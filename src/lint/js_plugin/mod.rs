@@ -42,4 +42,4 @@ pub use processor::{Block, Processor, Route, read_messages, write_messages};
 pub(crate) use rules::has_what_json_lacks;
 pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};
 #[doc(hidden)]
-pub use schema::{ESLINT_PATCH, PROGRAM};
+pub use schema::{eslint_patch, program};

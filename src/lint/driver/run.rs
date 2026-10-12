@@ -44,8 +44,8 @@ pub struct Stream {
     pub colors: bool,
 }
 
-/// The text of a program, in parts: several programs begin with the same.
-pub(crate) type Source = &'static [&'static str];
+/// The text of a program, in parts.
+pub(crate) type Source = &'static [crate::evaluate::Part];
 
 /// A program for the running executable to run: `head`, then `source`.
 pub struct Script<'s> {

@@ -144,7 +144,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     // Linux.
     argv.push(Box::from(&b"-e"[..]));
     argv.push(Box::from(PROGRAM_IS_ON_STDIN));
-    let parts = script.source.iter().map(|it| it.as_bytes());
+    let parts = script.source.iter().map(|it| it.text());
     let input: Vec<&[u8]> = std::iter::once(script.head).chain(parts).collect();
     let adapt = |variables: &mut bun_dotenv::Map| {
         Script::NOT_INHERITED

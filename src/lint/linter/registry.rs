@@ -485,6 +485,20 @@ pub fn formatting_rule(id: &[u8]) -> Option<&'static Deprecated> {
     find_deprecated(deprecated::FORMATTING, id)
 }
 
+/// What follows `ruleId` in ESLint's `DeprecatedRuleInfo` for `rule`, as JSON. Only `usedDeprecatedRules` in the JSON output
+/// has it, so release builds embed the text compressed and inflate it here on first use.
+pub fn deprecated_info(rule: &Deprecated) -> &'static [u8] {
+    static LINES: bun_core::Once<Vec<&'static [u8]>> = bun_core::Once::new();
+    let lines = LINES.get_or_init(|| {
+        let text = bun_zstd::embed_compressed!(
+            "src/lint/linter/deprecated.txt",
+            include_bytes!("deprecated.txt")
+        );
+        strings::split(text, b"\n").collect()
+    });
+    lines.get(rule.1 as usize).copied().unwrap_or_default()
+}
+
 /// The names of all of [these](formatting_rule).
 pub fn formatting_rules() -> impl Iterator<Item = &'static str> {
     deprecated::FORMATTING.iter().map(|it| it.0)

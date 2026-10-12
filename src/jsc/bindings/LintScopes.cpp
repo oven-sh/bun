@@ -260,17 +260,13 @@ StringView wordAt(ASCIILiteral words, uint32_t index)
     return {};
 }
 
-// The shape of the objects `index` of `group`. Without a template: there are no such objects, or an exception was thrown.
-Shape shapeIn(JSGlobalObject* globalObject, LintHost* host, bool isEspree, Group group, uint32_t index)
+// Makes what `shapeIn` returns. It runs once for each shape.
+__attribute__((minsize)) NEVER_INLINE Shape makeShapeIn(JSGlobalObject* globalObject, LintHost* host, bool isEspree, Group group, uint32_t index)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintScopeLayout& layout = host->scopes.layouts[isEspree];
-    if (index >= templatesIn[group])
-        return {};
     size_t at = firstTemplateIn[group] + index;
-    if (JSObject* like = layout.templates[at].get()) [[likely]]
-        return { like, layout.programs[at].span() };
 
     Vector<StringView, 24> keys;
     auto add = [&](ASCIILiteral words) {
@@ -402,6 +398,24 @@ Shape shapeIn(JSGlobalObject* globalObject, LintHost* host, bool isEspree, Group
     RELEASE_ASSERT(like->structure()->maxOffset() == static_cast<PropertyOffset>(keys.size()) - 1);
     layout.programs[at] = WTF::move(program);
     return { like, layout.programs[at].span() };
+}
+
+// The shape of the objects `index` of `group`. Without a template: there are no such objects, or an exception was thrown.
+Shape shapeIn(JSGlobalObject* globalObject, LintHost* host, bool isEspree, Group group, uint32_t index)
+{
+    if (index >= templatesIn[group])
+        return {};
+    size_t at = firstTemplateIn[group] + index;
+    LintScopeLayout& layout = host->scopes.layouts[isEspree];
+    if (JSObject* like = layout.templates[at].get()) [[likely]]
+        return { like, layout.programs[at].span() };
+    return makeShapeIn(globalObject, host, isEspree, group, index);
+}
+
+// `map.set(key, value)`. What it takes is several KB, so it's here once.
+NEVER_INLINE void setInMap(JSGlobalObject* globalObject, JSMap* map, JSValue key, JSValue value)
+{
+    map->set(globalObject, key, value);
 }
 
 class LintScopeMaker {
@@ -651,7 +665,7 @@ private:
         JSMap* map = JSMap::create(m_vm, structure);
         for (uint32_t index : variables) {
             JSObject* variable = asObject(m_variables->getIndexQuickly(index));
-            map->set(m_globalObject, variable->getDirect(m_variableNameOffset), variable);
+            setInMap(m_globalObject, map, variable->getDirect(m_variableNameOffset), variable);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         return map;
@@ -898,10 +912,10 @@ private:
                 JSMap* taints = JSMap::create(m_vm, mapStructure);
                 value = taints;
                 if (it[0] & hasArguments)
-                    taints->set(m_globalObject, string(argumentsString), jsBoolean(true));
+                    setInMap(m_globalObject, taints, string(argumentsString), jsBoolean(true));
                 for (uint32_t variable : m_message.list(it[4])) {
                     RETURN_IF_EXCEPTION(scope, void());
-                    taints->set(m_globalObject, asObject(m_variables->getIndexQuickly(variable))->getDirect(m_variableNameOffset), jsBoolean(true));
+                    setInMap(m_globalObject, taints, asObject(m_variables->getIndexQuickly(variable))->getDirect(m_variableNameOffset), jsBoolean(true));
                 }
                 break;
             }
@@ -1117,7 +1131,7 @@ void addAllLibVariables(JSGlobalObject* globalObject, LintHost* host)
     set->clear(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     for (size_t i = 0; i < all.size(); ++i) {
-        set->set(globalObject, asObject(all.at(i))->getDirect(nameOffset), all.at(i));
+        setInMap(globalObject, set, asObject(all.at(i))->getDirect(nameOffset), all.at(i));
         RETURN_IF_EXCEPTION(scope, void());
     }
     lintReplaceCustomValue(vm, host, state.globalScope.get(), Identifier::fromString(vm, "variables"_s), variables);
@@ -1176,20 +1190,19 @@ JSC_DEFINE_HOST_FUNCTION(jsLintLibVariable, (JSGlobalObject * globalObject, Call
         return JSValue::encode(jsUndefined());
     JSObject* variable = makeQuietLibVariable(globalObject, host, shape, known, entry);
     RETURN_IF_EXCEPTION(scope, {});
-    state.globalSet->set(globalObject, known, variable);
+    setInMap(globalObject, state.globalSet.get(), known, variable);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(variable);
 }
 
 // `scopes(classes, names, wantsFlags)` asks Rust for the scopes of the file that's being linted, whose nodes have been made, and returns
-// `[scopeManager.scopes, globalScope, variableCount, nodeToScope, declaredVariables, flags, explicit]`.
+// `[scopeManager.scopes, nodeToScope, declaredVariables, flags, explicit]`.
 // `flags`: a `Uint32Array` with the flags of each reference, if `wantsFlags`. `explicit`: each variable that `/* global */` comments
 // name, followed by a list of where these comments start.
 // `classes`: `[scopes, Variable, ImplicitLibVariable, definitions, Reference, globalSet]`, those of the scopes by the `ScopeKind` and those
 // of the definitions by the `DeclarationKind`, and an empty `set` for the global scope. It has to be the same array each time.
 // `names`: the configured globals.
-// With a fourth argument that is true, what the libraries of TypeScript define and nothing mentions is made by `libVariable` and
-// `addLibVariables`. It has to be the same each time.
+// What the libraries of TypeScript define and nothing mentions is made by `libVariable` and `addLibVariables`.
 JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1230,7 +1243,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
         return outOfStep();
     LintScopeMaker maker(globalObject, message, nodes, names, strings, text);
 
-    bool makesLibVariables = callFrame->argument(3).isTrue() && !host->isEspree();
+    bool makesLibVariables = !host->isEspree();
     if (makesLibVariables && !host->scopes.lazyVariables) {
         constexpr uint32_t askForAll = 16;
         LintSpan libs = Bun__Lint__ask(globalObject, askForAll, nullptr, 0);
@@ -1282,17 +1295,19 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
         host->scopes.hasAllLibVariables = false;
     }
 
-    // The program needs no more of the objects by their numbers.
-    made->setIndexQuickly(vm, 1, globalScope);
-    made->setIndexQuickly(vm, 2, jsNumber(variables->length()));
-    made->setIndexQuickly(vm, 5, jsUndefined());
-    made->setIndexQuickly(vm, 6, jsUndefined());
+    // The program needs none of the objects by their numbers.
+    JSArray* forProgram = tryCreateFilledLintArray(vm, globalObject, 5);
+    if (!forProgram) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
+    forProgram->setIndexQuickly(vm, 0, made->getIndexQuickly(0));
+    forProgram->setIndexQuickly(vm, 1, made->getIndexQuickly(3));
+    forProgram->setIndexQuickly(vm, 2, made->getIndexQuickly(4));
     if (callFrame->argument(2).toBoolean(globalObject)) {
         auto* flags = JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypeUint32>(), message.referenceCount);
         RETURN_IF_EXCEPTION(scope, {});
         for (uint32_t i = 0; i < message.referenceCount; ++i)
             flags->typedVector()[i] = message.reference(i)[1];
-        made->setIndexQuickly(vm, 5, flags);
+        forProgram->setIndexQuickly(vm, 3, flags);
     }
     MarkedArgumentBuffer explicitGlobals;
     for (uint32_t index : message.list(message.scope(0)[6])) {
@@ -1309,8 +1324,8 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
     }
     JSArray* explicitList = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), explicitGlobals);
     RETURN_IF_EXCEPTION(scope, {});
-    made->setIndexQuickly(vm, 6, explicitList);
-    return JSValue::encode(result);
+    forProgram->setIndexQuickly(vm, 4, explicitList);
+    return JSValue::encode(forProgram);
 }
 
 // `usedVariables()`: the indices of the variables that the file declares and for which a rule has set `eslintUsed`, or `undefined` if

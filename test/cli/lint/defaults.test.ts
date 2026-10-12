@@ -114,6 +114,37 @@ describe.concurrent("globals", () => {
     },
   );
 
+  test("in a repository, a test folder with its own package.json gives the same result from every directory", async () => {
+    const files = {
+      ".git/HEAD": "ref: refs/heads/main\n",
+      "package.json": "{}",
+      "src/a.js": 'describe("a", () => {});\n',
+      "test/package.json": "{}",
+      "test/b.js": 'describe("b", () => {});\n',
+      "test/unit/c.js": 'describe("c", () => {});\n',
+    };
+    for (const cwd of ["test", "test/unit"]) {
+      const { reports, exitCode } = await lint(files, [], undefined, cwd);
+      expect({ cwd, reports, exitCode }).toEqual({ cwd, reports: [], exitCode: 0 });
+    }
+    expect((await lint(files, [])).reports).toEqual(["src/a.js:1:1 error no-undef"]);
+  });
+
+  test("a repository inside a folder named test isn't all tests, with or without a package.json", async () => {
+    for (const extra of [{}, { "test/app/package.json": "{}" }]) {
+      const files = {
+        "test/app/.git/HEAD": "ref: refs/heads/main\n",
+        "test/app/src/a.js": 'describe("a", () => {});\n',
+        "test/app/test/b.js": 'describe("b", () => {});\n',
+        ...extra,
+      };
+      for (const cwd of ["test/app", "test/app/src"]) {
+        const { reports } = await lint(files, [], undefined, cwd);
+        expect({ cwd, reports }).toEqual({ cwd, reports: ["test/app/src/a.js:1:1 error no-undef"] });
+      }
+    }
+  });
+
   test("the test folders count from the closest package.json, also when run from inside one", async () => {
     const files = {
       "package.json": "{}",

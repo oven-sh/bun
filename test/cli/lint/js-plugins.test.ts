@@ -3038,6 +3038,81 @@ describe.concurrent("scopes in JavaScript plugins", () => {
   );
 
   // From then on JavaScriptCore stores every array of the realm in another way.
+  // What is expected is what ESLint 10.12.0 with @typescript-eslint/parser 8.71.1 reports.
+  test(
+    "what the libraries of TypeScript define is in the global scope whichever way a rule looks at it first",
+    async () => {
+      const config = `
+        const flagsOf = (object, key) => {
+          const it = Object.getOwnPropertyDescriptor(object, key);
+          return ["value" in it ? "value" : "accessor", it.writable, it.enumerable, it.configurable].join(" ");
+        };
+        const operations = {
+          descriptor: it => [flagsOf(it, "variables"), Object.getOwnPropertyDescriptor(it, "variables").value.length, it.variables === it.variables],
+          keys: it => Object.keys(it).join(),
+          one: it => {
+            const [array, record] = [it.set.get("Array"), it.set.get("Record")];
+            return [it.variables.includes(array), record === it.set.get("Record"), it.variables.includes(record), it.set.size === it.variables.length];
+          },
+          names: it => ["NotThere", "Promise", "const", "__proto__", 1, "\\u00e9"].map(name => [it.set.has(name), it.set.get(name)?.name]),
+          frozen: it => [Object.freeze(it).variables.length, flagsOf(it, "variables")],
+          assigned: it => [(it.variables = [1]), flagsOf(it, "variables"), it.set.size],
+          deleted: it => [delete it.variables, it.variables, "variables" in it, it.set.size],
+          spread: it => [{ ...it }.variables === it.variables, it.variables.length],
+          inherited: it => [Object.create(it).variables === it.variables, it.variables.length],
+          order: it => [[...it.set.keys()].slice(0, 4), [...it.set.keys()].join() === it.variables.map(it => it.name).join(), it.variables.at(-1).name],
+          iterated: it => {
+            let count = 0;
+            for (const [name, variable] of it.set) count += variable.name === name;
+            it.set.forEach(() => count++);
+            return [count, [...it.set.values()].length, [...it.set.entries()].length];
+          },
+          quiet: it => {
+            const variable = it.set.get("WeakRef");
+            const { defs, references, identifiers, isTypeVariable, isValueVariable, eslintImplicitGlobalSetting, writeable } = variable;
+            const values = [defs, references, identifiers, isTypeVariable, isValueVariable, eslintImplicitGlobalSetting, writeable];
+            return [Object.keys(variable).join(), variable.constructor.name, variable.scope === it, ...values];
+          },
+        };
+        const rule = name => ({
+          create: context => ({
+            Program(node) {
+              context.report({ node, message: name + " " + JSON.stringify(operations[name](context.sourceCode.scopeManager.globalScope)) });
+            },
+          }),
+        });
+        const names = Object.keys(operations);
+        const own = { rules: Object.fromEntries(names.map(name => [name, rule(name)])) };
+        const languageOptions = { parser: { meta: { name: "typescript-eslint/parser" } } };
+        module.exports = names.map(name => ({ files: [name + ".ts"], plugins: { own }, rules: { ["own/" + name]: "error" }, languageOptions }));`;
+      const names = "descriptor keys one names frozen assigned deleted spread inherited order iterated quiet".split(
+        " ",
+      );
+      const code = "let a: Promise<Record<string, number>> = Array;\n";
+      const { raw, exitCode } = await lint(
+        { "eslint.config.cjs": config, ...Object.fromEntries(names.map(name => [`${name}.ts`, code])) },
+        ["-f", "json", ...names.map(name => `${name}.ts`)],
+      );
+      const results: { messages: { message: string }[] }[] = JSON.parse(raw);
+      expect(results.flatMap(it => it.messages.map(it => it.message)).sort()).toEqual([
+        `assigned [[1],"value true true true",217]`,
+        `deleted [true,null,false,217]`,
+        `descriptor ["value true true true",217,true]`,
+        `frozen [217,"value false true false"]`,
+        `inherited [true,217]`,
+        `iterated [434,217,217]`,
+        `keys "$id,block,childScopes,functionExpressionScope,isStrict,leftToResolve,references,set,through,type,upper,variables,variableScope,implicit"`,
+        `names [[false,null],[true,"Promise"],[true,"const"],[false,null],[false,null],[false,null]]`,
+        `one [true,true,true,true]`,
+        `order [["Intl","Map","WeakMap","SymbolConstructor"],true,"globalThis"]`,
+        `quiet ["$id,defs,eslintUsed,identifiers,name,references,scope,writeable,eslintExplicitGlobal,eslintImplicitGlobalSetting,eslintExplicitGlobalComments,isTypeVariable,isValueVariable","ImplicitLibVariable",true,[],[],[],true,true,"readonly",false]`,
+        `spread [true,217]`,
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test(
     "nodes, scopes and code paths are right after a plugin has put an accessor with an index for a name on Array.prototype",
     async () => {

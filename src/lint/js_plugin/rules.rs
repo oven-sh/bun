@@ -146,7 +146,7 @@ impl Configured {
 #[derive(Debug)]
 pub struct FileSettings {
     pub(super) id: u32,
-    /// `{ settings, languageOptions, globals, libs, freezes, isLegacy, parser }`
+    /// `{ settings, languageOptions, globals, freezes, isLegacy, parser }`
     pub(super) json: Box<[u8]>,
     /// ESLint's `configGlobals`, in the order of the keys of `globals` in `json`.
     pub(super) globals: ConfiguredGlobals,
@@ -236,21 +236,10 @@ impl FileSettings {
             .iter()
             .map(|(name, setting)| (name.to_vec(), string(setting_name(*setting))))
             .collect();
-        // 1: a type, 2: a value. typescript-eslint defines the `const` of `x as const` after the libraries.
-        let libs = language
-            .lib_variables()
-            .chain([(&b"const"[..], true, false)]);
-        let libs = libs.map(|(name, is_type, is_value)| {
-            (
-                name.to_vec(),
-                Json::Number(f64::from(u8::from(is_type) | (u8::from(is_value) << 1))),
-            )
-        });
         let all = Json::Object(vec![
             (b"settings".to_vec(), settings),
             (b"languageOptions".to_vec(), language_options),
             (b"globals".to_vec(), Json::Object(all_globals)),
-            (b"libs".to_vec(), Json::Object(libs.collect())),
             (b"freezes".to_vec(), Json::Bool(language.is_oxlint)),
             (
                 b"isLegacy".to_vec(),

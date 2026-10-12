@@ -40,7 +40,7 @@ One file, `src/lint/<crate>/rules/<name_in_snake_case>.rs`. See [Writing a rule]
 - **Options**: the JSON schema is data, not code.
   - Bun's own rule: add `"bun/no-foo": [<schema of each option>]` to `src/lint/linter/schema/own.json`. `[]` means no options.
   - A port: the schema comes from upstream. See the header of `src/lint/linter/schema/generate-schemas.mjs`.
-  - Then regenerate `data.rs` with that script.
+  - Then regenerate `schemas.txt` and `data.rs` with that script.
 - **On by default?** Almost never. `.recommended()` / `.presets(..)` mirror what upstream's presets turn on. What is on with no config file is `BUILT_IN` in `src/lint/driver/configs.rs`.
 
 ### 3. Document it

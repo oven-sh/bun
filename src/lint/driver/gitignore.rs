@@ -126,7 +126,8 @@ fn common_directory(dot_git: Vec<u8>, kind: fs::Kind) -> Option<Vec<u8>> {
     })
 }
 
-fn is_root(directory: &[u8]) -> bool {
+/// True if `directory` is the top of a Git or Jujutsu repository.
+pub(crate) fn is_root(directory: &[u8]) -> bool {
     [&b".git"[..], b".jj"]
         .iter()
         .any(|name| bun_sys::exists(&paths::join(directory, name)))

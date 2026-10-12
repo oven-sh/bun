@@ -4,7 +4,9 @@ use bun_core::printer::json_stringify;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin;
-use bun_lint::linter::{Deprecated, Entry, ResolvedConfig, RuleId, deprecated_rule, write_json};
+use bun_lint::linter::{
+    Deprecated, Entry, ResolvedConfig, RuleId, deprecated_info, deprecated_rule, write_json,
+};
 use bun_lint::options::Json;
 
 /// `getShorthandName(name, "eslint-plugin")`
@@ -55,8 +57,8 @@ fn write_js(out: &mut Vec<u8>, rule: &js_plugin::Rule, (deprecated, replaced_by)
     out.push(b'}');
 }
 
-fn write(out: &mut Vec<u8>, (id, rest): &Deprecated) {
-    let (id, rest) = (id.as_bytes(), rest.as_bytes());
+fn write(out: &mut Vec<u8>, rule: &Deprecated) {
+    let (id, rest) = (rule.0.as_bytes(), deprecated_info(rule));
     out.extend_from_slice(&[b"{\"ruleId\":\"", id, b"\",", rest, b"}"].concat());
 }
 

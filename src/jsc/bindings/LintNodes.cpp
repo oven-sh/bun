@@ -40,7 +40,7 @@ JSArray* tryCreateFilledLintArray(VM& vm, JSGlobalObject* globalObject, unsigned
 // `shape(prototype, keys, first, hidden = 0)` returns a template object with `keys` as inline properties, in that order.
 // `first` is the value of the first key. The last `hidden` keys are what `Object.defineProperty(object, key, { value })`
 // defines. They are not enumerable, writable or configurable. `listen` and `codePaths` create objects with the template's Structure.
-JSC_DEFINE_HOST_FUNCTION(jsLintShape, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintShape, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -308,7 +308,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintIllegalConstructor, (JSGlobalObject * globalObjec
     return throwVMTypeError(globalObject, scope, "Illegal constructor"_s);
 }
 
-bool LintNodeState::load(JSGlobalObject* globalObject, LintHost* host)
+__attribute__((minsize)) bool LintNodeState::load(JSGlobalObject* globalObject, LintHost* host)
 {
     constexpr uint32_t layouts = 15;
     LintSpan answer = Bun__Lint__ask(globalObject, layouts, nullptr, 0);
@@ -416,7 +416,7 @@ JSString* LintNodeState::knownString(VM& vm, LintHost* host, uint32_t index)
     return slot.get();
 }
 
-JSObject* LintNodeState::prototype(VM& vm, JSGlobalObject* globalObject, LintHost* host, LayoutKind kind)
+__attribute__((minsize)) JSObject* LintNodeState::prototype(VM& vm, JSGlobalObject* globalObject, LintHost* host, LayoutKind kind)
 {
     if (kind == TypeScript)
         return globalObject->objectPrototype();
@@ -438,7 +438,7 @@ JSObject* LintNodeState::prototype(VM& vm, JSGlobalObject* globalObject, LintHos
     return prototype;
 }
 
-JSObject* LintNodeState::makeTemplate(JSGlobalObject* globalObject, LintHost* host, LayoutKind kind, uint8_t type, unsigned which, bool isAlternate, unsigned index)
+__attribute__((minsize)) JSObject* LintNodeState::makeTemplate(JSGlobalObject* globalObject, LintHost* host, LayoutKind kind, uint8_t type, unsigned which, bool isAlternate, unsigned index)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -492,7 +492,7 @@ JSObject* LintNodeState::makeTemplate(JSGlobalObject* globalObject, LintHost* ho
     return like;
 }
 
-JSObject* LintNodeState::visitorKeys(JSGlobalObject* globalObject, LintHost* host, bool isEspree)
+__attribute__((minsize)) JSObject* LintNodeState::visitorKeys(JSGlobalObject* globalObject, LintHost* host, bool isEspree)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

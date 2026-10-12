@@ -1135,9 +1135,12 @@ impl<'l> Loader<'l> {
             let _ = self.mistake.set(mistake.print(self.cwd(), colors));
             return Err(Fatal(mistake.message));
         }
+        // The repository first, so that a file gets the same answer from every directory in it, even from a `test` folder that
+        // has a package.json of its own.
         let has_package = |it: &&[u8]| fs::is_file(&paths::join(it, b"package.json"));
         let project = paths::ancestors(self.cwd())
-            .find(has_package)
+            .find(|it| gitignore::is_root(it))
+            .or_else(|| paths::ancestors(self.cwd()).find(has_package))
             .unwrap_or_else(|| self.cwd());
         // Every file is in it, on whatever drive.
         let mut objects = vec![built_in_json(

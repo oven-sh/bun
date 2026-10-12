@@ -58,9 +58,9 @@ pub use message::{
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
-    Deprecated, Missing, Modes, Names, NativePlugins, Registry, deprecated_rule, formatting_rule,
-    formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
-    plugin_of_oxlint,
+    Deprecated, Missing, Modes, Names, NativePlugins, Registry, deprecated_info, deprecated_rule,
+    formatting_rule, formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key,
+    parse_rule_id, plugin_of_oxlint,
 };
 pub use resolved::{
     ConfiguredJsRule, ConfiguredRule, Entry, FormattingRule, LinterOptions, ResolvedConfig,

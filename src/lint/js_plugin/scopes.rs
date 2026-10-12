@@ -491,11 +491,42 @@ struct Order {
     has_moved: bool,
 }
 
+/// The indices of `keys` sorted by them. A key is the number of a node or [`NONE`]. Those with the same key keep their order. It counts
+/// how many there are for each node, so it compares nothing, and it is small: a sort of the standard library is several KB for each
+/// type and closure.
+fn order_by_node(keys: &[u32], node_count: usize) -> Vec<u32> {
+    let mut order: Vec<u32> = (0..keys.len() as u32).collect();
+    // A few are not worth a pass over the nodes.
+    if keys.len() <= 8 {
+        for end in 1..order.len() {
+            let mut at = end;
+            while at > 0 && keys[order[at - 1] as usize] > keys[order[at] as usize] {
+                order.swap(at - 1, at);
+                at -= 1;
+            }
+        }
+        return order;
+    }
+    let place_of = |key: u32| (key as usize).min(node_count);
+    let mut starts = vec![0u32; node_count + 2];
+    for &key in keys {
+        starts[place_of(key) + 1] += 1;
+    }
+    for place in 0..=node_count {
+        starts[place + 1] += starts[place];
+    }
+    for (&key, index) in keys.iter().zip(0..) {
+        let start = &mut starts[place_of(key)];
+        order[*start as usize] = index;
+        *start += 1;
+    }
+    order
+}
+
 impl Order {
-    fn new(node_of: Vec<u32>) -> Order {
+    fn new(node_of: Vec<u32>, node_count: usize) -> Order {
         let order: Vec<u32> = (0..node_of.len() as u32).collect();
-        let mut sorted = order.clone();
-        sorted.sort_unstable_by_key(|&it| (node_of[it as usize], it));
+        let sorted = order_by_node(&node_of, node_count);
         Order {
             node_of,
             sorted,
@@ -987,8 +1018,10 @@ impl<'t, 'a> Builder<'t, 'a> {
         if self.is_espree && members.is_empty() {
             return (0..self.scopes.len() as u32).collect();
         }
-        let mut references = Order::new(self.references.iter().map(|it| it.made_at).collect());
-        let mut scopes = Order::new(self.scopes.iter().map(|it| it.block).collect());
+        let node_count = self.tree.nodes.len();
+        let made_at = self.references.iter().map(|it| it.made_at).collect();
+        let mut references = Order::new(made_at, node_count);
+        let mut scopes = Order::new(self.scopes.iter().map(|it| it.block).collect(), node_count);
         let mut order = TypeScriptOrder {
             tree: &self.tree,
             orders: [&mut references, &mut scopes],
@@ -1426,7 +1459,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         }
         for (for_jsx, index) in for_jsx {
             let home = for_jsx.from;
-            values.sort_by_key(|&it| {
+            let time_of = |it: u32| {
                 let reference = &self.references[it as usize];
                 if reference.variable != for_jsx.variable {
                     return 0;
@@ -1444,19 +1477,21 @@ impl<'t, 'a> Builder<'t, 'a> {
                     scope = upper;
                 }
                 2 * it
-            });
+            };
+            crate::utils::sort::sort_indices(&mut values, &mut |a, b| time_of(a).cmp(&time_of(b)));
         }
         if !self.is_espree {
             // typescript-eslint resolves what the libraries say a name can be. `Promise` is only a type in the first library
             // that has it. ESLint resolves the rest afterwards.
-            values.sort_by_key(|&it| {
+            let (first, rest): (Vec<u32>, Vec<u32>) = values.iter().partition(|&&it| {
                 let reference = &self.references[it as usize];
                 let is = |flag: ReferenceFlags| reference.flags & u32::from(flag.bits()) != 0;
-                reference.flags & TO_GLOBAL != 0
-                    && reference.variable != NONE
-                    && !(is(ReferenceFlags::TYPE) && self.accepts(reference.variable, IS_TYPE)
-                        || is(ReferenceFlags::VALUE) && self.accepts(reference.variable, IS_VALUE))
+                reference.flags & TO_GLOBAL == 0
+                    || reference.variable == NONE
+                    || is(ReferenceFlags::TYPE) && self.accepts(reference.variable, IS_TYPE)
+                    || is(ReferenceFlags::VALUE) && self.accepts(reference.variable, IS_VALUE)
             });
+            values = [first, rest].concat();
         }
         let keys: Vec<u32> = values.iter().map(|&it| keys[it as usize]).collect();
         group(&keys, &values, self.variables.len(), &mut self.lists)
@@ -1658,7 +1693,15 @@ impl Builder<'_, '_> {
                 }
             }
         }
-        definitions.sort_by_key(|it| it.0);
+        let node_count = self.tree.nodes.len();
+        let by_name = |items: &mut [(u32, u32, u32, u32)]| {
+            let names: Vec<u32> = items.iter().map(|it| it.0).collect();
+            let sorted: Vec<_> = (order_by_node(&names, node_count).iter())
+                .map(|&it| items[it as usize])
+                .collect();
+            items.copy_from_slice(&sorted);
+        };
+        by_name(&mut definitions);
         // It makes the implicit globals last, in the order of the assignments.
         let first_implicit = definitions.len();
         for (&pairs, variable) in implicit.iter().zip(self.variables.len() as u32..) {
@@ -1672,7 +1715,7 @@ impl Builder<'_, '_> {
                     .map(|&[name, node]| (name, node, NONE, variable)),
             );
         }
-        definitions[first_implicit..].sort_by_key(|it| it.0);
+        by_name(&mut definitions[first_implicit..]);
 
         let (mut keys, mut values) = (Vec::new(), Vec::new());
         let mut seen = FxHashSet::default();

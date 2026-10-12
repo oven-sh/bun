@@ -12,7 +12,7 @@
 //! never posts a job. And nobody posts a job while holding a lock that linting a file takes. A thread with a VM does wait for
 //! its own JavaScript, which can need Bun's pool, on which nothing of `bun lint` runs.
 //!
-//! The program is `bun_lint::js_plugin::PROGRAM`: the body of a function that is given the native functions of
+//! The program is `bun_lint::js_plugin::program()`: the body of a function that is given the native functions of
 //! src/jsc/bindings/Lint*.cpp, and returns the function that [`ThreadVm::call`] calls. These functions ask with [`Bun__Lint__ask`].
 
 use core::cell::{Cell, RefCell};
@@ -20,7 +20,7 @@ use core::ptr::NonNull;
 
 use bun_core::strings;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
-use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, PROGRAM, Serve, Vm, Work};
+use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Serve, Vm, Work, program};
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -171,9 +171,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
         const require = process.getBuiltinModule(\"node:module\").createRequire(process.cwd() + \"/\");\n\
         const load = specifier => import(specifier);\n"
         .to_vec();
-    PROGRAM
-        .iter()
-        .for_each(|part| source.extend_from_slice(part.1.as_bytes()));
+    program().for_each(|part| source.extend_from_slice(part));
     source.extend_from_slice(b"\n})");
     let name = b"bun-lint-plugins.js";
     let mut exception = JSValue::UNDEFINED;

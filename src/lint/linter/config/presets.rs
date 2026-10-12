@@ -1,8 +1,8 @@
-//! The configurations that ESLint and typescript-eslint publish, by name, for a project that does
-//! not have them installed.
-
-#[path = "presets_data.rs"]
-mod data;
+//! The configs that ESLint and typescript-eslint publish, by name, for a project that doesn't have them installed.
+//!
+//! `generate-presets.mjs` writes them to `presets.txt`, from @eslint/js 10.0.1 and @typescript-eslint/eslint-plugin 8.71.1. Each
+//! line is `name<tab>JSON`. The JSON is an array of config objects, where a string stands for the objects of the config with
+//! that name.
 
 use crate::options::Json;
 use bun_core::strings;
@@ -42,15 +42,28 @@ fn canonical(name: &[u8]) -> Option<Vec<u8>> {
 ///   `/base`, `/eslint-recommended`, `/disable-type-checked`, .., also as `@typescript-eslint/..`,
 ///   `plugin:@typescript-eslint/..`, `tseslint/recommendedTypeChecked`
 pub(super) fn find(name: &[u8]) -> Option<Vec<Json>> {
-    let name = canonical(name)?;
-    let text = strings::replace_owned(data::PRESETS.as_bytes(), b"\"@/", b"\"@typescript-eslint/");
-    let all = crate::json::parse(&text)?;
     let mut objects = Vec::new();
-    for object in all.get(&name)?.as_array()? {
+    for object in parse(&canonical(name)?)? {
         match object {
-            Json::String(other) => objects.extend(all.get(other)?.as_array()?.iter().cloned()),
-            object => objects.push(object.clone()),
+            Json::String(other) => objects.extend(parse(&other)?),
+            object => objects.push(object),
         }
     }
     Some(objects)
+}
+
+/// The line of `presets.txt` for `name`. Release builds embed the file compressed and inflate it on first use.
+fn parse(name: &[u8]) -> Option<Vec<Json>> {
+    let lines = bun_zstd::embed_compressed!(
+        "src/lint/linter/config/presets.txt",
+        include_bytes!("presets.txt")
+    );
+    let json = strings::split(lines, b"\n")
+        .filter_map(|line| strings::split_once_char(line, b'\t'))
+        .find(|it| it.0 == name)?
+        .1;
+    match crate::json::parse(json)? {
+        Json::Array(objects) => Some(objects),
+        _ => None,
+    }
 }

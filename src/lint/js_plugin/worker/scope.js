@@ -172,42 +172,33 @@ const eslintScopeLayout = once(() => {
 
 // ------------- `@typescript-eslint/scope-manager` -------------
 
-// src/jsc/bindings/LintScopes.cpp makes what the libraries of TypeScript define.
-const hasNativeLibVariables = process.env.BUN_LINT_NATIVE_LIBS === "1";
-
 // The `set` of the global scope. The libraries of TypeScript can define thousands of variables, and most files ask for a few names.
-// The others are made when something goes through all of them.
+// The others are made when something goes through all of them: src/jsc/bindings/LintScopes.cpp.
 class GlobalSet extends Map {
   get(name) {
-    const found = super.get(name);
-    if (hasNativeLibVariables) return found ?? native.libVariable(name);
-    if (found !== undefined || scopeData.hasAllLibVariables || !Object.hasOwn(fileSettings.libs, name)) return found;
-    const variable = libVariable(name);
-    super.set(name, variable);
-    return variable;
+    return super.get(name) ?? native.libVariable(name);
   }
   has(name) {
-    if (hasNativeLibVariables) return this.get(name) !== undefined;
-    return super.has(name) || (!scopeData.hasAllLibVariables && Object.hasOwn(fileSettings.libs, name));
+    return this.get(name) !== undefined;
   }
   get size() {
-    addLibVariables();
+    native.addLibVariables();
     return super.size;
   }
   keys() {
-    addLibVariables();
+    native.addLibVariables();
     return super.keys();
   }
   values() {
-    addLibVariables();
+    native.addLibVariables();
     return super.values();
   }
   entries() {
-    addLibVariables();
+    native.addLibVariables();
     return super.entries();
   }
   forEach(callback, thisArg) {
-    addLibVariables();
+    native.addLibVariables();
     return super.forEach(callback, thisArg);
   }
   [Symbol.iterator]() {
@@ -321,8 +312,10 @@ const typescriptLayout = once(() => {
     isStrictModeSupported() {
       return true;
     }
-    // In the order in which typescript-eslint makes them: what the libraries define, what the file declares as the traversal comes to
-    // it, what ESLint adds. A variable is made where its name is, and not before the one that is before it in its scope.
+    // typescript-eslint sorts them by `$id`, which is the order in which it makes them: what the libraries define, what the file declares
+    // as its traversal comes to it, what ESLint adds. This is not that algorithm. It takes a variable to be made where its name is, and
+    // not before the one that is before it in its scope. With the objects of typescript-eslint 8.71.1 that gives the order of the real
+    // getter in 37,525 of 37,603 files. In the others the traversal doesn't go by position: type parameters come after parameters.
     get variables() {
       const isOfLib = it => it instanceof ImplicitLibVariable;
       const others = [];
@@ -355,52 +348,9 @@ const typescriptLayout = once(() => {
 
   return {
     ScopeManager,
-    ImplicitLibVariable,
     forNative: [types, Variable, ImplicitLibVariable, definitionClasses, Reference, new GlobalSet()],
   };
 });
-
-// A variable that the libraries of TypeScript define, and that nothing in the file or in the configuration mentions.
-function libVariable(name) {
-  let variable = scopeData.libVariables.get(name);
-  if (variable === undefined) {
-    const flags = fileSettings.libs[name];
-    variable = {
-      __proto__: typescriptLayout().ImplicitLibVariable.prototype,
-      $id: scopeData.variableCount + scopeData.libVariables.size + 1,
-      defs: [],
-      eslintUsed: false,
-      identifiers: [],
-      name,
-      references: [],
-      scope: scopeData.manager.globalScope,
-      writeable: false,
-      eslintExplicitGlobal: undefined,
-      eslintImplicitGlobalSetting: "readonly",
-      eslintExplicitGlobalComments: undefined,
-      isTypeVariable: (flags & 1) !== 0,
-      isValueVariable: (flags & 2) !== 0,
-    };
-    scopeData.libVariables.set(name, variable);
-  }
-  return variable;
-}
-
-// Puts the rest of them into `variables` and `set` of the global scope. typescript-eslint defines what is in the libraries first.
-function addLibVariables() {
-  if (hasNativeLibVariables) return native.addLibVariables();
-  if (scopeData.hasAllLibVariables) return;
-  scopeData.hasAllLibVariables = true;
-  const { globalScope } = scopeData.manager;
-  const isOfLib = it => it instanceof typescriptLayout().ImplicitLibVariable;
-  const mentioned = new Map(scopeData.mentionedGlobals.map(it => [it.name, it]));
-  // A name that the file declares as well is only among the others.
-  const ofLibs = Object.keys(fileSettings.libs).map(name => mentioned.get(name) ?? libVariable(name));
-  const value = [...ofLibs.filter(isOfLib), ...scopeData.mentionedGlobals.filter(it => !isOfLib(it))];
-  Map.prototype.clear.call(globalScope.set);
-  for (const variable of value) Map.prototype.set.call(globalScope.set, variable.name, variable);
-  Object.defineProperty(globalScope, "variables", { value, writable: true, enumerable: true, configurable: true });
-}
 
 function scopeManager() {
   if (scopeData !== null) return scopeData.manager;
@@ -408,34 +358,14 @@ function scopeManager() {
   const layout = fileDialect === 1 ? eslintScopeLayout() : typescriptLayout();
   const names =
     globalNames.get(fileSettings) ?? globalNames.set(fileSettings, Object.keys(fileSettings.globals)).get(fileSettings);
-  const made = native.scopes(layout.forNative, names, fileDialect === 0, hasNativeLibVariables);
-  const [listed, globalScope, variableCount, nodeToScope, declaredVariables, referenceFlags, explicitGlobals] = made;
-  scopeData = {
-    manager: new layout.ScopeManager(listed, nodeToScope, declaredVariables),
-    variableCount,
-    referenceFlags,
-    libVariables: new Map(),
-    mentionedGlobals: hasNativeLibVariables ? null : globalScope.variables,
-    hasAllLibVariables: fileDialect === 1,
-  };
+  const made = native.scopes(layout.forNative, names, fileDialect === 0);
+  const [listed, nodeToScope, declaredVariables, referenceFlags, explicitGlobals] = made;
+  scopeData = { manager: new layout.ScopeManager(listed, nodeToScope, declaredVariables), referenceFlags };
   native.setScopeManager(scopeData.manager);
   // The comments are tokens, which are made here.
   const commentAt = start => sourceCode.getTokenByRangeStart(start, { includeComments: true });
   for (let i = 0; i < explicitGlobals.length; i += 2) {
     explicitGlobals[i].eslintExplicitGlobalComments = explicitGlobals[i + 1].map(commentAt);
-  }
-  if (fileDialect === 0 && !hasNativeLibVariables) {
-    Object.defineProperty(globalScope, "variables", {
-      get() {
-        addLibVariables();
-        return this.variables;
-      },
-      set(value) {
-        Object.defineProperty(this, "variables", { value, writable: true, enumerable: true, configurable: true });
-      },
-      enumerable: true,
-      configurable: true,
-    });
   }
   return scopeData.manager;
 }

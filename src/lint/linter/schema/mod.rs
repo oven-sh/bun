@@ -1,8 +1,8 @@
 //! Schemas for rule options: ESLint's `meta.schema` and `meta.defaultOptions`.
 //!
 //! ESLint validates the options of every enabled rule, and rejects a config whose options don't
-//! match the rule's schema. Here the schemas are data, not part of the rules (126 KB for 360
-//! rules). A rule's schema is parsed only when its options are validated.
+//! match the rule's schema. Here the schemas are data, not part of the rules (200 KB for 360
+//! rules, 26 KB compressed). A rule's schema is parsed only when its options are validated.
 //!
 //! Default options are merged in only for validating and comparing. A rule is built from the
 //! options as written, and applies its own defaults.
@@ -21,71 +21,29 @@ pub use validate::Step;
 pub(super) use validate::is_equal;
 use validate::{SchemaError, Validator};
 
-/// The strings of an entry of [`data::NAMES`].
-fn names(mut list: &[u8]) -> Json {
-    let mut all = Vec::new();
-    let mut name: Vec<u8> = Vec::new();
-    while let [shared, more, rest @ ..] = list
-        && let Some((added, rest)) = rest.split_at_checked(*more as usize)
-    {
-        name.truncate(*shared as usize);
-        name.extend_from_slice(added);
-        all.push(Json::String(name.clone()));
-        list = rest;
-    }
-    Json::Array(all)
+/// `schemas.txt` as `(rule id, JSON)` pairs, sorted by id. The JSON is `[meta.schema]` or `[meta.schema, meta.defaultOptions]`.
+/// A typescript-eslint rule that merges its defaults itself has `[meta.schema, [], defaultOptions]`. A rule that isn't listed
+/// takes no options.
+///
+/// Release builds embed the file compressed and inflate it here, the first time a schema is needed.
+fn schemas() -> &'static [(&'static [u8], &'static [u8])] {
+    static SCHEMAS: bun_core::Once<Vec<(&'static [u8], &'static [u8])>> = bun_core::Once::new();
+    SCHEMAS.get_or_init(|| {
+        let lines = bun_zstd::embed_compressed!(
+            "src/lint/linter/schema/schemas.txt",
+            include_bytes!("schemas.txt")
+        );
+        strings::split(lines, b"\n")
+            .filter_map(|line| strings::split_once_char(line, b'\t'))
+            .collect()
+    })
 }
 
-/// Writes `text` with what each `{"$":n}` stands for in its place. As text: to parse is dear however short the text is.
-fn write_with_shared(out: &mut Vec<u8>, mut text: &[u8]) {
-    const REFERENCE: &[u8] = b"{\"$\":";
-    while let Some(at) = strings::index_of(text, REFERENCE) {
-        let (before, reference) = text.split_at(at);
-        out.extend_from_slice(before);
-        let digits = &reference[REFERENCE.len()..];
-        let end = strings::index_of_char_usize(digits, b'}').unwrap_or(digits.len());
-        let shared = bun_core::fmt::parse_decimal::<usize>(&digits[..end]);
-        if let Some(shared) = shared.and_then(|it| data::SHARED.get(it)) {
-            write_with_shared(out, shared.as_bytes());
-        }
-        text = digits.get(end + 1..).unwrap_or_default();
-    }
-    out.extend_from_slice(text);
-}
-
-/// Puts what each `{"$names":n}` stands for in its place.
-fn put_names(json: &mut Json) {
-    let list = match &*json {
-        Json::Object(entries) => match &entries[..] {
-            [(key, Json::Number(index))] if key == b"$names" => data::NAMES.get(*index as usize),
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some(list) = list {
-        *json = names(list);
-        return;
-    }
-    match json {
-        Json::Object(entries) => entries.iter_mut().for_each(|it| put_names(&mut it.1)),
-        Json::Array(items) => items.iter_mut().for_each(put_names),
-        _ => {}
-    }
-}
-
-/// An entry of [`data::SCHEMAS`]: `[meta.schema]`, then `meta.defaultOptions` if the rule has them. `None` if the rule takes
-/// no options.
+/// The rule's entry in [`schemas`], parsed. `None` if the rule takes no options.
 fn find(id: &[u8]) -> Option<Json> {
-    let at = data::SCHEMAS
-        .binary_search_by(|it| it.0.as_bytes().cmp(id))
-        .ok()?;
-    let mut text = Vec::new();
-    write_with_shared(&mut text, data::SCHEMAS[at].1.as_bytes());
-    let mut found = crate::json::parse(&text)?;
-    if strings::contains(&text, b"{\"$names\":") {
-        put_names(&mut found);
-    }
-    Some(found)
+    let schemas = schemas();
+    let at = schemas.binary_search_by(|it| it.0.cmp(id)).ok()?;
+    crate::json::parse(schemas[at].1)
 }
 
 /// `deepMergeObjects`
@@ -139,7 +97,7 @@ pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Jso
     let [schema, defaults @ ..] = found.as_array()? else {
         return None;
     };
-    // The defaults that a typescript-eslint rule merges itself come last. See `data::SCHEMAS`.
+    // The defaults that a typescript-eslint rule merges itself come last. See [`schemas`].
     let defaults = defaults.last().and_then(Json::as_array);
     let merged = deep_merge_arrays(defaults.unwrap_or_default(), options);
     Some((schema.clone(), merged))

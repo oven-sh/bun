@@ -1019,6 +1019,7 @@ dependencies = [
  "bun_threading",
  "bun_wyhash",
  "bun_yarr",
+ "bun_zstd",
  "rustc-hash",
  "smallvec",
 ]
@@ -1586,6 +1587,7 @@ dependencies = [
  "bun_sema_standalone",
  "bun_threading",
  "bun_wyhash",
+ "bun_zstd",
  "hashbrown 0.15.5",
  "rustc-hash",
  "smallvec",

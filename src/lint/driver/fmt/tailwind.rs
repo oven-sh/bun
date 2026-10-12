@@ -5,7 +5,7 @@
 //! turn, one script answers for all those classes, and the files that were put aside are formatted again.
 
 use super::files::Kind;
-use crate::evaluate::evaluate_input;
+use crate::evaluate::{TAILWIND, evaluate_input};
 use crate::run::Environment;
 use crate::{fs, paths};
 use bun_core::printer::json_stringify_alloc;
@@ -19,8 +19,6 @@ use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-
-const SCRIPT: crate::run::Source = &[crate::evaluate::START, include_str!("tailwind.js")];
 
 /// Which Tailwind is asked: the package in the directory `root`, loaded with one of these files.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -344,7 +342,7 @@ impl Classes {
             &mut text,
             &Json::Object(vec![(b"groups".to_vec(), Json::Array(groups.collect()))]),
         );
-        let answer = evaluate_input(environment, SCRIPT, &environment.cwd, &text)
+        let answer = evaluate_input(environment, TAILWIND, &environment.cwd, &text)
             .map_err(|why| fail(&why))?;
         let failures: Vec<Vec<u8>> = (without_package.into_iter())
             .chain(known.take_in(asked, &answer).iter().map(|it| fail(it)))

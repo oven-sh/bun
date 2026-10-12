@@ -167,9 +167,9 @@ fn may_hold_merge_key(data: &[u8]) -> bool {
         let Some(hex) = rest.get(1..1 + hex_len) else {
             continue;
         };
-        let code = hex
-            .iter()
-            .try_fold(0u32, |n, &c| hex_val(c).map(|v| n * 16 + u32::from(v)));
+        let code = hex.iter().try_fold(0u32, |n, &c| {
+            bun_core::fmt::hex_digit_value(c).map(|v| n * 16 + u32::from(v))
+        });
         if code == Some(u32::from(b'<')) {
             return true;
         }
@@ -182,49 +182,10 @@ fn invalid_lockfile(log: &mut bun_ast::Log, args: core::fmt::Arguments<'_>) -> E
     Error::InvalidYarnBerryLockfile
 }
 
-fn hex_val(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn percent_decode(s: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len());
-    let mut i = 0;
-    while i < s.len() {
-        if s[i] == b'%' && i + 2 < s.len() {
-            if let (Some(a), Some(b)) = (hex_val(s[i + 1]), hex_val(s[i + 2])) {
-                out.push(a * 16 + b);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(s[i]);
-        i += 1;
-    }
-    out
-}
-
-/// `encodeURIComponent`, which is how yarn embeds a locator in `::locator=`.
-fn percent_encode(out: &mut Vec<u8>, s: &[u8]) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    for &c in s {
-        if c.is_ascii_alphanumeric()
-            || matches!(
-                c,
-                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
-            )
-        {
-            out.push(c);
-        } else {
-            out.push(b'%');
-            out.push(HEX[(c >> 4) as usize]);
-            out.push(HEX[(c & 0xf) as usize]);
-        }
-    }
+/// Yarn writes a locator inside a reference with `encodeURIComponent`. Text
+/// that is not percent-encoding is kept as written.
+fn decoded_component(s: &[u8]) -> Vec<u8> {
+    bun_url::PercentEncoding::decode_alloc(s).map_or_else(|_| s.to_vec(), Vec::from)
 }
 
 /// `name@rest`, keeping a leading scope `@`.
@@ -242,7 +203,7 @@ fn split_reference_params(reference: &[u8]) -> (&[u8], Vec<(&[u8], Vec<u8>)>) {
     let mut params = Vec::new();
     for kv in strings::split(tail, b"&") {
         if let Some((k, v)) = strings::split_once_char(kv, b'=') {
-            params.push((k, percent_decode(v)));
+            params.push((k, decoded_component(v)));
         }
     }
     (head, params)
@@ -598,8 +559,8 @@ fn decode_patch_spec(rest: &[u8]) -> (PatchSpec, Vec<(&[u8], Vec<u8>)>) {
     };
     (
         PatchSpec {
-            inner: percent_decode(inner),
-            source: percent_decode(source),
+            inner: decoded_component(inner),
+            source: decoded_component(source),
         },
         params,
     )
@@ -612,7 +573,7 @@ fn locator_key(name: &[u8], reference: &[u8]) -> Vec<u8> {
     let mut key = Vec::with_capacity(name.len() + 1 + head.len());
     key.extend_from_slice(name);
     key.push(b'@');
-    key.extend_from_slice(&percent_decode(head));
+    key.extend_from_slice(&decoded_component(head));
     key
 }
 
@@ -620,7 +581,7 @@ fn locator_key(name: &[u8], reference: &[u8]) -> Vec<u8> {
 /// names: `name@workspace:path` -> `path`; `name@portal:./p::locator=<owner>` ->
 /// `<owner dir>/p`. `None` for anything that is not a folder.
 fn locator_dir(encoded: &[u8], depth: u8) -> Option<Vec<u8>> {
-    let decoded = percent_decode(encoded);
+    let decoded = decoded_component(encoded);
     let (_, reference) = split_locator(&decoded)?;
     if let Some(path) = reference.strip_prefix(b"workspace:") {
         return Some(path.to_vec());
@@ -1393,7 +1354,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             .get(b".")
             .map_or(&b""[..], |&idx| entries[idx].name);
         let mut enc = Vec::new();
-        percent_encode(&mut enc, &[root_name, b"@workspace:."].concat());
+        strings::percent_encode_uri_component(&[root_name, b"@workspace:."].concat(), &mut enc);
         enc
     };
 
@@ -1430,7 +1391,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         // that declared them
         let owner_locator: Option<Vec<u8>> = owner.as_ref().map(|(name, reference)| {
             let mut enc = Vec::with_capacity(name.len() + reference.len() + 16);
-            percent_encode(&mut enc, &[&name[..], b"@", reference].concat());
+            strings::percent_encode_uri_component(&[&name[..], b"@", reference].concat(), &mut enc);
             enc
         });
         let is_patched = patched_packages.contains_key(&(pkg_id as PackageID));

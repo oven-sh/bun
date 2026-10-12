@@ -332,9 +332,9 @@ impl WebWorker {
             }
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
-            if let Some(preload) =
-                unsafe { resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message) }
-            {
+            let preload =
+                unsafe { resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message) };
+            if let Some(preload) = preload {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
 

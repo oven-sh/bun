@@ -415,7 +415,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time
     // setup and `backing` is never moved (static storage).
     let loader = unsafe { &mut *backing.loader.get() };
-    loader.map.put(b"NODE_ENV", b"production")?;
+    loader.override_node_env(b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
     // In-place init via `MaybeUninit` (`init_transpiler_with_options`

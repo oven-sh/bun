@@ -282,9 +282,8 @@ impl FileSystemRouter {
             origin_str = origin.to_utf8(global_this)?;
         }
 
-        if log.errors + log.warnings > 0 {
-            let err_value = log.to_js(global_this, format_args!("loading routes"));
-            return Err(global_this.throw_value(err_value?));
+        if let Some(err_value) = log.errors_to_js(global_this, format_args!("loading routes"))? {
+            return Err(global_this.throw_value(err_value));
         }
 
         let base_dir_str = if !root_dir_info.abs_real_path.is_empty() {

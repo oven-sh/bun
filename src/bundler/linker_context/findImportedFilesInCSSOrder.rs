@@ -725,7 +725,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 }
             }
         }
-        let _ = did_clone;
     }
     debug_css_order(
         this,
@@ -938,64 +937,57 @@ fn debug_css_order_impl(
     order: &Vec<CssImportOrder>,
     step: CssOrderDebugStep,
 ) {
-    #[cfg(debug_assertions)]
-    {
-        use crate::bun_css::{ImportInfo, LocalsResultsMap, Printer, PrinterOptions};
+    use crate::bun_css::{ImportInfo, LocalsResultsMap, Printer, PrinterOptions};
 
-        let tag = step.tag_name();
-        debug!("CSS order {}:\n", tag);
+    let tag = step.tag_name();
+    debug!("CSS order {}:\n", tag);
 
-        let arena = bun_alloc::Arena::new();
-        let parse_graph = this.parse_graph();
-        let ast_urls_for_css = parse_graph.ast.items_url_for_css();
-        // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
-        // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
-        let unique_keys: &[&[u8]] = unsafe {
-            bun_ptr::boxed_slices_as_borrowed(
-                parse_graph
-                    .input_files
-                    .items_unique_key_for_additional_file(),
-            )
-        };
-        // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
-        // `bun_js_printer::MangledProps`; no cast needed.
-        let local_names: &LocalsResultsMap = &this.mangled_props;
-        let symbols = bun_ast::symbol::Map::init_list(Default::default());
+    let arena = bun_alloc::Arena::new();
+    let parse_graph = this.parse_graph();
+    let ast_urls_for_css = parse_graph.ast.items_url_for_css();
+    // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
+    // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
+    let unique_keys: &[&[u8]] = unsafe {
+        bun_ptr::boxed_slices_as_borrowed(
+            parse_graph
+                .input_files
+                .items_unique_key_for_additional_file(),
+        )
+    };
+    // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
+    // `bun_js_printer::MangledProps`; no cast needed.
+    let local_names: &LocalsResultsMap = &this.mangled_props;
+    let symbols = bun_ast::symbol::Map::init_list(Default::default());
 
-        for (i, entry) in order.slice().iter().enumerate() {
-            let conditions_str: std::borrow::Cow<'_, str> = if entry.conditions.len() > 0 {
-                let mut writer: Vec<u8> = Vec::new();
-                writer.extend_from_slice(b"[");
-                for (j, condition) in entry.conditions.slice_const().iter().enumerate() {
-                    let mut printer = Printer::new(
-                        &arena,
-                        bun_alloc::ArenaVec::new_in(&arena),
-                        &mut writer,
-                        &PrinterOptions::default(),
-                        Some(ImportInfo {
-                            import_records: &entry.condition_import_records,
-                            ast_urls_for_css,
-                            ast_unique_key_for_additional_file: unique_keys,
-                        }),
-                        Some(local_names),
-                        &symbols,
-                    );
-                    let _ = condition.to_css(&mut printer);
-                    drop(printer);
-                    if j != entry.conditions.len() as usize - 1 {
-                        writer.extend_from_slice(b", ");
-                    }
+    for (i, entry) in order.slice().iter().enumerate() {
+        let conditions_str: std::borrow::Cow<'_, str> = if entry.conditions.len() > 0 {
+            let mut writer: Vec<u8> = Vec::new();
+            writer.extend_from_slice(b"[");
+            for (j, condition) in entry.conditions.slice_const().iter().enumerate() {
+                let mut printer = Printer::new(
+                    &arena,
+                    bun_alloc::ArenaVec::new_in(&arena),
+                    &mut writer,
+                    &PrinterOptions::default(),
+                    Some(ImportInfo {
+                        import_records: &entry.condition_import_records,
+                        ast_urls_for_css,
+                        ast_unique_key_for_additional_file: unique_keys,
+                    }),
+                    Some(local_names),
+                    &symbols,
+                );
+                let _ = condition.to_css(&mut printer);
+                drop(printer);
+                if j != entry.conditions.len() as usize - 1 {
+                    writer.extend_from_slice(b", ");
                 }
-                writer.extend_from_slice(b" ]");
-                bstr::BStr::new(&writer).to_string().into()
-            } else {
-                "[]".into()
-            };
-            debug!("  {}: {} {}\n", i, entry.fmt(this), conditions_str);
-        }
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let _ = (this, order, step);
+            }
+            writer.extend_from_slice(b" ]");
+            bstr::BStr::new(&writer).to_string().into()
+        } else {
+            "[]".into()
+        };
+        debug!("  {}: {} {}\n", i, entry.fmt(this), conditions_str);
     }
 }

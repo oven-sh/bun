@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 function testPBKDF2_(password, salt, iterations, keylen, expected) {
   async function runPBKDF2(password, salt, iterations, keylen, hash) {
     const syncResult = crypto.pbkdf2Sync(password, salt, iterations, keylen, hash);
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<[Error | null, Buffer]>();
 
     crypto.pbkdf2(password, salt, iterations, keylen, hash, (err, result) => {
       resolve([err, result]);
@@ -24,7 +24,7 @@ function testPBKDF2_(password, salt, iterations, keylen, expected) {
   return runPBKDF2(password, salt, iterations, keylen, "sha256");
 }
 
-function testPBKDF2(password, salt, iterations, keylen, expected, encoding = "latin1") {
+function testPBKDF2(password, salt, iterations, keylen, expected, encoding: BufferEncoding = "latin1") {
   test(Buffer.from(expected, encoding).toString("hex"), async () => {
     return testPBKDF2_(password, salt, iterations, keylen, Buffer.from(expected, encoding));
   });
@@ -90,7 +90,7 @@ describe("keylen is the length of the derived key", () => {
     expect(sync.length).toBe(keylen);
     expect(sync).toStrictEqual(expected);
 
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<{ err: Error | null; key: Buffer }>();
     crypto.pbkdf2("passwd", "salt", 1, keylen, "sha256", (err, key) => resolve({ err, key }));
     const { err, key } = await promise;
     expect(err).toBeNull();
@@ -136,8 +136,8 @@ describe("invalid inputs", () => {
 
   test("digest", () => {
     const err = new Error('Unsupported algorithm "md55"');
-    err.code = "ERR_CRYPTO_INVALID_DIGEST";
-    let thrown: Error;
+    (err as any).code = "ERR_CRYPTO_INVALID_DIGEST";
+    let thrown: NodeJS.ErrnoException;
     try {
       crypto.pbkdf2("password", "salt", 1, 1, "md55");
       expect.unreachable();
@@ -196,7 +196,7 @@ describe("invalid inputs", () => {
 });
 
 test("keylen=0 fails async via callback", async () => {
-  const { promise, resolve } = Promise.withResolvers();
+  const { promise, resolve } = Promise.withResolvers<{ err: Error; key: undefined }>();
   let threwSync = false;
   try {
     crypto.pbkdf2("p", "s", 1, 0, "sha256", (err, key) => resolve({ err, key }));

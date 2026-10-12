@@ -95,6 +95,9 @@ test/cli/install/bun-install-security-provider.test.ts
 test/js/node/test/parallel/test-tls-fast-writing.js
 test/js/bun/sqlite/sqlite.test.js
 test/regression/issue/12250.test.ts
+# `bun test --bail` exits with a bare exit(1), so the VM teardown is skipped and
+# LeakSanitizer aborts the child with 134 after several seconds (#32183).
+test/regression/issue/26851.test.ts
 test/js/bun/test/parallel/test-http-10177-response.write-with-non-ascii-latin1-should-not-cause-duplicated-character-or-segfault.ts
 test/cli/install/minimum-release-age.test.ts
 

@@ -166,7 +166,6 @@ impl SystemErrno {
     pub const EOPNOTSUPP: SystemErrno = SystemErrno::ENOTSUP;
 }
 
-#[allow(non_upper_case_globals)]
 pub mod uv_e {
     // Native `SystemErrno::$e as i32`; libuv-synthetic fallback for codes
     // Linux lacks (no kernel ECHARSET / EFTYPE).

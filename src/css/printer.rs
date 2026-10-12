@@ -535,6 +535,17 @@ impl<'a> Printer<'a> {
             }
         }
 
+        if self.local_names.is_none() {
+            if let Some(ref_) = ident.as_ref() {
+                let ref_ = self.symbols.follow(ref_);
+                let Some(symbol) = self.symbols.get_const(ref_) else {
+                    return Err(self.add_fmt_error());
+                };
+                let name: &'a [u8] = symbol.original_name.slice();
+                return self.write_ident(name, true);
+            }
+        }
+
         // `lookup_ident_or_ref` returns an `'a`-lifetime slice (arena/symbol-table),
         // independent of the `&self` borrow, so no clone is needed before re-borrowing
         // `&mut self` for the writer.

@@ -20,10 +20,6 @@
 
 #include <string.h>
 
-// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
-//     return bsd_udp_packet_buffer_ecn((struct udp_recvbuf *)buf, index);
-// }
-
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index) {
     return bsd_udp_packet_buffer_peer((struct udp_recvbuf *)buf, index);
 }
@@ -207,7 +203,6 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
 
     udp->closed = 0;
     udp->shared_fd = shared ? 1 : 0;
-    udp->connected = 0;
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;
     udp->on_close = close_cb;
@@ -275,7 +270,6 @@ struct us_udp_socket_t *us_create_udp_socket(
 
     udp->closed = 0;
     udp->shared_fd = 0;
-    udp->connected = 0;
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;
     udp->on_close = close_cb;

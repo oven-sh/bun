@@ -18,7 +18,7 @@ test("header values preserve bytes >= 0x80", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   // Send a raw HTTP request with 0xFF bytes surrounding the header value
   const request = Buffer.concat([
@@ -58,7 +58,7 @@ test("header values still trim actual whitespace (SP, HTAB)", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   // Send a raw HTTP request with spaces and tabs surrounding the header value
   const request = Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nX-Test: \t value \t \r\n\r\n");

@@ -1,3 +1,6 @@
+# The handles of `bun lint` are a `&File` and an index. They are hashed and compared by the index alone.
+ignore-interior-mutability = ["..", "bun_lint::ast::File"]
+
 disallowed-methods = [
   { path = "std::fs::read", reason = "use bun_sys::file" },
   { path = "std::fs::write", reason = "use bun_sys::file" },

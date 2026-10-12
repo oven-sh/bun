@@ -399,6 +399,41 @@ describe.concurrent("bun lint", () => {
     expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual([true, true, true, true]);
   });
 
+  // oxlint 1.87 lints all of these, and ESLint 10.12 with espree lints the .jsx files. tsc 6 and typescript-estree scan a
+  // JavaScript string, with escapes, as soon as something is between the `=` and the quote.
+  test("a JSX attribute string has no escapes, whatever is between the `=` and the quote", async () => {
+    const attributes = [
+      'id = "x\\" density = "comfortable"',
+      "id = 'x\\' density = 'comfortable'",
+      'id =\n"x\\" density="c"',
+      'id\t=\t"x\\" y="1"',
+      'id = "a\nb"',
+      'id = "\\u{110000}"',
+      'id = "\\x"',
+      'id = /* c */ "x\\" density = "c"',
+      'id =/* c */"x\\" density = "c"',
+      'id = // c\n "x\\" density = "c"',
+      'id = /* c */ "a\nb"',
+    ];
+    const code = attributes.map(it => `debugger;\nexport const a = <X ${it} />;\n`);
+    const jsx = Object.fromEntries(code.map((it, i) => [`a${i}.jsx`, it]));
+    const tsx = Object.fromEntries(code.map((it, i) => [`a${i}.tsx`, it]));
+    const rules = { "no-debugger": "error" };
+    const ofOxlint = JSON.stringify({ categories: { correctness: "off" }, rules });
+    const ofEslint = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } }, rules: ${JSON.stringify(rules)} }];\n`;
+    const [oxlint, eslint] = await Promise.all([
+      lint({ ".oxlintrc.json": ofOxlint, ...jsx, ...tsx }, ["-f", "unix"]),
+      lint({ "eslint.config.js": ofEslint, ...jsx }, ["-f", "unix"]),
+    ]);
+    const reported = (stdout: string) =>
+      stdout
+        .split("\n")
+        .flatMap(line => line.match(/a\d+\.\w+:\d+:\d+: .*/)?.[0].replace(/: .*no-debugger.*/, " no-debugger") ?? []);
+    const expected = (files: object) => Object.keys(files).map(name => `${name}:1:1 no-debugger`);
+    expect(reported(oxlint.stdout).sort()).toEqual(expected({ ...jsx, ...tsx }).sort());
+    expect(reported(eslint.stdout).sort()).toEqual(expected(jsx).sort());
+  });
+
   // Each row is what oxlint 1.87 does.
   test("with .oxlintrc.json a file is a script if nothing in it says that it is a module", async () => {
     const name = "var await = 1; f(await);\n";

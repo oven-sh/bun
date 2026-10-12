@@ -400,52 +400,66 @@ impl<'a> Report<'a> {
 
     /// One more place that oxlint marks, and what it says there.
     pub fn label(mut self, at: impl Spanned, text: impl Into<Cow<'static, str>>) -> Self {
-        if self.file.sink.wants_help.get()
-            && let Some(details) = self.details()
-        {
-            details.labels.push((at.span(), text.into()));
+        if self.file.sink.wants_help.get() {
+            self.push_label(at.span(), text.into());
         }
         self
+    }
+
+    #[inline(never)]
+    fn push_label(&mut self, at: Span, text: Cow<'static, str>) {
+        if let Some(details) = self.details() {
+            details.labels.push((at, text));
+        }
     }
 
     /// The labels of oxlint where a place has to be looked for or a text has to be made, and in a rule that ESLint has as well:
     /// `labels` is called at once, and only with a configuration of oxlint and a format that shows labels.
     pub fn labels_with(mut self, labels: impl FnOnce(&mut Details)) -> Self {
-        if self.file.language().is_oxlint
-            && self.file.sink.wants_help.get()
-            && let Some(details) = self.details()
-        {
+        if let Some(details) = self.details_for_labels() {
             labels(details);
         }
         self
     }
 
+    /// `None` unless [`Report::labels_with`] should run its closure. These builders are compiled once per closure, so
+    /// whatever doesn't depend on the closure is kept out of line.
+    #[inline(never)]
+    fn details_for_labels(&mut self) -> Option<&mut Details> {
+        match self.file.language().is_oxlint && self.file.sink.wants_help.get() {
+            true => self.details(),
+            false => None,
+        }
+    }
+
     /// oxlint's `help`: what to do about it.
     pub fn help(mut self, text: impl Into<Cow<'static, str>>) -> Self {
-        if self.file.sink.wants_help.get()
-            && let Some(details) = self.details()
-        {
-            details.help = text.into();
+        if self.file.sink.wants_help.get() {
+            self.set_help(text.into());
         }
         self
     }
 
-    /// The same for a text that has to be made. `text` is called at once, and only if the help is read.
-    pub fn help_with(self, text: impl FnOnce() -> String) -> Self {
-        match self.file.sink.wants_help.get() && self.diagnostic.is_some() {
-            true => self.help(text()),
-            false => self,
+    #[inline(never)]
+    fn set_help(&mut self, text: Cow<'static, str>) {
+        if let Some(details) = self.details() {
+            details.help = text;
         }
+    }
+
+    /// The same for a text that has to be made. `text` is called at once, and only if the help is read.
+    pub fn help_with(mut self, text: impl FnOnce() -> String) -> Self {
+        if self.file.sink.wants_help.get() && self.diagnostic.is_some() {
+            self.set_help(Cow::Owned(text()));
+        }
+        self
     }
 
     /// Adds Bun's own sentence under an ESLint message that doesn't say what's wrong or what to do. It replaces
     /// [`Report::help`] and is never shown with an oxlint config. The rule must set [`Meta::hints`]. Empty means no hint.
     pub fn hint(mut self, text: &'static str) -> Self {
-        if self.reads_hints
-            && !text.is_empty()
-            && let Some(details) = self.details()
-        {
-            details.help = Cow::Borrowed(text);
+        if self.reads_hints && !text.is_empty() {
+            self.set_help(Cow::Borrowed(text));
         }
         self
     }
@@ -454,9 +468,8 @@ impl<'a> Report<'a> {
     pub fn hint_with(mut self, text: impl FnOnce() -> Option<String>) -> Self {
         if self.reads_hints
             && let Some(text) = text()
-            && let Some(details) = self.details()
         {
-            details.help = Cow::Owned(text);
+            self.set_help(Cow::Owned(text));
         }
         self
     }
@@ -478,17 +491,23 @@ impl<'a> Report<'a> {
     pub fn fix<F: IntoFix>(mut self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         if self.reads_fixes() {
             let fix = fix(Fixer::new(self.file));
-            let fix = self.merged(fix).map(|it| self.as_it_is_read(it));
-            if self.file.sink.wants_fixes.get()
-                && let Some(diagnostic) = &mut self.diagnostic
-            {
-                diagnostic.fix = fix;
-            }
+            let fix = self.merged(fix);
+            self.set_fix(fix);
         }
         self
     }
 
-    #[inline]
+    #[inline(never)]
+    fn set_fix(&mut self, fix: Option<Fix>) {
+        let fix = fix.map(|it| self.as_it_is_read(it));
+        if self.file.sink.wants_fixes.get()
+            && let Some(diagnostic) = &mut self.diagnostic
+        {
+            diagnostic.fix = fix;
+        }
+    }
+
+    #[inline(never)]
     fn reads_fixes(&self) -> bool {
         self.diagnostic.is_some() && (self.file.sink.wants_fixes.get() || self.makes_help_of_fix())
     }
@@ -508,6 +527,7 @@ impl<'a> Report<'a> {
     }
 
     /// [`IntoFix::into_fix`], and the help that oxlint makes of the fix.
+    #[inline(never)]
     fn merged<F: IntoFix>(&mut self, fix: F) -> Option<Fix> {
         if !self.makes_help_of_fix() {
             return fix.into_fix(self.file);
@@ -607,12 +627,8 @@ impl<'a> Report<'a> {
     ) -> Self {
         if self.reads_fixes() {
             let fix = fix(Fixer::new(self.file));
-            if let Some(fix) = self.merged(fix)
-                && self.file.sink.wants_fixes.get()
-            {
-                let fix = self.as_it_is_read(fix);
-                self.push_suggestion(kind, message, data, fix);
-            }
+            let fix = self.merged(fix);
+            self.push_suggestion(kind, message, data, fix);
         }
         self
     }
@@ -624,8 +640,12 @@ impl<'a> Report<'a> {
         kind: SuggestionKind,
         message: Message,
         data: &[(&'static str, &[u8])],
-        fix: Fix,
+        fix: Option<Fix>,
     ) {
+        let Some(fix) = fix.filter(|_| self.file.sink.wants_fixes.get()) else {
+            return;
+        };
+        let fix = self.as_it_is_read(fix);
         let wants_text = !self.file.sink.drops_messages.get();
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.suggestions.push(Suggestion {

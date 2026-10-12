@@ -2235,11 +2235,10 @@ impl Lexer<'_> {
                 loop {
                     match (src.get(pos), src.get(pos + 1)) {
                         (Some(b' ' | b'\t' | b'\n' | b'\r'), _) => pos += 1,
-                        // acorn and Babel skip a comment here as they do everywhere.
-                        (Some(b'/'), Some(b'/')) if self.is_ecmascript => {
+                        (Some(b'/'), Some(b'/')) if self.skips_comments_before_jsx_strings() => {
                             pos = self.end_of_line(pos);
                         }
-                        (Some(b'/'), Some(b'*')) if self.is_ecmascript => {
+                        (Some(b'/'), Some(b'*')) if self.skips_comments_before_jsx_strings() => {
                             let rest = src.get(pos + 2..).unwrap_or_default();
                             let Some(len) = bun_core::strings::index_of(rest, b"*/") else {
                                 break;
@@ -2296,9 +2295,15 @@ impl Lexer<'_> {
     }
 
     /// For `scanJsxAttributeValue` of TypeScript 5 and 6, on which typescript-estree runs, blanks before the quote are
-    /// enough to leave the string to `scan`. Babel and acorn-jsx read it as TypeScript 7 does.
+    /// enough to leave the string to `scan`. Babel, acorn-jsx and oxc read it as TypeScript 7 does.
     fn scans_jsx_strings_as_typescript_5(&self) -> bool {
-        self.is_typescript_5 && !self.is_ecmascript && !self.is_babel
+        self.is_typescript_5 && !self.is_ecmascript && !self.is_babel && !self.is_oxc
+    }
+
+    /// acorn, Babel and oxc skip a comment between the `=` and the quote, like anywhere else. TypeScript scans a
+    /// JavaScript string after one.
+    fn skips_comments_before_jsx_strings(&self) -> bool {
+        self.is_ecmascript || self.is_oxc
     }
 
     /// `ScanJsxAttributeValue`: whether `Scan` scans the string at `start`, after a comment.
@@ -2311,7 +2316,9 @@ impl Lexer<'_> {
         {
             pos += len;
         }
-        if pos < start || before < start && self.scans_jsx_strings_as_typescript_5() {
+        if pos < start && !self.skips_comments_before_jsx_strings()
+            || before < start && self.scans_jsx_strings_as_typescript_5()
+        {
             return true;
         }
         self.forget_errors_from(before as u32);

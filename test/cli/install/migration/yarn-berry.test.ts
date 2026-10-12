@@ -1954,7 +1954,8 @@ catalogs:
           version: "1.0.0",
           dependencies: {
             "pkg-alias": "npm:no-deps@^1.0.0",
-            // a patch: range under another name than the package it patches
+            // one patch: range under the name of the package it patches and under another name
+            "no-deps": "patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch",
             "other-alias": "patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch",
             "a-dep": ">=1.0.1",
           },
@@ -1966,12 +1967,13 @@ catalogs:
             `resolution: "a@workspace:packages/a"`,
             `dependencies:`,
             `  a-dep: "npm:>=1.0.1"`,
+            `  no-deps: "patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch"`,
             `  other-alias: "patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch"`,
             `  pkg-alias: "npm:no-deps@^1.0.0"`,
           ],
           "berry-alias-rule@workspace:.": [`resolution: "berry-alias-rule@workspace:."`],
           "no-deps@npm:1.0.1": [`version: 1.0.1`, `resolution: "no-deps@npm:1.0.1"`],
-          "other-alias@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch, pkg-alias@patch:no-deps@npm:1.0.1#~/.yarn/patches/p.patch":
+          "no-deps@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch, other-alias@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch, pkg-alias@patch:no-deps@npm:1.0.1#~/.yarn/patches/p.patch":
             [
               `version: 1.0.1`,
               `resolution: "no-deps@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch::version=1.0.1&hash=abc123"`,
@@ -1993,6 +1995,7 @@ catalogs:
     });
     expect((await Bun.file(join(dir, "packages", "a", "package.json")).json()).dependencies).toEqual({
       "pkg-alias": "npm:no-deps@^1.0.0",
+      "no-deps": "1.0.1",
       "other-alias": "npm:no-deps@1.0.1",
       "a-dep": ">=1.0.1",
     });
@@ -2004,8 +2007,9 @@ catalogs:
       "a@workspace:packages/a",
       "no-deps@1.0.1",
       "no-deps@1.0.1",
+      "no-deps@1.0.1",
     ]);
-    for (const alias of ["pkg-alias", "other-alias"]) {
+    for (const alias of ["pkg-alias", "other-alias", "no-deps"]) {
       expect(await Bun.file(join(dir, "node_modules", alias, "package.json")).json()).toMatchObject({
         name: "no-deps",
         version: "1.0.1",

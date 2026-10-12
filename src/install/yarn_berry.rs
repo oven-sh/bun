@@ -646,6 +646,9 @@ struct Entry {
 /// (bun reads patches from `patchedDependencies`) becomes the plain range it
 /// patches, and yarn's `portal:` / `link:` paths become `file:` paths.
 struct ManifestRewrite {
+    /// The dependency the range belongs to: under an alias, a `patch:` range
+    /// becomes another range than under the name of the package it patches.
+    name: Box<[u8]>,
     original_spec: Box<[u8]>,
     new_spec: Box<[u8]>,
 }
@@ -1031,12 +1034,16 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // patch through `patchedDependencies` and the pinned range as the override,
     // and a folder as `file:`.
     for (_, pattern, target) in &resolutions {
-        if root_rewrites.iter().any(|r| &*r.original_spec == *target) {
+        let name = Dependency::split_name_and_maybe_version(pattern).0;
+        if root_rewrites
+            .iter()
+            .any(|r| &*r.name == name && &*r.original_spec == *target)
+        {
             continue;
         }
-        let name = Dependency::split_name_and_maybe_version(pattern).0;
         if let Some(new_spec) = yarn_only_range_for_bun(name, target, &yarn_links) {
             root_rewrites.push(ManifestRewrite {
+                name: Box::from(name),
                 original_spec: Box::from(*target),
                 new_spec: Box::from(new_spec),
             });
@@ -2391,8 +2398,12 @@ fn append_manifest_dependencies(
             if let Some(new_spec) = rewritten {
                 // interned: the dependency literal points at it
                 let new_spec: &'static [u8] = bun_ast::data_store_dupe_str(&new_spec);
-                if !rewrites.iter().any(|r| &*r.original_spec == spec) {
+                if !rewrites
+                    .iter()
+                    .any(|r| &*r.name == name && &*r.original_spec == spec)
+                {
                     rewrites.push(ManifestRewrite {
+                        name: Box::from(name),
                         original_spec: Box::from(spec),
                         new_spec: Box::from(new_spec),
                     });
@@ -2630,10 +2641,24 @@ fn edit_package_json(
                 continue;
             };
             for prop in e_object_mut(&mut obj).properties.slice_mut() {
-                let Some(value) = prop.value.as_ref().and_then(as_str) else {
+                let (Some(key), Some(value)) = (
+                    prop.key.as_ref().and_then(as_str),
+                    prop.value.as_ref().and_then(as_str),
+                ) else {
                     continue;
                 };
-                if let Some(ip) = rewrites.iter().find(|ip| &*ip.original_spec == value) {
+                // the dependency a `resolutions` key names is its last `name[@range]`
+                let name = if group == b"resolutions" {
+                    resolution_key_parts(key).map_or(key, |(_, pattern)| {
+                        Dependency::split_name_and_maybe_version(pattern).0
+                    })
+                } else {
+                    key
+                };
+                if let Some(ip) = rewrites
+                    .iter()
+                    .find(|ip| &*ip.name == name && &*ip.original_spec == value)
+                {
                     prop.value = Some(string_expr(&ip.new_spec));
                     any = true;
                 }

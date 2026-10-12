@@ -422,6 +422,7 @@ test("Bun.build: the check has the conditions and the loaders of the build, not 
 // a build more than there are threads, one that waited on a thread for what only that pool can do would wait for ever.
 test("a check in a bundle of more files than there are threads, and more such builds at once", async () => {
   const count = availableParallelism() + 1;
+  const buildCount = isDebug || isASAN ? 4 : count;
   const names = Array.from({ length: count }, (_, i) => `f${i}`);
   using dir = tempDir("bun-check", {
     "tsconfig.json": config({ noEmit: true }),
@@ -429,7 +430,7 @@ test("a check in a bundle of more files than there are threads, and more such bu
     "index.ts": names.map(name => `import { ${name} } from "./${name}";\n`).join("") + `export default [${names}];\n`,
     "wrong.ts": `import all from "./index";\nexport const wrong: string = all[0];\n`,
     "build.ts": `
-      const builds = Array.from({ length: ${isDebug || isASAN ? 4 : count} }, (_, i) =>
+      const builds = Array.from({ length: ${buildCount} }, (_, i) =>
         Bun.build({ entrypoints: [i === 0 ? "wrong.ts" : "index.ts"], outdir: "out" + i, throw: false, check: true }));
       console.log(JSON.stringify((await Promise.all(builds)).map(it => it.success)));
     `,
@@ -457,8 +458,8 @@ test("a check in a bundle of more files than there are threads, and more such bu
   expect([right.codes, right.exitCode]).toEqual([[], 0]);
   expect([wrong.codes, wrong.exitCode]).toEqual([["TS2322"], 1]);
   const succeeded: boolean[] = JSON.parse(builds.stdout);
-  expect([succeeded.length > 3, succeeded.indexOf(false), succeeded.lastIndexOf(false), builds.exitCode]).toEqual([
-    true,
+  expect([succeeded.length, succeeded.indexOf(false), succeeded.lastIndexOf(false), builds.exitCode]).toEqual([
+    buildCount,
     0,
     0,
     0,

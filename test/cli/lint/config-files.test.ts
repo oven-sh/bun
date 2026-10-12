@@ -5028,6 +5028,8 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
 
   test("a comment that disables one of their rules is neither wrong nor unused, and stays, if such a rule is on", async () => {
     const text = [
+      // oxlint's jsdoc rules look at comments like this one. Without any, none of them could have reported anything.
+      "/** A function. */",
       "// oxlint-disable-next-line jsdoc/require-param",
       "a;",
       "// eslint-disable-next-line vue/no-dupe-keys, no-debugger",
@@ -5038,7 +5040,7 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
     const on = { ...quiet, plugins: ["jsdoc", "vue"], rules: { ...quiet.rules, "jsdoc/require-param": "warn" } };
     const all = { "a.js": text, "b.vue": `<script>\n${text}</script>\n`, ".oxlintrc.json": JSON.stringify(on) };
     const { problems, raw } = await lint(all, ["--report-unused-disable-directives", "."]);
-    expect(problems).toEqual(["a.js:3:47 -", "b.vue:4:47 -"]);
+    expect(problems).toEqual(["a.js:4:47 -", "b.vue:5:47 -"]);
     expect(JSON.parse(raw).results[0].messages[0].message).toBe(
       "Unused eslint-disable directive (no problems were reported from no-debugger).",
     );

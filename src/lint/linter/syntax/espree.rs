@@ -179,6 +179,20 @@ pub(super) fn module_syntax_in_commonjs<'a>(
                 "`await` is only allowed within async functions and at the top levels of modules";
             (it.span().start, 0, message)
         });
+    let has_declarations = file.has_rare_syntax(hir::rare::AWAIT_USING);
+    let declarations = (has_declarations.then(|| file.stmts_of_kind(StmtTag::Var)))
+        .into_iter()
+        .flatten()
+        .filter(|it| {
+            let first = it.as_var().and_then(|it| it.first());
+            first.is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)
+                && is_at_top_level(Node::Stmt(*it))
+        })
+        .map(|it| {
+            let message =
+                "`await` is only allowed within async functions and at the top levels of modules";
+            (it.span().start, 0, message)
+        });
     let loops = (file.stmts_of_kind(StmtTag::ForOf))
         .filter(|it| matches!(it.kind(), StmtKind::ForOf { is_await: true, .. }))
         .filter(|it| is_at_top_level(Node::Stmt(*it)))
@@ -190,6 +204,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
         .into_iter()
         .chain(meta)
         .chain(awaits)
+        .chain(declarations)
         .chain(loops)
         .min_by_key(|it| it.0)?;
     Some(SyntaxError {

@@ -30,7 +30,7 @@ const KEYS_OF_OVERRIDES: &[&str] = &[
     "rules",
 ];
 /// The keys for which `null` is as good as nothing. For every other key it's a value of the wrong kind.
-const NULLABLE: &[&str] = &["$schema", "plugins", "jsPlugins", "globals"];
+const NULLABLE: &[&str] = &["$schema", "plugins", "jsPlugins"];
 const NULLABLE_IN_OVERRIDES: &[&str] = &["env", "globals", "plugins", "jsPlugins"];
 const OPTIONS: &[&str] = &[
     "typeAware",

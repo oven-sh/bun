@@ -590,6 +590,12 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
                 .modifiers_of_props
                 .shared_sort_unstable_by_key(|it| it.0.0);
         }
+        // A `with` clause nested in the options of an import type is pushed before the outer one.
+        if !self.f.import_attributes.is_sorted_by_key(|it| it.0) {
+            self.f
+                .import_attributes
+                .shared_sort_unstable_by_key(|it| it.0);
+        }
     }
 
     // ───────────────────────────── tokens ─────────────────────────────

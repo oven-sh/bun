@@ -79,6 +79,13 @@ async function format(files: Record<string, string>, args: string[], options: Op
   };
 }
 
+/**
+ * How many times the processor time of `plain` the run `odd` took. Windows counts that time in ticks of 1/64 s, so a
+ * short run can report 0: anything below a tick counts as one.
+ */
+const slowdown = (odd: { cpu: number }, plain: { cpu: number }) =>
+  odd.cpu / Math.max(plain.cpu, isWindows ? 1 / 64 : 0);
+
 /** Whether the temporary directory is in a repository. */
 const isInRepository = (function look(directory: string): boolean {
   const isRoot = [".git", ".jj"].some(name => existsSync(join(directory, name)));
@@ -2921,7 +2928,7 @@ try {
           );
         const shapes = await run(index => texts[index]);
         const plain = await run(() => repeated(ordinary, length / ordinary.length));
-        expect(shapes.cpu / plain.cpu).toBeLessThan(4);
+        expect(slowdown(shapes, plain)).toBeLessThan(4);
       }
     },
     120_000,
@@ -3014,7 +3021,7 @@ try {
       format(Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])), ["--check"]);
     const [odd, plain] = [await run(index => texts[index]), await run(() => ordinary.repeat(length / ordinary.length))];
     // 3 when all is well.
-    expect(odd.cpu / plain.cpu).toBeLessThan(6);
+    expect(slowdown(odd, plain)).toBeLessThan(6);
   }, 120_000);
 
   // The same for what is repeated in something. Prettier takes the square of the number of parameters.
@@ -3034,8 +3041,8 @@ try {
     const run = (text: (index: number) => string) =>
       format(Object.fromEntries(shapes.map((_, index) => [`${index}.scss`, text(index)])), ["--check"]);
     const [odd, plain] = [await run(index => texts[index]), await run(() => ordinary.repeat(length / ordinary.length))];
-    // 3 when all is well, 1,189 without the fix. Windows counts the time of the processor in steps of 15.6 ms.
-    expect(odd.cpu / plain.cpu).toBeLessThan(60);
+    // 3 when all is well, 1,189 without the fix.
+    expect(slowdown(odd, plain)).toBeLessThan(60);
   }, 120_000);
 
   // What some part of reading or printing Markdown once walked again for each repetition, or took a thousand times too
@@ -3081,7 +3088,7 @@ try {
         );
       const [shapes, plain] = [await run(index => texts[index]), await run(() => prose.repeat(length / prose.length))];
       expect(shapes.stderr).not.toMatch(anError);
-      expect(shapes.cpu / plain.cpu).toBeLessThan(6);
+      expect(slowdown(shapes, plain)).toBeLessThan(6);
     },
     120_000,
   );
@@ -5653,11 +5660,12 @@ describe("bun format on Windows, macOS and Linux", () => {
     test("a file that is named in the other case is formatted if the system finds it", async () => {
       using dir = tempDir("bun-format-platform", { "src/Button.js": ugly });
       const foldsCase = existsSync(join(String(dir), "SRC", "bUTTON.JS"));
-      const { stdout, exitCode } = await format(dir, [join("src", "Button.js"), join("SRC", "bUTTON.JS")]);
+      const { stdout, stderr, exitCode } = await format(dir, [join("src", "Button.js"), join("SRC", "bUTTON.JS")]);
       expect(stdout.split("\n")[0]).toBe("src/Button.js");
       expect(read(dir, "src", "Button.js")).toBe(formatted);
       expect(everythingIn(dir)).toEqual(["src", "src/Button.js"]);
-      expect(exitCode).toBe(foldsCase ? 0 : 2);
+      // With stderr, so that a failure says why.
+      expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: foldsCase ? 0 : 2 });
     });
 
     // macOS finds `é` whether it is written as one character or as `e` and an accent.

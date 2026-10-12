@@ -710,6 +710,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             _ => {
                 self.note_await();
                 self.suspensions += 1;
+                self.f.rare_syntax |= rare::AWAIT_USING;
                 // As for an `await` expression: `operand_of_await_outside_async`.
                 if self.options.dialect.oxc && !self.has_context(ctx::AWAIT) {
                     self.flag(DiagnosticKind::Grammar, 1308, (self.pos(), 0), &[]);
@@ -1060,8 +1061,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !self.expect(T::OpenBrace) {
             return IdList::EMPTY;
         }
-        // It stays in the context of the function around it.
+        // It stays in the context of the function around it. To oxc an `await` in an exported namespace is one of the top level.
         let saved = match self.has_context(ctx::TOP_LEVEL) {
+            true if self.options.dialect.oxc && self.has_context(ctx::AWAIT) => self.context,
             true => self.enter_context(0, ctx::TOP_LEVEL | self.cleared_in_types),
             false => self.context,
         };

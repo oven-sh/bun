@@ -21,6 +21,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   symlinkSync,
   truncateSync,
@@ -8359,8 +8360,11 @@ describe("bun lint on Windows, macOS and Linux", () => {
       .map(it => it.filePath.slice(String(dir).length + 1).replaceAll(sep, "/"))
       .sort();
   /** The same for oxlint's `json`, which has the path from the working directory. */
-  const reportedToOxlint = (stdout: string) =>
-    [...new Set((JSON.parse(stdout).diagnostics as { filename: string }[]).map(it => it.filename))].sort();
+  const reportedToOxlint = (stdout: string) => {
+    // The message shows the output if it isn't JSON.
+    expect(() => JSON.parse(stdout), stdout).not.toThrow();
+    return [...new Set((JSON.parse(stdout).diagnostics as { filename: string }[]).map(it => it.filename))].sort();
+  };
 
   const swapCase = (text: string) =>
     text.replace(/[a-z]/gi, letter => (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()));
@@ -9045,6 +9049,16 @@ foo(b)
           proc.kill("SIGKILL");
           await proc.exited;
           expect(await until(() => !isRunning(pid))).toBe(true);
+          // Windows reports a process as gone while it still holds its working directory, which can't be removed until then.
+          const isRemoved = () => {
+            try {
+              rmSync(String(dir), { recursive: true, force: true });
+              return true;
+            } catch {
+              return false;
+            }
+          };
+          expect(await until(isRemoved)).toBe(true);
         } finally {
           // It may exit at any moment, so don't check first. ESRCH means it's already gone.
           try {

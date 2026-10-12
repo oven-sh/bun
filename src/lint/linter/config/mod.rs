@@ -64,7 +64,7 @@ mod shape;
 use super::globals::Tables;
 use super::registry::{Registry, formatting_rule};
 use super::resolved::{
-    ConfiguredJsRule, ConfiguredRule, FormattingRule, LinterOptions, ResolvedConfig,
+    ConfiguredJsRule, ConfiguredRule, FormattingRule, LinterOptions, ResolvedConfig, Skipped,
     find_formatting_rule, find_js_rule,
 };
 use super::schema;
@@ -81,9 +81,9 @@ pub use eslintrc::{Eslint8, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions
 pub use flat::{ConfigError, LoadLocatedPlugin};
 use ignore_lines::IgnoreLines;
 use merge::RuleSetting;
-pub(crate) use rc::is_rule_of_oxlint;
 pub use rc::{LoadPlugin, oxlint_category, oxlint_runs_on, strings_of};
 pub(crate) use rc::{OxlintChanges, oxlint_changes};
+pub(crate) use rc::{is_rule_not_built_in, is_rule_of_oxlint};
 use rustc_hash::FxHashMap;
 pub use shape::glob_refusal;
 use smallvec::SmallVec;
@@ -1282,7 +1282,9 @@ impl Config {
                 && let Some(rule) =
                     find_formatting_rule(registry, &setting.id, foreign, &js_plugins)
             {
-                config.has_skipped_rules |= setting.severity != Severity::Off;
+                if setting.severity != Severity::Off {
+                    config.skipped = Skipped::Any;
+                }
                 config.formatting_rules.push(FormattingRule {
                     rule,
                     severity: setting.severity,
@@ -1329,7 +1331,9 @@ impl Config {
                     continue;
                 }
                 (None, None) => {
-                    config.has_skipped_rules |= setting.severity != Severity::Off;
+                    if setting.severity != Severity::Off {
+                        config.skip(prefix == b"jsdoc");
+                    }
                     continue;
                 }
             };

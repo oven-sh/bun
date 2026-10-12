@@ -319,10 +319,32 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-/// The plugins of which no rule is built in, as oxlint calls them, each with the categories that it has rules in, separated by spaces.
-pub(super) static NOT_BUILT_IN: &[(&str, &str)] = &[
-    ("jsdoc", "correctness pedantic style restriction"),
-    ("vue", "correctness suspicious style restriction"),
+/// The plugins of which no rule is built in, as oxlint calls them, each with the categories that it has rules in and the names of
+/// its rules, separated by spaces.
+#[rustfmt::skip]
+pub(super) static NOT_BUILT_IN: &[(&str, &str, &str)] = &[
+    ("jsdoc", "correctness pedantic style restriction", concat!(
+        "check-access check-property-names check-tag-names empty-tags implements-on-classes no-blank-blocks ",
+        "no-defaults require-param require-param-description require-param-name require-param-type ",
+        "require-property require-property-description require-property-name require-property-type ",
+        "require-returns require-returns-description require-returns-type require-throws-description ",
+        "require-throws-type require-yields require-yields-description require-yields-type",
+    )),
+    ("vue", "correctness suspicious style restriction", concat!(
+        "component-definition-name-casing define-emits-declaration define-props-declaration ",
+        "define-props-destructuring max-props next-tick-style no-arrow-functions-in-watch ",
+        "no-async-in-computed-properties no-computed-properties-in-data no-deprecated-data-object-declaration ",
+        "no-deprecated-delete-set no-deprecated-destroyed-lifecycle no-deprecated-events-api ",
+        "no-deprecated-model-definition no-deprecated-props-default-this no-deprecated-vue-config-keycodes ",
+        "no-dupe-keys no-export-in-script-setup no-expose-after-await no-import-compiler-macros ",
+        "no-lifecycle-after-await no-multiple-slot-args no-required-prop-with-default ",
+        "no-reserved-component-names no-reserved-keys no-reserved-props no-shared-component-data ",
+        "no-side-effects-in-computed-properties no-this-in-before-route-enter no-watch-after-await ",
+        "prefer-import-from-vue prop-name-casing require-default-export require-default-prop ",
+        "require-direct-export require-prop-type-constructor require-prop-types require-render-return ",
+        "require-slots-as-functions require-typed-ref return-in-computed-property return-in-emits-validator ",
+        "valid-define-emits valid-define-options valid-define-props valid-next-tick",
+    )),
 ];
 
 /// The rules that only run on TypeScript files: the plugins as oxlint calls them, each with the names of its rules, separated by spaces.

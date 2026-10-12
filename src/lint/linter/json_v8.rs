@@ -2,6 +2,7 @@
 //! rules ported from JavaScript read `package.json` and other files with it. Like V8, it has no limit on nesting.
 
 use crate::options::Json;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// `kMaxContextCharacters`
 const CONTEXT: usize = 10;
@@ -336,10 +337,7 @@ impl Parser<'_> {
                         value = Json::Array(std::mem::take(items));
                     }
                     Some(Open::Object(entries, name)) => {
-                        match entries.iter_mut().find(|it| it.0 == *name) {
-                            Some(entry) => entry.1 = value,
-                            None => entries.push((std::mem::take(name), value)),
-                        }
+                        entries.push((std::mem::take(name), value));
                         if self.check(Token::Comma) {
                             self.expect_next(
                                 Token::String,
@@ -352,13 +350,39 @@ impl Parser<'_> {
                             Token::RBrace,
                             "Expected ',' or '}' after property value in JSON",
                         )?;
-                        value = Json::Object(std::mem::take(entries));
+                        value = Json::Object(without_repeats(std::mem::take(entries)));
                     }
                 }
                 open.pop();
             }
         }
     }
+}
+
+/// A name that is written twice keeps its first place and has its last value, like a property that is assigned twice.
+fn without_repeats(entries: Vec<(Vec<u8>, Json)>) -> Vec<(Vec<u8>, Json)> {
+    // Comparing all pairs is faster than hashing for the few names that most objects have.
+    let has_repeats = match entries.len() {
+        0..=16 => (entries.iter().enumerate())
+            .any(|(at, entry)| entries.iter().take(at).any(|it| it.0 == entry.0)),
+        len => {
+            let names: FxHashSet<&[u8]> = entries.iter().map(|it| &it.0[..]).collect();
+            names.len() < len
+        }
+    };
+    if !has_repeats {
+        return entries;
+    }
+    let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+    let mut kept: Vec<(Vec<u8>, Json)> = Vec::with_capacity(entries.len());
+    for (name, value) in entries {
+        let place = *places.entry(name.clone()).or_insert(kept.len());
+        match kept.get_mut(place) {
+            Some(first) => first.1 = value,
+            None => kept.push((name, value)),
+        }
+    }
+    kept
 }
 
 /// `Err`: the message of the `SyntaxError`.

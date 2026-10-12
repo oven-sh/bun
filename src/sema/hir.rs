@@ -1062,6 +1062,8 @@ pub mod rare {
     pub const ODD_EXPORT: u32 = 1 << 18;
     /// An `await`, a `yield` or an `await using` is in a static block, or in a function in one.
     pub const SUSPENDS_IN_STATIC_BLOCK: u32 = 1 << 24;
+    /// `await using a = b`
+    pub const AWAIT_USING: u32 = 1 << 25;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

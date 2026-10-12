@@ -1,0 +1,210 @@
+// What happens when a rule throws instead of reporting, for example because a file named in its options is missing. A rule of a
+// JavaScript plugin throws for real. A native rule calls `cx.throw()`, which has to look the same.
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { endChildren, spawn } from "../children";
+
+afterAll(endChildren);
+
+async function lint(files: Record<string, string>, args: string[]) {
+  using dir = tempDir("bun-lint-rule-throws", files);
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", ...args],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const tidy = (text: string) => text.replaceAll("\\", "/").replaceAll(String(dir).replaceAll("\\", "/"), "<dir>");
+  return { stdout, stderr: tidy(stderr), exitCode, tidy };
+}
+
+const plugin = `
+  const missing = () => { throw new Error("allowance file 'allow.json' is missing"); };
+  class AllowanceError extends Error { name = "AllowanceError"; }
+  export default {
+    meta: { name: "mini" },
+    rules: {
+      "in-create": { create: missing },
+      "in-listener": { create: () => ({ Identifier: missing }) },
+      "reports-first": {
+        create: context => ({
+          Program: node => context.report({ node, message: "reported before the throw" }),
+          Identifier: missing,
+        }),
+      },
+      "range-error": { create: () => ({ Identifier() { throw new RangeError("Invalid count value: -1"); } }) },
+      "own-class": { create: () => ({ Identifier() { throw new AllowanceError("no file"); } }) },
+      "two-lines": { create: () => ({ Identifier() { throw new Error("line one\\nline two"); } }) },
+      "not-an-error": { create: () => ({ Identifier() { throw "just a string"; } }) },
+      fine: { create: context => ({ DebuggerStatement: node => context.report({ node, message: "fine saw a debugger" }) }) },
+    },
+  };
+`;
+const files = {
+  "plugin.mjs": plugin,
+  "a.js": "let a = 1;\ndebugger;\nexport default a;\n",
+  "no-identifier.js": "debugger;\n",
+  "disabled.js": "/* eslint-disable */\nlet a = 1;\ndebugger;\nexport default a;\n",
+};
+const names = ["a.js", "no-identifier.js", "disabled.js"];
+
+type Diagnostic = { message: string; code?: string; severity: string; filename: string; labels: unknown[] };
+
+/** Every diagnostic as `file severity code: message`, sorted, without the stack frames: those are the engine's. */
+function diagnostics({ stdout, tidy }: Awaited<ReturnType<typeof lint>>) {
+  return (JSON.parse(stdout).diagnostics as Diagnostic[])
+    .map(it => `${it.filename} ${it.severity} ${it.code ?? "no code"}: ${tidy(it.message.replace(/\n {4}at .*/g, ""))}`)
+    .sort();
+}
+
+const failed = (file: string, error: string) =>
+  `${file} error no code: Error running JS plugin.\nFile path: <dir>/${file}\n${error}`;
+const missing = "Error: allowance file 'allow.json' is missing";
+
+describe.concurrent("with an oxlint config", () => {
+  const oxlintrc = (rules: Record<string, unknown>, more = {}) => ({
+    ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules, ...more }),
+  });
+  const withPlugin = (rules: Record<string, unknown>) =>
+    oxlintrc({ "no-debugger": "warn", "mini/fine": "warn", ...rules }, { jsPlugins: ["./plugin.mjs"] });
+  const debuggers = (...names: string[]) =>
+    names.map(it => `${it} warning eslint(no-debugger): \`debugger\` statement is not allowed`);
+
+  // All of this is what oxlint 1.87 prints.
+  describe("a JavaScript rule that throws", () => {
+    test.each(["warn", "error"])("in create() is an error in every file when it's set to %s", async severity => {
+      const result = await lint({ ...files, ...withPlugin({ "mini/in-create": severity }) }, ["-f", "json", ...names]);
+      expect(diagnostics(result)).toEqual(
+        [
+          ...["a.js", "disabled.js", "no-identifier.js"].map(it => failed(it, missing)),
+          ...debuggers("a.js", "no-identifier.js"),
+        ].sort(),
+      );
+      expect(result.exitCode).toBe(1);
+    });
+
+    test.each(["warn", "error"])(
+      "in a listener is an error where the listener runs when it's set to %s",
+      async severity => {
+        const result = await lint({ ...files, ...withPlugin({ "mini/in-listener": severity }) }, [
+          "-f",
+          "json",
+          ...names,
+        ]);
+        expect(diagnostics(result)).toEqual(
+          [
+            ...["a.js", "disabled.js"].map(it => failed(it, missing)),
+            ...debuggers("a.js", "no-identifier.js"),
+            "no-identifier.js warning mini(fine): fine saw a debugger",
+          ].sort(),
+        );
+        expect(result.exitCode).toBe(1);
+      },
+    );
+
+    test.each([
+      ["mini/reports-first", missing],
+      ["mini/range-error", "RangeError: Invalid count value: -1"],
+      ["mini/own-class", "AllowanceError: no file"],
+      ["mini/two-lines", "Error: line one\nline two"],
+      ["mini/not-an-error", "Unknown error"],
+    ])("%s", async (rule, error) => {
+      const result = await lint({ ...files, ...withPlugin({ [rule]: "warn" }) }, ["-f", "json", "a.js"]);
+      expect(diagnostics(result)).toEqual([failed("a.js", error), ...debuggers("a.js")]);
+      expect(result.exitCode).toBe(1);
+    });
+
+    test.each([
+      [["--quiet"], false],
+      [["--max-warnings", "0"], true],
+      [["--deny-warnings"], true],
+      [["--fix"], true],
+    ])("with %j", async (flags, hasWarnings) => {
+      const config = withPlugin({ "mini/in-create": "warn" });
+      const result = await lint({ ...files, ...config }, ["-f", "json", ...flags, "a.js"]);
+      const found = diagnostics(result).map(it => it.replace(" error eslint", " warning eslint"));
+      expect(found).toEqual([failed("a.js", missing), ...(hasWarnings ? debuggers("a.js") : [])]);
+      expect(result.exitCode).toBe(1);
+    });
+  });
+
+  // eslint-plugin-react's rule calls `" ".repeat(-1)` for every element here, and V8 throws this for it. oxlint doesn't have the
+  // rule itself, so it can only run it as a JavaScript plugin's rule, like `mini/range-error` above.
+  describe("a native rule that throws", () => {
+    const element = 'const a = (\n  <b\n    c="d"\n  >\n    <e />\n  </b>\n);\ndebugger;\n';
+    const project = (severity: string) => ({
+      ...oxlintrc({ "no-debugger": "warn", "react/jsx-indent": [severity, -1] }, { plugins: ["react"] }),
+      "a.jsx": element,
+      "disabled.jsx": `/* eslint-disable */\n${element}`,
+      "no-element.js": "debugger;\n",
+    });
+    const rangeError = "RangeError: Invalid count value: -1";
+
+    test.each(["warn", "error"])("prints the same error once per file when it's set to %s", async severity => {
+      const result = await lint(project(severity), ["-f", "json", "a.jsx", "disabled.jsx", "no-element.js"]);
+      expect(diagnostics(result)).toEqual(
+        [...["a.jsx", "disabled.jsx"].map(it => failed(it, rangeError)), ...debuggers("a.jsx", "no-element.js")].sort(),
+      );
+      expect(result.exitCode).toBe(1);
+    });
+
+    test.each([
+      [["--quiet"], false],
+      [["--max-warnings", "0"], true],
+      [["--fix"], true],
+    ])("with %j", async (flags, hasWarnings) => {
+      const result = await lint(project("warn"), ["-f", "json", ...flags, "a.jsx"]);
+      expect(diagnostics(result)).toEqual([failed("a.jsx", rangeError), ...(hasWarnings ? debuggers("a.jsx") : [])]);
+      expect(result.exitCode).toBe(1);
+    });
+
+    test("prints what a JavaScript rule that throws prints in every format", async () => {
+      const formats = ["default", "stylish", "unix", "github", "checkstyle", "junit", "gitlab", "json"];
+      const files = { "plugin.mjs": plugin, "a.jsx": element };
+      const native = oxlintrc({ "react/jsx-indent": ["warn", -1] }, { plugins: ["react"] });
+      const script = oxlintrc({ "mini/range-error": "warn" }, { jsPlugins: ["./plugin.mjs"] });
+      for (const format of formats) {
+        const [a, b] = await Promise.all(
+          [native, script].map(config => lint({ ...files, ...config }, ["-f", format, "a.jsx"])),
+        );
+        // The fingerprint is a hash of the message, which has the path of the temporary directory in it.
+        const timeless = (text: string) =>
+          text.replace(/[\d.]+(?=m?s\b)|"start_time": [\d.]+|"fingerprint": "\w+"/g, "");
+        expect({ format, stdout: timeless(a.tidy(a.stdout)), exitCode: a.exitCode }).toEqual({
+          format,
+          stdout: timeless(b.tidy(b.stdout)),
+          exitCode: 1,
+        });
+      }
+    });
+  });
+});
+
+describe.concurrent("with an ESLint config", () => {
+  const config = (rule: string, severity: string) => ({
+    "eslint.config.mjs": `
+      import mini from "./plugin.mjs";
+      export default [{ plugins: { mini }, rules: { "no-debugger": "warn", "mini/${rule}": "${severity}" } }];
+    `,
+  });
+
+  // What ESLint 10.12 prints after "Oops! Something went wrong!" and before the stack.
+  test.each(["warn", "error"])("a JavaScript rule set to %s that throws ends the run", async severity => {
+    const { stdout, stderr, exitCode } = await lint({ ...files, ...config("in-listener", severity) }, names);
+    expect(stderr).toContain(
+      `rror: allowance file 'allow.json' is missing\nOccurred while linting <dir>/a.js:1\nRule: "mini/in-listener"\n`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+  });
+});
+
+test.concurrent("without a config, a native rule that throws ends the run", async () => {
+  const element = 'const a = (\n  <b\n    c="d"\n  >\n    <e />\n  </b>\n);\n';
+  const { stdout, stderr, exitCode } = await lint({ "a.jsx": element }, ["--rule", 'react/jsx-indent: ["warn", -1]']);
+  expect(stderr).toBe(
+    `error: RangeError: Invalid count value: -1\nOccurred while linting <dir>/a.jsx:2\nRule: "react/jsx-indent"\n`,
+  );
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+});

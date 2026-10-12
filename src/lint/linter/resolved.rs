@@ -219,6 +219,16 @@ pub(crate) fn needs_resolver(meta: &Meta) -> bool {
     meta.plugin == Plugin::Import && meta.needs_modules
 }
 
+/// [`ResolvedConfig::skipped`]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Skipped {
+    #[default]
+    None,
+    /// Only rules of oxlint's `jsdoc` plugin, which report nothing in a file without a `/**` comment.
+    OnlyJsdoc,
+    Any,
+}
+
 /// The configuration of a file: what ESLint's `configs.getConfig(path)` returns.
 #[derive(Clone, Default)]
 pub struct ResolvedConfig {
@@ -257,9 +267,9 @@ pub struct ResolvedConfig {
     pub printed_plugins: Vec<Box<[u8]>>,
     /// A rule that does not exist is skipped, whatever its name.
     pub skips_unknown_rules: bool,
-    /// A rule that is configured for the file, and not off, is skipped. Nobody can say then that an `eslint-disable` without
-    /// names is unused.
-    pub has_skipped_rules: bool,
+    /// Whether rules that are configured for the file, and not off, are skipped. Nobody can say then that an `eslint-disable`
+    /// without names is unused.
+    pub skipped: Skipped,
     /// With the configuration files of ESLint 8: the rules that are on and that it has no definition of, in the order of the
     /// configuration. Each is a message at the start of the file.
     pub missing_rules: Vec<Box<[u8]>>,
@@ -438,7 +448,15 @@ impl ResolvedConfig {
         if !self.plugins_without_rules.contains(&plugin) {
             self.plugins_without_rules.push(plugin);
         }
-        self.has_skipped_rules = true;
+        self.skip(plugin == Plugin::Jsdoc);
+    }
+
+    /// A rule that is on is skipped. `is_of_jsdoc`: it is one of oxlint's `jsdoc` plugin.
+    pub(crate) fn skip(&mut self, is_of_jsdoc: bool) {
+        self.skipped = self.skipped.max(match is_of_jsdoc {
+            true => Skipped::OnlyJsdoc,
+            false => Skipped::Any,
+        });
     }
 
     /// The rule about layout that a comment of a file that the configuration is for calls `id`: [`find_formatting_rule`]. oxlint

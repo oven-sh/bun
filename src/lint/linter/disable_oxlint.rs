@@ -26,8 +26,8 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) wants_fixes: bool,
     /// The rules that are enabled and did not run. What disables them is not reported.
     pub(crate) rules_to_ignore: &'i [RuleId],
-    /// There are more of them, which have no name here.
-    pub(crate) has_skipped_rules: bool,
+    /// Whether there are more of them, which have no name here. Asked only about a comment that silences nothing.
+    pub(crate) has_skipped_rules: &'i dyn Fn() -> bool,
     /// Whether it is known what the rule that a comment names reports: not if it is one that oxlint has and that does not
     /// exist here. Nothing can be said about a comment that disables such a rule.
     pub(crate) can_tell: &'i dyn Fn(&[u8]) -> bool,
@@ -447,7 +447,7 @@ pub(crate) fn apply<'a>(
     let is_unused = |it: &Range| {
         !it.is_used
             && match it.name {
-                None => input.rules_to_ignore.is_empty() && !input.has_skipped_rules,
+                None => input.rules_to_ignore.is_empty() && !(input.has_skipped_rules)(),
                 Some(name) => {
                     (input.can_tell)(name)
                         && !input.rules_to_ignore.iter().any(|id| is_name_of(name, id))

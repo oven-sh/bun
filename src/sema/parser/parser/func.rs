@@ -901,7 +901,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         };
         // oxc reads the parameters as an expression first, in the context around the arrow function.
         let around = match self.options.dialect.oxc {
-            true => self.context & (ctx::YIELD | ctx::AWAIT),
+            true => self.context & (ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL),
             false => 0,
         };
         let context = signature_context(flags) | around;

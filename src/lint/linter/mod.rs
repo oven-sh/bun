@@ -67,7 +67,7 @@ pub use resolved::{
     ConfiguredJsRule, ConfiguredRule, Entry, FormattingRule, LinterOptions, ResolvedConfig,
     severity_of,
 };
-use resolved::{Prepared, Slot};
+use resolved::{Prepared, Skipped, Slot};
 pub use schema::{OptionMistake, Step, mistake_in_options, schema_and_defaults};
 pub use syntax::{
     Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, parse_errors,
@@ -957,18 +957,21 @@ impl<S: RuleSet> Linter<S> {
 
         let report_unused = (options.report_unused_disable_directives)
             .unwrap_or(config.linter.report_unused_disable_directives);
+        let has_skipped_rules = || match config.skipped {
+            Skipped::None => false,
+            Skipped::OnlyJsdoc => bun_core::strings::contains(file.text(), b"/**"),
+            Skipped::Any => true,
+        };
         let can_tell = |name: &[u8]| {
-            let slash = bun_core::strings::last_index_of_char(name, b'/');
-            match config.find_js_rule(name) {
-                Some(_) => true,
-                None if config.find_rule(&self.registry, name).is_some() => true,
-                None if config.named_rule(name).is_some() => true,
-                // It may be one of the rules that are on and were skipped.
-                None if slash.is_some() && config.has_skipped_rules => false,
-                // Every rule that's on ran, so a comment that silences nothing here silences nothing in oxlint either.
-                None if !config.has_skipped_rules => true,
-                None => !config::is_rule_of_oxlint(slash.map_or(name, |it| &name[it + 1..])),
+            // Every rule that's on ran, so a comment that silences nothing here silences nothing in oxlint either.
+            if config.find_js_rule(name).is_some() || !has_skipped_rules() {
+                return true;
             }
+            // oxlint goes by what is after the last `/`, so a rule that was skipped may be meant if it's called that.
+            let slash = bun_core::strings::last_index_of_char(name, b'/');
+            let last = slash.map_or(name, |it| &name[it + 1..]);
+            let is_here = || (self.registry.all().iter()).any(|it| it.meta.name.as_bytes() == last);
+            !config::is_rule_not_built_in(last) && (!config::is_rule_of_oxlint(last) || is_here())
         };
         // Adds to each of `messages`, which are sorted by position, what suppresses it.
         let apply_comments =
@@ -980,7 +983,7 @@ impl<S: RuleSet> Linter<S> {
                             report_unused,
                             wants_fixes,
                             rules_to_ignore: &rules_to_ignore,
-                            has_skipped_rules: config.has_skipped_rules,
+                            has_skipped_rules: &has_skipped_rules,
                             can_tell: &can_tell,
                         },
                         comments.iter().filter(is_directive).filter(is_understood),
@@ -997,7 +1000,7 @@ impl<S: RuleSet> Linter<S> {
                             wants_fixes,
                             wants_suppressions,
                             rules_to_ignore: &rules_to_ignore,
-                            has_skipped_rules: config.has_skipped_rules,
+                            has_skipped_rules: config.skipped != Skipped::None,
                             off: &off,
                         },
                         messages,
@@ -1151,7 +1154,7 @@ fn js_failure(
 struct ThrownError<'e> {
     /// The error as the tool prints it, without the stack.
     said: &'e [u8],
-    /// The line of the node that was being visited. `None`: the rule threw in `create`, or it wasn't a rule that threw.
+    /// The line of the node that was being visited, if there was one and its line could be read.
     line: Option<u32>,
     /// ESLint's `ruleId`
     rule: Option<&'e [u8]>,
@@ -1163,18 +1166,10 @@ impl ThrownError<'_> {
     fn outcome(&self, path: &[u8], config: &ResolvedConfig) -> Result<LintMessage, Vec<u8>> {
         if !config.prefers_typescript_rules {
             let occurred: &[u8] = b"\nOccurred while linting ";
-            return Err(match (self.line, self.rule) {
-                (None, Some(rule)) => {
-                    let loading: &[u8] = b"Error while loading rule '";
-                    [loading, rule, b"': ", self.said, occurred, path].concat()
-                }
-                (line, rule) => {
-                    let line = line.map_or_else(String::new, |line| format!(":{line}"));
-                    let named = rule.map(|rule| [b"\nRule: \"", rule, b"\""].concat());
-                    let named = named.unwrap_or_default();
-                    [self.said, occurred, path, line.as_bytes(), &named].concat()
-                }
-            });
+            let line = (self.line).map_or_else(String::new, |line| format!(":{line}"));
+            let named = (self.rule).map(|rule| [b"\nRule: \"", rule, b"\""].concat());
+            let named = named.unwrap_or_default();
+            return Err([self.said, occurred, path, line.as_bytes(), &named].concat());
         }
         Ok(LintMessage {
             rule_id: None,

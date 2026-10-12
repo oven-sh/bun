@@ -243,6 +243,8 @@ impl<'a> File<'a> {
         types: Option<crate::types::Checker<'a>>,
     ) -> File<'a> {
         let hides_casts = hir.is_js && !hir.jsdoc_comments.is_empty();
+        // Every lookup in the list is a binary search by the keyword's position.
+        debug_assert!(hir.import_attributes.is_sorted_by_key(|it| it.0));
         File {
             language,
             body: hir.body,

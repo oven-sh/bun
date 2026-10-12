@@ -172,6 +172,11 @@ pub(crate) fn is_rule_of_oxlint(name: &[u8]) -> bool {
     (categories::CATEGORIES.iter().flat_map(|it| it.1)).any(|it| has_word(it.1, name))
 }
 
+/// Whether a plugin of which no rule is built in has a rule that is called `name`.
+pub(crate) fn is_rule_not_built_in(name: &[u8]) -> bool {
+    (categories::NOT_BUILT_IN.iter()).any(|it| has_word(it.2, name))
+}
+
 /// What an element of `plugins` can be for oxlint 1.80, after `eslint-plugin-` or `oxlint-plugin-`. Each was tried.
 const PLUGIN_NAMES: [&[u8]; 23] = [
     b"eslint",

@@ -158,6 +158,14 @@ describe.concurrent("JSON files that rules read", () => {
     expect(said).toEqual([[unlisted], [unlisted]]);
   });
 
+  test("the last value of a repeated name counts", async () => {
+    const others = Array.from({ length: 40 }, (_, i) => `"name-${i}":${i}`).join(",");
+    const first = `"dependencies":{"unlisted":"1"}`;
+    const last = `"dependencies":{"listed":"1"}`;
+    const said = await readAsPackageJson([`{${first},${last}}`, `{${first},${others},${last}}`]);
+    expect(said).toEqual([[unlisted], [unlisted]]);
+  });
+
   test("the closest package.json can be deeply nested", async () => {
     const { stdout, exitCode } = await lint(
       {
@@ -194,6 +202,16 @@ describe.concurrent("JSON files that rules read", () => {
     const said = await readAsPackageJson(texts.map(it => it[0]));
     expect(said.map(it => it[0])).toEqual(texts.map(it => "The package.json file could not be parsed: " + it[1]));
   });
+});
+
+// `bun lint` looks for `eslintConfig` in every package.json on the way up.
+test.concurrent("a deeply nested package.json without eslintConfig doesn't stop the run", async () => {
+  const files = { "package.json": `{"name":"a","x":${nested.arrays}}\n`, "a.js": "debugger;\n" };
+  const { stdout, exitCode } = await lint(files, ["-f", "json", "--rule", "no-debugger: error", "a.js"]);
+  expect(JSON.parse(stdout)[0].messages.map((it: { message: string }) => it.message)).toEqual([
+    "Unexpected 'debugger' statement.",
+  ]);
+  expect(exitCode).toBe(1);
 });
 
 describe.concurrent("/* eslint rule: .. */ comments", () => {

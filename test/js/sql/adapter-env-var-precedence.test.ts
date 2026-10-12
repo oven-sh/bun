@@ -293,6 +293,73 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.sslMode).toBe(2); // SSLMode.require
   });
 
+  describe("{ adapter: 'sqlite' } and a DATABASE_URL for another database", () => {
+    // The file name that the SQLite client resolves to, with the given variables set.
+    async function filenameWith(variables: Record<string, string>) {
+      Object.assign(process.env, variables);
+      try {
+        await using sql = new SQL({ adapter: "sqlite" });
+        return sql.options.filename;
+      } finally {
+        for (const name in variables) delete process.env[name];
+      }
+    }
+
+    const urlsForAnotherDatabase = [
+      "postgres://pu:pp@pghost:5432/pgdb",
+      "postgresql://pu:pp@pghost:5432/pgdb",
+      "POSTGRES://pu:pp@pghost:5432/pgdb",
+      "postgres://pu:pp@pghost:5432/pgdb?sslmode=require",
+      "mysql://mu:mp@myhost:3306/mydb",
+      "mysql2://mu:mp@myhost:3306/mydb",
+      "mariadb://mu:mp@myhost:3306/mydb",
+      "https://example.com/db",
+    ];
+
+    test.each(
+      ["DATABASE_URL", "DATABASEURL", "TLS_DATABASE_URL"].flatMap(variable =>
+        urlsForAnotherDatabase.map(url => ({ variable, url })),
+      ),
+    )("ignores $variable=$url", async ({ variable, url }) => {
+      expect(await filenameWith({ [variable]: url })).toBe(":memory:");
+    });
+
+    test("opens an in-memory database", async () => {
+      process.env.DATABASE_URL = "postgres://127.0.0.1:1/db";
+      await using sql = new SQL({ adapter: "sqlite" });
+      expect(sql.options.filename).toBe(":memory:");
+      await sql`CREATE TABLE t (a)`;
+      await sql`INSERT INTO t VALUES (1)`;
+      const [row] = await sql`SELECT a FROM t`;
+      expect(row).toEqual({ a: 1 });
+    });
+
+    test("reads SQLITE_URL", async () => {
+      using dir = tempDir("sql-env-own-variable", {});
+      const filename = `${dir}/own.db`;
+      const variables = { SQLITE_URL: `sqlite://${filename}`, DATABASE_URL: "postgres://pu:pp@pghost:5432/pgdb" };
+      expect(await filenameWith(variables)).toBe(filename);
+    });
+
+    test("still uses a DATABASE_URL that is a SQLite URL or a path", async () => {
+      using dir = tempDir("sql-env-sqlite-url", {});
+      const filename = `${dir}/env.db`;
+      const filenames: unknown[] = [];
+      for (const url of [":memory:", "sqlite://:memory:", `sqlite://${filename}`, `sqlite:${filename}`, filename]) {
+        filenames.push(await filenameWith({ DATABASE_URL: url }));
+      }
+      expect(filenames).toEqual([":memory:", ":memory:", filename, filename, filename]);
+    });
+
+    // A scheme that no adapter claims, a SQLite scheme in upper case and a value with no scheme stay file names.
+    test.each(["libsql://db.example.com", "mongodb://mongohost:27017/db", "SQLITE://env.db", "127.0.0.1:5432/db"])(
+      "still takes DATABASE_URL=%s as the file name",
+      async url => {
+        expect(await filenameWith({ DATABASE_URL: url })).toBe(url);
+      },
+    );
+  });
+
   describe("PGSSLMODE", () => {
     test.each([
       ["disable", 0],

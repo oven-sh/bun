@@ -176,6 +176,9 @@ declare module "bun" {
       /**
        * Path to the database file
        *
+       * Without a `filename`, Bun reads `DATABASE_URL`. A `DATABASE_URL` for
+       * another database, such as `postgres://...`, does not apply.
+       *
        * Examples:
        *
        * - `sqlite://:memory:`

@@ -52,11 +52,13 @@ bun --watch run index.tsx
 When using `bun run`, put Bun flags like `--watch` immediately after `bun`.
 
 ```bash
-bun --watch run dev # ✔️ do this
-bun run dev --watch # ❌ don't do this
+bun --watch run index.tsx # ✔️ do this
+bun run index.tsx --watch # ❌ don't do this
 ```
 
-`bun` ignores flags at the end of the command and passes them through to the `"dev"` script itself.
+`bun` ignores flags at the end of the command and passes them through to `index.tsx` itself.
+
+Bun does not pass `--watch` to a `package.json` script. `bun --watch run dev` runs the `"dev"` script once and does not restart it. Put the flag in the script instead, for example `"dev": "bun --watch server.ts"`.
 
 </Note>
 

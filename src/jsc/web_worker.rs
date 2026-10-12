@@ -1234,14 +1234,11 @@ fn on_unhandled_rejection(
 /// standalone module graph, or the resolver's arena; the caller must NOT
 /// free it.
 ///
-/// A failure is logged through `transpiler.log` and `error_message` is built
-/// from that pointer, so the caller holds no reference to that log.
-///
 /// # Safety
 /// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
-/// pointer (not `&mut`) because callers hold other borrows into the VM across
-/// the call; per-use `(*parent)` derefs keep any autoref scoped to the single
-/// expression.
+/// pointer (not `&mut`) because callers hold other borrows into the VM (not its
+/// log) across the call; per-use `(*parent)` derefs keep any autoref scoped to
+/// the single expression.
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
@@ -1291,8 +1288,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
         Err(_) => {
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
             let global = JSGlobalObject::opaque_ref(global);
-            // SAFETY: `transpiler.log` is never null. It is the log the resolver
-            // just wrote to, and no other reference to it is live (fn contract).
+            // SAFETY: `transpiler.log` is never null, and per fn contract no caller
+            // holds a reference to that log across this call.
             let log = unsafe { &*(*parent).transpiler.log };
             let out: jsc::JsResult<BunString> = (|| {
                 let out = log.to_js(global, format_args!("Error resolving Worker entry point"))?;

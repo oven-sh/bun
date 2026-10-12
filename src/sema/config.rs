@@ -1143,20 +1143,6 @@ pub fn matched_include_spec<'s>(
         .filter(|spec| !spec.is_empty())
 }
 
-/// `getMatchedFileSpec`: the first of `specs` (source text, path) that names the file at `path`, as
-/// its source text. `""` is no match to its callers.
-pub fn matched_file_spec<'s>(
-    specs: &'s [(Vec<u8>, Vec<u8>)],
-    path: &[u8],
-    case_sensitive: bool,
-) -> Option<&'s [u8]> {
-    specs
-        .iter()
-        .find(|spec| is_same_path(&spec.1, path, case_sensitive))
-        .map(|spec| spec.0.as_slice())
-        .filter(|spec| !spec.is_empty())
-}
-
 /// `getFileNamesFromConfigSpecs`
 fn file_names_from_specs(
     host: &dyn Host,

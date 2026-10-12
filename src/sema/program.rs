@@ -3229,6 +3229,8 @@ struct Included<'a, 's> {
     /// Where each entry of `files` and of `include` is in the configuration file, which is parsed
     /// once for all of them. `None`: it cannot be.
     top_elements_in_configuration: std::cell::OnceCell<Option<[TopElements; 2]>>,
+    /// `getMatchedFileSpec` for every path at once: the first of `Options::file_specs` with it.
+    file_spec_by_path: std::cell::OnceCell<FxHashMap<Cow<'a, [u8]>, &'a [u8]>>,
 }
 
 type TopElements = FxHashMap<Vec<u8>, (u32, u32)>;
@@ -3519,6 +3521,7 @@ impl Included<'_, '_> {
                 options,
                 &self.roots[index],
                 self.host.is_case_sensitive(),
+                self.matched_file_spec(&self.roots[index]),
                 to_file_name,
             ),
             IncludeReason::LibFile(Some(entry)) => (1422, vec![entry.clone()]),
@@ -3547,6 +3550,22 @@ impl Included<'_, '_> {
                 )
             }
         }
+    }
+
+    /// `getMatchedFileSpec`: the first of `files` that names the file at `path`, as its source text.
+    /// `""` is no match to its callers.
+    fn matched_file_spec(&self, path: &[u8]) -> Option<&[u8]> {
+        let is_case_sensitive = self.host.is_case_sensitive();
+        let by_path = self.file_spec_by_path.get_or_init(|| {
+            let mut by_path = FxHashMap::default();
+            for (text, path) in &self.options.file_specs {
+                let first = by_path.entry(to_path(path, is_case_sensitive));
+                first.or_insert(&text[..]);
+            }
+            by_path
+        });
+        let spec = by_path.get(&to_path(path, is_case_sensitive)).copied();
+        spec.filter(|spec| !spec.is_empty())
     }
 
     /// `toRelatedInfo`
@@ -3593,7 +3612,9 @@ impl Included<'_, '_> {
             &IncludeReason::RootFile(index) => {
                 let is_case_sensitive = self.host.is_case_sensitive();
                 let root = &self.roots[index];
-                match root_file_reason(options, root, is_case_sensitive, &file_name_as_it_is) {
+                let file_spec = self.matched_file_spec(root);
+                let to_file_name = &file_name_as_it_is;
+                match root_file_reason(options, root, is_case_sensitive, file_spec, to_file_name) {
                     (1409, args) => top_element(0, &args[0], 1410),
                     (1407, args) => top_element(1, &args[0], 1408),
                     _ => None,
@@ -3899,14 +3920,13 @@ fn root_file_reason(
     options: &Options,
     path: &[u8],
     is_case_sensitive: bool,
+    matched_file_spec: Option<&[u8]>,
     to_file_name: ToFileName<'_>,
 ) -> (u32, Vec<Vec<u8>>) {
     if options.config_path.is_empty() {
         return (1427, Vec::new());
     }
-    if let Some(spec) =
-        crate::config::matched_file_spec(&options.file_specs, path, is_case_sensitive)
-    {
+    if let Some(spec) = matched_file_spec {
         return (1409, vec![spec.to_vec(), to_file_name(path)]);
     }
     if options.is_default_include_spec {
@@ -5318,6 +5338,7 @@ impl<'s> Files<'s> {
             root_of_start: &root_of_start,
             explained_in_diagnostics: Default::default(),
             top_elements_in_configuration: Default::default(),
+            file_spec_by_path: Default::default(),
         };
         // None of their reasons is a reference in a file.
         let explained = included.explain_tasks_without_file(&without_file);

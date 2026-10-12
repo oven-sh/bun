@@ -1947,6 +1947,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     let last: &mut Decl = &mut local.decls.slice_mut()[last_idx];
                     let Some(replacement) = last.value else { break };
 
+                    // The binding supplies the inferred name of an anonymous
+                    // function or class; substituting it would erase that name.
+                    if replacement.is_anonymous_named()
+                        && (!p.options.bundle || p.options.features.minify_keep_names)
+                    {
+                        break;
+                    }
+
                     // The binding must be an identifier that is only used once.
                     // Ignore destructuring bindings since that's not the simple case.
                     // Destructuring bindings could potentially execute side-effecting

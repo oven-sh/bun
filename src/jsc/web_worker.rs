@@ -1101,11 +1101,9 @@ impl WebWorker {
     }
 
     /// Report the VM log (entry resolution / load errors) to the parent as the
-    /// worker's 'error' event, when the `errors` counter of the log is above
-    /// zero. A log that holds only warnings (from a tsconfig.json beside the
-    /// entry, for example) is not an error of the worker. Nothing is reported
-    /// once the worker is being stopped: the parent asked for exactly that,
-    /// and building the error object would run into the pending termination.
+    /// worker's 'error' event. Nothing is reported once the worker is being
+    /// stopped: the parent asked for exactly that, and building the error
+    /// object would run into the pending termination.
     fn flush_logs(&self, vm: &VirtualMachine) {
         jsc::mark_binding();
         let vm_log = vm.log_ref().unwrap();

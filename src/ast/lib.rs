@@ -1569,8 +1569,7 @@ impl Log {
         Log::init()
     }
 
-    /// An empty log for messages that are appended to `self` later. It takes
-    /// the `level` of `self`, so it keeps and drops the same messages.
+    /// An empty log at the `level` of `self`, for messages that are appended to `self` later.
     #[inline]
     pub fn child(&self) -> Log {
         Log {

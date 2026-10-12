@@ -1364,9 +1364,7 @@ pub trait LogJsc {
         global: &JSGlobalObject,
         message: core::fmt::Arguments<'_>,
     ) -> JsResult<JSValue>;
-    /// The value to throw for this log: `to_js` when its `errors` counter is
-    /// above zero, `None` otherwise. A log that holds only warnings is not a
-    /// failure.
+    /// The value to throw for this log: `to_js` if its `errors` counter is above zero, else `None`.
     fn errors_to_js(
         &self,
         global: &JSGlobalObject,

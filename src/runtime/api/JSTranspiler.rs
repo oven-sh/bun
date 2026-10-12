@@ -596,8 +596,7 @@ impl Config {
             }
         }
 
-        // `tsconfig` and `macro` were read above, in option order. They are
-        // parsed here so that `logLevel` also covers their diagnostics.
+        // `tsconfig` and `macro` are parsed after `logLevel` so that it covers their diagnostics.
         if !self.tsconfig_buf.is_empty() {
             // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
             let vm = VirtualMachine::get().as_mut();

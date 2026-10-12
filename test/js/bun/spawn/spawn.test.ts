@@ -10,9 +10,11 @@ import {
   isBroken,
   isDebug,
   isLinux,
+  isMacOS,
   isPosix,
   isRoot,
   isWindows,
+  libcPathForDlopen,
   shellExe,
   tempDir,
   tmpdirSync,
@@ -1939,6 +1941,75 @@ describe.skipIf(!isPosix)("file status flags handed to the child", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("3:blocking\n");
     expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// These probes use the Linux/macOS libc ABI through bun:ffi.
+describe.skipIf(!(isLinux || isMacOS) || isAndroid)("inherited descriptors are close-on-exec", () => {
+  it.concurrent("marks stdio and extra pipes before user code uses them", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { dlopen } from "bun:ffi";
+        const { symbols: { fcntl } } = dlopen(${JSON.stringify(isMacOS ? "libSystem.B.dylib" : libcPathForDlopen())}, {
+          fcntl: { args: ["i32", "i32"], returns: "i32" },
+        });
+        const flags = [0, 1, 2, 3].map(fd => fcntl(fd, 1));
+        console.log(JSON.stringify(flags));`,
+      ],
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual([1, 1, 1, 1]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("native system children do not inherit stdout or extra pipes", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { dlopen, ptr } from "bun:ffi";
+        const { symbols: { system } } = dlopen(${JSON.stringify(isMacOS ? "libSystem.B.dylib" : libcPathForDlopen())}, {
+          system: { args: ["ptr"], returns: "i32" },
+        });
+        const command = Buffer.from("echo leaked-stdout; test ! -e /dev/fd/3\\0");
+        const result = system(ptr(command));
+        console.log("bun-stdout");
+        console.log(result);`,
+      ],
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("bun-stdout\n0\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("CLI sync helpers explicitly inherit stdout and stderr", async () => {
+    using dir = tempDir("spawn-cli-inherit", {
+      "package.json": JSON.stringify({
+        name: "spawn-cli-inherit",
+        scripts: { postinstall: "echo helper-stdout; echo helper-stderr >&2" },
+        overrides: { "@types/bun": "file:./types-bun", typescript: "file:./typescript" },
+      }),
+      "types-bun/package.json": JSON.stringify({ name: "@types/bun", version: "1.0.0" }),
+      "typescript/package.json": JSON.stringify({ name: "typescript", version: "7.0.0" }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("helper-stdout\n");
+    expect(stderr).toContain("helper-stderr\n");
     expect(exitCode).toBe(0);
   });
 });

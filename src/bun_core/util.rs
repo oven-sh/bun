@@ -4690,42 +4690,43 @@ fn spawn_sync_inherit_impl(
         // for the non-PTY inherit case. PTY spawns go through spawn_sys.
         #[cfg(target_os = "macos")]
         let pid: libc::pid_t = {
-            // StdinBehavior::Ignore → file action opening /dev/null onto fd 0;
-            // stdout/stderr stay inherited.
+            unsafe extern "C" {
+                fn posix_spawn_file_actions_addinherit_np(
+                    actions: *mut libc::posix_spawn_file_actions_t,
+                    fd: libc::c_int,
+                ) -> libc::c_int;
+            }
             let mut actions: libc::posix_spawn_file_actions_t = core::ptr::null_mut();
-            let actions_ptr: *const libc::posix_spawn_file_actions_t =
-                if stdin == StdinBehavior::Ignore {
-                    let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
-                    if rc != 0 {
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    let rc = libc::posix_spawn_file_actions_addopen(
+            if libc::posix_spawn_file_actions_init(&raw mut actions) != 0 {
+                return Err(crate::CrateError::Unexpected);
+            }
+            for fd in 0..3 {
+                let rc = if fd == 0 && stdin == StdinBehavior::Ignore {
+                    libc::posix_spawn_file_actions_addopen(
                         &raw mut actions,
                         0,
                         c"/dev/null".as_ptr(),
                         libc::O_RDONLY,
                         0,
-                    );
-                    if rc != 0 {
-                        libc::posix_spawn_file_actions_destroy(&raw mut actions);
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    &raw const actions
+                    )
                 } else {
-                    core::ptr::null()
+                    posix_spawn_file_actions_addinherit_np(&raw mut actions, fd)
                 };
+                if rc != 0 {
+                    libc::posix_spawn_file_actions_destroy(&raw mut actions);
+                    return Err(crate::CrateError::Unexpected);
+                }
+            }
             let mut pid: libc::pid_t = 0;
             let rc = libc::posix_spawnp(
                 &raw mut pid,
                 ptrs[0],
-                actions_ptr,
+                &raw const actions,
                 core::ptr::null(),
                 ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
                 environ.cast::<*mut core::ffi::c_char>(),
             );
-            if !actions_ptr.is_null() {
-                libc::posix_spawn_file_actions_destroy(&raw mut actions);
-            }
+            libc::posix_spawn_file_actions_destroy(&raw mut actions);
             if rc != 0 {
                 return Err(crate::CrateError::Unexpected);
             }
@@ -4743,9 +4744,7 @@ fn spawn_sync_inherit_impl(
                 return Err(crate::CrateError::Unexpected);
             }
             if pid == 0 {
-                // Child. execvp inherits stdio + environ, which is exactly the
-                // "inherit" contract this helper promises. On failure, _exit
-                // (no destructors / atexit hooks in a forked child).
+                // Only async-signal-safe calls before exec in the forked child.
                 if stdin == StdinBehavior::Ignore {
                     // StdinBehavior::Ignore: fd 0 ← /dev/null.
                     let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
@@ -4754,6 +4753,12 @@ fn spawn_sync_inherit_impl(
                     }
                     if devnull != 0 {
                         libc::close(devnull);
+                    }
+                }
+                for fd in 0..3 {
+                    let flags = libc::fcntl(fd, libc::F_GETFD);
+                    if flags < 0 || libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+                        libc::_exit(127);
                     }
                 }
                 libc::execvp(ptrs[0], ptrs.as_ptr());

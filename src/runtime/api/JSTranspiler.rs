@@ -306,17 +306,6 @@ impl Config {
                     break 'tsconfig;
                 }
                 self.tsconfig_buf = out.to_owned_slice().into();
-
-                // TODO: JSC -> Ast conversion
-                // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-                let vm = VirtualMachine::get().as_mut();
-                if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
-                    &mut self.log,
-                    &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
-                    &mut vm.transpiler.resolver.caches.json,
-                ) {
-                    self.tsconfig = Some(parsed_tsconfig);
-                }
             }
         }
 
@@ -351,18 +340,6 @@ impl Config {
                     break 'macros;
                 }
                 self.macros_buf = out.to_owned_slice().into();
-                let source =
-                    bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
-                // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-                let vm = VirtualMachine::get().as_mut();
-                let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
-                    &mut self.log,
-                    &source,
-                    bun_resolver::tsconfig_json::JsonMode::Json,
-                ) else {
-                    break 'macros;
-                };
-                self.macro_map = PackageJSON::parse_macros_json(json, &mut self.log, &source);
             }
         }
 
@@ -619,6 +596,32 @@ impl Config {
             }
         }
 
+        // `tsconfig` and `macro` were read above, in option order. They are
+        // parsed here so that `logLevel` also covers their diagnostics.
+        if !self.tsconfig_buf.is_empty() {
+            // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
+            let vm = VirtualMachine::get().as_mut();
+            if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
+                &mut self.log,
+                &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
+                &mut vm.transpiler.resolver.caches.json,
+            ) {
+                self.tsconfig = Some(parsed_tsconfig);
+            }
+        }
+        if !self.macros_buf.is_empty() {
+            let source = bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
+            // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
+            let vm = VirtualMachine::get().as_mut();
+            if let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
+                &mut self.log,
+                &source,
+                bun_resolver::tsconfig_json::JsonMode::Json,
+            ) {
+                self.macro_map = PackageJSON::parse_macros_json(json, &mut self.log, &source);
+            }
+        }
+
         self.tree_shaking = tree_shaking.unwrap_or(false);
         self.trim_unused_imports = Some(trim_unused_imports.unwrap_or(self.tree_shaking));
         Ok(())
@@ -679,8 +682,7 @@ impl TransformTask {
         loader: Loader,
     ) -> JSValue {
         let config = transpiler.config.get();
-        let mut log = bun_ast::Log::init();
-        log.level = config.log.level;
+        let log = config.log.child();
 
         // SAFETY: `ManuallyDrop` keeps this bitwise copy from freeing what the
         // wrapper owns; `run` re-aims its log and arena pointers.
@@ -1281,7 +1283,7 @@ impl JSTranspiler {
         };
 
         let arena = Arena::new();
-        let mut log = bun_ast::Log::init();
+        let mut log = self.config.get().log.child();
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
@@ -1460,8 +1462,7 @@ impl JSTranspiler {
         // (`prev_bundler = this.transpiler`) and restores it on exit. `Transpiler` is not
         // bitwise-copyable in Rust, so explicitly snapshot the fields the body mutates
         // (`allocator`, `log`, `macro_context`) and restore them via RAII guard.
-        let mut log = bun_ast::Log::init();
-        log.level = self.config.get().log.level;
+        let mut log = self.config.get().log.child();
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
@@ -1628,7 +1629,7 @@ impl JSTranspiler {
         }
 
         let arena = Arena::new();
-        let mut log = bun_ast::Log::init();
+        let mut log = self.config.get().log.child();
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.

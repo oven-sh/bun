@@ -76,8 +76,7 @@ impl JavaScript {
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
-        let mut temp_log = bun_ast::Log::init();
-        temp_log.level = log.level;
+        let mut temp_log = log.child();
         let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
@@ -125,7 +124,7 @@ impl JavaScript {
             return Ok(());
         }
 
-        let mut temp_log = bun_ast::Log::init();
+        let mut temp_log = log.child();
         // scopeguard cannot capture &mut temp_log while it's used below;
         // explicit `append_to_maybe_recycled` calls at each exit.
 

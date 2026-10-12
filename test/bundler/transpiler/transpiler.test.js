@@ -2702,6 +2702,126 @@ export default <>hi</>
           expect(e).toBeInstanceOf(AggregateError);
           expect(messagesOf(e)).toEqual([warning, error]);
         });
+
+        it('throws only the error at logLevel "error"', async () => {
+          const t = new Bun.Transpiler({ loader: "js", logLevel: "error" });
+          const e = await thrownBy(() => t[fn](code));
+          expect(e).not.toBeInstanceOf(AggregateError);
+          expect(messagesOf(e)).toEqual([error]);
+        });
+      });
+    });
+
+    describe("logLevel covers the tsconfig and macro options", () => {
+      const unexpectedEnd = ["error", 'Expected "}" but found end of file'];
+      // [name, options that log one warning and one error, the messages in log order]
+      const configs = [
+        [
+          "tsconfig warning beside a macro error",
+          { tsconfig: { compilerOptions: { moduleSuffixes: [".ios"] } }, macro: '{"react": {' },
+          [["warn", "moduleSuffixes is not supported yet"], unexpectedEnd],
+        ],
+        [
+          "duplicate tsconfig key beside a macro error",
+          { tsconfig: '{"compilerOptions":{"jsx":"react","jsx":"react"}}', macro: '{"react": {' },
+          [["warn", 'Duplicate key "jsx" in object literal'], unexpectedEnd],
+        ],
+        [
+          "tsconfig error beside a duplicate macro key",
+          { tsconfig: '{"compilerOptions": {', macro: '{"a":{"b":"c"},"a":{"b":"c"}}' },
+          [unexpectedEnd, ["warn", 'Duplicate key "a" in object literal']],
+        ],
+      ];
+
+      describe.each(configs)("%s", (_, config, messages) => {
+        it.each(["default", "warn"])("the constructor throws both at logLevel %s", async level => {
+          const e = await thrownBy(() => new Bun.Transpiler(optionsAt(level, config)));
+          expect(e).toBeInstanceOf(AggregateError);
+          expect(e.message).toBe("Failed to create transpiler");
+          expect(messagesOf(e)).toEqual(messages);
+        });
+
+        it('the constructor throws only the error at logLevel "error"', async () => {
+          const e = await thrownBy(() => new Bun.Transpiler({ ...config, logLevel: "error" }));
+          expect(e).not.toBeInstanceOf(AggregateError);
+          expect(messagesOf(e)).toEqual([unexpectedEnd]);
+        });
+      });
+
+      it("tsconfig and macro are still read before logLevel", () => {
+        const reads = [];
+        const options = new Proxy(
+          {
+            tsconfig: { compilerOptions: { jsx: "react" } },
+            macro: { react: { bacon: "./macro.js" } },
+            logLevel: "error",
+          },
+          {
+            get(target, key, receiver) {
+              if (typeof key === "string") reads.push(key);
+              return Reflect.get(target, key, receiver);
+            },
+          },
+        );
+        new Bun.Transpiler(options);
+        expect(reads.filter(key => key in options)).toEqual(["tsconfig", "macro", "logLevel"]);
+      });
+
+      it("an invalid logLevel is still reported before a tsconfig warning", () => {
+        expect(
+          () => new Bun.Transpiler({ tsconfig: { compilerOptions: { moduleSuffixes: [".ios"] } }, logLevel: "poop" }),
+        ).toThrow('logLevel must be one of "verbose", "debug", "info", "warn", or "error"');
+      });
+
+      // Without the option the level is the log level of the process. The
+      // option wins over it in both directions.
+      it("the option wins over logLevel in bunfig.toml", async () => {
+        using dir = tempDir("transpiler-loglevel-bunfig", {
+          "bunfig.toml": 'logLevel = "error"\n',
+          "fixture.js": `
+            const messagesOf = e => (e instanceof AggregateError ? e.errors : [e]).map(m => [m.level, m.message]);
+            const thrownBy = fn => {
+              try {
+                fn();
+              } catch (e) {
+                return messagesOf(e);
+              }
+            };
+            const code = "x = 1\\n--> legacy html comment\\ny = 2\\nbad??!?!?!";
+            const config = { tsconfig: '{"compilerOptions":{"jsx":"react","jsx":"react"}}', macro: '{"react": {' };
+            const out = {};
+            for (const level of ["default", "warn"]) {
+              const logLevel = level === "default" ? undefined : level;
+              out[level] = {
+                method: thrownBy(() => new Bun.Transpiler({ loader: "js", logLevel }).transformSync(code)),
+                constructor: thrownBy(() => new Bun.Transpiler({ ...config, logLevel })),
+              };
+            }
+            console.log(JSON.stringify(out));
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({
+            default: { method: [["error", "Unexpected ?"]], constructor: [unexpectedEnd] },
+            warn: {
+              method: [
+                ["warn", 'Treating "-->" as the start of a legacy HTML single-line comment'],
+                ["error", "Unexpected ?"],
+              ],
+              constructor: [["warn", 'Duplicate key "jsx" in object literal'], unexpectedEnd],
+            },
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
   });

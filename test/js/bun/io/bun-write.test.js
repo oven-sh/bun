@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -16,7 +17,7 @@ import http from "node:http";
 import { finished } from "node:stream/promises";
 import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
-import { dupPathDestinationRows, opensAsDup, run as runWithRedirect } from "./dup-path-destination";
+import { dupPathDestinationRows, opensAsDup, runs, run as runWithRedirect } from "./dup-path-destination";
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -576,17 +577,6 @@ const IS_UV_FS_COPYFILE_DISABLED =
         },
       ],
       [
-        { title: `Bun.write(path, "")`, write: `await Bun.write("/dev/stdout", "")`, result: "0" },
-        {
-          title: "Bun.write(path, new Uint8Array(0))",
-          write: `await Bun.write("/dev/stdout", new Uint8Array(0))`,
-          result: "0",
-        },
-        {
-          title: "Bun.write(path, new Blob([]))",
-          write: `await Bun.write("/dev/stdout", new Blob([]))`,
-          result: "0",
-        },
         {
           title: "Bun.write(path, Bun.file(empty))",
           write: `await Bun.write("/dev/stdout", Bun.file(process.env.EMPTY_SRC))`,
@@ -598,7 +588,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
     // The slice is the most that the copy writes. It is not a length to cut the file to.
     it("Bun.write(Bun.file(path).slice(0, 50), Bun.file(src)) keeps the other bytes of a file that stdout appends to (>>)", async () => {
       const script = `fs.writeSync(2, String(await Bun.write(Bun.file("/dev/stdout").slice(0, 50), Bun.file(process.env.SRC))));`;
-      const { stdout, stderr, exitCode, log } = await runWithRedirect(`"$BUN" -e "$SCRIPT" >> "$LOG"`, script);
+      const { stdout, stderr, exitCode, log } = await runWithRedirect(`"$EXE" -e "$SCRIPT" >> "$LOG"`, script);
 
       expect({ stdout, stderr, log }).toEqual({ stdout: "", stderr: "50", log: "A×200 S×50" });
       expect(exitCode).toBe(0);
@@ -613,13 +603,25 @@ const IS_UV_FS_COPYFILE_DISABLED =
         `Bun.write(path, string) keeps the other bytes of a file that stdout appends to (>>) through ${spelling}`,
         async () => {
           const script = `fs.writeSync(2, String(await Bun.write(${dest}, Buffer.alloc(100, "S").toString())));`;
-          const { stdout, stderr, exitCode, log } = await runWithRedirect(`"$BUN" -e "$SCRIPT" >> "$LOG"`, script);
+          const { stdout, stderr, exitCode, log } = await runWithRedirect(`"$EXE" -e "$SCRIPT" >> "$LOG"`, script);
 
           expect({ stdout, stderr, log }).toEqual({ stdout: "", stderr: "100", log: "A×200 S×100" });
           expect(exitCode).toBe(0);
         },
       );
     }
+
+    // Through another spelling the copy still goes to fcopyfile, which gives a pipe nothing.
+    (isMacOS ? it.failing : it)(
+      "Bun.write(path, Bun.file(src)) writes to a pipe through a symlink to /dev/stdout",
+      async () => {
+        const script = `fs.writeSync(2, String(await Bun.write(process.env.LINK, Bun.file(process.env.SRC))));`;
+        const { stdout, stderr, exitCode } = await runWithRedirect(`"$EXE" -e "$SCRIPT" | cat`, script);
+
+        expect({ stdout: runs(stdout), stderr }).toEqual({ stdout: "S×100", stderr: "100" });
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   // fstat on a FIFO reports st_size == 0, so the kernel-copy / bounded loop

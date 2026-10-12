@@ -4162,30 +4162,6 @@ fn write_file_with_empty_source_to_destination(
 
     match &destination_store.data {
         store::Data::File(file) => {
-            // truncate(2) of a dup name can reach the file behind the descriptor. An O_TRUNC open cannot.
-            if let PathOrFileDescriptor::Path(path) = &file.pathlike
-                && bun_sys::path_opens_as_dup(path.slice())
-            {
-                let mut buf = bun_paths::path_buffer_pool::get();
-                return Ok(
-                    match bun_sys::File::open(
-                        path.slice_z(&mut buf),
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                        options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION),
-                    ) {
-                        bun_sys::Result::Ok(opened) => {
-                            let _ = opened.close(); // close error is non-actionable
-                            JSPromise::resolved_promise_value(cx.global(), JSValue::js_number(0.0))
-                        }
-                        bun_sys::Result::Err(err) => JSPromise::rejected_promise(
-                            cx.global(),
-                            err.with_path(path.slice()).to_js(cx.global()),
-                        )
-                        .to_js(),
-                    },
-                );
-            }
-
             // TODO: make this async
             // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
             // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
@@ -5182,19 +5158,17 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     str: &BunString,
     needs_async: &mut bool,
 ) -> JSValue {
-    // A dup is not resized after the write. O_TRUNC in its open is for a new file at that name.
-    let dest_is_dup = NEEDS_OPEN
-        && matches!(
-            pathlike,
-            PathOrFileDescriptor::Path(path) if bun_sys::path_opens_as_dup(path.slice())
-        );
+    // The name is a hint. If it opens a dup, that is the caller's descriptor. If it opens a file, O_TRUNC empties it.
+    let mut dest_is_dup = false;
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
+        let path = pathlike.path().slice_z(&mut file_path);
+        dest_is_dup = bun_sys::path_opens_as_dup(path.as_bytes());
         match bun_sys::open(
-            pathlike.path().slice_z(&mut file_path),
-            // we deliberately don't use O_TRUNC here
+            path,
+            // no O_TRUNC for an ordinary path: the ftruncate after the write sets the length
             // it's a perf optimization
             bun_sys::O::WRONLY
                 | bun_sys::O::CREAT
@@ -5223,7 +5197,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
     // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
-    let truncate = core::cell::Cell::new((NEEDS_OPEN || str.is_empty()) && !dest_is_dup);
+    let truncate = core::cell::Cell::new((NEEDS_OPEN && !dest_is_dup) || str.is_empty());
     let written = core::cell::Cell::new(0usize);
 
     // we only truncate if it's a path
@@ -5273,12 +5247,8 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     bytes: &[u8],
     needs_async: &mut bool,
 ) -> JSValue {
-    // A dup is not resized after the write. O_TRUNC in its open is for a new file at that name.
-    let dest_is_dup = NEEDS_OPEN
-        && matches!(
-            pathlike,
-            PathOrFileDescriptor::Path(path) if bun_sys::path_opens_as_dup(path.slice())
-        );
+    // The name is a hint. If it opens a dup, that is the caller's descriptor. If it opens a file, O_TRUNC empties it.
+    let mut dest_is_dup = false;
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
@@ -5288,8 +5258,10 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         } else {
             bun_sys::O::WRONLY | bun_sys::O::CREAT
         };
+        let path = pathlike.path().slice_z(&mut file_path);
+        dest_is_dup = bun_sys::path_opens_as_dup(path.as_bytes());
         match bun_sys::open(
-            pathlike.path().slice_z(&mut file_path),
+            path,
             flags | if dest_is_dup { bun_sys::O::TRUNC } else { 0 },
             WRITE_PERMISSIONS,
         ) {
@@ -5310,7 +5282,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     // TODO: on windows this is always synchronous
 
-    let truncate = (NEEDS_OPEN || bytes.is_empty()) && !dest_is_dup;
+    let truncate = (NEEDS_OPEN && !dest_is_dup) || bytes.is_empty();
     let mut written: usize = 0;
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 

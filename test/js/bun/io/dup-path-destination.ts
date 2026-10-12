@@ -26,7 +26,7 @@ const fromStart = (size: number) => (size < 200 ? `S×${size} A×${200 - size}` 
 const redirects = [
   {
     title: "a file that stdout appends to (>>)",
-    shell: `"$BUN" -e "$SCRIPT" >> "$LOG"`,
+    shell: `"$EXE" -e "$SCRIPT" >> "$LOG"`,
     dest: `"/dev/stdout"`,
     report: 2,
     before: "",
@@ -34,7 +34,7 @@ const redirects = [
   },
   {
     title: "a file that stdout already wrote to (>)",
-    shell: `"$BUN" -e "$SCRIPT" > "$LOG"`,
+    shell: `"$EXE" -e "$SCRIPT" > "$LOG"`,
     dest: `"/dev/stdout"`,
     report: 2,
     before: `fs.writeSync(1, Buffer.alloc(200, "H"));`,
@@ -42,7 +42,7 @@ const redirects = [
   },
   {
     title: "a file that stderr appends to (2>>)",
-    shell: `"$BUN" -e "$SCRIPT" 2>> "$LOG"`,
+    shell: `"$EXE" -e "$SCRIPT" 2>> "$LOG"`,
     dest: `"/dev/stderr"`,
     report: 1,
     before: "",
@@ -50,7 +50,7 @@ const redirects = [
   },
   {
     title: "a file that stdout reads and writes from its start (1<>)",
-    shell: `"$BUN" -e "$SCRIPT" 1<> "$LOG"`,
+    shell: `"$EXE" -e "$SCRIPT" 1<> "$LOG"`,
     dest: `"/dev/stdout"`,
     report: 2,
     before: "",
@@ -58,7 +58,7 @@ const redirects = [
   },
   {
     title: "a file that stdin reads and writes from its start (0<>)",
-    shell: `"$BUN" -e "$SCRIPT" 0<> "$LOG"`,
+    shell: `"$EXE" -e "$SCRIPT" 0<> "$LOG"`,
     dest: `"/dev/stdin"`,
     report: 2,
     before: "",
@@ -69,7 +69,7 @@ const redirects = [
     ? [
         {
           title: "a file that fd 3 appends to (3>>)",
-          shell: `"$BUN" -e "$SCRIPT" 3>> "$LOG"`,
+          shell: `"$EXE" -e "$SCRIPT" 3>> "$LOG"`,
           dest: `"/dev/fd/3"`,
           report: 2,
           before: "",
@@ -77,7 +77,7 @@ const redirects = [
         },
         {
           title: "a file that fd 3 reads and writes from its start (3<>)",
-          shell: `"$BUN" -e "$SCRIPT" 3<> "$LOG"`,
+          shell: `"$EXE" -e "$SCRIPT" 3<> "$LOG"`,
           dest: `"/dev/fd/3"`,
           report: 2,
           before: "",
@@ -87,8 +87,8 @@ const redirects = [
     : []),
 ];
 
-/** Runs `script` in a child under `sh -c shell`. `$SRC`, `$LARGE_SRC` and `$EMPTY_SRC` are files of "S". */
-export async function run(shell: string, script: string) {
+/** Runs `script` with `exe` in a child under `sh -c shell`. `$SRC`, `$LARGE_SRC` and `$EMPTY_SRC` are files of "S". */
+export async function run(shell: string, script: string, exe: string = bunExe()) {
   using dir = tempDir("dup-path-destination", {
     "src.bin": Buffer.alloc(100, "S").toString(),
     "large.bin": Buffer.alloc(300_000, "S").toString(),
@@ -101,8 +101,9 @@ export async function run(shell: string, script: string) {
     cmd: ["sh", "-c", shell],
     env: {
       ...bunEnv,
-      BUN: bunExe(),
-      SCRIPT: `const fs = require("fs"); ${script}`,
+      EXE: exe,
+      // node -e has no top-level await beside require().
+      SCRIPT: `const fs = require("fs"); (async () => { ${script} })();`,
       SRC: file("src.bin"),
       LARGE_SRC: file("large.bin"),
       EMPTY_SRC: file("empty.bin"),
@@ -116,13 +117,13 @@ export async function run(shell: string, script: string) {
   return { stdout, stderr, exitCode, log: runs(fs.readFileSync(file("log.txt"), "utf8")) };
 }
 
-/** Each writer against each redirect and a pipe, and each empty writer against `>>`. */
-export function dupPathDestinationRows(writers: Writer[], emptyWriters: EmptyWriter[]) {
+/** Each writer against each redirect and a pipe, and each empty writer against `>>`. `exe` runs the calls. */
+export function dupPathDestinationRows(writers: Writer[], emptyWriters: EmptyWriter[], exe: string = bunExe()) {
   for (const { title, write, size, result } of writers) {
     for (const redirect of redirects) {
       it.concurrent(`${title} keeps the other bytes of ${redirect.title}`, async () => {
         const script = `${redirect.before} const result = ${write(redirect.dest)}; fs.writeSync(${redirect.report}, String(result));`;
-        const { stdout, stderr, exitCode, log } = await run(redirect.shell, script);
+        const { stdout, stderr, exitCode, log } = await run(redirect.shell, script, exe);
 
         expect({
           reported: redirect.report === 1 ? stdout : stderr,
@@ -135,7 +136,7 @@ export function dupPathDestinationRows(writers: Writer[], emptyWriters: EmptyWri
 
     it.concurrent(`${title} writes to a pipe through /dev/stdout`, async () => {
       const script = `const result = ${write(`"/dev/stdout"`)}; fs.writeSync(2, String(result));`;
-      const { stdout, stderr, exitCode } = await run(`"$BUN" -e "$SCRIPT" | cat`, script);
+      const { stdout, stderr, exitCode } = await run(`"$EXE" -e "$SCRIPT" | cat`, script, exe);
 
       expect({ stdout: runs(stdout), stderr }).toEqual({ stdout: `S×${size}`, stderr: result });
       expect(exitCode).toBe(0);
@@ -145,7 +146,7 @@ export function dupPathDestinationRows(writers: Writer[], emptyWriters: EmptyWri
   for (const { title, write, result } of emptyWriters) {
     it.concurrent(`${title} leaves a file that stdout appends to (>>) as it is`, async () => {
       const script = `const result = ${write}; fs.writeSync(2, String(result));`;
-      const { stdout, stderr, exitCode, log } = await run(`"$BUN" -e "$SCRIPT" >> "$LOG"`, script);
+      const { stdout, stderr, exitCode, log } = await run(`"$EXE" -e "$SCRIPT" >> "$LOG"`, script, exe);
 
       expect({ stdout, stderr, log }).toEqual({ stdout: "", stderr: result, log: "A×200" });
       expect(exitCode).toBe(0);

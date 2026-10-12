@@ -633,21 +633,23 @@ For Yarn Berry lockfiles the migration handles:
 - `resolutions` in the root `package.json`, applied the way Yarn applies them: the first matching entry wins, and `parent@version/name` names the version the parent is locked to
 - `catalog:` ranges, read from `catalog` / `catalogs` in `.yarnrc.yml` and copied into the `workspaces` object of `package.json`
 - Yarn 2 and 3 lockfiles, which write ranges without quotes (`wrappy: 1`)
+- `packageExtensions`: the `dependencies` they add and the peers they mark optional, for the ones in `.yarnrc.yml` and the ones Yarn ships
 
 Limitations:
 
-- the `dependencies` that `packageExtensions` in `.yarnrc.yml` add to a package; the extensions built into Yarn are not applied
+- `peerDependencies` that `packageExtensions` add are not applied
+- an extension Yarn ships is applied when `yarn.lock` has the entry it adds; the list is the one of Yarn 4
 - `libc` conditions are ignored, and Yarn settings such as `nodeLinker` and `supportedArchitectures` are not migrated
 - integrity hashes come from the registry manifest; Yarn's `checksum` is not checked
 
 The lockfile is not migrated when it has:
 
-- a dependency with no lockfile entry (`yarn.lock` is older than `package.json`), or a workspace that the `package.json` `workspaces` globs do not match
+- a dependency with no lockfile entry (`yarn.lock` is older than `package.json`), unless a workspace's version satisfies its range and `enableTransparentWorkspaces` is on; or a workspace that the `package.json` `workspaces` globs do not match
 - a registry for Yarn (`npmRegistryServer` or `npmScopes` in a `.yarnrc.yml` of the project, a parent folder or the home folder, or `YARN_NPM_REGISTRY_SERVER`) that is not the registry Bun is configured with for that package, or that is written with an environment variable (`${VAR}`); configure the registry in `bunfig.toml` or `.npmrc` and run the migration again. Yarn fetches the `@jsr` scope from `npm.jsr.io` by default, so that scope needs the same configuration
 - a package whose integrity the registry manifest does not give, for example an `__archiveUrl` on another host
 - a patch that `patchedDependencies` cannot express: several patch files for one package, a patch on a `file:` / `portal:` / `link:` folder, or a patch file outside the project
 - an entry with a protocol Bun does not have (for example `exec:`), or a git dependency on a package inside a repository (`#workspace=`)
-- a dependency of the root `package.json` that has the name of a workspace and that Yarn installed from somewhere else (`enableTransparentWorkspaces: false`); Bun links the workspace under that name
+- a dependency of the root `package.json` that has the name of a workspace and that Yarn installed from somewhere else; Bun links the workspace under that name
 - a name in both `dependencies` and `devDependencies` when the version Yarn installed for the `devDependencies` range is not in the `dependencies` range, which is the one Bun reads
 - a `__metadata.version` outside 4 to 10, a key written twice, or a YAML merge key (`<<`)
 

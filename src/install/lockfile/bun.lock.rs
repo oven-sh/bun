@@ -72,6 +72,24 @@ pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
         && (url.len() == registry.len() || url[registry.len()] == b'/')
 }
 
+/// A registry href can carry `user:password@` (one that comes from an environment
+/// variable keeps it). A migration builds tarball URLs on the registry and they
+/// are written to bun.lock, which is committed, so it builds them on the href
+/// without it.
+pub(crate) fn registry_without_auth(href: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let url = bun_url::URL::parse(href);
+    if url.username.is_empty() && url.password.is_empty() {
+        std::borrow::Cow::Borrowed(href)
+    } else {
+        // `href_without_auth` ends a URL that has no path in `//`
+        let mut href = url.href_without_auth().into_vec();
+        while href.ends_with(b"//") {
+            href.pop();
+        }
+        std::borrow::Cow::Owned(href)
+    }
+}
+
 // A single `lockfile.string_buf()` held for the whole parser would lock out
 // every other `lockfile.*` access (the `string_buf()` method borrows the whole
 // receiver). Construct a fresh `Buf` at each append site so the disjoint

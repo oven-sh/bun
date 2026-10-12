@@ -1279,7 +1279,11 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
 
                 if res.tag == resolution::Tag::Npm {
-                    let scope_registry: &[u8] = manager.scope_for_package_name(name_str).url.href();
+                    let scope_registry = lockfile::bun_lock::registry_without_auth(
+                        manager.scope_for_package_name(name_str).url.href(),
+                    );
+                    let scope_registry: &[u8] = &scope_registry;
+                    let named_registry;
                     let registry: &[u8] = match registry_name {
                         None => scope_registry,
                         Some(registry_name) => {
@@ -1300,16 +1304,17 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                         url,
                                     )) =>
                                 {
+                                    named_registry = lockfile::bun_lock::registry_without_auth(url);
                                     if !warned_registries.get_or_put(registry_name)?.found_existing
                                         && !silent
                                     {
                                         bun_core::warn!(
                                             "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
                                             bstr::BStr::new(registry_name),
-                                            bstr::BStr::new(url)
+                                            bstr::BStr::new(&named_registry)
                                         );
                                     }
-                                    &**url
+                                    &named_registry
                                 }
                                 Some(_) => scope_registry,
                                 None => {

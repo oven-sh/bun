@@ -62,6 +62,8 @@ use crate::resolution::{Resolution, TaggedValue};
 use crate::versioned_url::VersionedURLType;
 use crate::{DependencyID, Error, INVALID_PACKAGE_ID, PackageID, PackageManager};
 
+mod builtin_extensions;
+
 // A `Buf` held for the whole function would lock out every other `lockfile.*`
 // access; build a fresh one per append so the borrow ends immediately
 // (same pattern as pnpm.rs).
@@ -347,16 +349,36 @@ struct YarnRc {
     registry: Option<Box<[u8]>>,
     /// `npmScopes.<scope>.npmRegistryServer`, keyed without the `@`
     scope_registries: StringArrayHashMap<Box<[u8]>>,
-    /// `packageExtensions.<name>@<range>.dependencies`. Yarn adds them to the
-    /// packages they match when it installs; yarn.lock has entries for what they
-    /// name, but not the edges.
+    /// `packageExtensions`. Yarn applies them to the packages they match when it
+    /// installs; yarn.lock has entries for what they name, but not the edges.
     extensions: Vec<PackageExtension>,
+    /// `enableTransparentWorkspaces`: a range a workspace's version satisfies is
+    /// that workspace (the default) or, when false, a package of the registry.
+    transparent_workspaces: Option<bool>,
 }
 
 struct PackageExtension {
     /// `name@range`, as written
     key: Box<[u8]>,
     dependencies: Vec<(Box<[u8]>, Box<[u8]>)>,
+    /// `peerDependenciesMeta.<name>.optional`
+    optional_peers: Vec<Box<[u8]>>,
+}
+
+/// What `packageExtensions` add to one yarn.lock entry.
+#[derive(Default)]
+struct Extended<'a> {
+    dependencies: Vec<(&'a [u8], &'a [u8])>,
+    optional_peers: Vec<&'a [u8]>,
+}
+
+/// A boolean setting as yarn reads it from the environment or a quoted value.
+fn yarn_bool(value: &[u8]) -> Option<bool> {
+    match value {
+        b"true" | b"1" => Some(true),
+        b"false" | b"0" => Some(false),
+        _ => None,
+    }
 }
 
 /// Yarn's settings come from `YARN_*` environment variables, then the rc file
@@ -374,6 +396,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
     if let Some(url) = env(b"YARN_NPM_REGISTRY_SERVER") {
         out.registry = Some(Box::from(url));
     }
+    out.transparent_workspaces = env(b"YARN_ENABLE_TRANSPARENT_WORKSPACES").and_then(yarn_bool);
     let rc_name = env(b"YARN_RC_FILENAME").unwrap_or(b".yarnrc.yml");
     let home = bun_core::env_var::HOME
         .get_not_empty()
@@ -495,8 +518,18 @@ fn read_yarnrc_file(
             out.extensions.push(PackageExtension {
                 key: Box::from(key),
                 dependencies,
+                optional_peers: optional_names(&data, value, b"peerDependenciesMeta")
+                    .into_iter()
+                    .map(Box::from)
+                    .collect(),
             });
         }
+    }
+    if out.transparent_workspaces.is_none() {
+        out.transparent_workspaces = root.get(b"enableTransparentWorkspaces").and_then(|v| {
+            v.as_bool()
+                .or_else(|| scalar_text(&data, &v).and_then(yarn_bool))
+        });
     }
 
     if out.registry.is_none() {
@@ -1214,7 +1247,15 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             resolution,
             ..Default::default()
         };
-        let extended = extension_dependencies(this, log, &yarnrc, data, name, &entry_expr)?;
+        let extended = extensions_for(
+            this,
+            log,
+            &yarnrc,
+            &descriptor_to_entry,
+            data,
+            name,
+            &entry_expr,
+        )?;
         let (off, len) = append_entry_dependencies(this, log, data, name, &entry_expr, &extended)?;
         pkg.dependencies = ExternalSlice::new(off, len);
         pkg.resolutions = ExternalSlice::new(off, len);
@@ -1500,6 +1541,31 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                         }
                     }
                 }
+                // 5. a range with no key in yarn.lock that a workspace's version
+                // satisfies: yarn resolves it to the workspace without the registry
+                // (`enableTransparentWorkspaces`), and so does bun
+                if found.is_none()
+                    && dep.version.tag == dependency::VersionTag::Npm
+                    && !dep.behavior.is_peer()
+                    && yarnrc.transparent_workspaces != Some(false)
+                {
+                    let npm = dep.version.npm();
+                    let linked = lockfile::linked_workspace_path(
+                        manager.options.link_workspace_packages,
+                        &this.workspace_paths,
+                        &this.workspace_versions,
+                        semver::string::Builder::string_hash(npm.name.slice(string_bytes!(this))),
+                        &npm.version,
+                        string_bytes!(this),
+                    );
+                    if let Some(ws_path) = linked {
+                        let ws_path = ws_path.slice(string_bytes!(this));
+                        if let Some(ws) = workspaces.iter().find(|w| &*w.path == ws_path) {
+                            this.buffers.resolutions[dep_id as usize] = ws.package_id;
+                            continue;
+                        }
+                    }
+                }
             }
 
             match found.map(|i| entries[i].package_id) {
@@ -1508,7 +1574,9 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                     let mut bound = this.packages.items_resolution()[pid as usize];
                     let owner_name = owner.as_ref().map_or(&b""[..], |(n, _)| n);
                     // Bun links every workspace into the root's node_modules under its
-                    // name, so the root cannot hold another package under that name.
+                    // name, so the root cannot hold another package under that name. (A
+                    // range the workspace's version is outside of replaces that link in
+                    // `Package::parse`, and bun.lock then has two packages at one path.)
                     if pkg_id == 0
                         && !dep.behavior.is_workspace()
                         && !dep.behavior.is_peer()
@@ -1736,7 +1804,8 @@ fn registry_for(
     yarnrc: &YarnRc,
     name: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    let configured = registry_without_auth(manager.scope_for_package_name(name).url.href());
+    let configured =
+        lockfile::bun_lock::registry_without_auth(manager.scope_for_package_name(name).url.href());
     let configured: &[u8] = &configured;
     let from_yarn: Option<&[u8]> = if name.first() == Some(&b'@') {
         let scope = npm::registry::Scope::get_name(name);
@@ -1770,11 +1839,11 @@ fn registry_for(
     };
     // yarn's default registry serves the same packages as the npm registry
     let canonical = |url: &'_ [u8]| -> Vec<u8> {
-        let url = registry_without_auth(url);
+        let url = lockfile::bun_lock::registry_without_auth(url);
         if same(&url, b"https://registry.yarnpkg.com") {
             npm::Registry::DEFAULT_URL.as_bytes().to_vec()
         } else {
-            url
+            url.into_owned()
         }
     };
     if same(&canonical(url), &canonical(configured)) {
@@ -1790,18 +1859,6 @@ fn registry_for(
             bun_core::fmt::redacted_npm_url(configured),
         ),
     ))
-}
-
-/// A registry href can carry `user:password@` (one that comes from an environment
-/// variable keeps it). The tarball URLs built on it are written to bun.lock,
-/// which is committed, so they are built on the href without it.
-pub(crate) fn registry_without_auth(href: &[u8]) -> Vec<u8> {
-    let url = bun_url::URL::parse(href);
-    if url.username.is_empty() && url.password.is_empty() {
-        href.to_vec()
-    } else {
-        url.href_without_auth().into_vec()
-    }
 }
 
 /// yarn always locks git dependencies with `#commit=<sha>`; the prefixes cover
@@ -2020,11 +2077,16 @@ fn append_entry_dependencies(
     source: &[u8],
     entry_name: &[u8],
     entry: &Expr,
-    extended: &[(&[u8], &[u8])],
+    extended: &Extended<'_>,
 ) -> Result<(u32, u32), Error> {
     let off = this.buffers.dependencies.len();
-    let optional_deps = optional_names(source, entry, b"dependenciesMeta");
-    let optional_peers = optional_names(source, entry, b"peerDependenciesMeta");
+    let optional_deps: Vec<&[u8]> = optional_names(source, entry, b"dependenciesMeta");
+    let mut optional_peers: Vec<&[u8]> = optional_names(source, entry, b"peerDependenciesMeta");
+    for peer in &extended.optional_peers {
+        if !optional_peers.contains(peer) {
+            optional_peers.push(peer);
+        }
+    }
     for (group, behavior, optional) in [
         (b"dependencies".as_slice(), Behavior::PROD, &optional_deps),
         (
@@ -2073,7 +2135,7 @@ fn append_entry_dependencies(
         }
     }
     // an extension adds a dependency the package does not declare itself
-    for (name, range) in extended {
+    for (name, range) in &extended.dependencies {
         if entry
             .get(b"dependencies")
             .is_none_or(|deps| deps.get(name).is_none())
@@ -2086,33 +2148,45 @@ fn append_entry_dependencies(
     Ok((off as u32, (end - off) as u32))
 }
 
-/// The dependencies `.yarnrc.yml` `packageExtensions` add to this entry: those
-/// of every `name@range` whose range holds the entry's version, prereleases
-/// included, as yarn matches them.
-fn extension_dependencies<'a>(
+/// What `packageExtensions` add to this entry: the `dependencies` and optional
+/// peers of every `name@range` whose range holds the entry's version,
+/// prereleases included, as yarn matches them. The extensions of `.yarnrc.yml`
+/// come first and the first one to add a name wins, as in yarn.
+///
+/// Yarn's own list changes from release to release and yarn.lock does not say
+/// which release wrote it, so a dependency from that list is added only when
+/// yarn.lock has the entry it names.
+fn extensions_for<'a>(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,
     yarnrc: &'a YarnRc,
+    descriptor_to_entry: &StringArrayHashMap<usize>,
     source: &[u8],
     name: &[u8],
     entry: &Expr,
-) -> Result<Vec<(&'a [u8], &'a [u8])>, Error> {
-    let mut extended = Vec::new();
-    for extension in &yarnrc.extensions {
-        let Some((extension_name, range)) = split_locator(&extension.key) else {
-            continue;
+) -> Result<Extended<'a>, Error> {
+    let mut extended = Extended::default();
+    let Some(version) = entry.get(b"version").and_then(|v| scalar_text(source, &v)) else {
+        return Ok(extended);
+    };
+    let version = sbuf!(this).append(version)?;
+    let version = semver::Version::parse(version.sliced(string_bytes!(this)));
+    let name_hash = semver::string::Builder::string_hash(name);
+    let mut key = Vec::new();
+
+    let mut apply = |extension_key: &'a [u8],
+                     from_yarnrc: bool,
+                     dependencies: &mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
+                     optional_peers: &mut dyn Iterator<Item = &'a [u8]>|
+     -> Result<(), Error> {
+        let Some((extension_name, range)) = split_locator(extension_key) else {
+            return Ok(());
         };
-        if extension_name != name || extension.dependencies.is_empty() {
-            continue;
+        if extension_name != name {
+            return Ok(());
         }
-        let Some(version) = entry.get(b"version").and_then(|v| scalar_text(source, &v)) else {
-            continue;
-        };
-        let version = sbuf!(this).append(version)?;
-        let version = semver::Version::parse(version.sliced(string_bytes!(this)));
         let range_str = sbuf!(this).append(range)?;
         let sliced = range_str.sliced(string_bytes!(this));
-        let name_hash = semver::string::Builder::string_hash(name);
         let parsed = Dependency::parse(
             String::default(),
             name_hash,
@@ -2129,25 +2203,63 @@ fn extension_dependencies<'a>(
                     string_bytes!(this),
                 )
             }
+            _ if !from_yarnrc => false,
             _ => {
                 return Err(invalid_lockfile(
                     log,
                     format_args!(
                         "packageExtensions \"{}\" in .yarnrc.yml cannot be matched against \"{}\"",
-                        bstr::BStr::new(&extension.key),
+                        bstr::BStr::new(extension_key),
                         bstr::BStr::new(name),
                     ),
                 ));
             }
         };
-        if matches {
-            // the first extension that adds a name wins, as in yarn
-            for (dep_name, dep_range) in &extension.dependencies {
-                if !extended.iter().any(|(n, _)| *n == &**dep_name) {
-                    extended.push((&**dep_name, &**dep_range));
+        if !matches {
+            return Ok(());
+        }
+        for (dep_name, dep_range) in dependencies {
+            if extended.dependencies.iter().any(|(n, _)| *n == dep_name) {
+                continue;
+            }
+            if !from_yarnrc {
+                key.clear();
+                key.extend_from_slice(dep_name);
+                key.extend_from_slice(b"@npm:");
+                key.extend_from_slice(dep_range);
+                let normalized = descriptor_to_entry.contains(&key);
+                key.truncate(dep_name.len() + 1);
+                key.extend_from_slice(dep_range);
+                if !normalized && !descriptor_to_entry.contains(&key) {
+                    continue;
                 }
             }
+            extended.dependencies.push((dep_name, dep_range));
         }
+        for peer in optional_peers {
+            if !extended.optional_peers.contains(&peer) {
+                extended.optional_peers.push(peer);
+            }
+        }
+        Ok(())
+    };
+    for extension in &yarnrc.extensions {
+        apply(
+            &extension.key,
+            true,
+            &mut extension.dependencies.iter().map(|(n, r)| (&**n, &**r)),
+            &mut extension.optional_peers.iter().map(|n| &**n),
+        )?;
+    }
+    for (extension_key, dependencies, optional_peers) in builtin_extensions::BUILTIN {
+        apply(
+            extension_key.as_bytes(),
+            false,
+            &mut dependencies
+                .iter()
+                .map(|(n, r)| (n.as_bytes(), r.as_bytes())),
+            &mut optional_peers.iter().map(|n| n.as_bytes()),
+        )?;
     }
     Ok(extended)
 }

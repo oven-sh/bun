@@ -14,10 +14,14 @@ afterAll(() => {
 });
 
 async function run(cwd: string, ...args: string[]) {
+  return runWithEnv(cwd, {}, ...args);
+}
+
+async function runWithEnv(cwd: string, env: Record<string, string>, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"), ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -311,6 +315,46 @@ describe("pnpm-lock.yaml v9", () => {
       expect(install.stderr).not.toContain("error:");
       expect(install.exitCode).toBe(0);
       expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.0.1"`);
+    });
+
+    test.concurrent("credentials in a registry URL are not written to bun.lock", async () => {
+      // a registry that comes from an environment variable keeps its `user:password@`
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "registry-credentials", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work").replaceAll("work:", ""),
+        },
+      });
+      const bunfig = join(packageDir, "bunfig.toml");
+      await Bun.write(bunfig, (await Bun.file(bunfig).text()).replace(verdaccio.registryUrl(), "$PNPM_TEST_REGISTRY"));
+      const withPassword = `http://builder:hunter2secret@localhost:${verdaccio.port}/`;
+
+      const fromBun = await runWithEnv(packageDir, { PNPM_TEST_REGISTRY: withPassword }, "pm", "migrate");
+      expect(fromBun.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(await bunLockOf(packageDir)).toContain(
+        `"no-deps@1.0.1", "http://localhost:${verdaccio.port}/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`,
+      );
+      expect(fromBun.exitCode).toBe(0);
+
+      // and one that pnpm-workspace.yaml names
+      const { packageDir: namedDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "registry-credentials", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-workspace.yaml": `namedRegistries:\n  work: http://builder:hunter2secret@127.0.0.1:${verdaccio.port}/\n`,
+          "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work"),
+        },
+      });
+      const named = await migrate(namedDir);
+      expect(named.stderr).toContain(
+        `warn: fetching pnpm registry "work" packages from http://127.0.0.1:${verdaccio.port}/; add it to bunfig.toml or .npmrc if it needs authentication`,
+      );
+      expect(named.stderr).not.toContain("hunter2secret");
+      expect(await bunLockOf(namedDir)).toContain(
+        `"no-deps@1.0.1", "http://127.0.0.1:${verdaccio.port}/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`,
+      );
+      expect(named.exitCode).toBe(0);
     });
 
     test("namedRegistries entry pointing at another registry is used for the tarballs", async () => {

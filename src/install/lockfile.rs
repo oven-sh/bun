@@ -1631,7 +1631,7 @@ impl Lockfile {
                         if url.is_empty()
                             || bun_lock::url_is_under_registry(
                                 url,
-                                &crate::yarn_berry::registry_without_auth(scope.url.href()),
+                                &bun_lock::registry_without_auth(scope.url.href()),
                             )
                             || url == pkg.package.tarball_url.slice(&manifest.string_buf)
                         {

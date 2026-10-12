@@ -38,9 +38,9 @@ function chunkReachedClient(): Promise<void> {
 
 // Set by the variants that fail after the status line but before any body byte
 // (pending-error-after-headers, proxied-fetch-after-status) so they only error
-// once the status line has provably reached the client socket. (uWS terminates
-// the header block only with the first body byte, so a blank line never
-// arrives for these variants.) The forced close that follows sends a RST, and
+// once the status line has provably reached the client socket. (The server
+// sends the whole header section for a body that has no bytes yet, so the
+// status line arrives with it.) The forced close that follows sends a RST, and
 // a RST can discard data the peer has not read yet (Windows always does), so
 // the error must not race the client's read.
 let statusLineReceivedResolve: (() => void) | undefined;

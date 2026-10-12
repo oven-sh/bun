@@ -8,7 +8,7 @@
 // labels.json has, in the same way, `file rule line:column+length "text" | ..` for each report for which oxlint marks more than one place or says something there.
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { labelsOf, projects } from "./projects.ts";
@@ -66,6 +66,10 @@ for (const project of projects) {
     for (const [path, text] of Object.entries({ ".oxlintrc.json": JSON.stringify(project.config), ...tsconfig, ...project.files })) {
       mkdirSync(dirname(join(cwd, path)), { recursive: true });
       writeFileSync(join(cwd, path), text);
+    }
+    for (const [path, target] of Object.entries(project.links ?? {})) {
+      mkdirSync(dirname(join(cwd, path)), { recursive: true });
+      symlinkSync(join(cwd, target), join(cwd, path), "junction");
     }
     if (oxlint) {
       const { reports, labels } = run(oxlint, typed, cwd);

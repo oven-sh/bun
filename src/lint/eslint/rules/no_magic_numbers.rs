@@ -303,8 +303,17 @@ impl Checker {
                 None => return,
             },
         };
+        let is_oxlint = cx.language().is_oxlint;
         let (full, sign, value, parent) = match parent.as_expr().map(|it| (it, it.unary_op())) {
+            // For oxc the operand is the parentheses.
+            Some(_) if is_oxlint && e.is_parenthesized() => (e, None, value, parent),
             Some((full, Some(UnOp::Minus))) => (full, Some(b'-'), value.negated(), full.parent()),
+            // oxlint points at `void 0`, `+1` and `~1` too, and prints the number alone.
+            Some((full, Some(UnOp::Plus | UnOp::BitNot | UnOp::Not | UnOp::Typeof | UnOp::Void | UnOp::Delete)))
+                if is_oxlint =>
+            {
+                (full, None, value, full.parent())
+            }
             Some((full, Some(UnOp::Plus))) => (full, Some(b'+'), value, full.parent()),
             _ => (e, None, value, parent),
         };

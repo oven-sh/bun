@@ -83,6 +83,7 @@ const unlisted: Files = {
   "case.jsx": memo("Foo, bar", "Foo, bar", ""),
   "names.jsx": memo("_a, $a, a1, a10, a9, A, a, B, b, é, e, f, z", "z, f, é, e, b, B, a, A, a9, a10, a1, $a, _a", ""),
   "number.jsx": memo("x", "x.z, x[10], x[9], x.B, x.b, x.a, x.A, x.$d, x._c", ""),
+  "paths.jsx": memo("x", "x.z, x.B, x.b, x.a, x.A, x.$d, x._c, x.a9, x.a10, x.a1, x.é, x.e, x.f", ""),
   "some.jsx": memo("Zed, alpha, Beta, gamma", "gamma, Zed, alpha, Beta", "gamma, Beta"),
 };
 const missingIn = (text: string) => Array.from(text.matchAll(/Missing dependency `([^`]+)`/g), it => it[1]);
@@ -369,9 +370,17 @@ ${chain}
         `${it.labels[0].span.line}:${it.labels[0].span.column}`,
         ...missingIn(it.labels.map(label => label.label).join("\n")),
       ]);
-    expect({ case: labels("case.jsx"), names: labels("names.jsx"), some: labels("some.jsx") }).toEqual({
+    expect({
+      case: labels("case.jsx"),
+      names: labels("names.jsx"),
+      paths: labels("paths.jsx"),
+      some: labels("some.jsx"),
+    }).toEqual({
       case: [["4:43", "Foo", "bar"]],
       names: [["4:79", "$a", "A", "B", "_a", "a", "a1", "a10", "a9", "b", "e", "f", "z", "é"]],
+      paths: [
+        ["4:105", "x.$d", "x.A", "x.B", "x._c", "x.a", "x.a1", "x.a10", "x.a9", "x.b", "x.e", "x.f", "x.z", "x.é"],
+      ],
       some: [["4:58", "Zed", "alpha"]],
     });
     expect(exit).toBe(1);
@@ -494,6 +503,24 @@ describe.concurrent(
         "case.jsx": [["4:37-4:40", "bar", "Foo"]],
         "names.jsx": [["4:73-4:75", "_a", "$a", "a", "A", "a1", "a10", "a9", "b", "B", "e", "é", "f", "z"]],
         "number.jsx": [["4:37-4:38", "x"]],
+        "paths.jsx": [
+          [
+            "4:63-4:67",
+            "x._c",
+            "x.$d",
+            "x.a",
+            "x.A",
+            "x.a1",
+            "x.a10",
+            "x.a9",
+            "x.b",
+            "x.B",
+            "x.e",
+            "x.é",
+            "x.f",
+            "x.z",
+          ],
+        ],
         "some.jsx": [["4:44-4:49", "alpha", "Zed"]],
       });
       expect(exitCode).toBe(1);

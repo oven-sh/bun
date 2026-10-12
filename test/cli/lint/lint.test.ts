@@ -2025,7 +2025,15 @@ describe.concurrent("bun lint", () => {
             for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
           }
           const names = some.map(it => it.name);
-          const { raw } = await lint(files, ["-f", "json"]);
+          const link = (dir: string) => {
+            for (const { name, links } of some) {
+              for (const [path, target] of Object.entries(links ?? {})) {
+                mkdirSync(dirname(join(dir, name, path)), { recursive: true });
+                symlinkSync(join(dir, name, target), join(dir, name, path), "junction");
+              }
+            }
+          };
+          const { raw } = await lint(files, ["-f", "json"], { before: link });
           expect(foundExactly(raw, names)).toEqual(expected(names));
           expect(marked(raw, names)).toEqual(expectedMarks(names));
         },

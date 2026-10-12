@@ -7,6 +7,8 @@ export interface Project {
   files: Record<string, string>;
   /** It is linted with `--type-aware`. oxlint finds tsgolint through OXLINT_TSGOLINT_PATH. */
   typed?: boolean;
+  /** Links to directories: by the path of the link, where it leads, both from the directory of the project. */
+  links?: Record<string, string>;
 }
 
 type Label = { label?: string; span: { line: number; column: number; length: number } };
@@ -603,6 +605,230 @@ const codeOfPackages = [false, true].map((withAtTypes): Project => {
     files,
   };
 });
+
+// Each file that can be meant exports a name of its own: the names that import/namespace misses tell which of them is read.
+const exporting = (name: string) => `export const ${name} = 1;\n`;
+const declaring = "export declare const types: number;\n";
+const reading = (specifier: string) =>
+  lines(
+    `import * as all from ${JSON.stringify(specifier)};`,
+    "export default [all.code, all.types, all.other, all.local, all.upper];",
+  );
+/** `a.ts` reads the first of `specifiers`, `b.ts` the second. */
+const readers = (specifiers: string[], directory = "") =>
+  Object.fromEntries(
+    specifiers.map((it, index) => [`${directory}${String.fromCharCode(97 + index)}.ts`, reading(it)] as const),
+  );
+const whatIsRead = (name: string, about: string, files: Record<string, string | object>, links?: Project["links"]) => ({
+  name: `import/${name}`,
+  about,
+  config: rules(["import"], { "import/namespace": "warn", "import/no-cycle": "warn" }),
+  files: Object.fromEntries(
+    Object.entries(files).map(([path, text]) => [path, typeof text === "string" ? text : JSON.stringify(text)]),
+  ),
+  links,
+});
+const asNodeResolves: Project[] = [
+  whatIsRead("paths-lead-to-code", "AsRequire::as_import: what `paths` name is a file or a directory for Node.js", {
+    "tsconfig.json": {
+      compilerOptions: {
+        paths: {
+          "at-types": ["./node_modules/@types/at-types"],
+          "at-types-file": ["./node_modules/@types/at-types/index.d.ts"],
+          "file-of-package": ["./node_modules/pkg/dist/other.js"],
+          pkg: ["./node_modules/pkg/dist/other.js"],
+          "directory-of-package": ["./node_modules/pkg/compat"],
+          vendor: ["./vendor"],
+          missing: ["./none"],
+          "@/*": ["./src/*"],
+          "*": ["./typings/*"],
+        },
+      },
+    },
+    "node_modules/@types/at-types/index.d.ts": declaring,
+    "node_modules/at-types/index.js": exporting("code"),
+    "node_modules/at-types-file/index.js": exporting("code"),
+    "node_modules/pkg/index.js": exporting("code"),
+    "node_modules/pkg/dist/other.js": exporting("other"),
+    "node_modules/pkg/dist/other.d.ts": declaring,
+    "node_modules/pkg/compat/package.json": { main: "cjs.js", module: "esm.js", types: "src/index.d.ts" },
+    "node_modules/pkg/compat/cjs.js": "module.exports = {};\n",
+    "node_modules/pkg/compat/esm.js": exporting("other"),
+    "node_modules/pkg/compat/src/index.d.ts": declaring,
+    "node_modules/missing/package.json": { main: "index.js", types: "types/index.d.ts" },
+    "node_modules/missing/index.js": exporting("code"),
+    "node_modules/missing/types/index.d.ts": declaring,
+    "node_modules/typed/index.js": exporting("code"),
+    "node_modules/typed-file/index.js": exporting("code"),
+    "typings/typed/index.d.ts": declaring,
+    "typings/typed-file.d.ts": declaring,
+    "vendor/package.json": { main: "main.js", module: "module.js", types: "types.d.ts" },
+    "vendor/main.js": exporting("other"),
+    "vendor/module.js": exporting("local"),
+    "vendor/types.d.ts": declaring,
+    "src/both.js": exporting("code"),
+    "src/both.ts": exporting("local"),
+    "src/both.d.ts": declaring,
+    "src/only.d.ts": declaring,
+    "src/view.tsx": exporting("local"),
+    ...readers([
+      "at-types",
+      "at-types-file",
+      "file-of-package",
+      "pkg",
+      "directory-of-package",
+      "vendor",
+      "missing",
+      "typed",
+      "typed-file",
+      "@/both",
+      "@/both.js",
+      "@/both.ts",
+      "@/both.d.ts",
+      "@/only",
+      "@/only.js",
+      "@/only.d.ts",
+      "@/view",
+      "@/view.js",
+    ]),
+  }),
+  whatIsRead("base-url-before-packages", "AsRequire::base_url", {
+    "tsconfig.json": { compilerOptions: { baseUrl: "./src", paths: { "p/*": ["./lib/*"] } } },
+    "src/lib.ts": exporting("local"),
+    "src/lib/in.ts": exporting("other"),
+    "src/directory/package.json": { main: "main.js", types: "types.d.ts" },
+    "src/directory/main.js": exporting("local"),
+    "src/directory/types.d.ts": declaring,
+    "src/declared.d.ts": declaring,
+    "node_modules/lib/index.js": exporting("code"),
+    "node_modules/directory/index.js": exporting("code"),
+    "node_modules/declared/index.js": exporting("code"),
+    "node_modules/pkg/index.js": exporting("code"),
+    "node_modules/@types/pkg/index.d.ts": declaring,
+    ...readers(["lib", "p/in", "lib/in", "directory", "declared", "pkg"]),
+  }),
+  whatIsRead(
+    "packages-of-a-workspace",
+    "a link in node_modules leads out of it: there too the code is read, and a cycle goes through it",
+    {
+      "packages/not-built/package.json": { main: "dist/index.js", types: "src/index.ts" },
+      "packages/not-built/src/index.ts": exporting("local"),
+      "packages/source/package.json": { main: "src/index.ts" },
+      "packages/source/src/index.ts": exporting("local"),
+      "packages/built/package.json": { exports: { ".": { types: "./src/index.ts", import: "./dist/index.js" } } },
+      "packages/built/src/index.ts": exporting("local"),
+      "packages/built/dist/index.js": exporting("code"),
+      "packages/declared/package.json": { main: "dist/index.js", types: "types/index.d.ts" },
+      "packages/declared/dist/index.js": exporting("code"),
+      "packages/declared/types/index.d.ts": declaring,
+      "packages/cycle/package.json": { main: "lib/index.ts", types: "types/index.d.ts" },
+      "packages/cycle/lib/index.ts": `import { a } from "../../../app/cycle";\nexport const b = a;\n`,
+      "packages/cycle/types/index.d.ts": declaring,
+      "app/cycle.ts": `import { b } from "cycle";\nexport const a = b;\n`,
+      ...readers(["not-built", "source", "built", "declared"], "app/"),
+    },
+    Object.fromEntries(
+      ["not-built", "source", "built", "declared", "cycle"].map(it => [`node_modules/${it}`, `packages/${it}`]),
+    ),
+  ),
+  whatIsRead("imports-and-own-name", "AsRequire::as_import: `imports`, and the `exports` of the package that the file is in", {
+    "tsconfig.json": { compilerOptions: { outDir: "./dist", rootDir: "./src" } },
+    "package.json": {
+      name: "own",
+      imports: {
+        "#elsewhere": { types: "./types/lib.d.ts", default: "./lib/lib.js" },
+        "#beside": { types: "./lib/beside.d.ts", default: "./lib/beside.js" },
+        "#condition": { require: "./lib/cjs.js", import: "./lib/lib.js" },
+        "#package": "pkg",
+        "#built": "./dist/built.js",
+        "#not-built": "./dist/not-built.js",
+        "#source/*": "./src/*.ts",
+      },
+      exports: {
+        ".": { types: "./types/lib.d.ts", import: "./lib/lib.js" },
+        "./built": "./dist/built.js",
+        "./not-built": "./dist/not-built.js",
+      },
+    },
+    "lib/lib.js": exporting("local"),
+    "lib/cjs.js": "module.exports = {};\n",
+    "lib/beside.js": exporting("local"),
+    "lib/beside.d.ts": declaring,
+    "types/lib.d.ts": declaring,
+    "src/built.ts": exporting("other"),
+    "src/not-built.ts": exporting("other"),
+    "dist/built.js": exporting("code"),
+    "node_modules/pkg/package.json": {
+      main: "index.js",
+      types: "types/index.d.ts",
+      imports: { "#inner": { types: "./types/inner.d.ts", default: "./inner.js" }, "#other": "other" },
+    },
+    "node_modules/pkg/index.js": `export * from "#inner";\nexport * from "#other";\n`,
+    "node_modules/pkg/inner.js": exporting("code"),
+    "node_modules/pkg/types/index.d.ts": declaring,
+    "node_modules/pkg/types/inner.d.ts": declaring,
+    "node_modules/other/package.json": { main: "lib.js", types: "types/lib.d.ts" },
+    "node_modules/other/lib.js": exporting("other"),
+    "node_modules/other/types/lib.d.ts": declaring,
+    "node_modules/@types/other/index.d.ts": declaring,
+    ...readers(
+      [
+        "#elsewhere",
+        "#beside",
+        "#condition",
+        "#package",
+        "#built",
+        "#not-built",
+        "#source/built",
+        "#none",
+        "own",
+        "own/built",
+        "own/not-built",
+        "own/lib/lib.js",
+      ],
+      "src/",
+    ),
+  }),
+  whatIsRead("packages-further-up", "a package without an entry is passed over, one whose `exports` do not have the name ends the search", {
+    ...Object.fromEntries(
+      ["at-types", "no-entry", "types-only", "not-exported", "target-missing"].map(it => [
+        `node_modules/${it}/index.js`,
+        exporting("upper"),
+      ]),
+    ),
+    "in/node_modules/@types/at-types/index.d.ts": declaring,
+    "in/node_modules/no-entry/package.json": { main: "none.js" },
+    "in/node_modules/types-only/package.json": { types: "index.d.ts" },
+    "in/node_modules/types-only/index.d.ts": declaring,
+    "in/node_modules/not-exported/package.json": { exports: { "./other": "./other.js" } },
+    "in/node_modules/not-exported/other.js": exporting("other"),
+    "in/node_modules/target-missing/package.json": { exports: "./none.js" },
+    ...readers(["at-types", "no-entry", "types-only", "not-exported", "target-missing"], "in/"),
+  }),
+  whatIsRead("directories-with-a-manifest", "AsRequire::as_import: a relative directory has an entry as a package has, but no `exports`", {
+    "fields/package.json": { main: "main.js", module: "module.js", types: "types.d.ts" },
+    "fields/main.js": exporting("other"),
+    "fields/module.js": exporting("code"),
+    "fields/types.d.ts": declaring,
+    "types-only/package.json": { types: "types.d.ts" },
+    "types-only/types.d.ts": declaring,
+    "types-only/index.ts": exporting("local"),
+    "main-missing/package.json": { main: "none.js" },
+    "main-missing/index.js": exporting("code"),
+    "exports/package.json": { exports: "./exported.js", main: "main.js" },
+    "exports/exported.js": exporting("other"),
+    "exports/main.js": exporting("code"),
+    "nested/package.json": { main: "./sub" },
+    "nested/sub/package.json": { main: "other.js" },
+    "nested/sub/other.js": exporting("other"),
+    "nested/sub/index.js": exporting("code"),
+    "beside.js": exporting("code"),
+    "beside/package.json": { main: "main.js" },
+    "beside/main.js": exporting("other"),
+    ...readers(["./fields", "./types-only", "./main-missing", "./exports", "./nested", "./beside", "./beside/"]),
+    ...readers([".", "./", "../fields"], "fields/"),
+  }),
+];
 
 export const projects: Project[] = [
   {
@@ -11597,6 +11823,7 @@ export const projects: Project[] = [
   },
   ...whichFilesATsconfigIsFor,
   ...codeOfPackages,
+  ...asNodeResolves,
   {
     name: "types/an-alias-is-a-deferred-reference",
     about: "is_unsafe_assignment: is_looked_into",

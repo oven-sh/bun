@@ -1751,6 +1751,47 @@ describe("maybeReadMore is a no-op while a read is in flight (nodejs/node#60454)
   });
 });
 
+describe("endReadable() queues one tick for 'end' (nodejs/node#65310)", () => {
+  it("read() calls at the EOF do not queue a tick each", async () => {
+    const r = new Readable({ read() {} });
+    r.push(null);
+    const { nextTick } = process;
+    let queued = 0;
+    process.nextTick = function (...args) {
+      queued++;
+      return nextTick.apply(process, args);
+    };
+    try {
+      r.read();
+      r.read();
+      r.read();
+    } finally {
+      process.nextTick = nextTick;
+    }
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers();
+    r.on("end", onEnd);
+    await ended;
+    expect(queued).toBe(1);
+  });
+
+  it("an unshift() behind the EOF does not lose 'end'", async () => {
+    const r = new Readable({ read() {} });
+    r.push(null);
+    // This queues the tick for 'end'. It finds the chunk of the unshift() and emits nothing.
+    r.read();
+    r.unshift("x");
+    await new Promise(resolve => setImmediate(resolve));
+    const endedBeforeRead = r.readableEnded;
+    const chunk = String(r.read());
+    await new Promise(resolve => setImmediate(resolve));
+    expect({ endedBeforeRead, chunk, ended: r.readableEnded }).toEqual({
+      endedBeforeRead: false,
+      chunk: "x",
+      ended: true,
+    });
+  });
+});
+
 describe("Duplex.from({ readable, writable }) destroy propagation (nodejs/node#62824)", () => {
   it("destroys the writable side when the readable side errors", async () => {
     const r = new Readable({ read() {} });

@@ -64,6 +64,7 @@ const kFlowing = 1 << 24;
 const kHasPaused = 1 << 25;
 const kPaused = 1 << 26;
 const kDataListening = 1 << 27;
+const kEndScheduled = 1 << 28;
 
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
@@ -1656,14 +1657,17 @@ function endReadable(stream) {
   const state = stream._readableState;
 
   $debug("endReadable");
-  if ((state[kState] & kEndEmitted) === 0) {
-    state[kState] |= kEnded;
+  if ((state[kState] & (kEndEmitted | kEndScheduled)) === 0) {
+    state[kState] |= kEnded | kEndScheduled;
     process.nextTick(endReadableNT, state, stream);
   }
 }
 
 function endReadableNT(state, stream) {
   $debug("endReadableNT");
+
+  // endReadable() can schedule again: 'end' is skipped below after an unshift(), and undestroy() keeps this flag.
+  state[kState] &= ~kEndScheduled;
 
   // Check that we didn't get one last unshift.
   if ((state[kState] & (kErrored | kCloseEmitted | kEndEmitted)) === 0 && state.length === 0) {

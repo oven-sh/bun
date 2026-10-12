@@ -64,8 +64,13 @@ pub fn acquire() -> NonNull<ThreadPoolLib::ThreadPool> {
         unsafe {
             (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
                 max_threads: u32::from(bun_core::get_thread_count().clamp(2, 4)),
-                // Use a much smaller stack size for the IO thread pool
-                stack_size: 512 * 1024,
+                // Use a much smaller stack size for the IO thread pool. On Windows the size is a
+                // reservation, committed as it is touched, and one `PathBuffer` is 98 KB.
+                stack_size: if cfg!(windows) {
+                    2 * 1024 * 1024
+                } else {
+                    512 * 1024
+                },
             }));
         }
         // 2 means initialized and referenced by one `ThreadPool`.

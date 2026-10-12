@@ -95,6 +95,17 @@ fn get_code_path_start_scope<'a>(scope: Scope<'a>, code_path_start_scopes: &FxHa
     scope.chain().find(|it| code_path_start_scopes.contains(it))
 }
 
+/// Whether `reference`, which is in the code path that starts with `scope` by its own scope, is in the decorator of a parameter
+/// of a function in it: that is in the scope around the function and in the code path of the function.
+fn is_in_decorator_of_parameter<'a>(reference: Reference<'a>, scope: Scope<'a>) -> bool {
+    let is_part_of_expression = |it: &Node<'a>| matches!(it, Node::Expr(_) | Node::Prop(_));
+    !scope.node().file().is_javascript()
+        && matches!(
+            reference.node().ancestors().find(|it| !is_part_of_expression(it)),
+            Some(Node::Param(param)) if param.func().and_then(Func::scope) != Some(scope)
+        )
+}
+
 /// Whether a variable of the scope of a module is exported, other than by `export default`.
 fn is_exported(variable: Symbol<'_>) -> bool {
     variable.declarations().any(|declaration| match declaration {
@@ -670,7 +681,9 @@ impl<'a> Uses<'a> {
                 }
             }
             if next.is_read() {
-                return Flow::Read;
+                // What is in a type is not evaluated.
+                let is_in_type = next.symbol().is_some_and(|it| is_type_only_reference(it, next));
+                return if is_in_type { Flow::Unknown } else { Flow::Read };
             }
             // `x = f(x)`
             let evaluated_first = written_by(next, &mut self.writers).and_then(|it| it.expression);
@@ -1448,7 +1461,7 @@ impl NoUselessAssignment {
             for reference in variable.references().filter(|it| it.is_read()) {
                 // It can be called at any time.
                 let start = get_code_path_start_scope(reference.scope(), &cx.state.code_path_start_scopes);
-                if start != Some(target.scope) {
+                if start != Some(target.scope) || is_in_decorator_of_parameter(reference, target.scope) {
                     continue 'variables;
                 }
                 read_references.push(reference.span());

@@ -72,13 +72,16 @@
               "/runtime/index",
               "/runtime/watch-mode",
               "/runtime/check",
-              "/runtime/lint",
-              "/runtime/format",
               "/runtime/debugger",
               "/runtime/repl",
               "/runtime/bunfig",
               "/runtime/code-generation-from-strings"
             ]
+          },
+          {
+            "group": "Linter & Formatter",
+            "icon": "sparkles",
+            "pages": ["/runtime/lint", "/runtime/format", "/format/prettier", "/format/oxfmt"]
           },
           {
             "group": "File & Module System",

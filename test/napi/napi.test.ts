@@ -417,6 +417,49 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("napi_get_version / node_api_create_external_string_*", () => {
+    async function externalStringLifetime(mode: string, route?: string) {
+      await using child = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/external-string-lifetime-fixture.mjs"), mode, ...(route ? [route] : [])],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: route ? `ok ${mode} ${route}` : "latin1=4096 utf16=4096 received=0 ordinary=0 unrelated=0",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+
+    describe.each(["terminate", "exit"])("external string lifetime on Worker %s", mode => {
+      it.each([
+        "retained",
+        "latin1",
+        "utf16",
+        "array",
+        "object",
+        "nested",
+        "map",
+        "keys",
+        "structured",
+        "transfer",
+        "port",
+        "broadcast",
+        "object-url",
+      ])("finalizes storage on the creating thread after env cleanup: %s", async route => {
+        await externalStringLifetime(mode, route);
+      });
+    });
+
+    it("external string lifetime before env cleanup", async () => {
+      await externalStringLifetime("exit", "gc-before-exit");
+    });
+
+    it("external string lifetime copies only addon-owned storage across threads", async () => {
+      await externalStringLifetime("copy-cost");
+    });
+
     it("reports Node-API v10 and accepts zero-length external strings", async () => {
       const result = await checkSameOutput("test_napi_v10_surface", []);
       expect(result).toContain("napi_get_version >= 10 = true");

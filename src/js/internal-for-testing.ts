@@ -896,6 +896,12 @@ export const aotNameClass: (text: string) => string | undefined = $newCppFunctio
   1,
 );
 
+export const BunString_crossThreadCopyBytes: (value: string, unrelatedExternal?: boolean) => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_BunString_crossThreadCopyBytes",
+  2,
+);
+
 export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_threadIsolatedCopyRefCountDelta",

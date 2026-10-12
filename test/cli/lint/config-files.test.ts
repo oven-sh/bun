@@ -4081,7 +4081,9 @@ describe.concurrent("the deprecated rules about layout", () => {
       ]);
       expect(notes(noted.stderr)).toEqual([note(3, "indent, quotes, semi")]);
       // But for `usedDeprecatedRules`.
-      const report = (stdout: string) => stdout.replace(/"usedDeprecatedRules":\[.*?\]\}\]/g, "");
+      // But for the two temporary directories too: in JSON a path of Windows is escaped, so it is not replaced.
+      const report = (stdout: string) =>
+        stdout.replace(/"usedDeprecatedRules":\[.*?\]\}\]/g, "").replace(/bun-lint-config-files_\w+/g, "");
       expect(report(noted.stdout)).toBe(report(plain.stdout));
     },
   );
@@ -4393,7 +4395,8 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
         lint({ ...files, ...config([]) }, [flag, "."]),
       ]);
       expect(noted.stderr.split("\n").filter(it => it.startsWith("note: "))).toEqual([ofCategories("vue")]);
-      const timeless = (stdout: string) => stdout.replace(/"start_time": [\d.e-]+|\d+(\.\d+)?m?s\b/g, "");
+      const timeless = (stdout: string) =>
+        stdout.replace(/"start_time": [\d.e-]+|\d+(\.\d+)?m?s\b|bun-lint-config-files_\w+/g, "");
       expect(timeless(noted.stdout)).toBe(timeless(plain.stdout));
       expect([noted.exitCode, plain.exitCode]).toEqual([1, 1]);
     },

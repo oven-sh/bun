@@ -2551,7 +2551,7 @@ describe.concurrent("the plugin bun:test", () => {
   const only = `import { test } from "bun:test";\ntest.only("a", () => {});\n`;
   /** The lines of `unix` that are about a rule of the plugin: the line in the file, and what is in the brackets. */
   const unix = (stdout: string) =>
-    [...stdout.matchAll(/^[^:\n]*:(\d+):\d+: .* \[(.*bun:test.*)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
+    [...stdout.matchAll(/^.*?:(\d+):\d+: .* \[(.*bun:test.*)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
 
   test("without a configuration file some rules are on", async () => {
     const code = `import { describe, expect, test } from "bun:test";

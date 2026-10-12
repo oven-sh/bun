@@ -312,10 +312,12 @@ impl Rule for NoUselessEscape {
         if !strings::contains_char(file.text(), b'`') {
             return on;
         }
-        on.types(&[TypeTag::StringLit, TypeTag::Template])
-            .props()
-            .members()
-            .pats(&[PatTag::Object])
+        // oxlint does not look at a type that is a template with substitutions.
+        let on = match file.language().is_oxlint {
+            true => on.types(&[TypeTag::StringLit]),
+            false => on.types(&[TypeTag::StringLit, TypeTag::Template]),
+        };
+        on.props().members().pats(&[PatTag::Object])
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Backslashes<'a>> {

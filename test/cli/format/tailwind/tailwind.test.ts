@@ -214,7 +214,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       "two.jsx": `<a className="p-4 content-['caf\xE8'] flex content-['caf\xE9'] m-2"   />;\n`,
       "lone.html": `<a class="p-4 content-['\x80'] flex m-2"   >x</a>\n`,
       "cut.css": "a {\n  @apply p-4 content-['\xE2\x82'] flex   m-2;\n}\n",
-      "nul.jsx": `<a className="p-4 content-['\0'] flex m-2"   />;\n`,
+      "zero.jsx": `<a className="p-4 content-['\0'] flex m-2"   />;\n`,
       "outside.jsx": `// caf\xE9\n<a className="p-4 flex m-2" title="caf\xE9"   />;\n`,
     };
     const expected = {
@@ -222,7 +222,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       "two.jsx": `<a className="content-['caf\xE8'] content-['caf\xE9'] m-2 flex p-4" />;\n`,
       "lone.html": `<a class="content-['\x80'] m-2 flex p-4">x</a>\n`,
       "cut.css": "a {\n  @apply content-['\xE2\x82'] m-2 flex p-4;\n}\n",
-      "nul.jsx": `<a className="content-['\0'] m-2 flex p-4" />;\n`,
+      "zero.jsx": `<a className="content-['\0'] m-2 flex p-4" />;\n`,
       "outside.jsx": `// caf\xE9\n<a className="m-2 flex p-4" title="caf\xE9" />;\n`,
     };
     using dir = tempDir("bun-format-tailwind", {

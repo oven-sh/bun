@@ -430,7 +430,12 @@ impl Rule for NoMisleadingCharacterClass {
                 matches!(flags_node.tag(), ExprTag::String | ExprTag::Template)
                     .then(|| fixer.insert_before(Span::empty(flags_node.span().end - 1), "u"))
             };
-            self.verify(pattern_node, &pattern, &flags, unicode_fixer, cx);
+            // oxlint finds the characters in what is written under an `as`.
+            let written = match file.language().is_oxlint {
+                true => pattern_node.skip_type_wrappers(),
+                false => pattern_node,
+            };
+            self.verify(written, &pattern, &flags, unicode_fixer, cx);
         }
 
         for e in std::mem::take(&mut cx.state) {

@@ -2372,23 +2372,24 @@ function _writeHead(statusCode, reason, obj, response) {
 
 // The headers of a writeHead() on a response with no header set before, which Node renders as given (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L465-L468): what flattenRawHead() returns, a [name, value, ...] list and then its NodeHTTPRawHead bits.
 const kRawHead = Symbol("kRawHead");
-// What flattenRawHead() reports of one call: the NodeHTTPRawHead bits, and the number of the last Content-Length line.
-const rawHeadOut = new Float64Array(2);
+// What flattenRawHead() reports of one call: the NodeHTTPRawHead bits, and the number of the last Content-Length line. Made at the first call: the first Float64Array of a process creates that class.
+let rawHeadOut;
 
 function setRawHead(response, headers) {
   const hasHandle = !!response[kHandle];
   if (!hasHandle && response._header) throw $ERR_HTTP_HEADERS_SENT("write");
   const contentLength = response._contentLength;
+  const out = (rawHeadOut ??= new Float64Array(2));
   let rawHead;
   let facts = 0;
-  rawHeadOut[0] = 0;
+  out[0] = 0;
   try {
     try {
-      rawHead = flattenRawHead(headers, response._isLenientHeaderValidation(), response[kUniqueHeaders], rawHeadOut);
+      rawHead = flattenRawHead(headers, response._isLenientHeaderValidation(), response[kUniqueHeaders], out);
     } finally {
       // Node's matchHeader(), for each line that the walk reached. `| 0` makes the bits an int32: a `&` of the double that a Float64Array gives is a slow path below the DFG.
-      facts = rawHeadOut[0] | 0;
-      if (facts !== 0) matchRawHead(response, facts, rawHeadOut[1]);
+      facts = out[0] | 0;
+      if (facts !== 0) matchRawHead(response, facts, out[1]);
     }
     if (!hasHandle) {
       // Node's _storeHeader renders the lines. A throw here comes before writeHead() marks the headers as sent.

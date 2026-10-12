@@ -935,6 +935,25 @@ describe("writeHead(status, headers) with no header set before reads the argumen
     );
   });
 
+  test("a value whose toString() calls writeHead() on another response: each one keeps what its own headers name", async () => {
+    const { headers, body, result } = await respond(res => {
+      const other = new http.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 } as any);
+      const value = {
+        toString() {
+          if (!other.headersSent) other.writeHead(200, { "Connection": "close", "Content-Length": "7" });
+          return "a";
+        },
+      };
+      res.writeHead(200, { "Content-Length": "2", "X-A": value as any });
+      res.end("ok");
+      return { own: (res as any)._contentLength, other: [(other as any)._contentLength, (other as any)._last] };
+    });
+    assert.deepStrictEqual(
+      { headers, body, result },
+      { headers: ["Content-Length: 2", "X-A: a"], body: "ok", result: { own: 2, other: [7, true] } },
+    );
+  });
+
   test("a value whose toString() ends the response: writeHead() returns", async () => {
     const { headers, body, result } = await respond(res => {
       let ended = false;

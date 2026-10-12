@@ -1133,9 +1133,11 @@ impl WebWorker {
     }
 
     /// Report the VM log (entry resolution / load errors) to the parent as the
-    /// worker's 'error' event. Nothing is reported once the worker is being
-    /// stopped: the parent asked for exactly that, and building the error
-    /// object would run into the pending termination.
+    /// worker's 'error' event, when the `errors` counter of the log is above
+    /// zero. A log that holds only warnings (from a tsconfig.json beside the
+    /// entry, for example) is not an error of the worker. Nothing is reported
+    /// once the worker is being stopped: the parent asked for exactly that,
+    /// and building the error object would run into the pending termination.
     fn flush_logs(&self, vm: &VirtualMachine) {
         jsc::mark_binding();
         let vm_log = vm.log_ref().unwrap();
@@ -1143,13 +1145,16 @@ impl WebWorker {
             return;
         }
         let global = vm.global();
-        let result: jsc::JsResult<(JSValue, BunString)> = (|| {
-            let err = vm_log.to_js(global, format_args!("Error in worker"))?;
+        let result: jsc::JsResult<Option<(JSValue, BunString)>> = (|| {
+            let Some(err) = vm_log.errors_to_js(global, format_args!("Error in worker"))? else {
+                return Ok(None);
+            };
             let str = err.to_bun_string(global)?;
-            Ok((err, str))
+            Ok(Some((err, str)))
         })();
         let (err, str) = match result {
-            Ok(pair) => pair,
+            Ok(Some(pair)) => pair,
+            Ok(None) => return,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(err) => {
                 // The worker's start sequence is its outermost frame: building the error from the

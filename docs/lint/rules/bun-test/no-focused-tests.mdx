@@ -12,6 +12,7 @@ This rule is on by default in files that import from `"bun:test"`.
 Reported:
 
 {/* bad */}
+
 ```ts
 import { expect, test } from "bun:test";
 
@@ -23,6 +24,7 @@ test.only("adds", () => {
 Not reported:
 
 {/* good */}
+
 ```ts
 import { expect, test } from "bun:test";
 

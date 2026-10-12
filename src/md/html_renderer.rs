@@ -486,10 +486,7 @@ impl<'src> HtmlRenderer<'src> {
     /// Writes the bytes at the start of `txt` that are written as they are.
     /// Returns how many there are.
     fn write_url_safe_run(&mut self, txt: &[u8]) -> usize {
-        let len = txt
-            .iter()
-            .take_while(|&&byte| URL_SAFE.has(byte))
-            .count();
+        let len = txt.iter().take_while(|&&byte| URL_SAFE.has(byte)).count();
         if len > 0 {
             self.write(&txt[..len]);
         }

@@ -10,6 +10,7 @@ description: "Require `===` and `!==` instead of `==` and `!=`"
 Reported:
 
 {/* bad */}
+
 ```js
 if (count == 0) {
   reset();
@@ -19,6 +20,7 @@ if (count == 0) {
 Not reported:
 
 {/* good */}
+
 ```js
 if (count === 0) {
   reset();
@@ -32,16 +34,17 @@ if (count === 0) {
 eqeqeq = ["error", "smart"]
 ```
 
-| Option | What it does |
-| --- | --- |
-| `"always"` (default) | Report every `==` and `!=`. |
-| `"smart"` | Allow `==` when comparing with `null`, comparing two literals, or comparing the result of `typeof`. |
+| Option               | What it does                                                                                        |
+| -------------------- | --------------------------------------------------------------------------------------------------- |
+| `"always"` (default) | Report every `==` and `!=`.                                                                         |
+| `"smart"`            | Allow `==` when comparing with `null`, comparing two literals, or comparing the result of `typeof`. |
 
 With `"always"`, a second option decides what happens with `null`: `{ "null": "always" }` (default) reports `x == null`, `"ignore"` allows it, and `"never"` reports `x === null` instead.
 
 With `"smart"`, this is allowed, because `== null` is a common way to test for both `null` and `undefined`:
 
 {/* good {"options": ["smart"]} */}
+
 ```js
 if (value == null) {
   value = fallback;
@@ -51,6 +54,7 @@ if (value == null) {
 And this is still reported:
 
 {/* bad {"options": ["smart"]} */}
+
 ```js
 if (value == other) {
   merge(value, other);

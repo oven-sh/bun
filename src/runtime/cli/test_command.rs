@@ -1824,11 +1824,11 @@ impl TestCommand {
             });
         // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
         // and `exec()` never returns, so detaching to `'static` is sound.
-        let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
+        let path_ignore_patterns_view: Vec<bun_glob::Prepared<&'static [u8]>> = ctx
             .test_options
             .path_ignore_patterns
             .iter()
-            .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+            .map(|b| bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) }))
             .collect();
 
         // Keep an owned `Box` local — `exec()` never returns before process

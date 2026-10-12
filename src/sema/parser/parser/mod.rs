@@ -194,6 +194,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     pub(crate) cleared_in_types: u32,
     /// How many `await` and `yield` expressions have been made.
     pub(crate) suspensions: u32,
+    /// The private names that the classes declare.
+    pub(crate) declared_private_names: Vec<Atom>,
     pub(crate) has_top_level_await: bool,
     /// One of them can be nothing else: `await a`, `for await`, `await using`. Not `await (a)`, which calls `await` in a script.
     pub(crate) has_plain_top_level_await: bool,
@@ -336,9 +338,6 @@ pub(crate) fn run<'a>(
     f.comments = lx.comments;
     scratch.stacks = stacks;
     scratch.html_opens = lx.html_opens;
-    if lx.has_private_names {
-        f.rare_syntax |= rare::PRIVATE_NAME;
-    }
     scratch.has_only_ambiguous_awaits = has_top_level_await && !has_plain_top_level_await;
     if let Some(why) = refusal {
         scratch.recycled = Some(f);
@@ -424,6 +423,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
                 false => ctx::YIELD | ctx::AWAIT,
             },
             suspensions: 0,
+            declared_private_names: Vec::new(),
             has_top_level_await: false,
             has_plain_top_level_await: false,
             has_await_in_statement: false,
@@ -452,6 +452,10 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
         self.source_file();
         self.report_what_the_scanner_flagged();
+        let (scanned, declared) = (&self.lx.private_names, &self.declared_private_names);
+        if scanned.iter().any(|it| !declared.contains(it)) {
+            self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
+        }
         *file = self.f;
         Harvest {
             lx: self.lx,

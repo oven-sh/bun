@@ -828,13 +828,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         };
         self.next();
         let operand = self.simple_unary_expression();
-        if op == UnOp::Delete
-            && let Some(Expr {
-                kind: ExprKind::Ident(_),
-                ..
-            }) = self.f.exprs.get(operand.idx())
-        {
-            self.f.rare_syntax |= rare::DELETES_A_NAME;
+        if op == UnOp::Delete {
+            let is_private = |at: u32| self.lx.src.get(at as usize) == Some(&b'#');
+            match self.f.exprs.get(operand.idx()).map(|it| it.kind) {
+                Some(ExprKind::Ident(_)) => self.f.rare_syntax |= rare::DELETES_A_NAME,
+                Some(ExprKind::Dot { name_pos, .. }) if is_private(name_pos) => {
+                    self.f.rare_syntax |= rare::DELETES_A_NAME;
+                }
+                _ => {}
+            }
         }
         self.finish_expr(ExprKind::Unary { op, operand }, start)
     }

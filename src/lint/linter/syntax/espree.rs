@@ -527,12 +527,12 @@ pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> 
             ExprTag::NewTarget,
         ],
     };
-    // `a.#b` is one of a kind of which there are many.
-    let candidates =
-        (!file.is_javascript()).then(|| match file.has_rare_syntax(hir::rare::PRIVATE_NAME) {
-            true => Candidates::of(file),
-            false => Candidates::of_kinds(file, kinds),
-        });
+    // `a.#b` and `delete a` are of kinds of which there are many.
+    let asks_about_many = hir::rare::ODD_PRIVATE_NAME | hir::rare::DELETES_A_NAME;
+    let candidates = (!file.is_javascript()).then(|| match file.has_rare_syntax(asks_about_many) {
+        true => Candidates::of(file),
+        false => Candidates::of_kinds(file, kinds),
+    });
     let mut checks = checks_of_oxc(file, candidates.as_ref());
     checks.early_errors_of_oxc();
     checks.first.map(|it| it.1)
@@ -540,8 +540,16 @@ pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> 
 
 /// Names that are keywords where they are, `eval` and `arguments` where they are written to, in JavaScript. In TypeScript OXC lets
 /// them pass in some of what is only declared, which acorn's checks know nothing about.
+///
+/// A file in which `arguments` is the only such name is not looked at. Many read it, and it takes a look at every name to see that
+/// none writes to it.
 pub(super) fn keywords_as_names_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    if !file.is_javascript() || file.hir.keyword_identifier_positions.is_empty() {
+    let is_arguments = |&at: &u32| {
+        let text = file.text().get(at as usize..).unwrap_or_default();
+        text.starts_with(b"arguments")
+    };
+    let names = &file.hir.keyword_identifier_positions;
+    if !file.is_javascript() || names.iter().all(is_arguments) {
         return None;
     }
     let mut checks = checks_of_oxc(file, None);
@@ -1317,6 +1325,10 @@ impl<'a, 'c> Checks<'a, 'c> {
             }
         } else if name == known::let_ {
             let is_lexical = match node {
+                // oxc takes `catch (let)`.
+                Node::Pat(pat) if self.is_oxc && Declaration::Var(pat).is_catch_parameter() => {
+                    false
+                }
                 Node::Pat(pat) => (Node::Pat(pat).ancestors())
                     .find_map(|it| match it {
                         Node::VarDecl(it) => Some(it.var_kind() != VarKind::Var),

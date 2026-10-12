@@ -651,7 +651,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 flags.contains(Flags::ASYNC)
                     || before.iter().any(|it| it.kind == MemberKind::Constructor)
             }
-            (_, PropKey::Private(_)) => true,
+            (_, PropKey::Private(name)) => {
+                self.declared_private_names.push(name);
+                before.iter().any(|it| it.key == member.key)
+                    || self.lx.text_of(name) == b"#constructor"
+            }
             (_, PropKey::Name(name)) => name == known::constructor || name == known::prototype,
             _ => false,
         };

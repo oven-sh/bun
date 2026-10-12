@@ -209,6 +209,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let saved = self.enter_context(context, cleared);
         // Only a block whose `{` is put up with has none.
         let open_at = self.expect(T::OpenBrace).then_some(open);
+        if self.token() == T::String {
+            self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
+        }
         let list = self.statements_until_close_brace();
         self.context = saved;
         self.expect_matching((T::OpenBrace, T::CloseBrace), open_at);

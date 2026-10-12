@@ -642,13 +642,13 @@ impl<S: RuleSet> Linter<S> {
         };
         // Read where comments are applied.
         let mut rules_to_ignore = Vec::new();
-        // To oxlint, what disables a rule that it does not run on the file is unused.
-        let ignores_what_is_filtered = !config.language.is_oxlint;
+        // A comment for a rule that was skipped isn't called unused. oxlint does call it unused.
+        let ignores_skipped_rules = !config.language.is_oxlint;
         if let Some(filter) = options.rule_filter {
             running.retain(|it| {
                 let id = it.ran().id();
                 let runs = it.severity == Severity::Off || filter(&id, it.severity);
-                if !runs && ignores_what_is_filtered {
+                if !runs && ignores_skipped_rules {
                     rules_to_ignore.push(id);
                 }
                 runs
@@ -656,7 +656,7 @@ impl<S: RuleSet> Linter<S> {
             running_js.retain(|it| {
                 let id = RuleId::Js(Arc::clone(&it.configured.rule));
                 let runs = filter(&id, it.severity);
-                if !runs && ignores_what_is_filtered {
+                if !runs && ignores_skipped_rules {
                     rules_to_ignore.push(id);
                 }
                 runs
@@ -675,12 +675,13 @@ impl<S: RuleSet> Linter<S> {
                 ..LintResult::default()
             };
         }
-        // Nor can what disables a rule that does not run for lack of types be called unused.
-        if file.types.is_none() && is_plain {
+        // Rules that need types are skipped when there are none.
+        let skips_typed_rules = file.types.is_none() && ignores_skipped_rules;
+        if skips_typed_rules && is_plain {
             if has_directives {
                 rules_to_ignore.extend(prepared.typed.iter().copied().map(RuleId::Known));
             }
-        } else if file.types.is_none() && !options.again.is_some_and(|it| it.had_types) {
+        } else if skips_typed_rules && !options.again.is_some_and(|it| it.had_types) {
             let without_types = running
                 .iter()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);

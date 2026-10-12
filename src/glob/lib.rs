@@ -11,6 +11,29 @@ pub use crate::matcher::{Dots, MatchResult, r#match};
 pub use crate::pattern::{Candidate, Pattern};
 pub use walk::GlobWalker;
 
+/// A pattern whose groups were found once. Use it to match one pattern against many paths.
+pub struct Prepared<P> {
+    pattern: P,
+    shape: matcher::Shape,
+}
+
+impl<P: AsRef<[u8]>> Prepared<P> {
+    pub fn new(pattern: P) -> Prepared<P> {
+        let shape = matcher::Shape::of(pattern.as_ref());
+        Prepared { pattern, shape }
+    }
+
+    pub fn pattern(&self) -> &[u8] {
+        self.pattern.as_ref()
+    }
+
+    /// Answers like [`r#match`].
+    pub fn r#match(&self, path: &[u8]) -> MatchResult {
+        let pattern = self.pattern.as_ref();
+        matcher::match_prepared::<{ cfg!(windows) }>(pattern, &self.shape, path, Dots::Match)
+    }
+}
+
 // `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
 // parameter (const-generic fn ptrs are unstable).
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;

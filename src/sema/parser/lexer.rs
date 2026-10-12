@@ -55,8 +55,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_oxc: bool,
     /// [`HtmlOpens`], with `is_oxc`.
     pub(crate) html_opens: HtmlOpens,
-    /// `hir::rare::PRIVATE_NAME`
-    pub(crate) has_private_names: bool,
+    /// Each private name that was scanned, for `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE`: one after `super.`.
+    pub(crate) private_names: Vec<Atom>,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) names: &'a mut Names,
     /// `hir::File::comment_directives`
@@ -320,7 +320,7 @@ impl<'a> Lexer<'a> {
             is_babel: false,
             is_oxc: false,
             html_opens: HtmlOpens::default(),
-            has_private_names: false,
+            private_names: Vec::new(),
             atoms,
             names,
             comment_directives: Vec::new(),
@@ -1076,7 +1076,7 @@ impl<'a> Lexer<'a> {
         let mut kind = crate::token::keyword(&text);
         self.buffer = text;
         if is_private {
-            self.has_private_names = true;
+            self.note_private_name(start);
             return self.set(T::PrivateIdentifier, start, pos);
         }
         if self.has_escape && kind != T::Identifier {
@@ -1147,8 +1147,19 @@ impl<'a> Lexer<'a> {
         }
         self.has_escape = false;
         self.atom = (self.names).atom(Text::of_source(src, start, end), self.atoms);
-        self.has_private_names = true;
+        self.note_private_name(start);
         self.set(T::PrivateIdentifier, start, end);
+    }
+
+    /// `self.atom` is the private name at `start`.
+    fn note_private_name(&mut self, start: usize) {
+        self.private_names.push(self.atom);
+        let before = self.src.get(..start).unwrap_or_default().trim_ascii_end();
+        if let Some(object) = before.strip_suffix(b".")
+            && object.trim_ascii_end().ends_with(b"super")
+        {
+            self.private_names.push(Atom::NONE);
+        }
     }
 
     /// The `#` of `Scan`, at `start`, that no name follows.

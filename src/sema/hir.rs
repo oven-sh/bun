@@ -1037,13 +1037,15 @@ pub mod rare {
     pub const ODD_ACCESSOR: u8 = 1 << 2;
     /// `{ a = 1 }` where an expression can be.
     pub const DEFAULT_IN_OBJECT: u8 = 1 << 3;
-    /// A class has a second constructor or an `async` one, a member that is called `prototype`, one that is called
-    /// `constructor` and is not its constructor, or one with a private name.
+    /// A class has a second constructor or an `async` one, a member that is called `prototype` or `#constructor`, one that is
+    /// called `constructor` and is not its constructor, or two with one private name.
     pub const NOTABLE_CLASS_MEMBER: u8 = 1 << 4;
-    /// There is a private name: `#a`.
-    pub const PRIVATE_NAME: u8 = 1 << 5;
-    /// `delete a`
+    /// There is a private name that no class of the file declares, or `super.#a`.
+    pub const ODD_PRIVATE_NAME: u8 = 1 << 5;
+    /// `delete a`, `delete a.#b`
     pub const DELETES_A_NAME: u8 = 1 << 6;
+    /// The body of a function starts with a string, which may be a directive.
+    pub const DIRECTIVE_IN_FUNCTION: u8 = 1 << 7;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

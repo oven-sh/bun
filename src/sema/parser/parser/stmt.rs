@@ -534,16 +534,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
         }
         let saved = self.context;
-        // oxc's `parse_ts_declaration_statement` leaves the await context. `export` and `const enum` go another way.
-        if self.options.dialect.oxc
-            && !flags.intersects(Flags::EXPORT | Flags::CONST)
-            && (flags.intersects(Flags::AMBIENT | Flags::ABSTRACT)
-                || matches!(
-                    self.token(),
-                    T::Type | T::Interface | T::Enum | T::Module | T::Namespace | T::Global
-                ))
-        {
-            self.context &= !ctx::AWAIT;
+        if flags.intersects(Flags::AMBIENT | Flags::ABSTRACT) {
+            self.leave_await_like_oxc(flags);
         }
         if flags.contains(Flags::AMBIENT) {
             self.context |= ctx::AMBIENT;
@@ -572,6 +564,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     }
 
     /// `parseDeclarationWorker`
+    /// oxc's `parse_ts_declaration_statement` leaves the await context: before `declare`, `abstract`, and what only TypeScript
+    /// declares. `export` and `const enum` go another way. `declaration` restores the context.
+    #[inline]
+    fn leave_await_like_oxc(&mut self, flags: Flags) {
+        if self.options.dialect.oxc && !flags.intersects(Flags::EXPORT | Flags::CONST) {
+            self.context &= !ctx::AWAIT;
+        }
+    }
+
     fn declaration_worker(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         match self.token() {
             T::Var | T::Let | T::Const | T::Using => self.variable_statement(start, base, flags),
@@ -587,11 +588,20 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             T::Class => self.class_declaration(start, base, flags),
             T::Interface if self.is_flow => self.flow_interface(start, base, flags),
-            T::Interface => self.interface_declaration(start, base, flags),
+            T::Interface => {
+                self.leave_await_like_oxc(flags);
+                self.interface_declaration(start, base, flags)
+            }
             T::Type if self.is_flow => self.flow_type_alias(start, base, flags),
-            T::Type => self.type_alias_declaration(start, base, flags),
+            T::Type => {
+                self.leave_await_like_oxc(flags);
+                self.type_alias_declaration(start, base, flags)
+            }
             T::Enum if self.is_flow => self.flow_enum(start, base, flags),
-            T::Enum => self.enum_declaration(start, base, flags),
+            T::Enum => {
+                self.leave_await_like_oxc(flags);
+                self.enum_declaration(start, base, flags)
+            }
             T::Module if self.is_flow && self.peek() == T::Dot => {
                 self.flow_declare_module_exports(start, base)
             }
@@ -599,7 +609,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.fail();
                 StmtId::NONE
             }
-            T::Global | T::Module | T::Namespace => self.module_declaration(start, base, flags),
+            T::Global | T::Module | T::Namespace => {
+                self.leave_await_like_oxc(flags);
+                self.module_declaration(start, base, flags)
+            }
             T::Import => self.import_declaration_or_import_equals(start, base, flags),
             T::Export => {
                 let export = self.pos();

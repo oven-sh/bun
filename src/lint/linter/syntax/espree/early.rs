@@ -101,8 +101,17 @@ impl<'a> Checks<'a, '_> {
         self.defaults_that_suspend(true);
         self.jumps();
         self.labels();
-        // Nothing in a declaration file runs.
-        if self.file.is_declaration_file() {
+        // Nearly no file has any of what the rest looks for, and nothing in a declaration file runs.
+        let file = self.file;
+        let (kinds, counts) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
+        let has_none = |tag: ExprTag| counts.get(2 * tag as usize) == Some(&0);
+        let has_nothing_rare = !file.has_rare_syntax(!rare::SUSPENDS_IN_PARAMETERS)
+            && kinds.len() == file.hir.exprs.len()
+            && has_none(ExprTag::Super)
+            && has_none(ExprTag::NewTarget)
+            && file.hir.diagnostics.is_empty()
+            && !file.mentions("__proto__");
+        if has_nothing_rare || file.is_declaration_file() {
             return;
         }
         self.strict_mode();
@@ -786,7 +795,7 @@ impl<'a> Checks<'a, '_> {
 
     /// `isPrivateFieldAccess`
     fn deleted_private_fields(&mut self) {
-        if self.lacks(rare::PRIVATE_NAME) {
+        if self.lacks(rare::DELETES_A_NAME) {
             return;
         }
         for it in self.exprs_of(ExprTag::Unary) {
@@ -1084,7 +1093,8 @@ impl<'a> Checks<'a, '_> {
 
     fn functions(&mut self) {
         let file = self.file;
-        let may_have_directive = file.mentions("use strict");
+        let may_have_directive =
+            !self.lacks(rare::DIRECTIVE_IN_FUNCTION) && file.mentions("use strict");
         if !may_have_directive && self.lacks(rare::ODD_ACCESSOR) {
             return;
         }
@@ -1230,7 +1240,7 @@ impl<'a> Checks<'a, '_> {
     /// A `#a` has to be declared by a class around it.
     fn private_names(&mut self) {
         let file = self.file;
-        if self.lacks(rare::PRIVATE_NAME) || !strings::contains_char(file.text(), b'#') {
+        if self.lacks(rare::ODD_PRIVATE_NAME) || !strings::contains_char(file.text(), b'#') {
             return;
         }
         // The private names of a class are collected once: there can be as many of them as there are uses.
@@ -1477,7 +1487,9 @@ impl<'a> Checks<'a, '_> {
 
     fn object_literals(&mut self) {
         let file = self.file;
-        let may_have_proto = file.mentions("__proto__");
+        let proto = file.find_name("__proto__");
+        let proto = proto.map(|it| hir::PropKey::Name(it.atom()));
+        let may_have_proto = proto.is_some();
         // The rest is about private names as keys, which the parser of oxc stumbles over, and `accessor`, which it knows.
         if !may_have_proto && self.lacks(rare::DEFAULT_IN_OBJECT) {
             return;
@@ -1489,7 +1501,8 @@ impl<'a> Checks<'a, '_> {
                     Some(hir::ExprKind::Assign { .. })
                 );
             let is_private = matches!(raw.key, hir::PropKey::Private(_));
-            if !is_default && !is_private && !(may_have_proto && raw.kind == PropKind::Init) {
+            let may_be_proto = raw.kind == PropKind::Init && Some(raw.key) == proto;
+            if !is_default && !is_private && !may_be_proto {
                 continue;
             }
             let prop = Prop::from_raw(file, i as u32);

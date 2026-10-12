@@ -2884,6 +2884,91 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(problems).toEqual(["a.vue:2:1 -"]);
   });
 
+  // Every row is what oxlint 1.87 prints. Without --type-aware it acts as if the rules that need types didn't exist.
+  test("disable comments are unused under .oxlintrc.json when the only rules left are ones that need types", async () => {
+    const text = [
+      "declare function g(): void;",
+      "export async function f() {",
+      "  // oxlint-disable-next-line",
+      "  g();",
+      "  g(); // eslint-disable-line",
+      "  // oxlint-disable-next-line typescript/await-thenable",
+      "  g();",
+      "  // eslint-disable-next-line @typescript-eslint/await-thenable",
+      "  g();",
+      "  g(); // oxlint-disable-line await-thenable",
+      "  // oxlint-disable-next-line typescript/await-thenable, no-debugger",
+      "  g();",
+      "  // oxlint-disable-next-line typescript/await-thenable, no-debugger",
+      "  debugger;",
+      "  // oxlint-disable-next-line typescript/await-thenable",
+      "  await 1;",
+      "  // oxlint-disable-next-line",
+      "  await 2;",
+      "  /* oxlint-disable typescript/await-thenable */",
+      "  await 3;",
+      "  /* oxlint-enable typescript/await-thenable */",
+      "  await 4;",
+      "  /* oxlint-disable */",
+      "  g();",
+      "  /* oxlint-enable */",
+      "}",
+      "",
+    ].join("\n");
+    const run = async (config: object, ...flags: string[]) => {
+      const files = {
+        ".oxlintrc.json": JSON.stringify(config),
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { strict: true, noEmit: true, lib: ["es2022"], types: [] },
+        }),
+        "a.ts": text,
+      };
+      const { problems } = await lint(files, ["a.ts", "--report-unused-disable-directives", ...flags]);
+      const place = (it: string) => it.split(/[: ]/).slice(1, 3).map(Number);
+      return problems
+        .sort((a, b) => place(a)[0] - place(b)[0] || place(a)[1] - place(b)[1])
+        .map(it => it.replace("a.ts:", "").replace(" -", " unused").replace(/ .*\//, " "));
+    };
+    const only = (severity: string) => ({
+      categories: { correctness: "off" },
+      rules: { "no-debugger": "error", "typescript/await-thenable": severity },
+    });
+    // These silence nothing, whether or not the rule runs.
+    const always = ["3:3", "5:8", "6:3", "8:3", "10:8", "11:3", "13:31"].map(it => `${it} unused`);
+    const withoutTheRule = [...always, "15:3 unused", "17:3 unused", "21:3 unused", "25:3 unused"];
+    const results = await Promise.all([
+      run({}),
+      run({}, "--type-aware"),
+      run(only("error")),
+      run(only("error"), "--type-aware"),
+      run(only("off")),
+      run(only("off"), "--type-aware"),
+    ]);
+    expect(results).toEqual([
+      [
+        ...always,
+        "15:3 unused",
+        "16:3 no-unnecessary-await",
+        "20:3 no-unnecessary-await",
+        "21:3 unused",
+        "22:3 no-unnecessary-await",
+        "25:3 unused",
+      ],
+      [
+        ...always,
+        "16:3 no-unnecessary-await",
+        "20:3 no-unnecessary-await",
+        "22:3 no-unnecessary-await",
+        "22:9 await-thenable",
+        "25:3 unused",
+      ],
+      withoutTheRule,
+      [...always, "22:9 await-thenable", "25:3 unused"],
+      withoutTheRule,
+      withoutTheRule,
+    ]);
+  });
+
   test("the rules that a category turns on and that do not exist here are named, in a warning", async () => {
     const config = {
       plugins: ["unicorn", "oxc", "react", "jsx-a11y", "jest"],

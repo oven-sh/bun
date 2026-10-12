@@ -727,6 +727,23 @@ describe("color-mix() operand conversion", () => {
   });
 });
 
+// The alpha scales the lightness and the chroma of an operand, and never its hue.
+// https://www.w3.org/TR/css-color-4/#interpolation-alpha
+describe("color-mix() in lch and oklch with a translucent operand", () => {
+  test.each([
+    ["color-mix(in oklch, oklch(70% 0.15 300 / 0.5), oklch(70% 0.15 200))", "oklch(70% .15 250 / .75)"],
+    ["color-mix(in oklch, oklch(0.7 0.15 300 / 0.5), oklch(0.7 0.15 200))", "oklch(70% .15 250 / .75)"],
+    ["color-mix(in lch, lch(70% 50 300 / 0.5), lch(70% 50 200))", "lch(70% 50 250 / .75)"],
+    ["color-mix(in oklch, oklch(80% 0.2 300 / 0.25), oklch(40% 0.1 200 / 0.75))", "oklch(50% .125 250 / .5)"],
+    ["color-mix(in oklch longer hue, oklch(70% 0.15 300 / 0.5), oklch(70% 0.15 200))", "oklch(70% .15 70 / .75)"],
+    ["color-mix(in oklch, oklch(70% 0.15 30 / 0.5), oklch(70% 0.15 350))", "oklch(70% .15 10 / .75)"],
+    // A result with an alpha of 0 keeps its hue.
+    ["color-mix(in oklch, oklch(70% 0.15 300 / 0), oklch(70% 0.15 200 / 0))", "oklch(0% 0 250 / 0)"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
 describe("rgb() channel order and legacy syntax", () => {
   // Distinct channel values, so any two channels ending up in each other's
   // place shows in the output. The legacy comma syntax gives the channels on a
@@ -925,6 +942,8 @@ describe("lab-family channels written as numbers or percentages", () => {
     ["lab(50% calc(32%) -50)", "lab(50% 40 -50)", "#965dcd"],
     ["lab(50 none none)", "lab(50% none none)", "#777777"],
     ["color-mix(in oklch, oklch(0.5 0.1 120), oklch(50% 0.1 120))", "oklch(50% .1 120)", "#5c6b21"],
+    // Black has no hue, so the mix keeps the hue of the other operand.
+    ["color-mix(in oklch, oklch(0.62 0.19 255), black 20%)", "oklch(49.6% .152 255)", "#1361b6"],
     // A negative lightness or chroma clamps to 0, like the forms that already parsed.
     ["lab(-10 0 0)", "lab(0% 0 0)", "#000000"],
     ["lch(50 -20% 120)", "lch(50% 0 120)", "#777777"],

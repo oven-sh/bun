@@ -1678,22 +1678,36 @@ macro_rules! define_colorspace {
                 let (a, b, c, alpha) = lerp_components(self, p1, other, p2);
                 $name { $h: a, $a: b, $b: c, alpha }
             }
-            fn premultiply(&mut self) {
-                if !self.alpha.is_nan() {
-                    self.$a *= self.alpha;
-                    self.$b *= self.alpha;
-                }
-            }
-            fn unpremultiply(&mut self, alpha_multiplier: f32) {
-                self.$h = self.$h.rem_euclid(360.0);
-                if !self.alpha.is_nan() {
-                    // PERF: precalculate 1/alpha?
-                    self.$a /= self.alpha;
-                    self.$b /= self.alpha;
-                    self.alpha *= alpha_multiplier;
-                }
-            }
+            define_colorspace!(@premultiply_polar $h, $a, $b);
             define_colorspace!(@powerless $pow $(($eps))? $name { $h, $a, $b });
+        }
+    };
+    (@interp polar_hue_last $pow:ident $(($eps:literal))? $name:ident { $a:ident, $b:ident, $h:ident }) => {
+        impl Interpolate for $name {
+            fn interpolate(&self, p1: f32, other: &Self, p2: f32) -> Self {
+                let (a, b, c, alpha) = lerp_components(self, p1, other, p2);
+                $name { $a: a, $b: b, $h: c, alpha }
+            }
+            define_colorspace!(@premultiply_polar $h, $a, $b);
+            define_colorspace!(@powerless $pow $(($eps))? $name { $a, $b, $h });
+        }
+    };
+    // The alpha does not scale a hue: https://www.w3.org/TR/css-color-4/#interpolation-alpha
+    (@premultiply_polar $h:ident, $a:ident, $b:ident) => {
+        fn premultiply(&mut self) {
+            if !self.alpha.is_nan() {
+                self.$a *= self.alpha;
+                self.$b *= self.alpha;
+            }
+        }
+        fn unpremultiply(&mut self, alpha_multiplier: f32) {
+            self.$h = self.$h.rem_euclid(360.0);
+            if !self.alpha.is_nan() && self.alpha != 0.0 {
+                // PERF: precalculate 1/alpha?
+                self.$a /= self.alpha;
+                self.$b /= self.alpha;
+                self.alpha *= alpha_multiplier;
+            }
         }
     };
     (@interp none $pow:ident $(($eps:literal))? $name:ident { $a:ident, $b:ident, $c:ident }) => {};
@@ -1875,7 +1889,7 @@ define_colorspace! {
     LCH { l, c, h }
     types = (CT_PCT, CT_NUM, CT_ANG);
     gamut = unbounded;
-    premultiply = rectangular;
+    premultiply = polar_hue_last;
     // css-color-4: C <= 0.0015
     powerless = lch(0.0015);
     into_css = |c: &LCH| CssColor::Lab(Box::new(LABColor::Lch(*c)));
@@ -1896,7 +1910,7 @@ define_colorspace! {
     OKLCH { l, c, h }
     types = (CT_PCT, CT_NUM, CT_ANG);
     gamut = unbounded;
-    premultiply = rectangular;
+    premultiply = polar_hue_last;
     // css-color-4: C <= 0.000004
     powerless = lch(0.000004);
     into_css = |c: &OKLCH| CssColor::Lab(Box::new(LABColor::Oklch(*c)));

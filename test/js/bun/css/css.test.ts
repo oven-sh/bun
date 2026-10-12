@@ -8025,6 +8025,18 @@ describe("css tests", () => {
       );
     }
 
+    // An operand with number channels mixes like its percent spelling.
+    describe("color-mix()", () => {
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(0.62 0.19 255), black 20%) }",
+        ".foo{color:oklch(49.6% .152 255)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(0.7 0.15 300 / 0.5), oklch(0.7 0.15 200)) }",
+        ".foo{color:oklch(70% .15 250/.75)}",
+      );
+    });
+
     describe("relative colors", () => {
       minify_test(".foo { color: lab(from lab(50 20 30) l a b) }", ".foo{color:lab(50% 20 30)}");
       minify_test(".foo { color: oklch(from red 0.5 c h) }", ".foo{color:oklch(50% .257683 29.2339)}");

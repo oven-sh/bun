@@ -4348,6 +4348,17 @@ test_napi_toobject_coercion_node26(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_napi_module_filename(const Napi::CallbackInfo &info) {
+  const char *filename = nullptr;
+  if (node_api_get_module_file_name(info.Env(), &filename) != napi_ok ||
+      filename == nullptr) {
+    Napi::Error::New(info.Env(), "Cannot get module filename")
+        .ThrowAsJavaScriptException();
+    return nullptr;
+  }
+  return Napi::String::New(info.Env(), filename);
+}
+
 // Empty-key set, symbol description handling, result-on-exception ordering,
 // and module_file_name non-null: byte-for-byte vs Node via checkSameOutput.
 static napi_value
@@ -4676,6 +4687,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_result);
   REGISTER_FUNCTION(env, exports, test_napi_toobject_coercion_node26);
   REGISTER_FUNCTION(env, exports, test_napi_symbol_key_result_ordering);
+  REGISTER_FUNCTION(env, exports, test_napi_module_filename);
   REGISTER_FUNCTION(env, exports, test_napi_external_string_args);
   REGISTER_FUNCTION(env, exports, test_napi_get_buffer_info_gate);
   REGISTER_FUNCTION(env, exports, test_create_weak_ref_for_gc);

@@ -335,8 +335,9 @@ describe.concurrent("require() of a module whose plugin callback returns a promi
       lines = JSON.parse(stdout.trim().split("\n").at(-1)!);
     } catch {}
     // `bun test` reports on stderr: the lines of a run that passed are left out, anything else is kept.
+    // A test that takes 10 microseconds or less is reported without its duration.
     const report =
-      /^(scenario\.test\.cjs:|\(pass\) scenario \[.+\]| 1 pass| 0 fail|Ran 1 test across 1 file\. \[.+\])?$/;
+      /^(scenario\.test\.cjs:|\(pass\) scenario( \[.+\])?| 1 pass| 0 fail|Ran 1 test across 1 file\. \[.+\])?$/;
     const unexpected = stderr
       .split(/\r?\n/)
       .filter(line => mode === "bun" || !report.test(line))

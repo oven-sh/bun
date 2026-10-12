@@ -491,8 +491,14 @@ impl Checker<'_, '_> {
             .find(|&i| !self.is_part_of(self.stack[i], self.stack[i - 1]))
             .unwrap_or(lowest);
         let asked_by = (from > floor).then(|| self.stack[from - 1]);
+        // `getTypeOfAccessors` of a getter of an object literal calls `getReturnTypeFromBody` itself.
+        let is_return_type_from_body = match asked_by {
+            Some(Query::Return(..) | Query::ReturnAtFirstLook(..)) => true,
+            Some(Query::LiteralProp(file, p)) => self.hir(file)[p].kind == PropKind::Getter,
+            _ => false,
+        };
         let is_checked_again = match (*self.stack.get(from)?, asked_by) {
-            (Query::Expr(file, e), Some(Query::Return(..) | Query::ReturnAtFirstLook(..))) => {
+            (Query::Expr(file, e), _) if is_return_type_from_body => {
                 let hir = self.hir(file);
                 is_parenthesized(hir, e)
                     || !matches!(self.bound(file).expr_parent[e.idx()],

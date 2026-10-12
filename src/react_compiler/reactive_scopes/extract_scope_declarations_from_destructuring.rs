@@ -9,6 +9,7 @@
 //! Corresponds to `src/ReactiveScopes/ExtractScopeDeclarationsFromDestructuring.ts`.
 
 use crate::collections::FxHashSet as HashSet;
+use crate::collections::IdBitSet;
 
 use crate::hir::{
     DeclarationId, IdentifierId, InstructionKind, InstructionValue, LValue, Place,
@@ -31,7 +32,7 @@ pub(crate) fn extract_scope_declarations_from_destructuring(
     func: &mut ReactiveFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {
-    let mut declared: HashSet<DeclarationId> = HashSet::default();
+    let mut declared: IdBitSet<DeclarationId> = IdBitSet::new();
     for param in &func.params {
         let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
@@ -43,7 +44,7 @@ pub(crate) fn extract_scope_declarations_from_destructuring(
 }
 
 struct ExtractState {
-    declared: HashSet<DeclarationId>,
+    declared: IdBitSet<DeclarationId>,
 }
 
 struct Transform<'a> {
@@ -98,7 +99,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
 
             for place in visitors::pattern_operands(&lvalue.pattern) {
                 let identifier = &self.env.identifiers[place.identifier.0 as usize];
-                if state.declared.contains(&identifier.declaration_id) {
+                if state.declared.contains(identifier.declaration_id) {
                     reassigned.insert(place.identifier);
                 } else {
                     has_declaration = true;

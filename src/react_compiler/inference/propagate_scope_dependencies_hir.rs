@@ -13,7 +13,7 @@
 //! - `src/HIR/DeriveMinimalDependenciesHIR.ts`
 //! Caught throws: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
-use crate::collections::{IdMap, IndexMap};
+use crate::collections::{IdBitSet, IdMap, IndexMap};
 
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::rc::Rc;
@@ -142,22 +142,22 @@ fn are_equal_paths(a: &[DependencyPathEntry], b: &[DependencyPathEntry]) -> bool
 fn find_temporaries_used_outside_declaring_scope(
     func: &HirFunction,
     env: &Environment,
-) -> Result<HashSet<DeclarationId>, CompilerDiagnostic> {
+) -> Result<IdBitSet<DeclarationId>, CompilerDiagnostic> {
     let mut declarations: IdMap<DeclarationId, ScopeId> = IdMap::new();
-    let mut pruned_scopes: HashSet<ScopeId> = HashSet::default();
+    let mut pruned_scopes: IdBitSet<ScopeId> = IdBitSet::new();
     let mut traversal = ScopeBlockTraversal::new();
-    let mut used_outside_declaring_scope: HashSet<DeclarationId> = HashSet::default();
+    let mut used_outside_declaring_scope: IdBitSet<DeclarationId> = IdBitSet::new();
 
     let handle_place = |place_id: IdentifierId,
                         declarations: &IdMap<DeclarationId, ScopeId>,
                         traversal: &ScopeBlockTraversal,
-                        pruned_scopes: &HashSet<ScopeId>,
-                        used_outside: &mut HashSet<DeclarationId>,
+                        pruned_scopes: &IdBitSet<ScopeId>,
+                        used_outside: &mut IdBitSet<DeclarationId>,
                         env: &Environment| {
         let decl_id = env.identifiers[place_id.0 as usize].declaration_id;
         if let Some(&declaring_scope) = declarations.get(decl_id) {
             if !traversal.is_scope_active(declaring_scope)
-                && !pruned_scopes.contains(&declaring_scope)
+                && !pruned_scopes.contains(declaring_scope)
             {
                 used_outside.insert(decl_id);
             }
@@ -194,7 +194,7 @@ fn find_temporaries_used_outside_declaring_scope(
             // Handle instruction (track declarations)
             let current_scope = traversal.current_scope();
             if let Some(scope) = current_scope {
-                if !pruned_scopes.contains(&scope) {
+                if !pruned_scopes.contains(scope) {
                     match &instr.value {
                         InstructionValue::LoadLocal { .. }
                         | InstructionValue::LoadContext { .. }
@@ -233,7 +233,7 @@ fn find_temporaries_used_outside_declaring_scope(
 fn collect_temporaries_sidemap(
     func: &HirFunction,
     env: &Environment,
-    used_outside_declaring_scope: &HashSet<DeclarationId>,
+    used_outside_declaring_scope: &IdBitSet<DeclarationId>,
 ) -> IdMap<IdentifierId, ReactiveScopeDependency> {
     let mut temporaries = IdMap::new();
     collect_temporaries_sidemap_impl(
@@ -265,7 +265,7 @@ fn is_load_context_mutable(
 fn collect_temporaries_sidemap_impl(
     func: &HirFunction,
     env: &Environment,
-    used_outside_declaring_scope: &HashSet<DeclarationId>,
+    used_outside_declaring_scope: &IdBitSet<DeclarationId>,
     temporaries: &mut IdMap<IdentifierId, ReactiveScopeDependency>,
     inner_fn_context: Option<EvaluationOrder>,
 ) {
@@ -282,7 +282,7 @@ fn collect_temporaries_sidemap_impl(
                 instr.id
             };
             let lvalue_decl_id = env.identifiers[instr.lvalue.identifier.0 as usize].declaration_id;
-            let used_outside = used_outside_declaring_scope.contains(&lvalue_decl_id);
+            let used_outside = used_outside_declaring_scope.contains(lvalue_decl_id);
 
             match &instr.value {
                 InstructionValue::PropertyLoad {

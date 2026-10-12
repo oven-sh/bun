@@ -549,8 +549,8 @@ pub enum PropSource<'s> {
     /// `this.name = value` or `Object.defineProperty(f, "name", descriptor)`. A late bound symbol
     /// is identified by the symbol the binder created for its first declaration.
     Symbol(Sym),
-    /// A property of the given intersection: the properties of that name in several of its
-    /// constituents. It combines all of them.
+    /// A property of the given intersection or union: the properties of that name in several of
+    /// its constituents. It combines all of them.
     Intersected(TypeId, List<'s, Prop<'s>>),
     /// A property of the given mapped type (`containingType`). Its type is the template of that
     /// type instantiated with `Prop::mapper`: the mapper of the mapped type plus its type parameter
@@ -681,6 +681,9 @@ pub struct Shape<'s> {
     /// one. `mapType` iterates over a union of named unions by its origin, which is not the order
     /// of `CompareTypes`.
     pub spread_rank: u32,
+    /// The intersection that this has the properties of, and no more. Its signatures and index
+    /// signatures are elsewhere: `structured_members`.
+    pub properties_of: Option<TypeId>,
     /// For a type created by `getSignatureInstantiation` with `inferredTypeParameters`
     /// (`ObjectFlagsSingleSignatureType`), which creates a new type on every call: the outer type
     /// parameters of the signature's declaration instantiated with `t.mapper`, as a tuple.
@@ -794,6 +797,7 @@ impl<'s> Shape<'s> {
             default_of: None,
             spread_of: None,
             spread_rank: 0,
+            properties_of: None,
             single_signature_arguments: None,
             has_no_instantiable_symbol: false,
             pattern_at: None,
@@ -3346,6 +3350,7 @@ follow_struct!(Shape<'_> {
     default_of,
     spread_of,
     spread_rank,
+    properties_of,
     single_signature_arguments,
     has_no_instantiable_symbol,
     pattern_at,
@@ -3594,6 +3599,7 @@ clone_in_struct!(Shape {
     default_of,
     spread_of,
     spread_rank,
+    properties_of,
     single_signature_arguments,
     has_no_instantiable_symbol,
     pattern_at,

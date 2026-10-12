@@ -481,7 +481,7 @@ describe.concurrent("bun lint", () => {
     const places = async (lines: string[]) => {
       const files = { "eslint.config.js": config({ "no-useless-assignment": "error" }), "a.cjs": lines.join("\n") + "\n" };
       const { raw } = await lint(files, ["-f", "unix", "a.cjs"]);
-      return [...raw.matchAll(/^a\.cjs:(\d+:\d+):/gm)].map(it => it[1]);
+      return [...raw.matchAll(/\ba\.cjs:(\d+:\d+):/g)].map(it => it[1]);
     };
 
     test("the `arguments` of a function is a variable", async () => {

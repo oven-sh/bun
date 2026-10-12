@@ -912,10 +912,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseTypeArguments`, at the `<`, and `checkGrammarTypeArguments`.
     pub(crate) fn type_arguments(&mut self) -> IdList<TypeNodeId> {
         let (list, error) = self.type_arguments_unchecked();
-        if let Some((at, code)) = error {
-            self.flag(DiagnosticKind::Grammar, code, at, &[]);
+        if let Some(error) = error {
+            self.flag_type_arguments(error);
         }
         list
+    }
+
+    /// The last argument of `flag` is passed on the stack: not in the frame of `jsx_element`.
+    #[cold]
+    #[inline(never)]
+    fn flag_type_arguments(&mut self, (at, code): GrammarError) {
+        self.flag(DiagnosticKind::Grammar, code, at, &[]);
     }
 
     /// After the expression of a heritage clause, or the name of a JSX element. `parseTypeArguments`

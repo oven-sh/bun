@@ -1199,6 +1199,15 @@ fn cmp_property_literal(a: &PropertyLiteral, b: &PropertyLiteral) -> std::cmp::O
     }
 }
 
+fn name_of<'a>(dep: &'a InferredDependency, identifiers: &'a [Identifier]) -> Option<&'a [u8]> {
+    match dep {
+        InferredDependency::Global { binding } => Some(binding.name()),
+        InferredDependency::Local { identifier, .. } => {
+            get_identifier_name(*identifier, identifiers)
+        }
+    }
+}
+
 fn validate_dependencies(
     mut inferred: Vec<InferredDependency>,
     manual_dependencies: &[ManualMemoDependency],
@@ -1209,13 +1218,20 @@ fn validate_dependencies(
     identifiers: &[Identifier],
     types: &[Type],
 ) -> Result<Option<CompilerDiagnostic>, CompilerDiagnostic> {
-    // Sort dependencies by name and path
+    // Sort dependencies by name and path. Upstream compares two that are not one variable by their
+    // names alone. That is no order where two have one name, and a sort may panic on what is none.
     sort_slice_by(&mut inferred, |a, b| {
-        match (a, b) {
-            (
-                InferredDependency::Global { binding: ab },
-                InferredDependency::Global { binding: bb },
-            ) => ab.name().cmp(bb.name()),
+        let names = name_of(a, identifiers).cmp(&name_of(b, identifiers));
+        names.then_with(|| match (a, b) {
+            (InferredDependency::Global { .. }, InferredDependency::Global { .. }) => {
+                std::cmp::Ordering::Equal
+            }
+            (InferredDependency::Global { .. }, InferredDependency::Local { .. }) => {
+                std::cmp::Ordering::Less
+            }
+            (InferredDependency::Local { .. }, InferredDependency::Global { .. }) => {
+                std::cmp::Ordering::Greater
+            }
             (
                 InferredDependency::Local {
                     identifier: a_id,
@@ -1227,60 +1243,19 @@ fn validate_dependencies(
                     path: b_path,
                     ..
                 },
-            ) => {
-                let a_name = get_identifier_name(*a_id, identifiers);
-                let b_name = get_identifier_name(*b_id, identifiers);
-                match (a_name, b_name) {
-                    (Some(an), Some(bn)) => {
-                        if *a_id != *b_id {
-                            an.cmp(bn)
-                        } else if a_path.len() != b_path.len() {
-                            a_path.len().cmp(&b_path.len())
-                        } else {
-                            // Compare path entries
-                            for (ap, bp) in a_path.iter().zip(b_path.iter()) {
-                                let a_opt = if ap.optional { 0i32 } else { 1 };
-                                let b_opt = if bp.optional { 0i32 } else { 1 };
-                                if a_opt != b_opt {
-                                    return a_opt.cmp(&b_opt);
-                                }
-                                let prop_cmp = cmp_property_literal(&ap.property, &bp.property);
-                                if prop_cmp != std::cmp::Ordering::Equal {
-                                    return prop_cmp;
-                                }
-                            }
-                            std::cmp::Ordering::Equal
-                        }
-                    }
-                    _ => std::cmp::Ordering::Equal,
-                }
-            }
-            (
-                InferredDependency::Global { binding: ab },
-                InferredDependency::Local {
-                    identifier: b_id, ..
-                },
-            ) => {
-                let a_name = ab.name();
-                match get_identifier_name(*b_id, identifiers) {
-                    Some(bn) => a_name.cmp(bn),
-                    None => std::cmp::Ordering::Equal,
-                }
-            }
-            (
-                InferredDependency::Local {
-                    identifier: a_id, ..
-                },
-                InferredDependency::Global { binding: bb },
-            ) => {
-                let a_name = get_identifier_name(*a_id, identifiers);
-                let b_name = bb.name();
-                match a_name {
-                    Some(an) => an.cmp(b_name),
-                    None => std::cmp::Ordering::Equal,
-                }
-            }
-        }
+            ) => (a_id.0.cmp(&b_id.0))
+                .then_with(|| a_path.len().cmp(&b_path.len()))
+                .then_with(|| {
+                    let mut entries = a_path.iter().zip(b_path.iter()).map(|(ap, bp)| {
+                        // An optional entry first.
+                        (bp.optional.cmp(&ap.optional))
+                            .then_with(|| cmp_property_literal(&ap.property, &bp.property))
+                    });
+                    entries
+                        .find(|order| order.is_ne())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                }),
+        })
     });
 
     // Remove redundant inferred dependencies

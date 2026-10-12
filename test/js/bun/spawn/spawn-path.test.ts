@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execFile, spawn as cpSpawn, spawnSync as cpSpawnSync } from "child_process";
+import { spawn as cpSpawn, spawnSync as cpSpawnSync, execFile } from "child_process";
 import { chmodSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";

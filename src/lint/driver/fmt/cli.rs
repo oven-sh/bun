@@ -126,7 +126,9 @@ const OF_PRETTIER: &[Param] = &[
     clap::param!(
         "--find-config-path <path>       Print the path of the config for a file and exit"
     ),
-    clap::param!("--parser <name>                 Read every file with this parser"),
+    clap::param!(
+        "--parser <name>                 Read every file with this parser. Without files, format standard input"
+    ),
     clap::param!("--plugin <name>...              Load these plugins"),
     clap::param!(
         "--require-pragma                Only format files that start with a <b>@format<r> or <b>@prettier<r> comment"
@@ -140,7 +142,7 @@ const OF_PRETTIER: &[Param] = &[
     clap::param!("--range-start <offset>          Only format the statements from this offset on"),
     clap::param!("--range-end <offset>            Only format the statements up to this offset"),
     clap::param!(
-        "--cursor-offset <offset>        With <b>--stdin-filepath<r>, print on stderr where this offset ends up"
+        "--cursor-offset <offset>        For standard input, print on stderr where this offset ends up"
     ),
     clap::param!(
         "--experimental-ternaries        Put the question mark of a ternary after the condition"
@@ -533,6 +535,17 @@ impl Options {
             _ => {}
         }
         Ok(())
+    }
+
+    /// True for `bun format --parser x` with no paths. Like Prettier, that formats standard input, which has no file name
+    /// then. An empty `--stdin-filepath` is no name either. It must never fall back to the working directory: one parser
+    /// would rewrite every file there.
+    pub(crate) fn formats_unnamed_stdin(&self) -> bool {
+        let only_reports = self.doctor || self.list_files;
+        self.patterns.is_empty()
+            && self.stdin_filepath.as_ref().is_none_or(Vec::is_empty)
+            && !only_reports
+            && self.format.iter().any(|it| it.0 == b"parser")
     }
 
     /// As `--no-config --no-editorconfig`.

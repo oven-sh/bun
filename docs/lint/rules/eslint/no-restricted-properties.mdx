@@ -33,7 +33,11 @@ Off by default. To turn it on:
 
 ```toml bunfig.toml
 [lint.rules]
-"no-restricted-properties" = ["error", { object = "Math", property = "pow", message = "Use the ** operator." }]
+"no-restricted-properties" = ["error", {
+  object = "Math",
+  property = "pow",
+  message = "Use the ** operator.",
+}]
 ```
 
 Reported:

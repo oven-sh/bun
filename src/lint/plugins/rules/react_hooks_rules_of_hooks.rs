@@ -1,6 +1,7 @@
 use crate::oxlint::{self, rules_of_hooks::Flow};
 use bun_core::strings;
 use bun_lint::code_path::{Event, Step, steps};
+use bun_lint::paths;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::ByName;
@@ -67,6 +68,25 @@ fn is_hook(e: Expr) -> bool {
         ExprKind::Dot { obj, name, .. } => is_hook_name(name.bytes()) && obj.as_ident().is_some_and(starts_with_uppercase),
         _ => false,
     }
+}
+
+/// Whether `callee` is a `use` that the file declares itself, other than by importing it from React. Playwright passes a function
+/// with that name to every fixture: `async ({ page }, use) => { await use(page); }`.
+fn is_use_of_the_file(callee: Expr) -> bool {
+    let is_from_react = |it| matches!(it, Declaration::ImportSpec(spec) if spec.import().spec().is("react"));
+    callee.is_ident("use") && callee.symbol().is_some_and(|symbol| !symbol.declarations().any(is_from_react))
+}
+
+/// [`is_hook`], minus what only has the name of a hook. With an ESLint or oxlint config the name alone decides, as in the plugin.
+fn calls_hook(callee: Expr) -> bool {
+    is_hook(callee) && !(callee.file().language().stands_alone && is_use_of_the_file(callee))
+}
+
+/// Storybook renders a story's `render` function as a component, so it can call hooks.
+fn is_render_of_story(name: FunctionName, file: &File) -> bool {
+    matches!(name, FunctionName::Ident(name, _) if name.is("render"))
+        && file.language().stands_alone
+        && strings::contains(paths::basename(file.path()), b".stories.")
 }
 
 /// `name`, `React.name`
@@ -625,7 +645,7 @@ impl Rule for RulesOfHooks {
             let Some(name) = callee.as_ident().or_else(|| callee.member_name().map(|it| it.name())) else {
                 continue;
             };
-            if is_name_of_hook.get_or_insert_with(name, || is_hook_name(name.bytes())) && is_hook(callee) {
+            if is_name_of_hook.get_or_insert_with(name, || is_hook_name(name.bytes())) && calls_hook(callee) {
                 state.calls.push(e);
             }
         }
@@ -789,7 +809,7 @@ impl RulesOfHooks {
                 }
                 Step::Enter(Node::Expr(e)) => {
                     if let Some(call) = e.as_call()
-                        && is_hook(call.callee())
+                        && calls_hook(call.callee())
                     {
                         let segment = cx.state.segments.last().copied();
                         cx.state.hooks.push((segment, call.callee()));
@@ -838,7 +858,7 @@ impl RulesOfHooks {
             _ => None,
         };
         let is_directly_inside_component_or_hook = match function_name {
-            Some(name) => name.is_component_or_hook(),
+            Some(name) => name.is_component_or_hook() || is_render_of_story(name, cx.file()),
             None => function_expr.is_some_and(is_forward_ref_or_memo_callback),
         };
         // It is the value of a method or of a property of a class.

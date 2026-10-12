@@ -83,11 +83,14 @@ if (Object.hasOwn(user, "email")) {
 | `version` | `engines.node`, or `">=16.0.0"` | The range of Node.js versions you support, written as in `package.json`. |
 | `ignores` | `[]` | Built-ins that are never reported, by the name in the message. Use it for anything you polyfill. |
 
-Without `version`, the range comes from `settings.n.version` in an ESLint config, then from `engines.node`, then from `devEngines.runtime` in `package.json`.
+Without `version`, the range comes from `settings.n.version` (`[lint.settings.n]` in `bunfig.toml`, or `settings` in an ESLint config), then from `engines.node`, then from `devEngines.runtime` in `package.json`.
 
 ```toml bunfig.toml
 [lint.rules]
-"n/no-unsupported-features/es-builtins" = ["error", { version = ">=20.0.0", ignores = ["Object.groupBy"] }]
+"n/no-unsupported-features/es-builtins" = ["error", {
+  version = ">=20.0.0",
+  ignores = ["Object.groupBy"],
+}]
 ```
 
 {/* bad {"options": [{"version": ">=20.0.0"}]} */}

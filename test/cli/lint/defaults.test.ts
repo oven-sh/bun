@@ -84,20 +84,65 @@ describe.concurrent("globals", () => {
     "packages/x/test/a.mjs",
     "tests/a.js",
     "spec/a.js",
+    "a-test.js",
+    "a.e2e.js",
+    "e2e/a.js",
+    "__mocks__/fs.js",
+    "jest.setup.js",
+    "jest-setup.cjs",
+    "vitest.setup.mjs",
+    "src/setupTests.js",
+    "config/setup-jest.js",
+    "testSetup.js",
   ])("the test runners' globals are defined in %s", async name => {
     const { reports, exitCode } = await lint({ [name]: tests }, []);
     expect(reports).toEqual([]);
     expect(exitCode).toBe(0);
   });
 
-  test.each(["a.js", "src/a.js", "testing/a.js", "latest/a.js", "src/test.js"])(
-    "the test runners' globals are not defined in %s",
+  test.each(["cypress/e2e/login.cy.js", "cypress/support/commands.js", "src/login.cy.js"])(
+    "Cypress's globals are defined in %s",
     async name => {
-      const { reports, exitCode } = await lint({ [name]: 'describe("a", () => {});\n' }, []);
-      expect(reports).toEqual([`${name}:1:1 error no-undef`]);
-      expect(exitCode).toBe(1);
+      const code = 'describe("a", () => it("b", () => cy.get("a").then(() => assert.ok(expect(Cypress.env("c"))))));\n';
+      const { reports, exitCode } = await lint({ [name]: code }, []);
+      expect(reports).toEqual([]);
+      expect(exitCode).toBe(0);
     },
   );
+
+  test.each([
+    "a.js",
+    "src/a.js",
+    "testing/a.js",
+    "latest/a.js",
+    "src/test.js",
+    "setup.js",
+    "src/contest.js",
+    "src/cy.js",
+  ])("the test runners' globals are not defined in %s", async name => {
+    const { reports, exitCode } = await lint({ [name]: 'describe("a", () => {});\n' }, []);
+    expect(reports).toEqual([`${name}:1:1 error no-undef`]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("an eslint-env comment defines its globals, and is only an error with an ESLint config", async () => {
+    const files = { "a.js": '/* eslint-env mocha, nonsense */\ndescribe("a", () => {});\njQuery("a");\n' };
+    const config = { "eslint.config.mjs": `export default [{ rules: { "no-undef": "error" } }];\n` };
+    const [native, eslint] = await Promise.all([lint(files, []), lint({ ...files, ...config }, ["a.js"])]);
+    expect(native.reports).toEqual(["a.js:3:1 error no-undef"]);
+    expect(eslint.reports).toEqual(["a.js:1:1 error null", "a.js:2:1 error no-undef", "a.js:3:1 error no-undef"]);
+  });
+
+  test("a service worker's globals are defined", async () => {
+    const code = `self.addEventListener("install", event => event.waitUntil(skipWaiting()));
+self.addEventListener("activate", () => clients.claim());
+self.addEventListener("push", event => registration.showNotification(event.data.text()));
+importScripts("./lib.js");
+skipWaitng();
+`;
+    const { reports } = await lint({ "public/sw.js": code }, []);
+    expect(reports).toEqual(["public/sw.js:5:1 error no-undef"]);
+  });
 
   test.each(["test", "tests", "spec", "__tests__"])(
     "a project inside a folder named %s isn't all tests",
@@ -161,9 +206,76 @@ describe.concurrent("globals", () => {
 });
 
 describe.concurrent("severities", () => {
+  test("code that's often written on purpose is a warning, not an error", async () => {
+    const { reports, exitCode } = await lint(
+      {
+        "a.js": `export const strip = text => text.replace(/\\x1b\\[[0-9;]*m/g, "");
+export function words(text, re, object) {
+  let match;
+  while (match = re.exec(text)) console.log(match[0]);
+  try {
+    return object.hasOwnProperty(text);
+  } catch (error) {
+    error = new Error(String(error));
+    throw error;
+  }
+}
+export const id = 9007199254740993;
+`,
+        "b.ts": `export type Keep<T> = T extends Function ? T : never;
+// @ts-ignore
+export const name: String = "a";
+export enum Level { Off = 0, None = 0 }
+export interface Emitter { on(): void }
+export class Emitter {}
+export const text = document.querySelector("h1")?.textContent!;
+`,
+        "c.test.ts": `import { expect, test } from "bun:test";
+export const fixture = 1;
+test("a", () => {
+  expect(fixture).toBe(1);
+});
+`,
+      },
+      [],
+    );
+    expect(reports).toEqual([
+      "a.js:1:43 warning no-control-regex",
+      "a.js:4:10 warning no-cond-assign",
+      "a.js:6:19 warning no-prototype-builtins",
+      "a.js:8:5 warning no-ex-assign",
+      "a.js:12:19 warning no-loss-of-precision",
+      "b.ts:1:33 warning @typescript-eslint/no-unsafe-function-type",
+      "b.ts:2:1 warning @typescript-eslint/ban-ts-comment",
+      "b.ts:3:20 warning @typescript-eslint/no-wrapper-object-types",
+      "b.ts:4:30 warning @typescript-eslint/no-duplicate-enum-values",
+      "b.ts:5:18 warning @typescript-eslint/no-unsafe-declaration-merging",
+      "b.ts:6:14 warning @typescript-eslint/no-unsafe-declaration-merging",
+      "b.ts:7:21 warning @typescript-eslint/no-non-null-asserted-optional-chain",
+      "c.test.ts:2:14 warning bun:test/no-export",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("require() in a TypeScript file isn't reported", async () => {
+    const code = `import path = require("node:path");
+export default { path, plugins: [require("tailwindcss-animate")] };
+`;
+    const on = `[lint.rules]\n"@typescript-eslint/no-require-imports" = "error"\n`;
+    const [plain, turnedOn] = await Promise.all([
+      lint({ "tailwind.config.ts": code }, []),
+      lint({ "tailwind.config.ts": code, "bunfig.toml": on }, []),
+    ]);
+    expect(plain.reports).toEqual([]);
+    expect(turnedOn.reports).toEqual([
+      "tailwind.config.ts:1:15 error @typescript-eslint/no-require-imports",
+      "tailwind.config.ts:2:34 error @typescript-eslint/no-require-imports",
+    ]);
+  });
+
   const files = {
     "a.js": "debugger;\nif (Bun) {\n}\nlet unused;\n",
-    "b.ts": "export let a: any = 1;\nexport const b = 1 as unknown as Number;\n",
+    "b.ts": "export let a: any = 1;\nexport interface B {\n  constructor(): void;\n}\n",
   };
 
   test("default rules that catch bugs are errors, and the rest are warnings", async () => {
@@ -174,7 +286,7 @@ describe.concurrent("severities", () => {
       "a.js:4:5 warning no-unused-vars",
       "b.ts:1:12 warning prefer-const",
       "b.ts:1:15 warning @typescript-eslint/no-explicit-any",
-      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
+      "b.ts:3:3 error @typescript-eslint/no-misused-new",
     ]);
     expect(exitCode).toBe(1);
   });
@@ -195,6 +307,30 @@ describe.concurrent("severities", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("with --type-aware, using a value of type any is a warning", async () => {
+    const { reports, exitCode } = await lint(
+      {
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "lib": ["esnext", "dom"], "types": [] } }`,
+        "a.ts": `export async function load(url: string, log: (text: string) => void) {
+  const body = await (await fetch(url)).json();
+  log(body);
+  body.run();
+  return body;
+}
+`,
+      },
+      ["--type-aware"],
+    );
+    expect(reports).toEqual([
+      "a.ts:2:9 warning @typescript-eslint/no-unsafe-assignment",
+      "a.ts:3:7 warning @typescript-eslint/no-unsafe-argument",
+      "a.ts:4:3 warning @typescript-eslint/no-unsafe-call",
+      "a.ts:4:8 warning @typescript-eslint/no-unsafe-member-access",
+      "a.ts:5:3 warning @typescript-eslint/no-unsafe-return",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("warnings don't fail the run unless --max-warnings is exceeded, and --quiet hides them", async () => {
     const warned = { "a.js": files["a.js"].replace("debugger;", "") };
     const [plain, limited, quiet] = await Promise.all([
@@ -205,10 +341,7 @@ describe.concurrent("severities", () => {
     expect(plain.reports).toEqual(["a.js:2:10 warning no-empty", "a.js:4:5 warning no-unused-vars"]);
     expect(limited.reports).toEqual(plain.reports);
     expect(limited.stderr).toContain("Found too many warnings (maximum: 0).");
-    expect(quiet.reports).toEqual([
-      "a.js:1:1 error no-debugger",
-      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
-    ]);
+    expect(quiet.reports).toEqual(["a.js:1:1 error no-debugger", "b.ts:3:3 error @typescript-eslint/no-misused-new"]);
     expect([plain.exitCode, limited.exitCode, quiet.exitCode]).toEqual([0, 1, 1]);
   });
 
@@ -224,7 +357,7 @@ describe.concurrent("severities", () => {
       "a.js:4:5 warning no-unused-vars",
       "b.ts:1:12 warning prefer-const",
       "b.ts:1:15 warning @typescript-eslint/no-explicit-any",
-      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
+      "b.ts:3:3 error @typescript-eslint/no-misused-new",
       "c.js:1:1 error no-var",
     ]);
     expect(byFlag.reports).toEqual([
@@ -232,7 +365,7 @@ describe.concurrent("severities", () => {
       "a.js:4:5 warning no-unused-vars",
       "b.ts:1:12 error prefer-const",
       "b.ts:1:15 warning @typescript-eslint/no-explicit-any",
-      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
+      "b.ts:3:3 error @typescript-eslint/no-misused-new",
     ]);
   });
 
@@ -248,11 +381,11 @@ describe.concurrent("severities", () => {
       "a.js:4:5 error no-unused-vars",
       "b.ts:1:12 error prefer-const",
       "b.ts:1:15 error @typescript-eslint/no-explicit-any",
-      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
+      "b.ts:3:3 error @typescript-eslint/no-misused-new",
     ]);
   });
 
-  test("bun:test/no-disabled-tests is a warning, the other bun:test rules are errors", async () => {
+  test("bun:test rules that catch a broken test are errors", async () => {
     const code = `import { expect, test } from "bun:test";\ntest.skip("a", () => {});\ntest.only("b", () => {\n  expect(1);\n});\n`;
     const { reports } = await lint({ "a.test.ts": code }, []);
     expect(reports).toEqual([
@@ -290,9 +423,385 @@ describe.concurrent("severities", () => {
   });
 });
 
+describe.concurrent("defaults that differ from ESLint's", () => {
+  /** Returns the reports of `rules`, with no config and with the same rules turned on in an eslint.config.mjs. */
+  async function inBothModes(files: Record<string, string>, rules: string[], args: string[] = []) {
+    const on = JSON.stringify(Object.fromEntries(rules.map(rule => [rule, "error"])));
+    const config = `const plugin = name => ({ meta: { name: "eslint-plugin-" + name }, rules: {} });
+export default [
+  { plugins: { "react-hooks": plugin("react-hooks"), react: plugin("react") } },
+  { files: ["**/*.{js,jsx}"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } },
+  {
+    files: ["**/*.{ts,tsx}"],
+    extends: ["typescript-eslint/base"],
+    languageOptions: { parserOptions: { projectService: true } },
+  },
+  { rules: ${on} },
+];
+`;
+    const names = Object.keys(files).filter(name => /\.[jt]sx?$/.test(name));
+    const [native, eslint] = await Promise.all([
+      lint(files, args),
+      lint({ ...files, "eslint.config.mjs": config }, names),
+    ]);
+    const own = (reports: string[]) => reports.filter(it => rules.some(rule => it.endsWith(` ${rule}`)));
+    return { native: own(native.reports), eslint: own(eslint.reports) };
+  }
+
+  test("no-irregular-whitespace checks code, not text", async () => {
+    const files = {
+      "a.jsx": `// At most 10\u00a0kg, コメント\u3000全角
+export const price = <p>Prix\u00a0: 10\u00a0€</p>;
+export const name = \`名前\u3000太郎\`;
+export const pattern = /10\u00a0kg/;
+export const total\u00a0= 1;
+`,
+    };
+    const { native, eslint } = await inBothModes(files, ["no-irregular-whitespace"]);
+    expect(native).toEqual(["a.jsx:5:19 error no-irregular-whitespace"]);
+    expect(eslint).toEqual([
+      "a.jsx:1:14 error no-irregular-whitespace",
+      "a.jsx:1:23 error no-irregular-whitespace",
+      "a.jsx:2:29 error no-irregular-whitespace",
+      "a.jsx:2:34 error no-irregular-whitespace",
+      "a.jsx:3:24 error no-irregular-whitespace",
+      "a.jsx:4:27 error no-irregular-whitespace",
+      "a.jsx:5:19 error no-irregular-whitespace",
+    ]);
+  });
+
+  test("a short circuit or a ternary that calls something is a fine statement", async () => {
+    const code = `export function f(done, a, b) {
+  done && done();
+  done ? a() : b();
+  done && a;
+  done ? a : b;
+}
+`;
+    const rule = "no-unused-expressions";
+    const bunfig = { "bunfig.toml": `[lint.rules]\n"${rule}" = "warn"\n` };
+    const files = { "a.js": code, "b.ts": code };
+    const [plain, turnedOn] = await Promise.all([lint(files, []), lint({ ...files, ...bunfig }, [])]);
+    const own = (reports: string[]) => reports.filter(it => it.endsWith(rule));
+    // The core rule is off by default. It gets the same options when it's turned on.
+    expect(own(plain.reports)).toEqual([
+      `b.ts:4:3 warning @typescript-eslint/${rule}`,
+      `b.ts:5:3 warning @typescript-eslint/${rule}`,
+    ]);
+    expect(own(turnedOn.reports)).toEqual([
+      `a.js:4:3 warning ${rule}`,
+      `a.js:5:3 warning ${rule}`,
+      `b.ts:4:3 warning @typescript-eslint/${rule}`,
+      `b.ts:5:3 warning @typescript-eslint/${rule}`,
+    ]);
+    const { eslint } = await inBothModes({ "a.js": code }, [rule]);
+    expect(eslint).toEqual([2, 3, 4, 5].map(line => `a.js:${line}:3 error ${rule}`));
+  });
+
+  test("an async function as a JSX event handler isn't a misused promise", async () => {
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "jsx": "preserve", "types": [] } }`,
+      "a.tsx": `declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      form: { onSubmit?: () => void };
+    }
+  }
+}
+declare function save(): Promise<void>;
+export const form = <form onSubmit={save} />;
+[1].forEach(save);
+if (save()) save().catch(console.error);
+`,
+    };
+    const rule = "@typescript-eslint/no-misused-promises";
+    const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+    expect(native).toEqual([`a.tsx:10:13 error ${rule}`, `a.tsx:11:5 error ${rule}`]);
+    expect(eslint).toEqual([`a.tsx:9:36 error ${rule}`, `a.tsx:10:13 error ${rule}`, `a.tsx:11:5 error ${rule}`]);
+  });
+
+  test("no-fallthrough accepts the usual ways to write the comment", async () => {
+    const comments = [
+      "// falls through",
+      "/* intentional fall-through */",
+      "// FALLTHROUGH",
+      "// no break",
+      "// and the next",
+    ];
+    const cases = comments.map((comment, i) => `    case ${i}:\n      console.log(${i});\n    ${comment}\n`);
+    const files = { "a.js": `export function f(a) {\n  switch (a) {\n${cases.join("")}    default:\n  }\n}\n` };
+    const { native, eslint } = await inBothModes(files, ["no-fallthrough"]);
+    expect(native).toEqual(["a.js:18:5 error no-fallthrough"]);
+    expect(eslint).toEqual([9, 15, 18].map(line => `a.js:${line}:5 error no-fallthrough`));
+  });
+
+  test("a namespace inside declare global is allowed", async () => {
+    const files = {
+      "a.ts": `declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      API_URL: string;
+    }
+  }
+}
+export namespace Shapes {
+  export const unit = 1;
+}
+`,
+    };
+    const rule = "@typescript-eslint/no-namespace";
+    const { native, eslint } = await inBothModes(files, [rule]);
+    expect(native).toEqual([`a.ts:8:8 warning ${rule}`]);
+    expect(eslint).toEqual([`a.ts:2:3 error ${rule}`, `a.ts:8:8 error ${rule}`]);
+  });
+
+  const react = { "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }) };
+
+  test("a parameter named use isn't React's hook", async () => {
+    const files = {
+      ...react,
+      "e2e/fixtures.ts": `import { test as base } from "@playwright/test";
+export const test = base.extend<{ user: string }>({
+  user: async ({}, use) => {
+    await use("alice");
+  },
+});
+`,
+      "src/imported.ts": `import { use } from "react";
+export function load(promise: Promise<string>) {
+  return use(promise);
+}
+`,
+      "src/global.js": `export function load(promise) {
+  return use(promise);
+}
+`,
+    };
+    const rule = "react-hooks/rules-of-hooks";
+    const { native, eslint } = await inBothModes(files, [rule]);
+    const real = [`src/global.js:2:10 error ${rule}`, `src/imported.ts:3:10 error ${rule}`];
+    expect(native).toEqual(real);
+    expect(eslint).toEqual([`e2e/fixtures.ts:4:11 error ${rule}`, ...real]);
+  });
+
+  test("a story's render function can call hooks", async () => {
+    const files = {
+      ...react,
+      "src/Button.stories.tsx": `import { useState } from "react";
+export const Controlled = {
+  render: (args: object) => {
+    const [on] = useState(false);
+    return <button {...args} disabled={on} />;
+  },
+};
+export const Broken = {
+  render(args: { on: boolean }) {
+    if (args.on) useState(false);
+    return <button />;
+  },
+};
+`,
+      "src/Button.tsx": `import { useState } from "react";
+export const story = {
+  render: () => {
+    const [on] = useState(false);
+    return <button disabled={on} />;
+  },
+};
+`,
+    };
+    const rule = "react-hooks/rules-of-hooks";
+    const { native, eslint } = await inBothModes(files, [rule]);
+    const real = [`src/Button.stories.tsx:10:18 error ${rule}`, `src/Button.tsx:4:18 error ${rule}`];
+    expect(native).toEqual(real);
+    expect(eslint).toEqual([`src/Button.stories.tsx:4:18 error ${rule}`, ...real]);
+  });
+
+  test("process.exit() ends a case", async () => {
+    const files = {
+      "a.js": `export function run(command, usage, fail) {
+  switch (command) {
+    case "help":
+      usage();
+      process.exit(0);
+    case "crash":
+      process.abort();
+    case "check":
+      if (usage) {
+        process.exit(1);
+      } else {
+        return 1;
+      }
+    case "maybe":
+      if (usage) process.exit(1);
+    case "fail":
+      fail("never returns");
+    default:
+      return 0;
+  }
+}
+`,
+    };
+    const { native, eslint } = await inBothModes(files, ["no-fallthrough"]);
+    expect(native).toEqual([16, 18].map(line => `a.js:${line}:5 error no-fallthrough`));
+    expect(eslint).toEqual([6, 8, 14, 16, 18].map(line => `a.js:${line}:5 error no-fallthrough`));
+  });
+
+  test("with --type-aware, a call that returns never ends a case", async () => {
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+      "a.ts": `declare function fail(message: string): never;
+export function run(command: string) {
+  switch (command) {
+    case "fail":
+      fail("stop");
+    case "log":
+      console.log(command);
+    default:
+      return 0;
+  }
+}
+`,
+    };
+    const { native, eslint } = await inBothModes(files, ["no-fallthrough"], ["--type-aware"]);
+    expect(native).toEqual(["a.ts:8:5 error no-fallthrough"]);
+    expect(eslint).toEqual(["a.ts:6:5 error no-fallthrough", "a.ts:8:5 error no-fallthrough"]);
+  });
+
+  test("options from bunfig.toml replace them", async () => {
+    const files = {
+      "a.js": "// 10\u00a0kg\nexport const weight = `10\u00a0kg`;\n",
+      "bunfig.toml": `[lint.rules]\n"no-irregular-whitespace" = ["error", { skipComments = true }]\n`,
+    };
+    const { reports } = await lint(files, []);
+    expect(reports).toEqual(["a.js:2:26 error no-irregular-whitespace"]);
+  });
+});
+
+describe.concurrent("--fix-suggestions never deletes code that does something", () => {
+  test("an unused variable stays if its initializer can have side effects", async () => {
+    const code = `const sent = sendEmail(user);
+const last = queue.pop();
+const saved = await db.save(user);
+const plain = 1;
+import unused from "x";
+export {};
+`;
+    for (const flag of ["--fix-suggestions", "--fix-dangerously"]) {
+      const { texts, reports } = await lint({ "a.mjs": code }, [flag]);
+      expect(texts["a.mjs"]).toBe(`const sent = sendEmail(user);
+const last = queue.pop();
+const saved = await db.save(user);
+
+import "x";
+export {};
+`);
+      expect(reports.filter(it => it.endsWith("no-unused-vars"))).toEqual([
+        "a.mjs:1:7 warning no-unused-vars",
+        "a.mjs:2:7 warning no-unused-vars",
+        "a.mjs:3:7 warning no-unused-vars",
+      ]);
+    }
+  });
+
+  const removed = [
+    "const a = 1;",
+    'const b = "text";',
+    "const c = -1 + 2 * 3;",
+    "const d = [1, [2], { e: 3, f() {}, get g() {} }];",
+    "const h = () => call();",
+    "const i = async function* () {};",
+    "const j = class extends Base { static k = 1; l = call(); };",
+    "const m = `text`;",
+    'const n = typeof value === "string" ? null : !value;',
+    "const o = /a/u;",
+    "let p;",
+    "function q() { call(); }",
+    "class r { s = call(); }",
+  ];
+  const kept = [
+    "const a = call();",
+    "const b = new Thing();",
+    "const c = object.property;",
+    "const d = object[0];",
+    "const e = object?.property;",
+    "const f = [...list];",
+    "const g = { ...object };",
+    "const h = { [key]: 1 };",
+    "const i = tag`text`;",
+    "const j = `${value}`;",
+    "const k = (count = 1);",
+    "const l = count++;",
+    "const m = delete object.property;",
+    'const n = import("x");',
+    "const o = class { static { call(); } };",
+    "const p = class { static q = call(); };",
+    "const r = class extends mixin() {};",
+    "const s = class { [key]() {} };",
+    'const t = "property" in object;',
+    "const u = value instanceof Thing;",
+    "const v = [1, { w: [call()] }];",
+    "const x = true && (false || call());",
+    "const { y } = object;",
+    "const [z] = list;",
+    "class A { static B = call(); }",
+    "class C extends mixin() {}",
+  ];
+
+  test("declarations that only define something are removed", async () => {
+    const { texts } = await lint({ "a.mjs": [...removed, "export {};", ""].join("\n") }, ["--fix-suggestions"]);
+    expect(texts["a.mjs"]).toBe([...removed.map(() => ""), "export {};", ""].join("\n"));
+  });
+
+  test("declarations that run other code stay", async () => {
+    const code = [...kept, "export {};", ""].join("\n");
+    const { texts, reports } = await lint({ "a.mjs": code }, ["--fix-suggestions"]);
+    expect(texts["a.mjs"]).toBe(code);
+    expect(reports.filter(it => it.endsWith("no-unused-vars")).length).toBe(kept.length);
+  });
+
+  test("a parameter stays, because the number of parameters can matter", async () => {
+    const code = "app.use((error, request, response, next) => {\n  response.end(String(error));\n});\nexport {};\n";
+    const bunfig = { "bunfig.toml": `[lint.rules]\n"no-unused-vars" = ["warn", { args = "all" }]\n` };
+    const { texts, reports } = await lint({ "a.mjs": code, ...bunfig }, ["--fix-suggestions"]);
+    expect(texts["a.mjs"]).toBe(code);
+    expect(reports.filter(it => it.endsWith("no-unused-vars"))).toEqual([
+      "a.mjs:1:17 warning no-unused-vars",
+      "a.mjs:1:36 warning no-unused-vars",
+    ]);
+  });
+
+  test("the top level of a classic script stays, because the page can use it", async () => {
+    const code = "function onClick() {}\nconst settings = { a: 1 };\n(function () {\n  const inner = 1;\n})();\n";
+    const { texts } = await lint({ "public/app.js": code, "lib.cjs": `${code}module.exports = {};\n` }, [
+      "--fix-suggestions",
+    ]);
+    expect(texts["public/app.js"]).toBe(
+      "function onClick() {}\nconst settings = { a: 1 };\n(function () {\n  \n})();\n",
+    );
+    expect(texts["lib.cjs"]).toBe("\n\n(function () {\n  \n})();\nmodule.exports = {};\n");
+  });
+
+  test("with an ESLint config the suggestion is ESLint's", async () => {
+    const files = {
+      "a.mjs": "const sent = sendEmail();\n",
+      "eslint.config.mjs": `export default [{ rules: { "no-unused-vars": "error" } }];\n`,
+    };
+    const { json } = await lint(files, ["a.mjs"]);
+    expect(json[0].messages[0].suggestions).toEqual([
+      {
+        messageId: "removeVar",
+        data: { varName: "sent" },
+        fix: { range: [0, 25], text: "" },
+        desc: "Remove unused variable 'sent'.",
+      },
+    ]);
+  });
+});
+
 describe.concurrent("declaration files", () => {
   const code = `declare var a: any;
-declare const b: Number;
+declare class B { new(): B; }
 declare const d: {};
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const c: any;
@@ -302,7 +811,7 @@ declare const c: any;
     "%s: default rules run if they're errors, and are skipped if they're warnings",
     async name => {
       const { reports, exitCode } = await lint({ [name]: code }, []);
-      expect(reports).toEqual([`${name}:2:18 error @typescript-eslint/no-wrapper-object-types`]);
+      expect(reports).toEqual([`${name}:2:19 error @typescript-eslint/no-misused-new`]);
       expect(exitCode).toBe(1);
     },
   );
@@ -320,7 +829,7 @@ declare const c: any;
     const expected = [
       "types.d.ts:1:1 error no-var",
       "types.d.ts:1:16 warning @typescript-eslint/no-explicit-any",
-      "types.d.ts:2:18 error @typescript-eslint/no-wrapper-object-types",
+      "types.d.ts:2:19 error @typescript-eslint/no-misused-new",
     ];
     const [byFile, byFlag] = await Promise.all([
       lint({ "types.d.ts": code, "bunfig.toml": bunfig }, []),
@@ -336,7 +845,7 @@ declare const c: any;
     expect(reports).toEqual([
       "types.d.ts:1:1 error no-var",
       "types.d.ts:1:16 error @typescript-eslint/no-explicit-any",
-      "types.d.ts:2:18 error @typescript-eslint/no-wrapper-object-types",
+      "types.d.ts:2:19 error @typescript-eslint/no-misused-new",
       "types.d.ts:3:18 error @typescript-eslint/no-empty-object-type",
     ]);
   });

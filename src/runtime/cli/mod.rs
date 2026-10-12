@@ -1623,13 +1623,45 @@ pub(crate) mod command {
         &[]
     }
 
+    /// The flags of `command` that stand before it, as in `bun --check format`, and then what follows it. If they were dropped,
+    /// `--check` would write. `knows` tells whether `command` has a flag. The others are for `bun`, or come from `BUN_OPTIONS`.
+    fn with_own_flags_before(
+        argv: &[&'static bun_core::ZStr],
+        command: &[u8],
+        knows: fn(&[u8]) -> bool,
+    ) -> Vec<&'static bun_core::ZStr> {
+        let is_of_bun = |arg: &[u8]| {
+            let name = strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
+            matches!(name, b"--config" | b"--cwd" | b"--help" | b"--silent")
+        };
+        let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
+        let mut args: Vec<_> = before
+            .filter(|arg| arg.as_bytes().starts_with(b"--"))
+            .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
+            .copied()
+            .collect();
+        args.extend_from_slice(after_command(argv, command));
+        args
+    }
+
+    /// `bun --help lint`: prints the help of `command` and exits if `--help` or `-h` is among the flags of `bun`, which precede it.
+    fn print_help_if_asked_before(argv: &[&'static bun_core::ZStr], command: &[u8], tag: Tag) {
+        let mut before = (argv.iter().map(|it| it.as_bytes())).take_while(|arg| *arg != command);
+        if before.any(|arg| matches!(arg, b"--help" | b"-h")) {
+            tag_print_help(tag, false);
+            Global::exit(0);
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn exec_lint(log: &mut bun_ast::Log) -> CmdResult {
         // LintCommand parses its own argv.
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
-        super::lint_command::LintCommand::exec(ctx, after_command(&argv, b"lint"))
+        print_help_if_asked_before(&argv, b"lint", Tag::LintCommand);
+        let knows = super::lint_command::LintCommand::has_flag;
+        super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint", knows))
     }
 
     #[cold]
@@ -1638,7 +1670,12 @@ pub(crate) mod command {
         // FormatCommand parses its own argv.
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
-        super::format_command::FormatCommand::exec(ctx, after_command(&argv, b"format"))
+        print_help_if_asked_before(&argv, b"format", Tag::FormatCommand);
+        let knows = super::format_command::FormatCommand::has_flag;
+        super::format_command::FormatCommand::exec(
+            ctx,
+            &with_own_flags_before(&argv, b"format", knows),
+        )
     }
 
     #[cold]

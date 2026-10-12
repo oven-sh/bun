@@ -39,7 +39,10 @@ struct LintScopeState {
         variableWords = {};
         declaredCount = 0;
         globalSet.clear();
+        knownGlobals.clear();
         mentionedGlobals.clear();
+        mentionedNames.clear();
+        mentionedAreOfLib.clear();
         quietLibVariables = 0;
         hasAllLibVariables = true;
     }
@@ -49,7 +52,9 @@ struct LintScopeState {
     void visit(Visitor& visitor)
     {
         visitor.append(globalSet);
+        visitor.append(knownGlobals);
         visitor.append(mentionedGlobals);
+        visitor.append(mentionedNames);
         visitor.append(lazyVariables);
         for (auto& it : libNames)
             visitor.append(it);
@@ -87,10 +92,14 @@ struct LintScopeState {
 
     // The libraries of TypeScript can define thousands of variables, and most files ask for a few names. So only those that the file or
     // the configuration mentions are made with the scopes, the others when something asks for them.
-    // `set` of the global scope.
+    // `set` of the global scope. Plugins can write to it, so nothing is ever read from it. It's empty until all variables are made.
     JSC::WriteBarrier<JSC::JSMap> globalSet;
-    // The variables of the global scope that were made with the scopes, in their order.
+    // From the name to the variable, for those of the global scope that have been made. No plugin can reach it or the next two.
+    JSC::WriteBarrier<JSC::JSMap> knownGlobals;
+    // The variables of the global scope that were made with the scopes, in their order, their names, and whether each is one of a library.
     JSC::WriteBarrier<JSC::JSArray> mentionedGlobals;
+    JSC::WriteBarrier<JSC::JSArray> mentionedNames;
+    WTF::Vector<bool> mentionedAreOfLib;
     // How many of the others have been made.
     uint32_t quietLibVariables { 0 };
     // There are no others, or all have been made.

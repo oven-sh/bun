@@ -73,7 +73,7 @@ const brand = <strong>{"Bun"}</strong>;
 | `noAttributeStrings` | `false` | Also report props with a plain string value, such as `alt="Logo"`. |
 | `allowedStrings` | `[]` | Strings that are never reported. Spaces around the text don't count. |
 | `elementOverrides` | `{}` | Different options for some components, by name. |
-| `restrictedAttributes` | `[]` | Only with an oxlint config: props that can't have a plain string value, even with `ignoreProps`. |
+| `restrictedAttributes` | `[]` | Only for an oxlint config. Props that can't have a plain string value, even with `ignoreProps`. `bunfig.toml` rejects this option. |
 
 With `noStrings`, braces don't help:
 

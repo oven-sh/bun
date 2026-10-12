@@ -103,7 +103,7 @@ function connect(port?: number) {}
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Don't report files that are checked without `strictNullChecks`. |
+| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Without `strictNullChecks` in `tsconfig.json`, the rule can't tell what can be `undefined`, and it reports that once for each file. Set this to `true` to turn that report off. |
 
 Without `strictNullChecks` in `tsconfig.json`, types don't say what can be `undefined`. By default, the rule reports each of those files once, to tell you to turn it on:
 

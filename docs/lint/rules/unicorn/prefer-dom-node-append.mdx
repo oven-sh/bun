@@ -52,4 +52,4 @@ list.append("Total: ", count, footer);
 
 ## When not to use it
 
-`appendChild()` returns the node it added and `append()` returns `undefined`. `const item = list.appendChild(node)` is reported and fixed like any other call, and after the fix `item` is `undefined`.
+`appendChild()` returns the node it added and `append()` returns `undefined`. The rule doesn't check whether you use the result. `const item = list.appendChild(node)` is reported and fixed like any other call, and after the fix `item` is `undefined`. If your code relies on the returned node, leave the rule off, or review what `--fix` changed.

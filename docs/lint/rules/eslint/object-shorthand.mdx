@@ -31,16 +31,12 @@ Every option, set to its default. The ones that are commented out are unset by d
 
 ```toml bunfig.toml
 [lint.rules]
-"object-shorthand" = [
-  "error",
-  "always",
-  {
-    avoidQuotes = false,
-    ignoreConstructors = false,
-    # methodsIgnorePattern = <string>,
-    avoidExplicitReturnArrows = false,
-  },
-]
+"object-shorthand" = ["error", "always", {
+  avoidQuotes = false,
+  ignoreConstructors = false,
+  # methodsIgnorePattern = <string>,
+  avoidExplicitReturnArrows = false,
+}]
 ```
 
 {/* End of the generated section. */}

@@ -124,7 +124,10 @@ import express from "express";
 
 ```toml bunfig.toml
 [lint.rules]
-"import/order" = ["error", { named = true, alphabetize = { order = "asc", caseInsensitive = true } }]
+"import/order" = ["error", {
+  named = true,
+  alphabetize = { order = "asc", caseInsensitive = true },
+}]
 ```
 
 {/* bad {"count": 2, "options": [{"named": true, "alphabetize": {"order": "asc", "caseInsensitive": true}}]} */}
@@ -147,7 +150,10 @@ Use it for path aliases such as `@/`, which otherwise count as `"unknown"`:
 
 ```toml bunfig.toml
 [lint.rules]
-"import/order" = ["error", { groups = ["builtin", "external", "internal", "parent", "sibling", "index"], pathGroups = [{ pattern = "@/**", group = "internal" }] }]
+"import/order" = ["error", {
+  groups = ["builtin", "external", "internal", "parent", "sibling", "index"],
+  pathGroups = [{ pattern = "@/**", group = "internal" }],
+}]
 ```
 
 {/* bad {"options": [{"groups": ["builtin", "external", "internal", "parent", "sibling", "index"], "pathGroups": [{"pattern": "@/**", "group": "internal"}]}]} */}

@@ -1310,16 +1310,27 @@ impl<'c> Configs<'c> {
     }
 
     /// The plugins that the configuration names for the file at `path`, which has `scope`: the last list that applies
-    /// is the list.
-    fn plugins_for<'s>(&'s self, scope: &'s Scope, path: &[u8]) -> Option<&'s Plugins> {
+    /// is the list. `None`: text without a file name, which no override matches.
+    fn plugins_for<'s>(&'s self, scope: &'s Scope, path: Option<&[u8]>) -> Option<&'s Plugins> {
         let config = self.config_of(scope).ok().flatten()?;
-        let of_override = config.in_last_override(path, |it| it.plugins.as_ref());
+        let of_override =
+            path.and_then(|path| config.in_last_override(path, |it| it.plugins.as_ref()));
         Some(of_override.unwrap_or(&config.plugins))
     }
 
     /// See [`Plugins::missing`], for the file at `path`, which has `scope`.
-    pub(crate) fn missing_plugins<'s>(&'s self, scope: &'s Scope, path: &[u8]) -> &'s [Vec<u8>] {
+    pub(crate) fn missing_plugins<'s>(
+        &'s self,
+        scope: &'s Scope,
+        path: Option<&[u8]>,
+    ) -> &'s [Vec<u8>] {
         (self.plugins_for(scope, path)).map_or(&[][..], |it| &it.missing[..])
+    }
+
+    /// Whether the config or `--plugin` names a plugin that isn't built in, for the file at `path`, which has `scope`.
+    pub(crate) fn names_other_plugins(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
+        (self.plugins_for(scope, path)).is_some_and(|it| it.names_others)
+            || !(self.options.plugins.iter()).all(|it| is_built_in_plugin(it))
     }
 
     /// See [`Plugins::endings`], for the file at `path`, which has `scope`.
@@ -1331,7 +1342,7 @@ impl<'c> Configs<'c> {
         let of_flags = (self.options.plugins.iter())
             .filter_map(|it| endings_of_plugin(it))
             .flatten();
-        let of_config = self.plugins_for(scope, path).into_iter();
+        let of_config = self.plugins_for(scope, Some(path)).into_iter();
         of_config
             .flat_map(|it| &it.endings)
             .chain(of_flags)
@@ -1356,7 +1367,7 @@ impl<'c> Configs<'c> {
     pub(crate) fn packages_of_plugins<'s>(
         &'s self,
         scope: &'s Scope,
-        path: &[u8],
+        path: Option<&[u8]>,
     ) -> impl Iterator<Item = &'s [u8]> + use<'s, 'c> {
         (self.plugins_for(scope, path).into_iter())
             .flat_map(|it| &it.packages)
@@ -1385,9 +1396,9 @@ impl<'c> Configs<'c> {
             .unwrap_or(false)
     }
 
-    /// Returns true if TOML gets formatted in `scope`. Prettier doesn't format TOML, so this needs native mode and no
-    /// Prettier config for the directory.
-    pub(crate) fn formats_toml(&self, scope: &Scope) -> bool {
+    /// Returns true if Bun's own choices apply in `scope`: the run is in native mode and the directory has no Prettier
+    /// config. That's where TOML gets formatted and generated files get skipped.
+    pub(crate) fn is_native_in(&self, scope: &Scope) -> bool {
         self.is_native() && self.config_of(scope).is_ok_and(|it| it.is_none())
     }
 
@@ -1411,13 +1422,25 @@ impl<'c> Configs<'c> {
 
     /// Prettier's `getOptionsForFile`: how to format the file at `path`, which has `scope`.
     pub(crate) fn options_for(&self, scope: &Scope, path: &[u8]) -> Result<Resolved, Fatal> {
+        self.options_of(scope, Some(path))
+    }
+
+    /// The same for text without a file name, like `prettier --parser x < file`. `scope` is the working directory's.
+    /// Overrides and `.editorconfig` sections match on a name, so they don't apply.
+    pub(crate) fn options_without_name(&self, scope: &Scope) -> Result<Resolved, Fatal> {
+        self.options_of(scope, None)
+    }
+
+    fn options_of(&self, scope: &Scope, path: Option<&[u8]>) -> Result<Resolved, Fatal> {
+        let directory = path.map_or(&self.environment.cwd[..], paths::dirname);
         let config = self.config_of(scope)?;
         let is_oxfmt = self.is_oxfmt_for(scope);
         let mut from_config: Vec<(&[u8], &[u8])> = Vec::new();
         if let Some(config) = config {
             from_config.extend(config.settings.iter().map(|it| (&it.0[..], &it.1[..])));
-            let relative = paths::relative(paths::dirname(&config.path), path);
-            for it in config.overrides.iter().filter(|it| it.matches(&relative)) {
+            let relative = path.map(|path| paths::relative(paths::dirname(&config.path), path));
+            let is_for_it = |it: &&Override| relative.as_ref().is_some_and(|path| it.matches(path));
+            for it in config.overrides.iter().filter(is_for_it) {
                 from_config.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
             }
             // oxfmt has no such option.
@@ -1426,15 +1449,18 @@ impl<'c> Configs<'c> {
             }
         }
         let mut from_files: Vec<(&[u8], &[u8])> = Vec::new();
-        let from_editorconfig = match (self.options.config_lookup, self.flavor) {
-            (false, _) => Vec::new(),
-            (true, Flavor::Prettier) => {
+        let from_editorconfig = match (self.options.config_lookup, self.flavor, path) {
+            (false, ..) | (true, Flavor::Prettier, None) => Vec::new(),
+            (true, Flavor::Prettier, Some(path)) => {
                 editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path)
             }
-            (true, Flavor::Oxfmt) => {
+            (true, Flavor::Oxfmt, _) => {
                 let use_tabs = use_tabs_in(from_config.iter().copied());
                 (scope.editorconfigs.first())
-                    .map(|it| editorconfig::options_for_oxfmt(it, path, use_tabs))
+                    .map(|it| match path {
+                        Some(path) => editorconfig::options_for_oxfmt(it, path, use_tabs),
+                        None => editorconfig::options_of_root_for_oxfmt(it, use_tabs),
+                    })
                     .unwrap_or_default()
             }
         };
@@ -1456,7 +1482,7 @@ impl<'c> Configs<'c> {
         let has_files = config.is_some() || !from_editorconfig.is_empty();
         let mut from_flags: Vec<(&[u8], &[u8])> =
             (self.options.format.iter().map(|it| (it.0, &it.1[..]))).collect();
-        if !self.overrides.is_empty() {
+        if let Some(path) = path.filter(|_| !self.overrides.is_empty()) {
             let relative = paths::relative(&self.environment.cwd, path);
             for it in self.overrides.iter().filter(|it| it.matches(&relative)) {
                 from_flags.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
@@ -1483,11 +1509,11 @@ impl<'c> Configs<'c> {
         }
         let mut resolved = Resolved::default();
         let mut sort = SortSettings::default();
-        let _ = resolved.options.set(b"filepath", path);
+        let _ = resolved.options.set(b"filepath", path.unwrap_or_default());
         resolved.options.format_javascript = Some(super::format_javascript(self.options.verify));
         resolved.options.parse_javascript = Some(super::parse_javascript);
         resolved.options.embedded_html = true;
-        resolved.options.toml = self.formats_toml(scope);
+        resolved.options.toml = self.is_native_in(scope);
         if is_oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
             // It sorts the keys of a `package.json` unless it is told not to.
@@ -1498,9 +1524,7 @@ impl<'c> Configs<'c> {
         // oxfmt-only options are also valid under a Prettier config when a flag or `[format]` sets them.
         let is_known = |name: &[u8]| is_oxfmt || from_flags.iter().any(|it| it.0 == name);
         // Prettier knows the options of the plugins that it has loaded.
-        let knows_all_options = !is_oxfmt
-            && !(self.plugins_for(scope, path)).is_some_and(|it| it.names_others)
-            && (self.options.plugins.iter()).all(|it| is_built_in_plugin(it));
+        let knows_all_options = !is_oxfmt && !self.names_other_plugins(scope, path);
         let mut unknown: Vec<(&[u8], &[u8])> = Vec::new();
         for (name, value) in all {
             match name {
@@ -1561,7 +1585,7 @@ impl<'c> Configs<'c> {
         }
         if !is_oxfmt
             && resolved.options.parser.is_none()
-            && let Some(parser) = super::files::parser_by_interpreter(path)
+            && let Some(parser) = path.and_then(super::files::parser_by_interpreter)
         {
             let _ = resolved.options.set(b"parser", parser);
         }
@@ -1579,7 +1603,7 @@ impl<'c> Configs<'c> {
             self.warn(&[b"Ignored unknown option { ", name, b": ", &shown, b" }."]);
         }
         if sort.organizes_imports() {
-            for (name, value) in self.tsconfig_of(paths::dirname(path)).iter() {
+            for (name, value) in self.tsconfig_of(directory).iter() {
                 sort.set(name, value);
             }
         }
@@ -1587,8 +1611,8 @@ impl<'c> Configs<'c> {
         if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
             // Paths in an oxfmt config are relative to that file. Paths in `[format]` are relative to the working directory.
             let of_config = (config.filter(|it| it.is_oxfmt)).map(|it| paths::dirname(&it.path));
-            let tailwind =
-                tailwind::for_file(&self.classes, self.environment, &value, (of_config, path));
+            let places = (of_config, directory);
+            let tailwind = tailwind::for_file(&self.classes, self.environment, &value, places);
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }
         Ok(resolved)

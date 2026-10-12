@@ -3809,6 +3809,33 @@ describe.concurrent("the command line of oxlint", () => {
     expect(alone.exitCode).toBe(1);
   });
 
+  // Rules that look at several files lint a file a second time, without types.
+  test("--type-check still reports type errors when import rules are on", async () => {
+    const files = {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+      "q.ts": "export const q = 1;\n",
+      "b.ts": [
+        'import { q } from "./q";',
+        'import { q as r } from "./q";',
+        "// oxlint-disable-next-line",
+        'const n: number = "x";',
+        "var old = await 1;",
+        "export default [n, q, r, old];",
+        "",
+      ].join("\n"),
+    };
+    const rules = { "no-var": "error", "import/no-duplicates": "error", "typescript/await-thenable": "error" };
+    const config = JSON.stringify({ plugins: ["import", "typescript"], categories: { correctness: "off" }, rules });
+    const { problems, exitCode } = await lint({ ...files, ".oxlintrc.json": config }, ["--type-aware", "--type-check"]);
+    expect(problems).toEqual([
+      "b.ts:1:19 import/no-duplicates",
+      "b.ts:4:7 typescript/TS2322",
+      "b.ts:5:1 no-var",
+      "b.ts:5:17 @typescript-eslint/await-thenable",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   test("--print-config prints what oxlint prints", async () => {
     using dir = tempDir("bun-lint-print-config", {
       ".oxlintrc.json": JSON.stringify({

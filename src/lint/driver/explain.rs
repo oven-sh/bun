@@ -46,7 +46,8 @@ fn page_of(meta: &Meta) -> Option<&'static [u8]> {
     Some(&page[..strings::index_of_char_usize(page, 0).unwrap_or(page.len())])
 }
 
-/// Severity and options of the rules that are on by default, with no config at all.
+/// Severity and options that the default config has for each rule it mentions. It sets options for some rules that are off,
+/// which apply once the user turns the rule on.
 struct Defaults(FxHashMap<(Plugin, &'static str), (Severity, Arc<[Json]>)>);
 
 impl Defaults {
@@ -59,10 +60,7 @@ impl Defaults {
             else {
                 continue;
             };
-            for rule in of_file
-                .configured()
-                .filter(|it| it.severity != Severity::Off)
-            {
+            for rule in of_file.configured() {
                 let meta = rule.entry.meta;
                 let (severity, _) = on
                     .entry((meta.plugin, meta.name))
@@ -73,8 +71,10 @@ impl Defaults {
         Defaults(on)
     }
 
+    /// `None` if the rule is off by default.
     fn get(&self, meta: &Meta) -> Option<Severity> {
-        self.0.get(&(meta.plugin, meta.name)).map(|it| it.0)
+        let (severity, _) = self.0.get(&(meta.plugin, meta.name))?;
+        Some(*severity).filter(|it| *it != Severity::Off)
     }
 
     fn options(&self, meta: &Meta) -> &[Json] {

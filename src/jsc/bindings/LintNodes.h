@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/Structure.h>
@@ -129,5 +130,10 @@ private:
     std::array<JSC::WriteBarrier<JSC::JSObject>, layoutKinds> m_sharedPrototypes;
     std::array<JSC::WriteBarrier<JSC::JSObject>, 2> m_visitorKeys;
 };
+
+// An array of `length` times `undefined`, or null if there's no memory. `setIndexQuickly` is safe for all its indices.
+// It isn't after `JSArray::tryCreate`, which makes room for a few items only once a plugin has put an accessor with an index for
+// a name on `Array.prototype`. So never use `JSArray::tryCreate` in the plugin host.
+JSC::JSArray* tryCreateFilledLintArray(JSC::VM&, JSC::JSGlobalObject*, unsigned length);
 
 } // namespace Bun

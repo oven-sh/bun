@@ -6,7 +6,7 @@ plugin: "bun-test"
 aliases: []
 kind: "problem"
 category: null
-default: "error"
+default: "warn"
 fixable: "no"
 typeAware: false
 deprecated: false
@@ -22,11 +22,11 @@ This rule is on by default in files that import from `"bun:test"`.
 
 ## Configure
 
-On by default as an error. To turn it off:
+On by default as a warning. To turn it off:
 
 ```toml bunfig.toml
 [lint.rules]
-"bun:test/no-export" = "off" # or "warn"
+"bun:test/no-export" = "off" # or "error"
 ```
 
 {/* End of the generated section. */}

@@ -94,7 +94,9 @@ function Badge(props) {
 
 ```toml bunfig.toml
 [lint.rules]
-"react/destructuring-assignment" = ["error", "always", { destructureInSignature = "always" }]
+"react/destructuring-assignment" = ["error", "always", {
+  destructureInSignature = "always",
+}]
 ```
 
 The first option is `"always"` (default) or `"never"`. With `"never"`, the rule reports destructuring instead:

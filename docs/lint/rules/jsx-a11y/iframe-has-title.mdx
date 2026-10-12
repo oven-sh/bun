@@ -49,7 +49,7 @@ const video = <iframe src={videoUrl} title={clip.name} />;
 const widget = <iframe {...frameProps} title={`Preview of ${page.name}`} />;
 ```
 
-A title built with `+`, or read through `?.`, is also reported. Use a template or a variable:
+In braces, the rule accepts a string, a template, a variable, a property such as `clip.name`, a call, `a ? b : c`, and `||`, `&&` or `??`. Any other expression is reported, including a title that's built with `+`, read through `?.` or cast with `as`. Use a template or a variable:
 
 {/* bad {"count": 2} */}
 ```jsx

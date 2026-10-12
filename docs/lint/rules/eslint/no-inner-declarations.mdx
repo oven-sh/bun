@@ -120,7 +120,7 @@ The second option is an object:
 | Option | Default | What it does |
 | --- | --- | --- |
 | `blockScopedFunctions` | `"allow"` | With `"disallow"`, report functions in nested blocks in strict mode too. |
-| `namespaces` | `"disallow"` | Only applies with an oxlint config, which reports declarations directly inside a TypeScript `namespace`. `"allow"` turns that off. |
+| `namespaces` | `"disallow"` | Only for an oxlint config, where the rule also reports declarations directly inside a TypeScript `namespace`. `"allow"` turns that off. `bunfig.toml` rejects this option. |
 
 {/* bad {"options": ["functions", {"blockScopedFunctions": "disallow"}]} */}
 ```js

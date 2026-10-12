@@ -102,7 +102,7 @@ test("responds with 200", async () => {
 });
 ```
 
-With `assertFunctionNames`, only `expect` and the names in the list count. A name can be a dotted path. `*` matches any letters and digits in one part of the path, and `**` matches any number of parts.
+With `assertFunctionNames`, only `expect` and the names in the list count. A name can be a dotted path. `*` matches any letters and digits in one part of the path, and `**` matches one or more parts.
 
 {/* good {"options": [{"assertFunctionNames": ["assert*", "request.**.expect"]}]} */}
 ```ts

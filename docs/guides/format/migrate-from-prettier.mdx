@@ -43,6 +43,13 @@ Change the scripts.
 
 Don't skip this. If `package.json` has a `format` script, `bun format` runs that script, so you'd still get Prettier.
 
+Watch out for two differences in hooks and shell scripts:
+
+- **No arguments means the current directory.** Prettier prints an error there. So if the file list can be empty, as in `git diff --cached --name-only | xargs bun format` or `bun format $(git ls-files '*.foo')`, Bun formats everything. Use `bun format --staged` in a pre-commit hook, or `xargs -r`.
+- **`bun format file.ts` writes the file and prints its name.** `prettier file.ts` prints the formatted code. To print it, pipe the code in: `bun format --stdin-filepath file.ts < file.ts`.
+
+Piping into `--parser` works like in Prettier: `generate | bun format --parser typescript > out.ts`.
+
 ---
 
 Check that nothing changes. With a Prettier config, `--check` prints what Prettier prints.

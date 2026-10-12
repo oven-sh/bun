@@ -24,7 +24,7 @@ src/server.ts
 Formatted 2 files, 2 unchanged [3.47ms]
 ```
 
-`bun format` rewrites the files in the current directory that need it and prints their names. It skips `node_modules` and anything in your `.gitignore`.
+`bun format` rewrites the files in the current directory that need it and prints their names. It skips `node_modules`, anything in your `.gitignore`, minified files (`*.min.js`, `*.min.css`) and lock files such as `package-lock.json`.
 
 To format specific files, pass paths or globs.
 
@@ -234,10 +234,16 @@ jsdoc = true
 
 ## Standard input
 
-Pipe text through `bun format`. The path picks the language and the options. The file doesn't have to exist.
+Pipe text through `bun format`. It prints the result and writes nothing. The path picks the language and the options. The file doesn't have to exist.
 
 ```bash terminal icon="terminal"
 bun format --stdin-filepath src/index.ts < src/index.ts
+```
+
+No path to give? Name the parser instead. Your config still applies, except for what goes by a file name: `overrides`, `.editorconfig`, and ignore files.
+
+```bash terminal icon="terminal"
+bun run generate-types | bun format --parser typescript > types.ts
 ```
 
 ## Git hooks

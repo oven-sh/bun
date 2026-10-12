@@ -3113,6 +3113,278 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 
+  // What is expected is what ESLint 10.12.0 with @typescript-eslint/parser 8.71.1 reports.
+  test(
+    "what a plugin writes to the global scope and its variables stays, and nothing of it is trusted",
+    async () => {
+      const config = `
+        const summary = it => [it.variables.length, it.set.size, typeof it.set.get("Array"), it.set.has("mine"), it.set.has("Promise")];
+        const put = value => it => {
+          it.set.set("Array", value);
+          it.set.set("mine", { name: "mine" });
+          return summary(it);
+        };
+        const operations = {
+          putNothing: it => (it.set.set("mine", { name: "mine" }), summary(it)),
+          putNumber: put(1),
+          putNull: it => [...put(null)(it), it.set.get("Array")],
+          putString: put("x"),
+          putObject: put({}),
+          putUndefined: it => [...put(undefined)(it), it.set.has("Array")],
+          putLookalike: it => put(Object.create(Object.getPrototypeOf(it.set.get("WeakRef"))))(it),
+          putThenKeys: it => (it.set.set("Array", 1), it.set.set("mine", 2), [[...it.set.keys()].indexOf("Array") === it.variables.findIndex(it => it.name === "Array"), [...it.set.keys()].at(-1)]),
+          deleted: it => [it.set.delete("Array"), it.set.delete("NotThere"), ...summary(it), it.variables.some(it => it.name === "Array")],
+          deletedAndPutBack: it => { const array = it.set.get("Array"); it.set.delete("Array"); it.set.set("Array", array); return [...summary(it), [...it.set.keys()].at(-1)]; },
+          cleared: it => (it.set.clear(), summary(it)),
+          clearedAfter: it => { const before = it.variables.length; it.set.clear(); return [before, ...summary(it)]; },
+          frozenSet: it => (Object.freeze(it.set), summary(it)),
+          ownGet: it => { it.set.get = () => 1; return summary(it); },
+          ownSet: it => { it.set.set = () => 1; it.set.set("mine", 2); return summary(it); },
+          calledOnMap: it => { Map.prototype.set.call(it.set, "Array", 1); Map.prototype.set.call(it.set, "mine", 2); return summary(it); },
+          noLength: it => { it.variables.length = 0; return summary(it); },
+          noLengthAfter: it => { const before = it.set.size; it.variables.length = 0; return [before, ...summary(it)]; },
+          assignedThenSet: it => { it.variables = []; return summary(it); },
+          pushed: it => { it.variables.push(1); return summary(it); },
+          changedVariable: it => { const array = it.set.get("Array"); delete array.name; array.extra = 1; Object.setPrototypeOf(array, null); return [...summary(it), it.set.get("Array") === array, it.variables.includes(array)]; },
+          changedQuiet: it => { const quiet = it.set.get("WeakRef"); delete quiet.name; Object.setPrototypeOf(quiet, Object.prototype); return [...summary(it), it.set.get("WeakRef") === quiet, it.variables.includes(quiet)]; },
+          changedOther: it => { const other = it.set.get("globalThis"); delete other.name; Object.setPrototypeOf(other, Object.getPrototypeOf(it.set.get("WeakRef"))); return [...summary(it), it.set.get("globalThis") === other, it.variables.at(-1) === other]; },
+          oddNames: it => [1, null, undefined, {}, Symbol.iterator, "", "é", "a".repeat(300)].map(name => [it.set.get(name) === undefined, it.set.has(name)]),
+          copied: it => [new Map(it.set).size, [...it.set].length, Array.from(it.set.values()).length],
+        };
+        const rule = name => ({
+          create: context => ({
+            Program(node) {
+              context.report({ node, message: name + " " + JSON.stringify(operations[name](context.sourceCode.scopeManager.globalScope)) });
+            },
+          }),
+        });
+        const names = Object.keys(operations);
+        const own = { rules: Object.fromEntries(names.map(name => [name, rule(name)])) };
+        const languageOptions = { parser: { meta: { name: "typescript-eslint/parser" } } };
+        module.exports = names.map(name => ({ files: [name + ".ts"], plugins: { own }, rules: { ["own/" + name]: "error" }, languageOptions }));`;
+      const expected = [
+        `assignedThenSet [0,217,"object",false,true]`,
+        `calledOnMap [217,218,"number",true,true]`,
+        `changedOther [217,217,"object",false,true,true,true]`,
+        `changedQuiet [217,217,"object",false,true,true,true]`,
+        `changedVariable [217,217,"object",false,true,true,true]`,
+        `cleared [217,0,"undefined",false,false]`,
+        `clearedAfter [217,217,0,"undefined",false,false]`,
+        `copied [217,217,217]`,
+        `deleted [true,false,217,216,"undefined",false,true,true]`,
+        `deletedAndPutBack [217,217,"object",false,true,"Array"]`,
+        `frozenSet [217,217,"object",false,true]`,
+        `noLength [0,217,"object",false,true]`,
+        `noLengthAfter [217,0,217,"object",false,true]`,
+        `oddNames [[true,false],[true,false],[true,false],[true,false],[true,false],[true,false],[true,false],[true,false]]`,
+        `ownGet [217,217,"number",false,true]`,
+        `ownSet [217,217,"object",false,true]`,
+        `pushed [218,217,"object",false,true]`,
+        `putLookalike [217,218,"object",true,true]`,
+        `putNothing [217,218,"object",true,true]`,
+        `putNull [217,218,"object",true,true,null]`,
+        `putNumber [217,218,"number",true,true]`,
+        `putObject [217,218,"object",true,true]`,
+        `putString [217,218,"string",true,true]`,
+        `putThenKeys [true,"mine"]`,
+        `putUndefined [217,218,"undefined",true,true,true]`,
+      ];
+      const names = expected.map(it => it.slice(0, it.indexOf(" ")));
+      const code = "let a: Promise<Record<string, number>> = Array;\n";
+      const { raw, exitCode } = await lint(
+        { "eslint.config.cjs": config, ...Object.fromEntries(names.map(name => [`${name}.ts`, code])) },
+        ["-f", "json", ...names.map(name => `${name}.ts`)],
+      );
+      const results: { messages: { message: string }[] }[] = JSON.parse(raw);
+      expect(results.flatMap(it => it.messages.map(it => it.message)).sort()).toEqual(expected);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // The ids are what oxlint 1.87.0 gives the rule, in a run for each row: it has no two plugins of one name in a run.
+  test(
+    "the name of a plugin, and of the plugin in the name of a rule, without eslint-plugin and oxlint-plugin as oxlint takes them off",
+    async () => {
+      // `meta.name`, the plugin in the key of the rule, `context.id`.
+      const cases = [
+        ["eslint-plugin-foo", "eslint-plugin-foo", "foo/r"],
+        ["eslint-plugin-foo", "foo", "foo/r"],
+        ["oxlint-plugin-foo", "oxlint-plugin-foo", "foo/r"],
+        ["oxlint-plugin-foo", "foo", "foo/r"],
+        ["@scope/eslint-plugin", "@scope/eslint-plugin", "@scope/r"],
+        ["@scope/eslint-plugin", "@scope", "@scope/r"],
+        ["@scope/oxlint-plugin", "@scope/oxlint-plugin", "@scope/r"],
+        ["@scope/oxlint-plugin", "@scope", "@scope/r"],
+        ["@scope/eslint-plugin-foo", "@scope/eslint-plugin-foo", "@scope/foo/r"],
+        ["@scope/eslint-plugin-foo", "@scope/foo", "@scope/foo/r"],
+        ["@scope/oxlint-plugin-bar", "@scope/oxlint-plugin-bar", "@scope/bar/r"],
+        ["@scope/oxlint-plugin-bar", "@scope/bar", "@scope/bar/r"],
+        ["eslint-plugin", "eslint-plugin", "eslint-plugin/r"],
+        ["oxlint-plugin", "oxlint-plugin", "oxlint-plugin/r"],
+        ["@a/b", "@a/b", "@a/b/r"],
+        ["eslint-plugin-eslint-plugin-x", "eslint-plugin-eslint-plugin-x", "eslint-plugin-x/r"],
+        ["@s/eslint-plugin-", "@s/eslint-plugin-", "@s//r"],
+        ["@s/eslint-plugin-", "@s/", "@s//r"],
+        ["plain", "plain", "plain/r"],
+        ["@scope/x/eslint-plugin-y", "@scope/x/eslint-plugin-y", "@scope/x/eslint-plugin-y/r"],
+        ["Eslint-Plugin-Z", "Eslint-Plugin-Z", "Eslint-Plugin-Z/r"],
+        ["eslint-plugin-react-hooks2", "eslint-plugin-react-hooks2", "react-hooks2/r"],
+        ["eslint-plugin-react-hooks2", "react-hooks2", "react-hooks2/r"],
+        ["@s/eslint-plugin/z", "@s/eslint-plugin/z", "@s/eslint-plugin/z/r"],
+      ];
+      const plugin = (name: string) =>
+        `module.exports = { meta: { name: ${JSON.stringify(name)} }, rules: { r: { create: context => ({ Program(node) { context.report({ node, message: context.id }); } }) } } };`;
+      const project = (directory: string, name: string, key: string) => ({
+        [`${directory}p.cjs`]: plugin(name),
+        [`${directory}.oxlintrc.json`]: oxlintrc({
+          jsPlugins: ["./p.cjs"],
+          ignorePatterns: ["p.cjs"],
+          rules: { [`${key}/r`]: "error" },
+        }),
+        [`${directory}a.js`]: "a;\n",
+      });
+      const directory = (i: number) => `d${String(i).padStart(2, "0")}/`;
+      const [accepted, ...refused] = await Promise.all([
+        lint(Object.assign({}, ...cases.map(([name, key], i) => project(directory(i), name, key))), [
+          "-f",
+          "json",
+          ".",
+        ]),
+        // oxlint: "Plugin 'foo' not found", "Plugin '@scope/x/y' not found".
+        lint(project("", "foo/bar", "foo/bar"), ["a.js"]),
+        lint(project("", "@scope/x/eslint-plugin-y", "@scope/x/y"), ["a.js"]),
+      ]);
+      const results: { filePath: string; messages: { message: string; ruleId: string }[] }[] = JSON.parse(accepted.raw);
+      const found = results.flatMap(it => it.messages.map(({ message, ruleId }) => [message, ruleId]));
+      expect(found).toEqual(cases.map(([, , id]) => [id, id]));
+      expect(refused.map(it => [it.stderr.split("\n")[0], it.exitCode])).toEqual([
+        ["error: 1 rule in .oxlintrc.json is not supported: foo/bar/r", 2],
+        ["error: 1 rule in .oxlintrc.json is not supported: @scope/x/y/r", 2],
+      ]);
+    },
+    timeout,
+  );
+
+  test(
+    "whatever a plugin throws, and wherever, the run ends with an error that can be read",
+    async () => {
+      const config = `
+        const thrown = {
+          plain: () => new Error("real error"),
+          noLoc: node => ((node.loc = null), new Error("real error")),
+          locThrows: node => (Object.defineProperty(node, "loc", { get() { throw new Error("from loc"); } }), new Error("real error")),
+          bare: () => Object.create(null),
+          bareMessage: () => Object.assign(new Error("x"), { message: Object.create(null) }),
+          getter: () => ({ get message() { throw 2; } }),
+          getters: () => ({ get message() { throw { get message() { throw 3; } }; } }),
+          symbol: () => Symbol("s"),
+          nothing: () => undefined,
+          proxy: () => new Proxy({}, { get() { throw new Error("from a proxy"); } }),
+          revoked: () => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return proxy; },
+          toString: () => ({ toString() { throw new Error("from toString"); } }),
+        };
+        const { WHERE: where, WHAT: what } = process.env;
+        const fail = node => { throw thrown[what](node); };
+        const rule = {
+          meta: { fixable: "code", schema: [] },
+          create(context) {
+            if (where === "create") fail({});
+            return {
+              Program(node) {
+                if (where === "listener") fail(node);
+                if (where === "fix") context.report({ node, message: "m", fix() { fail(node); } });
+                if (where === "filter") context.sourceCode.getFirstToken(node, { filter() { fail(node); } });
+                if (where === "data") context.report({ node, message: "{{a}}", data: { get a() { fail(node); } } });
+              },
+              onCodePathStart(path, node) { if (where === "path") fail(node); },
+            };
+          },
+        };
+        const processor = { preprocess: text => [{ text, filename: "0.js" }], postprocess() { fail({}); } };
+        module.exports = [
+          { files: ["**/*.js"], plugins: { own: { rules: { rule } } }, rules: { "own/rule": "error" } },
+          { files: ["**/*.md"], processor },
+        ];`;
+      const cases = [
+        ["listener", "plain", "real error"],
+        ["listener", "noLoc", "real error"],
+        ["listener", "locThrows", "real error"],
+        ["listener", "bare", "No default value"],
+        ["listener", "bareMessage", "No default value"],
+        ["listener", "getter", "2"],
+        ["listener", "getters", "An exception was thrown."],
+        ["listener", "symbol", "Symbol(s)"],
+        ["listener", "nothing", "undefined"],
+        ["listener", "proxy", "from a proxy"],
+        ["listener", "revoked", "Proxy has already been revoked. No more operations are allowed to be performed on it"],
+        ["listener", "toString", "from toString"],
+        ["create", "bare", "No default value"],
+        ["path", "noLoc", "real error"],
+        ["fix", "getter", "2"],
+        ["filter", "bare", "No default value"],
+        ["data", "getters", "An exception was thrown."],
+        ["postprocess", "bare", "No default value"],
+      ];
+      const results = await Promise.all(
+        cases.map(async ([WHERE, WHAT]) => {
+          const name = WHERE === "postprocess" ? "a.md" : "a.js";
+          const { stderr, exitCode } = await lint({ "eslint.config.cjs": config, [name]: "a;\n" }, [name], [], {
+            WHERE,
+            WHAT,
+          });
+          return [WHERE, WHAT, stderr.split("\n")[0], exitCode];
+        }),
+      );
+      expect(results).toEqual(cases.map(([where, what, message]) => [where, what, `error: ${message}`, 2]));
+    },
+    timeout,
+  );
+
+  test(
+    "a plugin gets at nothing of the host through caller or through what it has put on Array.prototype",
+    async () => {
+      const config = `
+        const seen = [];
+        const original = Array.prototype[Symbol.iterator];
+        Array.prototype[Symbol.iterator] = function () {
+          for (let i = -1; i < 2; i++) {
+            const it = i < 0 ? this : this[i];
+            if (Array.isArray(it) && it[0]?.type === "Program") seen.push(it);
+          }
+          return original.call(this);
+        };
+        let said = false;
+        const rule = {
+          create: context => ({
+            // Not strict, so that it has a \`caller\`.
+            Identifier: new Function("report", "return function listener(node) { var names = []; for (var it = listener.caller; it; it = it.caller) names.push(it.name); report(node, names); };")(
+              (node, names) => { if (!said) context.report({ node, message: "callers: " + names }); said = true; },
+            ),
+            "Program:exit"(node) {
+              for (let i = 0; i < seen.length; i++) { delete seen[i][3]; seen[i].length = 2; seen[i][5e7] = 1; }
+              const { sourceCode } = context;
+              const found = [0, 5, 12, 30].map(index => sourceCode.getNodeByRangeIndex(index).type);
+              const inner = node.body[1].body.body[0];
+              context.report({ node, message: [seen.length, found, sourceCode.scopeManager.scopes.length, sourceCode.getAncestors(inner).length, sourceCode.getScope(inner).type].join(" | ") });
+            },
+          }),
+        };
+        module.exports = [{ languageOptions: { sourceType: "script" }, plugins: { own: { rules: { rule } } }, rules: { "own/rule": "error" } }];`;
+      const { raw, exitCode } = await lint(
+        { "eslint.config.cjs": config, "a.js": "var a = 1; function f(b) { return a + b; }\nf(a);\n" },
+        ["-f", "json", "a.js"],
+      );
+      const results: { messages: { message: string }[] }[] = JSON.parse(raw);
+      expect(results.flatMap(it => it.messages.map(it => it.message))).toEqual([
+        "0 | VariableDeclaration,VariableDeclarator,FunctionDeclaration,ReturnStatement | 2 | 3 | function",
+        "callers: ",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test(
     "nodes, scopes and code paths are right after a plugin has put an accessor with an index for a name on Array.prototype",
     async () => {
@@ -3153,6 +3425,34 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 });
+
+test.concurrent(
+  "getAncestors returns every ancestor after a plugin has put an accessor with an index for a name on Array.prototype",
+  async () => {
+    const plugin = `Object.defineProperty(Array.prototype, "4294967290", { get() {}, set() {}, configurable: true });
+      const rule = {
+        create(context) {
+          return {
+            ReturnStatement(node) {
+              context.report({ node, message: context.sourceCode.getAncestors(node).map(it => it.type).join() });
+            },
+          };
+        },
+      };
+      export default { meta: { name: "p" }, rules: { rule } };`;
+    const config = { jsPlugins: ["./plugin.mjs"], rules: { "p/rule": "error" } };
+    const code = "function f(a) { if (a) { for (;;) { while (a) { return 1; } } } }\n";
+    const { raw, exitCode } = await lint({ "plugin.mjs": plugin, ".oxlintrc.json": oxlintrc(config), "a.js": code }, [
+      "-f",
+      "json",
+    ]);
+    expect(JSON.parse(raw).diagnostics.map((it: { message: string }) => it.message)).toEqual([
+      "Program,FunctionDeclaration,BlockStatement,IfStatement,BlockStatement,ForStatement,BlockStatement,WhileStatement,BlockStatement",
+    ]);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
 
 test.concurrent(
   "context.sourceCode is laid out and answers as in ESLint: text, lines, locations, indices, ancestors, scopes, directive comments, bad input",

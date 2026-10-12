@@ -86,4 +86,4 @@ import { jest } from "@jest/globals";
 const api = jest.genMockFromModule("./api");
 ```
 
-If your ESLint or oxlint config has `settings.jest.version`, that version is used instead of the option.
+If you set `settings.jest.version` (`[lint.settings.jest]` in `bunfig.toml`, or `settings` in an ESLint or oxlint config), that version is used instead of the option.

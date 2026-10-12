@@ -280,6 +280,9 @@ To see Prettier's document for a snippet: `prettier --parser babel --debug-print
 - **Where the keys live**: `FEATURES` in `src/lint/driver/bunfig.rs` lists the keys that take `true`, `false` or a table, with each table's options. They end up in `Options::format` (`src/lint/driver/fmt/cli.rs`) under the same names that `settings` in `fmt/config.rs` uses for an `.oxfmtrc.json`. In a `.prettierrc` these names are still unknown options, unless a flag or `[format]` sets them too (`Configs::options_for`).
 - **`[[format.overrides]]`** has the shape of `overrides` in a `.prettierrc`. Its globs follow oxfmt's rules and are relative to the working directory. Overrides behave like flags that only apply to some files.
 - **Defaults can differ from oxfmt's** when nearly everybody would set the same value. Example: `functions` of `sortTailwindcss` (`FUNCTIONS` in `fmt/tailwind.rs`).
+- **TOML layout**: without an oxfmt config, arrays and inline tables get Bun's own layout. The header of `toml/printer.rs` lists the rules. The TOML snippets in `docs/lint/rules` follow it (`src/codegen/lint-rule-options.ts`), and `test/cli/lint/rule-docs.test.ts` checks that. Tests: `test/cli/format/toml-layout.test.ts`.
+- **Generated files**: without a Prettier or oxfmt config, minified code and lock files are skipped unless they're named on the command line (`files::is_generated`).
+- **`--check` runs the same verify step as a write**, so it reports a refusal as an error instead of telling people to run `bun format`.
 - **Adding a feature** that another tool's config file turns on? Give it a flag and a key, and test it in `test/cli/format/bunfig.test.ts`.
 
 ## `sortTailwindcss`

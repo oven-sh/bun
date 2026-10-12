@@ -14,7 +14,7 @@ deprecated: false
 
 A `namespace` is TypeScript's own way to group code. It isn't JavaScript syntax. It compiles to a function that fills in an object when the file runs. A file with `export` does the same job in plain JavaScript, and a project that uses both has two places to look for where a name comes from.
 
-`declare global {}` and `declare module "name" {}` are allowed, because they describe other code. `.d.ts` files aren't checked by default.
+`declare global {}`, `declare module "name" {}` and `declare namespace Name {}` are allowed, with everything inside them, because they describe other code. It's the only way to add to `NodeJS.ProcessEnv`, `JSX.IntrinsicElements` or `Express.Request`. `.d.ts` files aren't checked by default.
 
 This rule is on by default in TypeScript files.
 
@@ -34,7 +34,7 @@ Every option, set to its default:
 ```toml bunfig.toml
 [lint.rules]
 "@typescript-eslint/no-namespace" = ["warn", {
-  allowDeclarations = false,
+  allowDeclarations = true,
   allowDefinitionFiles = true,
 }]
 ```
@@ -80,6 +80,11 @@ declare module "legacy-charts" {
 
 declare global {
   var analyticsId: string;
+  namespace NodeJS {
+    interface ProcessEnv {
+      API_URL: string;
+    }
+  }
 }
 
 export {};
@@ -89,21 +94,23 @@ export {};
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowDeclarations` | `false` | Allow a namespace with `declare`, and the namespaces inside it. |
+| `allowDeclarations` | `true` | Allow a namespace with `declare`, and the namespaces inside it. |
 | `allowDefinitionFiles` | `true` | Allow namespaces in `.d.ts` files. |
 
-Reported by default:
+With an ESLint config file `allowDeclarations` is `false`, as in typescript-eslint.
 
-{/* bad */}
+Not reported by default:
+
+{/* good */}
 ```ts
 declare namespace Charts {
   function draw(id: string): void;
 }
 ```
 
-Not reported with `allowDeclarations`:
+Reported if `allowDeclarations` is `false`:
 
-{/* good {"options": [{"allowDeclarations": true}]} */}
+{/* bad {"options": [{"allowDeclarations": false}]} */}
 ```ts
 declare namespace Charts {
   function draw(id: string): void;

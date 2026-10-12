@@ -102,7 +102,7 @@ const { id: user_id } = await response.json();
 import { unstable_cache } from "next/cache";
 ```
 
-`ignoreDestructuring` and `ignoreImports` only cover the line that creates the variable. Using it later is still reported, except in a call:
+`ignoreDestructuring` and `ignoreImports` only cover the line that creates the variable. Using it later is still reported, except where it's called or passed as an argument:
 
 {/* bad {"options": [{"ignoreDestructuring": true}], "count": 1} */}
 ```js

@@ -89,7 +89,9 @@ With `ignore`, you can keep one shared directory reachable:
 
 ```toml bunfig.toml
 [lint.rules]
-"import/no-relative-parent-imports" = ["error", { ignore = ["^\\.\\./shared/"] }]
+"import/no-relative-parent-imports" = ["error", {
+  ignore = ["^\\.\\./shared/"],
+}]
 ```
 
 {/* file "src/shared/format.js" */}

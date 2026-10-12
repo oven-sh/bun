@@ -14,7 +14,9 @@ deprecated: false
 
 `const name = user.name` writes `name` twice. `const { name } = user` writes it once, and the next property you need goes into the same statement.
 
-This is `prefer-destructuring` with types. `const [first] = items` only works if `items` can be iterated, so `items[0]` is reported only when the type of `items` is iterable or `any`. A declaration with a type annotation is left alone by default. Turn the other rule off when you use this one.
+This is `prefer-destructuring` with types. `const [first] = items` only works if `items` can be iterated, so `items[0]` is reported only when the type of `items` is iterable or `any`. A declaration with a type annotation is left alone by default.
+
+With `bunfig.toml`, turning this rule on runs it in TypeScript files and `prefer-destructuring` in JavaScript files, so nothing is reported twice. With an ESLint config, turn the other rule off when you use this one.
 
 A property is only reported if the variable has the same name. An element is only reported if the index is a literal whole number, such as `items[0]`.
 
@@ -90,7 +92,11 @@ The rule takes two objects. The first says what to check, and the second has the
 
 ```toml bunfig.toml
 [lint.rules]
-"@typescript-eslint/prefer-destructuring" = ["error", { object = true, array = false }, { enforceForRenamedProperties = true }]
+"@typescript-eslint/prefer-destructuring" = [
+  "error",
+  { object = true, array = false },
+  { enforceForRenamedProperties = true },
+]
 ```
 
 | Option | Default | What it does |

@@ -44,7 +44,13 @@ These examples use this config:
 
 ```toml bunfig.toml
 [lint.rules]
-"bun/no-restricted-text" = ["error", { patterns = [{ pattern = "http://", message = "Use https.", in = ["strings", "templates"] }] }]
+"bun/no-restricted-text" = ["error", {
+  patterns = [{
+    pattern = "http://",
+    message = "Use https.",
+    in = ["strings", "templates"],
+  }],
+}]
 ```
 
 Reported:

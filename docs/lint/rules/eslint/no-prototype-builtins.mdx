@@ -6,7 +6,7 @@ plugin: "eslint"
 aliases: ["eslint/no-prototype-builtins"]
 kind: "problem"
 category: "pedantic"
-default: "error"
+default: "warn"
 fixable: "suggestion"
 typeAware: false
 deprecated: false
@@ -22,11 +22,11 @@ This rule is on by default.
 
 ## Configure
 
-On by default as an error. To turn it off:
+On by default as a warning. To turn it off:
 
 ```toml bunfig.toml
 [lint.rules]
-"no-prototype-builtins" = "off" # or "warn"
+"no-prototype-builtins" = "off" # or "error"
 ```
 
 {/* End of the generated section. */}

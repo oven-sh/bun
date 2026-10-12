@@ -33,7 +33,10 @@ Off by default. To turn it on:
 
 ```toml bunfig.toml
 [lint.rules]
-no-restricted-globals = ["error", "event", { name = "fetch", message = "Use the client in api.js." }]
+no-restricted-globals = ["error", "event", {
+  name = "fetch",
+  message = "Use the client in api.js.",
+}]
 ```
 
 Reported:

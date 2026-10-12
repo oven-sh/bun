@@ -276,7 +276,7 @@ function isAboutLayout({ ruleId, message }, aboutLayout) {
 // ESLint's `verifyText`, without the fixing, which the other side does. The message: `flags`, the id of the configuration, the length
 // of the path and of what it starts with that is the path of the file on disk, then the path, then the text.
 function lintWithEslint() {
-  const [flags, id, pathLength, physicalLength] = messageWords(4);
+  const { 0: flags, 1: id, 2: pathLength, 3: physicalLength } = messageWords(4);
   const configuration = eslintConfigurations.get(id);
   if (configuration === undefined) return NEEDS_ESLINT_CONFIGURATION;
   const { linter, configs, options } = configuration;
@@ -301,7 +301,7 @@ function lintWithEslint() {
 
 // What `handle` does with the kinds of calls from `LINT_WITH_ESLINT` on.
 function handleForEslint(kind) {
-  const failed = error => FAILED + String(error?.message ?? error);
+  const failed = error => FAILED + messageOf(error);
   try {
     return kind === LINT_WITH_ESLINT ? lintWithEslint() : configureEslint(askForJson(MESSAGE)).catch(failed);
   } catch (error) {

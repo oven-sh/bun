@@ -85,7 +85,9 @@ Use it for your own components:
 
 ```toml bunfig.toml
 [lint.rules]
-"bun/jsx-no-forbidden-nesting" = ["error", { pairs = [{ outer = "Link", inner = "Button" }] }]
+"bun/jsx-no-forbidden-nesting" = ["error", {
+  pairs = [{ outer = "Link", inner = "Button" }],
+}]
 ```
 
 {/* bad {"options": [{"pairs": [{"outer": "Link", "inner": "Button"}]}]} */}

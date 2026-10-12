@@ -83,6 +83,17 @@ function summarize(items, label = "items") {
 }
 ```
 
+If you turn the rule on in `bunfig.toml`, TypeScript files get `@typescript-eslint/no-redeclare` instead, which understands function overloads:
+
+{/* good */}
+```ts
+export function parse(input: string): number;
+export function parse(input: Buffer): number;
+export function parse(input: string | Buffer): number {
+  return input.length;
+}
+```
+
 ## Options
 
 | Option | Default | What it does |
@@ -114,17 +125,4 @@ A top-level `var` only clashes with a global in a classic script. In a module or
 var name = "Ada";
 
 export { name };
-```
-
-## When not to use it
-
-In TypeScript files, `bun lint` runs `@typescript-eslint/no-redeclare` instead, which understands function overloads:
-
-{/* good */}
-```ts
-export function parse(input: string): number;
-export function parse(input: Buffer): number;
-export function parse(input: string | Buffer): number {
-  return input.length;
-}
 ```

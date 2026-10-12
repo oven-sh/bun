@@ -14,7 +14,9 @@ deprecated: false
 
 `user["name"]` and `user.name` read the same property. The dot form is shorter and easier to read. Brackets are for keys that are computed or aren't valid names, such as `headers["content-type"]`.
 
-This is `dot-notation` with types, which lets it make exceptions for private members, protected members, and index signatures. Turn the other rule off when you use this one.
+This is `dot-notation` with types, which lets it make exceptions for private members, protected members, and index signatures.
+
+With `bunfig.toml`, turning this rule on runs it in TypeScript files and `dot-notation` in JavaScript files, so nothing is reported twice. With an ESLint config, turn the other rule off when you use this one.
 
 `--fix` rewrites the brackets to a dot.
 

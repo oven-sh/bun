@@ -79,7 +79,11 @@ The rule takes two objects. The first says what to check, and the second holds `
 
 ```toml bunfig.toml
 [lint.rules]
-prefer-destructuring = ["error", { object = true, array = false }, { enforceForRenamedProperties = true }]
+prefer-destructuring = [
+  "error",
+  { object = true, array = false },
+  { enforceForRenamedProperties = true },
+]
 ```
 
 | Option | Default | What it does |

@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
+use bun_lint::utils::oxlint::has_module_syntax;
 use bun_lint::utils::ts_scope::{
     Walks, get_rhs_node, has_rest_sibling, is_defined_in_array_pattern, is_read_for_itself,
     is_referenced_in_array_pattern,
@@ -883,6 +884,102 @@ fn handle_fixes<'a>(
     }
 }
 
+/// Whether evaluating `e` runs no other code, so nothing is lost if it's deleted. Anything not listed here counts as impure:
+/// calls, `new`, `await`, member access (it can run a getter), spread, tagged templates, JSX.
+fn is_pure(e: Expr) -> bool {
+    let mut rest = vec![e];
+    while let Some(e) = rest.pop() {
+        match e.kind() {
+            ExprKind::Missing
+            | ExprKind::Ident(_)
+            | ExprKind::This
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex(_)
+            | ExprKind::Fn(_) => {}
+            ExprKind::Template(template) if template.exprs().is_empty() => {}
+            ExprKind::Array(elements) => rest.extend(elements),
+            ExprKind::Object(props) => {
+                for prop in props {
+                    if prop.kind() == PropKind::Spread || prop.has_computed_key() {
+                        return false;
+                    }
+                    rest.extend(prop.value());
+                }
+            }
+            ExprKind::Class(class) => {
+                if !defines_purely(class, &mut rest) {
+                    return false;
+                }
+            }
+            ExprKind::Unary {
+                op: UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof | UnOp::Void,
+                operand,
+            } => rest.push(operand),
+            ExprKind::Binary { op, left, right } if !matches!(op, BinOp::In | BinOp::Instanceof) => {
+                rest.extend([left, right]);
+            }
+            ExprKind::Cond { test, yes, no } => rest.extend([test, yes, no]),
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Whether defining `class` runs no other code, if the expressions this adds to `evaluated` are [pure](is_pure).
+fn defines_purely<'a>(class: Class<'a>, evaluated: &mut Vec<Expr<'a>>) -> bool {
+    if class.decorators().next().is_some() {
+        return false;
+    }
+    evaluated.extend(class.extends());
+    class.members().iter().all(|member| {
+        if member.flags().contains(Flags::STATIC) {
+            evaluated.extend(member.init());
+        }
+        member.kind() != MemberKind::StaticBlock
+            && !member.key().is_some_and(Key::is_computed)
+            && member.decorators().next().is_none()
+    })
+}
+
+/// Whether other `<script>`s or inline event handlers of a page can use what the file declares at its top level: it's neither an
+/// ES module nor CommonJS.
+fn is_classic_script<'a>(file: &'a File<'a>) -> bool {
+    !has_module_syntax(file) && !file.mentions_any(&["require", "module", "exports"])
+}
+
+/// Whether deleting the declaration `def` of the unused `symbol` can't change what the program does. `--fix-suggestions` applies
+/// every suggestion at once with nobody looking, so with no config file the rule only suggests a removal that passes this.
+///
+/// A parameter stays, because the number of parameters can matter: Express takes a function with four for an error handler. So
+/// does a name in a destructuring pattern, which reads a property or runs an iterator.
+fn can_be_removed_unseen<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
+    let file = symbol.file();
+    if symbol.scope() == file.top_level_scope() && is_classic_script(file) {
+        return false;
+    }
+    match def {
+        Declaration::Var(pat) => match pat.parent() {
+            Node::VarDecl(declarator) => {
+                !matches!(declarator.var_kind(), VarKind::Using | VarKind::AwaitUsing)
+                    && declarator.init().is_none_or(is_pure)
+            }
+            _ => false,
+        },
+        Declaration::Fn(_) => true,
+        Declaration::Class(class) => {
+            let mut evaluated = Vec::new();
+            defines_purely(class, &mut evaluated) && evaluated.into_iter().all(is_pure)
+        }
+        Declaration::ImportDefault(_) | Declaration::ImportNamespace(_) | Declaration::ImportSpec(_) => true,
+        _ => false,
+    }
+}
+
 // ───────────────────────────── the rule ─────────────────────────────
 
 impl NoUnusedVars {
@@ -1059,6 +1156,9 @@ impl NoUnusedVars {
             .data("additional", self.unused_message_data(kind, cx.file()))
             .hint(self.hint(def, kind))
             .suggest_with(REMOVE_VAR, &[("varName", name.bytes())], |fixer| {
+                if cx.language().stands_alone && !can_be_removed_unseen(symbol, def) {
+                    return None;
+                }
                 handle_fixes(fixer, variable, def, at)
             });
     }

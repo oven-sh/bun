@@ -105,5 +105,7 @@ module.exports = { run: text => parse(text) };
 
 ```toml bunfig.toml
 [lint.rules]
-"import/no-import-module-exports" = ["error", { exceptions = ["**/*.config.js"] }]
+"import/no-import-module-exports" = ["error", {
+  exceptions = ["**/*.config.js"],
+}]
 ```

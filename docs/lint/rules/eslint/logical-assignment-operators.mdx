@@ -70,7 +70,9 @@ user.name ||= "guest";
 
 ```toml bunfig.toml
 [lint.rules]
-logical-assignment-operators = ["error", "always", { enforceForIfStatements = true }]
+logical-assignment-operators = ["error", "always", {
+  enforceForIfStatements = true,
+}]
 ```
 
 | Option | What it does |

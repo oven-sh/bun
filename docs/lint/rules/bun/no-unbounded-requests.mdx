@@ -94,7 +94,9 @@ await api.get("/users");
 
 ```toml bunfig.toml
 [lint.rules]
-"bun/no-unbounded-requests" = ["error", { clients = [{ module = "./http.js", names = ["api"] }] }]
+"bun/no-unbounded-requests" = ["error", {
+  clients = [{ module = "./http.js", names = ["api"] }],
+}]
 ```
 
 {/* bad {"options": [{"clients": [{"module": "./http.js", "names": ["api"]}]}]} */}

@@ -47,7 +47,9 @@ These examples use this configuration:
 
 ```toml bunfig.toml
 [lint.rules]
-"bun/prefer-local-module" = ["error", { modules = [{ package = "axios", use = "@/http" }] }]
+"bun/prefer-local-module" = ["error", {
+  modules = [{ package = "axios", use = "@/http" }],
+}]
 ```
 
 Reported:

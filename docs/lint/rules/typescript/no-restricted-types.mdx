@@ -44,7 +44,9 @@ Every option, set to its default. The ones that are commented out are unset by d
 
 ```toml bunfig.toml
 [lint.rules]
-"@typescript-eslint/no-restricted-types" = ["error", { types = { LegacyUser = "Use Account instead." } }]
+"@typescript-eslint/no-restricted-types" = ["error", {
+  types = { LegacyUser = "Use Account instead." },
+}]
 ```
 
 Reported:

@@ -69,6 +69,19 @@ fn is_left_alone_by_oxfmt(path: &[u8]) -> bool {
     )
 }
 
+/// Returns true for minified code and for lock files, which a tool wrote and nobody wants reformatted.
+pub(crate) fn is_generated(path: &[u8]) -> bool {
+    let name = paths::basename(path);
+    let is_minified = || {
+        [&b".min.js"[..], b".min.mjs", b".min.cjs", b".min.css"]
+            .iter()
+            .any(|ending| name.ends_with(ending))
+    };
+    is_left_alone_by_oxfmt(path)
+        || matches!(name, b"npm-shrinkwrap.json" | b"glide.lock" | b"pixi.lock")
+        || is_minified()
+}
+
 /// A language that the formatter has.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Kind {

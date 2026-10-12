@@ -9,7 +9,7 @@ use crate::code_path;
 use crate::estree::Dialect;
 use crate::fix::Fix;
 use crate::language::LanguageOptions;
-use crate::linter::write_json;
+use crate::linter::{normalize_plugin_name, write_json};
 use crate::options::Json;
 use crate::rule::Kind;
 use crate::selector::Selector;
@@ -18,6 +18,7 @@ use bun_core::strings::Utf16OffsetTable;
 use bun_threading::Guarded;
 use core::cell::RefCell;
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -726,7 +727,7 @@ impl<'e> Host<'e> {
     }
 }
 
-/// `{ name, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
+/// `{ name, isAlias, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
 /// numbered from `first`, in that order. `position`: that of the plugin. `needs_the_configuration`: no module exports it.
 fn plugin_of(
     described: &Json,
@@ -737,6 +738,11 @@ fn plugin_of(
         .get(b"name")
         .and_then(Json::as_str)
         .unwrap_or_default();
+    let name = match described.get(b"isAlias").and_then(Json::as_bool) {
+        Some(true) => Cow::Borrowed(name),
+        _ => normalize_plugin_name(name),
+    };
+    let name = &*name;
     let rules = described
         .get(b"rules")
         .and_then(Json::as_array)

@@ -24,15 +24,20 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
         let value = file.slice(comment.value);
         match comment.label {
             Label::Env => {
-                let Some(eslint_8) = &file.language().eslint_8 else {
-                    continue;
+                // ESLint 9 and later reject the comment. With no config file it still says which globals the file expects.
+                let language = file.language();
+                let tables = match &language.eslint_8 {
+                    Some(_) => Tables::Eslint8,
+                    None if language.stands_alone => Tables::Today,
+                    None => continue,
                 };
                 for name in parse_list_config(value) {
-                    let of_plugin = eslint_8.globals_of_environment(name);
+                    let of_plugin = language.eslint_8.iter();
+                    let of_plugin = of_plugin.flat_map(|it| it.globals_of_environment(name));
                     let of_plugin = of_plugin.map(|it| (Cow::Owned(it.0.to_vec()), it.1));
                     variables.of_environments.extend(of_plugin);
                     let name: &[u8] = if name == b"es6" { b"es2015" } else { name };
-                    let all = super::globals::environment(name, Tables::Eslint8);
+                    let all = super::globals::environment(name, tables);
                     let all = all.into_iter().flatten();
                     let all = all.map(|it| (Cow::Borrowed(it.0), it.1));
                     variables.of_environments.extend(all);

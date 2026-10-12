@@ -238,13 +238,13 @@ const FUNCTIONS: [&[u8]; 9] = [
     b"tv",
 ];
 
-/// Resolves `sortTailwindcss` for the file at `path`. `value` is the option as JSON, and it isn't `false`. `of_config` is
+/// Resolves `sortTailwindcss` for a file in `directory`. `value` is the option as JSON, and it isn't `false`. `of_config` is
 /// the directory of the oxfmt config that sets it, or `None` if `[format]` or the flag sets it.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
     environment: &Environment,
     value: &[u8],
-    (of_config, path): (Option<&[u8]>, &[u8]),
+    (of_config, directory): (Option<&[u8]>, &[u8]),
 ) -> Tailwind {
     let base = of_config.unwrap_or(&environment.cwd);
     // `true` has no keys.
@@ -261,7 +261,6 @@ pub(crate) fn for_file(
     };
     let is_on = |key: &[u8]| get(key).and_then(Json::as_bool) == Some(true);
     let mut known = classes.known.lock();
-    let directory = paths::dirname(path);
     if !known.by_directory.contains_key(directory) {
         known
             .by_directory

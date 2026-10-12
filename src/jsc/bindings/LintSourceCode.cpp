@@ -173,7 +173,9 @@ JSValue acquireScope(JSGlobalObject* globalObject, LintHost* host, JSValue node,
     LintSourceCodeState& state = host->sourceCode;
     if (!canBeHeldWeakly(node))
         return {};
-    auto* scopes = dynamicDowncast<JSArray>(host->scopes.nodeToScope->get(node.asCell()));
+    // What a getter of a plugin has done since the scopes were made is not known.
+    JSWeakMap* nodeToScope = host->scopes.nodeToScope.get();
+    auto* scopes = nodeToScope ? dynamicDowncast<JSArray>(nodeToScope->get(node.asCell())) : nullptr;
     if (!scopes) [[likely]]
         return {};
     unsigned length = scopes->length();
@@ -927,7 +929,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetAncestors, (JSGlobalObject * globalObject, Cal
         }
     }
     if (isPlain) [[likely]] {
-        JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), depth);
+        JSArray* result = tryCreateFilledLintArray(vm, globalObject, depth);
         if (!result) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};

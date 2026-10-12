@@ -14,7 +14,7 @@ deprecated: false
 
 A statement such as `user.name;` or `count + 1;` computes a value and throws it away. It's usually a mistake, like a call without its `()`, a `===` that was meant to be `=`, or a line left behind after an edit.
 
-Calls, `new`, assignments, `await`, `delete`, `void`, `import()`, and directives such as `"use strict"` do something, so they aren't reported. The rule looks through `as`, `!`, and type arguments, so `save as unknown;` is reported like `save;`.
+Calls, `new`, assignments, `await`, `delete`, `void`, `import()`, and directives such as `"use strict"` do something, so they aren't reported. Neither are `user && user.save();` and `user.isNew ? user.create() : user.update();`, which are short ways to write an `if`. The rule looks through `as`, `!`, and type arguments, so `save as unknown;` is reported like `save;`.
 
 This rule is on by default in TypeScript files.
 
@@ -34,8 +34,8 @@ Every option, set to its default:
 ```toml bunfig.toml
 [lint.rules]
 "@typescript-eslint/no-unused-expressions" = ["warn", {
-  allowShortCircuit = false,
-  allowTernary = false,
+  allowShortCircuit = true,
+  allowTernary = true,
   allowTaggedTemplates = false,
   enforceForJSX = false,
   ignoreDirectives = false,
@@ -73,15 +73,17 @@ user?.save();
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowShortCircuit` | `false` | Allow `a && b()`, `a \|\| b()`, and `a ?? b()`, if the right side would be allowed as a statement. |
-| `allowTernary` | `false` | Allow `a ? b() : c()`, if both branches would be allowed as statements. |
+| `allowShortCircuit` | `true` | Allow `a && b()`, `a \|\| b()`, and `a ?? b()`, if the right side would be allowed as a statement. |
+| `allowTernary` | `true` | Allow `a ? b() : c()`, if both branches would be allowed as statements. |
 | `allowTaggedTemplates` | `false` | Allow a tagged template such as `` sql`...` `` as a statement. |
 | `enforceForJSX` | `false` | Also report a JSX element as a statement. |
 | `ignoreDirectives` | `false` | Allow strings at the start of a file or a function when `ecmaVersion` is 3, which has no directives. |
 
-With `allowShortCircuit`, you can use `&&` instead of an `if`:
+With an ESLint config file the defaults are typescript-eslint's: every option is `false`.
 
-{/* good {"options": [{"allowShortCircuit": true}]} */}
+By default, you can use `&&` instead of an `if`:
+
+{/* good */}
 ```ts
 declare const user: { save(): void } | undefined;
 
@@ -90,18 +92,26 @@ user && user.save();
 
 The right side still needs to do something:
 
-{/* bad {"options": [{"allowShortCircuit": true}]} */}
+{/* bad */}
 ```ts
 declare const user: { save(): void } | undefined;
 
 user && user.save;
 ```
 
-{/* good {"options": [{"allowTernary": true}]} */}
+{/* good */}
 ```ts
 declare const user: { isNew: boolean; create(): void; update(): void };
 
 user.isNew ? user.create() : user.update();
+```
+
+{/* bad {"options": [{"allowShortCircuit": false, "allowTernary": false}], "count": 2} */}
+```ts
+declare const user: { isNew: boolean; create(): void; update(): void } | undefined;
+
+user && user.update();
+user?.isNew ? user.create() : user?.update();
 ```
 
 {/* good {"options": [{"allowTaggedTemplates": true}]} */}

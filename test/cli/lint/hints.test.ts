@@ -279,7 +279,8 @@ export const fs = require("fs");
 import path = require("path");
 export { path };
 `;
-  expect(await hints(code, "a.ts")).toEqual([
+  const bunfig = { "bunfig.toml": `[lint.rules]\n"@typescript-eslint/no-require-imports" = "warn"\n` };
+  expect(await hints(code, "a.ts", bunfig)).toEqual([
     "@typescript-eslint/no-unused-expressions 3: Nothing uses the value. Did you mean to call it, with ()?",
     "@typescript-eslint/no-unused-expressions 4: Nothing uses the result of the comparison. Did you mean to assign, with =?",
     "@typescript-eslint/no-unused-expressions 5: Nothing uses the value, so the statement does nothing.",

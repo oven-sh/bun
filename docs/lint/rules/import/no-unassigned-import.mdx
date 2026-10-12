@@ -75,12 +75,14 @@ A package name is matched exactly as you wrote it. A relative path is made absol
 
 ```toml bunfig.toml
 [lint.rules]
-"import/no-unassigned-import" = ["error", { allow = ["**/*.css", "reflect-metadata"] }]
+"import/no-unassigned-import" = ["error", {
+  allow = ["**/*.css", "reflect-metadata"],
+}]
 ```
 
 With this configuration, these are allowed:
 
-{/* good {"root": true, "options": [{"allow": ["*.css", "reflect-metadata"]}]} */}
+{/* good {"root": true, "options": [{"allow": ["**\/*.css", "reflect-metadata"]}]} */}
 ```js
 import "./app.css";
 import "reflect-metadata";
@@ -88,7 +90,7 @@ import "reflect-metadata";
 
 And this is still reported:
 
-{/* bad {"root": true, "options": [{"allow": ["*.css", "reflect-metadata"]}]} */}
+{/* bad {"root": true, "options": [{"allow": ["**\/*.css", "reflect-metadata"]}]} */}
 ```js
 import "./register-globals.js";
 ```

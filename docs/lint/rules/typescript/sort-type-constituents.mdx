@@ -48,7 +48,7 @@ type Key = "alt" | "Shift";
 | `checkUnions` | `true` | Check union types (`\|`). |
 | `checkIntersections` | `true` | Check intersection types (`&`). |
 | `caseSensitive` | `false` | Compare by character code, so every uppercase letter comes before every lowercase one. |
-| `groupOrder` | all, in this order | The order of the groups: `"named"`, `"keyword"`, `"operator"`, `"literal"`, `"function"`, `"import"`, `"conditional"`, `"object"`, `"tuple"`, `"intersection"`, `"union"`, `"nullish"`. Groups you leave out come last, together. |
+| `groupOrder` | every group, in the order listed here | The order of the groups: `"named"`, `"keyword"`, `"operator"`, `"literal"`, `"function"`, `"import"`, `"conditional"`, `"object"`, `"tuple"`, `"intersection"`, `"union"`, `"nullish"`. Groups you leave out come last, together. |
 
 Not reported with `groupOrder: ["nullish", "keyword", "named"]`:
 

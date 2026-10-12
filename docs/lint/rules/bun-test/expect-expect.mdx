@@ -97,7 +97,9 @@ Add the helper's name and the test isn't reported anymore:
 
 ```toml bunfig.toml
 [lint.rules]
-"bun:test/expect-expect" = ["error", { assertFunctionNames = ["expect", "checkUser"] }]
+"bun:test/expect-expect" = ["error", {
+  assertFunctionNames = ["expect", "checkUser"],
+}]
 ```
 
 {/* good {"options": [{"assertFunctionNames": ["expect", "checkUser"]}]} */}

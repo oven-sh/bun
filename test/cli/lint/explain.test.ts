@@ -119,6 +119,9 @@ describe.concurrent("--rules -f json", () => {
     // Includes the options that Bun's built-in config sets.
     for (const id of ["no-unused-vars", "@typescript-eslint/no-unused-vars"])
       expect(options(id).default_options).toEqual([expect.objectContaining({ argsIgnorePattern: "^_" })]);
+    // It also sets options for rules that are off by default.
+    for (const id of ["no-unused-expressions", "@typescript-eslint/no-unused-expressions"])
+      expect(options(id).default_options).toEqual([expect.objectContaining({ allowShortCircuit: true })]);
     expect([...rules.values()].filter(it => (it.schema === null) !== (it.default_options === null))).toEqual([]);
   });
 

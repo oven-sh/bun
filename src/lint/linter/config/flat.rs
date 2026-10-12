@@ -192,14 +192,32 @@ fn has_unknown_resolver(json: &Json) -> bool {
 
 const META_KEYS: [&[u8]; 2] = [b"name", b"basePath"];
 
-/// `Kind::Problem` rules that [warn by default](Reader::grade_by_kind) anyway. They find unused or useless code, not bugs.
-const ABOUT_WHAT_DOES_NOTHING: [&[u8]; 14] = [
+/// `Kind::Problem` rules that [warn by default](Reader::grade_by_kind) anyway. An error fails CI, so it has to be right nearly
+/// every time. These find unused or useless code, or code that people often write on purpose: `while (match = re.exec(text))`,
+/// `object.hasOwnProperty(key)`, a regular expression that strips ANSI escapes.
+const WARN_BY_DEFAULT: [&[u8]; 30] = [
     b"@typescript-eslint/await-thenable",
+    b"@typescript-eslint/ban-ts-comment",
+    b"@typescript-eslint/no-duplicate-enum-values",
     b"@typescript-eslint/no-extra-non-null-assertion",
+    b"@typescript-eslint/no-non-null-asserted-optional-chain",
+    b"@typescript-eslint/no-unsafe-argument",
+    b"@typescript-eslint/no-unsafe-assignment",
+    b"@typescript-eslint/no-unsafe-call",
+    b"@typescript-eslint/no-unsafe-declaration-merging",
+    b"@typescript-eslint/no-unsafe-function-type",
+    b"@typescript-eslint/no-unsafe-member-access",
+    b"@typescript-eslint/no-unsafe-return",
     b"@typescript-eslint/no-unused-vars",
+    b"@typescript-eslint/no-wrapper-object-types",
+    b"no-cond-assign",
     b"no-constant-condition",
+    b"no-control-regex",
     b"no-empty-character-class",
     b"no-empty-pattern",
+    b"no-ex-assign",
+    b"no-loss-of-precision",
+    b"no-prototype-builtins",
     b"no-self-assign",
     b"no-setter-return",
     b"no-unassigned-vars",
@@ -475,7 +493,7 @@ impl Reader<'_> {
     }
 
     /// `$severityByKind`, which `bun lint`'s default config sets. Enabled `Kind::Problem` rules become errors, except those in
-    /// [`ABOUT_WHAT_DOES_NOTHING`]. Every other enabled rule becomes a warning.
+    /// [`WARN_BY_DEFAULT`]. Every other enabled rule becomes a warning.
     fn grade_by_kind(&self, settings: &mut [RuleSetting]) {
         for setting in settings
             .iter_mut()
@@ -483,7 +501,7 @@ impl Reader<'_> {
         {
             let kind = self.native_rule(&setting.id).map(|it| it.meta.kind);
             setting.severity = match kind {
-                Some(Kind::Problem) if !ABOUT_WHAT_DOES_NOTHING.contains(&&setting.id[..]) => {
+                Some(Kind::Problem) if !WARN_BY_DEFAULT.contains(&&setting.id[..]) => {
                     Severity::Error
                 }
                 _ => Severity::Warn,

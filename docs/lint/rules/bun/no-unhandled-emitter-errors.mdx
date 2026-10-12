@@ -112,7 +112,9 @@ export const log = createReadStream("app.log");
 
 ```toml bunfig.toml
 [lint.rules]
-"bun/no-unhandled-emitter-errors" = ["error", { factories = [{ module = "ws", names = ["createWebSocketStream"] }] }]
+"bun/no-unhandled-emitter-errors" = ["error", {
+  factories = [{ module = "ws", names = ["createWebSocketStream"] }],
+}]
 ```
 
 {/* bad {"options": [{"factories": [{"module": "ws", "names": ["createWebSocketStream"]}]}]} */}

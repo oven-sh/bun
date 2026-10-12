@@ -2112,6 +2112,26 @@ describe.concurrent("bun lint", () => {
         expect(lost.map(it => it[0].trim())).toEqual([]);
       });
 
+      test("the help table refers to lines of oxlint_help.txt", () => {
+        const root = join(import.meta.dir, "../../../src/lint");
+        const lines = readFileSync(join(root, "oxlint_help.txt"), "utf8").split("\n");
+        const table = readFileSync(join(root, "oxlint_help.rs"), "utf8");
+        const entries = [
+          ...table.matchAll(/^ {4}\(0x[0-9A-F]{8}, (One|Three|of_the_fix)\((?:\w+, \w+, )?(\d+)\), (\d)\), \/\//gm),
+        ];
+        expect(entries.length).toBe(table.match(/^ {4}\(0x/gm)!.length);
+        const wrong = entries.filter(([, kind, line, withValues]) => {
+          // Lines count from 1. A fix's note is optional, and 0 stands for none.
+          const at = Number(line) - 1;
+          if (kind === "of_the_fix" && at < 0) return withValues !== "0";
+          // By part: the help, the label, the note.
+          const texts = kind === "Three" ? lines.slice(at, at + 3) : kind === "One" ? [lines[at]] : ["", "", lines[at]];
+          const bits = texts.reduce((bits, text, part) => bits | (Number(text?.includes("{{")) << part), 0);
+          return !texts.some(Boolean) || bits !== Number(withValues);
+        });
+        expect(wrong.map(it => it[0])).toEqual([]);
+      });
+
       // What oxlint 1.87.0 with tsgolint 7.0.2003 reports.
       test("JavaScript is linted with types without allowJs, and is `any` to the TypeScript that imports it", async () => {
         const { raw } = await lint(
@@ -6608,9 +6628,9 @@ describe.concurrent("regular expressions in a configuration", () => {
     // JavaScriptCore, which has the regular expressions, prints its options when it is started.
     const env = { BUN_JSC_dumpOptions: "1", JSC_dumpOptions: "1" };
     // Without a configuration file: eslint:recommended.
-    const { stdout, stderr, exitCode } = await lint(files, ["-f", "stylish", "--rule", "no-warning-comments: error"], {
-      env,
-    });
+    const inComments = "no-irregular-whitespace: [error, { skipComments: false }]";
+    const rules = ["--rule", "no-warning-comments: error", "--rule", inComments];
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "stylish", ...rules], { env });
     expect(stdout).toMatchInlineSnapshot(`
       "<dir>/a.js
          4:11  error  Irregular whitespace not allowed            no-irregular-whitespace
@@ -6619,9 +6639,9 @@ describe.concurrent("regular expressions in a configuration", () => {
         11:4   error  Irregular whitespace not allowed            no-irregular-whitespace
 
       <dir>/b.ts
-        1:1  error  Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+        1:1  warning  Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
 
-      ✖ 5 problems (5 errors, 0 warnings)"
+      ✖ 5 problems (4 errors, 1 warning)"
     `);
     expect(stderr).not.toContain("JSC options");
     expect(exitCode).toBe(1);

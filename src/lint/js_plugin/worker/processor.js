@@ -40,7 +40,7 @@ async function loadProcessor([id, location]) {
 
 // The message: the id of the processor and the length of the path, then the path, then `rest`.
 function readForProcessor() {
-  const [id, pathLength] = messageWords(2);
+  const { 0: id, 1: pathLength } = messageWords(2);
   return {
     processor: processors.get(id),
     name: messageText(8, 8 + pathLength),
@@ -82,6 +82,6 @@ function handleForProcessor(kind) {
     if (kind === POSTPROCESS) return postprocess();
     return loadProcessor(askForJson(MESSAGE)).catch(error => FAILED + describeLoadError(error));
   } catch (error) {
-    return FAILED + String(error?.message ?? error);
+    return FAILED + messageOf(error);
   }
 }

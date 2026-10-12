@@ -46,7 +46,7 @@ const EXPRESSION_JSX: &[u8] = b"\0.jsx";
 const EXPRESSION_TS: &[u8] = b"\0.ts";
 
 /// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
-fn is_probably_jsx(text: &[u8]) -> bool {
+pub fn is_probably_jsx(text: &[u8]) -> bool {
     // `</` with the start of a line before it and no quote in between.
     let mut rest = if strings::contains(text, b"</") {
         text

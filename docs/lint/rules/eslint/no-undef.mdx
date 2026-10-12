@@ -14,7 +14,7 @@ deprecated: false
 
 Using a name that no `import`, declaration, or parameter defines throws a `ReferenceError` when that line runs. It's usually a typo or a missing import, and you only find out when that code path runs.
 
-Without a config file, `bun lint` knows the browser and Node.js globals, and `Bun`. In test files such as `math.test.js` it also knows `test`, `expect`, `describe` and the like.
+Without a config file, `bun lint` knows the browser, service worker and Node.js globals, and `Bun`. In test files such as `math.test.js` it also knows `test`, `expect`, `describe` and the like.
 
 This rule is on by default in JavaScript files. It's off in TypeScript files, where the type checker reports the same thing.
 
@@ -78,6 +78,15 @@ If a script tag or the host defines a global, declare it. For one file, use a co
 /* global analytics */
 
 analytics.track("signup");
+```
+
+An `eslint-env` comment from an older ESLint setup still works. It declares all the globals of an environment such as `jquery`, `mocha` or `webextensions`. With an ESLint config file it's an error, as in ESLint 9 and later.
+
+{/* good */}
+```js
+/* eslint-env jquery */
+
+$(".menu").hide();
 ```
 
 For the whole project, use `bunfig.toml`:

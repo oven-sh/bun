@@ -95,6 +95,64 @@ fn cannot_resolve_parser(parser: &[u8]) -> Vec<u8> {
     [b"Couldn't resolve parser \"", parser, b"\"."].concat()
 }
 
+/// The error for `--parser` with the directory `written` as an argument.
+fn cannot_force_parser_on(written: &[u8], parser: &[u8]) -> Vec<u8> {
+    let extension: Option<&[u8]> = match parser {
+        b"typescript" | b"babel-ts" | b"oxc-ts" => Some(b"ts"),
+        b"markdown" | b"remark" => Some(b"md"),
+        b"glimmer" => Some(b"hbs"),
+        b"json-stringify" => Some(b"json"),
+        b"angular" | b"lwc" => Some(b"html"),
+        _ if parser.starts_with(b"__") => None,
+        _ if Kind::of_parser(parser) == Some(Kind::Script) => Some(b"js"),
+        // The others are named like their files: css, json5, yaml, vue, graphql.
+        _ => Some(parser),
+    };
+    let mut text = [b"--parser ", parser, b" would read every file in \""].concat();
+    text.extend_from_slice(&[written, b"\" as ", parser].concat());
+    let Some(extension) = extension else {
+        text.extend_from_slice(b"\n  Name the files, or use a glob.");
+        return text;
+    };
+    let directory = paths::from_native(written);
+    let directory = directory.strip_suffix(b"/").unwrap_or(&directory);
+    let base = match directory {
+        b"." => Vec::new(),
+        _ => [directory, b"/"].concat(),
+    };
+    text.extend_from_slice(b"\n  Name the files, or use a glob: bun format --parser ");
+    text.extend_from_slice(&[parser, b" \"", &base, b"**/*.", extension, b"\""].concat());
+    text
+}
+
+/// All of standard input, or the error to print.
+fn read_stdin() -> Result<Vec<u8>, Vec<u8>> {
+    fs::read_stdin()
+        .map_err(|error| [&b"Cannot read standard input: "[..], &fs::describe(&error)].concat())
+}
+
+/// Code from standard input.
+struct Piped<'p> {
+    text: Vec<u8>,
+    /// Its name in error messages.
+    shown: &'p [u8],
+    /// The file names to parse it as. The first one that parses wins.
+    paths: &'p [&'p [u8]],
+}
+
+/// [`Piped::paths`] for code that has no file name. These only tell the parser which syntax to expect. No config ever sees
+/// them. Prettier's TypeScript parsers go by the extension to allow JSX or not. Without one they try both.
+fn syntaxes_to_try(parser: &[u8], text: &[u8]) -> &'static [&'static [u8]] {
+    match parser {
+        b"typescript" | b"oxc-ts" if !bun_format::html::is_probably_jsx(text) => {
+            &[b"stdin.ts", b"stdin.tsx"]
+        }
+        b"typescript" | b"oxc-ts" | b"babel-ts" => &[b"stdin.tsx", b"stdin.ts"],
+        _ if Kind::of_parser(parser) == Some(Kind::Script) => &[b"stdin.js"],
+        _ => &[b""],
+    }
+}
+
 /// What the file at `path` is parsed as, one after the other until there is no error: whether as
 /// a script. A module, then a script, as the parsers of Prettier do.
 fn kinds(path: &[u8]) -> &'static [bool] {
@@ -840,7 +898,7 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
         }
         None => match files::language_of(path) {
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
-            Language::Unknown if files::is_toml(path) && configs.formats_toml(scope) => {
+            Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
                 Language::Supported
             }
             Language::Unknown if files::parser_by_interpreter(path).is_some() => {
@@ -1026,12 +1084,9 @@ impl Run<'_> {
 
     /// Prettier's `formatStdin`
     fn format_stdin(mut self, configs: &Configs, ignored: &Ignored, name: &[u8]) -> Outcome {
-        let text = match fs::read_stdin() {
+        let text = match read_stdin() {
             Ok(text) => text,
-            Err(error) => {
-                return self
-                    .fail(&[&b"Cannot read standard input: "[..], &fs::describe(&error)].concat());
-            }
+            Err(error) => return self.fail(&error),
         };
         let path = paths::resolve(&self.environment.cwd, &paths::from_native(name));
         let only_looks = self.options.check || self.options.list_different;
@@ -1051,40 +1106,14 @@ impl Run<'_> {
         };
         let language = language_of(configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.ignores_of(&scope));
-        // What has to be installed for the text to go to the project's own Prettier, and is not.
-        let mut not_installed: Vec<&[u8]> = Vec::new();
         let is_of_plugin = configs.plugin_that_reads(&scope, &path).is_some();
-        if language == Language::Other && is_of_plugin {
-            for package in [&b"prettier"[..]]
-                .into_iter()
-                .chain(configs.packages_of_plugins(&scope, &path))
-            {
-                if !prettier::is_installed(&self.environment.cwd, package)
-                    && !not_installed.contains(&package)
-                {
-                    not_installed.push(package);
-                }
-            }
-        }
-        // The language of a plugin: see `prettier.rs`.
+        let not_installed = match language == Language::Other && is_of_plugin {
+            true => self.not_installed(configs, &scope, Some(&path)),
+            false => Vec::new(),
+        };
         if language == Language::Other && !is_ignored && is_of_plugin && not_installed.is_empty() {
-            let size = (1, text.len() as u64);
-            let bridge = prettier::Prettier::new(self.environment, self.options, size, 1);
-            match bridge.format(&path, configs.path_of_config(&scope), &text) {
-                Err(Unformatted::Message(message)) if forgives => {
-                    self.error(&message);
-                    self.out.exit_code = 0;
-                }
-                Err(why) => self.error(&[name, b": ", &prettier::describe(why)].concat()),
-                Ok(formatted) if only_looks => {
-                    if formatted != text && !self.options.write {
-                        self.log(b"(stdin)");
-                        self.out.exit_code = 1;
-                    }
-                }
-                Ok(formatted) => self.out.stdout = formatted,
-            }
-            return self.out;
+            let config = configs.path_of_config(&scope);
+            return self.format_stdin_with_prettier((Some(&path), config), (name, &text));
         }
         let mut options = match configs.options_for(&scope, &path) {
             Ok(options) => options,
@@ -1107,7 +1136,7 @@ impl Run<'_> {
             }
             return self.out;
         }
-        let missing_plugins = configs.missing_plugins(&scope, &path);
+        let missing_plugins = configs.missing_plugins(&scope, Some(&path));
         if language == Language::Supported && !allows && !missing_plugins.is_empty() {
             let names: Vec<&[u8]> = missing_plugins.iter().map(|it| &it[..]).collect();
             self.say_left_for_plugins(1, &names);
@@ -1134,17 +1163,169 @@ impl Run<'_> {
         }
         let kind = Kind::with_options(&path, &options.options);
         tailwind::only_where_sorted(&mut options.options, kind);
+        let piped = Piped {
+            text,
+            shown: name,
+            paths: &[&path],
+        };
+        self.print_stdin(configs, piped, options)
+    }
+
+    /// `prettier --parser x < file`: Prettier's `formatStdin` without `--stdin-filepath`. Whatever goes by a file name doesn't
+    /// apply: ignore files, overrides, `.editorconfig`.
+    fn format_unnamed_stdin(mut self, configs: &Configs) -> Outcome {
+        // Prettier prints its usage.
+        if bun_sys::isatty(bun_sys::Fd::stdin()) {
+            return self.fail(
+                b"--parser without files formats standard input, and nothing is piped in\n  Pipe the code in, or name the files to format.",
+            );
+        }
+        let text = match read_stdin() {
+            Ok(text) => text,
+            Err(error) => return self.fail(&error),
+        };
+        let only_looks = self.options.check || self.options.list_different;
+        let forgives = configs.flavor == Flavor::Prettier && only_looks;
+        let scope = configs.for_directory(&self.environment.cwd);
+        let found = scope.and_then(|scope| Ok((configs.options_without_name(&scope)?, scope)));
+        let (mut options, scope) = match found {
+            Ok(found) => found,
+            Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
+        };
+        // `--config-precedence` can make a config file without `parser` win over the flag.
+        let Some(parser) = options.options.parser.clone() else {
+            if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !only_looks {
+                return self.out;
+            }
+            self.error(b"No parser and no file path given, couldn't infer a parser.");
+            if forgives {
+                self.out.exit_code = 0;
+            }
+            return self.out;
+        };
+        let Some(kind) = Kind::of_parser(&parser) else {
+            if !configs.names_other_plugins(&scope, None) {
+                self.error(&cannot_resolve_parser(&parser));
+                self.out.exit_code = match (self.is_native, forgives) {
+                    (true, _) => 2,
+                    (false, true) => 0,
+                    (false, false) => 1,
+                };
+                return self.out;
+            }
+            // It can only be a plugin's.
+            let not_installed = self.not_installed(configs, &scope, None);
+            if not_installed.is_empty() {
+                let config = configs.path_of_config(&scope);
+                return self.format_stdin_with_prettier((None, config), (b"stdin", &text));
+            }
+            self.say_unsupported(&mut [(&parser, 1)], &not_installed);
+            if self.options.allow_unsupported && !only_looks {
+                self.out.stdout = text;
+            }
+            return self.out;
+        };
+        let missing_plugins = configs.missing_plugins(&scope, None);
+        if !self.options.allow_unsupported && !missing_plugins.is_empty() {
+            let names: Vec<&[u8]> = missing_plugins.iter().map(|it| &it[..]).collect();
+            self.say_left_for_plugins(1, &names);
+            return self.out;
+        }
+        tailwind::only_where_sorted(&mut options.options, Some(kind));
+        let paths = syntaxes_to_try(&parser, &text);
+        let piped = Piped {
+            text,
+            shown: b"stdin",
+            paths,
+        };
+        self.print_stdin(configs, piped, options)
+    }
+
+    /// The packages that aren't installed, of those it takes to hand the file at `path` to the project's own Prettier.
+    fn not_installed<'s>(
+        &self,
+        configs: &'s Configs,
+        scope: &'s config::Scope,
+        path: Option<&[u8]>,
+    ) -> Vec<&'s [u8]> {
+        let mut missing: Vec<&[u8]> = Vec::new();
+        for package in [&b"prettier"[..]]
+            .into_iter()
+            .chain(configs.packages_of_plugins(scope, path))
+        {
+            if !prettier::is_installed(&self.environment.cwd, package)
+                && !missing.contains(&package)
+            {
+                missing.push(package);
+            }
+        }
+        missing
+    }
+
+    /// Standard input in the language of a plugin: see `prettier.rs`. `shown` is its name in error messages.
+    fn format_stdin_with_prettier(
+        mut self,
+        (path, config): (Option<&[u8]>, Option<&[u8]>),
+        (shown, text): (&[u8], &[u8]),
+    ) -> Outcome {
+        let only_looks = self.options.check || self.options.list_different;
+        let size = (1, text.len() as u64);
+        let bridge = prettier::Prettier::new(self.environment, self.options, size, 1);
+        match bridge.format(path, config, text) {
+            // Prettier's `listDifferent` prints `error.message` of what `check` throws, and that is all.
+            Err(Unformatted::Message(message)) if only_looks => {
+                self.error(&message);
+                self.out.exit_code = 0;
+            }
+            // Prettier's `handleError` prints only `error.message` of a `ConfigError`, like a parser that no plugin has.
+            Err(Unformatted::Thrown(why)) if why.starts_with(b"ConfigError: ") => {
+                let message = &why[b"ConfigError: ".len()..];
+                let end = strings::index_of(message, b"\n    at ").unwrap_or(message.len());
+                self.error(&message[..end]);
+                self.out.exit_code = 1;
+            }
+            Err(why) => self.error(&[shown, b": ", &prettier::describe(why)].concat()),
+            Ok(formatted) if only_looks => {
+                if formatted != text && !self.options.write {
+                    self.log(b"(stdin)");
+                    self.out.exit_code = 1;
+                }
+            }
+            Ok(formatted) => self.out.stdout = formatted,
+        }
+        self.out
+    }
+
+    /// Formats what came from standard input, then prints the result, or what `--check` says about it.
+    fn print_stdin(mut self, configs: &Configs, piped: Piped, mut options: Resolved) -> Outcome {
+        let Piped {
+            text,
+            shown: name,
+            paths,
+        } = piped;
+        let only_looks = self.options.check || self.options.list_different;
+        let forgives = configs.flavor == Flavor::Prettier && only_looks;
+        for warning in std::mem::take(&mut *configs.warnings.lock()) {
+            self.warn(&warning);
+        }
         let names = Session::new();
         let verifies = self.options.verify;
         let format_text = |options: &Resolved| {
-            format(
-                &path,
-                &text,
-                options,
-                (&Interner::new_in(&names), &names),
-                &mut Scratches::default(),
-                verifies,
-            )
+            let mut first_failure = None;
+            for path in paths {
+                match format(
+                    path,
+                    &text,
+                    options,
+                    (&Interner::new_in(&names), &names),
+                    &mut Scratches::default(),
+                    verifies,
+                ) {
+                    Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
+                    done => return done,
+                }
+            }
+            Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
         };
         let mut formatted = format_text(&options);
         if let Some(tailwind) = options
@@ -1259,9 +1440,10 @@ impl Run<'_> {
         let mut others: Vec<(&[u8], usize)> = Vec::new();
         // How many files are left alone because of plugins that are not there, and which.
         let mut left_for_plugins: (usize, Vec<&[u8]>) = (0, Vec::new());
-        let is_wanted = |target: &Target| {
-            let of_config = configs.ignores_of(&target.scope);
-            !target.is_named || !ignored.ignores_file(&target.path, of_config)
+        let is_wanted = |target: &Target| match target.is_named {
+            true => !ignored.ignores_file(&target.path, configs.ignores_of(&target.scope)),
+            // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
+            false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
         };
         let mut work: Vec<(usize, &Target)> = Vec::new();
         // What goes to the project's own Prettier, and the plugins that would have to be installed for more to go there.
@@ -1283,7 +1465,7 @@ impl Run<'_> {
             };
             let missing_plugins = match options.allow_unsupported {
                 true => &[][..],
-                false => configs.missing_plugins(&target.scope, &target.path),
+                false => configs.missing_plugins(&target.scope, Some(&target.path)),
             };
             match language_of(configs, &target.scope, &target.path) {
                 _ if !is_wanted(target) => {}
@@ -1300,7 +1482,7 @@ impl Run<'_> {
                     if (configs.plugin_that_reads(&target.scope, &target.path)).is_some()
                         && [&b"prettier"[..]]
                             .into_iter()
-                            .chain(configs.packages_of_plugins(&target.scope, &target.path))
+                            .chain(configs.packages_of_plugins(&target.scope, Some(&target.path)))
                             .all(&mut has_package) =>
                 {
                     handed_over.push((index, target));
@@ -1312,7 +1494,7 @@ impl Run<'_> {
                     {
                         for package in [&b"prettier"[..]]
                             .into_iter()
-                            .chain(configs.packages_of_plugins(&target.scope, &target.path))
+                            .chain(configs.packages_of_plugins(&target.scope, Some(&target.path)))
                         {
                             if !has_package(package) && !not_installed.contains(&package) {
                                 not_installed.push(package);
@@ -1409,21 +1591,15 @@ impl Run<'_> {
                 })?;
                 let kind = Kind::with_options(&target.path, &options.options);
                 tailwind::only_where_sorted(&mut options.options, kind);
-                // What a template would lose is known without a second look, and the second look at HTML is a short
-                // one, which only a file that changes gets.
-                let is_free = || {
-                    matches!(
-                        Kind::with_options(&target.path, &options.options),
-                        Some(Kind::Handlebars | Kind::Html(_))
-                    )
-                };
                 let formatted = match format(
                     &target.path,
                     &text,
                     &options,
                     (&atoms, &memory),
                     &mut scratch,
-                    self.options.verify && (!only_looks || is_free()),
+                    // `--check` verifies too, so it never tells people to run a `bun format` that would then refuse. Only
+                    // files that need formatting pay for it.
+                    self.options.verify,
                 ) {
                     Ok((formatted, _)) => formatted,
                     Err(failure @ Failure::Unread(_)) => {
@@ -1774,6 +1950,10 @@ impl Run<'_> {
         if let Some(only) = (options.only.as_ref()).filter(|_| options.stdin_filepath.is_some()) {
             return self.fail(&only.refusal_of_stdin("--stdin-filepath"));
         }
+        let is_unnamed = options.formats_unnamed_stdin();
+        if let Some(only) = options.only.as_ref().filter(|_| is_unnamed) {
+            return self.fail(&only.refusal_of_stdin("--parser without files"));
+        }
         // Prettier and oxfmt both report this before they look at files, patterns or config.
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
         if let Some(refusal) = options.refusal_of_modes(is_oxfmt) {
@@ -1809,19 +1989,40 @@ impl Run<'_> {
             return self.fail_to_start(configs.flavor, &error);
         }
         let from_flag = options.format.iter().rfind(|it| it.0 == b"parser");
-        if let Some((_, parser)) = from_flag.filter(|it| Kind::of_parser(&it.1).is_none()) {
+        let is_unknown = |it: &&(&[u8], Vec<u8>)| Kind::of_parser(&it.1).is_none();
+        if let Some((_, parser)) = from_flag.filter(is_unknown).filter(|_| !is_unnamed) {
             return self.fail(&cannot_resolve_parser(parser));
         }
-        let mut ignored = match Ignored::new(options, &environment.cwd, configs.flavor) {
-            Ok(ignored) => ignored,
-            Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
+        // Prettier reads everything in the directory with that parser: lock files, dotfiles, LICENSE. A Prettier config gets that.
+        let is_directory = |written: &&Vec<u8>| {
+            let path = paths::resolve(&environment.cwd, &paths::from_native(written));
+            matches!(
+                fs::link_kind_and_size(&path),
+                Some((fs::LinkKind::Directory, _))
+            )
         };
+        if self.is_native
+            && !options.doctor
+            && !options.list_files
+            && let Some((_, parser)) = from_flag
+            && let Some(directory) = options.patterns.iter().find(is_directory)
+        {
+            return self.fail(&cannot_force_parser_on(directory, parser));
+        }
         // `--doctor` already lists it with its own notes.
         let is_said = options.log_level >= LogLevel::Warn && !options.doctor;
         let colors = self.colors();
-        let mut out = match &options.stdin_filepath {
-            Some(name) => self.format_stdin(&configs, &ignored, name),
-            None => self.format_files(&configs, &mut ignored),
+        let mut out = if is_unnamed {
+            self.format_unnamed_stdin(&configs)
+        } else {
+            let mut ignored = match Ignored::new(options, &environment.cwd, configs.flavor) {
+                Ok(ignored) => ignored,
+                Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
+            };
+            match &options.stdin_filepath {
+                Some(name) => self.format_stdin(&configs, &ignored, name),
+                None => self.format_files(&configs, &mut ignored),
+            }
         };
         if let Some(note) = configs.note().filter(|_| is_said) {
             let note = BStr::new(note);

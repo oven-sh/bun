@@ -616,6 +616,12 @@ fn type_error(diagnostic: &Diagnostic) -> LintMessage {
     }
 }
 
+/// Whether [`type_error`] made `message`.
+pub(crate) fn is_type_error(message: &LintMessage) -> bool {
+    message.message_id.is_none()
+        && matches!(&message.rule_id, Some(RuleId::Unknown(id)) if id.starts_with(b"typescript/TS"))
+}
+
 /// What is said about a file for which [`File::is_too_large_for_flow_analysis`](bun_lint::ast::File::is_too_large_for_flow_analysis)
 /// holds. typescript-eslint says nothing.
 fn too_large_for_flow_analysis() -> LintMessage {

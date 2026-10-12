@@ -43,7 +43,9 @@ Every option, set to its default. The ones that are commented out are unset by d
 
 ```toml bunfig.toml
 [lint.rules]
-"import/no-restricted-paths" = ["error", { zones = [{ target = "./src/client", from = "./src/server" }] }]
+"import/no-restricted-paths" = ["error", {
+  zones = [{ target = "./src/client", from = "./src/server" }],
+}]
 ```
 
 With this zone, files in `src/client` can't import files in `src/server`.
@@ -94,5 +96,12 @@ With this zone, `src/client/app.js` can import `../server/types.js` and nothing 
 
 ```toml bunfig.toml
 [lint.rules]
-"import/no-restricted-paths" = ["error", { zones = [{ target = "./src/client", from = "./src/server", except = ["./types.js"], message = "Call the API instead." }] }]
+"import/no-restricted-paths" = ["error", {
+  zones = [{
+    target = "./src/client",
+    from = "./src/server",
+    except = ["./types.js"],
+    message = "Call the API instead.",
+  }],
+}]
 ```

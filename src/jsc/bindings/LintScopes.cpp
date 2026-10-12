@@ -478,6 +478,9 @@ public:
     // After `make`.
     JSMap* setOfGlobalScope() { return m_setOfGlobalScope; }
     JSArray* variablesOfGlobalScope() { return array(m_message.scope(0)[6], m_variables); }
+    JSMap* mapOfGlobalScope() { return mapOf(mapStructure, m_message.list(m_message.scope(0)[6])); }
+    // See `LintScopeState::globalSet`.
+    bool leavesGlobalSetEmpty { false };
 
     // Whether every object of the message has a shape.
     bool hasShapes() const
@@ -904,9 +907,11 @@ private:
                 value = jsNumber(index + 1);
                 break;
             case Field::Set:
-                value = mapOf(index ? mapStructure : globalSetStructure, m_message.list(it[6]));
-                if (!index)
-                    m_setOfGlobalScope = value ? uncheckedDowncast<JSMap>(value) : nullptr;
+                if (!index && leavesGlobalSetEmpty) {
+                    m_setOfGlobalScope = JSMap::create(m_vm, globalSetStructure);
+                    value = m_setOfGlobalScope;
+                } else
+                    value = mapOf(index ? mapStructure : globalSetStructure, m_message.list(it[6]));
                 break;
             case Field::Taints: {
                 JSMap* taints = JSMap::create(m_vm, mapStructure);
@@ -1082,87 +1087,100 @@ JSObject* makeQuietLibVariable(JSGlobalObject* globalObject, LintHost* host, con
 constexpr uint32_t shapeOfLibVariable = 2;
 
 // Makes the rest of them, and puts all into `variables` and `set` of the global scope. typescript-eslint defines what is in the libraries
-// first.
-void addAllLibVariables(JSGlobalObject* globalObject, LintHost* host)
+// first. It goes by what the host knows: a plugin can have changed the variables, and written to `set`. Returns `variables`, or null if
+// it has been here before or an exception was thrown.
+JSArray* addAllLibVariables(JSGlobalObject* globalObject, LintHost* host)
 {
     constexpr uint32_t askForAll = 16;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintScopeState& state = host->scopes;
     if (state.hasAllLibVariables)
-        return;
+        return nullptr;
     state.hasAllLibVariables = true;
     LintSpan answer = Bun__Lint__ask(globalObject, askForAll, nullptr, 0);
     std::span<const uint32_t> words { reinterpret_cast<const uint32_t*>(answer.ptr), answer.len / 4 };
     Shape shape = shapeIn(globalObject, host, false, Variables, shapeOfLibVariable);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (words.size() < 2 || words[1] != words.size() - 2 || reinterpret_cast<uintptr_t>(answer.ptr) % 4 || !shape.like) {
         throwTypeError(globalObject, scope, "The scopes are not as expected"_s);
-        return;
+        return nullptr;
     }
-    JSMap* set = state.globalSet.get();
+    JSMap* known = state.knownGlobals.get();
     JSArray* mentioned = state.mentionedGlobals.get();
-    JSValue prototypeOfLib = shape.like->getPrototypeDirect();
-    auto isOfLib = [&](JSValue variable) { return asObject(variable)->getPrototypeDirect() == prototypeOfLib; };
+    // Those that the file declares, or that only ESLint knows. A name that a library has as well is only among these.
+    UncheckedKeyHashSet<JSCell*> others;
+    for (unsigned i = 0; i < mentioned->length(); ++i) {
+        if (!state.mentionedAreOfLib[i])
+            others.add(mentioned->getIndexQuickly(i).asCell());
+    }
 
-    MarkedArgumentBuffer all;
+    MarkedArgumentBuffer all, names;
     for (uint32_t entry : words.subspan(2)) {
         JSString* name = libName(globalObject, host, entry >> 2);
         if (!name)
             continue;
-        JSValue variable = set->get(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, void());
+        JSValue variable = known->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (variable.isUndefined()) {
             variable = makeQuietLibVariable(globalObject, host, shape, name, entry);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
-        // A name that the file declares as well is only among the others.
-        if (isOfLib(variable))
-            all.append(variable);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        } else if (others.contains(variable.asCell()))
+            continue;
+        all.append(variable);
+        names.append(name);
     }
     for (unsigned i = 0; i < mentioned->length(); ++i) {
-        JSValue variable = mentioned->getIndexQuickly(i);
-        if (!isOfLib(variable))
-            all.append(variable);
+        if (state.mentionedAreOfLib[i])
+            continue;
+        all.append(mentioned->getIndexQuickly(i));
+        names.append(state.mentionedNames->getIndexQuickly(i));
     }
     JSArray* variables = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), all);
-    RETURN_IF_EXCEPTION(scope, void());
-    PropertyOffset nameOffset = static_cast<PropertyOffset>(std::ranges::find(shape.program, static_cast<uint8_t>(Field::Name)) - shape.program.begin());
-    set->clear(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // `GlobalSet` in scope.js comes here before it writes. Only `Map.prototype.set.call(set, ..)` has put something there earlier, which stays.
+    JSMap* set = state.globalSet.get();
+    bool isEmpty = !set->size();
     for (size_t i = 0; i < all.size(); ++i) {
-        setInMap(globalObject, set, asObject(all.at(i))->getDirect(nameOffset), all.at(i));
-        RETURN_IF_EXCEPTION(scope, void());
+        if (!isEmpty) [[unlikely]] {
+            bool has = set->has(globalObject, names.at(i));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (has)
+                continue;
+        }
+        setInMap(globalObject, set, names.at(i), all.at(i));
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
     lintReplaceCustomValue(vm, host, state.globalScope.get(), Identifier::fromString(vm, "variables"_s), variables);
+    return variables;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(lintLazyVariablesOfGlobalScope, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(lintLazyVariablesOfGlobalScope, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintHost* host = LintHost::from(globalObject);
-    JSObject* globalScope = asObject(JSValue::decode(thisValue));
     // That of a file that is done.
-    if (globalScope != host->scopes.globalScope.get() || host->scopes.hasAllLibVariables)
+    if (JSValue::decode(thisValue) != JSValue(host->scopes.globalScope.get()))
         return JSValue::encode(jsUndefined());
-    addAllLibVariables(globalObject, host);
+    JSArray* variables = addAllLibVariables(globalObject, host);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(globalScope->getDirect(vm, name));
+    return JSValue::encode(variables ? JSValue(variables) : jsUndefined());
 }
 
 } // namespace
 
-// `addLibVariables()`: see `addAllLibVariables`.
-JSC_DEFINE_HOST_FUNCTION(jsLintAddLibVariables, (JSGlobalObject * globalObject, CallFrame*))
+// `addLibVariables(set)`: see `addAllLibVariables`. `set`: that of the global scope. A plugin can have kept that of another file.
+JSC_DEFINE_HOST_FUNCTION(jsLintAddLibVariables, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    addAllLibVariables(globalObject, LintHost::from(globalObject));
+    LintHost* host = LintHost::from(globalObject);
+    if (callFrame->argument(0) == JSValue(host->scopes.globalSet.get()))
+        addAllLibVariables(globalObject, host);
     return JSValue::encode(jsUndefined());
 }
 
-// `libVariable(name)`: the variable `name`, which isn't in `set` of the global scope, if the libraries of TypeScript define it. It's put
-// there. If not, `undefined`.
-JSC_DEFINE_HOST_FUNCTION(jsLintLibVariable, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// `globalVariable(name, set)`: the variable `name` of the global scope, as long as not all of them are in its `set`. One that the libraries of
+// TypeScript define and nothing mentions is made. `undefined`: there's none, or all are in `set`.
+JSC_DEFINE_HOST_FUNCTION(jsLintGlobalVariable, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     constexpr uint32_t askForOne = 18;
     VM& vm = globalObject->vm();
@@ -1170,8 +1188,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintLibVariable, (JSGlobalObject * globalObject, Call
     LintHost* host = LintHost::from(globalObject);
     LintScopeState& state = host->scopes;
     JSValue name = callFrame->argument(0);
-    if (state.hasAllLibVariables || !name.isString())
+    if (state.hasAllLibVariables || !name.isString() || callFrame->argument(1) != JSValue(state.globalSet.get()))
         return JSValue::encode(jsUndefined());
+    JSValue made = state.knownGlobals->get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!made.isUndefined())
+        return JSValue::encode(made);
     auto text = asString(name)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     // All of the names are ASCII.
@@ -1190,7 +1212,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintLibVariable, (JSGlobalObject * globalObject, Call
         return JSValue::encode(jsUndefined());
     JSObject* variable = makeQuietLibVariable(globalObject, host, shape, known, entry);
     RETURN_IF_EXCEPTION(scope, {});
-    setInMap(globalObject, state.globalSet.get(), known, variable);
+    setInMap(globalObject, state.knownGlobals.get(), known, variable);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(variable);
 }
@@ -1202,7 +1224,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintLibVariable, (JSGlobalObject * globalObject, Call
 // `classes`: `[scopes, Variable, ImplicitLibVariable, definitions, Reference, globalSet]`, those of the scopes by the `ScopeKind` and those
 // of the definitions by the `DeclarationKind`, and an empty `set` for the global scope. It has to be the same array each time.
 // `names`: the configured globals.
-// What the libraries of TypeScript define and nothing mentions is made by `libVariable` and `addLibVariables`.
+// With typescript-eslint `set` of the global scope is empty: see `globalVariable` and `addLibVariables`.
 JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1275,6 +1297,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
     maker.mapStructure = globalObject->mapStructure();
     maker.weakMapStructure = globalObject->weakMapStructure();
     maker.globalSetStructure = globalSet->structure();
+    maker.leavesGlobalSetEmpty = makesLibVariables;
 
     JSValue result = maker.make();
     RETURN_IF_EXCEPTION(scope, {});
@@ -1288,9 +1311,21 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
     host->scopes.variableWords = message.variables;
     host->scopes.declaredCount = message.declaredCount;
     if (makesLibVariables) {
+        // No plugin has seen the variables yet, so they are as they were made.
+        auto ofGlobalScope = message.list(message.scope(0)[6]);
         JSArray* mentioned = maker.variablesOfGlobalScope();
         RETURN_IF_EXCEPTION(scope, {});
         host->scopes.mentionedGlobals.set(vm, host, mentioned);
+        MarkedArgumentBuffer namesOfMentioned;
+        for (unsigned i = 0; i < mentioned->length(); ++i)
+            namesOfMentioned.append(asObject(mentioned->getIndexQuickly(i))->getDirect(maker.m_variableNameOffset));
+        JSArray* mentionedNames = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), namesOfMentioned);
+        RETURN_IF_EXCEPTION(scope, {});
+        host->scopes.mentionedNames.set(vm, host, mentionedNames);
+        host->scopes.mentionedAreOfLib = Vector<bool>(ofGlobalScope.size(), [&](size_t i) { return (message.variable(ofGlobalScope[i])[6] >> 8 & shapeOfLibVariable) != 0; });
+        JSMap* knownGlobals = maker.mapOfGlobalScope();
+        RETURN_IF_EXCEPTION(scope, {});
+        host->scopes.knownGlobals.set(vm, host, knownGlobals);
         host->scopes.globalSet.set(vm, host, maker.setOfGlobalScope());
         host->scopes.hasAllLibVariables = false;
     }
@@ -1368,7 +1403,7 @@ void addLintScopeFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
     native->putDirect(vm, Identifier::fromString(vm, "scopes"_s), JSFunction::create(vm, globalObject, 3, "scopes"_s, jsLintScopes, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "libVariable"_s), JSFunction::create(vm, globalObject, 1, "libVariable"_s, jsLintLibVariable, ImplementationVisibility::Public));
+    native->putDirect(vm, Identifier::fromString(vm, "globalVariable"_s), JSFunction::create(vm, globalObject, 2, "globalVariable"_s, jsLintGlobalVariable, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "addLibVariables"_s), JSFunction::create(vm, globalObject, 0, "addLibVariables"_s, jsLintAddLibVariables, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "usedVariables"_s), JSFunction::create(vm, globalObject, 0, "usedVariables"_s, jsLintUsedVariables, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "setScopeManager"_s), JSFunction::create(vm, globalObject, 1, "setScopeManager"_s, jsLintSetScopeManager, ImplementationVisibility::Public));

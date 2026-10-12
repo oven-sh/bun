@@ -119,10 +119,10 @@ An object after it, or instead of it, holds exceptions and more settings:
 | Option | Default | What it does |
 | --- | --- | --- |
 | an extension, such as `js` or `json` | the first option | `"always"` or `"never"` for files with that extension. |
-| `pattern` | `{}` | The same extension entries, in their own object. Use it if you also set one of the options below, because entries written next to those are ignored. |
+| `pattern` | `{}` | The same extension entries, in their own object. If you set `ignorePackages` or `checkTypeImports`, put the entries in here. Entries written next to those two options are ignored. |
 | `ignorePackages` | `false` | Don't require an extension in paths into packages. |
 | `checkTypeImports` | `false` | Also require extensions in `import type` and `export type`. |
-| `pathGroupOverrides` | `[]` | A list of `{ pattern, action }`. A path that matches the glob `pattern` is skipped if `action` is `"ignore"`. With `"enforce"` it's checked even if it looks like a package. Only read if `pattern`, `ignorePackages` or `checkTypeImports` is set too. |
+| `pathGroupOverrides` | `[]` | A list of `{ pattern, action }`. A path that matches the glob `pattern` is skipped if `action` is `"ignore"`. With `"enforce"` it's checked even if it looks like a package. It's ignored unless you also set `pattern`, `ignorePackages` or `checkTypeImports`. |
 
 {/* good {"options": ["never", {"json": "always"}]} */}
 ```js

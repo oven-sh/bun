@@ -6,7 +6,7 @@ plugin: "typescript"
 aliases: ["typescript-eslint/no-wrapper-object-types","typescript/no-wrapper-object-types"]
 kind: "problem"
 category: "correctness"
-default: "error"
+default: "warn"
 fixable: "yes"
 typeAware: false
 deprecated: false
@@ -24,11 +24,11 @@ This rule is on by default in TypeScript files.
 
 ## Configure
 
-On by default as an error. To turn it off:
+On by default as a warning. To turn it off:
 
 ```toml bunfig.toml
 [lint.rules]
-"@typescript-eslint/no-wrapper-object-types" = "off" # or "warn"
+"@typescript-eslint/no-wrapper-object-types" = "off" # or "error"
 ```
 
 {/* End of the generated section. */}

@@ -80,9 +80,15 @@ test("loads the user", () => {
 | --- | --- | --- |
 | `inlineMaxSize` | the value of `maxSize` | The most lines an inline snapshot can have. |
 | `maxSize` | `50` | The most lines a snapshot in a `.snap` file can have. |
-| `allowedSnapshots` | `{}` | Snapshots in `.snap` files that can have any length. Each key is the path to a `.snap` file, and its value is a list of snapshot names or regular expressions. |
+| `allowedSnapshots` | `{}` | Snapshots in `.snap` files that can have any length. Each key is the absolute path to a `.snap` file, and its value is a list of snapshot names or regular expressions. |
 
-An oxlint config never lints `.snap` files. There, `maxSize` only sets the default for `inlineMaxSize`, and `allowedSnapshots` has no effect.
+`bun lint` skips `.snap` files unless you ask for them:
+
+```sh
+bun lint --ext .snap
+```
+
+With an ESLint config, list `.snap` files under `files` instead. An oxlint config never lints them. If `.snap` files aren't linted, `maxSize` only sets the default for `inlineMaxSize`, and `allowedSnapshots` has no effect.
 
 ```json .oxlintrc.json
 {

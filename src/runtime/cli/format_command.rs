@@ -25,6 +25,11 @@ fn test_runner(flag: &[u8]) -> Option<fn(&Bundle<'_>, &Flags<'_>, Format<'_>)> {
 }
 
 impl FormatCommand {
+    /// Whether `bun format <flag>` is a valid command line.
+    pub(crate) fn has_flag(flag: &[u8]) -> bool {
+        Options::parse(&[flag]).is_ok()
+    }
+
     /// `args`: what follows `format`.
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         if HAS_TEST_RUNNER

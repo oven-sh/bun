@@ -59,8 +59,8 @@ pub use message::{
 pub(crate) use per_file::PerFile;
 pub use registry::{
     Deprecated, Missing, Modes, Names, NativePlugins, Registry, deprecated_info, deprecated_rule,
-    formatting_rule, formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key,
-    parse_rule_id, plugin_of_oxlint,
+    formatting_rule, formatting_rules, normalize_plugin_name, oxlint_category_of_key,
+    oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
 };
 pub use resolved::{
     ConfiguredJsRule, ConfiguredRule, Entry, FormattingRule, LinterOptions, ResolvedConfig,
@@ -1304,6 +1304,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         match comment.label {
             Label::Rules => {}
             Label::Env if self.file.language().eslint_8.is_some() => return,
+            Label::Env if self.file.language().stands_alone => return,
             Label::Env => {
                 return self.fatal(
                     comment,

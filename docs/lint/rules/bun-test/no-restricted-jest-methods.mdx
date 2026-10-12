@@ -84,7 +84,9 @@ The rule takes one object. Each key is a method name, and its value is the messa
 
 ```toml bunfig.toml
 [lint.rules]
-"bun:test/no-restricted-jest-methods" = ["error", { spyOn = "Pass the dependency in instead of spying on it" }]
+"bun:test/no-restricted-jest-methods" = ["error", {
+  spyOn = "Pass the dependency in instead of spying on it",
+}]
 ```
 
 In a JSON or JavaScript config, use `null` in place of the message to get the default message: ``Use of `spyOn` is not allowed``.

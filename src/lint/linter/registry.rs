@@ -8,6 +8,7 @@ use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
 use bun_core::strings;
 pub use deprecated::Deprecated;
+use std::borrow::Cow;
 
 /// All the rules that can be configured.
 pub struct Registry {
@@ -173,19 +174,34 @@ fn is_eslint_rule_adapted_to_typescript(name: &[u8]) -> bool {
         .is_ok()
 }
 
+/// oxlint's `normalizePluginName`, for the name of a JavaScript plugin and for the plugin in the name of a rule: `eslint-plugin-a` and
+/// `oxlint-plugin-a` are `a`, `@b/eslint-plugin` is `@b`, `@b/eslint-plugin-a` is `@b/a`.
+pub fn normalize_plugin_name(name: &[u8]) -> Cow<'_, [u8]> {
+    const PREFIXES: [&[u8]; 2] = [b"eslint-plugin", b"oxlint-plugin"];
+    let Some((scope, rest)) = strings::split_once_char(name, b'/') else {
+        let mut stripped =
+            (PREFIXES.iter()).filter_map(|it| name.strip_prefix(*it)?.strip_prefix(b"-"));
+        return Cow::Borrowed(stripped.next().unwrap_or(name));
+    };
+    for prefix in PREFIXES {
+        match rest.strip_prefix(prefix) {
+            Some(b"") => return Cow::Borrowed(scope),
+            Some([b'-', rest @ ..]) => return Cow::Owned([scope, b"/", rest].concat()),
+            _ => {}
+        }
+    }
+    Cow::Borrowed(name)
+}
+
 /// The one name of the built-in plugin of oxlint that `name` is a name of: `LintPlugins::try_from`.
-/// What is no name of one is the name of a JavaScript plugin, without `eslint-plugin`.
-pub fn plugin_of_oxlint(name: &[u8]) -> &[u8] {
-    let name = [&b"/eslint-plugin"[..], b"/oxlint-plugin"]
-        .iter()
-        .find_map(|it| name.strip_suffix(*it))
-        .unwrap_or(name);
-    let name = [&b"eslint-plugin-"[..], b"oxlint-plugin-"]
-        .iter()
-        .find_map(|it| name.strip_prefix(*it))
-        .unwrap_or(name);
-    match name {
-        b"react-hooks" | b"react_hooks" => b"react",
+/// What is no name of one is the name of a JavaScript plugin, as [`normalize_plugin_name`] has it.
+pub fn plugin_of_oxlint(name: &[u8]) -> Cow<'_, [u8]> {
+    let name = match normalize_plugin_name(name) {
+        Cow::Borrowed(name) => name,
+        owned => return owned,
+    };
+    Cow::Borrowed(match name {
+        b"react-hooks" | b"react_hooks" => &b"react"[..],
         b"typescript-eslint" | b"typescript_eslint" | b"@typescript-eslint" => b"typescript",
         b"deepscan" => b"oxc",
         b"import-x" => b"import",
@@ -194,7 +210,7 @@ pub fn plugin_of_oxlint(name: &[u8]) -> &[u8] {
         // `unalias_plugin_name`
         b"@next/next" | b"@next" => b"nextjs",
         name => name,
-    }
+    })
 }
 
 /// The rule `name` of `plugin`, which is a name that [`plugin_of_oxlint`] gives, as all of its names
@@ -219,12 +235,14 @@ fn is_in_oxlint(plugin: Plugin, name: &[u8]) -> bool {
 pub fn oxlint_rule_key(id: &[u8]) -> Vec<u8> {
     let (prefix, name) = parse_rule_id(id);
     let plugin = match prefix {
-        b"" => (PLUGINS_OF_OXLINT.iter())
-            .find(|it| is_in_oxlint(it.0, name))
-            .map_or(&b"eslint"[..], |it| it.1),
+        b"" => Cow::Borrowed(
+            (PLUGINS_OF_OXLINT.iter())
+                .find(|it| is_in_oxlint(it.0, name))
+                .map_or(&b"eslint"[..], |it| it.1),
+        ),
         prefix => plugin_of_oxlint(prefix),
     };
-    match plugin {
+    match &*plugin {
         b"typescript" if is_eslint_rule_adapted_to_typescript(name) => name.to_vec(),
         plugin => oxlint_key_of(plugin, name),
     }
@@ -240,7 +258,7 @@ pub fn oxlint_filter_keys(name: &[u8]) -> Vec<Vec<u8>> {
         None => (&b""[..], name),
     };
     if !prefix.is_empty() {
-        let key = oxlint_key_of(plugin_of_oxlint(prefix), rule);
+        let key = oxlint_key_of(&plugin_of_oxlint(prefix), rule);
         return match oxlint_rule_key(&key) == key {
             true => vec![key],
             false => Vec::new(),

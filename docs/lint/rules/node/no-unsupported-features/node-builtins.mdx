@@ -90,11 +90,14 @@ const { values } = parseArgs({ options: { url: { type: "string" } } });
 | `allowExperimental` | `false` | Allow an API if every version in the range has it, even as experimental. |
 | `ignores` | `[]` | APIs that are never reported, by the name in the message, such as `"fs.cpSync"` or `"test"`. |
 
-Without `version`, the range comes from `settings.n.version` in an ESLint config, then from `engines.node`, then from `devEngines.runtime` in `package.json`.
+Without `version`, the range comes from `settings.n.version` (`[lint.settings.n]` in `bunfig.toml`, or `settings` in an ESLint config), then from `engines.node`, then from `devEngines.runtime` in `package.json`.
 
 ```toml bunfig.toml
 [lint.rules]
-"n/no-unsupported-features/node-builtins" = ["error", { version = ">=22.5.0", allowExperimental = true }]
+"n/no-unsupported-features/node-builtins" = ["error", {
+  version = ">=22.5.0",
+  allowExperimental = true,
+}]
 ```
 
 `node:sqlite` has been experimental since 22.5.0:

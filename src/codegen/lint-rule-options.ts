@@ -8,12 +8,17 @@
 //
 // An option without a default is commented out, so the snippet as a whole never changes what the rule does.
 // `test/cli/lint/rule-docs.test.ts` checks that.
+//
+// The layout is what `bun format` prints, so pasting a snippet into a formatted `bunfig.toml` keeps `bun format --check`
+// green. The same test checks that too.
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Schema = { [key: string]: any };
 
 // Fits an 80-column terminal, next to the frame that `bun lint --explain` draws around code.
 export const WIDTH = 78;
+// `bun format` puts a list on one line if it fits in `printWidth`. Comments don't count.
+const PRINT_WIDTH = 80;
 
 export const isObject = (value: unknown): value is Record<string, any> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -208,18 +213,11 @@ function placeholder(before: string, schemas: Schema[], root: Schema) {
   return line.length <= WIDTH ? line : `${before}<${oneOf(short)}>,`;
 }
 
-/** `before` + `value` + `,`. Wraps a list that doesn't fit on the line. */
+/** `before` + `value` + `,`. A list that doesn't fit on the line gets one item per line. */
 function entry(before: string, value: Json, indent: string): string[] {
   const line = `${indent}${before}${toml(value)},`;
-  if (line.length <= WIDTH || !Array.isArray(value)) return [line];
-  const lines = [`${indent}${before}[`];
-  for (const item of value) {
-    const [text, last] = [`${toml(item)},`, lines.at(-1)!];
-    if (lines.length > 1 && !isObject(item) && `${last} ${text}`.length <= WIDTH)
-      lines[lines.length - 1] = `${last} ${text}`;
-    else lines.push(`${indent}  ${text}`);
-  }
-  return [...lines, `${indent}],`];
+  if (line.length <= PRINT_WIDTH || !Array.isArray(value)) return [line];
+  return [`${indent}${before}[`, ...value.flatMap(item => entry("", item, `${indent}  `)), `${indent}],`];
 }
 
 /** Puts each hint after its line, or above it if that's too long. Options with the same long hint only get it once. */
@@ -270,7 +268,7 @@ class Writer {
         const inner = this.properties(nested[0], set, `${path}${name}.`, `${indent}  `);
         value[name] = inner.value;
         const [line] = entry(before, inner.value, indent);
-        if (line.length <= WIDTH && inner.lines.every(it => !it.hints?.length && !isOff(it)))
+        if (line.length <= PRINT_WIDTH && inner.lines.every(it => !it.hints?.length && !isOff(it)))
           lines.push({ text: line });
         else lines.push({ text: `${indent}${before}{` }, ...inner.lines, { text: `${indent}},` });
       } else {
@@ -399,16 +397,24 @@ export function optionsSnippet(
     const line = `${start}${[severity, ...defaults].map(toml).join(", ")}]`;
     return { lines: [line], options: defaults, hasUnset: false, isRequired };
   }
-  let { lines } = best;
-  const first = `${start}${toml(severity)}`;
-  if (lines[0].text === "  {" && lines.findIndex(it => it.text === "  },") === lines.length - 1)
-    lines = [
-      { text: `${first}, {` },
-      ...lines.slice(1, -1).map(it => ({ ...it, text: it.text.slice(2) })),
-      { text: "}]" },
-    ];
-  else if (lines.length === 1 && !isOff(lines[0]) && `${first}, ${lines[0].text.trim()}`.length <= WIDTH)
-    lines = [{ ...lines[0], text: `${first}, ${lines[0].text.trim().slice(0, -1)}]` }];
-  else lines = [{ text: start }, { text: `  ${toml(severity)},` }, ...lines, { text: "]" }];
-  return { lines: withHints(lines), options: best.options, hasUnset: lines.some(isOff), isRequired };
+  const { lines } = best;
+  const hasUnset = lines.some(isOff);
+  const done = (lines: string[]) => ({ lines, options: best.options, hasUnset, isRequired });
+  const exploded = withHints([{ text: start }, { text: `  ${toml(severity)},` }, ...lines, { text: "]" }]);
+  const table = lines.findIndex(it => it.text === "  {");
+  const plain = lines.slice(0, table < 0 ? lines.length : table);
+  // A comment between the brackets keeps one value per line. Without one, `bun format` joins whatever fits.
+  const hasHints = withHints(plain).join("\n") !== plain.map(it => it.text).join("\n");
+  // A single value's hint can go behind the `]`.
+  const only = `${start}${toml(severity)}, ${lines[0].text.trim().slice(0, -1)}]`;
+  if (lines.length === 1 && !hasUnset && only.length <= (hasHints ? WIDTH : PRINT_WIDTH))
+    return done(withHints([{ ...lines[0], text: only }]));
+  if (hasHints || plain.some(it => isOff(it) || !it.text.endsWith(","))) return done(exploded);
+  const head = [toml(severity), ...plain.map(it => it.text.trim().slice(0, -1))].join(", ");
+  if (table < 0) return done(`${start}${head}]`.length <= PRINT_WIDTH ? [`${start}${head}]`] : exploded);
+  // `bun format` hugs a table in last position: `["error", {` .. `}]`.
+  if (lines.findIndex(it => it.text === "  },") < lines.length - 1 || `${start}${head}, {`.length > PRINT_WIDTH)
+    return done(exploded);
+  const inner = lines.slice(table + 1, -1).map(it => ({ ...it, text: it.text.slice(2) }));
+  return done(withHints([{ text: `${start}${head}, {` }, ...inner, { text: "}]" }]));
 }

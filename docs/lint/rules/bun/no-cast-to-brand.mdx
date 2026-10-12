@@ -44,7 +44,9 @@ These examples use this config:
 
 ```toml bunfig.toml
 [lint.rules]
-"bun/no-cast-to-brand" = ["error", { branded = [{ module = "src/ids", type = "UserId" }] }]
+"bun/no-cast-to-brand" = ["error", {
+  branded = [{ module = "src/ids", type = "UserId" }],
+}]
 ```
 
 Reported:

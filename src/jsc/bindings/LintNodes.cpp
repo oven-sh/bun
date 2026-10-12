@@ -25,9 +25,6 @@
 namespace Bun {
 using namespace JSC;
 
-// An array of `length` times `undefined`, or null if there's no memory. `setIndexQuickly` is safe for all its indices.
-// It isn't after `JSArray::tryCreate`, which makes room for a few items only once a plugin has put an accessor with an index for
-// a name on `Array.prototype`.
 JSArray* tryCreateFilledLintArray(VM& vm, JSGlobalObject* globalObject, unsigned length)
 {
     ObjectInitializationScope initializationScope(vm);
@@ -733,7 +730,13 @@ JSC_DEFINE_HOST_FUNCTION(jsLintListen, (JSGlobalObject * globalObject, CallFrame
     if (treeBytes) {
         JSArray* nodes = makeLintNodes(globalObject, host, bytes.subspan(8 + callBytes));
         RETURN_IF_EXCEPTION(scope, {});
-        result->setIndexQuickly(vm, 1, nodes);
+        // A copy. The host relies on its own list, and a plugin that has changed `Array.prototype` can get at what the program has.
+        JSArray* copy = tryCreateFilledLintArray(vm, globalObject, nodes->length());
+        if (!copy) [[unlikely]]
+            return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
+        for (unsigned i = 0; i < nodes->length(); ++i)
+            copy->setIndexQuickly(vm, i, nodes->getIndexQuickly(i));
+        result->setIndexQuickly(vm, 1, copy);
     }
     return JSValue::encode(result);
 }

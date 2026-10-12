@@ -65,14 +65,14 @@ description: "Every rule built into bun lint"
 | [`no-catch-shadow`](/lint/rules/eslint/no-catch-shadow) | Disallow a `catch` parameter with the name of a variable in the scope around it |  |  |  |
 | [`no-class-assign`](/lint/rules/eslint/no-class-assign) | Disallow assigning to the name of a class | error |  |  |
 | [`no-compare-neg-zero`](/lint/rules/eslint/no-compare-neg-zero) | Disallow comparing against `-0` | error | suggestion |  |
-| [`no-cond-assign`](/lint/rules/eslint/no-cond-assign) | Disallow assignments in the test of `if`, loops and `? :` | error |  |  |
+| [`no-cond-assign`](/lint/rules/eslint/no-cond-assign) | Disallow assignments in the test of `if`, loops and `? :` | warn |  |  |
 | [`no-console`](/lint/rules/eslint/no-console) | Disallow the use of `console` |  | suggestion |  |
 | [`no-const-assign`](/lint/rules/eslint/no-const-assign) | Disallow reassigning `const`, `using` and `await using` variables | error |  |  |
 | [`no-constant-binary-expression`](/lint/rules/eslint/no-constant-binary-expression) | Disallow comparisons and `&&`, `\|\|`, `??` that always give the same result | error |  |  |
 | [`no-constant-condition`](/lint/rules/eslint/no-constant-condition) | Disallow conditions that are always truthy or always falsy | warn |  |  |
 | [`no-constructor-return`](/lint/rules/eslint/no-constructor-return) | Disallow returning a value from a constructor |  |  |  |
 | [`no-continue`](/lint/rules/eslint/no-continue) | Disallow `continue` statements |  |  |  |
-| [`no-control-regex`](/lint/rules/eslint/no-control-regex) | Disallow control characters in regular expressions | error |  |  |
+| [`no-control-regex`](/lint/rules/eslint/no-control-regex) | Disallow control characters in regular expressions | warn |  |  |
 | [`no-debugger`](/lint/rules/eslint/no-debugger) | Disallow `debugger` statements | error |  |  |
 | [`no-delete-var`](/lint/rules/eslint/no-delete-var) | Disallow `delete` on variables | warn |  |  |
 | [`no-div-regex`](/lint/rules/eslint/no-div-regex) | Disallow regular expressions that start with `=` |  | yes |  |
@@ -90,7 +90,7 @@ description: "Every rule built into bun lint"
 | [`no-empty-static-block`](/lint/rules/eslint/no-empty-static-block) | Disallow empty `static {}` blocks in classes | warn | suggestion |  |
 | [`no-eq-null`](/lint/rules/eslint/no-eq-null) | Disallow comparing with `null` using `==` or `!=` |  |  |  |
 | [`no-eval`](/lint/rules/eslint/no-eval) | Disallow `eval()` |  |  |  |
-| [`no-ex-assign`](/lint/rules/eslint/no-ex-assign) | Disallow assigning to the error parameter of a `catch` clause | error |  |  |
+| [`no-ex-assign`](/lint/rules/eslint/no-ex-assign) | Disallow assigning to the error parameter of a `catch` clause | warn |  |  |
 | [`no-extend-native`](/lint/rules/eslint/no-extend-native) | Disallow adding properties to the prototypes of built-in objects |  |  |  |
 | [`no-extra-bind`](/lint/rules/eslint/no-extra-bind) | Disallow `.bind()` on functions that do not use `this` |  | yes |  |
 | [`no-extra-boolean-cast`](/lint/rules/eslint/no-extra-boolean-cast) | Disallow `!!` and `Boolean()` where the value is converted to a boolean anyway | warn | yes |  |
@@ -113,7 +113,7 @@ description: "Every rule built into bun lint"
 | [`no-lone-blocks`](/lint/rules/eslint/no-lone-blocks) | Disallow blocks that do nothing |  |  |  |
 | [`no-lonely-if`](/lint/rules/eslint/no-lonely-if) | Require `else if` instead of an `if` alone in an `else` block |  | yes |  |
 | [`no-loop-func`](/lint/rules/eslint/no-loop-func) | Disallow functions in loops that use a variable the loop changes |  |  |  |
-| [`no-loss-of-precision`](/lint/rules/eslint/no-loss-of-precision) | Disallow number literals that cannot be stored exactly as written | error |  |  |
+| [`no-loss-of-precision`](/lint/rules/eslint/no-loss-of-precision) | Disallow number literals that cannot be stored exactly as written | warn |  |  |
 | [`no-magic-numbers`](/lint/rules/eslint/no-magic-numbers) | Require numbers to be given a name instead of being used directly |  |  |  |
 | [`no-misleading-character-class`](/lint/rules/eslint/no-misleading-character-class) | Disallow characters made of several code points inside a regular expression character class | error | suggestion |  |
 | [`no-mixed-requires`](/lint/rules/eslint/no-mixed-requires) | Disallow `require` calls mixed with other variables in one declaration |  |  |  |
@@ -142,7 +142,7 @@ description: "Every rule built into bun lint"
 | [`no-process-exit`](/lint/rules/eslint/no-process-exit) | Disallow calls to `process.exit()` |  |  |  |
 | [`no-promise-executor-return`](/lint/rules/eslint/no-promise-executor-return) | Disallow returning a value from the function passed to `new Promise` |  | suggestion |  |
 | [`no-proto`](/lint/rules/eslint/no-proto) | Disallow the `__proto__` property |  |  |  |
-| [`no-prototype-builtins`](/lint/rules/eslint/no-prototype-builtins) | Disallow calling `hasOwnProperty` and other `Object.prototype` methods on the object itself | error | suggestion |  |
+| [`no-prototype-builtins`](/lint/rules/eslint/no-prototype-builtins) | Disallow calling `hasOwnProperty` and other `Object.prototype` methods on the object itself | warn | suggestion |  |
 | [`no-redeclare`](/lint/rules/eslint/no-redeclare) | Disallow declaring the same variable twice in one scope | warn |  |  |
 | [`no-regex-spaces`](/lint/rules/eslint/no-regex-spaces) | Disallow several spaces in a row in a regular expression | warn | yes |  |
 | [`no-restricted-exports`](/lint/rules/eslint/no-restricted-exports) | Disallow the export names you list, or default exports |  |  |  |
@@ -241,7 +241,7 @@ description: "Every rule built into bun lint"
 | [`@typescript-eslint/adjacent-overload-signatures`](/lint/rules/typescript/adjacent-overload-signatures) | Require the overloads of a function to be next to each other |  |  |  |
 | [`@typescript-eslint/array-type`](/lint/rules/typescript/array-type) | Require either `T[]` or `Array<T>` for array types, consistently |  | yes |  |
 | [`@typescript-eslint/await-thenable`](/lint/rules/typescript/await-thenable) | Disallow `await` on a value that is not a promise |  | suggestion | yes |
-| [`@typescript-eslint/ban-ts-comment`](/lint/rules/typescript/ban-ts-comment) | Disallow `@ts-ignore` and `@ts-nocheck`, and require a reason after `@ts-expect-error` | error | suggestion |  |
+| [`@typescript-eslint/ban-ts-comment`](/lint/rules/typescript/ban-ts-comment) | Disallow `@ts-ignore` and `@ts-nocheck`, and require a reason after `@ts-expect-error` | warn | suggestion |  |
 | [`@typescript-eslint/ban-tslint-comment`](/lint/rules/typescript/ban-tslint-comment) | Disallow `// tslint:disable` and `// tslint:enable` comments |  | yes |  |
 | [`@typescript-eslint/ban-types`](/lint/rules/typescript/ban-types) | Disallow `String`, `Number`, `Object`, `Function`, `{}` and similar types |  |  |  |
 | [`@typescript-eslint/class-literal-property-style`](/lint/rules/typescript/class-literal-property-style) | Require constants on a class to be all `readonly` fields or all getters |  | suggestion |  |
@@ -270,7 +270,7 @@ description: "Every rule built into bun lint"
 | [`@typescript-eslint/no-confusing-void-expression`](/lint/rules/typescript/no-confusing-void-expression) | Require expressions of type `void` to stand alone as statements |  | yes | yes |
 | [`@typescript-eslint/no-deprecated`](/lint/rules/typescript/no-deprecated) | Disallow using code marked as `@deprecated` |  |  | yes |
 | [`@typescript-eslint/no-dupe-class-members`](/lint/rules/typescript/no-dupe-class-members) | Disallow two class members with the same name |  |  |  |
-| [`@typescript-eslint/no-duplicate-enum-values`](/lint/rules/typescript/no-duplicate-enum-values) | Disallow two enum members with the same value | error |  |  |
+| [`@typescript-eslint/no-duplicate-enum-values`](/lint/rules/typescript/no-duplicate-enum-values) | Disallow two enum members with the same value | warn |  |  |
 | [`@typescript-eslint/no-duplicate-type-constituents`](/lint/rules/typescript/no-duplicate-type-constituents) | Disallow the same type twice in a union or intersection |  | yes | yes |
 | [`@typescript-eslint/no-dynamic-delete`](/lint/rules/typescript/no-dynamic-delete) | Disallow `delete` with a computed property key |  |  |  |
 | [`@typescript-eslint/no-empty-function`](/lint/rules/typescript/no-empty-function) | Disallow functions with an empty body |  | suggestion |  |
@@ -297,11 +297,11 @@ description: "Every rule built into bun lint"
 | [`@typescript-eslint/no-mixed-enums`](/lint/rules/typescript/no-mixed-enums) | Disallow enums that have both number and string members |  |  | yes |
 | [`@typescript-eslint/no-namespace`](/lint/rules/typescript/no-namespace) | Disallow TypeScript `namespace` and `module` blocks | warn |  |  |
 | [`@typescript-eslint/no-non-null-asserted-nullish-coalescing`](/lint/rules/typescript/no-non-null-asserted-nullish-coalescing) | Disallow `!` on the left side of `??` |  | suggestion |  |
-| [`@typescript-eslint/no-non-null-asserted-optional-chain`](/lint/rules/typescript/no-non-null-asserted-optional-chain) | Disallow `!` after an optional chain | error | suggestion |  |
+| [`@typescript-eslint/no-non-null-asserted-optional-chain`](/lint/rules/typescript/no-non-null-asserted-optional-chain) | Disallow `!` after an optional chain | warn | suggestion |  |
 | [`@typescript-eslint/no-non-null-assertion`](/lint/rules/typescript/no-non-null-assertion) | Disallow the non-null assertion `value!` |  | suggestion |  |
 | [`@typescript-eslint/no-redeclare`](/lint/rules/typescript/no-redeclare) | Disallow declaring the same name twice in one scope |  |  |  |
 | [`@typescript-eslint/no-redundant-type-constituents`](/lint/rules/typescript/no-redundant-type-constituents) | Disallow members of unions and intersections that change nothing or swallow the rest |  |  | yes |
-| [`@typescript-eslint/no-require-imports`](/lint/rules/typescript/no-require-imports) | Disallow `require()` in favor of `import` | error |  |  |
+| [`@typescript-eslint/no-require-imports`](/lint/rules/typescript/no-require-imports) | Disallow `require()` in favor of `import` |  |  |  |
 | [`@typescript-eslint/no-restricted-imports`](/lint/rules/typescript/no-restricted-imports) | Disallow imports of the modules you list, with an exception for type imports |  |  |  |
 | [`@typescript-eslint/no-restricted-types`](/lint/rules/typescript/no-restricted-types) | Disallow the types you list |  | yes |  |
 | [`@typescript-eslint/no-shadow`](/lint/rules/typescript/no-shadow) | Disallow a declaration that hides one with the same name in an outer scope |  |  |  |
@@ -320,10 +320,10 @@ description: "Every rule built into bun lint"
 | [`@typescript-eslint/no-unsafe-argument`](/lint/rules/typescript/no-unsafe-argument) | Disallow passing a value of type `any` as an argument |  |  | yes |
 | [`@typescript-eslint/no-unsafe-assignment`](/lint/rules/typescript/no-unsafe-assignment) | Disallow assigning a value of type `any` to a variable or a property |  |  | yes |
 | [`@typescript-eslint/no-unsafe-call`](/lint/rules/typescript/no-unsafe-call) | Disallow calling a value of type `any` |  |  | yes |
-| [`@typescript-eslint/no-unsafe-declaration-merging`](/lint/rules/typescript/no-unsafe-declaration-merging) | Disallow a class and an interface with the same name | error |  |  |
+| [`@typescript-eslint/no-unsafe-declaration-merging`](/lint/rules/typescript/no-unsafe-declaration-merging) | Disallow a class and an interface with the same name | warn |  |  |
 | [`@typescript-eslint/no-unsafe-enum-assignment`](/lint/rules/typescript/no-unsafe-enum-assignment) | Disallow giving a plain number or string to a place typed as an enum |  |  | yes |
 | [`@typescript-eslint/no-unsafe-enum-comparison`](/lint/rules/typescript/no-unsafe-enum-comparison) | Disallow comparing an enum value with a plain number or string |  | suggestion | yes |
-| [`@typescript-eslint/no-unsafe-function-type`](/lint/rules/typescript/no-unsafe-function-type) | Disallow the built-in `Function` type | error |  |  |
+| [`@typescript-eslint/no-unsafe-function-type`](/lint/rules/typescript/no-unsafe-function-type) | Disallow the built-in `Function` type | warn |  |  |
 | [`@typescript-eslint/no-unsafe-member-access`](/lint/rules/typescript/no-unsafe-member-access) | Disallow reading a property of a value of type `any` |  |  | yes |
 | [`@typescript-eslint/no-unsafe-return`](/lint/rules/typescript/no-unsafe-return) | Disallow returning a value of type `any` from a function |  |  | yes |
 | [`@typescript-eslint/no-unsafe-type-assertion`](/lint/rules/typescript/no-unsafe-type-assertion) | Disallow type assertions that narrow a type |  |  | yes |
@@ -336,7 +336,7 @@ description: "Every rule built into bun lint"
 | [`@typescript-eslint/no-useless-default-assignment`](/lint/rules/typescript/no-useless-default-assignment) | Disallow default values that can never be used |  | suggestion | yes |
 | [`@typescript-eslint/no-useless-empty-export`](/lint/rules/typescript/no-useless-empty-export) | Disallow `export {}` in a file that is already a module |  | yes |  |
 | [`@typescript-eslint/no-var-requires`](/lint/rules/typescript/no-var-requires) | Disallow `const x = require()` in favor of `import` |  |  |  |
-| [`@typescript-eslint/no-wrapper-object-types`](/lint/rules/typescript/no-wrapper-object-types) | Disallow `String`, `Number`, `Boolean`, `BigInt`, `Symbol`, and `Object` as types | error | yes |  |
+| [`@typescript-eslint/no-wrapper-object-types`](/lint/rules/typescript/no-wrapper-object-types) | Disallow `String`, `Number`, `Boolean`, `BigInt`, `Symbol`, and `Object` as types | warn | yes |  |
 | [`@typescript-eslint/non-nullable-type-assertion-style`](/lint/rules/typescript/non-nullable-type-assertion-style) | Require `value!` instead of `value as T` when the assertion only removes `null` and `undefined` |  | yes | yes |
 | [`@typescript-eslint/only-throw-error`](/lint/rules/typescript/only-throw-error) | Disallow throwing values that are not `Error` objects |  |  | yes |
 | [`@typescript-eslint/parameter-properties`](/lint/rules/typescript/parameter-properties) | Require or disallow parameter properties in class constructors |  |  |  |
@@ -932,7 +932,7 @@ description: "Every rule built into bun lint"
 | [`bun:test/no-disabled-tests`](/lint/rules/bun-test/no-disabled-tests) | Disallow skipped tests such as `test.skip`, `xtest` and `xdescribe` | warn |  |  |
 | [`bun:test/no-done-callback`](/lint/rules/bun-test/no-done-callback) | Disallow the `done` callback in tests and hooks in favor of promises |  |  |  |
 | [`bun:test/no-duplicate-hooks`](/lint/rules/bun-test/no-duplicate-hooks) | Disallow using the same hook twice in one `describe` block |  |  |  |
-| [`bun:test/no-export`](/lint/rules/bun-test/no-export) | Disallow exports from a file that has tests | error |  |  |
+| [`bun:test/no-export`](/lint/rules/bun-test/no-export) | Disallow exports from a file that has tests | warn |  |  |
 | [`bun:test/no-focused-tests`](/lint/rules/bun-test/no-focused-tests) | Disallow `test.only` and `describe.only` | error | suggestion |  |
 | [`bun:test/no-hooks`](/lint/rules/bun-test/no-hooks) | Disallow `beforeAll`, `beforeEach`, `afterEach` and `afterAll` |  |  |  |
 | [`bun:test/no-identical-title`](/lint/rules/bun-test/no-identical-title) | Disallow two tests or two `describe` blocks with the same title in one block |  |  |  |

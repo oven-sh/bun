@@ -6,7 +6,7 @@ plugin: "eslint"
 aliases: ["eslint/no-cond-assign"]
 kind: "problem"
 category: "correctness"
-default: "error"
+default: "warn"
 fixable: "no"
 typeAware: false
 deprecated: false
@@ -22,18 +22,18 @@ This rule is on by default.
 
 ## Configure
 
-On by default as an error. To turn it off:
+On by default as a warning. To turn it off:
 
 ```toml bunfig.toml
 [lint.rules]
-"no-cond-assign" = "off" # or "warn"
+"no-cond-assign" = "off" # or "error"
 ```
 
 Every option, set to its default:
 
 ```toml bunfig.toml
 [lint.rules]
-"no-cond-assign" = ["error", "except-parens"] # "except-parens" or "always"
+"no-cond-assign" = ["warn", "except-parens"] # "except-parens" or "always"
 ```
 
 {/* End of the generated section. */}

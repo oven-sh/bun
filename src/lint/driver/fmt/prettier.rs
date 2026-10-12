@@ -57,8 +57,8 @@ impl<'e> Prettier<'e> {
             Precedence::FileOverride => b"file-override",
             Precedence::PreferFile => b"prefer-file",
         };
-        let looks_at_stdin =
-            options.stdin_filepath.is_some() && (options.check || options.list_different);
+        let reads_stdin = options.stdin_filepath.is_some() || options.formats_unnamed_stdin();
+        let looks_at_stdin = reads_stdin && (options.check || options.list_different);
         let run = vec![
             (b"looksAtStdin".to_vec(), Json::Bool(looks_at_stdin)),
             (b"usesConfig".to_vec(), Json::Bool(options.config_lookup)),
@@ -94,7 +94,7 @@ impl<'e> Prettier<'e> {
         let fail = |what: &[u8], why: &[u8]| [what, b" file \"", shown, b"\":\n", why].concat();
         let text =
             fs::read(path).map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
-        let formatted = (self.format(path, config, &text))
+        let formatted = (self.format(Some(path), config, &text))
             .map_err(|why| [shown, b": ", &describe(why)].concat())?;
         if formatted == text {
             return Ok(false);
@@ -106,17 +106,18 @@ impl<'e> Prettier<'e> {
         Ok(true)
     }
 
-    /// What Prettier makes of `text`, which is the file at `path`. `config`: its configuration file.
+    /// What Prettier makes of `text`, which is the file at `path`. `None`: it has no file name. `config`: its configuration
+    /// file.
     pub(crate) fn format(
         &self,
-        path: &[u8],
+        path: Option<&[u8]>,
         config: Option<&[u8]>,
         text: &[u8],
     ) -> Result<Vec<u8>, Unformatted> {
         let mut how = self.run.clone();
-        how.push((b"path".to_vec(), Json::String(path.to_vec())));
-        let config = config.map_or(Json::Null, |it| Json::String(it.to_vec()));
-        how.push((b"config".to_vec(), config));
+        let or_null = |it: Option<&[u8]>| it.map_or(Json::Null, |it| Json::String(it.to_vec()));
+        how.push((b"path".to_vec(), or_null(path)));
+        how.push((b"config".to_vec(), or_null(config)));
         let mut json = Vec::new();
         write_json(&mut json, &Json::Object(how));
         // Prettier puts the byte order mark back. What decodes the text may not show it one.

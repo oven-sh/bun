@@ -1221,6 +1221,66 @@ exports.format = async (text, options) => {
       timeout,
     );
 
+    test(
+      "--parser with the plugin's parser: piped code goes to Prettier without a file name",
+      async () => {
+        const stdin = "<p   >c</p>\n";
+        const result = await format(files, ["--parser", "svelte", "--tab-width", "8"], { stdin, reads });
+        expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
+        expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
+        // `JSON.stringify` drops `filepath: undefined`.
+        expect(JSON.parse(result.files[reads[2]]!)).toEqual({ ...config, parser: "svelte", tabWidth: 8 });
+        expect(result.files[reads[3]]!.split("\n")[0]).toBe("undefined");
+        const checked = await format(files, ["--parser", "svelte", "--check"], { stdin });
+        expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
+      },
+      timeout,
+    );
+
+    test.each<[string[], string, number]>([
+      [[], "[error] stdin: SyntaxError: Unexpected token (1:2)", 2],
+      [["--check"], "[error] Unexpected token (1:2)", 0],
+    ])(
+      "--parser with the plugin's parser, and the code doesn't parse: %j",
+      async (flags, stderr, exitCode) => {
+        const result = await format(files, ["--parser", "svelte", ...flags], { stdin: "<p>broken</p>\n" });
+        expect(result).toMatchObject({ raw: "", stderr, exitCode });
+      },
+      timeout,
+    );
+
+    test(
+      "--parser with a parser that none of the plugins has",
+      async () => {
+        const prettier = `exports.resolveConfig = async () => null;
+class ConfigError extends Error {
+  name = "ConfigError";
+}
+exports.format = async (text, { parser }) => {
+  throw new ConfigError(\`Couldn't resolve parser "\${parser}".\`);
+};
+`;
+        const project = { ...files, "node_modules/prettier/index.cjs": prettier };
+        const result = await format(project, ["--parser", "nonsense"], { stdin: "a\n" });
+        expect(result).toMatchObject({ raw: "", stderr: `[error] Couldn't resolve parser "nonsense".`, exitCode: 1 });
+      },
+      timeout,
+    );
+
+    test("--parser with the plugin's parser, and nothing is installed", async () => {
+      const result = await format({ ".prettierrc": files[".prettierrc"] }, ["--parser", "svelte"], {
+        stdin: "<p   >c</p>\n",
+      });
+      expect(result.raw).toBe("");
+      expect(result.stderr.split("\n")).toEqual([
+        "[warn] Not installed: prettier, prettier-plugin-svelte",
+        "[warn]   Install prettier and every plugin in your config, and bun format will use them for these files.",
+        "[error] 1 file was not formatted because bun format does not support its language yet: 1 svelte",
+        "[error]   Use --allow-unsupported to make this a warning.",
+      ]);
+      expect(result.exitCode).toBe(2);
+    });
+
     // As Prettier 3.9.9 with a plugin that throws this.
     test.each<[string[], string, number]>([
       [[], "[error] c.svelte: SyntaxError: Unexpected token (1:2)", 2],
@@ -2596,9 +2656,12 @@ try {
   test("what a tool has written and Prettier does not read", async () => {
     const names = ["composer.lock", "Pipfile.lock", "flake.lock", "deno.lock", "mcmod.info", "MODULE.bazel.lock"];
     const files = Object.fromEntries(names.map(name => [name, '{"a":   1}\n']));
-    const directory = await format({ ...files, "glide.lock": "a:   1\n" }, [], { reads: [...names, "glide.lock"] });
+    // Prettier reads glide.lock as YAML. Without a Prettier config, Bun skips it like every other lock file.
+    const all = { ...files, "glide.lock": "a:   1\n" };
+    const directory = await format({ ...all, ".prettierrc": "{}\n" }, [], { reads: [...names, "glide.lock"] });
     expect(directory.files).toEqual({ ...files, "glide.lock": "a: 1\n" });
     expect(directory.exitCode).toBe(0);
+    expect((await format(all, [], { reads: [...names, "glide.lock"] })).files).toEqual(all);
     const named = await format(files, names, { reads: names });
     expect(named.files).toEqual(files);
     expect(named.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(
@@ -3152,6 +3215,41 @@ try {
         "src/c.mjs",
         "src/deep/e.jsx",
       ]);
+    });
+
+    test("skips minified code and lock files unless they're named", async () => {
+      const generated = [
+        "vendor/jquery.min.js",
+        "vendor/a.min.mjs",
+        "vendor/a.min.cjs",
+        "vendor/a.min.css",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "sub/pnpm-lock.yaml",
+        "bun.lock",
+        "composer.lock",
+        "deno.lock",
+        "flake.lock",
+      ];
+      const unformatted = (name: string) =>
+        name.endsWith("js")
+          ? ugly
+          : name.endsWith(".css")
+            ? "a{b:c}\n"
+            : name.endsWith(".yaml")
+              ? "a:   1\n"
+              : '{"a":1}\n';
+      const all = { ...Object.fromEntries(generated.map(name => [name, unformatted(name)])), "admin.js": ugly };
+      expect(await different(all, [])).toEqual(["admin.js"]);
+      expect(await different(all, ["**/*"])).toEqual(["admin.js"]);
+      expect(await different(all, ["vendor/jquery.min.js", "package-lock.json"])).toEqual([
+        "vendor/jquery.min.js",
+        "package-lock.json",
+      ]);
+      // Prettier formats all of these that it has a parser for.
+      const withPrettier = await different({ ...all, ".prettierrc": "{}\n" }, []);
+      expect(withPrettier).toContain("vendor/jquery.min.js");
+      expect(withPrettier).toContain("package-lock.json");
     });
 
     test("files, directories, patterns, and patterns that exclude", async () => {
@@ -3819,6 +3917,401 @@ try {
       const result = await format({}, ["--check", "--stdin-filepath", "a.js"], { stdin: ugly });
       expect(result.raw).toBe("(stdin)\n");
       expect(result.exitCode).toBe(1);
+    });
+  });
+
+  // Expected values come from Prettier 3.9.9, which reads standard input whenever it gets no file arguments.
+  describe("--parser without any paths formats standard input", () => {
+    const files = {
+      "ci.yml": "jobs:\n  test:\n    steps:\n      - run: |\n          bun test\n",
+      "src/a.ts": "const a:number=1\n",
+      "package.json": `{"name":"a"}\n`,
+      ".editorconfig": "[*]\nindent_style = tab\n",
+    };
+    const reads = Object.keys(files);
+    const prettier = { ".prettierrc": "{}\n" };
+    const noSemi = { ".prettierrc": `{ "semi": false }\n` };
+    const js = `function f(){return "a"}\n`;
+    const printed = `function f() {\n  return "a";\n}\n`;
+    const withoutSemi = `function f() {\n  return "a"\n}\n`;
+    /** Runs `bun format --parser babel` with `js` on standard input. */
+    const pipe = (project: Record<string, string>, flags: string[] = [], options: Options = {}) =>
+      format(project, ["--parser", "babel", ...flags], { stdin: js, ...options });
+
+    test.each([
+      ["no config", {}],
+      ["a Prettier config", { ".prettierrc": "{}\n" }],
+      ["an oxfmt config", { ".oxfmtrc.json": "{}\n" }],
+    ])("never writes to files in the working directory: %s", async (_, config) => {
+      for (const flags of [[], ["--write"], ["--check"], ["-l"]]) {
+        const result = await format({ ...files, ...config }, ["--parser", "markdown", ...flags], {
+          reads,
+          stdin: "# hi   there\n",
+        });
+        expect(result.files).toEqual(files);
+      }
+    });
+
+    test.each([
+      ["babel", "const a = {b:1,  c:'two'}\n", 'const a = { b: 1, c: "two" };\n'],
+      ["babel", "a = <div  a='1'>x</div>\n", 'a = <div a="1">x</div>;\n'],
+      ["babel", "// @flow\ntype A = {|a:1|}\n", "// @flow\ntype A = {| a: 1 |};\n"],
+      ["babel-flow", "type A = {|a:1|}\n", "type A = {| a: 1 |};\n"],
+      ["flow", "type A = {|a:1|}\n", "type A = {| a: 1 |};\n"],
+      ["acorn", "const a = {b:1,  c:'two'}\n", 'const a = { b: 1, c: "two" };\n'],
+      ["espree", "const a = {b:1,  c:'two'}\n", 'const a = { b: 1, c: "two" };\n'],
+      ["meriyah", "const a = {b:1,  c:'two'}\n", 'const a = { b: 1, c: "two" };\n'],
+      ["typescript", "const a:number=1\n", "const a: number = 1;\n"],
+      ["babel-ts", "const a:number=1\n", "const a: number = 1;\n"],
+      ["css", "a{color:red}\n", "a {\n  color: red;\n}\n"],
+      ["scss", "$a:1;a{b{color:$a}}\n", "$a: 1;\na {\n  b {\n    color: $a;\n  }\n}\n"],
+      ["less", "@a:1;a{.b();color:@a}\n", "@a: 1;\na {\n  .b();\n  color: @a;\n}\n"],
+      ["json", '{"a":1,  "b":[1,2]}\n', '{ "a": 1, "b": [1, 2] }\n'],
+      ["json5", '{"a":1,  "b":[1,2]}\n', "{ a: 1, b: [1, 2] }\n"],
+      ["jsonc", '{"a":1,  "b":[1,2],}\n', '{ "a": 1, "b": [1, 2] }\n'],
+      ["json-stringify", "{'a':1,  b:[1,2]}\n", '{\n  "a": 1,\n  "b": [\n    1,\n    2\n  ]\n}\n'],
+      ["yaml", "a:   1\nb:\n    - 1\n", "a: 1\nb:\n  - 1\n"],
+      ["markdown", "# hi   there\n", "# hi there\n"],
+      ["markdown", "```js\nconst a = {b:1}\n```\n", "```js\nconst a = { b: 1 };\n```\n"],
+      ["mdx", "# hi   there\n\n<A  b='1' />\n", '# hi there\n\n<A b="1" />\n'],
+      ["html", "<!doctype HTML>\n<p>a\n", "<!doctype html>\n<p>a</p>\n"],
+      [
+        "vue",
+        "<script setup lang='ts'>const a:number=1</script>\n",
+        '<script setup lang="ts">\nconst a: number = 1;\n</script>\n',
+      ],
+      [
+        "angular",
+        "<div *ngIf='a  &&  b' (click)='c( )'>{{a|b}}</div>\n",
+        '<div *ngIf="a && b" (click)="c()">{{ a | b }}</div>\n',
+      ],
+      ["lwc", "<div   a={b}>x</div>\n", "<div a={b}>x</div>\n"],
+      ["graphql", "query { a  b }\n", "query {\n  a\n  b\n}\n"],
+      ["glimmer", "<div   class='a'>{{b}}</div>\n", '<div class="a">{{b}}</div>'],
+    ])("%s: %j", async (parser, stdin, expected) => {
+      for (const config of [{}, prettier]) {
+        const result = await format({ ...files, ...config }, ["--parser", parser], { stdin });
+        expect(result).toMatchObject({ raw: expected, stderr: "", exitCode: 0 });
+      }
+    });
+
+    // With no extension to go by, the TypeScript parsers try with JSX and without.
+    test.each([
+      ["typescript", "a = <T>x\n", "a = <T>x;\n"],
+      ["typescript", "a = <div  a='1'>x</div>\n", 'a = <div a="1">x</div>;\n'],
+      ["typescript", "const f = <T>(x:T)=>x\n", "const f = <T,>(x: T) => x;\n"],
+      ["typescript", "const a = <T,>(b: T) => <div>{b}</div>\n", "const a = <T,>(b: T) => <div>{b}</div>;\n"],
+      ["typescript", "// </div>\nconst a = <T>b;\n", "// </div>\nconst a = <T>b;\n"],
+      ["babel-ts", "a = <T>x\n", "a = <T>x;\n"],
+      ["babel-ts", "a = <div  a='1'>x</div>\n", 'a = <div a="1">x</div>;\n'],
+    ])("%s takes both JSX and type assertions: %j", async (parser, stdin, expected) => {
+      const result = await format(prettier, ["--parser", parser], { stdin });
+      expect(result).toMatchObject({ raw: expected, stderr: "", exitCode: 0 });
+    });
+
+    test.each([
+      ["const a = <div>x</div>\nlet b: = 1\n", "(2:8)"],
+      ["const a = <T>x\nlet b: = 1\n", "(2:8)"],
+    ])("typescript reports the error of the syntax the code looks like: %j", async (stdin, position) => {
+      const result = await format(prettier, ["--parser", "typescript"], { stdin });
+      expect(result.stderr.split("\n")[0]).toBe(`[error] stdin: SyntaxError: Type expected. ${position}`);
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("prints nothing for empty input", async () => {
+      // `stdin: "ignore"`, like `< /dev/null`.
+      const results = await Promise.all([
+        format(files, ["--parser", "babel"], { reads }),
+        pipe(files, [], { stdin: "" }),
+      ]);
+      for (const result of results) expect(result).toMatchObject({ raw: "", stderr: "", exitCode: 0 });
+      expect(results[0].files).toEqual(files);
+    });
+
+    test("uses the config of the working directory", async () => {
+      const nested = { ...noSemi, "sub/.prettierrc": `{ "tabWidth": 8 }\n`, "sub/dir/a.txt": "", "other/a.txt": "" };
+      const [here, below, nearer, off, named] = await Promise.all([
+        pipe(noSemi),
+        pipe(nested, [], { cwd: "other" }),
+        pipe(nested, [], { cwd: "sub/dir" }),
+        pipe(noSemi, ["--no-config"]),
+        pipe({ ...prettier, "x.json": `{ "semi": false }` }, ["--config", "x.json"]),
+      ]);
+      expect(here.raw).toBe(withoutSemi);
+      expect(below.raw).toBe(withoutSemi);
+      expect(nearer.raw).toBe(printed.replace("  return", "        return"));
+      expect(off.raw).toBe(printed);
+      expect(named.raw).toBe(withoutSemi);
+    });
+
+    test.each([
+      [
+        "overrides in .prettierrc",
+        { ".prettierrc": `{ "overrides": [{ "files": $, "options": { "singleQuote": true } }] }` },
+      ],
+      ["overrides in --config", { "x.json": `{ "overrides": [{ "files": $, "options": { "singleQuote": true } }] }` }],
+      [
+        "overrides in .oxfmtrc.json",
+        { ".oxfmtrc.json": `{ "overrides": [{ "files": $, "options": { "singleQuote": true } }] }` },
+      ],
+      [
+        "[[format.overrides]]",
+        { "bunfig.toml": `[[format.overrides]]\nfiles = $\noptions = { singleQuote = true }\n` },
+      ],
+    ])("there's no file name for %s to match", async (_, project) => {
+      const [[name, text]] = Object.entries(project);
+      const globs = `["*", "**", "**/*", "*.js", "stdin", "(stdin)"]`;
+      const flags = name === "x.json" ? ["--config", name] : [];
+      const result = await pipe({ [name]: text.replace("$", globs) }, flags);
+      expect(result).toMatchObject({ raw: printed, stderr: "", exitCode: 0 });
+      // The same override does match a name.
+      const control = await format({ [name]: text.replace("$", globs) }, [...flags, "--stdin-filepath", "a.js"], {
+        stdin: js,
+      });
+      expect(control.raw).toBe(printed.replaceAll('"', "'"));
+    });
+
+    test.each([
+      ["no config", {}],
+      ["a Prettier config", prettier],
+    ])(".editorconfig doesn't apply: %s", async (_, config) => {
+      const project = { ...config, ".editorconfig": "root = true\n[*]\nindent_style = tab\n" };
+      expect((await pipe(project)).raw).toBe(printed);
+      const control = await format(project, ["--stdin-filepath", "a.js"], { stdin: js });
+      expect(control.raw).toBe(printed.replace("  return", "\treturn"));
+    });
+
+    test("ignore files don't apply", async () => {
+      const everything = "*\n**\nstdin\n";
+      const results = await Promise.all([
+        pipe({ ...prettier, ".prettierignore": everything }),
+        pipe({ ...prettier, ".gitignore": everything }),
+        pipe({ ...prettier, ig: everything }, ["--ignore-path", "ig"]),
+        pipe(prettier, ["--ignore-path", "missing"]),
+        pipe({ ...prettier, "node_modules/x/a.txt": "" }, [], { cwd: "node_modules/x" }),
+        pipe({}, ["--ignore-pattern", "*"]),
+      ]);
+      for (const result of results) expect(result).toMatchObject({ raw: printed, stderr: "", exitCode: 0 });
+    });
+
+    test.each([
+      [["--check"], js, "(stdin)\n", 1],
+      [["--list-different"], js, "(stdin)\n", 1],
+      [["--check"], printed, "", 0],
+      [["--list-different"], printed, "", 0],
+      [["--write"], js, printed, 0],
+      [["--check", "--write"], js, "", 0],
+      [["--list-different", "--write"], js, "", 0],
+      [["--log-level", "silent"], js, printed, 0],
+      [["--log-level", "warn", "--check"], js, "", 1],
+    ])("%j", async (flags, stdin, raw, exitCode) => {
+      for (const config of [{}, prettier]) {
+        const result = await pipe({ ...files, ...config }, flags, { stdin, reads });
+        expect(result).toMatchObject({ raw, stderr: "", exitCode, files });
+      }
+    });
+
+    test.each<[Record<string, string>, string[], string, number]>([
+      [prettier, [], "[error] stdin: SyntaxError: ", 2],
+      [prettier, ["--write"], "[error] stdin: SyntaxError: ", 2],
+      [prettier, ["--check"], "[error] ", 0],
+      [prettier, ["--list-different"], "[error] ", 0],
+      [{}, [], "error: stdin: SyntaxError: ", 2],
+      [{ ".oxfmtrc.json": "{}" }, [], "[error] stdin: SyntaxError: ", 2],
+    ])("a syntax error: %j %j", async (config, flags, before, exitCode) => {
+      const result = await format(config, ["--parser", "typescript", ...flags], { stdin: "let a: = 1;\n" });
+      const margin = before.startsWith("[") ? "[error] " : "";
+      expect(result.raw).toBe("");
+      expect(result.stderr.split("\n")).toEqual([
+        `${before}Type expected. (1:8)`,
+        `${margin}> 1 | let a: = 1;`,
+        `${margin}    |        ^`,
+        `${margin}  2 |`,
+      ]);
+      expect(result.exitCode).toBe(exitCode);
+    });
+
+    test.each<[Record<string, string>, string[], string, number]>([
+      [prettier, [], "[error] ", 1],
+      [prettier, ["--check"], "[error] ", 0],
+      [prettier, ["--list-different"], "[error] ", 0],
+      [prettier, ["--ignore-unknown"], "[error] ", 1],
+      [{}, [], "error: ", 2],
+      [{}, ["--check"], "error: ", 2],
+    ])("a parser nobody has: %j %j", async (config, flags, before, exitCode) => {
+      const result = await format({ ...files, ...config }, ["--parser", "nonsense", ...flags], { stdin: js, reads });
+      expect(result).toMatchObject({
+        raw: "",
+        stderr: `${before}Couldn't resolve parser "nonsense".`,
+        exitCode,
+        files,
+      });
+    });
+
+    test("--config-precedence", async () => {
+      const none = "[error] No parser and no file path given, couldn't infer a parser.";
+      const prefer = ["--config-precedence", "prefer-file"];
+      const override = ["--config-precedence", "file-override"];
+      const json = { ".prettierrc": `{ "parser": "json" }` };
+      expect(await pipe(noSemi, ["--semi", ...override])).toMatchObject({ raw: withoutSemi, exitCode: 0 });
+      expect(await pipe(noSemi, ["--semi"])).toMatchObject({ raw: printed, exitCode: 0 });
+      expect(await pipe(json, override, { stdin: `{"a":1}` })).toMatchObject({ raw: `{ "a": 1 }\n`, exitCode: 0 });
+      expect(await pipe(json, prefer, { stdin: `{"a":1}` })).toMatchObject({ raw: `{ "a": 1 }\n`, exitCode: 0 });
+      // The config file wins, and it has no parser.
+      expect(await pipe(noSemi, prefer)).toMatchObject({ raw: "", stderr: none, exitCode: 2 });
+      expect(await pipe(noSemi, [...prefer, "--check"])).toMatchObject({ raw: "", stderr: none, exitCode: 0 });
+      expect(await pipe(noSemi, [...prefer, "--ignore-unknown"])).toMatchObject({ raw: "", stderr: "", exitCode: 0 });
+    });
+
+    test.each([
+      [["--cursor-offset", "13"], js, printed, "14"],
+      [["--cursor-offset", "0"], js, printed, "0"],
+      [
+        ["--range-start", "10", "--range-end", "20"],
+        "a  =  1;\nb  =  2;\nc  =  3;\n",
+        "a  =  1;\nb = 2;\nc = 3;\n",
+        "",
+      ],
+      [["--range-start", "10", "--cursor-offset", "3"], "a  =  1;\nb  =  2;\n", "a  =  1;\nb = 2;\n", "3"],
+      [["--insert-pragma"], "a\n", "/** @format */\n\na;\n", ""],
+      [["--require-pragma"], js, js, ""],
+      [["--require-pragma"], "/** @format */\n" + js, "/** @format */\n" + printed, ""],
+      [["--check-ignore-pragma"], "/** @noformat */\n" + js, "/** @noformat */\n" + js, ""],
+      [["--single-quote", "--use-tabs"], js, "function f() {\n\treturn 'a';\n}\n", ""],
+      [["--end-of-line", "auto"], "a  =  1;\r\nb;\r\n", "a = 1;\r\nb;\r\n", ""],
+    ])("%j", async (flags, stdin, raw, stderr) => {
+      expect(await pipe(prettier, flags, { stdin })).toMatchObject({ raw, stderr, exitCode: 0 });
+    });
+
+    test("an empty --stdin-filepath is no file name either", async () => {
+      expect(await pipe(noSemi, ["--stdin-filepath", ""])).toMatchObject({ raw: withoutSemi, stderr: "", exitCode: 0 });
+    });
+
+    test.each([[["--parser", "babel"]], [["--stdin-filepath", "a.js"]]])(
+      "warns about an unknown option in the config: %j",
+      async args => {
+        const result = await format({ ".prettierrc": `{ "nope": 1 }` }, args, { stdin: js });
+        expect(result).toMatchObject({
+          raw: printed,
+          stderr: "[warn] Ignored unknown option { nope: 1 }.",
+          exitCode: 0,
+        });
+      },
+    );
+
+    test("with an oxfmt config, uses its options", async () => {
+      const project = {
+        ".oxfmtrc.json": `{ "semi": false }`,
+        ".editorconfig": "[*]\nindent_style = tab\n[*.js]\nindent_size = 8\n",
+      };
+      // oxfmt reads `[*]` as settings for the whole project, not as a pattern.
+      expect(await pipe(project)).toMatchObject({
+        raw: withoutSemi.replace("  return", "\treturn"),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(await pipe(project, ["--check"])).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
+    });
+
+    test.each(["--staged", "--changed"])("%s has no file list to filter", async flag => {
+      const result = await pipe(files, [flag], { reads });
+      expect(result).toMatchObject({
+        raw: "",
+        stderr: `error: ${flag} and --parser without files cannot be used together`,
+        exitCode: 2,
+        files,
+      });
+    });
+
+    test("without --parser, piped input still means the working directory", async () => {
+      const result = await format({ "a.js": ugly }, [], { stdin: js, reads: ["a.js"] });
+      expect(result.files).toEqual({ "a.js": formatted });
+      expect(result.stdout).toBe("a.js");
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Some sandboxes have no pseudo-terminals.
+    const hasTerminal = (() => {
+      if (isWindows) return false;
+      try {
+        new Bun.Terminal({}).close();
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+
+    test.skipIf(!hasTerminal)(
+      "in a terminal with nothing piped in, it's an error instead of waiting for input",
+      async () => {
+        using dir = tempDir("bun-format", files);
+        let output = "";
+        await using proc = spawn({
+          cmd: [...command, "--parser", "babel"],
+          env: { ...env, NO_COLOR: "1", TERM: "xterm-256color" },
+          cwd: String(dir),
+          terminal: {
+            cols: 200,
+            rows: 40,
+            data(_terminal, chunk) {
+              output += Buffer.from(chunk).toString();
+            },
+          },
+        });
+        expect(await proc.exited).toBe(2);
+        expect(output.replaceAll("\r\n", "\n")).toBe(
+          "error: --parser without files formats standard input, and nothing is piped in\n  Pipe the code in, or name the files to format.\n",
+        );
+      },
+    );
+  });
+
+  describe("--parser with a directory", () => {
+    const files = {
+      "a.md": "#   a\n",
+      "LICENSE": "a   b\n",
+      "src/b.md": "#   b\n",
+      "src/c.js": "c  ;\n",
+      ".env": "A   =   1\n",
+    };
+    const reads = Object.keys(files);
+
+    test.each([
+      [["--parser", "markdown", "."], ".", "markdown", "**/*.md"],
+      [["--parser", "markdown", "./"], "./", "markdown", "**/*.md"],
+      [["--parser", "flow", "src"], "src", "flow", "src/**/*.js"],
+      [["--parser", "babel", "a.md", "src/"], "src/", "babel", "src/**/*.js"],
+      [["--parser", "typescript", "--check", "src"], "src", "typescript", "src/**/*.ts"],
+      [["--parser", "json5", "-l", "src"], "src", "json5", "src/**/*.json5"],
+      [["--parser", "glimmer", "--no-config", "src"], "src", "glimmer", "src/**/*.hbs"],
+    ])("is an error without a config: %j", async (args, directory, parser, glob) => {
+      const result = await format(files, args, { reads });
+      expect(result.files).toEqual(files);
+      expect(result.raw).toBe("");
+      expect(result.stderr.split("\n")).toEqual([
+        `error: --parser ${parser} would read every file in "${directory}" as ${parser}`,
+        `  Name the files, or use a glob: bun format --parser ${parser} "${glob}"`,
+      ]);
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("files and globs are explicit, so they're formatted", async () => {
+      const result = await format(files, ["--parser", "markdown", "LICENSE", "**/*.md"], { reads });
+      expect(result.files).toEqual({ ...files, "LICENSE": "a b\n", "a.md": "# a\n", "src/b.md": "# b\n" });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Prettier 3.9.9 rewrites the same files.
+    test("with a Prettier config, every file in it is read with that parser, like Prettier does", async () => {
+      const result = await format({ ...files, ".prettierrc": "{}\n" }, ["--parser", "markdown", "."], { reads });
+      expect(result.files).toEqual({
+        "a.md": "# a\n",
+        "LICENSE": "a b\n",
+        "src/b.md": "# b\n",
+        "src/c.js": "c ;\n",
+        ".env": "A = 1\n",
+      });
+      expect(result.exitCode).toBe(0);
     });
   });
 

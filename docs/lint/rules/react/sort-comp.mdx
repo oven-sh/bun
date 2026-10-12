@@ -103,7 +103,13 @@ This config puts the event handlers right before the methods that render:
 
 ```toml bunfig.toml
 [lint.rules]
-"react/sort-comp" = ["error", { order = ["lifecycle", "everything-else", "handlers", "rendering"], groups = { handlers = ["/^handle.+$/"], rendering = ["/^render.+$/", "render"] } }]
+"react/sort-comp" = ["error", {
+  order = ["lifecycle", "everything-else", "handlers", "rendering"],
+  groups = {
+    handlers = ["/^handle.+$/"],
+    rendering = ["/^render.+$/", "render"],
+  },
+}]
 ```
 
 With it, this is reported, because `handleClick` comes before `fullName`:

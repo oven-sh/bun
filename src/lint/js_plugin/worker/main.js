@@ -49,6 +49,19 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+// What a plugin has thrown, as text. To read it runs code of the plugin, which can throw again.
+function messageOf(error, read = it => it?.message ?? it) {
+  try {
+    return String(read(error));
+  } catch (second) {
+    try {
+      return String(second?.message ?? second);
+    } catch {
+      return "An exception was thrown.";
+    }
+  }
+}
+
 const LOAD = 1;
 const LINT = 2;
 const LOAD_SETTINGS = 3;
@@ -94,23 +107,6 @@ const rules = [];
 const loadedPlugins = new Set();
 // By where they are, as JSON: `{ name, plugin }` of the plugins that were ever loaded.
 const pluginsByLocation = new Map();
-
-// oxlint's `normalizePluginName`.
-function normalizePluginName(name) {
-  const prefixes = ["eslint-plugin", "oxlint-plugin"];
-  const slash = name.indexOf("/");
-  if (slash === -1) {
-    const prefix = prefixes.find(prefix => name.startsWith(`${prefix}-`));
-    return prefix ? name.slice(prefix.length + 1) : name;
-  }
-  const scope = name.slice(0, slash);
-  const rest = name.slice(slash + 1);
-  for (const prefix of prefixes) {
-    if (rest === prefix) return scope;
-    if (rest.startsWith(`${prefix}-`)) return `${scope}/${rest.slice(prefix.length + 1)}`;
-  }
-  return name;
-}
 
 // JSON, or `undefined` for what is not.
 function asJson(value) {
@@ -194,18 +190,19 @@ async function findPlugin([directory, specifier, alias]) {
   if (plugin === null || typeof plugin !== "object") {
     throw new TypeError(`A plugin must export an object: ${JSON.stringify(alias ?? specifier)}`);
   }
+  // The other side takes `eslint-plugin-` and the like off a name that is no alias.
   let name = alias;
   if (name === null && plugin.meta?.name != null) {
     if (typeof plugin.meta.name !== "string") throw new TypeError("`plugin.meta.name` must be a string if defined");
-    name = normalizePluginName(plugin.meta.name);
+    name = plugin.meta.name;
   }
-  if (name === null && !isPath) name = normalizePluginName(specifier);
+  if (name === null && !isPath) name = specifier;
   if (name === null) {
     throw new Error(
       "Plugin must either define `meta.name`, be loaded from an NPM package with a `name` field in `package.json`, or be given an alias in config",
     );
   }
-  return { name, plugin };
+  return { name, isAlias: alias !== null, plugin };
 }
 
 // Where the objects are that the modules which are loaded export: `{ module, export }`, as `locate` in `evaluate-eslint.js` has it.
@@ -251,7 +248,7 @@ function ruleAt(location) {
   try {
     return exportedAt(require(location.module), location.export);
   } catch (error) {
-    whyNoRule = ` ${location.module}: ${error?.message ?? error}`;
+    whyNoRule = ` ${location.module}: ${messageOf(error)}`;
     return undefined;
   } finally {
     loadingTime += performance.now() - started;
@@ -267,7 +264,7 @@ async function loadPlugin([location, position, firstRule]) {
     pluginsByLocation.set(key, (found = await findPlugin(location)));
     loadingTime += performance.now() - started;
   }
-  const { name, plugin } = found;
+  const { name, isAlias, plugin } = found;
   const described = [];
   const exported = position === null ? exportedObjects() : null;
   // Sorted: a plugin that imports its rules all at once has them in another order each time.
@@ -291,7 +288,7 @@ async function loadPlugin([location, position, firstRule]) {
     }
   });
   if (position !== null) loadedPlugins.add(position);
-  return { name, rules: described };
+  return { name, isAlias, rules: described };
 }
 
 // ------------- ESLint's `context` -------------
@@ -375,26 +372,8 @@ function deepFreeze(value) {
   return value;
 }
 
-// What all rules see of a file. The contexts of the rules inherit from it.
-const fileContext = Object.freeze({
-  get cwd() {
-    return cwd;
-  },
-  get filename() {
-    return filename;
-  },
-  get physicalFilename() {
-    return physicalFilename;
-  },
-  get sourceCode() {
-    return sourceCode;
-  },
-  get settings() {
-    return fileSettings.settings;
-  },
-  get languageOptions() {
-    return fileSettings.languageOptions;
-  },
+// What a context had until ESLint 9, which plugins still ask for.
+const oldContext = {
   get parserOptions() {
     return fileSettings.languageOptions.parserOptions;
   },
@@ -454,15 +433,60 @@ const fileContext = Object.freeze({
       "getTokensBetween",
     ].map(name => [name, (...args) => sourceCode[name](...args)]),
   ),
+};
+
+// ESLint's `FileContext`: what all rules see of a file. There is one for each file, and the contexts of the rules inherit from it.
+class FileContext {
+  constructor() {
+    this.cwd = cwd;
+    this.filename = filename;
+    this.physicalFilename = physicalFilename;
+    this.sourceCode = sourceCode;
+    this.languageOptions = fileSettings.languageOptions;
+    this.settings = fileSettings.settings;
+    Object.freeze(this);
+  }
+
   extend(extension) {
     return Object.freeze(Object.assign(Object.create(this), extension));
-  },
-});
+  }
+}
+for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(oldContext))) {
+  Object.defineProperty(FileContext.prototype, key, { ...descriptor, enumerable: false });
+}
+
+// That of oxlint is one for all files, since `createOnce` gets its context once.
+const oxlintFileContext = Object.freeze(
+  Object.defineProperties(
+    {
+      get cwd() {
+        return cwd;
+      },
+      get filename() {
+        return filename;
+      },
+      get physicalFilename() {
+        return physicalFilename;
+      },
+      get sourceCode() {
+        return sourceCode;
+      },
+      get settings() {
+        return fileSettings.settings;
+      },
+      get languageOptions() {
+        return fileSettings.languageOptions;
+      },
+      extend: FileContext.prototype.extend,
+    },
+    Object.getOwnPropertyDescriptors(oldContext),
+  ),
+);
 
 // The rule with its options that has `id`, and is at `position` among those that run on the file. Or the position of its plugin,
 // which has to be loaded first. Or `null`: its module is among `toImport`.
 function configure(id, position) {
-  const [index, options, ruleId, location, pluginPosition] = askForJson(CONFIGURED, String(position));
+  const { 0: index, 1: options, 2: ruleId, 3: location, 4: pluginPosition } = askForJson(CONFIGURED, String(position));
   const ofPlugin = rules[index];
   if (ofPlugin === undefined && location && !imported.has(location.module)) {
     toImport.push(location.module);
@@ -573,9 +597,10 @@ function listen(keys, wantsTree) {
     listenWords[1 + 2 * i] = keys[i].kind;
     listenWords[2 + 2 * i] = keys[i].number;
   }
-  const [calls, made] = native.listen(listenWords, length);
-  if (made !== undefined) nodes = made;
-  return calls;
+  // By index: to take an array apart with `[a, b] =` goes through `Array.prototype`, which a plugin can have changed.
+  const answer = native.listen(listenWords, length);
+  if (answer[1] !== undefined) nodes = answer[1];
+  return answer[0];
 }
 
 // The `Program`
@@ -718,7 +743,7 @@ const legacyCodePathShapes = [native.shape(legacyPrototype, codePathKeys, "", 1)
 function openCodePaths() {
   const isLegacy = fileSettings.isLegacy === true;
   const shapesOfPaths = isLegacy ? legacyCodePathShapes : codePathShapes;
-  const [paths, segments, events] = native.codePaths(shapesOfPaths, codePathOrigins);
+  const { 0: paths, 1: segments, 2: events } = native.codePaths(shapesOfPaths, codePathOrigins);
   if (isLegacy) for (const path of paths) path.internal.currentSegments = [];
   // `internal` of the code paths that have started and not ended, to keep `currentSegments` up to date.
   const open = [];
@@ -787,7 +812,7 @@ function reset() {
 
 // Returns the positions of the plugins that are missing, if any are, or `NEEDS_SETTINGS`.
 function lint() {
-  const [flags, plugins, settingsId, count, pathLength, physicalLength] = messageWords(6);
+  const { 0: flags, 1: plugins, 2: settingsId, 3: count, 4: pathLength, 5: physicalLength } = messageWords(6);
   const words = messageWords(6 + plugins + count);
   // Only the plugins that have a rule which runs on the file, and which no module exports.
   const missing = Array.from(words.subarray(6, 6 + plugins)).filter(position => !loadedPlugins.has(position));
@@ -811,6 +836,7 @@ function lint() {
     physicalLength === pathLength ? filename : nativePath(messageText(pathStart, pathStart + physicalLength), nodePath);
   text = messageText(pathStart + pathLength);
   native.beginFile(text, flags);
+  const fileContext = fileSettings.freezes ? oxlintFileContext : new FileContext();
   for (let position = 0; position < count; position++) {
     const entry = entries[position];
     entry.position = entry.reporter.position = position;
@@ -819,7 +845,7 @@ function lint() {
     // under one of them.
     const listeners =
       typeof entry.rule.createOnce === "function"
-        ? listenersOfOnce(entry)
+        ? listenersOfOnce(entry, fileContext)
         : entry.rule.create(fileContext.extend(entry.own));
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
@@ -839,7 +865,7 @@ let afterHooks = [];
 
 // oxlint's alternative to `create`: the listeners are made once, `before` is called with each file and can refuse it, `after`
 // when the file is done.
-function listenersOfOnce(entry) {
+function listenersOfOnce(entry, fileContext) {
   if (entry.once === null) {
     const { before, after, ...listeners } = entry.rule.createOnce(fileContext.extend(entry.own));
     entry.once = { before, after, listeners };
@@ -900,7 +926,7 @@ function start() {
 
 // With where in the plugin it was thrown, and without what is not the user's.
 function describeLoadError(error) {
-  const lines = String(error?.stack ?? error).split("\n");
+  const lines = messageOf(error, it => it?.stack ?? it).split("\n");
   const stack = lines.indexOf("Require stack:");
   if (stack !== -1) lines.length = stack;
   return lines.filter(it => !/^\s+at .*\bbun-lint-plugins\.js:\d+/.test(it)).join("\n");
@@ -938,8 +964,12 @@ function respond(kind) {
     native.sendReports();
     return used.length === 0 ? DONE : DONE + JSON.stringify(used);
   } catch (error) {
-    const line = currentNode === null ? null : currentNode.loc.start.line;
-    return FAILED + JSON.stringify([currentRule?.position ?? null, String(error?.message ?? error), line]);
+    // The node is the plugin's to change.
+    let line = null;
+    try {
+      line = Number(currentNode.loc.start.line);
+    } catch {}
+    return FAILED + JSON.stringify([currentRule?.position ?? null, messageOf(error), line]);
   } finally {
     reset();
   }

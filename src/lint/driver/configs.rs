@@ -96,14 +96,32 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
 /// `Reader::grade_by_kind`, for `$forReact` see `ResolvedConfig::outside_of_react`, for `$withoutWarnings` see
 /// `Reader::without_warnings`. The words `UNUSED_ON_PURPOSE` and `TEST_GLOBALS` are replaced with the constants of that name,
 /// and the `basePath` `"PROJECT"` with the project's directory, so that a project in `~/test/app` isn't all tests.
+///
+/// The first `rules` only sets options. A later setting that's just a severity keeps them, whether it comes from a preset
+/// below or from the user, so these are the rules' default options in a project with no config file.
 const BUILT_IN: &[u8] = br#"[
     { "ignores": ["**/.git/", "**/*.min.js"] },
     { "files": ["**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"] },
     {
+        "rules": {
+            "no-fallthrough": ["off", { "commentPattern": "(?i:falls?[\\s-]?through|no\\s?break)" }],
+            "no-irregular-whitespace": ["off", {
+                "skipComments": true, "skipTemplates": true, "skipJSXText": true, "skipRegExps": true
+            }],
+            "no-unused-expressions": ["off", { "allowShortCircuit": true, "allowTernary": true }],
+            "@typescript-eslint/no-unused-expressions": ["off", { "allowShortCircuit": true, "allowTernary": true }],
+            "@typescript-eslint/no-misused-promises": ["off", { "checksVoidReturn": {
+                "arguments": true, "attributes": false, "inheritedMethods": true,
+                "properties": true, "returns": true, "variables": true
+            } }],
+            "@typescript-eslint/no-namespace": ["off", { "allowDeclarations": true }]
+        }
+    },
+    {
         "extends": ["eslint:recommended"],
         "$severityByKind": true,
         "languageOptions": {
-            "$env": { "browser": true, "node": true },
+            "$env": { "browser": true, "node": true, "serviceworker": true },
             "globals": {
                 "Bun": "readonly", "HTMLRewriter": "readonly", "ShadowRealm": "readonly",
                 "BuildMessage": "readonly", "ResolveMessage": "readonly",
@@ -121,24 +139,31 @@ const BUILT_IN: &[u8] = br#"[
         "rules": { "no-unused-vars": ["warn", UNUSED_ON_PURPOSE] }
     },
     {
-        "files": ["**/*{.,_}{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"],
+        "files": [
+            "**/*{.,_,-}{test,spec,e2e,cy}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}",
+            "**/*[sS]etup*{[tT]est,[jJ]est,[vV]itest}*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}",
+            "**/*{[tT]est,[jJ]est,[vV]itest}*[sS]etup*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"
+        ],
         "languageOptions": TEST_GLOBALS
     },
     {
         "basePath": "PROJECT",
-        "files": ["**/{__tests__,test,tests,spec}/**"],
+        "files": ["**/{__tests__,__mocks__,test,tests,spec,e2e,cypress}/**"],
         "languageOptions": TEST_GLOBALS
     },
     {
         "files": ["**/*.{ts,mts,cts,tsx}"],
         "extends": ["typescript-eslint/TYPESCRIPT"],
         "$severityByKind": true,
-        "rules": { "@typescript-eslint/no-unused-vars": ["warn", UNUSED_ON_PURPOSE] }
+        "rules": {
+            "@typescript-eslint/no-require-imports": "off",
+            "@typescript-eslint/no-unused-vars": ["warn", UNUSED_ON_PURPOSE]
+        }
     },
     {
         "rules": {
             "bun:test/no-disabled-tests": "warn",
-            "bun:test/no-export": "error",
+            "bun:test/no-export": "warn",
             "bun:test/no-focused-tests": "error",
             "bun:test/valid-describe-callback": "error",
             "bun:test/valid-expect": "error",
@@ -168,7 +193,10 @@ const UNUSED_ON_PURPOSE: &[u8] = br#"{
 
 const TEST_GLOBALS: &[u8] = br#"{
     "$env": { "jest": true, "mocha": true },
-    "globals": { "expectTypeOf": "readonly", "vi": "readonly", "fdescribe": "readonly" }
+    "globals": {
+        "expectTypeOf": "readonly", "vi": "readonly", "fdescribe": "readonly",
+        "cy": "readonly", "Cypress": "readonly", "assert": "readonly", "chai": "readonly"
+    }
 }"#;
 
 /// Parses [`BUILT_IN`]. `with_types` also turns on the rules that need types.

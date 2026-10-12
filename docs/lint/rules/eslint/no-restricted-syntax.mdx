@@ -69,7 +69,10 @@ This selector matches a literal, such as a string, that's the first argument of 
 
 ```toml bunfig.toml
 [lint.rules]
-"no-restricted-syntax" = ["error", { selector = "CallExpression[callee.name='setTimeout'] > Literal:first-child", message = "Pass a function to setTimeout." }]
+"no-restricted-syntax" = ["error", {
+  selector = "CallExpression[callee.name='setTimeout'] > Literal:first-child",
+  message = "Pass a function to setTimeout.",
+}]
 ```
 
 {/* bad {"options": [{"selector": "CallExpression[callee.name='setTimeout'] > Literal:first-child", "message": "Pass a function to setTimeout."}]} */}

@@ -97,7 +97,9 @@ Add the helper's name and the report goes away:
 
 ```toml bunfig.toml
 [lint.rules]
-"jest/expect-expect" = ["error", { assertFunctionNames = ["expect", "checkUser"] }]
+"jest/expect-expect" = ["error", {
+  assertFunctionNames = ["expect", "checkUser"],
+}]
 ```
 
 {/* good {"options": [{"assertFunctionNames": ["expect", "checkUser"]}]} */}

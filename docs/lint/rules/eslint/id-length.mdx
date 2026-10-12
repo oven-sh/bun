@@ -99,7 +99,7 @@ id-length = ["error", { min = 3, max = 30, exceptions = ["i", "id"] }]
 | `properties` | `"always"` | `"never"` stops checking object keys and the properties you assign to. |
 | `exceptions` | `[]` | Names that are always allowed. |
 | `exceptionPatterns` | `[]` | Regular expressions. A name that matches one is always allowed. |
-| `checkGeneric` | `true` | Only applies with an oxlint config, which also checks type parameters such as the `T` in `Box<T>`. `false` stops checking them. |
+| `checkGeneric` | `true` | Only for an oxlint config, where the rule also checks type parameters such as the `T` in `Box<T>`. `false` stops checking them. `bunfig.toml` rejects this option. |
 
 {/* bad {"options": [{"max": 20}]} */}
 ```js

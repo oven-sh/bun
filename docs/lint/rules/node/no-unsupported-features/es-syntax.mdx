@@ -88,7 +88,7 @@ class Cache {
 }
 ```
 
-A method is reported if the value is obviously an array or a string:
+A method is reported if the rule can tell that the value is an array or a string:
 
 {/* bad */}
 ```js
@@ -110,11 +110,14 @@ function lastOf(steps) {
 | `version` | `engines.node`, or `">=16.0.0"` | The range of Node.js versions you support, written as in `package.json`. |
 | `ignores` | `[]` | Features that are never reported, by the name in the message, such as `"class-static-block"`. |
 
-Without `version`, the range comes from `settings.n.version` in an ESLint config, then from `engines.node`, then from `devEngines.runtime` in `package.json`.
+Without `version`, the range comes from `settings.n.version` (`[lint.settings.n]` in `bunfig.toml`, or `settings` in an ESLint config), then from `engines.node`, then from `devEngines.runtime` in `package.json`.
 
 ```toml bunfig.toml
 [lint.rules]
-"n/no-unsupported-features/es-syntax" = ["error", { version = ">=14.0.0", ignores = ["logical-assignment-operators"] }]
+"n/no-unsupported-features/es-syntax" = ["error", {
+  version = ">=14.0.0",
+  ignores = ["logical-assignment-operators"],
+}]
 ```
 
 {/* bad {"options": [{"version": ">=14.0.0"}]} */}

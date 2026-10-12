@@ -26,6 +26,7 @@ use crate::paths;
 use crate::rule::{Meta, Plugin};
 use bun_core::strings;
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Whether `word` is one of the words of `list`, which have spaces between them.
@@ -313,11 +314,11 @@ fn written_rules(json: &Json) -> Vec<Written> {
     let written = |(id, setting): &(Vec<u8>, Json)| {
         let ((prefix, name), key) = (parse_rule_id(id), oxlint_rule_key(id));
         let plugin = match (prefix, parse_rule_id(&key).0) {
-            (b"", b"") => &b"eslint"[..],
-            (b"", of_key) => of_key,
+            (b"", b"") => Cow::Borrowed(&b"eslint"[..]),
+            (b"", of_key) => Cow::Borrowed(of_key),
             (prefix, _) => plugin_of_oxlint(prefix),
         };
-        let plugin = match plugin {
+        let plugin = match &*plugin {
             b"jsx-a11y" => &b"jsx_a11y"[..],
             b"react-perf" => b"react_perf",
             plugin => plugin,
@@ -359,12 +360,12 @@ fn merged(own: Vec<Written>, extended: Vec<Written>) -> Vec<Written> {
 /// Whether `plugin` is one of `names`, which are as a configuration file of oxlint has them.
 fn is_among(plugin: Plugin, names: &[Vec<u8>]) -> bool {
     (names.iter())
-        .any(|it| Plugin::of_oxlint_prefix(plugin_of_oxlint(it)) == Some(plugin.in_oxlint()))
+        .any(|it| Plugin::of_oxlint_prefix(&plugin_of_oxlint(it)) == Some(plugin.in_oxlint()))
 }
 
 /// `names`, which are as a configuration file of oxlint has them, as a set. `eslint` is no plugin.
 fn set_of(names: &[Vec<u8>]) -> u32 {
-    let plugins = (names.iter()).filter_map(|it| Plugin::of_oxlint_prefix(plugin_of_oxlint(it)));
+    let plugins = (names.iter()).filter_map(|it| Plugin::of_oxlint_prefix(&plugin_of_oxlint(it)));
     let plugins = plugins.filter(|it| *it != Plugin::Eslint);
     plugins.fold(0, |set, it| set | (1 << (it.in_oxlint() as u32)))
 }
@@ -510,11 +511,11 @@ impl Rc<'_, '_> {
                 if find_js_rule(&self.reader.js_plugins, id).is_none() {
                     let key = oxlint_rule_key(id);
                     let plugin = match (parse_rule_id(id).0, parse_rule_id(&key).0) {
-                        (b"", b"") => &b"eslint"[..],
-                        (b"", of_key) => of_key,
+                        (b"", b"") => Cow::Borrowed(&b"eslint"[..]),
+                        (b"", of_key) => Cow::Borrowed(of_key),
                         (written, _) => plugin_of_oxlint(written),
                     };
-                    if plugin == b"eslint"
+                    if *plugin == *b"eslint"
                         || plugins.iter().any(|it| plugin_of_oxlint(it) == plugin)
                     {
                         refuse_unknown_fields(&key, setting)?;

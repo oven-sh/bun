@@ -107,7 +107,9 @@ Most projects allow `devDependencies` in tests and scripts only:
 
 ```toml bunfig.toml
 [lint.rules]
-"import/no-extraneous-dependencies" = ["error", { devDependencies = ["test/**", "scripts/**"] }]
+"import/no-extraneous-dependencies" = ["error", {
+  devDependencies = ["test/**", "scripts/**"],
+}]
 ```
 
 With that config, code that ships can't import a package that's missing in production:

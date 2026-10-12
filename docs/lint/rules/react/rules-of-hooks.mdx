@@ -112,6 +112,34 @@ function Note({ notePromise }) {
 }
 ```
 
+A `use` that the file declares itself isn't React's, unless it's imported from `"react"`. Playwright passes a function with that name to every fixture:
+
+{/* good */}
+```js
+import { test as base } from "@playwright/test";
+
+export const test = base.extend({
+  user: async ({ page }, use) => {
+    await page.goto("/login");
+    await use("alice");
+  },
+});
+```
+
+In a `*.stories.*` file, a function named `render` counts as a component, because Storybook renders it as one:
+
+{/* good {"filename": "Button.stories.jsx"} */}
+```jsx Button.stories.jsx
+export const Controlled = {
+  render: args => {
+    const [on, setOn] = useState(false);
+    return <Button {...args} active={on} onClick={() => setOn(!on)} />;
+  },
+};
+```
+
+With an ESLint config file both are reported, as `eslint-plugin-react-hooks` does.
+
 You can only call a function made with `useEffectEvent` from an effect or another effect event in the same component:
 
 {/* bad */}
@@ -124,7 +152,7 @@ function Chat({ room }) {
 }
 ```
 
-Your own effect hooks count as effects if `settings["react-hooks"].additionalEffectHooks` in your ESLint config is a regular expression that matches their names.
+Your own effect hooks count as effects if the `additionalEffectHooks` setting is a regular expression that matches their names. It goes under `[lint.settings.react-hooks]` in `bunfig.toml`, or under `settings["react-hooks"]` in an ESLint config.
 
 ## Options
 

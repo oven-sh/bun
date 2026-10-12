@@ -27,7 +27,7 @@ function prettierFrom(directory) {
 }
 
 // `getOptionsForFile` of Prettier's command line, and `format`. The message: the length of what follows as JSON, that, the text.
-// The JSON: `path`, `config`: the configuration file, or `null`, `usesConfig`: not `--no-config`, `editorconfig`, `flags`: the options
+// The JSON: `path`, or `null` for text that has no file name, `config`: the configuration file, or `null`, `usesConfig`: not `--no-config`, `editorconfig`, `flags`: the options
 // that the command line sets, `precedence`: `--config-precedence`, `looksAtStdin`: the text is standard input, with `--check` or
 // `--list-different`.
 async function formatWithPrettier() {
@@ -39,7 +39,7 @@ async function formatWithPrettier() {
   const prettier = prettierFrom(cwd);
   if (prettier === null) return NOT_INSTALLED;
   // As Prettier's command line has them, which plugins see.
-  const filepath = nativePath(path, nodePath);
+  const filepath = path === null ? undefined : nativePath(path, nodePath);
   const configFile = config === null ? undefined : nativePath(config, nodePath);
   const ofFiles = usesConfig ? await prettier.resolveConfig(filepath, { config: configFile, editorconfig }) : null;
   let options = { ...ofFiles, ...flags };

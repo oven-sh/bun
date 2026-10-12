@@ -1106,7 +1106,7 @@ impl Data {
     }
 }
 
-/// Width in terminal columns of the first `units` UTF-16 code units of `line`.
+/// Width in terminal columns of the first `units` UTF-16 code units of `line`. A tab counts as one column.
 fn width_before(line: &[u8], units: usize) -> usize {
     use bun_core::strings;
     if strings::is_all_ascii(line) {
@@ -1114,7 +1114,9 @@ fn width_before(line: &[u8], units: usize) -> usize {
     }
     let before = &line[..strings::wtf8_offset_of_utf16_index(line, units as u32)];
     let past_the_end = units.saturating_sub(strings::wtf8_len_utf16(before) as usize);
-    strings::visible::width::exclude_ansi_colors::utf8(before) + past_the_end
+    // The width of a tab is 0 there.
+    let tabs = strings::count_char(before, b'\t');
+    strings::visible::width::exclude_ansi_colors::utf8(before) + tabs + past_the_end
 }
 
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {

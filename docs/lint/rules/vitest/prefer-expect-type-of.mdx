@@ -14,7 +14,7 @@ deprecated: false
 
 `expect(typeof value).toBe("string")` only gives `expect` the name of the type. When the test fails, the output compares `"number"` with `"string"` and doesn't show the value. `expect(value).toBeTypeOf("string")` shows it.
 
-The rule reports `typeof` inside `expect` with `toBe` or `toEqual`, with or without `.not`.
+The rule reports `typeof` inside `expect` with `toBe` or `toEqual`, with or without `.not`. Despite its name, it asks for the `toBeTypeOf` matcher, not for `expectTypeOf()`.
 
 `--fix` rewrites the assertion.
 

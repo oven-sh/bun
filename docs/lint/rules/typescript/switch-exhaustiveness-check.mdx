@@ -86,9 +86,23 @@ function label(status: Status) {
 | `requireDefaultForNonUnion` | `false` | Require a `default` clause when the value isn't a union of literals, such as a `string` or a `number`. |
 | `defaultCaseCommentPattern` | `^no default$`, ignoring case | A regular expression. A comment after the last `case` that matches it counts as a `default` clause. |
 
-By default `"closed"` and `"merged"` are reported as missing here. With `considerDefaultExhaustiveForUnions`, the `default` covers them:
+By default `"closed"` and `"merged"` are reported as missing here:
 
 {/* bad */}
+```ts
+function isOpen(status: "open" | "closed" | "merged") {
+  switch (status) {
+    case "open":
+      return true;
+    default:
+      return false;
+  }
+}
+```
+
+With `considerDefaultExhaustiveForUnions`, the `default` covers them:
+
+{/* good {"options": [{"considerDefaultExhaustiveForUnions": true}]} */}
 ```ts
 function isOpen(status: "open" | "closed" | "merged") {
   switch (status) {

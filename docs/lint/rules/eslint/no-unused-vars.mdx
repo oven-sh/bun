@@ -16,7 +16,9 @@ A name that's declared and never read is clutter at best. Often it points to a b
 
 "Used" means read. A variable that's only assigned to or incremented isn't used, and neither is a function that only calls itself. Anything you `export` is used.
 
-The rule suggests removing the declaration. To keep a name that you don't use, start it with `_`.
+`--fix-suggestions` removes the declaration, but only if that can't change what the program does: an unused import, function or class, or a variable set to a plain value. `const sent = sendEmail(user);` stays, because removing it would also remove the call. So do parameters, names in a destructuring pattern, and the top level of a script that's neither an ES module nor CommonJS, which a web page can use. With an ESLint config file the suggestions are ESLint's.
+
+To keep a name that you don't use, start it with `_`.
 
 This rule is on by default in JavaScript files. In TypeScript files, `@typescript-eslint/no-unused-vars` is on instead.
 
@@ -116,6 +118,8 @@ export const App = () => <Button />;
 no-unused-vars = ["error", { args = "all", argsIgnorePattern = "^_" }]
 ```
 
+The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config the defaults are ESLint's: no patterns, and `ignoreRestSiblings` is `false`.
+
 | Option | Default | What it does |
 | --- | --- | --- |
 | `vars` | `"all"` | `"local"` skips globals: the names in `/* global */` comments and the top-level variables of a classic script. The top level of a module or a CommonJS file is still checked. |
@@ -132,12 +136,14 @@ no-unused-vars = ["error", { args = "all", argsIgnorePattern = "^_" }]
 
 You can pass a string instead of the object, `"all"` or `"local"`, to set `vars`.
 
-The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config the defaults are ESLint's: no patterns, and `ignoreRestSiblings` is `false`.
+With `{ "args": "all" }` alone, the `"^_"` patterns are gone and `_item` is reported:
 
 {/* bad {"options": [{"args": "all"}]} */}
 ```js
 export const doubled = items.map((_item, index) => index * 2);
 ```
+
+With the pattern repeated, it isn't:
 
 {/* good {"options": [{"args": "all", "argsIgnorePattern": "^_"}]} */}
 ```js

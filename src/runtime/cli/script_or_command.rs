@@ -17,22 +17,19 @@ pub(crate) enum Runs {
     Other,
 }
 
-/// Whether `arg` only asks `bun <command>` about itself or its config, like `--help` does.
-/// Nothing is checked, linted or formatted then.
+/// Whether `arg` asks `bun <command>` about itself, so it isn't passed to the project's own `command`.
+///
+/// Only flags that the tools behind such scripts don't have. `-v`, `--version`, `--init`, `--rules` and `--print-config` mean
+/// something to ESLint, oxlint, Prettier and others, and `bun lint -v` must not turn a failing script into exit code 0.
+/// `--doctor` and `--explain` are here because the migration guides send people to them who still have `"lint": "eslint ."`.
 fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
     let name = bun_core::strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
-    let of_lint_and_format = matches!(
-        name,
-        b"--doctor"
-            | b"--init"
-            | b"--rules"
-            | b"--explain"
-            | b"--print-config"
-            | b"--version"
-            | b"-v"
-            | b"-V"
-    );
-    matches!(name, b"--help" | b"-h" | b"--help-all") || (of_lint_and_format && command != b"check")
+    match name {
+        b"--help" | b"-h" => true,
+        b"--help-all" | b"--doctor" => command != b"check",
+        b"--explain" => command == b"lint",
+        _ => false,
+    }
 }
 
 /// Whether `bun <command>` runs something from the project, as it did before `command` became a built-in command.

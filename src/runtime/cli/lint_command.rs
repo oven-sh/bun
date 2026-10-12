@@ -308,6 +308,11 @@ pub(crate) fn run_and_exit(
 }
 
 impl LintCommand {
+    /// Whether `bun lint <flag>` is a valid command line.
+    pub(crate) fn has_flag(flag: &[u8]) -> bool {
+        Options::parse(&[flag]).is_ok()
+    }
+
     /// `args`: what follows `lint`.
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();

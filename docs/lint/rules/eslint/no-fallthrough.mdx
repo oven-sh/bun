@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `case` that doesn't end with `break`, `return`, `throw` or `continue` keeps going into the code of the next `case`. A forgotten `break` runs code for a value it wasn't written for, and nothing fails at that line.
+A `case` that doesn't end with `break`, `return`, `throw`, `continue` or `process.exit()` keeps going into the code of the next `case`. A forgotten `break` runs code for a value it wasn't written for, and nothing fails at that line.
 
-If you want the fallthrough, say so in a comment that contains `falls through` right before the next `case`. Several `case` labels in a row that share one body are allowed.
+If you want the fallthrough, say so in a comment right before the next `case`. `// falls through`, `// fall-through`, `// fallthrough` and `// no break` all work, in any case. Several `case` labels in a row that share one body are allowed.
 
 This rule is on by default.
 
@@ -29,12 +29,12 @@ On by default as an error. To turn it off:
 "no-fallthrough" = "off" # or "warn"
 ```
 
-Every option, set to its default. The ones that are commented out are unset by default.
+Every option, set to its default:
 
 ```toml bunfig.toml
 [lint.rules]
 "no-fallthrough" = ["error", {
-  # commentPattern = <string>,
+  commentPattern = "(?i:falls?[\\s-]?through|no\\s?break)",
   allowEmptyCase = false,
   reportUnusedFallthroughComment = false,
 }]
@@ -71,6 +71,20 @@ switch (post.status) {
 }
 ```
 
+`process.exit()` and `process.abort()` end a `case` too. With `--type-aware`, so does any call that returns `never`. With an ESLint config file they don't, as in ESLint.
+
+{/* good */}
+```js
+switch (command) {
+  case "help":
+    printUsage();
+    process.exit(0);
+  case "version":
+    console.log(version);
+    break;
+}
+```
+
 {/* good */}
 ```js
 switch (post.status) {
@@ -84,13 +98,29 @@ switch (post.status) {
 }
 ```
 
+{/* good */}
+```js
+switch (post.status) {
+  case "draft":
+    publish(post);
+  /* intentional fall-through */
+  case "published":
+    notify(post);
+  // no break
+  default:
+    log(post);
+}
+```
+
 ## Options
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `commentPattern` | `"falls?\\s?through"`, ignoring case | A regular expression for the comment that allows a fallthrough. It replaces the default. |
+| `commentPattern` | see below | A regular expression for the comment that allows a fallthrough. It replaces the default. |
 | `allowEmptyCase` | `false` | Allow an empty `case` with a blank line before the next one. |
 | `reportUnusedFallthroughComment` | `false` | Report a fallthrough comment after a `case` that can't fall through. |
+
+The default `commentPattern` is `(?i:falls?[\s-]?through|no\s?break)`. With an ESLint config file it's ESLint's own, `falls?\s?through` in any case, which doesn't accept `fall-through` or `no break`.
 
 {/* good {"options": [{"commentPattern": "break omitted"}]} */}
 ```js

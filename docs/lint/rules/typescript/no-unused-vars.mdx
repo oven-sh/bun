@@ -101,6 +101,8 @@ export type Settings = typeof defaults;
 
 ## Options
 
+The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config you get ESLint's defaults, which have no patterns and set `ignoreRestSiblings` to `false`.
+
 | Option | Default | What it does |
 | --- | --- | --- |
 | `vars` | `"all"` | `"local"` skips variables in the global scope. The top level of a module isn't the global scope, so this only matters for scripts. |
@@ -117,8 +119,6 @@ export type Settings = typeof defaults;
 | `enableAutofixRemoval` | `{ "imports": false }` | With `imports: true`, `--fix` removes unused imports. |
 
 You can pass a string, `"all"` or `"local"`, instead of the object. It sets `vars`.
-
-The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config you get ESLint's defaults, which have no patterns and set `ignoreRestSiblings` to `false`.
 
 By default, an unused parameter before a used one is allowed, because you can't remove it without moving the others:
 

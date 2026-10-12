@@ -63,7 +63,12 @@ Not reported:
 
 ```toml bunfig.toml
 [lint.rules]
-"react/forbid-elements" = ["error", { forbid = ["marquee", { element = "button", message = "use our Button component" }] }]
+"react/forbid-elements" = ["error", {
+  forbid = [
+    "marquee",
+    { element = "button", message = "use our Button component" },
+  ],
+}]
 ```
 
 `forbid` is the only option. It's a list of element names or objects, and it's empty by default:

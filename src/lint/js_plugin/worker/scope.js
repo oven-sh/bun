@@ -173,32 +173,45 @@ const eslintScopeLayout = once(() => {
 // ------------- `@typescript-eslint/scope-manager` -------------
 
 // The `set` of the global scope. The libraries of TypeScript can define thousands of variables, and most files ask for a few names.
-// The others are made when something goes through all of them: src/jsc/bindings/LintScopes.cpp.
+// So it is empty until something goes through it or writes to it, and then it has all of them: src/jsc/bindings/LintScopes.cpp.
 class GlobalSet extends Map {
   get(name) {
-    return super.get(name) ?? native.libVariable(name);
+    const found = super.get(name);
+    return found !== undefined ? found : native.globalVariable(name, this);
   }
   has(name) {
-    return this.get(name) !== undefined;
+    return super.has(name) || native.globalVariable(name, this) !== undefined;
+  }
+  set(name, value) {
+    native.addLibVariables(this);
+    return super.set(name, value);
+  }
+  delete(name) {
+    native.addLibVariables(this);
+    return super.delete(name);
+  }
+  clear() {
+    native.addLibVariables(this);
+    super.clear();
   }
   get size() {
-    native.addLibVariables();
+    native.addLibVariables(this);
     return super.size;
   }
   keys() {
-    native.addLibVariables();
+    native.addLibVariables(this);
     return super.keys();
   }
   values() {
-    native.addLibVariables();
+    native.addLibVariables(this);
     return super.values();
   }
   entries() {
-    native.addLibVariables();
+    native.addLibVariables(this);
     return super.entries();
   }
   forEach(callback, thisArg) {
-    native.addLibVariables();
+    native.addLibVariables(this);
     return super.forEach(callback, thisArg);
   }
   [Symbol.iterator]() {
@@ -359,7 +372,7 @@ function scopeManager() {
   const names =
     globalNames.get(fileSettings) ?? globalNames.set(fileSettings, Object.keys(fileSettings.globals)).get(fileSettings);
   const made = native.scopes(layout.forNative, names, fileDialect === 0);
-  const [listed, nodeToScope, declaredVariables, referenceFlags, explicitGlobals] = made;
+  const { 0: listed, 1: nodeToScope, 2: declaredVariables, 3: referenceFlags, 4: explicitGlobals } = made;
   scopeData = { manager: new layout.ScopeManager(listed, nodeToScope, declaredVariables), referenceFlags };
   native.setScopeManager(scopeData.manager);
   // The comments are tokens, which are made here.

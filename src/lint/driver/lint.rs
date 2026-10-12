@@ -383,8 +383,12 @@ impl Context<'_, '_> {
                 Fatal([b"Cannot read ", &path[..], b": ", &fs::describe(&error)].concat())
             })?,
         };
+        // Type errors don't come from a rule, so the second pass can't carry them over. No comment disables them either.
+        let (type_errors, messages): (Vec<LintMessage>, Vec<LintMessage>) =
+            (std::mem::take(&mut result.messages).into_iter())
+                .partition(crate::typed::is_type_error);
         let previous = LintResult {
-            messages: std::mem::take(&mut result.messages),
+            messages,
             suppressed: std::mem::take(&mut result.suppressed),
             ..LintResult::default()
         };
@@ -397,11 +401,15 @@ impl Context<'_, '_> {
             ..How::default()
         };
         let framework = Framework::of(&path).filter(|_| config.language.is_oxlint);
-        let linted = match framework {
+        let mut linted = match framework {
             // Its scripts are linted one by one, so all rules run once more.
             Some(framework) => self.verify_scripts(framework, &path, &text, &config),
             None => self.verify_as(&path, &text, &config, &how),
         };
+        if !type_errors.is_empty() {
+            linted.messages.extend(type_errors);
+            LintMessage::sort(&mut linted.messages);
+        }
         let (had_types, was_fixed, fixes) = (result.had_types, result.is_fixed, result.fixes);
         let fixed_text = result.fixed_text.take();
         let shown = std::mem::take(&mut result.path);

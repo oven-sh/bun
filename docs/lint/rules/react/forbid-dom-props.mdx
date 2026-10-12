@@ -60,7 +60,9 @@ Not reported:
 
 ```toml bunfig.toml
 [lint.rules]
-"react/forbid-dom-props" = ["error", { forbid = ["id", { propName = "style", message = "Use a class" }] }]
+"react/forbid-dom-props" = ["error", {
+  forbid = ["id", { propName = "style", message = "Use a class" }],
+}]
 ```
 
 `forbid` is the only option. It's a list of prop names or objects, and it's empty by default:

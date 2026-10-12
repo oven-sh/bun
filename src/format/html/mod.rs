@@ -31,6 +31,8 @@ mod verify;
 mod vue;
 mod writer;
 
+pub use js::is_probably_jsx;
+
 use crate::cursor::Region;
 use crate::ir::formatter::Formatter;
 use crate::js::context::JsFormatContext;

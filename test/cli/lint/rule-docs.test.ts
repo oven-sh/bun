@@ -72,6 +72,29 @@ describe("docs/lint/rules", () => {
     expect(wrong).toEqual([]);
   });
 
+  test("TOML snippets are formatted the way `bun format` prints them", async () => {
+    // Pasting a snippet into a formatted bunfig.toml has to keep `bun format --check` green.
+    const files: Record<string, string> = { "canary/bunfig.toml": "a   = 1\n" };
+    for (const name of pageNames()) {
+      let count = 0;
+      for (const [, code] of text(name).matchAll(/^```toml[^\n]*\n(.*?)^```/gms))
+        files[`${name.replaceAll("/", "__")}__${count++}/bunfig.toml`] = code;
+    }
+    expect(Object.keys(files).length).toBeGreaterThan(1000);
+    using dir = tempDir("bun-lint-rule-docs-toml", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "format", "--list-different", "."],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The canary shows that TOML files were looked at.
+    expect(stdout.replaceAll("\\", "/").split("\n").filter(Boolean)).toEqual(["canary/bunfig.toml"]);
+  });
+
   test("index.mdx is up to date", () => {
     // bun src/codegen/lint-rule-docs.ts --write
     expect(readFileSync(join(pagesRoot, "index.mdx"), "utf8").replaceAll("\r\n", "\n")).toBe(indexFor(rules));

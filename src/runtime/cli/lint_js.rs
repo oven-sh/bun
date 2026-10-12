@@ -85,8 +85,13 @@ unsafe extern "C" {
     safe fn Bun__Lint__endFile(global: &JSGlobalObject);
 }
 
+/// What was thrown, as text. It can be any value, and to make text of it runs code of a plugin, which can throw again.
 fn message_of(global: &JSGlobalObject, error: JSValue) -> Vec<u8> {
-    match error.to_bun_string(global) {
+    if error.is_termination_exception() {
+        return b"JavaScript was stopped.".to_vec();
+    }
+    // `take_exception` returns the `JSC::Exception`, a cell that is no value: what was thrown is in it.
+    match error.to_error().unwrap_or(error).to_bun_string(global) {
         Ok(text) => text.to_utf8().slice().to_vec(),
         Err(_) => {
             global.clear_exception();
@@ -167,7 +172,9 @@ extern "C" fn Bun__Lint__ask(
 /// Runs the program in this thread's new VM.
 fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     let global = vm.global();
+    // Strict, so that no function of a plugin gets at those of the program through `caller`.
     let mut source = b"(function (native) {\n\
+        \"use strict\";\n\
         const require = process.getBuiltinModule(\"node:module\").createRequire(process.cwd() + \"/\");\n\
         const load = specifier => import(specifier);\n"
         .to_vec();

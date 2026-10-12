@@ -6,7 +6,7 @@ plugin: "eslint"
 aliases: ["eslint/no-ex-assign"]
 kind: "problem"
 category: "correctness"
-default: "error"
+default: "warn"
 fixable: "no"
 typeAware: false
 deprecated: false
@@ -20,11 +20,11 @@ This rule is on by default.
 
 ## Configure
 
-On by default as an error. To turn it off:
+On by default as a warning. To turn it off:
 
 ```toml bunfig.toml
 [lint.rules]
-"no-ex-assign" = "off" # or "warn"
+"no-ex-assign" = "off" # or "error"
 ```
 
 {/* End of the generated section. */}

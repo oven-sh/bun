@@ -77,8 +77,8 @@ pub(super) fn report(
     let (mut plugins, mut nested) = (Plugins::default(), Vec::new());
     for target in found {
         let (scope, path) = (&target.scope, &target.path);
-        let named = configs.packages_of_plugins(scope, path);
-        let missing = configs.missing_plugins(scope, path).iter();
+        let named = configs.packages_of_plugins(scope, Some(path));
+        let missing = configs.missing_plugins(scope, Some(path)).iter();
         named
             .chain(missing.map(|it| &it[..]))
             .for_each(|it| plugins.add(it));
@@ -88,7 +88,7 @@ pub(super) fn report(
     nested.retain(|it| Some(it) != file.as_ref());
     // Prettier loads every plugin listed in a file's config, so all of them have to stay installed.
     let for_files = files.handed_over.iter().flat_map(|(_, target)| {
-        let named = configs.packages_of_plugins(&target.scope, &target.path);
+        let named = configs.packages_of_plugins(&target.scope, Some(&target.path));
         std::iter::once(&b"prettier"[..]).chain(named)
     });
     // Packages that aren't installed yet are needed too. They're the reason some files can't go to Prettier.

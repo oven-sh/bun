@@ -2897,10 +2897,13 @@ expect(1).toBe(1);
         "8 bun:test/valid-expect-in-promise",
       ]);
       expect(own(reported(stdout, "quiet.test.js"))).toEqual([]);
-      // All of them are errors except `no-disabled-tests`.
+      // Skipping a test and exporting from a test file are often done on purpose. The rest are errors.
       const files = JSON.parse(stdout) as { messages: { ruleId: string; severity: number }[] }[];
       const ofBunTest = files.flatMap(it => it.messages).filter(it => it.ruleId.startsWith("bun:test/"));
-      expect(ofBunTest.filter(it => it.severity !== 2).map(it => it.ruleId)).toEqual(["bun:test/no-disabled-tests"]);
+      expect(ofBunTest.filter(it => it.severity !== 2).map(it => it.ruleId)).toEqual([
+        "bun:test/no-disabled-tests",
+        "bun:test/no-export",
+      ]);
     }
     // A test that is skipped on purpose does not fail the run.
     expect(unix(skipped.stdout)).toEqual(["2 Warning/bun:test/no-disabled-tests"]);
@@ -3185,7 +3188,7 @@ var a = b;
     ]);
     expect(Object.entries(JSON.parse(plain.stdout).rules).filter(it => it[0].startsWith("bun:test/"))).toEqual([
       ["bun:test/no-disabled-tests", [1]],
-      ["bun:test/no-export", [2]],
+      ["bun:test/no-export", [1]],
       ["bun:test/no-focused-tests", [2]],
       ["bun:test/valid-describe-callback", [2]],
       ["bun:test/valid-expect", [2]],

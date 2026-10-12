@@ -65,9 +65,14 @@ With no config, `bun lint` turns on the rules that catch real bugs:
 - **React**: `rules-of-hooks`, `exhaustive-deps`, and `jsx-key`, if `react` is in your `package.json`
 - **Tests**: leftover `test.only`, `expect()` without a matcher, un-awaited `.resolves`, and a few more, in files that import from `bun:test`
 
-Likely bugs are errors. Unused code and style suggestions are warnings.
+Likely bugs are errors. Unused code, style suggestions, and code that people often write on purpose, like `while (match = re.exec(text))`, are warnings. A warning doesn't fail the run.
 
+A few defaults differ from ESLint's, so that ordinary code isn't reported:
+
+- `require()` is allowed in TypeScript files. Bun runs `import` and `require()` in the same file.
 - A name that starts with `_` may be unused.
+- `done && done();` and `ok ? resolve() : reject();` are fine as statements.
+- A no-break space or a full-width space is only reported in code, not in text, comments or JSX.
 - In `.d.ts` files only the errors run.
 - An `eslint-disable` comment for a rule that is off is left alone.
 
@@ -209,6 +214,8 @@ Already have an `eslint.config.js`, `.eslintrc`, or `.oxlintrc.json`? `bun lint`
   }
 }
 ```
+
+If `package.json` has a `lint` script, `bun lint` runs that script. Inside the script, `bun lint` is the linter.
 
 Rules from built-in plugins run natively. Any other ESLint plugin still runs, in JavaScript. To see which is which, and which packages you can uninstall:
 

@@ -6,7 +6,7 @@ plugin: "typescript"
 aliases: ["typescript-eslint/no-unsafe-function-type","typescript/no-unsafe-function-type"]
 kind: "problem"
 category: "pedantic"
-default: "error"
+default: "warn"
 fixable: "no"
 typeAware: false
 deprecated: false
@@ -22,11 +22,11 @@ This rule is on by default in TypeScript files.
 
 ## Configure
 
-On by default as an error. To turn it off:
+On by default as a warning. To turn it off:
 
 ```toml bunfig.toml
 [lint.rules]
-"@typescript-eslint/no-unsafe-function-type" = "off" # or "warn"
+"@typescript-eslint/no-unsafe-function-type" = "off" # or "error"
 ```
 
 {/* End of the generated section. */}

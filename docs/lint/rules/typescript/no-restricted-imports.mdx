@@ -14,7 +14,7 @@ deprecated: true
 
 Some modules shouldn't be imported in your project, or not from everywhere, like a library you're moving away from, another package's internals, or server code in the browser bundle. You list them, and the rule reports every `import`, `export .. from` and `import x = require("..")` of one.
 
-The rule does nothing until you give it options. `require()` isn't checked, and `import()` is only checked with an oxlint config.
+The rule does nothing until you give it options. Like typescript-eslint, it doesn't check `require()` or `import()`. With an oxlint config it does check `import()`, because oxlint's version of the rule does.
 
 This rule is deprecated. Use `no-restricted-imports` instead. It has the same options, including `allowTypeImports`.
 
@@ -22,7 +22,9 @@ This rule is deprecated. Use `no-restricted-imports` instead. It has the same op
 
 ```toml bunfig.toml
 [lint.rules]
-"@typescript-eslint/no-restricted-imports" = ["error", { paths = [{ name = "moment", message = "Use Temporal instead." }] }]
+"@typescript-eslint/no-restricted-imports" = ["error", {
+  paths = [{ name = "moment", message = "Use Temporal instead." }],
+}]
 ```
 
 Reported:

@@ -22,7 +22,10 @@ ESLint has deprecated this rule. Its replacement, `n/no-restricted-require` from
 
 ```toml bunfig.toml
 [lint.rules]
-no-restricted-modules = ["error", "fs", { name = "request", message = "Use fetch()." }]
+no-restricted-modules = ["error", "fs", {
+  name = "request",
+  message = "Use fetch().",
+}]
 ```
 
 Reported:

@@ -33,7 +33,9 @@ Off by default. To turn it on:
 
 ```toml bunfig.toml
 [lint.rules]
-"bun:test/no-restricted-matchers" = ["error", { toBeTruthy = "Use toBe(true) instead" }]
+"bun:test/no-restricted-matchers" = ["error", {
+  toBeTruthy = "Use toBe(true) instead",
+}]
 ```
 
 Reported:

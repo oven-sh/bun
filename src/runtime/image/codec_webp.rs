@@ -118,6 +118,42 @@ unsafe extern "C" {
     fn WebPMuxAssemble(mux: *mut WebPMux, assembled_data: *mut WebPData) -> c_int;
 }
 
+/// Whether `WebPGetInfo` gives the same answer for `head`, the first bytes of
+/// a longer file, as for the whole file. It does not when its walk to the
+/// VP8/VP8L frame header runs off the head. With a VP8X chunk it then reports
+/// the canvas and does not check it against the frame. A bitstream with no
+/// chunk header is sized by the bytes handed in.
+pub(crate) fn info_in_head(head: &[u8]) -> bool {
+    // A chunk header, then the longer (VP8) of the two frame headers.
+    const FRAME: usize = 8 + 10;
+    if head.len() < 12 + FRAME {
+        return false;
+    }
+    if &head[12..16] != b"VP8X" {
+        return matches!(&head[12..16], b"VP8 " | b"VP8L");
+    }
+    // An animated file answers with the canvas and never looks for a frame.
+    if head[20] & 0x02 != 0 {
+        return true;
+    }
+    let mut at: usize = 12 + FRAME;
+    loop {
+        let Some(chunk) = head.get(at..).filter(|rest| rest.len() >= 8) else {
+            return false;
+        };
+        if matches!(&chunk[0..4], b"VP8 " | b"VP8L") {
+            return chunk.len() >= FRAME;
+        }
+        let size =
+            u32::from_le_bytes(chunk[4..8].try_into().expect("infallible: size matches")) as usize;
+        // The step of libwebp's ParseOptionalChunks: the payload is padded to an even length.
+        let Some(next) = at.checked_add(8 + size + (size & 1)) else {
+            return false;
+        };
+        at = next;
+    }
+}
+
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     let mut cw: c_int = 0;
     let mut ch: c_int = 0;

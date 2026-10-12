@@ -18,6 +18,7 @@ pub(crate) use super::codec_gif as gif;
 pub(crate) use super::codec_jpeg as jpeg;
 pub(crate) use super::codec_png as png;
 pub(crate) use super::codec_webp as webp;
+use super::exif;
 
 /// Optional OS-native backend. Absent on Linux (and any platform we haven't
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The
@@ -340,7 +341,8 @@ pub(crate) struct Probe {
 /// Header-only dimensions probe for `.metadata()`. Decoding the full RGBA for
 /// a 1920×1080 PNG just to read the IHDR is ~70× slower than Sharp; this reads
 /// the few bytes each format needs and stops. Still subject to `max_pixels` so
-/// metadata() and bytes() agree on what's "too big".
+/// metadata() and bytes() agree on what's "too big". `probe_head` states which
+/// bytes each arm reads: keep it in step.
 pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     let w: u32;
@@ -422,6 +424,71 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         width: w,
         height: h,
     })
+}
+
+/// What the first bytes of a longer input say about its `metadata()` answer.
+pub(crate) enum HeadProbe {
+    /// The whole input gives this answer. The EXIF 90/270 swap is applied.
+    Final(Result<Probe, Error>),
+    /// A longer head can have the answer.
+    Longer,
+    /// Only the whole input has the answer.
+    #[cfg(any(target_os = "macos", windows))]
+    Whole,
+}
+
+/// `probe` plus the EXIF swap for `head`, the first bytes of a longer input.
+/// The answer is `Final` only when no byte after `head` can change it: the
+/// size, the format or the error. Each arm states what `probe` reads for that
+/// format.
+pub(crate) fn probe_head(head: &[u8], max_pixels: u64, auto_orient: bool) -> HeadProbe {
+    let decided = match Format::sniff(head) {
+        // The brand list of an `ftyp` box that runs past the head is not all here.
+        None => {
+            head.len() >= 16
+                && (&head[4..8] != b"ftyp"
+                    || u32::from_be_bytes(head[0..4].try_into().expect("infallible: size matches"))
+                        as usize
+                        <= head.len())
+        }
+        Some(Format::Png) => head.len() >= 24,
+        Some(Format::Gif) => head.len() >= 10,
+        Some(Format::Bmp) => bmp::header_in_head(head),
+        Some(Format::Webp) => webp::info_in_head(head),
+        Some(Format::Jpeg) => return probe_jpeg_head(head, max_pixels, auto_orient),
+        // No header probe. A system backend reads every byte. Without one the
+        // whole input is rejected the way `probe` rejects the head.
+        Some(Format::Tiff | Format::Heic | Format::Avif) => {
+            #[cfg(any(target_os = "macos", windows))]
+            if use_system() {
+                return HeadProbe::Whole;
+            }
+            true
+        }
+    };
+    if decided {
+        HeadProbe::Final(probe(head, max_pixels))
+    } else {
+        HeadProbe::Longer
+    }
+}
+
+fn probe_jpeg_head(head: &[u8], max_pixels: u64, auto_orient: bool) -> HeadProbe {
+    // The marker walk goes first: it is cheap, and libjpeg is slow to reject a cut header.
+    let Some(orientation) = exif::read_jpeg_head(head) else {
+        return HeadProbe::Longer;
+    };
+    let Some((w, h)) = jpeg::Handle::init(1).and_then(|handle| handle.read_header_of_head(head))
+    else {
+        return HeadProbe::Longer;
+    };
+    let rotate = orientation.transform().rotate;
+    let swap = auto_orient && (rotate == 90 || rotate == 270);
+    HeadProbe::Final(guard(w, h, max_pixels).map(|()| Probe {
+        format: Format::Jpeg,
+        width: if swap { h } else { w },
+        height: if swap { w } else { h },
+    }))
 }
 
 #[derive(Copy, Clone)]

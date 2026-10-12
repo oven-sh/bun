@@ -64,9 +64,15 @@ const ROWS: Row[] = [
   {
     // Same read job, different completion: the image's read chain is handed
     // ECANCELED at teardown and has to free itself.
-    name: "Bun.Image(Bun.file()).metadata()",
-    worker: `new Bun.Image(Bun.file(process.execPath).slice(0, 65536)).metadata().catch(() => {});`,
+    name: "Bun.Image(Bun.file()).bytes()",
+    worker: `new Bun.Image(Bun.file(process.execPath).slice(0, 65536)).bytes().catch(() => {});`,
     ticket: "read_file.rs",
+  },
+  {
+    // metadata() reads a head of a file named by path in the image's own job.
+    name: "Bun.Image(Bun.file()).metadata()",
+    worker: `new Bun.Image(Bun.file(process.execPath)).metadata().catch(() => {});`,
+    ticket: "Image.rs",
   },
   {
     name: "crypto.pbkdf2",

@@ -9624,7 +9624,14 @@ declare module "bun" {
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */
     toBase64(): Promise<string>;
-    /** Decode just enough to read width/height/format. */
+    /**
+     * Read width, height and format from the header. No pixel data is decoded.
+     *
+     * For a file named by path (a path string, `Bun.file(path)`, or a slice of
+     * it) this reads the first 64 KiB of the file, and more only when the
+     * header is longer. A file descriptor, a pipe and an S3 object are read
+     * whole.
+     */
     metadata(): Promise<Image.Metadata>;
 
     /** Populated after the first awaited terminal; `-1` before. */

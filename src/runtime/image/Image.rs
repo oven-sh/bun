@@ -118,6 +118,9 @@ pub(crate) enum Source {
     /// that kind of Blob — file, S3, pipe, slice) and chain the pipeline
     /// task off the resulting Promise. After the first read completes the
     /// source is swapped to `.owned` so subsequent terminals reuse the bytes.
+    /// One exception: a header-only terminal on a Blob that names a file by
+    /// path reads a head of the file on the worker (`blob_file_input`). The
+    /// source then stays a Blob, unless that read took the whole window.
     Blob(Strong),
 }
 
@@ -251,6 +254,12 @@ macro_rules! coerce_int {
 /// real-world image (a 268 MP JPEG is ~80 MB) while keeping a single
 /// path-driven request from materialising gigabytes before any guard runs.
 const MAX_INPUT_FILE_BYTES: u64 = 256 << 20;
+
+/// The first read of a file for a header-only kind (`metadata()`). It holds
+/// every header at a fixed position, and the header of most JPEGs.
+const HEAD_BYTES: usize = 64 << 10;
+/// A head that does not have the answer grows by this factor.
+const HEAD_GROWTH: usize = 4;
 
 // ───────────────────────────── lifecycle ────────────────────────────────────
 
@@ -787,12 +796,12 @@ impl Image {
             )),
             Source::Path(p) => Ok((
                 Input {
-                    path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
+                    file: InputFile::Path(std::ptr::from_ref::<ZStr>(p.as_zstr())),
                     ..Default::default()
                 },
                 Pin::NONE,
             )),
-            // schedule() peels this off before pin_for_task is reached.
+            // schedule() and encode_for_body() peel this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
         }
     }
@@ -929,7 +938,8 @@ impl Image {
         let cx = global.js_thread_of_caller(callframe);
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
-        // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
+        // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O,
+        // which is a head of the file (`PipelineTask::read_file`).
         if let Some(buf) = self.js_thread_bytes(callframe.this(), global) {
             match codecs::probe(buf, self.max_pixels) {
                 Ok(p) => {
@@ -1102,7 +1112,75 @@ impl Image {
     }
 }
 
+/// The worker-side input for a `Source::Blob` that names a file by path:
+/// `Bun.file(path)` and its slices. `None` for every other store (an fd, a
+/// pipe, S3, memory): only the Blob's own reader can read those.
+fn blob_file_input(blob_js: JSValue, unreadable: Unreadable) -> Option<Input> {
+    let blob = blob_js.as_class_ref::<Blob>()?;
+    let store = blob.store.get().as_ref()?;
+    let blob_store::Data::File(file) = &store.data else {
+        return None;
+    };
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return None;
+    };
+    Some(Input {
+        file: InputFile::Blob {
+            path: ZBox::from_bytes(path.slice()),
+            offset: blob.offset.get(),
+            size: blob.size.get(),
+            unreadable,
+        },
+        ..Default::default()
+    })
+}
+
+/// Stores on the file store of `blob_js` the mtime that the worker read. The
+/// Blob's own reader does the same, and `file.lastModified` reads it.
+fn set_last_modified(blob_js: JSValue, modified: jsc::JSTimeType) {
+    let Some(blob) = blob_js.as_class_ref::<Blob>() else {
+        return;
+    };
+    let Some(store) = blob.store.get().as_ref() else {
+        return;
+    };
+    if let blob_store::Data::File(file) = crate::webcore::blob::Store::data_mut(store) {
+        file.last_modified = modified;
+    }
+}
+
+/// `bytes` holds the start of a window of `file` that begins at `offset`.
+/// Reads on to `end` bytes of the window. A shorter result is the end of the
+/// file.
+fn read_window(file: &sys::File, bytes: &mut Vec<u8>, offset: u64, end: usize) -> sys::Result<()> {
+    let have = bytes.len();
+    if bytes.try_reserve_exact(end - have).is_err() {
+        return Err(sys::Error::oom());
+    }
+    // SAFETY: the spare bytes are only written, by `pread_all`, which returns
+    // how many of them it initialized.
+    let n = unsafe {
+        let spare = bun_core::vec::spare_bytes_mut(bytes);
+        file.pread_all(&mut spare[..end - have], offset + have as u64)?
+    };
+    // SAFETY: `pread_all` initialized the first `n` spare bytes.
+    unsafe { bun_core::vec::commit_spare(bytes, n) };
+    Ok(())
+}
+
 impl Image {
+    fn task(&self, input: Input, kind: Kind) -> PipelineTask {
+        PipelineTask {
+            pipeline: self.pipeline.get(),
+            input,
+            kind,
+            max_pixels: self.max_pixels,
+            auto_orient: self.auto_orient,
+            result: TaskResult::Err(codecs::Error::DecodeFailed),
+            file_modified: jsc::INIT_TIMESTAMP,
+        }
+    }
+
     fn schedule(
         &self,
         cx: &bun_jsc::JsThread<'_>,
@@ -1110,32 +1188,37 @@ impl Image {
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
-        if matches!(self.source.get(), Source::Blob(_)) {
-            return BlobReadChain::start(self, cx, this_value, kind, deliver);
-        }
-        let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
-            Ok(i) => i,
-            Err(PinError::Detached) => {
-                drop(deliver);
-                return Ok(JSPromise::rejected_promise(
-                    cx.global(),
-                    error_with_code(
+        let (input, pin) = if let Source::Blob(blob) = self.source.get() {
+            // A header-only kind reads a head of a file that the worker can
+            // open by path. Every other kind and store needs all the bytes,
+            // once, from the Blob's own reader.
+            let head_input = if kind.header_only() {
+                blob_file_input(blob.get(), Unreadable::Redo)
+            } else {
+                None
+            };
+            match head_input {
+                Some(input) => (input, Pin::NONE),
+                None => return BlobReadChain::start(self, cx, this_value, kind, deliver, None),
+            }
+        } else {
+            match self.pin_for_task(this_value, cx.global()) {
+                Ok(i) => i,
+                Err(PinError::Detached) => {
+                    drop(deliver);
+                    return Ok(JSPromise::rejected_promise(
                         cx.global(),
-                        zstr!("ERR_INVALID_STATE"),
-                        zstr!("Image: source ArrayBuffer was detached"),
-                    ),
-                )
-                .as_value(cx.global()));
+                        error_with_code(
+                            cx.global(),
+                            zstr!("ERR_INVALID_STATE"),
+                            zstr!("Image: source ArrayBuffer was detached"),
+                        ),
+                    )
+                    .as_value(cx.global()));
+                }
             }
         };
-        let work = PipelineTask {
-            pipeline: self.pipeline.get(),
-            input,
-            kind,
-            max_pixels: self.max_pixels,
-            auto_orient: self.auto_orient,
-            result: TaskResult::Err(codecs::Error::DecodeFailed),
-        };
+        let work = self.task(input, kind);
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
         jsc::Job::<PipelineTask>::schedule(
@@ -1166,50 +1249,30 @@ impl Image {
     ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
         // The body-init contract is synchronous, so a `.blob` source can't go
         // through the async read chain here. For the common case (file by path)
-        // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
-        // BunFiles would block or need network; refuse with a clear message until
-        // the body path is made `.Locked`.
-        if let Source::Blob(strong) = self.source.get() {
-            const REFUSE: &str = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
-            let blob_js = strong.get();
-            let Some(blob) = blob_js.as_class_ref::<Blob>() else {
-                return Err(global.throw(format_args!("{REFUSE}")));
-            };
-            // Braced so the `else` can't dangle onto the inner `if` — a null
-            // store would otherwise fall through to `pin_for_task`'s `.blob =>
-            // unreachable`. (The Strong-held wrapper makes that nominally
-            // unreachable, but this path should throw, not abort, when it isn't.)
-            if let Some(store) = blob.store.get() {
-                if let blob_store::Data::File(file) = &store.data {
-                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-                        let p = ZBox::from_bytes(path.slice());
-                        // `Source::Blob`'s `Strong` Drop releases the JS ref.
-                        self.source.set(Source::Path(p));
-                    } else {
-                        return Err(global.throw(format_args!("{REFUSE}")));
-                    }
-                } else {
-                    return Err(global.throw(format_args!("{REFUSE}")));
+        // `run()` reads the Blob's window of the file inline, with the guards
+        // of a path string. fd/S3-backed BunFiles would block or need network;
+        // refuse with a clear message until the body path is made `.Locked`.
+        let (input, _pin) = if let Source::Blob(blob) = self.source.get() {
+            match blob_file_input(blob.get(), Unreadable::Fail) {
+                Some(input) => (input, Pin::NONE),
+                None => {
+                    return Err(global.throw(format_args!(
+                        "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string"
+                    )));
                 }
-            } else {
-                return Err(global.throw(format_args!("{REFUSE}")));
             }
-        }
-        let (input, _pin) = match self.pin_for_task(this_value, global) {
-            Ok(i) => i,
-            Err(PinError::Detached) => {
-                return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
+        } else {
+            match self.pin_for_task(this_value, global) {
+                Ok(i) => i,
+                Err(PinError::Detached) => {
+                    return Err(
+                        global.throw(format_args!("Image: source ArrayBuffer was detached"))
+                    );
+                }
             }
         };
         // `_pin` unpins at scope exit, after `run()` is done with the bytes.
-        let mut task = PipelineTask {
-            pipeline: self.pipeline.get(),
-            input,
-            kind: Kind::Encode(self.pipeline.get().output),
-            max_pixels: self.max_pixels,
-            auto_orient: self.auto_orient,
-            result: TaskResult::Err(codecs::Error::DecodeFailed),
-        };
+        let mut task = self.task(input, Kind::Encode(self.pipeline.get().output));
         task.run();
         let result = mem::replace(
             &mut task.result,
@@ -1227,7 +1290,8 @@ impl Image {
             ))),
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
-            TaskResult::Meta { .. } => unreachable!(),
+            // Neither `Kind::Encode` nor `Unreadable::Fail` gives these.
+            TaskResult::Meta { .. } | TaskResult::Redo(_) => unreachable!(),
         }
     }
 }
@@ -1241,6 +1305,9 @@ impl Image {
 /// Promise-of-promise flattens, so the caller sees one `await` for
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
+/// `schedule()` does not come here for a header-only kind on a file that the
+/// worker can open by path. `then()` comes here for that file when it is not
+/// a regular file that the worker can read (`TaskResult::Redo`).
 struct BlobReadChain<'a> {
     image: *const Image,
     global: &'a JSGlobalObject,
@@ -1249,6 +1316,8 @@ struct BlobReadChain<'a> {
     kind: Kind,
     deliver: Deliver,
     outer: jsc::JSPromiseStrong,
+    /// The file of a `TaskResult::Redo`. It closes when the read has settled.
+    _keep_open: Option<sys::File>,
 }
 
 impl<'a> BlobReadChain<'a> {
@@ -1258,6 +1327,7 @@ impl<'a> BlobReadChain<'a> {
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
+        keep_open: Option<sys::File>,
     ) -> JsResult<JSValue> {
         // `deliver` may carry a `.write_dest` Strong; on these defensive
         // early-returns the chain is never created so its Drop can't free it.
@@ -1291,6 +1361,7 @@ impl<'a> BlobReadChain<'a> {
             kind,
             deliver,
             outer: jsc::JSPromiseStrong::init(cx.global()),
+            _keep_open: keep_open,
         });
         let promise = chain.outer.value();
         // `read_bytes_to_handler` stores the handler pointer and calls
@@ -1385,6 +1456,10 @@ pub(crate) struct PipelineTask {
     max_pixels: u64,
     auto_orient: bool,
     result: TaskResult,
+    /// The mtime of an `InputFile::Blob` file that `run()` read, or
+    /// `INIT_TIMESTAMP`. `then()` stores it on the Blob's store, as the Blob's
+    /// own reader does, so that `file.lastModified` stays the same.
+    file_modified: jsc::JSTimeType,
 }
 // SAFETY: `input` borrows bytes that are pinned (`Pin`) or owned by the Image
 // the job's Js side keeps alive; read only under the pool borrow. The rest is owned.
@@ -1462,23 +1537,52 @@ impl jsc::JobContext for PipelineTask {
     }
 }
 
-/// Bytes for the worker: a pinned/owned slice, a copy, or a path to read there.
+/// Bytes for the worker: a pinned/owned slice, a copy, or a file to read there.
 pub(crate) struct Input {
     // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
     // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
     bytes: bun_ptr::RawSlice<u8>,
-    // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
-    // held via BACKREF for the task's lifetime, same as `bytes` above.
-    path: Option<*const ZStr>,
+    file: InputFile,
     /// FastTypedArray inputs are tiny and GC-movable: copied instead of pinned.
+    /// For `InputFile::Blob`, `run()` leaves the complete window here.
     copied: Option<Vec<u8>>,
+}
+
+/// The file `run()` reads on the worker, when the input is one.
+pub(crate) enum InputFile {
+    None,
+    // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
+    // held via BACKREF for the task's lifetime, same as `Input::bytes`.
+    Path(*const ZStr),
+    /// A `Source::Blob` that names a file by path. The task owns a copy of
+    /// the path, because the source can be replaced while it runs.
+    Blob {
+        path: ZBox,
+        /// The Blob's window on the file. `size` is `blob::MAX_SIZE` when it
+        /// runs to the end of the file.
+        offset: u64,
+        size: u64,
+        /// What `run()` does with a file that it cannot read as a regular
+        /// file.
+        unreadable: Unreadable,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unreadable {
+    /// Report the error, as a path string does. For the synchronous
+    /// `encode_for_body`, which has no other reader.
+    Fail,
+    /// Return `TaskResult::Redo`: the Blob's own reader takes the input and
+    /// gives its own errors. It also reads pipes and devices.
+    Redo,
 }
 
 impl Default for Input {
     fn default() -> Self {
         Self {
             bytes: bun_ptr::RawSlice::EMPTY,
-            path: None,
+            file: InputFile::None,
             copied: None,
         }
     }
@@ -1521,6 +1625,17 @@ pub(crate) enum Kind {
     Placeholder,
 }
 
+impl Kind {
+    /// Whether the header of the input answers this kind. A file source then
+    /// reads a head of the file and not all of it.
+    fn header_only(&self) -> bool {
+        match self {
+            Kind::Metadata => true,
+            Kind::Encode(_) | Kind::Placeholder => false,
+        }
+    }
+}
+
 pub(crate) enum TaskResult {
     Encoded {
         out: codecs::Encoded,
@@ -1535,75 +1650,36 @@ pub(crate) enum TaskResult {
     },
     Err(codecs::Error),
     IoErr(sys::Error),
+    /// `InputFile::Blob` with `Unreadable::Redo`: `then()` gives the terminal
+    /// to `BlobReadChain`. A file that is not regular stays open until that
+    /// read settles, so that the writer of a FIFO always has a reader.
+    Redo(Option<sys::File>),
 }
 
 impl PipelineTask {
     /// Runs on a `WorkPool` thread. No JSC access.
     pub(crate) fn run(&mut self) {
-        // `self.input` was prepared on the JS thread by `pin_for_task`: either a
-        // pinned ArrayBuffer slice (pin lives until `then()` unpins), an owned
-        // buffer, or a path to read here.
-        let owned_file: Option<Vec<u8>>;
-        let input: &[u8] = if let Some(p) = self.input.path {
-            // SAFETY: `p` borrows `image.source.path`, which outlives the task
-            // because `this_ref` is held Strong while pending_tasks > 0.
-            let p: &ZStr = unsafe { &*p };
-            // The path string came straight from the constructor, so treat
-            // it as untrusted: open + fstat first instead of `readFrom`.
-            //   • !S_ISREG → ENODEV. `/dev/zero`/`/dev/urandom` would
-            //     otherwise pread forever (st_size=0, never returns 0) until
-            //     the doubling Vec OOMs the process; a FIFO with no writer
-            //     would park this WorkPool thread in-kernel forever.
-            //   • st_size cap → file-based decompression-bomb fails up
-            //     front with a clear error instead of materialising a
-            //     multi-GB encoded buffer before `maxPixels` even runs.
-            // O_NONBLOCK so the open itself can't block on a FIFO. POSIX-only:
-            // on Windows it omits FILE_SYNCHRONOUS_IO_NONALERT (overlapped
-            // handle) and the subsequent sync read fails EINVAL. Windows has
-            // no open-blocking FIFOs in the same sense; the !S_ISREG check
-            // below still rejects pipes/devices.
-            #[cfg(unix)]
-            let oflags = sys::O::RDONLY | sys::O::NONBLOCK;
-            #[cfg(not(unix))]
-            let oflags = sys::O::RDONLY;
-            let file = match sys::File::openat(sys::Fd::cwd(), p, oflags, 0) {
-                sys::Result::Ok(f) => f,
-                sys::Result::Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
+        // `self.input` was prepared on the JS thread: either a pinned
+        // ArrayBuffer slice (pin lives until `then()` unpins), an owned buffer,
+        // or a file to read here.
+        let owned_file: Vec<u8>;
+        let input: &[u8] = match self.input.file {
+            InputFile::None => self.input.slice(),
+            InputFile::Path(_) => {
+                let Some(bytes) = self.read_file() else {
                     return;
-                }
-            };
-            // `defer file.close()` — assume `sys::File` closes on Drop.
-            let st = match file.stat() {
-                sys::Result::Ok(s) => s,
-                sys::Result::Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
+                };
+                owned_file = bytes;
+                &owned_file
+            }
+            InputFile::Blob { .. } => {
+                let Some(bytes) = self.read_file() else {
                     return;
-                }
-            };
-            if !sys::S::ISREG(st.st_mode as _) {
-                self.result = TaskResult::IoErr(sys::Error {
-                    errno: sys::E::ENODEV as _,
-                    syscall: sys::Tag::read,
-                    path: p.as_bytes().to_vec().into_boxed_slice(),
-                    ..Default::default()
-                });
-                return;
+                };
+                // The complete window: `then()` gives it to the Image.
+                self.input.copied = Some(bytes);
+                self.input.slice()
             }
-            if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
-                self.result = TaskResult::Err(codecs::Error::TooManyPixels);
-                return;
-            }
-            match file.read_to_end() {
-                Ok(bytes) => owned_file = Some(bytes),
-                Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
-                    return;
-                }
-            }
-            owned_file.as_deref().unwrap()
-        } else {
-            self.input.slice()
         };
 
         // Header-only fast path for `.metadata()` — Sharp parses just the
@@ -1754,12 +1830,200 @@ impl PipelineTask {
         };
     }
 
+    /// Reads `self.input.file` on the worker. Returns the bytes of its whole
+    /// window. Returns `None` when `self.result` has the outcome: an error, a
+    /// `Redo`, or the answer of a header-only kind from a head of the window.
+    fn read_file(&mut self) -> Option<Vec<u8>> {
+        let (path, offset, size, unreadable): (&[u8], u64, u64, Unreadable) = match &self.input.file
+        {
+            InputFile::None => unreachable!(),
+            // SAFETY: `p` borrows `image.source.path`, which outlives the task
+            // because `this_ref` is held Strong while pending_tasks > 0.
+            InputFile::Path(p) => (
+                unsafe { &**p }.as_bytes(),
+                0,
+                crate::webcore::blob::MAX_SIZE,
+                Unreadable::Fail,
+            ),
+            InputFile::Blob {
+                path,
+                offset,
+                size,
+                unreadable,
+            } => (path.as_bytes(), *offset, *size, *unreadable),
+        };
+        let redo = unreadable == Unreadable::Redo;
+        let header_only = self.kind.header_only();
+        let fail = |e: sys::Error| {
+            if redo {
+                TaskResult::Redo(None)
+            } else {
+                TaskResult::IoErr(e.with_path(path))
+            }
+        };
+        // A path string comes straight from the constructor, so treat it as
+        // untrusted: open + fstat first instead of `readFrom`.
+        //   • !S_ISREG → ENODEV. `/dev/zero`/`/dev/urandom` would
+        //     otherwise pread forever (st_size=0, never returns 0) until
+        //     the doubling Vec OOMs the process; a FIFO with no writer
+        //     would park this WorkPool thread in-kernel forever.
+        //   • st_size cap → file-based decompression-bomb fails up
+        //     front with a clear error instead of materialising a
+        //     multi-GB encoded buffer before `maxPixels` even runs.
+        // `Unreadable::Redo` hands both cases to the Blob's own reader, which
+        // reads pipes and has no cap.
+        // O_NONBLOCK so the open itself can't block on a FIFO. POSIX-only:
+        // on Windows it omits FILE_SYNCHRONOUS_IO_NONALERT (overlapped
+        // handle) and the subsequent sync read fails EINVAL. Windows has
+        // no open-blocking FIFOs in the same sense; the !S_ISREG check
+        // below still rejects pipes/devices.
+        #[cfg(unix)]
+        let oflags = sys::O::RDONLY | sys::O::NONBLOCK;
+        #[cfg(not(unix))]
+        let oflags = sys::O::RDONLY;
+        let file = match sys::File::openat(sys::Fd::cwd(), path, oflags, 0) {
+            sys::Result::Ok(f) => f,
+            sys::Result::Err(e) => {
+                self.result = fail(e);
+                return None;
+            }
+        };
+        let st = match file.stat() {
+            sys::Result::Ok(s) => s,
+            sys::Result::Err(e) => {
+                self.result = fail(e);
+                return None;
+            }
+        };
+        if !sys::S::ISREG(st.st_mode as _) {
+            self.result = if redo {
+                TaskResult::Redo(Some(file))
+            } else {
+                TaskResult::IoErr(sys::Error {
+                    errno: sys::E::ENODEV as _,
+                    syscall: sys::Tag::read,
+                    path: path.to_vec().into_boxed_slice(),
+                    ..Default::default()
+                })
+            };
+            return None;
+        }
+        let file_size = u64::try_from(st.st_size.max(0)).expect("int cast");
+        // The bytes of the file that the window covers.
+        let len = file_size.saturating_sub(offset).min(size);
+        if redo {
+            // `st_size` is 0 for an empty file, and for a file whose length
+            // the file system does not report. The Blob's own reader decides.
+            if file_size == 0 {
+                self.result = TaskResult::Redo(None);
+                return None;
+            }
+            let mtime = sys::PosixStat::init(&st).mtime();
+            self.file_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
+        } else if len > MAX_INPUT_FILE_BYTES {
+            self.result = TaskResult::Err(codecs::Error::TooManyPixels);
+            return None;
+        }
+        if file_size == 0 || (!header_only && len == file_size) {
+            // The whole file, to its real end: `st_size` is only a hint.
+            let mut bytes = match file.read_to_end() {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    self.result = fail(e);
+                    return None;
+                }
+            };
+            if file_size == 0 {
+                bytes.drain(
+                    ..bytes
+                        .len()
+                        .min(usize::try_from(offset).unwrap_or(usize::MAX)),
+                );
+                bytes.truncate(usize::try_from(size).unwrap_or(usize::MAX));
+            }
+            return Some(bytes);
+        }
+
+        let len = usize::try_from(len).unwrap_or(usize::MAX);
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut end = if header_only {
+            len.min(HEAD_BYTES)
+        } else {
+            len
+        };
+        loop {
+            if let Err(e) = read_window(&file, &mut bytes, offset, end) {
+                self.result = fail(e);
+                return None;
+            }
+            // A short read is the end of the file, so the window has no more.
+            if end == len || bytes.len() < end {
+                return Some(bytes);
+            }
+            match codecs::probe_head(&bytes, self.max_pixels, self.auto_orient) {
+                codecs::HeadProbe::Final(Ok(p)) => {
+                    self.result = TaskResult::Meta {
+                        w: p.width,
+                        h: p.height,
+                        format: p.format,
+                    };
+                    return None;
+                }
+                codecs::HeadProbe::Final(Err(e)) => {
+                    self.result = TaskResult::Err(e);
+                    return None;
+                }
+                codecs::HeadProbe::Longer => end = end.saturating_mul(HEAD_GROWTH).min(len),
+                #[cfg(any(target_os = "macos", windows))]
+                codecs::HeadProbe::Whole => end = len,
+            }
+        }
+    }
+
     /// Back on the JS thread: publish dims, deliver the result. The pin and
     /// the hold on the Image are released when `js` drops at the end.
     pub(crate) fn then(mut self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
-        let promise = js.promise.swap();
         let image = js.image.image(cx);
+        if let InputFile::Blob { .. } = self.input.file {
+            if let Source::Blob(blob) = image.source.get() {
+                if self.file_modified != jsc::INIT_TIMESTAMP {
+                    set_last_modified(blob.get(), self.file_modified);
+                }
+            }
+            // `run()` read the complete window. As in `BlobReadChain`, the
+            // first resolver gives its bytes to the Image and later terminals
+            // use them. A worker can borrow the bytes of a source that is not
+            // a Blob any more, so that source stays.
+            if let Some(bytes) = self.input.copied.take() {
+                if matches!(image.source.get(), Source::Blob(_)) {
+                    image.source.set(Source::Owned(bytes));
+                }
+            }
+        }
+        if let TaskResult::Redo(keep_open) = &mut self.result {
+            let keep_open = keep_open.take();
+            let kind = self.kind;
+            let deliver = mem::replace(&mut js.deliver, Deliver::Uint8Array);
+            let Some(this_value) = image.this_ref.get().try_get() else {
+                return js.promise.reject(
+                    global,
+                    Ok(global.create_error_instance(format_args!(
+                        "Image: collected before read completed"
+                    ))),
+                );
+            };
+            // The Blob's own reader takes the terminal. A concurrent terminal
+            // can have given the Image its bytes while this task ran: then
+            // the source is not a Blob any more, and `schedule()` uses them.
+            let inner = if matches!(image.source.get(), Source::Blob(_)) {
+                BlobReadChain::start(image, cx, this_value, kind, deliver, keep_open)
+            } else {
+                image.schedule(cx, this_value, kind, deliver)
+            };
+            return js.promise.settle(global, inner);
+        }
+        let promise = js.promise.swap();
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `image.*` there would race the synchronous getters.
         match &self.result {
@@ -1931,6 +2195,8 @@ impl PipelineTask {
             }
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,
             TaskResult::IoErr(e) => promise.reject(global, Ok(e.to_js(global)))?,
+            // Returned above.
+            TaskResult::Redo(_) => unreachable!(),
         }
         Ok(())
     }

@@ -107,6 +107,17 @@ pub(crate) fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
     Ok(h)
 }
 
+/// Whether `parse_header` reads nothing past `head`, the first bytes of a
+/// longer file. It tests two things against the length of its input: the info
+/// header's length, which is file data, and the V4 alpha mask at offset 66.
+pub(crate) fn header_in_head(head: &[u8]) -> bool {
+    let Some(ih_size) = head.get(14..18) else {
+        return false;
+    };
+    let ih_size = u32::from_le_bytes(ih_size.try_into().expect("infallible: size matches"));
+    head.len() >= 70 && 14 + ih_size as usize <= head.len()
+}
+
 /// One contiguous run of bits in `mask` → (right-shift, bit-width).
 /// Separate from the mask read so the inner loop has no ctz/popcount.
 #[inline]

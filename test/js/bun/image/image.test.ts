@@ -1,6 +1,8 @@
 import { S3Client } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -172,8 +174,9 @@ describe("Bun.Image", () => {
     const img = new Bun.Image(Bun.file(p));
     const meta = await img.metadata();
     expect(meta).toEqual({ width: 4, height: 3, format: "png" });
-    // Second terminal on the same instance reuses the now-.owned bytes
-    // (no re-read).
+    // The file is smaller than the head that metadata() reads, so that read
+    // took all of it: the second terminal on the same instance reuses the
+    // now-.owned bytes (no re-read).
     const out = await img.png().bytes();
     expect(out[0]).toBe(0x89);
     // Blob#image() is the same construction.
@@ -1764,5 +1767,447 @@ describe("Bun.Image.backend", () => {
       const out = await new Bun.Image(cornersPng).heic().bytes();
       expect(out.length).toBeGreaterThan(0);
     }
+  });
+});
+
+// `metadata()` needs the header of the picture. For a file that the worker can
+// open by path (a path string, `Bun.file(path)` and its slices) it reads a
+// 64 KiB head and reads on only when the head cannot give the answer of the
+// whole file. An fd, a pipe and S3 can be read once, so they are read whole.
+describe("metadata() on a file source", () => {
+  const HEAD = 64 * 1024;
+  type Answer = Promise<Bun.Image.Metadata>;
+  // The answer or the error code, so that two routes to one file compare.
+  const settle = (p: Answer) =>
+    p.then(
+      m => `${m.width}x${m.height} ${m.format}`,
+      e => String(e.code),
+    );
+
+  function chunk(type: string, data: Uint8Array) {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, "latin1");
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(data, zlib.crc32(head.subarray(4))) >>> 0, 0);
+    return Buffer.concat([head, data, crc]);
+  }
+  // A valid RGBA PNG of about side * side * 4 bytes: level 0 stores the rows.
+  function storedPng(side: number): Buffer {
+    const row = 1 + side * 4;
+    const raw = Buffer.alloc(row * side);
+    for (let y = 0; y < side; y++) raw.fill((y * 7) & 255, y * row + 1, (y + 1) * row);
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(side, 0);
+    ihdr.writeUInt32BE(side, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk("IHDR", ihdr),
+      chunk("IDAT", zlib.deflateSync(raw, { level: 0 })),
+      chunk("IEND", Buffer.alloc(0)),
+    ]);
+  }
+  const large = storedPng(1024); // about 4 MB
+  const largeMeta = { width: 1024, height: 1024, format: "png" };
+
+  // Bytes that this process has read so far, as the kernel counts them.
+  const bytesRead = () => Number(/rchar: (\d+)/.exec(fs.readFileSync("/proc/self/io", "utf8"))![1]);
+  async function count<T>(f: () => Promise<T>) {
+    const before = bytesRead();
+    const value = await f();
+    return { value, read: bytesRead() - before };
+  }
+
+  test.skipIf(!isLinux)("reads a head of a large file, not the file", async () => {
+    using dir = tempDir("image-metadata-head", {});
+    const p = join(String(dir), "large.png");
+    fs.writeFileSync(p, large);
+    expect(large.length).toBeGreaterThan(4 * 1024 * 1024);
+
+    const forms: Record<string, () => Answer> = {
+      "new Bun.Image(path)": () => new Bun.Image(p).metadata(),
+      "Bun.file(path).image()": () => Bun.file(p).image().metadata(),
+      "new Bun.Image(Bun.file(path))": () => new Bun.Image(Bun.file(p)).metadata(),
+      "Bun.file(path).slice(0, 1 MiB).image()": () =>
+        Bun.file(p)
+          .slice(0, 1024 * 1024)
+          .image()
+          .metadata(),
+    };
+    const got: Record<string, unknown> = {};
+    for (const [name, f] of Object.entries(forms)) {
+      const { value, read } = await count(f);
+      got[name] = { value, head: read < 4 * HEAD };
+    }
+    // Two calls at once on one Image, and a later call: a head each.
+    const img = Bun.file(p).image();
+    const twice = await count(() => Promise.all([img.metadata(), img.metadata()]));
+    const again = await count(() => img.metadata());
+    expect({ ...got, twice: twice.read < 8 * HEAD, again: again.read < 4 * HEAD }).toEqual({
+      ...Object.fromEntries(Object.keys(forms).map(name => [name, { value: largeMeta, head: true }])),
+      twice: true,
+      again: true,
+    });
+    expect(twice.value).toEqual([largeMeta, largeMeta]);
+
+    // A file that is not a picture is rejected from its head.
+    const text = join(String(dir), "large.txt");
+    fs.writeFileSync(text, Buffer.alloc(4 * 1024 * 1024, "a"));
+    for (const f of [() => new Bun.Image(text).metadata(), () => Bun.file(text).image().metadata()]) {
+      const { value, read } = await count(() => settle(f()));
+      expect({ value, head: read < 4 * HEAD }).toEqual({ value: "ERR_IMAGE_UNKNOWN_FORMAT", head: true });
+    }
+
+    // An fd can be read once: all of it, and the Image keeps the bytes.
+    const fd = fs.openSync(p, "r");
+    try {
+      const fromFd = Bun.file(fd).image();
+      const first = await count(() => fromFd.metadata());
+      expect({ value: first.value, whole: first.read >= large.length }).toEqual({ value: largeMeta, whole: true });
+      const out = await count(() => fromFd.resize(4, 4).png().bytes());
+      expect(out.read).toBeLessThan(HEAD);
+      expect(await new Bun.Image(out.value).metadata()).toEqual({ width: 4, height: 4, format: "png" });
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  // ── Fixtures whose header is not in the first 64 KiB, or looks as if it is ──
+  const le32 = (n: number) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32LE(n >>> 0, 0);
+    return b;
+  };
+  const padded = (bytes: Uint8Array, length: number) =>
+    Buffer.concat([bytes, Buffer.alloc(Math.max(0, length - bytes.length))]);
+  // A JPEG marker segment, and `total` bytes of comment segments.
+  const segment = (marker: number, body: Uint8Array) =>
+    Buffer.concat([Buffer.from([0xff, marker, (body.length + 2) >> 8, (body.length + 2) & 255]), body]);
+  function comments(total: number) {
+    const out: Buffer[] = [];
+    while (total > 0) {
+      // A segment is 4 to 65537 bytes. Leave 4 or more for the last one.
+      const size = total <= 65537 ? total : Math.min(65537, total - 4);
+      out.push(segment(0xfe, Buffer.alloc(size - 4, 0x20)));
+      total -= size;
+    }
+    return Buffer.concat(out);
+  }
+  // SOI, then `segments`, then the rest of a JPEG that Bun.Image wrote.
+  const spliced = (jpeg: Uint8Array, ...segments: Uint8Array[]) =>
+    Buffer.concat([jpeg.subarray(0, 2), ...segments, jpeg.subarray(2)]);
+  function sosEnd(jpeg: Uint8Array) {
+    for (let i = 2; ; ) {
+      const length = (jpeg[i + 2] << 8) | jpeg[i + 3];
+      if (jpeg[i + 1] === 0xda) return i + 2 + length;
+      i += 2 + length;
+    }
+  }
+  // APP1/Exif with Orientation = 6: a quarter turn, so width and height swap.
+  // prettier-ignore
+  const exifQuarterTurn = segment(0xe1, Buffer.concat([Buffer.from("Exif\0\0"), Buffer.from([
+    0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, 0x00, 0x01,
+    0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ])]));
+  // RIFF/WEBP around `chunks`.
+  const riff = (...chunks: Uint8Array[]) => {
+    const body = Buffer.concat([Buffer.from("WEBP"), ...chunks]);
+    return Buffer.concat([Buffer.from("RIFF"), le32(body.length), body]);
+  };
+  const riffChunk = (tag: string, data: Uint8Array) =>
+    Buffer.concat([Buffer.from(tag), le32(data.length), data, Buffer.alloc(data.length & 1)]);
+  // The 10-byte header of a VP8 key frame, then `length - 10` bytes.
+  function vp8Frame(width: number, height: number, firstPartition: number, length: number) {
+    const b = Buffer.alloc(length, 0x41);
+    b.writeUIntLE((1 << 4) | (firstPartition << 5), 0, 3);
+    b.set([0x9d, 0x01, 0x2a], 3);
+    b.writeUInt16LE(width, 6);
+    b.writeUInt16LE(height, 8);
+    return b;
+  }
+  function vp8x(canvasWidth: number, canvasHeight: number, flags = 0) {
+    const b = Buffer.alloc(10);
+    b[0] = flags;
+    b.writeUIntLE(canvasWidth - 1, 4, 3);
+    b.writeUIntLE(canvasHeight - 1, 7, 3);
+    return riffChunk("VP8X", b);
+  }
+  function bmp(width: number, height: number, infoHeader: number, length: number) {
+    const b = Buffer.alloc(length);
+    b.write("BM", 0, "latin1");
+    b.writeUInt32LE(length, 2);
+    b.writeUInt32LE(14 + infoHeader, 10);
+    b.writeUInt32LE(infoHeader, 14);
+    b.writeInt32LE(width, 18);
+    b.writeInt32LE(height, 22);
+    b.writeUInt16LE(1, 26);
+    b.writeUInt16LE(24, 28);
+    return b;
+  }
+
+  test("gives the answer of the whole file, whatever the header needs", async () => {
+    const jpeg = Buffer.from(
+      await new Bun.Image(makePng(40, 24, (x, y) => [x * 6, y * 10, 128, 255])).jpeg({ quality: 90 }).bytes(),
+    );
+    const lossless = Buffer.from(await new Bun.Image(gradientPng).webp({ lossless: true }).bytes());
+    const gif = Buffer.concat([Buffer.from("GIF89a"), Buffer.from([33, 0, 21, 0])]);
+    const frame = riffChunk("VP8 ", vp8Frame(40, 30, 20, 64));
+    const profile = riffChunk("ICCP", Buffer.alloc(100_000, 1));
+    // A TEM marker has no length. The orientation reader takes the next two
+    // bytes (the APP0 marker) as one and lands on `exifQuarterTurn`, far away.
+    const tem = Buffer.alloc(300_000);
+    spliced(jpeg, Buffer.from([0xff, 0x01])).copy(tem);
+    exifQuarterTurn.copy(tem, 4 + 0xffe0);
+    const ftyp = Buffer.alloc(300_000);
+    ftyp.writeUInt32BE(100 * 1024, 0);
+    ftyp.write("ftypisom", 4, "latin1");
+    ftyp.write("avif", 80 * 1024, "latin1");
+
+    // name -> [bytes, the answer when every platform gives the same one]
+    const fixtures: Record<string, [Uint8Array, string?]> = {
+      "png": [large, "1024x1024 png"],
+      "png, one byte less than a head": [padded(cornersPng, HEAD - 1), "4x3 png"],
+      "png, a head": [padded(cornersPng, HEAD), "4x3 png"],
+      "png, one byte more than a head": [padded(cornersPng, HEAD + 1), "4x3 png"],
+      "gif": [padded(gif, 100_000), "33x21 gif"],
+      "bmp": [bmp(31, 17, 40, 100_000), "31x17 bmp"],
+      "bmp, info header longer than a head": [bmp(31, 17, 100_000, 120_000), "31x17 bmp"],
+      "webp": [padded(lossless, 100_000), "16x16 webp"],
+      "webp, frame after a long profile": [riff(vp8x(40, 30), profile, frame), "40x30 webp"],
+      "webp, canvas that is not the frame": [riff(vp8x(400, 300), profile, frame), "ERR_IMAGE_DECODE_FAILED"],
+      "webp, animated": [padded(riff(vp8x(400, 300, 0x02)), 100_000), "400x300 webp"],
+      "webp, frame with no chunk header": [riff(vp8Frame(320, 200, 100_000, 400_000)), "320x200 webp"],
+      "jpeg": [padded(jpeg, 100_000), "40x24 jpeg"],
+      "jpeg, 240 KB before the frame header": [padded(spliced(jpeg, comments(240_000)), 300_000), "40x24 jpeg"],
+      "jpeg, Exif after a head": [padded(spliced(jpeg, comments(70_000), exifQuarterTurn), 300_000), "24x40 jpeg"],
+      "jpeg, Exif in the head, frame header after it": [
+        padded(spliced(jpeg, exifQuarterTurn, comments(70_000)), 300_000),
+        "24x40 jpeg",
+      ],
+      "jpeg, TEM marker": [tem, "24x40 jpeg"],
+      "ftyp box longer than a head": [ftyp],
+      "tiff": [padded(Buffer.from("II*\0"), 100_000)],
+      "text": [Buffer.alloc(100_000, "a"), "ERR_IMAGE_UNKNOWN_FORMAT"],
+      "empty": [Buffer.alloc(0), "ERR_IMAGE_UNKNOWN_FORMAT"],
+      "png signature only": [cornersPng.subarray(0, 10), "ERR_IMAGE_DECODE_FAILED"],
+    };
+    // The scan header of a JPEG ends at the end of the head, or next to it.
+    for (const past of [-1, 0, 1]) {
+      const pad = HEAD + past - sosEnd(jpeg);
+      fixtures[`jpeg, scan header ends ${past} from the end of a head`] = [spliced(jpeg, comments(pad)), "40x24 jpeg"];
+    }
+
+    using dir = tempDir("image-metadata-parity", {});
+    const got: Record<string, unknown> = {};
+    const want: Record<string, unknown> = {};
+    let n = 0;
+    for (const [name, [bytes, answer]] of Object.entries(fixtures)) {
+      const p = join(String(dir), `${n++}.bin`);
+      fs.writeFileSync(p, bytes);
+      const whole = await settle(new Bun.Image(bytes).metadata());
+      got[name] = {
+        whole,
+        path: await settle(new Bun.Image(p).metadata()),
+        file: await settle(Bun.file(p).image().metadata()),
+        slice: await settle(Bun.file(p).slice(0, bytes.length).image().metadata()),
+      };
+      want[name] = { whole: answer ?? whole, path: whole, file: whole, slice: whole };
+    }
+    expect(got).toEqual(want);
+
+    // Options reach the head too.
+    const turned = join(String(dir), "turned.jpg");
+    fs.writeFileSync(turned, padded(spliced(jpeg, exifQuarterTurn), 100_000));
+    const big = join(String(dir), "large.png");
+    fs.writeFileSync(big, large);
+    expect({
+      path: await settle(new Bun.Image(turned, { autoOrient: false }).metadata()),
+      file: await settle(Bun.file(turned).image({ autoOrient: false }).metadata()),
+      pathMaxPixels: await settle(new Bun.Image(big, { maxPixels: 4 }).metadata()),
+      fileMaxPixels: await settle(Bun.file(big).image({ maxPixels: 4 }).metadata()),
+    }).toEqual({
+      path: "40x24 jpeg",
+      file: "40x24 jpeg",
+      pathMaxPixels: "ERR_IMAGE_TOO_MANY_PIXELS",
+      fileMaxPixels: "ERR_IMAGE_TOO_MANY_PIXELS",
+    });
+  });
+
+  // A Bun.file of 64 KiB or less is read whole by the head, and the Image
+  // keeps those bytes for later terminals. For a larger file the Image keeps
+  // nothing after metadata(), and a later terminal reads the file.
+  test.each([
+    ["64 KiB or less", 16],
+    ["more than 64 KiB", 256],
+  ])("a Bun.file of %s serves metadata() and then other terminals", async (_, side) => {
+    using dir = tempDir("image-metadata-orders", {});
+    const p = join(String(dir), "src.png");
+    fs.writeFileSync(p, storedPng(side));
+    const meta = { width: side, height: side, format: "png" };
+    const thumb = { width: 4, height: 4, format: "png" };
+    const sizeOf = async (bytes: Uint8Array) => await new Bun.Image(bytes).metadata();
+
+    const img = Bun.file(p).image();
+    expect(await img.metadata()).toEqual(meta);
+    expect(await img.metadata()).toEqual(meta);
+    expect(await sizeOf(await img.resize(4, 4).png().bytes())).toEqual(thumb);
+    expect(await img.metadata()).toEqual(meta);
+
+    const both = Bun.file(p).image();
+    const [m, out] = await Promise.all([both.metadata(), both.resize(4, 4).png().bytes()]);
+    expect([m, await sizeOf(out)]).toEqual([meta, thumb]);
+
+    // `file.lastModified` is as fresh as after any other read of the file.
+    fs.utimesSync(p, 1000, 1000);
+    const file = Bun.file(p);
+    const before = file.lastModified;
+    fs.utimesSync(p, 2000, 2000);
+    await file.image().metadata();
+    expect([before, file.lastModified]).toEqual([1_000_000, 2_000_000]);
+  });
+
+  test.skipIf(!isLinux)("a Bun.file of 64 KiB or less is read once for metadata() and a later terminal", async () => {
+    using dir = tempDir("image-metadata-small", {});
+    const p = join(String(dir), "src.png");
+    const small = storedPng(16);
+    fs.writeFileSync(p, small);
+    const img = Bun.file(p).image();
+    await img.metadata();
+    const later = await count(() => img.resize(4, 4).png().bytes());
+    expect(later.read).toBeLessThan(small.length);
+  });
+
+  // A slice is a window on the file. `new Response(img)` encodes the window,
+  // also when metadata() left no copy of it on the Image.
+  test.each([
+    ["64 KiB or less", 9],
+    ["more than 64 KiB", 200],
+  ])("a sliced Bun.file of %s is its window for metadata() and for new Response(img)", async (_, side) => {
+    using dir = tempDir("image-metadata-slice", {});
+    const p = join(String(dir), "two.bin");
+    const first = makePng(5, 7, () => [255, 0, 0, 255]);
+    fs.writeFileSync(p, Buffer.concat([first, storedPng(side)]));
+    const meta = { width: side, height: side, format: "png" };
+    const body = async (img: Bun.Image) => await new Bun.Image(await new Response(img.png()).bytes()).metadata();
+
+    expect(await body(Bun.file(p).slice(first.length).image())).toEqual(meta);
+    const img = Bun.file(p).slice(first.length).image();
+    expect(await img.metadata()).toEqual(meta);
+    expect(await body(img)).toEqual(meta);
+    expect(await img.metadata()).toEqual(meta);
+    // The window ends where the slice ends.
+    expect(await Bun.file(p).slice(0, first.length).image().metadata()).toEqual({ width: 5, height: 7, format: "png" });
+  });
+
+  test("a Bun.file that is not a readable regular file gives the errors of the Blob's reader", async () => {
+    using dir = tempDir("image-metadata-errors", { "empty.png": "" });
+    const missing = join(String(dir), "nope.png");
+    expect(await settle(Bun.file(missing).image().metadata())).toBe("ENOENT");
+    expect(
+      await settle(
+        Bun.file(join(String(dir), "empty.png"))
+          .image()
+          .metadata(),
+      ),
+    ).toBe("ERR_IMAGE_UNKNOWN_FORMAT");
+    if (isPosix) {
+      expect(await settle(Bun.file(String(dir)).image().metadata())).toBe("EISDIR");
+      expect(await settle(Bun.file("/dev/null").image().metadata())).toBe("ERR_IMAGE_UNKNOWN_FORMAT");
+    }
+    // A Response body reads the source before the pending metadata() settles.
+    const img = Bun.file(missing).image();
+    const pending = settle(img.metadata());
+    expect(() => new Response(img.png())).toThrow(/ENOENT/);
+    expect(await pending).toBe("ENOENT");
+    // The other order: bytes() gives the Image its bytes while the head is read.
+    const p = join(String(dir), "src.png");
+    fs.writeFileSync(p, storedPng(256));
+    const racing = Bun.file(p).image();
+    const [bytes, m] = await Promise.all([racing.resize(4, 4).png().bytes(), racing.metadata()]);
+    expect([bytes[0], m]).toEqual([0x89, { width: 256, height: 256, format: "png" }]);
+  });
+
+  // A pipe can be read once. metadata() takes all of it through the Blob's
+  // reader, the writer is never left without a reader, and the Image keeps
+  // the bytes for the next terminal.
+  test.skipIf(!isPosix)("a FIFO through Bun.file serves metadata() and then bytes()", async () => {
+    using dir = tempDir("image-metadata-fifo", {});
+    const fifo = join(String(dir), "fifo");
+    const src = join(String(dir), "src.png");
+    fs.writeFileSync(src, storedPng(256));
+    execFileSync("mkfifo", [fifo]);
+    await using writer = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("node:fs").writeFileSync(process.argv[1], require("node:fs").readFileSync(process.argv[2]))`,
+        fifo,
+        src,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const img = Bun.file(fifo).image();
+    expect(await img.metadata()).toEqual({ width: 256, height: 256, format: "png" });
+    const out = await img.resize(4, 4).png().bytes();
+    expect(await new Bun.Image(out).metadata()).toEqual({ width: 4, height: 4, format: "png" });
+    expect([await writer.stderr.text(), await writer.exited]).toEqual(["", 0]);
+  });
+
+  // `/dev/stdin` is a path, so metadata() reads a head of the file behind it
+  // at offset 0. It does not move the position that fd 0 shares on macOS.
+  test.skipIf(!isPosix)("/dev/stdin over a regular file serves metadata() and then bytes()", async () => {
+    using dir = tempDir("image-metadata-stdin", {});
+    const src = join(String(dir), "src.png");
+    fs.writeFileSync(src, storedPng(256));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const img = Bun.file("/dev/stdin").image();
+         const meta = await img.metadata();
+         const out = await img.resize(4, 4).png().bytes();
+         console.log(JSON.stringify([meta, await new Bun.Image(out).metadata()]));`,
+      ],
+      env: bunEnv,
+      stdin: Bun.file(src),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      { width: 256, height: 256, format: "png" },
+      { width: 4, height: 4, format: "png" },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Where the kernel does not count the bytes a process reads, the peak
+  // resident size shows them: a whole read puts the file in memory.
+  test.skipIf(isLinux)("does not bring a large file into memory", async () => {
+    using dir = tempDir("image-metadata-rss", {});
+    const p = join(String(dir), "large.png");
+    fs.writeFileSync(p, padded(cornersPng, 32 * 1024 * 1024));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const before = process.resourceUsage().maxRSS;
+         const byPath = await new Bun.Image(process.argv[1]).metadata();
+         const byFile = await Bun.file(process.argv[1]).image().metadata();
+         console.log(JSON.stringify({ byPath, byFile, grewKB: process.resourceUsage().maxRSS - before }));`,
+        p,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { byPath, byFile, grewKB } = JSON.parse(stdout);
+    const meta = { width: 4, height: 3, format: "png" };
+    expect({ byPath, byFile, small: grewKB < 24 * 1024 }).toEqual({ byPath: meta, byFile: meta, small: true });
+    expect(exitCode).toBe(0);
   });
 });

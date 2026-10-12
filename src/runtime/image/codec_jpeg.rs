@@ -98,6 +98,21 @@ impl Handle {
         }
         self.dimensions().ok_or(codecs::Error::DecodeFailed)
     }
+
+    /// `read_header` for the first bytes of a longer file: the SOF dimensions
+    /// only when libjpeg parsed the header without a warning. Its memory source
+    /// warns when it runs past `head`, so a parse that warned or failed may owe
+    /// that to the cut, and the whole file has to answer.
+    pub(crate) fn read_header_of_head(&self, head: &[u8]) -> Option<(u32, u32)> {
+        // SAFETY: `self` owns a live tjhandle; ptr/len come from a valid `&[u8]` borrowed for the call.
+        let rc = unsafe { tj3DecompressHeader(self.as_ptr(), head.as_ptr(), head.len()) };
+        // A tables-only stream returns 0 without folding the warning into `rc`.
+        // SAFETY: `self` owns a live tjhandle; this only reads a flag.
+        if rc != 0 || unsafe { tj3BunCompletedWithWarning(self.as_ptr()) } != 0 {
+            return None;
+        }
+        self.dimensions()
+    }
 }
 
 impl Drop for Handle {

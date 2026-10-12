@@ -5,8 +5,11 @@
 // numbers are reproducible across machines. Run with --sharp to include the
 // sharp column (requires `bun install` in this dir first).
 
-import zlib from "node:zlib";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import zlib from "node:zlib";
 
 // ─── synthetic 1920×1080 RGBA8 PNG ───────────────────────────────────────────
 
@@ -72,6 +75,14 @@ const jpeg4k = await new Bun.Image(makePng(3840, 2160)).jpeg({ quality: 92 }).by
 const jpegPhone = await new Bun.Image(makePng(4032, 3024)).jpeg({ quality: 92 }).bytes();
 process.stderr.write(`${(jpeg4k.length / 1024).toFixed(0)} KB / ${(jpegPhone.length / 1024).toFixed(0)} KB\n`);
 
+// The same pictures as files: metadata() on a file reads a head of it.
+const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "bun-image-bench-"));
+process.on("exit", () => fs.rmSync(fixtureDir, { recursive: true, force: true }));
+const pngFile = path.join(fixtureDir, "fixture.png");
+const jpegPhoneFile = path.join(fixtureDir, "phone.jpg");
+fs.writeFileSync(pngFile, pngFixture);
+fs.writeFileSync(jpegPhoneFile, jpegPhone);
+
 // ─── runners ────────────────────────────────────────────────────────────────
 
 const wantSharp = process.argv.includes("--sharp");
@@ -94,6 +105,26 @@ const ops = {
     fixture: pngFixture,
     bun: buf => new Bun.Image(buf).metadata(),
     sharp: buf => sharp(buf).metadata(),
+  },
+  "metadata() [PNG file, by path]": {
+    fixture: pngFile,
+    bun: file => new Bun.Image(file).metadata(),
+    sharp: file => sharp(file).metadata(),
+  },
+  "metadata() [PNG file, Bun.file]": {
+    fixture: pngFile,
+    bun: file => Bun.file(file).image().metadata(),
+    sharp: file => sharp(file).metadata(),
+  },
+  "metadata() [12MP JPEG file, by path]": {
+    fixture: jpegPhoneFile,
+    bun: file => new Bun.Image(file).metadata(),
+    sharp: file => sharp(file).metadata(),
+  },
+  "metadata() [12MP JPEG file, Bun.file]": {
+    fixture: jpegPhoneFile,
+    bun: file => Bun.file(file).image().metadata(),
+    sharp: file => sharp(file).metadata(),
   },
   "PNG resize 400×400 inside → jpeg q80": {
     fixture: pngFixture,

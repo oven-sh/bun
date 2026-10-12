@@ -59,6 +59,10 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
   codecs return `Encoded` with the right `free`, not a default_allocator slice.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
+- `metadata()` on a file named by path reads a head of the file (`HEAD_BYTES`
+  in `Image.rs`), not the file. `codecs::probe_head` decides whether that head
+  gives the answer of the whole file. Its arms state which bytes `codecs::probe`
+  reads per format: when `probe` reads more, change the arm too.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —
   highway's `foreach_target.h` has a TU-wide include guard that breaks with
   two highway TUs in one bundle.

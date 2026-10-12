@@ -52,6 +52,8 @@ const { width, height, format } = await new Bun.Image(input).metadata();
 // => { width: 1920, height: 1080, format: "jpeg" }
 ```
 
+For a file named by path (a path string, `Bun.file(path)`, or a slice of it), `metadata()` reads the first 64 KiB of the file. It reads more only when the header is longer, for example a JPEG with a large embedded profile, and for TIFF, HEIC and AVIF, which the OS codec reads whole. A file larger than 64 KiB is not kept in memory, so a later terminal on the same image reads the file then. A file descriptor, a pipe and an S3 object can be read only once: `metadata()` reads all of it, and the image keeps the bytes for later terminals.
+
 ## Resize
 
 ```ts

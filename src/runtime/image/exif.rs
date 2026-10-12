@@ -140,6 +140,53 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
     Orientation::Normal
 }
 
+/// `read_jpeg` for the first bytes of a longer file. `Some` when the whole file
+/// gives the same orientation and the first SOS header ends inside `head`, so
+/// a header parse of `head` can succeed. `None` when either needs more bytes.
+pub(crate) fn read_jpeg_head(head: &[u8]) -> Option<Orientation> {
+    if head.len() < 4 || head[0] != 0xFF || head[1] != 0xD8 {
+        return None;
+    }
+    let mut found: Option<Orientation> = None;
+    let mut i: usize = 2;
+    while i + 4 <= head.len() {
+        if head[i] != 0xFF {
+            i += bun_core::strings::index_of_char_usize(&head[i..], 0xFF)?;
+            continue;
+        }
+        let marker = head[i + 1];
+        match marker {
+            0xFF => {
+                i += 1;
+                continue;
+            }
+            0x00 | 0xD0..=0xD8 => {
+                i += 2;
+                continue;
+            }
+            // EOI before SOS: no header parse succeeds, so the whole file decides.
+            0xD9 => return None,
+            _ => {}
+        }
+        let seglen = ((head[i + 2] as usize) << 8) | (head[i + 3] as usize);
+        if seglen < 2 || i + 2 + seglen > head.len() {
+            return None;
+        }
+        if marker == 0xDA {
+            return Some(found.unwrap_or(Orientation::Normal));
+        }
+        // `read_jpeg` returns at the first Exif segment; later ones do not count.
+        if found.is_none() && marker == 0xE1 && seglen >= 8 {
+            let seg = &head[i + 4..i + 2 + seglen];
+            if seg.len() >= 6 && &seg[0..6] == b"Exif\x00\x00" {
+                found = Some(parse_tiff(&seg[6..]).unwrap_or(Orientation::Normal));
+            }
+        }
+        i += 2 + seglen;
+    }
+    None
+}
+
 fn parse_tiff(tiff: &[u8]) -> Option<Orientation> {
     if tiff.len() < 8 {
         return None;

@@ -2260,6 +2260,8 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     for info in &mut shape.index {
                         info.value = self.get_widened_type(info.value);
+                        // A new `IndexInfo`.
+                        info.is_enum_number_index_info = false;
                     }
                     self.intern(TypeData::Synth(shape))
                 }
@@ -2294,7 +2296,11 @@ impl<'p, 's> Checker<'p, 's> {
         for info in self.structured(members).index_infos() {
             let value = self.instantiate(info.value, members.mapper);
             let value = self.get_widened_type(value);
-            shape.index.push(IndexInfo { value, ..*info });
+            shape.index.push(IndexInfo {
+                value,
+                is_enum_number_index_info: false,
+                ..*info
+            });
         }
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(ty);
         shape.mapper = self.mapper_of_object_literal_type(ty);

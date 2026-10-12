@@ -207,7 +207,10 @@ impl NoImplicitCoercion {
         let is_numeric = if cx.language().is_oxlint { is_already_numeric } else { is_numeric };
         match op {
             UnOp::Not if self.checks_double_negation => {
-                if let Some(inner) = operand_of(operand, UnOp::Not) {
+                // For oxc the operand of `!(!a)` is the parentheses.
+                if let Some(inner) = operand_of(operand, UnOp::Not)
+                    && !(cx.language().is_oxlint && operand.is_parenthesized())
+                {
                     let remedy = match is_boolean_available(e) {
                         true => Remedy::Fix,
                         false => Remedy::Suggestion,

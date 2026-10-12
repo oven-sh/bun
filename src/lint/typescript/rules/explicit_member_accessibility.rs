@@ -90,7 +90,11 @@ impl ExplicitMemberAccessibility {
         match check {
             Level::Explicit => {
                 let key = || match member.key() {
-                    Some(key) => Some(key.inner_span(cx.file())),
+                    // With the parentheses of `[(a)]`.
+                    Some(key) => Some(match key.kind() {
+                        KeyKind::Computed(e) => e.outer_span(),
+                        _ => key.inner_span(cx.file()),
+                    }),
                     None => member.constructor_keyword().map(|it| it.span()),
                 };
                 report_missing(|| get_member_head_loc(member), key, node_type, name, cx);

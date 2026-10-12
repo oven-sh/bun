@@ -72,6 +72,18 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).toContain("console.log(this)");
       expect(result).not.toContain("console.log(exports)");
     });
+
+    test("declarations next to a top-level using are hoisted out of the lowered try block", () => {
+      const result = transpiler.transformSync("using handle = open(); const a = 1; let b = 2; var c = 3;");
+      // The lowering's try/finally survives inside the IIFE...
+      expect(result).toContain("__callDispose");
+      // ...while every declaration is hoisted next to it, at the top level.
+      expect(result).toMatch(/^var handle;$/m);
+      expect(result).toMatch(/^var a;$/m);
+      expect(result).toMatch(/^var b;$/m);
+      expect(result).toMatch(/^var c;$/m);
+      expect(result).not.toMatch(/^\s+(var|let|const) (handle|a|b|c)\b/m);
+    });
   });
 
   describe("REPL session with node:vm", () => {

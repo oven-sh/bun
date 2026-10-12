@@ -73,6 +73,13 @@ A few defaults differ from ESLint's, so that ordinary code isn't reported:
 - A name that starts with `_` may be unused.
 - `done && done();` and `ok ? resolve() : reject();` are fine as statements.
 - A no-break space or a full-width space is only reported in code, not in text, comments or JSX.
+- `process.exit()` ends a `case`, and `// fall-through` or `// no break` marks one that goes on.
+- `{false && <Debug />}` is a fine way to switch something off for a while.
+- An array of JSX elements needs keys only where React renders it as a list.
+- `import React` counts as used in a file with JSX.
+
+Each rule's page says what differs and how to change it.
+
 - In `.d.ts` files only the errors run.
 - An `eslint-disable` comment for a rule that is off is left alone.
 

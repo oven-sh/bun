@@ -1,3 +1,4 @@
+use bun_lint::fix::Around;
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::oxlint::has_module_syntax;
@@ -886,7 +887,7 @@ fn handle_fixes<'a>(
 
 /// Whether evaluating `e` runs no other code, so nothing is lost if it's deleted. Anything not listed here counts as impure:
 /// calls, `new`, `await`, member access (it can run a getter), spread, tagged templates, JSX.
-fn is_pure(e: Expr) -> bool {
+pub(crate) fn is_pure(e: Expr) -> bool {
     let mut rest = vec![e];
     while let Some(e) = rest.pop() {
         match e.kind() {
@@ -957,6 +958,10 @@ fn is_classic_script<'a>(file: &'a File<'a>) -> bool {
 ///
 /// A parameter stays, because the number of parameters can matter: Express takes a function with four for an error handler. So
 /// does a name in a destructuring pattern, which reads a property or runs an iterator.
+///
+/// Imports are the exception. An unused import always goes. `import { a } from "b"` goes as a whole, even though the module is then
+/// no longer loaded for its side effects, as in ESLint, oxlint and every "remove unused imports" command. `import a from "b"`
+/// becomes `import "b"`.
 fn can_be_removed_unseen<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
     let file = symbol.file();
     if symbol.scope() == file.top_level_scope() && is_classic_script(file) {
@@ -1156,10 +1161,13 @@ impl NoUnusedVars {
             .data("additional", self.unused_message_data(kind, cx.file()))
             .hint(self.hint(def, kind))
             .suggest_with(REMOVE_VAR, &[("varName", name.bytes())], |fixer| {
-                if cx.language().stands_alone && !can_be_removed_unseen(symbol, def) {
-                    return None;
+                if !cx.language().stands_alone {
+                    return handle_fixes(fixer, variable, def, at);
                 }
-                handle_fixes(fixer, variable, def, at)
+                let fix = handle_fixes(fixer, variable, def, at).filter(|_| can_be_removed_unseen(symbol, def))?;
+                // A statement that had its lines to itself takes them with it.
+                let lines = Around::of(cx.text(), fix.span).whole_lines().filter(|_| fix.text.is_empty());
+                Some(Fix { span: lines.unwrap_or(fix.span), ..fix })
             });
     }
 

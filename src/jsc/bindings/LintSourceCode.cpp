@@ -46,14 +46,11 @@ ALWAYS_INLINE bool getInt32Pair(JSValue range, int32_t& first, int32_t& second)
     if (!range.isCell() || !isJSArray(range.asCell())) [[unlikely]]
         return false;
     JSArray* array = asArray(range);
-    if (array->indexingType() != ArrayWithInt32 || array->length() < 2) [[unlikely]]
+    // Not with a hole.
+    if (array->indexingType() != ArrayWithInt32 || !array->canGetIndexQuickly(0u) || !array->canGetIndexQuickly(1u)) [[unlikely]]
         return false;
-    JSValue start = array->getIndexQuickly(0), end = array->getIndexQuickly(1);
-    // A hole.
-    if (!start || !end) [[unlikely]]
-        return false;
-    first = start.asInt32();
-    second = end.asInt32();
+    first = array->getIndexQuickly(0).asInt32();
+    second = array->getIndexQuickly(1).asInt32();
     return true;
 }
 

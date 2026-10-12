@@ -25,13 +25,14 @@ use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::language::InferGlobals;
 use bun_lint::linter::{
     Config, FileConfig, InJavaScript, LegacyFile, LegacyOptions, Registry, ResolvedConfig,
-    formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key,
+    formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
     plugin_of_oxlint,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::{Plugin, minor_of};
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
+use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
 /// The parsed `package.json` of the package that `specifier` names, found in `node_modules` from `directory` up. `None`
@@ -99,16 +100,24 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
 ///
 /// The first `rules` only sets options. A later setting that's just a severity keeps them, whether it comes from a preset
 /// below or from the user, so these are the rules' default options in a project with no config file.
+///
+/// `react/jsx-uses-react` reports nothing. In a file with JSX it keeps `no-unused-vars` quiet about `React`, or about the `h` of
+/// a `@jsx h` comment. It's an error so that `--quiet` doesn't skip it.
 const BUILT_IN: &[u8] = br#"[
     { "ignores": ["**/.git/", "**/*.min.js"] },
     { "files": ["**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"] },
     {
         "rules": {
+            "no-constant-binary-expression": ["off", { "allowLiteralToggle": true }],
+            "no-empty-pattern": ["off", { "allowObjectPatternsAsParameters": true }],
             "no-fallthrough": ["off", { "commentPattern": "(?i:falls?[\\s-]?through|no\\s?break)" }],
             "no-irregular-whitespace": ["off", {
                 "skipComments": true, "skipTemplates": true, "skipJSXText": true, "skipRegExps": true
             }],
+            "no-loss-of-precision": ["off", { "ignoreDecimals": true }],
             "no-unused-expressions": ["off", { "allowShortCircuit": true, "allowTernary": true }],
+            "react/jsx-key": ["off", { "checkArraysOutsideJSX": false }],
+            "@typescript-eslint/no-loss-of-precision": ["off", { "ignoreDecimals": true }],
             "@typescript-eslint/no-unused-expressions": ["off", { "allowShortCircuit": true, "allowTernary": true }],
             "@typescript-eslint/no-misused-promises": ["off", { "checksVoidReturn": {
                 "arguments": true, "attributes": false, "inheritedMethods": true,
@@ -170,6 +179,7 @@ const BUILT_IN: &[u8] = br#"[
             "bun:test/valid-expect-in-promise": "error"
         }
     },
+    { "rules": { "react/jsx-uses-react": "error" } },
     {
         "$forReact": true,
         "rules": {
@@ -420,7 +430,7 @@ pub(crate) fn severity_name(severity: Severity) -> Json {
 }
 
 /// `getShorthandName(name, "eslint-plugin")`
-fn plugin_shorthand(name: &[u8]) -> Vec<u8> {
+pub(crate) fn plugin_shorthand(name: &[u8]) -> Vec<u8> {
     if let [b'@', scoped @ ..] = name
         && let Some(slash) = strings::index_of_char_usize(scoped, b'/')
     {
@@ -531,9 +541,55 @@ pub(crate) fn is_category(name: &[u8]) -> bool {
     CATEGORIES.contains(&name) || matches!(name, b"all" | b"nursery")
 }
 
-/// oxlint's `-A`, `-W` and `-D`, one after the other. They come after the `rules` of the file and
-/// before its `overrides`. A category is about all of its rules, also those that `rules` names.
-fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u8>)]) {
+/// Collects the `rules` of every file that `json` extends. oxlint keeps the first setting it finds for a rule, and it looks
+/// at the last entry of `extends` first, so that's the order here.
+fn rules_of_extended(
+    json: &Json,
+    directory: &[u8],
+    load: &mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
+    into: &mut Vec<(Vec<u8>, Json)>,
+) {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return;
+    }
+    let extends = match json.get(b"extends") {
+        Some(Json::Array(items)) => &items[..],
+        Some(one) => std::slice::from_ref(one),
+        None => &[],
+    };
+    for extended in extends.iter().rev() {
+        let (file, directory) = match extended.as_str() {
+            // An `oxlint.config.ts` extends objects it has imported.
+            None => (Cow::Borrowed(extended), directory.to_vec()),
+            Some(name) => {
+                let name = paths::portable(directory, name);
+                let Some(file) = load(directory, &name) else {
+                    continue;
+                };
+                let path = paths::resolve(directory, &name);
+                (Cow::Owned(file), paths::dirname(&path).to_vec())
+            }
+        };
+        let rules = file.get(b"rules").and_then(Json::as_object);
+        into.extend(rules.unwrap_or_default().iter().cloned());
+        rules_of_extended(&file, &directory, load, into);
+    }
+}
+
+/// Whether an `.oxlintrc.json` means a rule of a JavaScript plugin by `id`. `-A`, `-W` and `-D` never change those.
+fn is_of_js_plugin(id: &[u8]) -> bool {
+    let prefix = parse_rule_id(id).0;
+    !prefix.is_empty() && Plugin::of_oxlint_prefix(&plugin_of_oxlint(prefix)).is_none()
+}
+
+/// oxlint's `-A`, `-W` and `-D`, one after the other. They come after the `rules` of the file and of what it extends
+/// (`inherited`, from [`rules_of_extended`]), and before its `overrides`. A category is about all of its rules, also those
+/// that `rules` names.
+fn apply_filters(
+    entries: &mut Vec<(Vec<u8>, Json)>,
+    filters: &[(Severity, Vec<u8>)],
+    inherited: &[(Vec<u8>, Json)],
+) {
     type Entries = Vec<(Vec<u8>, Json)>;
     /// The object `name` of the file, which is made if it is not there.
     fn section<'e>(entries: &'e mut Entries, name: &[u8]) -> Option<&'e mut Entries> {
@@ -549,7 +605,8 @@ fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u
             _ => None,
         }
     }
-    /// Gives the entries that `is_meant` holds for the severity, and adds one for `key` if there is none. The options stay.
+    /// Gives the entries that `is_meant` holds for the severity, and adds one for `key` if there is none. The options stay,
+    /// unless the rule is turned off: oxlint forgets the rule then, so `-A eqeqeq -D eqeqeq` ends up with the default options.
     fn put(
         section: Option<&mut Entries>,
         key: &[u8],
@@ -563,7 +620,9 @@ fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u
         for (_, value) in section.iter_mut().filter(|it| is_meant(&it.0)) {
             is_there = true;
             match value {
-                Json::Array(items) if !items.is_empty() => items[0] = severity_name(severity),
+                Json::Array(items) if !items.is_empty() && severity != Severity::Off => {
+                    items[0] = severity_name(severity);
+                }
                 value => *value = severity_name(severity),
             }
         }
@@ -584,17 +643,34 @@ fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u
     if !filters.is_empty() {
         entries.push((b"$categoriesOfTheFile".to_vec(), of_the_file));
     }
+    // oxlint merges the files first, so a flag changes an inherited rule like one of the file's own, and the options stay.
+    let has_key = |rules: &[(Vec<u8>, Json)], key: &[u8]| {
+        rules.iter().any(|it| oxlint_rule_key(&it.0) == key)
+    };
+    if let Some(own) = section(entries, b"rules").filter(|_| !inherited.is_empty()) {
+        for (id, setting) in inherited {
+            if !has_key(own, &oxlint_rule_key(id)) {
+                own.push((id.clone(), setting.clone()));
+            }
+        }
+    }
     for (severity, name) in filters {
         if name == b"all" {
-            if *severity == Severity::Off {
-                entries.retain(|it| it.0 != b"rules");
+            if *severity == Severity::Off
+                && let Some(own) = section(entries, b"rules")
+            {
+                // Dropping an inherited rule here would bring back what the extended file says about it.
+                own.retain(|it| {
+                    is_of_js_plugin(&it.0) || has_key(inherited, &oxlint_rule_key(&it.0))
+                });
+                put(Some(own), b"", Severity::Off, |it| !is_of_js_plugin(it));
             }
             CATEGORIES
                 .iter()
                 .for_each(|category| put_category(entries, category, *severity));
         } else if CATEGORIES.contains(&&name[..]) || name == b"nursery" {
             put_category(entries, name, *severity);
-        } else {
+        } else if !is_of_js_plugin(name) {
             for key in oxlint_filter_keys(name) {
                 put(section(entries, b"rules"), &key, *severity, |it| {
                     oxlint_rule_key(it) == key
@@ -670,6 +746,30 @@ impl<'l> Loader<'l> {
         if !advice.contains(&line) {
             advice.push(line);
         }
+    }
+
+    /// Adds a line of [`Config::advice`]. "<package> <version> is installed, but .. match <ours>" has the version from the
+    /// plugin's `meta.version`, which can be stale: eslint-plugin-react-hooks 7.1.1 says 7.0.0. Its package.json decides.
+    fn advise_if_true(&self, line: &[u8], directory: &[u8]) {
+        let words: Vec<&[u8]> = strings::split(line, b" ").collect();
+        if let [package, said, .., b"match", ours] = words[..]
+            && let Some(installed) = installed_version(directory, package)
+            && installed != said
+        {
+            if minor_of(&installed) < minor_of(ours) {
+                self.advise(
+                    [
+                        package,
+                        b" ",
+                        &installed,
+                        &line[package.len() + 1 + said.len()..],
+                    ]
+                    .concat(),
+                );
+            }
+            return;
+        }
+        self.advise(line.to_vec());
     }
 
     /// Says so if the `typescript` of the project is older than the one as which types are checked. It reads one file.
@@ -1008,6 +1108,18 @@ impl<'l> Loader<'l> {
     /// An `.oxlintrc.json`, with what the command line adds.
     fn rc(&self, path: &[u8], mut json: Json) -> Result<Config, Fatal> {
         let options = self.options;
+        let mut load = |directory: &[u8], name: &[u8]| {
+            // It is a path if it looks like one: it has an extension. oxlint does not know the names of packages.
+            let has_extension = strings::last_index_of_char(paths::basename(name), b'.') > Some(0);
+            if !name.starts_with(b".") && !paths::is_absolute(name) && !has_extension {
+                return None;
+            }
+            bun_lint::json::parse(&fs::read(&paths::resolve(directory, name)).ok()?)
+        };
+        let mut inherited = Vec::new();
+        if !options.filters.is_empty() {
+            rules_of_extended(&json, paths::dirname(path), &mut load, &mut inherited);
+        }
         if let Json::Object(entries) = &mut json {
             let mut put =
                 |key: &[u8], add: Vec<Json>| match entries.iter_mut().find(|it| it.0 == key) {
@@ -1057,7 +1169,7 @@ impl<'l> Loader<'l> {
                     self.overrides(Shape::Oxlint, paths::dirname(path)),
                 );
             }
-            apply_filters(entries, &options.filters);
+            apply_filters(entries, &options.filters, &inherited);
             if !options.plugins.is_empty() {
                 let mut plugins: Vec<Json> = match entries.iter().find(|it| it.0 == b"plugins") {
                     Some((_, Json::Array(plugins))) => plugins.clone(),
@@ -1100,14 +1212,6 @@ impl<'l> Loader<'l> {
                 ));
             }
         }
-        let mut load = |directory: &[u8], name: &[u8]| {
-            // It is a path if it looks like one: it has an extension. oxlint does not know the names of packages.
-            let has_extension = strings::last_index_of_char(paths::basename(name), b'.') > Some(0);
-            if !name.starts_with(b".") && !paths::is_absolute(name) && !has_extension {
-                return None;
-            }
-            bun_lint::json::parse(&fs::read(&paths::resolve(directory, name)).ok()?)
-        };
         let mut sources = Vec::new();
         let mut load_plugin = |directory: &[u8], specifier: &[u8], alias: Option<&[u8]>| {
             let loaded = self.js_plugins.load(directory, specifier, alias);
@@ -1307,7 +1411,7 @@ impl<'l> Loader<'l> {
             self.warn(&[note]);
         }
         for line in config.advice() {
-            self.advise(line.clone());
+            self.advise_if_true(line, paths::dirname(path));
         }
         self.warn_about_unknown_rules(&config, &paths::relative(self.cwd(), path));
         let option = |name: &[u8]| config.option_of_oxlint(name);

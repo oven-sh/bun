@@ -118,12 +118,16 @@ pub(super) fn report(
     notes.extend(configs.note().map(<[u8]>::to_vec));
 
     let loaded = modules.packages();
+    let is_not_supported = |name: &[u8]| plugins.not_supported.iter().any(|it| it == name);
     let packages = Packages::new(
         cwd,
-        &|name| is_for_formatting(name) && !plugins.not_supported.iter().any(|it| it == name),
+        &|name| is_for_formatting(name) && !is_not_supported(name),
         &|name| {
             if for_files.iter().any(|it| it == name) {
                 Some(Need::Files)
+            } else if files.left_for_plugins > 0 && (name == b"prettier" || is_not_supported(name))
+            {
+                Some(Need::SkippedFiles)
             } else if let Some(file) = &file {
                 (loaded.iter().any(|it| it == name)).then(|| Need::Configuration(file.clone()))
             } else {
@@ -240,6 +244,10 @@ pub(super) fn report(
         write_count(&mut out, colors, files.left_for_plugins, &what);
         let hint = "Use --allow-unsupported to format them without it";
         pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
+        if is_not_supported(b"prettier-plugin-tailwindcss") {
+            let hint = "Or replace prettier-plugin-tailwindcss with [format.sortTailwindcss] in bunfig.toml";
+            pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
+        }
     }
     let rows: [(&str, &[Vec<u8>]); 5] = [
         ("Built-in plugins:", &plugins.built_in),

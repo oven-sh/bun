@@ -9,6 +9,8 @@ use smallvec::SmallVec;
 /// Disallow expressions where the operation doesn't affect the value.
 pub struct NoConstantBinaryExpression {
     check_relational_comparisons: Option<bool>,
+    /// `allowLiteralToggle`, which only `bun lint` has.
+    allow_literal_toggle: bool,
 }
 
 const CONSTANT_BINARY_OPERAND: Message = Message::new(
@@ -304,6 +306,7 @@ impl Rule for NoConstantBinaryExpression {
     fn new(options: &Options) -> Self {
         NoConstantBinaryExpression {
             check_relational_comparisons: options.object(0).bool("checkRelationalComparisons"),
+            allow_literal_toggle: options.object(0).bool_or("allowLiteralToggle", false),
         }
     }
 
@@ -334,6 +337,7 @@ impl Rule for NoConstantBinaryExpression {
             return;
         };
         let may_be_constant = match op {
+            BinOp::And | BinOp::Or if self.allow_literal_toggle && is_toggle(left) => false,
             // That is all of the test.
             BinOp::And | BinOp::Or => is_constant_in(left, true, &mut cx.state),
             BinOp::Nullish => !matches!(left.tag(), ExprTag::Dot | ExprTag::Index),
@@ -343,6 +347,15 @@ impl Rule for NoConstantBinaryExpression {
         if may_be_constant {
             Self::check(e, (op, left, right), cx);
         }
+    }
+}
+
+/// `true`, `false`, `0` or `1`. In front of `&&` or `||` it's how people switch a piece of code off or on for a while.
+fn is_toggle(e: Expr<'_>) -> bool {
+    match e.kind() {
+        ExprKind::True | ExprKind::False => true,
+        ExprKind::Number(value) => value == 0.0 || value == 1.0,
+        _ => false,
     }
 }
 

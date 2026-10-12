@@ -1355,6 +1355,25 @@ impl Config {
                     .or(or_else),
             );
         }
+        // oxlint looks up the severity of a tsgolint report by the rule's bare name, and finds ESLint's rule first if it's on.
+        if self.prefers_typescript_rules {
+            let is_on = |it: &ConfiguredRule, plugin: Plugin| {
+                it.severity != Severity::Off && it.entry.meta.plugin == plugin
+            };
+            for at in 0..config.rules.len() {
+                let meta = config.rules[at].entry.meta;
+                if !is_on(&config.rules[at], Plugin::TypeScript)
+                    || !meta.requires_types
+                    || meta.extends_base_rule != Some(meta.name)
+                {
+                    continue;
+                }
+                let mut of_eslint = config.rules.iter().filter(|it| is_on(it, Plugin::Eslint));
+                if let Some(base) = of_eslint.find(|it| it.entry.meta.name == meta.name) {
+                    config.rules[at].severity = base.severity;
+                }
+            }
+        }
         if !self.js_plugins.is_empty() {
             // ESLint looks for a rule in the plugins that the objects for the file have.
             let has = |it: &&Arc<js_plugin::Plugin>| {

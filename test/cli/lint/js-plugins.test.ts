@@ -3266,6 +3266,37 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 
+  // As under ESLint 10.12.0.
+  test(
+    "a range with a hole is read like any other object",
+    async () => {
+      const config = `
+        const rule = {
+          create: context => ({
+            Program(node) {
+              const first = [4, 7], second = [4, 7], both = [4, 7];
+              delete first[0];
+              delete second[1];
+              delete both[0];
+              delete both[1];
+              const texts = [first, second, both, [4, 7]].map(range => context.sourceCode.getText({ range }));
+              context.report({ node, message: JSON.stringify(texts) });
+            },
+          }),
+        };
+        module.exports = [{ plugins: { own: { rules: { rule } } }, rules: { "own/rule": "error" } }];`;
+      const { raw, exitCode } = await lint({ "eslint.config.cjs": config, "a.js": "var abc = 1;\n" }, [
+        "-f",
+        "json",
+        "a.js",
+      ]);
+      const results: { messages: { message: string }[] }[] = JSON.parse(raw);
+      expect(results.flatMap(it => it.messages.map(it => it.message))).toEqual([`["var abc","","","abc"]`]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test(
     "whatever a plugin throws, and wherever, the run ends with an error that can be read",
     async () => {

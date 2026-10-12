@@ -1,4 +1,5 @@
 use bun_core::strings;
+use super::no_unused_vars::is_pure;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashMap;
@@ -313,6 +314,11 @@ impl NoUnusedPrivateClassMembers {
     }
 }
 
+/// Whether nothing else goes away with the member: no decorator, and no initializer that runs other code.
+fn is_removed_safely(member: Member) -> bool {
+    member.decorators().next().is_none() && member.init().is_none_or(is_pure)
+}
+
 impl Rule for NoUnusedPrivateClassMembers {
     const META: Meta = Meta::eslint("no-unused-private-class-members", Kind::Problem)
         .has_suggestions()
@@ -371,6 +377,8 @@ impl Rule for NoUnusedPrivateClassMembers {
                     &[("classMemberName", name.bytes())],
                     |fixer| match has_reference {
                         true => None,
+                        // `--fix-suggestions` applies this with nobody looking, so `#sent = sendEmail()` stays.
+                        false if cx.language().stands_alone && !is_removed_safely(declared) => None,
                         false => remove_member(fixer, declared),
                     },
                 );

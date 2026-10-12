@@ -57,7 +57,7 @@ impl Rule for NoCaseDeclarations {
             }
             let place = if cx.language().is_oxlint { keyword(statement) } else { statement.span() };
             let report = cx.report(place, UNEXPECTED).hint("Every case of the switch can see it. Wrap this case in { }.");
-            report.suggest(ADD_BRACKETS, |fixer| {
+            report.suggest_change_of_behavior(ADD_BRACKETS, &[], |fixer| {
                 Some([
                     fixer.insert_before(body.first()?, "{ "),
                     fixer.insert_after(body.last()?, " }"),

@@ -8,7 +8,7 @@ use crate::ast::File;
 use crate::code_path;
 use crate::estree::Dialect;
 use crate::fix::Fix;
-use crate::language::LanguageOptions;
+use crate::language::{LanguageOptions, SourceType};
 use crate::linter::{normalize_plugin_name, write_json};
 use crate::options::Json;
 use crate::rule::Kind;
@@ -565,7 +565,8 @@ impl<'e> Host<'e> {
             | (u32::from(has_mark) << 1)
             | (u32::from(is_espree) << 2)
             | (u32::from(settings.sources.is_some()) << 3)
-            | (u32::from(file.language().is_oxlint) << 4);
+            | (u32::from(file.language().is_oxlint) << 4)
+            | (source_type_for_oxlint(file) << 5);
         wire::words(
             &mut message,
             &[
@@ -725,6 +726,23 @@ impl<'e> Host<'e> {
             }
         }
     }
+}
+
+/// What oxlint takes the file for: 0 a module, 1 a script, 2 CommonJS, and 4 if it can't have JSX. With another configuration 0.
+fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
+    if !file.language().is_oxlint {
+        return 0;
+    }
+    let source_type = match crate::utils::oxlint::source_type(file) {
+        SourceType::Module => 0,
+        SourceType::Script => 1,
+        SourceType::CommonJs => 2,
+    };
+    let has_no_jsx = matches!(
+        file.path(),
+        [.., b'.', b't', b's'] | [.., b'.', b'c' | b'm', b't', b's']
+    );
+    source_type | (u32::from(has_no_jsx) << 2)
 }
 
 /// `{ name, isAlias, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are

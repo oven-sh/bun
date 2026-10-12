@@ -14,7 +14,7 @@ deprecated: false
 
 `delete items[1]` doesn't remove the element. It leaves a hole, so the array keeps its length and `items[1]` reads as `undefined`. To take the element out and close the gap, use `splice`.
 
-The report comes with a suggestion that rewrites the `delete` as a `splice` call.
+The report comes with a suggestion that rewrites the `delete` as a `splice` call. That moves the later items, so only `--fix-dangerously` applies it, not `--fix-suggestions`.
 
 `bun lint --type-aware` turns this rule on in TypeScript files.
 

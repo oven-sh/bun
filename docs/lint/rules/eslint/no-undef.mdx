@@ -96,6 +96,15 @@ For the whole project, use `bunfig.toml`:
 analytics = "readonly"
 ```
 
+A name that the file tests with `typeof` isn't reported anywhere in that file. You've shown that you know it may be missing. With an ESLint config file only the `typeof` itself is allowed, as in ESLint.
+
+{/* good */}
+```js
+if (typeof define === "function" && define.amd) {
+  define(["jquery"], () => 1);
+}
+```
+
 `bun lint --infer-globals` also accepts the globals that your project's types declare.
 
 ## Options

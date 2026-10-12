@@ -118,7 +118,7 @@ const cases: [code: string, ...reports: string[]][] = [
     "no-constant-binary-expression 1: The left side is always truthy, so the right side is never used.",
   ],
   [
-    `use(0 || f());`,
+    `use("" || f());`,
     "no-constant-binary-expression 1: The left side is always falsy, so the result is always the right side.",
   ],
   [

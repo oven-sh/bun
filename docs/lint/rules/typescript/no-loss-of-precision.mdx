@@ -22,10 +22,9 @@ This rule is deprecated. Use `no-loss-of-precision` instead.
 
 Reported:
 
-{/* bad {"count": 3} */}
+{/* bad {"count": 2} */}
 ```ts
 const orderId = 9007199254740993; // stored as 9007199254740992
-const rate = 0.30000000000000000001; // stored as 0.3
 const limit = 2e999; // stored as Infinity
 ```
 

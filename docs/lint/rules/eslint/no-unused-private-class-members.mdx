@@ -16,7 +16,7 @@ Nothing outside a class can reach its `#private` fields and methods. If nothing 
 
 A field that's only written to counts as unused, because the statements `this.#count = 1` and `this.#count++` never read the value.
 
-If nothing refers to the member at all, the rule suggests removing it.
+If nothing refers to the member at all, `--fix-suggestions` removes it, unless it has a decorator or an initializer that runs other code, like `#sent = sendEmail()`.
 
 This rule is on by default.
 

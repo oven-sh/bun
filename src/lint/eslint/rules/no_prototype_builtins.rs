@@ -10,6 +10,8 @@ const PROTOTYPE_BUILD_IN: Message = Message::new(
 );
 const CALL_OBJECT_PROTOTYPE: Message =
     Message::new("callObjectPrototype", "Call Object.prototype.{{prop}} explicitly.");
+/// Only with no config file, where the suggestion does what the hint says.
+const USE_OBJECT_HAS_OWN: Message = Message::new("useObjectHasOwn", "Use Object.hasOwn.");
 
 fn disallowed_prop(name: Name<'_>) -> Option<&'static str> {
     match name.bytes() {
@@ -79,8 +81,9 @@ impl NoPrototypeBuiltins {
             "hasOwnProperty" => Some("Use Object.hasOwn(object, key) instead.".to_owned()),
             _ => Some(format!("Use Object.prototype.{prop}.call(object, value) instead.")),
         };
+        let uses_has_own = prop == "hasOwnProperty" && cx.language().stands_alone;
         cx.report(place, PROTOTYPE_BUILD_IN).data("prop", prop).hint_with(hint).suggest_with(
-            CALL_OBJECT_PROTOTYPE,
+            if uses_has_own { USE_OBJECT_HAS_OWN } else { CALL_OBJECT_PROTOTYPE },
             &[("prop", prop.as_bytes())],
             |fixer| {
                 let file = fixer.file();
@@ -112,7 +115,10 @@ impl NoPrototypeBuiltins {
                     argument.extend_from_slice(b", ");
                 }
                 Some([
-                    fixer.replace(callee, format!("Object.prototype.{prop}.call")),
+                    fixer.replace(callee, match uses_has_own {
+                        true => "Object.hasOwn".to_owned(),
+                        false => format!("Object.prototype.{prop}.call"),
+                    }),
                     fixer.insert_after(open_paren, argument),
                 ])
             },

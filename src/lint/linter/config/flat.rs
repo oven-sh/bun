@@ -195,7 +195,7 @@ const META_KEYS: [&[u8]; 2] = [b"name", b"basePath"];
 /// `Kind::Problem` rules that [warn by default](Reader::grade_by_kind) anyway. An error fails CI, so it has to be right nearly
 /// every time. These find unused or useless code, or code that people often write on purpose: `while (match = re.exec(text))`,
 /// `object.hasOwnProperty(key)`, a regular expression that strips ANSI escapes.
-const WARN_BY_DEFAULT: [&[u8]; 30] = [
+const WARN_BY_DEFAULT: [&[u8]; 29] = [
     b"@typescript-eslint/await-thenable",
     b"@typescript-eslint/ban-ts-comment",
     b"@typescript-eslint/no-duplicate-enum-values",
@@ -216,7 +216,6 @@ const WARN_BY_DEFAULT: [&[u8]; 30] = [
     b"no-empty-character-class",
     b"no-empty-pattern",
     b"no-ex-assign",
-    b"no-loss-of-precision",
     b"no-prototype-builtins",
     b"no-self-assign",
     b"no-setter-return",

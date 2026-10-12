@@ -4284,6 +4284,7 @@ try {
       [["--parser", "typescript", "--check", "src"], "src", "typescript", "src/**/*.ts"],
       [["--parser", "json5", "-l", "src"], "src", "json5", "src/**/*.json5"],
       [["--parser", "glimmer", "--no-config", "src"], "src", "glimmer", "src/**/*.hbs"],
+      [["--parser", "markdown", ""], "", "markdown", "**/*.md"],
     ])("is an error without a config: %j", async (args, directory, parser, glob) => {
       const result = await format(files, args, { reads });
       expect(result.files).toEqual(files);
@@ -4291,6 +4292,21 @@ try {
       expect(result.stderr.split("\n")).toEqual([
         `error: --parser ${parser} would read every file in "${directory}" as ${parser}`,
         `  Name the files, or use a glob: bun format --parser ${parser} "${glob}"`,
+      ]);
+      expect(result.exitCode).toBe(2);
+    });
+
+    // oxfmt 0.72.0 has no --parser, so there's nothing to be compatible with.
+    test.each<[Record<string, string>, string[]]>([
+      [{ ".oxfmtrc.json": "{}\n" }, []],
+      [{}, ["--flavor=oxfmt"]],
+    ])("is an error when formatting like oxfmt: %j %j", async (config, flags) => {
+      const result = await format({ ...files, ...config }, [...flags, "--parser", "markdown", "."], { reads });
+      expect(result.files).toEqual(files);
+      expect(result.raw).toBe("");
+      expect(result.stderr.split("\n")).toEqual([
+        `[error] --parser markdown would read every file in "." as markdown`,
+        `[error]   Name the files, or use a glob: bun format --parser markdown "**/*.md"`,
       ]);
       expect(result.exitCode).toBe(2);
     });

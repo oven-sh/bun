@@ -2,7 +2,9 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Disallow literal numbers that lose precision.
-pub struct NoLossOfPrecision;
+pub struct NoLossOfPrecision {
+    ignore_decimals: bool,
+}
 
 const NO_LOSS_OF_PRECISION: Message = Message::new(
     "noLossOfPrecision",
@@ -100,10 +102,23 @@ fn loses_precision(raw: &[u8]) -> bool {
     }
 }
 
-pub fn check<'a, R: Rule>(literal: Literal<'a>, cx: &Cx<'a, R>) {
+/// Whether the number has a fractional part at run time. Then the digits that don't fit only round it, as the author expects of
+/// `3.14159265358979323846`. An integer such as a 64-bit ID becomes a different integer.
+fn is_decimal(raw: &[u8]) -> bool {
+    let text: Vec<u8> = raw.iter().copied().filter(|it| *it != b'_').collect();
+    let value = std::str::from_utf8(&text).ok().and_then(|it| it.parse::<f64>().ok());
+    value.is_some_and(|it| it.is_finite() && it.fract() != 0.0)
+}
+
+/// `ignoreDecimals`, which only `bun lint` has.
+pub fn ignores_decimals(options: &Options) -> bool {
+    options.object(0).bool_or("ignoreDecimals", false)
+}
+
+pub fn check<'a, R: Rule>(literal: Literal<'a>, ignore_decimals: bool, cx: &Cx<'a, R>) {
     let raw = literal.text();
     // An exponent takes three characters.
-    if raw.len() > 2 && !raw.ends_with(b"n") && loses_precision(raw) {
+    if raw.len() > 2 && !raw.ends_with(b"n") && loses_precision(raw) && !(ignore_decimals && is_decimal(raw)) {
         cx.report(literal, NO_LOSS_OF_PRECISION).hint_with(|| {
             let Node::Expr(number) = literal.owner() else {
                 return None;
@@ -119,11 +134,11 @@ impl Rule for NoLossOfPrecision {
     const ON: On = On::new().number_literals();
     no_state!();
 
-    fn new(_: &Options) -> Self {
-        NoLossOfPrecision
+    fn new(options: &Options) -> Self {
+        NoLossOfPrecision { ignore_decimals: ignores_decimals(options) }
     }
 
     fn number_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
-        check(literal, cx);
+        check(literal, self.ignore_decimals, cx);
     }
 }

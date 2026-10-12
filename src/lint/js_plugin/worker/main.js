@@ -372,6 +372,26 @@ function deepFreeze(value) {
   return value;
 }
 
+// `settings`, which are those of a configuration of oxlint, for a file. `kind`: see `source_type_for_oxlint` in ../host.rs. oxlint decides
+// these for each file.
+const settingsByKind = new WeakMap();
+function settingsFor(settings, kind) {
+  let known = settingsByKind.get(settings);
+  if (known === undefined) settingsByKind.set(settings, (known = []));
+  if (known[kind] === undefined) {
+    const sourceType = ["module", "script", "commonjs"][kind & 3];
+    const ecmaFeatures = {
+      jsx: (kind & 4) === 0,
+      globalReturn: sourceType === "commonjs",
+      impliedStrict: sourceType === "module",
+    };
+    const { languageOptions } = settings;
+    const parserOptions = { ...languageOptions.parserOptions, sourceType, ecmaFeatures };
+    known[kind] = deepFreeze({ ...settings, languageOptions: { ...languageOptions, sourceType, parserOptions } });
+  }
+  return known[kind];
+}
+
 // What a context had until ESLint 9, which plugins still ask for.
 const oldContext = {
   get parserOptions() {
@@ -825,6 +845,7 @@ function lint() {
     if (fileSettings.freezes) deepFreeze(fileSettings);
     else addParser(fileSettings);
   }
+  if (fileSettings.freezes) fileSettings = settingsFor(fileSettings, (flags >> 5) & 7);
   const entries = Array.from(ids, (id, position) => configured.get(id) ?? configure(id, position));
   if (toImport.length > 0) return NEEDS_MODULES;
   const unloaded = new Set(entries.filter(it => typeof it === "number"));

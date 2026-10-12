@@ -202,7 +202,8 @@ impl Context<'_, '_> {
     }
 
     /// oxlint's `--fix-suggestions` and `--fix-dangerously`: a suggestion of a kind that they allow is as good as a fix.
-    /// `--fix-suggestions` alone makes no other change, `--fix-dangerously` makes all.
+    /// `--fix-suggestions` alone makes no other change, except for the fixes of JavaScript plugins, which oxlint applies under
+    /// any of the three flags. `--fix-dangerously` makes all.
     pub(crate) fn promote_suggestions(&self, result: &mut LintResult) {
         let options = self.options;
         if !options.fix_suggestions && !options.fix_dangerously {
@@ -215,7 +216,8 @@ impl Context<'_, '_> {
             }
         };
         for message in &mut result.messages {
-            if !options.fix_safely && !options.fix_dangerously {
+            let is_of_js_plugin = matches!(message.rule_id, Some(RuleId::Js(_)));
+            if !options.fix_safely && !options.fix_dangerously && !is_of_js_plugin {
                 message.fix = None;
             }
             if message.fix.is_none()

@@ -39,6 +39,7 @@ Every option, set to its default:
 [lint.rules]
 "no-constant-binary-expression" = ["error", {
   checkRelationalComparisons = false,
+  allowLiteralToggle = true,
 }]
 ```
 
@@ -77,6 +78,19 @@ const isMissing = user.email === undefined;
 | Option | Default | What it does |
 | --- | --- | --- |
 | `checkRelationalComparisons` | `false` | Also report `<`, `<=`, `>` and `>=` between two literal values. With an oxlint config, the default is `true`. |
+| `allowLiteralToggle` | `true` | Allow `true`, `false`, `0` or `1` on the left of `&&` or `\|\|`. |
+
+`false && ...` is how people switch a piece of code off for a while, so it's allowed by default. Only `bun lint` has `allowLiteralToggle`. With an ESLint config file these are reported, as in ESLint.
+
+{/* good */}
+```jsx
+const page = <main>{false && <DebugPanel />}</main>;
+```
+
+{/* bad {"options": [{"allowLiteralToggle": false}]} */}
+```jsx
+const page = <main>{false && <DebugPanel />}</main>;
+```
 
 {/* bad {"options": [{"checkRelationalComparisons": true}]} */}
 ```js

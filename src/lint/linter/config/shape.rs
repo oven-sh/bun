@@ -185,6 +185,42 @@ fn options(json: &Json) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// `settings.react.version` is the one setting whose text oxlint parses: up to three numbers with dots between them.
+fn settings(json: &Json) -> Result<(), ConfigError> {
+    map(json, "struct WellKnownOxlintSettings")?;
+    let version = json.get(b"react").and_then(|it| it.get(b"version"));
+    let Some(version) = version.filter(|it| **it != Json::Null) else {
+        return Ok(());
+    };
+    let Some(text) = version.as_str() else {
+        let expected = "a version string like \\\"18.2.0\\\" or \\\"17.0\\\"";
+        return Err(wrong_kind(version, expected));
+    };
+    if text.is_empty() {
+        return Err(refusal(&[
+            b"version string cannot be empty for settings.react.version",
+        ]));
+    }
+    let is_number = |it: &[u8]| std::str::from_utf8(it).is_ok_and(|it| it.parse::<u32>().is_ok());
+    let mut parts = bytes::split(text, b".");
+    for (name, part) in ["major", "minor", "patch"].iter().zip(&mut parts) {
+        if !is_number(part) {
+            let name = name.as_bytes();
+            return Err(refusal(&[
+                b"invalid ",
+                name,
+                b" version in settings.react.version",
+            ]));
+        }
+    }
+    match parts.next() {
+        Some(_) => Err(refusal(&[
+            b"version string in settings.react.version has too many components, expected major.minor.patch",
+        ])),
+        None => Ok(()),
+    }
+}
+
 /// `json` is a whole file.
 pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
     let Some(entries) = json.as_object() else {
@@ -195,7 +231,7 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
         match &key[..] {
             b"$schema" if json.as_str().is_none() => return Err(wrong_kind(json, "a string")),
             b"categories" => known_keys(map(json, "a map")?, CATEGORIES, "variant")?,
-            b"settings" => map(json, "struct WellKnownOxlintSettings").map(|_| ())?,
+            b"settings" => settings(json)?,
             b"options" => options(json)?,
             b"extends" => {
                 let is_known = |it: &&Json| it.as_str().is_some() || it.as_object().is_some();

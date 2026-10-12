@@ -502,6 +502,55 @@ Still needed:   eslint (eslint-plugin-first needs it)
     expect(exitCode).toBe(0);
   });
 
+  // eslint-plugin-unicorn does this.
+  test(
+    "rules are attributed to the package even if it doesn't export the plugin object its configs use",
+    async () => {
+      const { stdout, exitCode } = await doctor({
+        "node_modules/eslint-plugin-inner/package.json": JSON.stringify({
+          name: "eslint-plugin-inner",
+          version: "1.0.0",
+          main: "index.js",
+          type: "module",
+        }),
+        "node_modules/eslint-plugin-inner/index.js": `const inner = { rules: { a: { create: () => ({}) } } };
+          export default { ...inner, configs: { recommended: { plugins: { inner }, rules: { "inner/a": "error" } } } };`,
+        "package.json": dependencies("eslint-plugin-inner"),
+        "eslint.config.js": `import inner from "eslint-plugin-inner";\nexport default [inner.configs.recommended];\n`,
+        "a.js": "var a = 1;\n",
+      });
+      expect(stdout).toEndWith(`
+    1 rule runs in JavaScript
+        eslint-plugin-inner    1
+
+Still needed:   eslint-plugin-inner (its rules run in JavaScript)
+`);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "rules from --rulesdir are listed under --rulesdir",
+    async () => {
+      const { stdout, exitCode } = await doctor(
+        {
+          ".eslintrc.json": JSON.stringify({ root: true, rules: { "my-rule": "error", "no-var": "error" } }),
+          "rules/my-rule.js": "module.exports = { create: () => ({}) };\n",
+          "a.js": "var a = 1;\n",
+        },
+        ["--rulesdir", "rules"],
+      );
+      expect(stdout).toEndWith(`
+    1 rule runs natively
+    1 rule runs in JavaScript
+        --rulesdir    1
+`);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test("lists the config files in subdirectories", async () => {
     const { stdout, exitCode } = await doctor({
       "eslint.config.js": `export default [{ rules: { "no-var": "error" } }];`,

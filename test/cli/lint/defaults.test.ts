@@ -220,7 +220,6 @@ export function words(text, re, object) {
     throw error;
   }
 }
-export const id = 9007199254740993;
 `,
         "b.ts": `export type Keep<T> = T extends Function ? T : never;
 // @ts-ignore
@@ -244,7 +243,6 @@ test("a", () => {
       "a.js:4:10 warning no-cond-assign",
       "a.js:6:19 warning no-prototype-builtins",
       "a.js:8:5 warning no-ex-assign",
-      "a.js:12:19 warning no-loss-of-precision",
       "b.ts:1:33 warning @typescript-eslint/no-unsafe-function-type",
       "b.ts:2:1 warning @typescript-eslint/ban-ts-comment",
       "b.ts:3:20 warning @typescript-eslint/no-wrapper-object-types",
@@ -668,6 +666,107 @@ export function run(command: string) {
     expect(eslint).toEqual(["a.ts:6:5 error no-fallthrough", "a.ts:8:5 error no-fallthrough"]);
   });
 
+  test("an array of elements needs keys only where React renders it as a list", async () => {
+    const files = {
+      ...react,
+      "a.jsx": `export function Wizard({ step }) {
+  const steps = [<StepOne />, <StepTwo />];
+  return steps[step];
+}
+export const ICONS = [<Home />, <User />];
+export const Actions = () => <Card actions={[<a href="#e">edit</a>, <a href="#m">more</a>]} />;
+export const List = () => <ul>{[<li>a</li>, <li>b</li>]}</ul>;
+export const Maybe = ({ on }) => <ul>{on && [<li>a</li>]}</ul>;
+export function Returned() {
+  return [<li>a</li>, <li>b</li>];
+}
+export const Arrow = () => [<li>a</li>];
+export const Mapped = ({ items }) => items.map(item => <li>{item}</li>);
+`,
+    };
+    const rule = "react/jsx-key";
+    const { native, eslint } = await inBothModes(files, [rule]);
+    const at = (places: string[]) => places.map(place => `a.jsx:${place} error ${rule}`);
+    const rendered = ["7:33", "7:45", "8:46", "10:11", "10:23", "12:29", "13:56"];
+    expect(native).toEqual(at(rendered));
+    expect(eslint).toEqual(at(["2:18", "2:31", "5:23", "5:33", "6:46", "6:69", ...rendered]));
+    const all = { "bunfig.toml": `[lint.rules]\n"${rule}" = ["error", { checkArraysOutsideJSX = true }]\n` };
+    expect((await inBothModes({ ...files, ...all }, [rule])).native).toEqual(eslint);
+  });
+
+  test("true, false, 0 and 1 can switch code off and on", async () => {
+    const files = {
+      "a.jsx": `export const Flags = ({ a }) => (
+  <div>
+    {false && <Debug />}
+    {true || <User />}
+    {0 && <Home />}
+    {1 && a}
+    {null && a}
+    {"" || a}
+    {2 && a}
+    {[] && a}
+  </div>
+);
+`,
+    };
+    const rule = "no-constant-binary-expression";
+    const { native, eslint } = await inBothModes(files, [rule]);
+    expect(native).toEqual([7, 8, 9, 10].map(line => `a.jsx:${line}:6 error ${rule}`));
+    expect(eslint).toEqual([3, 4, 5, 6, 7, 8, 9, 10].map(line => `a.jsx:${line}:6 error ${rule}`));
+  });
+
+  test.each(["a.js", "a.ts"])("%s: an integer that loses precision is an error, a decimal is fine", async name => {
+    const files = {
+      [name]: `export const PI = 3.14159265358979323846;
+export const LAT = 52.520006599999997;
+export const ID = 9007199254740993;
+export const BIG = 1234567890123456789;
+export const HEX = 0xffffffffffffffff;
+export const TINY = 1e-400;
+export const HUGE = 1e400;
+export const HALF = 9007199254740993.5;
+`,
+    };
+    const rule = "no-loss-of-precision";
+    const { native, eslint } = await inBothModes(files, [rule]);
+    const at = (places: string[]) => places.map(place => `${name}:${place} error ${rule}`);
+    const integers = ["3:19", "4:20", "5:20", "6:21", "7:21", "8:21"];
+    expect(native).toEqual(at(integers));
+    expect(eslint).toEqual(at(["1:19", "2:20", ...integers]));
+  });
+
+  test("the options that only bun lint has are invalid with an ESLint config", async () => {
+    const config = `export default [{ rules: { "no-loss-of-precision": ["error", { ignoreDecimals: true }] } }];\n`;
+    const { stderr, exitCode } = await lint({ "a.js": "export {};\n", "eslint.config.mjs": config }, ["a.js"]);
+    expect(stderr).toContain(`Key "rules": Key "no-loss-of-precision":`);
+    expect(exitCode).toBe(2);
+  });
+
+  test("an empty object pattern is fine as a parameter", async () => {
+    const files = { "a.js": "export const a = ({}, use) => use();\nconst {} = a;\n" };
+    const { native, eslint } = await inBothModes(files, ["no-empty-pattern"]);
+    expect(native).toEqual(["a.js:2:7 warning no-empty-pattern"]);
+    expect(eslint).toEqual(["a.js:1:19 error no-empty-pattern", "a.js:2:7 error no-empty-pattern"]);
+  });
+
+  test("a global that the file tests with typeof may be used", async () => {
+    const files = {
+      "a.js": `export function umd(factory) {
+  if (typeof define === "function" && define.amd) define(factory);
+  return typeof myGlobal !== "undefined" ? myGlobal.x : missing.x;
+}
+`,
+    };
+    const { native, eslint } = await inBothModes(files, ["no-undef"]);
+    expect(native).toEqual(["a.js:3:57 error no-undef"]);
+    expect(eslint).toEqual(["2:39", "2:51", "3:44", "3:57"].map(place => `a.js:${place} error no-undef`));
+    const strict = { "bunfig.toml": `[lint.rules]\n"no-undef" = ["error", { typeof = true }]\n` };
+    expect((await inBothModes({ ...files, ...strict }, ["no-undef"])).native).toEqual(
+      ["2:14", "2:39", "2:51", "3:17", "3:44", "3:57"].map(place => `a.js:${place} error no-undef`),
+    );
+  });
+
   test("options from bunfig.toml replace them", async () => {
     const files = {
       "a.js": "// 10\u00a0kg\nexport const weight = `10\u00a0kg`;\n",
@@ -675,6 +774,49 @@ export function run(command: string) {
     };
     const { reports } = await lint(files, []);
     expect(reports).toEqual(["a.js:2:26 error no-irregular-whitespace"]);
+  });
+});
+
+describe.concurrent("JSX uses the function it compiles to", () => {
+  const react = `import React from "react";\nexport const A = () => <p>a</p>;\n`;
+  const preact = `/** @jsx h */\nimport { h, Fragment } from "preact";\nexport const A = () => (\n  <>\n    <p>a</p>\n  </>\n);\n`;
+
+  test.each(["a.js", "a.jsx", "a.tsx"])("React isn't unused in %s", async name => {
+    const { reports } = await lint({ [name]: react }, []);
+    expect(reports).toEqual([]);
+  });
+
+  test.each(["a.jsx", "a.tsx"])("the function that a @jsx comment names isn't unused in %s", async name => {
+    const { reports } = await lint({ [name]: preact }, []);
+    expect(reports).toEqual([]);
+  });
+
+  test("React is unused in a file without JSX", async () => {
+    const code = `import React from "react";\nexport const a = 1;\n`;
+    const { reports } = await lint({ "a.js": code, "b.ts": code }, []);
+    expect(reports).toEqual(["a.js:1:8 warning no-unused-vars", "b.ts:1:8 warning @typescript-eslint/no-unused-vars"]);
+  });
+
+  test("with the automatic runtime, turn react/jsx-uses-react off to find leftover imports", async () => {
+    const bunfig = `[lint.rules]\n"react/jsx-uses-react" = "off"\n`;
+    const { reports } = await lint({ "a.jsx": react, "bunfig.toml": bunfig }, []);
+    expect(reports).toEqual(["a.jsx:1:8 warning no-unused-vars"]);
+  });
+
+  test("--quiet doesn't bring the report back", async () => {
+    const bunfig = `[lint.rules]\n"no-unused-vars" = "error"\n`;
+    const { reports } = await lint({ "a.jsx": react, "bunfig.toml": bunfig }, ["--quiet"]);
+    expect(reports).toEqual([]);
+  });
+
+  test("with an ESLint config, only the rule from eslint-plugin-react does that", async () => {
+    const config = `export default [{
+  files: ["**/*.jsx"],
+  languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+  rules: { "no-unused-vars": "error" },
+}];\n`;
+    const { reports } = await lint({ "a.jsx": react, "eslint.config.mjs": config }, ["a.jsx"]);
+    expect(reports).toEqual(["a.jsx:1:8 error no-unused-vars"]);
   });
 });
 
@@ -692,7 +834,6 @@ export {};
       expect(texts["a.mjs"]).toBe(`const sent = sendEmail(user);
 const last = queue.pop();
 const saved = await db.save(user);
-
 import "x";
 export {};
 `);
@@ -748,9 +889,15 @@ export {};
     "class C extends mixin() {}",
   ];
 
-  test("declarations that only define something are removed", async () => {
+  test("declarations that only define something are removed, with their lines", async () => {
     const { texts } = await lint({ "a.mjs": [...removed, "export {};", ""].join("\n") }, ["--fix-suggestions"]);
-    expect(texts["a.mjs"]).toBe([...removed.map(() => ""), "export {};", ""].join("\n"));
+    expect(texts["a.mjs"]).toBe("export {};\n");
+  });
+
+  test("a line that has something else on it stays", async () => {
+    const code = "const a = 1; // why\nconst b = 2; export {};\n";
+    const { texts } = await lint({ "a.mjs": code }, ["--fix-suggestions"]);
+    expect(texts["a.mjs"]).toBe(" // why\n export {};\n");
   });
 
   test("declarations that run other code stay", async () => {
@@ -776,10 +923,98 @@ export {};
     const { texts } = await lint({ "public/app.js": code, "lib.cjs": `${code}module.exports = {};\n` }, [
       "--fix-suggestions",
     ]);
-    expect(texts["public/app.js"]).toBe(
-      "function onClick() {}\nconst settings = { a: 1 };\n(function () {\n  \n})();\n",
+    expect(texts["public/app.js"]).toBe("function onClick() {}\nconst settings = { a: 1 };\n(function () {\n})();\n");
+    expect(texts["lib.cjs"]).toBe("(function () {\n})();\nmodule.exports = {};\n");
+  });
+
+  test("only --fix-dangerously turns any into unknown or rewrites a dependency array", async () => {
+    const files = {
+      "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }),
+      "a.ts": "export const then = (value: any) => value.then;\n",
+      "b.jsx": `import { useEffect } from "react";
+export function Timer({ ms, cb }) {
+  useEffect(() => {
+    setTimeout(cb, ms);
+  }, [ms]);
+  return null;
+}
+`,
+    };
+    const [careful, dangerous] = await Promise.all([
+      lint(files, ["--fix-suggestions"]),
+      lint(files, ["--fix-dangerously"]),
+    ]);
+    expect(careful.texts).toEqual(files);
+    expect(careful.reports).toEqual([
+      "a.ts:1:29 warning @typescript-eslint/no-explicit-any",
+      "b.jsx:5:6 warning react-hooks/exhaustive-deps",
+    ]);
+    expect(dangerous.texts["a.ts"]).toBe(files["a.ts"].replace("any", "unknown"));
+    expect(dangerous.texts["b.jsx"]).toBe(files["b.jsx"].replace("[ms]", "[cb, ms]"));
+  });
+
+  test("it leaves alone what would change working code or break the type check", async () => {
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "lib": ["esnext", "dom"], "types": [] } }`,
+      "a.ts": `// @ts-ignore
+export const a: number = 1;
+export interface Empty {}
+export type Nothing = {};
+export const value = (map: Map<string, { v: number }>) => map.get("a")?.v!;
+export async function later(list: number[]) {
+  await null;
+  delete list[0];
+}
+export async function one() {
+  return 1;
+}
+export function start() {
+  one();
+}
+`,
+      "b.js": `export function f(a, b) {
+  switch (a) {
+    case 1:
+      let x = b;
+      return x;
+  }
+}
+export class C {
+  #sent = sendEmail();
+  #plain = 1;
+  #method() {}
+}
+`,
+    };
+    const { texts } = await lint(files, ["--fix-suggestions", "--type-aware"]);
+    expect(texts["a.ts"]).toBe(files["a.ts"]);
+    expect(texts["b.js"]).toBe(files["b.js"].replace("  #plain = 1;\n  #method() {}\n", ""));
+  });
+
+  test("adding await and removing async don't collide", async () => {
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+      "a.test.ts": `import { expect, test } from "bun:test";
+test("a", async () => {
+  expect(Promise.resolve(1)).resolves.toBe(1);
+});
+`,
+    };
+    const { texts } = await lint(files, ["--fix-suggestions", "--type-aware"]);
+    expect(texts["a.test.ts"]).toBe(files["a.test.ts"].replace("  expect(", "  await expect("));
+  });
+
+  test("the fix for hasOwnProperty is what the hint recommends", async () => {
+    const files = { "a.mjs": "export const has = (o, k) => [o.hasOwnProperty(k), o.isPrototypeOf(k)];\n" };
+    const config = { "eslint.config.mjs": `export default [{ rules: { "no-prototype-builtins": "error" } }];\n` };
+    const [native, eslint] = await Promise.all([
+      lint(files, ["--fix-suggestions"]),
+      lint({ ...files, ...config }, ["a.mjs"]),
+    ]);
+    expect(native.texts["a.mjs"]).toBe(
+      "export const has = (o, k) => [Object.hasOwn(o, k), Object.prototype.isPrototypeOf.call(o, k)];\n",
     );
-    expect(texts["lib.cjs"]).toBe("\n\n(function () {\n  \n})();\nmodule.exports = {};\n");
+    expect(eslint.json[0].messages[0].suggestions[0].desc).toBe("Call Object.prototype.hasOwnProperty explicitly.");
   });
 
   test("with an ESLint config the suggestion is ESLint's", async () => {
@@ -918,10 +1153,31 @@ console.log(5);
     expect(reported.exitCode).toBe(0);
     expect(fixed.texts["a.js"]).toBe(
       code
-        .replace("// eslint-disable-next-line no-debugger", " ")
-        .replace("// eslint-disable-next-line\n", " \n")
+        .replace("// eslint-disable-next-line no-debugger\n", "")
+        .replace("// eslint-disable-next-line\n", "")
         .replace("unicorn/no-null, no-empty", "unicorn/no-null"),
     );
+  });
+
+  test("--fix removes an unused comment without leaving spaces behind", async () => {
+    const text = `function f() {
+  // eslint-disable-next-line no-debugger
+  g();
+  g(); // eslint-disable-line no-debugger
+  g(/* eslint-disable-line no-debugger */ 1);
+\t/* eslint-disable-next-line no-debugger */\t\r
+  g();
+}
+f();
+// eslint-disable-line no-debugger`;
+    const config = { "eslint.config.mjs": `export default [{ rules: { "no-debugger": "error" } }];\n` };
+    const [native, eslint] = await Promise.all([
+      lint({ "a.cjs": text }, ["--fix"]),
+      lint({ "a.cjs": text, ...config }, ["--fix", "a.cjs"]),
+    ]);
+    expect(native.texts["a.cjs"]).toBe("function f() {\n  g();\n  g();\n  g(  1);\n  g();\n}\nf();\n");
+    // ESLint puts a space where the comment was.
+    expect(eslint.texts["a.cjs"]).toBe("function f() {\n   \n  g();\n  g();  \n  g(  1);\n\t \t\r\n  g();\n}\nf();\n ");
   });
 
   test("a rule turned on by bunfig.toml or a comment counts as on", async () => {
@@ -1128,13 +1384,18 @@ export function useThing(a, on) {
       lint(files, ["--print-config", "mail/App.jsx"]),
     ]);
     const ofReact = (printed: { rules: object }) =>
-      Object.entries(printed.rules).filter(([name]) => name.startsWith("react"));
-    expect(ofReact(withReact.json)).toEqual([
-      ["react-hooks/rules-of-hooks", [2]],
-      ["react-hooks/exhaustive-deps", [1]],
-      ["react/jsx-key", [2]],
-    ]);
-    expect(ofReact(without.json)).toEqual([]);
+      Object.fromEntries(Object.entries(printed.rules).filter(([name]) => name.startsWith("react")));
+    expect(ofReact(withReact.json)).toEqual({
+      "react-hooks/rules-of-hooks": [2],
+      "react-hooks/exhaustive-deps": [1],
+      "react/jsx-key": [2, { checkArraysOutsideJSX: false }],
+      "react/jsx-uses-react": [2],
+    });
+    // `react/jsx-uses-react` reports nothing. It's also for Preact's `h`, so it doesn't depend on React.
+    expect(ofReact(without.json)).toEqual({
+      "react/jsx-key": [0, { checkArraysOutsideJSX: false }],
+      "react/jsx-uses-react": [2],
+    });
   });
 
   test("they stay off with an ESLint or oxlint config", async () => {

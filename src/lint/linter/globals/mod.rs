@@ -204,6 +204,8 @@ pub struct ConfigGlobals {
     /// ESLint's `configGlobals`: what the version of ECMAScript and `sourceType: "commonjs"`
     /// define, overridden by `languageOptions.globals`. Sorted by name.
     settings: Vec<(Cow<'static, [u8]>, Global)>,
+    /// With an oxlint config: what `settings` would have for a variable if `globals` didn't turn it off. Sorted by name.
+    behind_off: Vec<(Cow<'static, [u8]>, Global)>,
     /// For each name of the pool, two bits: whether the libraries of TypeScript define it as a
     /// type, as a value.
     libs: Box<[u8]>,
@@ -233,18 +235,26 @@ impl ConfigGlobals {
             );
         }
         settings.extend(
-            language
-                .globals
-                .iter()
+            (language.env_behind_off.iter().rev())
+                .chain(&language.globals)
                 .map(|(name, setting)| (Cow::Owned(name.to_vec()), *setting)),
         );
         // Of two with the same name, the later one counts.
         settings.reverse();
         crate::utils::sort::sort_by(&mut settings, |a, b| a.0.cmp(&b.0));
-        settings.dedup_by(|a, b| a.0 == b.0);
+        let mut behind_off: Vec<(Cow<'static, [u8]>, Global)> = Vec::new();
+        settings.dedup_by(|dropped, kept| {
+            let is_same = dropped.0 == kept.0;
+            if is_same && language.is_oxlint && kept.1 == Global::Off {
+                behind_off.push(dropped.clone());
+            }
+            is_same
+        });
+        behind_off.dedup_by(|a, b| a.0 == b.0);
         let (libs, lib_order) = Self::libs(language);
         ConfigGlobals {
             settings,
+            behind_off,
             libs,
             lib_order,
         }
@@ -295,6 +305,15 @@ impl ConfigGlobals {
             .binary_search_by(|it| (*it.0).cmp(name))
             .ok()?;
         Some(self.settings[at].1)
+    }
+
+    /// oxlint's `env_contains_var(name)`, for a variable that `globals` turns off.
+    fn behind_off(&self, name: &[u8]) -> Option<Global> {
+        let at = self
+            .behind_off
+            .binary_search_by(|it| (*it.0).cmp(name))
+            .ok()?;
+        Some(self.behind_off[at].1)
     }
 
     /// `TYPE`, `VALUE`, or 0 if no library defines `name`.
@@ -440,7 +459,12 @@ impl<'a> File<'a> {
                 && self.is_javascript()
                 && !crate::utils::oxlint::has_module_syntax(self)
         };
-        let implicit = (config.setting(name))
+        // To oxlint, "off" only takes back an entry of `globals`. What an `env` defines stays defined.
+        let of_config = match config.setting(name) {
+            Some(Global::Off) => config.behind_off(name).or(Some(Global::Off)),
+            setting => setting,
+        };
+        let implicit = of_config
             .filter(|it| {
                 !only_written
                     || *it == Global::Off

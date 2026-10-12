@@ -88,7 +88,7 @@ impl NoExplicitAny {
         if let Node::Type(keyof) = parent
             && keyof.tag() == TypeTag::Keyof
         {
-            let report = report.suggest(SUGGEST_PROPERTY_KEY, |fixer| fixer.replace(keyof, "PropertyKey"));
+            let report = report.suggest_change_of_behavior(SUGGEST_PROPERTY_KEY, &[], |fixer| fixer.replace(keyof, "PropertyKey"));
             if self.fixes_to_unknown {
                 report.fix(|fixer| fixer.replace(keyof, "PropertyKey"));
             }
@@ -96,8 +96,8 @@ impl NoExplicitAny {
         }
         let unknown = if is_rest_element_in_function(parent) { "unknown[]" } else { "unknown" };
         let report = report
-            .suggest(SUGGEST_UNKNOWN, |fixer| fixer.replace(ty, unknown))
-            .suggest(SUGGEST_NEVER, |fixer| fixer.replace(ty, "never"));
+            .suggest_change_of_behavior(SUGGEST_UNKNOWN, &[], |fixer| fixer.replace(ty, unknown))
+            .suggest_change_of_behavior(SUGGEST_NEVER, &[], |fixer| fixer.replace(ty, "never"));
         if self.fixes_to_unknown {
             report.fix(|fixer| fixer.replace(ty, unknown));
         }

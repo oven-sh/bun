@@ -1,6 +1,7 @@
 use bun_lint::linter::globals::config_globals_in_order;
 use bun_lint::prelude::*;
 use bun_lint::source::ByName;
+use std::cell::OnceCell;
 
 /// Disallow the use of undeclared variables unless mentioned in `/*global */` comments.
 pub struct NoUndef {
@@ -71,6 +72,12 @@ impl Rule for NoUndef {
         // Whether a global variable of a name is one for a value, and for a type.
         let (for_value, for_type) = (1, 2);
         let mut globals: ByName<u8> = ByName::default();
+        // With no config file, a name that the file tests with `typeof` isn't reported anywhere in it. The author knows that it may
+        // be missing: `if (typeof define === "function" && define.amd) define(factory);`
+        let trusts_typeof = cx.language().stands_alone && !self.considers_typeof;
+        let tested: OnceCell<Vec<Name>> = OnceCell::new();
+        let names_with_typeof =
+            || file.unresolved_references().filter(|it| has_typeof_operator(*it)).map(|it| it.name()).collect();
         for reference in file.unresolved_references() {
             let is_in_parentheses = || reference.expr().is_some_and(Expr::is_parenthesized);
             if is_oxlint && (reference.is_type() && !is_in_parentheses() || is_none_for_oxc(reference))
@@ -89,7 +96,9 @@ impl Rule for NoUndef {
             if reference.is_value() && global & for_value != 0 || reference.is_type() && global & for_type != 0 {
                 continue;
             }
-            if file.is_declared_by_types(name.bytes()) {
+            if file.is_declared_by_types(name.bytes())
+                || trusts_typeof && tested.get_or_init(names_with_typeof).contains(&name)
+            {
                 continue;
             }
             cx.report(reference, UNDEF).data("name", reference.name()).hint_with(|| Some(hint(reference)));

@@ -63,7 +63,7 @@ Still needed:   eslint (typescript-eslint needs it)
                 typescript-eslint (eslint.config.js loads it)
 ```
 
-- **Natively**: the rule is built into Bun. That covers ESLint's core rules, typescript-eslint, `react`, `react-hooks`, `import`, `n`, and `prettier/prettier`.
+- **Natively**: the rule is built into Bun. That covers ESLint's core rules, typescript-eslint, `react`, `react-hooks`, `import`, 15 rules of `n`, and `prettier/prettier`.
 - **In JavaScript**: Bun loads the plugin and runs it like ESLint does. It works, but it's slower. See [ESLint plugins](/lint/plugins).
 
 The last lines tell you which packages you still need. Bun runs your `eslint.config.js`, so everything that file imports has to stay. Here that's `typescript-eslint`, which needs `eslint`. Packages you no longer need are listed under `You can remove`.
@@ -148,6 +148,7 @@ If `bun lint` and ESLint 10 disagree about a rule, that's a bug. [Open an issue]
 - **`--fix` never writes a file that no longer parses.** Bun drops those fixes and warns.
 - **`console.log` in your config file is hidden** unless the config fails to load.
 - **One extra line on stderr** with the number of files and the time.
+- **In GitHub Actions, `::error` and `::warning` lines follow the `stylish` report** on stdout, so problems show up in the pull request diff. If a problem matcher such as the one from `actions/setup-node` already does that, you get each annotation twice. `-f json` and the other machine-readable formats don't have these lines.
 
 ---
 

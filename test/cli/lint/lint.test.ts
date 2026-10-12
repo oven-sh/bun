@@ -1209,7 +1209,8 @@ describe.concurrent("bun lint", () => {
             (await lint(files, [...flags, "a.js"], { reads: ["a.js"] })).files["a.js"];
           expect(await after("--fix")).toBe("done; suggested;\n");
           expect(await after("--fix", "--quiet")).toBe("done; suggested;\n");
-          expect(await after("--fix-suggestions")).toBe("fixed; done;\n");
+          // oxlint 1.87 applies a JS plugin's fixes under any of the three flags.
+          expect(await after("--fix-suggestions")).toBe("done; done;\n");
           expect(await after("--fix", "--fix-suggestions")).toBe("done; done;\n");
           expect(await after("--fix-dangerously")).toBe("done; done;\n");
         },
@@ -1946,6 +1947,195 @@ describe.concurrent("bun lint", () => {
         expect(results.map(it => it.exitCode)).toEqual(
           rows.map(it => (it[3].some(it => it.endsWith("error")) ? 1 : 0)),
         );
+      });
+
+      // Recorded from oxlint 1.87.0.
+      test("-A, -W and -D also change rules that come from `extends`, but never JS plugin rules", async () => {
+        const rule = `{ create: context => ({ DebuggerStatement: node => context.report({ node, message: "no" }) }) }`;
+        const files = {
+          ".oxlintrc.json": rc({
+            extends: ["./shared/base.json"],
+            jsPlugins: ["./plugin.js"],
+            rules: { "no-console": "warn", "no-var": "error", "local/own": "error" },
+          }),
+          "shared/base.json": JSON.stringify({
+            extends: ["./deep.json"],
+            rules: { "no-debugger": "warn", "no-alert": "error", "no-console": "error", "local/inherited": "warn" },
+          }),
+          "shared/deep.json": JSON.stringify({ rules: { eqeqeq: ["warn", "smart"], "no-alert": "off" } }),
+          "plugin.js": `const rule = ${rule};\nexport default { meta: { name: "local" }, rules: { own: rule, inherited: rule } };\n`,
+          "a.js": "var a = 1;\ndebugger;\nalert(a);\nconsole.log(a);\nif (a == null) a = 2;\nif (a == 1) a = 2;\n",
+        };
+        const local = ["a.js:2 local(inherited) warning", "a.js:2 local(own) error"];
+        const [noVar, noDebugger] = ["a.js:1 eslint(no-var) error", "a.js:2 eslint(no-debugger) warning"];
+        const [noAlert, noConsole] = ["a.js:3 eslint(no-alert) error", "a.js:4 eslint(no-console) warning"];
+        const eqeqeq = "a.js:6 eslint(eqeqeq) warning";
+        const unchanged = [noVar, noDebugger, ...local, noAlert, noConsole, eqeqeq];
+        const rows: [string[], string[]][] = [
+          [[], unchanged],
+          [["-A", "all"], local],
+          [
+            ["-A", "all", "-D", "no-debugger"],
+            ["a.js:2 eslint(no-debugger) error", ...local],
+          ],
+          [
+            ["-A", "correctness"],
+            [noVar, ...local, noAlert, noConsole, eqeqeq],
+          ],
+          [
+            ["-D", "correctness"],
+            [noVar, "a.js:2 eslint(no-debugger) error", ...local, noAlert, noConsole, eqeqeq],
+          ],
+          [
+            ["-W", "restriction"],
+            [
+              "a.js:1 eslint(no-implicit-globals) warning",
+              "a.js:1 eslint(no-var) warning",
+              noDebugger,
+              ...local,
+              "a.js:3 eslint(no-alert) warning",
+              noConsole,
+              "a.js:5 eslint(no-eq-null) warning",
+              eqeqeq,
+            ],
+          ],
+          // "smart" stays, so line 5 is still fine.
+          [
+            ["-D", "pedantic"],
+            [noVar, noDebugger, ...local, noAlert, noConsole, "a.js:6 eslint(eqeqeq) error"],
+          ],
+          [
+            ["-D", "eqeqeq"],
+            [noVar, noDebugger, ...local, noAlert, noConsole, "a.js:6 eslint(eqeqeq) error"],
+          ],
+          // -A forgets the rule, so "smart" is gone when -D or -W turns it on again.
+          [
+            ["-A", "eqeqeq", "-D", "eqeqeq"],
+            [
+              noVar,
+              noDebugger,
+              ...local,
+              noAlert,
+              noConsole,
+              "a.js:5 eslint(eqeqeq) error",
+              "a.js:6 eslint(eqeqeq) error",
+            ],
+          ],
+          [
+            ["-A", "all", "-W", "pedantic"],
+            [...local, "a.js:5 eslint(eqeqeq) warning", "a.js:6 eslint(eqeqeq) warning"],
+          ],
+          [["-A", "local/own", "-A", "local/inherited"], unchanged],
+          [["-W", "local/own", "-D", "local/inherited"], unchanged],
+        ];
+        const results = await Promise.all(rows.map(([args]) => lint(files, [...args, "-f", "json", "a.js"])));
+        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+        expect(results.map(it => it.exitCode)).toEqual(rows.map(() => 1));
+      });
+
+      // Recorded from oxlint 1.87.0 with tsgolint.
+      test("a type-aware rule reports with the severity of the ESLint rule of the same name, if that one is on", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": 'setTimeout("alert(1)", 1);\nexport async function f() {\n  return 1;\n}\n',
+        };
+        const rows: [object, string[]][] = [
+          [
+            { categories: { correctness: "error", suspicious: "warn" } },
+            ["a.ts:1 typescript(no-implied-eval) warning"],
+          ],
+          [{ categories: { correctness: "warn", suspicious: "error" } }, ["a.ts:1 typescript(no-implied-eval) error"]],
+          [{ categories: { correctness: "error", suspicious: "off" } }, ["a.ts:1 typescript(no-implied-eval) error"]],
+          [
+            { rules: { "eslint/no-implied-eval": "off", "typescript/no-implied-eval": "warn" } },
+            ["a.ts:1 typescript(no-implied-eval) warning"],
+          ],
+          [
+            { rules: { "eslint/require-await": "warn", "typescript/require-await": "error" } },
+            ["a.ts:2 eslint(require-await) warning", "a.ts:2 typescript(require-await) warning"],
+          ],
+          [
+            { rules: { "typescript/require-await": "warn", "eslint/require-await": "error" } },
+            ["a.ts:2 eslint(require-await) error", "a.ts:2 typescript(require-await) error"],
+          ],
+        ];
+        const results = await Promise.all(
+          rows.map(([config]) =>
+            lint({ ".oxlintrc.json": rc({ rules: {}, ...config }), ...texts }, ["--type-aware", "-f", "json", "a.ts"]),
+          ),
+        );
+        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+      });
+
+      // Recorded from oxlint 1.87.0.
+      test("--fix-suggestions alone applies the fixes of JS plugins, but not those of built-in rules", async () => {
+        const report = (more: string) => `node => context.report({ node, message: "no", ${more} })`;
+        const project = {
+          ".oxlintrc.json": rc({
+            jsPlugins: ["./plugin.js"],
+            rules: { "local/fixes": "error", "local/suggests": "error", "local/both": "error", "no-var": "error" },
+          }),
+          "plugin.js": `export default { meta: { name: "local" }, rules: {
+            fixes: { meta: { fixable: "code" }, create: context => ({
+              DebuggerStatement: ${report("fix: fixer => fixer.remove(node)")} }) },
+            suggests: { meta: { hasSuggestions: true }, create: context => ({
+              EmptyStatement: ${report('suggest: [{ desc: "remove", fix: fixer => fixer.remove(node) }]')} }) },
+            both: { meta: { fixable: "code", hasSuggestions: true }, create: context => ({
+              ThrowStatement: ${report('fix: fixer => fixer.replaceText(node, "fixed();"), suggest: [{ desc: "other", fix: fixer => fixer.replaceText(node, "suggested();") }]')} }) },
+          } };`,
+          "a.js": "var a = 1;\ndebugger;\n;\nthrow a;\n",
+        };
+        const { stdout, files, exitCode } = await lint(project, ["--fix-suggestions", "-f", "unix", "a.js"], {
+          reads: ["a.js"],
+        });
+        expect(stdout.split("\n").filter(it => it.includes("["))).toEqual([
+          "a.js:1:1: Unexpected var, use let or const instead. [Error/eslint(no-var)]",
+        ]);
+        expect(files["a.js"]).toBe("var a = 1;\n\n\nfixed();\n");
+        expect(exitCode).toBe(1);
+      });
+
+      // Recorded from oxlint 1.87.0.
+      test('"off" in `globals` does not hide a variable that an `env` defines', async () => {
+        const rules = { "no-undef": "error" };
+        const text = { "a.js": "alert(1);\nArray(2);\nmine(3);\n" };
+        const [alert, mine] = ["a.js:1 eslint(no-undef) error", "a.js:3 eslint(no-undef) error"];
+        const rows: [object, string[]][] = [
+          [{ env: { browser: true }, globals: { alert: "off" } }, [mine]],
+          [{ globals: { alert: "off", Array: "off", mine: "off" } }, [alert, mine]],
+          [{ globals: { alert: "readonly", mine: "readonly" } }, []],
+          [
+            {
+              env: { browser: true },
+              globals: { alert: "readonly" },
+              overrides: [
+                { files: ["*.js"], globals: { alert: "off", mine: "readonly" } },
+                { files: ["a.js"], globals: { mine: "off" } },
+              ],
+            },
+            [mine],
+          ],
+        ];
+        const results = await Promise.all(
+          rows.map(([config]) => lint({ ".oxlintrc.json": rc({ rules, ...config }), ...text }, ["-f", "json", "a.js"])),
+        );
+        expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+      });
+
+      // Recorded from oxlint 1.87.0. The two fixes overlap, so --fix leaves the second report.
+      test("use-isnan reports both sides of NaN == NaN", async () => {
+        const files = {
+          ".oxlintrc.json": rc({ rules: { "use-isnan": "error" } }),
+          "a.js": "if (NaN == NaN) {\n}\nif (NaN !== (NaN)) {\n}\nx = a == NaN;\n",
+        };
+        const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+        expect(
+          stdout
+            .split("\n")
+            .filter(it => it.includes("use-isnan"))
+            .map(it => it.split(": ")[0]),
+        ).toEqual(["a.js:1:5", "a.js:1:12", "a.js:3:5", "a.js:3:13", "a.js:5:10"]);
+        expect(exitCode).toBe(1);
       });
 
       test("the rules that ESLint has given up and oxlint has in `node` run if that plugin is on", async () => {

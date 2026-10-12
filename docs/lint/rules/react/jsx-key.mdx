@@ -14,7 +14,7 @@ deprecated: false
 
 React uses `key` to tell list items apart from one render to the next. Without it, React warns at run time and matches items by position. After an insert or a reorder, an item can then end up with its neighbor's state, such as the text typed into an input.
 
-The rule looks at elements in an array literal and at elements returned from a `.map()` or `Array.from()` callback. It skips lists passed to `React.Children.toArray()`, because that adds keys itself.
+The rule looks at elements returned from a `.map()` or `Array.from()` callback, and at elements in an array literal that React renders as a list: one that's a child of an element, or that a function returns. It skips lists passed to `React.Children.toArray()`, because that adds keys itself.
 
 This rule is on by default if your `package.json` depends on `react`.
 
@@ -37,6 +37,7 @@ Every option, set to its default:
   checkFragmentShorthand = false,
   checkKeyMustBeforeSpread = false,
   warnOnDuplicates = false,
+  checkArraysOutsideJSX = false,
 }]
 ```
 
@@ -54,7 +55,7 @@ const list = (
   </ul>
 );
 
-const tabs = [<Tab key="home" />, <Tab />];
+const tabs = <nav>{[<Tab key="home" />, <Tab />]}</nav>;
 
 const stars = Array.from({ length: 5 }, () => <Star />);
 ```
@@ -69,9 +70,21 @@ const list = (
   </ul>
 );
 
-const tabs = [<Tab key="home" />, <Tab key="settings" />];
+const tabs = <nav>{[<Tab key="home" />, <Tab key="settings" />]}</nav>;
 
 const panels = React.Children.toArray([<Panel />, <Panel />]);
+```
+
+An array that's only a place to keep elements doesn't need keys:
+
+{/* good */}
+```jsx
+function Wizard({ step }) {
+  const steps = [<Address />, <Payment />, <Review />];
+  return steps[step];
+}
+
+const card = <Card actions={[<a href="#edit">Edit</a>, <a href="#more">More</a>]} />;
 ```
 
 ## Options
@@ -81,6 +94,14 @@ const panels = React.Children.toArray([<Panel />, <Panel />]);
 | `checkFragmentShorthand` | `false` | Also report `<>...</>` in a list. It can't take a `key`, so use `<React.Fragment key={...}>`. |
 | `checkKeyMustBeforeSpread` | `false` | Also report a `key` that comes after a `{...spread}`. |
 | `warnOnDuplicates` | `false` | Also report siblings that have the same `key`. |
+| `checkArraysOutsideJSX` | `false` | Also report elements in every other array literal. |
+
+Only `bun lint` has `checkArraysOutsideJSX`. With an ESLint config file every array literal is checked, as in `eslint-plugin-react`.
+
+{/* bad {"options": [{"checkArraysOutsideJSX": true}], "count": 2} */}
+```jsx
+const icons = [<Home />, <User />];
+```
 
 With `checkFragmentShorthand`:
 

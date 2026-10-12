@@ -1114,6 +1114,24 @@ describe.concurrent("a note says that a plugin that is built in is installed in 
     expect(await notes(flat({ n: { name: "eslint-plugin-node", version: "11.1.0" } }))).toEqual([]);
   });
 
+  // eslint-plugin-react-hooks 7.1.1 ships with `meta.version: "7.0.0"`.
+  test("the version in the package's package.json wins over a stale meta.version", async () => {
+    const hooks = flat({ "react-hooks": { name: "eslint-plugin-react-hooks", version: "7.0.0" } });
+    const installed = (version: string) => ({
+      "node_modules/eslint-plugin-react-hooks/package.json": JSON.stringify({
+        name: "eslint-plugin-react-hooks",
+        version,
+      }),
+    });
+    expect(await notes({ ...hooks, ...installed("7.1.1") })).toEqual([]);
+    expect(await notes({ ...hooks, ...installed("6.1.0") })).toEqual([
+      "note: eslint-plugin-react-hooks 6.1.0 is installed, but bun lint's built-in rules match 7.1.1",
+    ]);
+    expect(await notes(hooks)).toEqual([
+      "note: eslint-plugin-react-hooks 7.0.0 is installed, but bun lint's built-in rules match 7.1.1",
+    ]);
+  });
+
   test("not where nobody reads it", async () => {
     for (const flags of [["--quiet"], ["--silent"], ["-f", "json"], ["-f", "unix"]]) {
       expect([flags, await notes(typescript("8.43.0"), ...flags)]).toEqual([flags, []]);
@@ -3807,6 +3825,57 @@ describe.concurrent("the command line of oxlint", () => {
     const alone = await lint({ ...files, ".oxlintrc.json": oxlintrc }, ["--type-check"]);
     expect(alone.stdout).toContain("The `--type-check` option requires type-aware linting.");
     expect(alone.exitCode).toBe(1);
+  });
+
+  // The texts are those of oxlint 1.87.0.
+  test.each([
+    [
+      { settings: { react: { version: 1 } } },
+      'invalid type: integer `1`, expected a version string like \\"18.2.0\\" or \\"17.0\\"',
+    ],
+    [{ settings: { react: { version: "detect" } } }, "invalid major version in settings.react.version"],
+    [{ settings: { react: { version: "18.x" } } }, "invalid minor version in settings.react.version"],
+    [{ settings: { react: { version: "18.2.0-rc.1" } } }, "invalid patch version in settings.react.version"],
+    [{ settings: { react: { version: "18.2.0.1" } } }, "has too many components, expected major.minor.patch"],
+    [{ settings: { react: { version: "" } } }, "version string cannot be empty for settings.react.version"],
+    [
+      { rules: { "no-unused-vars": ["error", { vars: "nope" }] } },
+      "Invalid 'vars' option for no-unused-vars: Expected  or all or local, got nope",
+    ],
+    [
+      { rules: { "no-unused-vars": ["off", "nope"] } },
+      "Invalid 'vars' option for no-unused-vars: Expected  or all or local, got nope",
+    ],
+    [
+      { rules: { "no-unused-vars": ["error", { args: 1 }] } },
+      "Invalid 'args' option for no-unused-vars: Expected a string, got 1",
+    ],
+    [{ rules: { "no-unused-vars": ["error", { args: "some" }] } }, "Expected  or after-used or all or none, got some"],
+    [
+      { rules: { "no-unused-vars": ["error", { caughtErrors: "some" }] } },
+      "Invalid 'caughtErrors' option for no-unused-vars: Expected  or all or none, got some",
+    ],
+    [
+      { rules: { "no-unused-vars": ["error", 1] } },
+      "Invalid 'vars' option for no-unused-vars: Expected a string or an object, got 1",
+    ],
+  ])("an option value that oxlint rejects is a config error: %j", async (config, why) => {
+    // `stdout` has its backslashes normalized, and one of these texts has some.
+    const { raw, exitCode } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.js": code });
+    expect(raw).toContain(why);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    { settings: { react: { version: "18" } } },
+    { settings: { react: { version: "18.2" } } },
+    { settings: { react: { version: null } } },
+    { rules: { "no-unused-vars": ["error", "local"] } },
+    { rules: { "no-unused-vars": ["error", { vars: "all", args: "after-used", caughtErrors: "none" }] } },
+    { rules: { "no-unused-vars": ["error", { caughtErrors: false }] } },
+  ])("an option value that oxlint accepts is not: %j", async config => {
+    const { stdout } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.js": code });
+    expect(stdout).toStartWith('{"results":');
   });
 
   // Rules that look at several files lint a file a second time, without types.

@@ -23,6 +23,46 @@ pub enum SuggestionKind {
     DangerousSuggestion,
 }
 
+/// What's left of a line once `span` is removed from `text`.
+pub struct Around {
+    /// `span` with the spaces and tabs on both sides of it.
+    pub with_blanks: Span,
+    /// Nothing comes before it on its first line.
+    pub starts_line: bool,
+    /// The length of the line break after it. `None` if something else follows on its last line, 0 at the end of the text.
+    pub line_break: Option<u32>,
+}
+
+impl Around {
+    pub fn of(text: &[u8], span: Span) -> Around {
+        let is_blank = |byte: &&u8| matches!(byte, b' ' | b'\t');
+        let before = text.get(..span.start as usize).unwrap_or_default();
+        let after = text.get(span.end as usize..).unwrap_or_default();
+        let start = before.len() - before.iter().rev().take_while(is_blank).count();
+        let blank_after = after.iter().take_while(is_blank).count();
+        Around {
+            with_blanks: Span::new(start as u32, span.end + blank_after as u32),
+            starts_line: matches!(before.get(..start), Some([] | [.., b'\n' | b'\r'])),
+            line_break: match after.get(blank_after..) {
+                Some([b'\r', b'\n', ..]) => Some(2),
+                Some([b'\n' | b'\r', ..]) => Some(1),
+                Some([]) | None => Some(0),
+                Some(_) => None,
+            },
+        }
+    }
+
+    /// The whole lines that `span` is on, with the last line break, if nothing else is on them. Removing that leaves no empty
+    /// line behind, which `bun format --check` would complain about.
+    pub fn whole_lines(&self) -> Option<Span> {
+        let line_break = self.line_break.filter(|_| self.starts_line)?;
+        Some(Span::new(
+            self.with_blanks.start,
+            self.with_blanks.end + line_break,
+        ))
+    }
+}
+
 /// The longest string that JavaScript has, in V8: `" ".repeat(n)` throws beyond it.
 pub const MAX_STRING_LENGTH: u64 = (1 << 29) - 24;
 

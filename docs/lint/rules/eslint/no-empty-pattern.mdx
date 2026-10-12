@@ -32,7 +32,7 @@ Every option, set to its default:
 ```toml bunfig.toml
 [lint.rules]
 "no-empty-pattern" = ["warn", {
-  allowObjectPatternsAsParameters = false,
+  allowObjectPatternsAsParameters = true,
 }]
 ```
 
@@ -47,7 +47,7 @@ Reported:
 const { settings: {} } = user;
 const [] = items;
 
-function render({}) {
+function render([]) {
   return "<div></div>";
 }
 ```
@@ -68,11 +68,11 @@ function render({ title }) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowObjectPatternsAsParameters` | `false` | Allow `{}` as a function parameter, with no default value or with the default `{}`. |
+| `allowObjectPatternsAsParameters` | `true` | Allow `{}` as a function parameter, with no default value or with the default `{}`. |
 
-This is for a function that's called with an object it doesn't need, but that uses a later parameter:
+This is for a function that's called with an object it doesn't need, but that uses a later parameter. Playwright requires the `{}` in a fixture that uses no other fixture. With an ESLint config file the default is ESLint's, `false`.
 
-{/* good {"options": [{"allowObjectPatternsAsParameters": true}]} */}
+{/* good */}
 ```js
 function withServer({}, use) {
   return use(startServer());
@@ -83,9 +83,16 @@ function withDatabase({} = {}, use) {
 }
 ```
 
+{/* bad {"options": [{"allowObjectPatternsAsParameters": false}]} */}
+```js
+function withServer({}, use) {
+  return use(startServer());
+}
+```
+
 An empty array pattern as a parameter is still reported:
 
-{/* bad {"options": [{"allowObjectPatternsAsParameters": true}]} */}
+{/* bad */}
 ```js
 function withServer([], use) {
   return use(startServer());

@@ -63,6 +63,8 @@ pub(crate) enum Need {
     Rules,
     /// It lints or formats files.
     Files,
+    /// `bun format` skips files because of a plugin it doesn't have. Until that changes, only the old tool formats them.
+    SkippedFiles,
     /// The config file can't be loaded without it. Holds the file's name as shown to the user.
     Configuration(Vec<u8>),
     /// There's no config file, so having this dependency is what picks whose defaults apply.
@@ -80,6 +82,7 @@ impl Need {
         match self {
             Need::Rules => b"rules",
             Need::Files => b"files",
+            Need::SkippedFiles => b"skipped_files",
             Need::Configuration(_) => b"config",
             Need::Defaults => b"defaults",
             Need::Script(_) => b"script",
@@ -92,7 +95,9 @@ impl Need {
     fn by(&self) -> Option<&[u8]> {
         match self {
             Need::Configuration(by) | Need::Script(by) | Need::Dependent(by) => Some(by),
-            Need::Rules | Need::Files | Need::Defaults | Need::LintStaged => None,
+            Need::Rules | Need::Files | Need::SkippedFiles | Need::Defaults | Need::LintStaged => {
+                None
+            }
         }
     }
 
@@ -106,6 +111,7 @@ impl Need {
         match self {
             Need::Rules => format!("{its} rules run in JavaScript"),
             Need::Files => format!("some files go to {it}"),
+            Need::SkippedFiles => format!("the skipped files need {it}"),
             Need::Configuration(file) => format!("{} loads {it}", BStr::new(file)),
             Need::Defaults => format!("{its} defaults apply while package.json has {it}"),
             Need::Script(script) => format!("the \"{}\" script runs {it}", BStr::new(script)),

@@ -31,7 +31,7 @@ function prettierFrom(directory) {
 // that the command line sets, `precedence`: `--config-precedence`, `looksAtStdin`: the text is standard input, with `--check` or
 // `--list-different`.
 async function formatWithPrettier() {
-  const [headLength] = messageWords(1);
+  const headLength = messageWords(1)[0];
   const { path, config, usesConfig, editorconfig, flags, precedence, looksAtStdin } = JSON.parse(
     messageText(4, 4 + headLength),
   );
@@ -57,5 +57,5 @@ async function formatWithPrettier() {
 // What `handle` does with the kinds of calls from `FORMAT_WITH_PRETTIER` on.
 function handleForPrettier() {
   // As `handleError` of Prettier's command line shows it.
-  return formatWithPrettier().catch(error => FAILED + String(error?.loc ? error : (error?.stack ?? error)));
+  return formatWithPrettier().catch(error => FAILED + messageOf(error, it => (it?.loc ? it : (it?.stack ?? it))));
 }

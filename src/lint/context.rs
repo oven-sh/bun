@@ -567,6 +567,22 @@ impl<'a> Report<'a> {
         self.suggest_as(SuggestionKind::Suggestion, message, data, fix)
     }
 
+    /// A suggestion that changes what the program does, or whether it type checks. It's an ordinary suggestion to ESLint and to an
+    /// editor. With no config file `--fix-suggestions` leaves it alone, because it applies everything at once with nobody looking,
+    /// and only `--fix-dangerously` makes it.
+    pub fn suggest_change_of_behavior<F: IntoFix>(
+        self,
+        message: Message,
+        data: &[(&'static str, &[u8])],
+        fix: impl FnOnce(Fixer<'a>) -> F,
+    ) -> Self {
+        let kind = match self.file.language().stands_alone {
+            true => SuggestionKind::DangerousSuggestion,
+            false => SuggestionKind::Suggestion,
+        };
+        self.suggest_as(kind, message, data, fix)
+    }
+
     /// oxlint's `diagnostic_with_dangerous_fix`. It is a suggestion that says what the report says.
     pub fn fix_dangerously<F: IntoFix>(self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         // The text is there when the report is made.

@@ -193,3 +193,24 @@ test.concurrent.each([
   expect(stdout.trim().split("\n").sort().join(" ")).toBe(expected);
   expect(exitCode).toBe(1);
 });
+
+// The expected files come from Prettier 3.9. To its `ignore` package the `**` in `build/**/` can stand for nothing, so the line is
+// about `build` itself. git reads it differently: there `build/a.js` isn't ignored.
+test.concurrent.each([
+  ["build/**/", "a.js a/f.js ab.js src/build/d.js src/e.js"],
+  ["**/build/**/", "a.js a/f.js ab.js src/e.js"],
+  ["build/", "a.js a/f.js ab.js src/e.js"],
+  ["build/**", "a.js a/f.js ab.js src/build/d.js src/e.js"],
+  ["build/**/x/", "a.js a/f.js ab.js build/a.js build/sub/b.js src/build/d.js src/e.js"],
+  ["a**/**", "a.js ab.js build/a.js build/sub/b.js build/sub/x/c.js src/build/d.js src/e.js"],
+])("the .prettierignore line %j with ** ignores the same files as Prettier", async (line, expected) => {
+  const names = "build/a.js build/sub/b.js build/sub/x/c.js src/build/d.js src/e.js a.js a/f.js ab.js".split(" ");
+  const files = {
+    ...Object.fromEntries(names.map(name => [name, ugly])),
+    ".prettierrc.json": "{}\n",
+    ".prettierignore": `${line}\n`,
+  };
+  const { stdout, exitCode } = await format(files, ["-l", "."]);
+  expect(stdout.trim().split("\n").sort().join(" ")).toBe(expected);
+  expect(exitCode).toBe(1);
+});

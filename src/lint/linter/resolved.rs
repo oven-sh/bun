@@ -374,7 +374,7 @@ impl ResolvedConfig {
         // No schema allows one, and `JSON.stringify` throws at it while ESLint makes the message.
         if options.iter().find_map(super::schema::placeholder) == Some(b"bigint") {
             self.error = Some(b"TypeError: Do not know how to serialize a BigInt".to_vec());
-        } else if let Err(lines) = super::schema::validate(entry.meta, options) {
+        } else if let Err(lines) = super::schema::validate(entry.meta, options, false) {
             let id = name.map_or_else(|| super::RuleId::Known(entry.meta).to_vec(), <[u8]>::to_vec);
             self.error = Some([b"Key \"rules\": Key \"", &id[..], b"\":\n", &lines].concat());
         }

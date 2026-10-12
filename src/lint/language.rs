@@ -96,6 +96,9 @@ pub struct LanguageOptions {
     pub globals: Vec<(Box<[u8]>, Global)>,
     /// The names that `globals` itself turns on, without those of an `env`. Sorted.
     pub written_globals: Vec<Box<[u8]>>,
+    /// With an oxlint config: what an `env` says about each variable that `globals` turns off. See
+    /// [`File::global`](crate::ast::File::global).
+    pub env_behind_off: Vec<(Box<[u8]>, Global)>,
     pub parser: Parser,
     /// It is `@babel/eslint-parser`, which analyzes the scopes itself: see [`LanguageOptions::has_function_scope_at_top_level`].
     pub is_babel: bool,
@@ -340,7 +343,14 @@ impl LanguageOptions {
         // The last of two entries with the same name counts.
         globals.reverse();
         crate::utils::sort::sort_by(&mut globals, |a, b| a.0.cmp(&b.0));
-        globals.dedup_by(|a, b| a.0 == b.0);
+        let mut env_behind_off: Vec<(Box<[u8]>, Global)> = Vec::new();
+        globals.dedup_by(|dropped, kept| {
+            let is_same = dropped.0 == kept.0;
+            if is_same && whose == Tables::Oxlint && kept.1 == Global::Off {
+                env_behind_off.push(dropped.clone());
+            }
+            is_same
+        });
         LanguageOptions {
             ecma_version: match language_options.get(b"ecmaVersion") {
                 None => Self::LATEST_ECMA_VERSION,
@@ -349,6 +359,7 @@ impl LanguageOptions {
             source_type,
             globals,
             written_globals,
+            env_behind_off,
             parser,
             is_babel,
             // ESLint turns it off for espree in a module. Babel's parser passes over it there.
@@ -467,6 +478,7 @@ impl Default for LanguageOptions {
             source_type: SourceType::Module,
             globals: Vec::new(),
             written_globals: Vec::new(),
+            env_behind_off: Vec::new(),
             parser: Parser::Espree,
             is_babel: false,
             global_return: false,

@@ -86,11 +86,13 @@ bun remove oxlint oxlint-tsgolint
 
 `import { defineConfig } from "oxlint"` in an `oxlint.config.ts` keeps working without the package.
 
-No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, write them to an `.oxlintrc.json` before you uninstall. Without it you get [Bun's defaults](/runtime/lint#default-rules).
+No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, add an empty `.oxlintrc.json` before you uninstall. Without it you get [Bun's defaults](/runtime/lint#default-rules).
 
-```sh terminal icon="terminal"
-bunx oxlint --init
+```json .oxlintrc.json icon="file-json"
+{}
 ```
+
+Don't use `oxlint --init` for this. It sets the `correctness` category to `"error"`, but oxlint's default is `"warn"`, so warnings turn into errors and the exit code changes.
 
 ---
 

@@ -4,7 +4,7 @@
 use super::message::{LintMessage, NotNumbers, RuleId, Suppression};
 use crate::ast::File;
 use crate::context::Severity;
-use crate::fix::Fix;
+use crate::fix::{Around, Fix};
 use crate::span::Span;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
@@ -140,6 +140,23 @@ impl Input<'_, '_> {
         None
     }
 
+    /// Removes a whole comment. ESLint puts a space in its place, which leaves a line with only a space on it, or a space at the
+    /// end of a line, and `bun format --check` fails on both. With no config file, a comment that ends its line goes with the
+    /// spaces around it, and with the line break too if nothing else is on the line.
+    fn removal_of(&self, comment: Span) -> Fix {
+        let around = Around::of(self.file.text(), comment);
+        if !self.file.language().stands_alone || around.line_break.is_none() {
+            return Fix {
+                span: comment,
+                text: b" ".to_vec(),
+            };
+        }
+        Fix {
+            span: around.whole_lines().unwrap_or(around.with_blanks),
+            text: Vec::new(),
+        }
+    }
+
     /// `processUnusedDirectives`, and the messages that `applyDirectives` makes of its result.
     /// `unused`: indices into the directives.
     fn report(&self, unused: &[u32], out: &mut Vec<LintMessage>) {
@@ -195,10 +212,7 @@ impl Input<'_, '_> {
                 description.extend_from_slice(name);
                 description.push(b'\'');
             }
-            let fix = Fix {
-                span: parent.comment,
-                text: b" ".to_vec(),
-            };
+            let fix = self.removal_of(parent.comment);
             out.push(self.message(group[0], parent, &description, fix));
         }
     }

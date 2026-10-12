@@ -206,14 +206,19 @@ pub(super) fn all_exprs() -> NodeTags {
 // ───────────────────────────── statements ─────────────────────────────
 
 /// `Program.sourceType`
-pub(super) fn source_type(file: &File) -> &'static str {
+pub(super) fn source_type<'a>(file: &'a File<'a>) -> &'static str {
     use crate::language::SourceType;
-    match (Dialect::of(file), file.language().source_type) {
-        (Dialect::Espree, SourceType::Module) => "module",
-        (Dialect::Espree, SourceType::Script) => "script",
-        (Dialect::Espree, SourceType::CommonJs) => "commonjs",
-        (Dialect::TypeScript, _) if file.is_module_program() => "module",
-        (Dialect::TypeScript, _) => "script",
+    let source_type = match Dialect::of(file) {
+        // oxlint decides for each file, whatever the configuration says.
+        _ if file.language().is_oxlint => crate::utils::oxlint::source_type(file),
+        Dialect::Espree => file.language().source_type,
+        Dialect::TypeScript if file.is_module_program() => SourceType::Module,
+        Dialect::TypeScript => SourceType::Script,
+    };
+    match source_type {
+        SourceType::Module => "module",
+        SourceType::Script => "script",
+        SourceType::CommonJs => "commonjs",
     }
 }
 

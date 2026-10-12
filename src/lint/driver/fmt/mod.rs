@@ -117,7 +117,7 @@ fn cannot_force_parser_on(written: &[u8], parser: &[u8]) -> Vec<u8> {
     let directory = paths::from_native(written);
     let directory = directory.strip_suffix(b"/").unwrap_or(&directory);
     let base = match directory {
-        b"." => Vec::new(),
+        b"." | b"" => Vec::new(),
         _ => [directory, b"/"].concat(),
     };
     text.extend_from_slice(b"\n  Name the files, or use a glob: bun format --parser ");
@@ -1174,8 +1174,8 @@ impl Run<'_> {
     /// `prettier --parser x < file`: Prettier's `formatStdin` without `--stdin-filepath`. Whatever goes by a file name doesn't
     /// apply: ignore files, overrides, `.editorconfig`.
     fn format_unnamed_stdin(mut self, configs: &Configs) -> Outcome {
-        // Prettier prints its usage.
-        if bun_sys::isatty(bun_sys::Fd::stdin()) {
+        // Prettier prints its usage. `bun_sys::isatty` is also true for `NUL` on Windows.
+        if bun_core::Output::is_stdin_tty() {
             return self.fail(
                 b"--parser without files formats standard input, and nothing is piped in\n  Pipe the code in, or name the files to format.",
             );
@@ -1994,6 +1994,7 @@ impl Run<'_> {
             return self.fail(&cannot_resolve_parser(parser));
         }
         // Prettier reads everything in the directory with that parser: lock files, dotfiles, LICENSE. A Prettier config gets that.
+        // oxfmt has no `--parser`.
         let is_directory = |written: &&Vec<u8>| {
             let path = paths::resolve(&environment.cwd, &paths::from_native(written));
             matches!(
@@ -2001,7 +2002,7 @@ impl Run<'_> {
                 Some((fs::LinkKind::Directory, _))
             )
         };
-        if self.is_native
+        if (self.is_native || is_oxfmt)
             && !options.doctor
             && !options.list_files
             && let Some((_, parser)) = from_flag

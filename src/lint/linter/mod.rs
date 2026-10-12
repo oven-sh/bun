@@ -285,10 +285,10 @@ impl Named<'_> {
     }
 
     /// [`schema::validate`]. `Ok`: what a rule of a JavaScript plugin gets as its options.
-    fn validate(self, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
+    fn validate(self, options: &[Json], stands_alone: bool) -> Result<Vec<Json>, Vec<u8>> {
         match self {
             Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
-                schema::validate(entry.meta, options).map(|()| Vec::new())
+                schema::validate(entry.meta, options, stands_alone).map(|()| Vec::new())
             }
             Named::Js(rule) => schema::validate_js(rule, options),
         }
@@ -1270,7 +1270,8 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             return rule;
         };
         let can_run = !extension.meta.requires_types || self.file.types.is_some();
-        let takes = |it: &RuleEntry| schema::validate(it.meta, given).is_ok();
+        let stands_alone = self.file.language().stands_alone;
+        let takes = |it: &RuleEntry| schema::validate(it.meta, given, stands_alone).is_ok();
         let is_for_base = self.file.is_javascript() || !can_run || !takes(extension) && takes(base);
         Named::Native(if is_for_base { base } else { extension })
     }
@@ -1431,13 +1432,14 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 || keeps_options && existing.is_some_and(|it| it.severity() != Severity::Off);
             // ESLint leaves out what is off only if that is written `0`.
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
+            let stands_alone = self.file.language().stands_alone;
             let validated = match is_validated || is_zero {
                 true => None,
                 // Options are valid for a pair if either rule accepts them.
-                false => Some(rule.validate(options).or_else(|lines| {
+                false => Some(rule.validate(options, stands_alone).or_else(|lines| {
                     let pair = self.pair_of(rule).map(|it| [it.0, it.1]);
                     let mut pair = pair.iter().flatten();
-                    match pair.any(|it| schema::validate(it.meta, options).is_ok()) {
+                    match pair.any(|it| schema::validate(it.meta, options, stands_alone).is_ok()) {
                         true => Ok(Vec::new()),
                         false => Err(lines),
                     }

@@ -138,6 +138,23 @@ pub struct Minimatch {
     folds_case: bool,
 }
 
+/// Escapes every `(` that isn't escaped yet, so that none of `?(` `*(` `+(` `@(` `!(` starts a group.
+fn without_groups(pattern: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pattern.len() + 2);
+    let mut rest = pattern.iter();
+    while let Some(&byte) = rest.next() {
+        match byte {
+            b'\\' => {
+                out.push(byte);
+                out.extend(rest.next());
+            }
+            b'(' => out.extend_from_slice(b"\\("),
+            _ => out.push(byte),
+        }
+    }
+    out
+}
+
 impl Minimatch {
     pub fn with(written: &[u8], options: MinimatchOptions) -> Minimatch {
         let mut written = match options.is_version_3 {
@@ -153,7 +170,7 @@ impl Minimatch {
         };
         let mut text = from_minimatch(&written[bangs..]);
         if options.noext {
-            text = strings::replace_owned(&text, b"(", b"\\(");
+            text = without_groups(&text);
         }
         // Only `nonegate` leaves a `!` here. It's a plain character then.
         if text.starts_with(b"!") {

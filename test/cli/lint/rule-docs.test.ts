@@ -119,8 +119,10 @@ describe("docs/lint/rules", () => {
   });
 
   test("snippets that turn a rule off work", async () => {
-    const on = rules.filter(rule => rule.on_by_default);
-    const toggles = on.flatMap(rule => configFor(rule, writtenPart(readPage(text(pageOf(rule)))!.body))!.toggle);
+    // A rule that never reports has no Configure section.
+    const config = (rule: Rule) => configFor(rule, writtenPart(readPage(text(pageOf(rule)))!.body));
+    const on = rules.filter(rule => rule.on_by_default && config(rule));
+    const toggles = on.flatMap(rule => config(rule)!.toggle);
     expect(toggles.length).toBeGreaterThan(70);
     using dir = tempDir("bun-lint-rule-docs", {
       "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }),

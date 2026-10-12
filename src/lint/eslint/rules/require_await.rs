@@ -97,7 +97,7 @@ fn report<'a>(func: Func<'a>, cx: &Cx<'a, RequireAwait>) {
     };
     cx.report(place, MISSING_AWAIT)
         .data("name", name)
-        .suggest(REMOVE_ASYNC, |fixer| {
+        .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| {
             let file = fixer.file();
             let node = node_with_async_keyword(func);
             let async_token = file.tokens_in(node).find(|token| token.is("async"))?;

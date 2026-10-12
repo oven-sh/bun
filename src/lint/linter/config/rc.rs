@@ -272,6 +272,57 @@ fn refuse_unknown_fields(key: &[u8], setting: &Json) -> Result<(), ConfigError> 
     Ok(())
 }
 
+/// oxlint's refusal of a value that `no-unused-vars` doesn't know for `vars`, `args` or `caughtErrors`. `id`: the rule as the
+/// file names it.
+fn refuse_unknown_values(id: &[u8], setting: &Json) -> Result<(), ConfigError> {
+    let refusal = |name: &str, why: &[&[u8]]| {
+        let start: [&[u8]; 5] = [
+            b"Invalid configuration for rule `",
+            id,
+            b"`:\n  Invalid '",
+            name.as_bytes(),
+            b"' option for no-unused-vars: ",
+        ];
+        ConfigError::new(&[&start[..], why].concat())
+    };
+    let shown = |value: &Json| {
+        let mut shown = Vec::new();
+        value.stringify(&mut shown);
+        shown
+    };
+    let check = |name: &str, value: &Json, known: &[&[u8]], takes_booleans: bool| match value {
+        Json::String(text) if known.contains(&&text[..]) => Ok(()),
+        Json::String(text) => {
+            let known = known.join(&b" or "[..]);
+            Err(refusal(name, &[b"Expected  or ", &known, b", got ", text]))
+        }
+        Json::Bool(_) if takes_booleans => Ok(()),
+        other => Err(refusal(name, &[b"Expected a string, got ", &shown(other)])),
+    };
+    let vars: &[&[u8]] = &[b"all", b"local"];
+    match setting.as_array().and_then(|it| it.get(1)) {
+        None | Some(Json::Null) => Ok(()),
+        Some(option @ Json::String(_)) => check("vars", option, vars, false),
+        Some(option @ Json::Object(_)) => {
+            let rows: [(&str, &[&[u8]], bool); 3] = [
+                ("vars", vars, false),
+                ("args", &[b"after-used", b"all", b"none"], false),
+                ("caughtErrors", &[b"all", b"none"], true),
+            ];
+            rows.iter().try_for_each(|&(name, known, takes_booleans)| {
+                match option.get(name.as_bytes()) {
+                    Some(value) => check(name, value, known, takes_booleans),
+                    None => Ok(()),
+                }
+            })
+        }
+        Some(other) => {
+            let why: [&[u8]; 2] = [b"Expected a string or an object, got ", &shown(other)];
+            Err(refusal("vars", &why))
+        }
+    }
+}
+
 /// Loads a JavaScript plugin: [`Host::load`](crate::js_plugin::Host::load). It is given the directory of the file that names the
 /// plugin, the specifier, and the name that the file gives the plugin, if it does.
 pub type LoadPlugin<'l> =
@@ -519,6 +570,9 @@ impl Rc<'_, '_> {
                         || plugins.iter().any(|it| plugin_of_oxlint(it) == plugin)
                     {
                         refuse_unknown_fields(&key, setting)?;
+                        if key == b"no-unused-vars" {
+                            refuse_unknown_values(id, setting)?;
+                        }
                     }
                     *id = key;
                 }

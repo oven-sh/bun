@@ -113,7 +113,7 @@ description: "Every rule built into bun lint"
 | [`no-lone-blocks`](/lint/rules/eslint/no-lone-blocks) | Disallow blocks that do nothing |  |  |  |
 | [`no-lonely-if`](/lint/rules/eslint/no-lonely-if) | Require `else if` instead of an `if` alone in an `else` block |  | yes |  |
 | [`no-loop-func`](/lint/rules/eslint/no-loop-func) | Disallow functions in loops that use a variable the loop changes |  |  |  |
-| [`no-loss-of-precision`](/lint/rules/eslint/no-loss-of-precision) | Disallow number literals that cannot be stored exactly as written | warn |  |  |
+| [`no-loss-of-precision`](/lint/rules/eslint/no-loss-of-precision) | Disallow number literals that cannot be stored exactly as written | error |  |  |
 | [`no-magic-numbers`](/lint/rules/eslint/no-magic-numbers) | Require numbers to be given a name instead of being used directly |  |  |  |
 | [`no-misleading-character-class`](/lint/rules/eslint/no-misleading-character-class) | Disallow characters made of several code points inside a regular expression character class | error | suggestion |  |
 | [`no-mixed-requires`](/lint/rules/eslint/no-mixed-requires) | Disallow `require` calls mixed with other variables in one declaration |  |  |  |
@@ -462,7 +462,7 @@ description: "Every rule built into bun lint"
 | [`react/jsx-sort-default-props`](/lint/rules/react/jsx-sort-default-props) | Require the keys of `defaultProps` to be sorted alphabetically |  |  |  |
 | [`react/jsx-sort-props`](/lint/rules/react/jsx-sort-props) | Require JSX props to be sorted alphabetically |  | yes |  |
 | [`react/jsx-tag-spacing`](/lint/rules/react/jsx-tag-spacing) | Enforce spacing around the `<`, `/` and `>` of JSX tags |  | yes |  |
-| [`react/jsx-uses-react`](/lint/rules/react/jsx-uses-react) | Count `React` as used in files that contain JSX |  |  |  |
+| [`react/jsx-uses-react`](/lint/rules/react/jsx-uses-react) | Count `React` as used in files that contain JSX | error |  |  |
 | [`react/jsx-uses-vars`](/lint/rules/react/jsx-uses-vars) | Count a variable as used when it is the name of a JSX tag |  |  |  |
 | [`react/jsx-wrap-multilines`](/lint/rules/react/jsx-wrap-multilines) | Require parentheses around JSX that spans several lines |  | yes |  |
 | [`react/no-access-state-in-setstate`](/lint/rules/react/no-access-state-in-setstate) | Disallow reading `this.state` in the argument of `this.setState()` |  |  |  |

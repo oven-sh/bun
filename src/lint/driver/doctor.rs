@@ -7,7 +7,7 @@
 mod packages;
 
 use crate::cli::Options;
-use crate::configs::{Flavor, Loaded, Loader};
+use crate::configs::{Flavor, Loaded, Loader, plugin_shorthand};
 use crate::discover::{self, Status};
 use crate::print_config::{object, text, write_indented};
 use crate::run::{Environment, Fatal, Pool, Script};
@@ -308,6 +308,21 @@ fn source_of(location: &Json, cwd: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+/// Some packages never export the plugin object their own configs use (eslint-plugin-unicorn is one), so `location` only
+/// names the config file. Then the plugin comes from the package the config loaded whose name gives its prefix.
+fn package_of_prefix(location: &Json, loaded: &[Vec<u8>]) -> Option<Vec<u8>> {
+    let [place, _, Json::String(prefix)] = location.as_array()? else {
+        return None;
+    };
+    if place.get(b"module").is_some() || place.get(b"config").is_none() {
+        return None;
+    }
+    let mut named = loaded
+        .iter()
+        .filter(|it| *it != prefix && plugin_shorthand(it) == *prefix);
+    named.next().cloned()
+}
+
 fn kind_of(flavor: Flavor) -> (&'static [u8], &'static str) {
     match flavor {
         Flavor::Eslint => (b"eslint", "ESLint flat config"),
@@ -386,15 +401,21 @@ pub(crate) fn lint(
     }
 
     let plugins = js_plugins.plugins();
+    let loaded = modules.packages();
+    let source = |it: &Json| package_of_prefix(it, &loaded).or_else(|| source_of(it, cwd));
     let sources: Vec<(&Arc<js_plugin::Plugin>, Vec<u8>)> = (plugins.iter())
-        .filter_map(|it| Some((&it.0, source_of(&it.1, cwd)?)))
+        .filter_map(|it| Some((&it.0, source(&it.1)?)))
         .collect();
     let mut javascript: Vec<(Vec<u8>, Vec<Vec<u8>>)> = Vec::new();
     for rule in &rules.javascript {
         let has_it =
             |plugin: &js_plugin::Plugin| plugin.rules.iter().any(|it| Arc::ptr_eq(it, rule));
         let source = sources.iter().find(|it| has_it(it.0)).map(|it| &it.1[..]);
-        let source = source.unwrap_or_else(|| parse_rule_id(&rule.id).0);
+        let source = source.unwrap_or_else(|| match parse_rule_id(&rule.id).0 {
+            // Only `--rulesdir` adds rules without a prefix.
+            b"" => b"--rulesdir",
+            prefix => prefix,
+        });
         match javascript.iter_mut().find(|it| it.0 == source) {
             Some(known) => known.1.push(rule.id.to_vec()),
             None => javascript.push((source.to_vec(), vec![rule.id.to_vec()])),
@@ -408,7 +429,6 @@ pub(crate) fn lint(
     let file = own.file.as_ref().map(shown);
     let nested = all_loaded.iter().skip(1).filter_map(|it| it.file.as_ref());
     let nested = sorted(nested.map(shown).collect());
-    let loaded = modules.packages();
     let packages = Packages::new(cwd, &packages::is_for_linting, &|name| {
         let is_named = || sources.iter().any(|it| it.1 == name);
         if javascript.iter().any(|it| it.0 == name) {

@@ -30,7 +30,7 @@ use super::ast::Numbered;
 use super::wire::{self, push_list};
 use crate::ast::{ExprKind, File, Node};
 use crate::estree::{Dialect, Field, NodeType, VNode, Value};
-use crate::language::Global;
+use crate::language::{Global, SourceType};
 use crate::semantic::{Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind};
 use crate::span::Span;
 use bun_core::strings::Utf16OffsetTable;
@@ -843,10 +843,17 @@ impl<'t, 'a> Builder<'t, 'a> {
 
         // By `Symbol::key`: the index of the variable.
         let mut index_of = vec![NONE; file.symbol_key_limit()];
+        // With a configuration of oxlint `Scope::is_strict` takes every file for a module.
+        let is_no_module = file.language().is_oxlint
+            && crate::utils::oxlint::source_type(file) != SourceType::Module;
         for scope in file.scopes() {
             let index = self.scopes.len() as u32;
+            let is_strict = match is_no_module {
+                true => crate::utils::oxlint::is_strict_mode(scope, file),
+                false => scope.is_strict(),
+            };
             self.scopes.push(ScopeRecord {
-                kind: scope.kind() as u32 | (u32::from(scope.is_strict()) * IS_STRICT),
+                kind: scope.kind() as u32 | (u32::from(is_strict) * IS_STRICT),
                 block: id(block(scope)),
                 upper: scope.parent().map(|it| it.id().0),
                 variable_scope: scope.variable_scope().id().0,

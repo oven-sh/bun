@@ -80,13 +80,17 @@ impl UseIsnan {
         let Some((op, left, right)) = e.as_binary() else {
             return;
         };
-        let (nan, compared) = if is_compared_nan(left) {
-            (left, right)
-        } else if is_compared_nan(right) {
-            (right, left)
-        } else {
-            return;
-        };
+        // ESLint reports `NaN == NaN` once. oxlint reports each side.
+        let is_oxlint = cx.language().is_oxlint;
+        if is_compared_nan(left) {
+            Self::report_comparison(e, op, left, right, cx);
+        }
+        if is_compared_nan(right) && (is_oxlint || !is_compared_nan(left)) {
+            Self::report_comparison(e, op, right, left, cx);
+        }
+    }
+
+    fn report_comparison<'a>(e: Expr<'a>, op: BinOp, nan: Expr<'a>, compared: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // oxlint points at the `NaN`, with its parentheses.
         let report = match (cx.language().is_oxlint, op) {
             (false, _) => cx.report(e, COMPARISON_WITH_NAN).hint("Nothing is equal to NaN, not even NaN itself."),

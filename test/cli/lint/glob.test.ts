@@ -260,6 +260,24 @@ test.concurrent.each([
   expect(await reported(files, ["a.js"])).toEqual(expected);
 });
 
+// The answers are minimatch's. A report means that the pattern matched "~(x)/a".
+test.concurrent.each([
+  ["~(x)/**", true, ["a.js:2"]],
+  ["~(x)/**", false, ["a.js:2"]],
+  ["~\\(x)/**", true, ["a.js:2"]],
+  ["~\\(x)/**", false, ["a.js:2"]],
+  ["~+(x)/**", true, []],
+  ["~?(\\(x\\))/**", true, []],
+  ["~?(\\(x\\))/**", false, ["a.js:2"]],
+])("import/order: the pattern %j with patternOptions.noext = %p", async (pattern, noext, expected) => {
+  const group = `{ pattern = ${JSON.stringify(pattern)}, group = "builtin", position = "before", patternOptions = { noext = ${noext} } }`;
+  const files = {
+    "bunfig.toml": `[lint.rules]\n"import/order" = ["error", { pathGroups = [${group}], pathGroupsExcludedImportTypes = [] }]\n`,
+    "a.js": 'import fs from "fs";\nimport a from "~(x)/a";\nexport default [fs, a];\n',
+  };
+  expect(await reported(files, ["a.js"])).toEqual(expected);
+});
+
 // The expected files come from ESLint 10.12.
 test.concurrent("brace sequences in `files` match the same files as ESLint", async () => {
   // prettier-ignore

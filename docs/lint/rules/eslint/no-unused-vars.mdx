@@ -18,6 +18,8 @@ A name that's declared and never read is clutter at best. Often it points to a b
 
 `--fix-suggestions` removes the declaration, but only if that can't change what the program does: an unused import, function or class, or a variable set to a plain value. `const sent = sendEmail(user);` stays, because removing it would also remove the call. So do parameters, names in a destructuring pattern, and the top level of a script that's neither an ES module nor CommonJS, which a web page can use. With an ESLint config file the suggestions are ESLint's.
 
+An unused import always goes. `import { setup } from "./polyfills";` is removed as a whole, so the module is no longer loaded. `import setup from "./polyfills";` becomes `import "./polyfills";`, which is how you load a module only for its side effects.
+
 To keep a name that you don't use, start it with `_`.
 
 This rule is on by default in JavaScript files. In TypeScript files, `@typescript-eslint/no-unused-vars` is on instead.

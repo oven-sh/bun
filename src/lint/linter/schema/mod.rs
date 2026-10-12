@@ -46,6 +46,41 @@ fn find(id: &[u8]) -> Option<Json> {
     crate::json::parse(schemas[at].1)
 }
 
+/// Options that only `bun lint` has, as `(rule, option)`. Each is a boolean in the rule's first options object. They're valid
+/// where there's no ESLint or oxlint config file. With one, the schema is the original's, and so is the error for these.
+const OPTIONS_OF_BUN: [(&[u8], &[u8]); 4] = [
+    (
+        b"@typescript-eslint/no-loss-of-precision",
+        b"ignoreDecimals",
+    ),
+    (b"no-constant-binary-expression", b"allowLiteralToggle"),
+    (b"no-loss-of-precision", b"ignoreDecimals"),
+    (b"react/jsx-key", b"checkArraysOutsideJSX"),
+];
+
+/// [`find`], with [`OPTIONS_OF_BUN`] added to the schema.
+fn find_standing_alone(id: &[u8]) -> Option<Json> {
+    let found = find(id);
+    let mut own = OPTIONS_OF_BUN.iter().filter(|it| it.0 == id).peekable();
+    if own.peek().is_none() {
+        return found;
+    }
+    let empty = br#"[[{ "type": "object", "properties": {}, "additionalProperties": false }]]"#;
+    let mut found = found.or_else(|| crate::json::parse(empty))?;
+    let Json::Array(parts) = &mut found else {
+        return Some(found);
+    };
+    if let Some(Json::Array(items)) = parts.first_mut()
+        && let Some(Json::Object(first)) = items.first_mut()
+        && let Some((_, Json::Object(properties))) =
+            first.iter_mut().find(|it| it.0 == b"properties")
+    {
+        let boolean = || crate::json::parse(br#"{ "type": "boolean" }"#).unwrap_or(Json::Null);
+        properties.extend(own.map(|it| (it.1.to_vec(), boolean())));
+    }
+    Some(found)
+}
+
 /// `deepMergeObjects`
 fn deep_merge_objects(first: &Json, second: &Json) -> Json {
     let (Json::Object(first), Json::Object(second)) = (first, second) else {
@@ -93,7 +128,7 @@ pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Jso
     if meta.follows_oxlint {
         return None;
     }
-    let found = find(&RuleId::Known(meta).to_vec())?;
+    let found = find_standing_alone(&RuleId::Known(meta).to_vec())?;
     let [schema, defaults @ ..] = found.as_array()? else {
         return None;
     };
@@ -104,13 +139,22 @@ pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Jso
 }
 
 /// Validates `options`, which are what follows the severity, as ESLint's `validateRulesConfig` does.
-/// `Err`: the lines of its message that follow `Key "rules": Key "<rule>":`.
-pub(crate) fn validate(meta: &'static Meta, options: &[Json]) -> Result<(), Vec<u8>> {
+/// `Err`: the lines of its message that follow `Key "rules": Key "<rule>":`. `stands_alone`: [`OPTIONS_OF_BUN`] are valid too.
+pub(crate) fn validate(
+    meta: &'static Meta,
+    options: &[Json],
+    stands_alone: bool,
+) -> Result<(), Vec<u8>> {
     // Rules ported from oxlint have no schema. They ignore options they don't know.
     if meta.follows_oxlint {
         return Ok(());
     }
-    validate_by_id(&RuleId::Known(meta).to_vec(), options)
+    let find = if stands_alone {
+        find_standing_alone
+    } else {
+        find
+    };
+    validate_found(&RuleId::Known(meta).to_vec(), options, find)
 }
 
 /// Validates `options` (without the severity) and describes the problem in Bun's own words. `rule` is the rule name as the
@@ -125,7 +169,7 @@ pub fn mistake_in_options(
     if meta.follows_oxlint || options.is_empty() && !needs_some() {
         return None;
     }
-    let found = find(&id);
+    let found = find_standing_alone(&id);
     let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
     let defaults = parts.get(1).and_then(Json::as_array).unwrap_or_default();
     let errors = errors_of(parts.first(), defaults, options).err()?;
@@ -168,6 +212,14 @@ fn without_placeholders(json: &Json) -> Json {
 
 /// The same for the rule that ESLint calls `id`, whether it is implemented or not.
 pub(crate) fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
+    validate_found(id, options, find)
+}
+
+fn validate_found(
+    id: &[u8],
+    options: &[Json],
+    find: fn(&[u8]) -> Option<Json>,
+) -> Result<(), Vec<u8>> {
     // Nearly no rule needs options: `generate-schemas.mjs` lists those that do.
     if options.is_empty() && !data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id) {
         return Ok(());

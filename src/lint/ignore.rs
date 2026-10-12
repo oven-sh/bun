@@ -319,8 +319,15 @@ fn regex_of_package(pattern: &[u8], ignores_case: bool) -> Option<Regex> {
 }
 
 /// Returns true if [`read_plain`] and the package agree on `line` (without its `!`). That holds for ASCII lines without `\` or
-/// trailing whitespace whose classes only contain letters and digits.
+/// trailing whitespace whose classes only contain letters and digits, and whose `**` are read the same.
 fn is_read_the_same(line: &[u8]) -> bool {
+    // To the package, the `**` in `a/**/` can stand for nothing, so the line is also about `a` itself, and about every file in it.
+    // And it has its own reading of a `**` that isn't a whole segment, as in `a**/**`.
+    if line.ends_with(b"/**/")
+        || strings::split(line, b"/").any(|it| it != b"**" && strings::contains(it, b"**"))
+    {
+        return false;
+    }
     let mut rest = line;
     while let Some(open) = strings::index_of_char_usize(rest, b'[') {
         let Some(len) = strings::index_of_char_usize(&rest[open + 1..], b']') else {

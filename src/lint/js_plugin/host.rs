@@ -314,7 +314,9 @@ impl<'e> Host<'e> {
     /// Whether `thrown`, the message of what `rule` has thrown, says that it needs types. From then on it
     /// [has asked](Host::has_asked_for_types).
     pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
-        if !thrown.starts_with(ASKS_FOR_TYPES) {
+        // With an oxlint config the message comes after the class of the error.
+        let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
+        if !message.starts_with(ASKS_FOR_TYPES) {
             return false;
         }
         if !self.has_asked_for_types(rule) {

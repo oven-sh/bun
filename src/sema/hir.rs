@@ -1040,7 +1040,7 @@ pub mod rare {
     /// A class has a second constructor or an `async` one, a member that is called `prototype` or `#constructor`, one that is
     /// called `constructor` and is not its constructor, or two with one private name.
     pub const NOTABLE_CLASS_MEMBER: u32 = 1 << 4;
-    /// There is a private name that no class of the file declares, or `super.#a`.
+    /// There is a private name that no class around it declares, or `super.#a`.
     pub const ODD_PRIVATE_NAME: u32 = 1 << 5;
     /// `delete a`, `delete a.#b`
     pub const DELETES_A_NAME: u32 = 1 << 6;

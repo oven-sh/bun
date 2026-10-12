@@ -45,25 +45,23 @@ mod flag {
 
 /// oxc's `SymbolFlags::..Excludes`
 mod excludes {
-    use super::flag::*;
-    pub(super) const FUNCTION_SCOPED: u32 = VALUE & !(super::flag::FUNCTION_SCOPED | FUNCTION);
-    pub(super) const BLOCK_SCOPED: u32 = VALUE;
-    pub(super) const FUNCTION: u32 = VALUE & !(super::flag::FUNCTION | VALUE_MODULE | CLASS);
+    use super::flag;
+    pub(super) const FUNCTION_SCOPED: u32 = flag::VALUE & !(flag::FUNCTION_SCOPED | flag::FUNCTION);
+    pub(super) const BLOCK_SCOPED: u32 = flag::VALUE;
+    pub(super) const FUNCTION: u32 =
+        flag::VALUE & !(flag::FUNCTION | flag::VALUE_MODULE | flag::CLASS);
     pub(super) const CLASS: u32 =
-        (VALUE | TYPE) & !(VALUE_MODULE | super::flag::FUNCTION | INTERFACE);
-    pub(super) const IMPORT: u32 = super::flag::IMPORT | TYPE_IMPORT;
-    pub(super) const TYPE_ALIAS: u32 = TYPE;
-    pub(super) const INTERFACE: u32 = TYPE & !(super::flag::INTERFACE | super::flag::CLASS);
-    pub(super) const TYPE_PARAMETER: u32 = TYPE & !super::flag::TYPE_PARAMETER;
-    pub(super) const CONST_ENUM: u32 = (TYPE | VALUE) & !super::flag::CONST_ENUM;
+        (flag::VALUE | flag::TYPE) & !(flag::VALUE_MODULE | flag::FUNCTION | flag::INTERFACE);
+    pub(super) const IMPORT: u32 = flag::IMPORT | flag::TYPE_IMPORT;
+    pub(super) const TYPE_ALIAS: u32 = flag::TYPE;
+    pub(super) const INTERFACE: u32 = flag::TYPE & !(flag::INTERFACE | flag::CLASS);
+    pub(super) const TYPE_PARAMETER: u32 = flag::TYPE & !flag::TYPE_PARAMETER;
+    pub(super) const CONST_ENUM: u32 = (flag::TYPE | flag::VALUE) & !flag::CONST_ENUM;
     pub(super) const REGULAR_ENUM: u32 =
-        (VALUE | TYPE) & !(super::flag::REGULAR_ENUM | VALUE_MODULE);
-    pub(super) const ENUM_MEMBER: u32 = super::flag::ENUM_MEMBER;
-    pub(super) const VALUE_MODULE: u32 = VALUE
-        & !(super::flag::FUNCTION
-            | super::flag::CLASS
-            | super::flag::REGULAR_ENUM
-            | super::flag::VALUE_MODULE);
+        (flag::VALUE | flag::TYPE) & !(flag::REGULAR_ENUM | flag::VALUE_MODULE);
+    pub(super) const ENUM_MEMBER: u32 = flag::ENUM_MEMBER;
+    pub(super) const VALUE_MODULE: u32 =
+        flag::VALUE & !(flag::FUNCTION | flag::CLASS | flag::REGULAR_ENUM | flag::VALUE_MODULE);
 }
 
 /// One declaration of a symbol: its own flags, and where its name is.
@@ -481,7 +479,8 @@ pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     binder.errors
 }
 
-/// `oxc_span::best_match`, two edits away at most. Of two that are as close, oxc takes the one that its hash table has first.
+/// `oxc_span::best_match`, two edits away at most. Of two that are as close oxc takes the one that its hash table has first,
+/// which is not known here.
 fn closest<'a>(needle: &[u8], candidates: impl Iterator<Item = &'a [u8]>) -> Option<&'a [u8]> {
     const THRESHOLD: usize = 2;
     let characters = |text: &[u8]| bstr::ByteSlice::chars(text).collect::<Vec<char>>();
@@ -493,7 +492,7 @@ fn closest<'a>(needle: &[u8], candidates: impl Iterator<Item = &'a [u8]>) -> Opt
         }
         let distance =
             bun_core::strings::edit_distance(characters(candidate).into_iter(), &needle_characters);
-        if distance <= THRESHOLD && best.is_none_or(|it| distance < it.1) {
+        if distance <= THRESHOLD && best.is_none_or(|it| (distance, candidate) < (it.1, it.0)) {
             best = Some((candidate, distance));
         }
     }

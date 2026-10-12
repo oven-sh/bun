@@ -29,6 +29,9 @@ const KEYS_OF_OVERRIDES: &[&str] = &[
     "jsPlugins",
     "rules",
 ];
+/// The keys for which `null` is as good as nothing. For every other key it's a value of the wrong kind.
+const NULLABLE: &[&str] = &["$schema", "plugins", "jsPlugins", "globals"];
+const NULLABLE_IN_OVERRIDES: &[&str] = &["env", "globals", "plugins", "jsPlugins"];
 const OPTIONS: &[&str] = &[
     "typeAware",
     "typeCheck",
@@ -87,6 +90,30 @@ fn strings(json: &Json) -> Result<(), ConfigError> {
     match sequence(json)?.iter().find(|it| it.as_str().is_none()) {
         Some(other) => Err(wrong_kind(other, "a string")),
         None => Ok(()),
+    }
+}
+
+fn says_something(entry: &(Vec<u8>, Json), nullable: &[&str]) -> bool {
+    entry.1 != Json::Null || !nullable.iter().any(|it| it.as_bytes() == entry.0)
+}
+
+/// oxlint's reader takes a list for a struct, each item for the field at that place. Here only a list of `nothing`, which
+/// says as much as an empty struct.
+fn is_empty_struct(json: &Json, nothing: &Json) -> bool {
+    (json.as_array()).is_some_and(|it| it.len() <= 6 && it.iter().all(|it| it == nothing))
+}
+
+fn global(json: &Json) -> Result<(), ConfigError> {
+    match json {
+        Json::Bool(_) => Ok(()),
+        Json::String(it) => match &it[..] {
+            b"readonly" | b"readable" | b"writable" | b"writeable" | b"off" => Ok(()),
+            _ => Err(refusal(&[b"Invalid global value"])),
+        },
+        _ => Err(wrong_kind(
+            json,
+            "'readonly', 'writable', 'off', or a boolean",
+        )),
     }
 }
 
@@ -151,13 +178,16 @@ fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
             let expected = "Record<string, SeverityConf | [SeverityConf, ...any[]]>";
             map(json, expected).map(|_| ())
         }
-        b"globals" => map(json, "a map").map(|_| ()),
+        b"globals" => map(json, "a map")?.iter().try_for_each(|it| global(&it.1)),
         b"env" => map(json, "a map")?.iter().try_for_each(|it| boolean(&it.1)),
         _ => Ok(()),
     }
 }
 
 fn options(json: &Json) -> Result<(), ConfigError> {
+    if is_empty_struct(json, &Json::Null) {
+        return Ok(());
+    }
     let entries = map(json, "struct OxlintOptions")?;
     known_keys(entries, OPTIONS, "field")?;
     for (key, json) in entries.iter().filter(|it| it.1 != Json::Null) {
@@ -187,6 +217,9 @@ fn options(json: &Json) -> Result<(), ConfigError> {
 
 /// `settings.react.version` is the one setting whose text oxlint parses: up to three numbers with dots between them.
 fn settings(json: &Json) -> Result<(), ConfigError> {
+    if is_empty_struct(json, &Json::Object(Vec::new())) {
+        return Ok(());
+    }
     map(json, "struct WellKnownOxlintSettings")?;
     let version = json.get(b"react").and_then(|it| it.get(b"version"));
     let Some(version) = version.filter(|it| **it != Json::Null) else {
@@ -227,7 +260,7 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
         return Ok(());
     };
     known_keys(entries, KEYS, "field")?;
-    for (key, json) in entries.iter().filter(|it| it.1 != Json::Null) {
+    for (key, json) in entries.iter().filter(|it| says_something(it, NULLABLE)) {
         match &key[..] {
             b"$schema" if json.as_str().is_none() => return Err(wrong_kind(json, "a string")),
             b"categories" => known_keys(map(json, "a map")?, CATEGORIES, "variant")?,
@@ -246,7 +279,8 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
                     if item.get(b"files").is_none() {
                         return Err(refusal(&[b"missing field `files`"]));
                     }
-                    let mut entries = entries.iter().filter(|it| it.1 != Json::Null);
+                    let mut entries =
+                        (entries.iter()).filter(|it| says_something(it, NULLABLE_IN_OVERRIDES));
                     entries.try_for_each(|it| value(&it.0, &it.1))?;
                 }
             }

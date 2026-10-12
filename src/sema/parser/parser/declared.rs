@@ -280,9 +280,11 @@ impl Declared {
         self.leave(outer);
         // What a block has hoisted is now declared by the scope around it.
         for index in outer.hoisted as usize..self.hoisted.len() {
-            let (place, flags) = self.hoisted[index];
-            let Some(&old) = self.table.get(place as usize).filter(|_| !held_vars) else {
+            let Some(&(place, flags)) = self.hoisted.get(index).filter(|_| !held_vars) else {
                 break;
+            };
+            let Some(&old) = self.table.get(place as usize) else {
+                continue;
             };
             match self.is_open(old) {
                 true if old.scope == self.now => self.put(place, old.flags | flags),
@@ -435,20 +437,25 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true => known::default,
             false => name,
         };
-        let is_twice = f.ids(f.body).any(|id| match f[id].kind {
-            StmtKind::ExportDefault(_) => export(known::default),
-            StmtKind::ExportStar { alias, .. } => export(alias),
-            StmtKind::ExportNamed(it) => {
-                let items = f.export_specs.get(f[it].items.range()).unwrap_or_default();
-                items.iter().any(|it| export(it.exported))
+        let kind_of = |id: StmtId| f.stmts.get(id.idx()).map(|it| it.kind);
+        let is_twice = f.ids(f.body).any(|id| match kind_of(id) {
+            Some(StmtKind::ExportDefault(_)) => export(known::default),
+            Some(StmtKind::ExportStar { alias, .. }) => export(alias),
+            Some(StmtKind::ExportNamed(it)) => {
+                let items = f.exports.get(it.idx()).map(|it| it.items.range());
+                let items = items.and_then(|it| f.export_specs.get(it));
+                items
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|it| export(it.exported))
             }
-            StmtKind::Fn(it) if f[it].flags.contains(Flags::EXPORT) => {
-                export(name_or_default(f[it].flags, f[it].name))
-            }
-            StmtKind::Class(it) if f[it].flags.contains(Flags::EXPORT) => {
-                export(name_or_default(f[it].flags, f[it].name))
-            }
-            StmtKind::Var(list) => {
+            Some(StmtKind::Fn(it)) => f.fns.get(it.idx()).is_some_and(|it| {
+                it.flags.contains(Flags::EXPORT) && export(name_or_default(it.flags, it.name))
+            }),
+            Some(StmtKind::Class(it)) => f.classes.get(it.idx()).is_some_and(|it| {
+                it.flags.contains(Flags::EXPORT) && export(name_or_default(it.flags, it.name))
+            }),
+            Some(StmtKind::Var(list)) => {
                 let list = f.var_decls.get(list.range()).unwrap_or_default();
                 let exported = list.iter().filter(|it| it.flags.contains(Flags::EXPORT));
                 exported

@@ -1117,7 +1117,7 @@ impl<'l> Loader<'l> {
             if !name.starts_with(b".") && !paths::is_absolute(name) && !has_extension {
                 return None;
             }
-            bun_lint::json::parse(&fs::read(&paths::resolve(directory, name)).ok()?)
+            bun_lint::json::parse_like_oxlint(&fs::read(&paths::resolve(directory, name)).ok()?)
         };
         let mut inherited = Vec::new();
         if !options.filters.is_empty() {
@@ -1337,7 +1337,15 @@ impl<'l> Loader<'l> {
                         .concat(),
                     )
                 })?;
-                bun_lint::json::parse(&text).ok_or_else(|| {
+                let json = match known.is_none_or(|it| it.0 == Flavor::Oxlint) {
+                    // A file by another name is oxlint's if it's an object.
+                    true => bun_lint::json::parse_like_oxlint(&text).or_else(|| {
+                        let other = bun_lint::json::parse(&text);
+                        other.filter(|it| known.is_none() && it.as_object().is_none())
+                    }),
+                    false => bun_lint::json::parse(&text),
+                };
+                json.ok_or_else(|| {
                     Fatal([b"The configuration file ", path, b" is not valid JSON."].concat())
                 })?
             }

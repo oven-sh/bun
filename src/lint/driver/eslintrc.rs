@@ -5,7 +5,7 @@ use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::json::{self, Notation};
-use bun_lint::linter::{LegacyFailure, LegacyFile, LegacyKind, write_json};
+use bun_lint::linter::{LegacyFailure, LegacyFile, LegacyKind, json_parse, write_json};
 use bun_lint::options::Json;
 
 /// By priority: of several in a directory the first counts.
@@ -175,7 +175,13 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
         Err(why) => Err(cannot_read(path, &why)),
     };
     if name == b"package.json" {
-        return Ok(json()?.get(b"eslintConfig").cloned());
+        let has_no_config = |it: Json| it.get(b"eslintConfig").is_none();
+        return match json::parse(&text) {
+            Some(package) => Ok(package.get(b"eslintConfig").cloned()),
+            // It's nested deeper than a config can be, which only matters if there is a config in it.
+            None if json_parse(&text).is_ok_and(has_no_config) => Ok(None),
+            None => Err(cannot_read(path, b"Invalid JSON.")),
+        };
     }
     Ok(Some(if name.ends_with(b".json") {
         json()?

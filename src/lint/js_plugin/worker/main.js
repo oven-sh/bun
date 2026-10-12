@@ -62,6 +62,14 @@ function messageOf(error, read = it => it?.message ?? it) {
   }
 }
 
+// oxlint's `getErrorMessage`, without the stack frames: V8's `error.stack` starts with `String(error)`.
+function saidByOxlint(error) {
+  try {
+    if (error instanceof Error) return Error.prototype.toString.call(error);
+  } catch {}
+  return "Unknown error";
+}
+
 const LOAD = 1;
 const LINT = 2;
 const LOAD_SETTINGS = 3;
@@ -994,7 +1002,8 @@ function respond(kind) {
     try {
       line = Number(currentNode.loc.start.line);
     } catch {}
-    return FAILED + JSON.stringify([currentRule?.position ?? null, messageOf(error), line]);
+    const said = fileSettings?.freezes ? saidByOxlint(error) : messageOf(error);
+    return FAILED + JSON.stringify([currentRule?.position ?? null, said, line]);
   } finally {
     reset();
   }

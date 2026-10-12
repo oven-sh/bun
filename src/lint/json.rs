@@ -7,10 +7,14 @@ use crate::utils::text::{number_to_string, string_from_code_points};
 use bun_ast::E::JsonValue;
 use bun_ast::expr::Data;
 use bun_ast::{ASTMemoryAllocator, Expr, Log, Source};
+use bun_core::strings;
 use bun_parsers::json::ParsedJson;
 use bun_parsers::json5::JSON5Parser;
 use bun_parsers::toml::TOML;
 use bun_parsers::yaml::{CyclicAliases, YAML};
+use rustc_hash::FxHashMap;
+use std::borrow::Cow;
+use std::collections::hash_map::Entry;
 
 /// Limits how deep a value from a config file can be nested. Most code that walks a config recurses without checking the
 /// stack, with frames of other sizes and maybe on another thread. So whatever builds a value for it only gets a quarter of
@@ -71,15 +75,99 @@ fn convert(value: &JsonValue, room: RoomToNest) -> Option<Json> {
         }
         JsonValue::Object(it) => {
             let mut entries = Vec::with_capacity(it.get().properties().len());
+            // As for `JSON.parse`, the last of two values with one key counts, at the place of the first.
+            let mut places: FxHashMap<&[u8], usize> = FxHashMap::default();
             for property in it.get().properties() {
-                entries.push((
-                    property.key.slice().to_vec(),
-                    convert(&property.value, room)?,
-                ));
+                let (key, value) = (property.key.slice(), convert(&property.value, room)?);
+                match places.entry(key) {
+                    Entry::Occupied(place) => entries[*place.get()] = (key.to_vec(), value),
+                    Entry::Vacant(place) => {
+                        place.insert(entries.len());
+                        entries.push((key.to_vec(), value));
+                    }
+                }
             }
             Json::Object(entries)
         }
     })
+}
+
+/// The end of the string that starts at `start`, if serde_json takes it.
+fn end_of_strict_string(text: &[u8], start: usize) -> Option<usize> {
+    let unit = |at: usize| {
+        let digits = std::str::from_utf8(text.get(at..at + 4)?).ok()?;
+        let is_hex = digits.bytes().all(|it| it.is_ascii_hexdigit());
+        u16::from_str_radix(digits, 16).ok().filter(|_| is_hex)
+    };
+    let mut at = start + 1;
+    loop {
+        match (*text.get(at)?, text.get(at + 1)) {
+            (b'"', _) => return Some(at + 1),
+            (b'\\', Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't')) => at += 2,
+            (b'\\', Some(b'u')) => match unit(at + 2)? {
+                0xd800..=0xdbff => {
+                    let is_pair = text.get(at + 6..at + 8) == Some(b"\\u")
+                        && matches!(unit(at + 8)?, 0xdc00..=0xdfff);
+                    at = is_pair.then_some(at + 12)?;
+                }
+                0xdc00..=0xdfff => return None,
+                _ => at += 6,
+            },
+            (b'\\' | 0..=0x1f, _) => return None,
+            _ => at += 1,
+        }
+    }
+}
+
+/// The end of the number that starts at `start`, if it is one of JSON: not `01`, `1.`, `.5`, `0x10`.
+fn end_of_strict_number(text: &[u8], start: usize) -> Option<usize> {
+    let digits = |at: usize| {
+        let count = text[at..]
+            .iter()
+            .take_while(|it| it.is_ascii_digit())
+            .count();
+        (count > 0).then_some(at + count)
+    };
+    let first = start + usize::from(text[start] == b'-');
+    let mut at = match text.get(first)? {
+        b'0' => first + 1,
+        _ => digits(first)?,
+    };
+    if text.get(at) == Some(&b'.') {
+        at = digits(at + 1)?;
+    }
+    if matches!(text.get(at), Some(b'e' | b'E')) {
+        at = digits(at + 1 + usize::from(matches!(text.get(at + 1), Some(b'+' | b'-'))))?;
+    }
+    (!text.get(at).is_some_and(u8::is_ascii_alphanumeric)).then_some(at)
+}
+
+/// [`parse`], for an `.oxlintrc.json`. oxlint takes out the comments, among them those that start with `#`, and has serde_json
+/// read the rest. That refuses what Bun's parser takes from JavaScript: `'a'`, `0x10`, `"\x61"`, a byte order mark.
+pub fn parse_like_oxlint(text: &[u8]) -> Option<Json> {
+    let line_end = |at: usize| {
+        strings::index_of_char_usize(&text[at..], b'\n').map_or(text.len(), |it| at + it)
+    };
+    let mut cleaned = Cow::Borrowed(text);
+    let mut at = 0;
+    while let Some(&byte) = text.get(at) {
+        at = match (byte, text.get(at + 1)) {
+            (b'"', _) => end_of_strict_string(text, at)?,
+            (b'-' | b'0'..=b'9', _) => end_of_strict_number(text, at)?,
+            (b'#', _) => {
+                let end = line_end(at);
+                cleaned.to_mut()[at..end].fill(b' ');
+                end
+            }
+            (b'/', Some(b'/')) => line_end(at),
+            (b'/', Some(b'*')) => at + 4 + strings::index_of(&text[at + 2..], b"*/")?,
+            (b' ' | b'\t' | b'\n' | b'\r' | b'{' | b'}' | b'[' | b']' | b':' | b',', _) => at + 1,
+            // `true`, `false`, `null`
+            (b'a'..=b'z', _) => at + 1,
+            _ => return None,
+        };
+    }
+    parse(&cleaned)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

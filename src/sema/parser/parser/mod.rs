@@ -206,7 +206,7 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     pub(crate) has_odd_members: bool,
     /// How many parameters have had a modifier, a `?` or `...`. It only grows.
     pub(crate) odd_parameters: u32,
-    /// The private names that the classes declare.
+    /// The private names that the classes around the token have declared so far.
     pub(crate) declared_private_names: Vec<Atom>,
     pub(crate) declared: Declared,
     pub(crate) has_top_level_await: bool,
@@ -477,8 +477,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
         self.source_file();
         self.report_what_the_scanner_flagged();
-        let (scanned, declared) = (&self.lx.private_names, &self.declared_private_names);
-        if scanned.iter().any(|it| !declared.contains(it)) {
+        if !self.lx.private_names.is_empty() {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
         }
         self.note_odd_exports();

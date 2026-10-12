@@ -41,8 +41,6 @@ struct Checks<'a, 'c> {
     all: Vec<SyntaxError>,
     /// acorn notices what is being checked only when it has read this far.
     noticed: u32,
-    /// A module, or `impliedStrict`. `None`: it is as oxc takes the file, which is asked where it matters.
-    is_all_strict: Option<bool>,
     /// The tree is whole: the parser has reported nothing.
     is_whole: bool,
     /// Only what Prettier refuses counts: see [`refusal_of_babel`].
@@ -113,7 +111,6 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
         first: None,
         all: Vec::new(),
         noticed: 0,
-        is_all_strict: Some(true),
         is_whole: true,
         is_babel: false,
         is_oxc: false,
@@ -222,7 +219,6 @@ pub(super) fn refusal_of_babel<'a>(
         first: None,
         all: Vec::new(),
         noticed: 0,
-        is_all_strict: Some(false),
         is_whole: true,
         is_babel: true,
         is_oxc: false,
@@ -413,7 +409,6 @@ pub(super) fn first_error<'a>(
     file: &'a File<'a>,
     of_parser: Option<(Option<&'a Diagnostic>, u32)>,
 ) -> Option<SyntaxError> {
-    let language = file.language();
     let mut checks = Checks {
         file,
         candidates: None,
@@ -421,7 +416,6 @@ pub(super) fn first_error<'a>(
         first: None,
         all: Vec::new(),
         noticed: 0,
-        is_all_strict: Some(language.source_type == SourceType::Module || language.implied_strict),
         is_whole: of_parser.is_none(),
         is_babel: false,
         is_oxc: false,
@@ -591,7 +585,6 @@ fn checks_of_oxc<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>)
         first: None,
         all: Vec::new(),
         noticed: 0,
-        is_all_strict: None,
         // Nothing is asked of the scopes, to which a file is a module whatever is in it.
         is_whole: false,
         is_babel: false,
@@ -644,6 +637,33 @@ impl<'a, 'c> Checks<'a, 'c> {
             };
             self.first = Some((noticed, error));
         }
+    }
+
+    /// For oxc: an error in its words.
+    fn report(&mut self, error: SyntaxError) {
+        self.all.push(error);
+    }
+
+    /// For oxc: `name` is declared at `first` and again at `again`.
+    fn redeclared(&mut self, what: &str, name: &[u8], first: Span, again: Span) -> SyntaxError {
+        let name = bstr::BStr::new(name);
+        SyntaxError::of_oxc(first, format!("{what} `{name}` has already been declared"))
+            .says(format!("`{name}` has already been declared here"))
+            .and(again, "It can not be redeclared here")
+    }
+
+    /// Runs `check`, whose errors are those of oxc's parser.
+    fn as_parser(&mut self, check: impl FnOnce(&mut Self)) {
+        let before = self.all.len();
+        check(self);
+        for it in self.all.iter_mut().skip(before) {
+            it.of_oxc.stage = Stage::Parser;
+        }
+    }
+
+    /// The token at `at`.
+    fn token_span(&self, at: u32) -> Span {
+        Span::new(at, at + self.token_at(at).len() as u32)
     }
 
     /// Runs `check`, the errors of which acorn notices when it has read up to `noticed`: it parses `[a, b()]` before it sees
@@ -723,8 +743,13 @@ impl<'a, 'c> Checks<'a, 'c> {
 
     /// All of the file is strict. oxc goes by the name of the file too: `.mjs` and `.mts` are modules whatever is in them.
     fn is_all_strict(&self) -> bool {
-        self.is_all_strict
-            .unwrap_or_else(|| source_type(self.file) == SourceType::Module)
+        let language = self.file.language();
+        match (self.is_oxc, self.is_babel) {
+            (true, _) => source_type(self.file) == SourceType::Module,
+            // See `is_strict`.
+            (_, true) => false,
+            _ => language.source_type == SourceType::Module || language.implied_strict,
+        }
     }
 
     /// Whether the code at `node` is strict.

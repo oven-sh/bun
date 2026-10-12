@@ -159,6 +159,24 @@ A listener is a method of `Rule`. `const ON: On` names those that are called, an
 - Reports are sorted by where they start. ESLint leaves what **starts at one place** in the order in which it was reported, which is the order of its traversal: every listener on entering a node before every listener on leaving one, the outer node first on entering and last on leaving, and what is reported when the program ends after all that. That order is printed, and it decides which fix wins. Here the end stands in for the node: the longer first. A rule says where that is wrong: `Meta::reports_on_exit()` (upstream reports in `:exit` listeners or at the end of a function's code path: after what is reported on entering, the shorter first), `Meta::reports_at_the_end()` (only in `Program:exit`: after all that, rule by rule), `Report::on_exit(bool)` where only some listeners are such, `Report::shorter_first()`.
 - **Two reports of one rule with the same span** stay in the order in which they were made. A rule in which two listeners (or two kinds, or two nodes of one kind) can report at one place listens by `enter` / `exit` for those kinds (right for a rule with types, or with few nodes), or collects the candidates and reports in `finish`, sorted by the start of the listened node, the longer first: see `no_unsafe_assignment.rs`. `--run-eslint-tests .. --in-order` fails a case whose messages come in another order than they were recorded.
 
+### When the rule itself fails
+
+A JavaScript rule that can't do its job throws: a file named in its options is missing, or isn't JSON. A report can't say that, because a report has the severity the rule is set to, and a comment can disable it.
+
+| The JavaScript rule                              | Here                                                                                      |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| throws in `create` because of its options alone  | `fn validate(options) -> Result<(), Vec<u8>>`. Checked once per config. It ends the run   |
+| throws anywhere else: `throw new Error(message)` | `cx.throw(node, "Error", message)`, then `return`. `node` is the node the listener is at  |
+| `JSON.parse(text)`                               | `bun_lint::linter::json_parse(text)`: V8's error messages, and no limit on nesting either |
+| `fs.readFileSync(path)`, `fs.existsSync(path)`   | `file.modules()?.read(path)`, `.exists(path)`                                             |
+
+What `cx.throw` does is what the real tool does with a rule that throws, whatever severity the rule has:
+
+- **oxlint config**: the file gets one error, `Error running JS plugin.`, with the path and `Error: message`. It has no rule name, no comment disables it, `--quiet` keeps it, and the exit code is 1. Nothing else this rule reports in the file is kept. Other rules still run, and so does the next file.
+- **ESLint config, or none**: the run ends with exit code 2 and `message`, `Occurred while linting <file>:<line>`, `Rule: "<id>"`.
+
+Only one throw per file counts, so calling it from a listener that runs for every node prints one error. `start` has no `cx`: keep the problem in the state and throw from `finish` or the first listener. See `test/cli/lint/rule-throws.test.ts`.
+
 ### Performance rules
 
 - Decide from the syntax first. Touch tokens, comments, line/column, references, scopes and types only when the cheap checks have passed: each of these is computed lazily for the whole file on first use.

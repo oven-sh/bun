@@ -333,6 +333,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         {
             self.flag(DiagnosticKind::Grammar, 1098, empty_list, &[]);
         }
+        // What is scanned from here to the `}` is in the class. What it extends and its decorators are not.
+        let private_names = (
+            self.lx.private_names.len(),
+            self.declared_private_names.len(),
+        );
         let has_members = self.expect(T::OpenBrace);
         let members = self.s.members.len();
         let decorators = self.s.decorators.len();
@@ -352,6 +357,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.class_element(members);
         }
         self.leave_list(lists);
+        if self.lx.private_names.len() > private_names.0 {
+            self.resolve_private_names(private_names);
+        }
         if has_members {
             self.expect(T::CloseBrace);
         }
@@ -446,6 +454,22 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `parseClassElement`: pushes it on the stack of members, of which the class's start at
     /// `base`.
+    /// At the `}` of a class, for `rare::ODD_PRIVATE_NAME`: the private names that were scanned in it and that it declares are
+    /// forgotten. The others are left to the class around it. `(scanned, declared)`: how many there were at its `{`.
+    #[inline(never)]
+    fn resolve_private_names(&mut self, (scanned, declared): (usize, usize)) {
+        let own = self
+            .declared_private_names
+            .get(declared..)
+            .unwrap_or_default();
+        let mut at = 0;
+        self.lx.private_names.retain(|it| {
+            at += 1;
+            at <= scanned || !own.contains(it)
+        });
+        self.declared_private_names.truncate(declared);
+    }
+
     fn class_element(&mut self, base: usize) {
         let start = self.start();
         let first_modifier = self.s.modifiers.len();

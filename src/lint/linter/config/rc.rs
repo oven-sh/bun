@@ -532,7 +532,7 @@ impl Rc<'_, '_> {
             (b"parser", b"parser"),
             (b"parserOptions", b"parserOptions"),
         ] {
-            if let Some(value) = json.get(from) {
+            if let Some(value) = json.get(from).filter(|it| **it != Json::Null) {
                 entries.push((to.to_vec(), value.clone()));
             }
         }

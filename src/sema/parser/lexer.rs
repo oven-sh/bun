@@ -55,7 +55,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_oxc: bool,
     /// [`HtmlOpens`], with `is_oxc`.
     pub(crate) html_opens: HtmlOpens,
-    /// Each private name that was scanned, for `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE`: one after `super.`.
+    /// Each private name that was scanned and that no class which has ended since declares, for
+    /// `hir::rare::ODD_PRIVATE_NAME`. `Atom::NONE`: one after `super.`.
     pub(crate) private_names: Vec<Atom>,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) names: &'a mut Names,

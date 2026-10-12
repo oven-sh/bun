@@ -144,15 +144,15 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
   });
 
   test("flags of the command that stand before it count", async () => {
-    const [flag, text, after, code] =
+    const [flags, text, after, code] =
       command === "format"
-        ? ["--check", "const   a=1\n", "const   a=1\n", 1]
-        : ["--fix", "let a = 1;\nexport { a };\n", "const a = 1;\nexport { a };\n", 0];
+        ? [["--check", "-c", "--list-different", "-l"], "const   a=1\n", "const   a=1\n", 1]
+        : [["--fix"], "let a = 1;\nexport { a };\n", "const a = 1;\nexport { a };\n", 0];
     using dir = tempDir("bun-flags-before", { "a.ts": text });
-    for (const cmd of [
+    for (const cmd of flags.flatMap(flag => [
       [bunExe(), flag, command, "a.ts"],
       [bunExe(), "--silent", flag, command, "a.ts"],
-    ]) {
+    ])) {
       await Bun.write(join(String(dir), "a.ts"), text);
       await using proc = Bun.spawn({ cmd, env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
       const exitCode = await proc.exited;

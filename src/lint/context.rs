@@ -98,13 +98,16 @@ pub(crate) struct Sink {
     pub(crate) thrown: RefCell<Option<Thrown>>,
 }
 
-/// [`Cx::repeat_count`], [`Cx::throw_for_selector`]
+/// [`Cx::throw`], [`Cx::throw_for_selector`]
 pub(crate) struct Thrown {
     /// As `Diagnostic::rule`.
     pub(crate) rule: u16,
     /// `None`: before ESLint comes to a node, and not in the rule.
     pub(crate) at: Option<u32>,
-    pub(crate) error: Vec<u8>,
+    /// `error.name`
+    pub(crate) name: &'static str,
+    /// `error.message`
+    pub(crate) message: Vec<u8>,
 }
 
 /// The context of the rule `R` in the file that is linted. It dereferences to the [`File`].
@@ -152,10 +155,29 @@ impl<'a, R: Rule> Cx<'a, R> {
         self.base.report(at.span(), message)
     }
 
-    /// How often `" ".repeat(count)` of JavaScript repeats. `None`: it throws, and so does the rule, as the one for ESLint does:
-    /// that ends the run. `at`: the node that ESLint is at. The rules of oxlint do not throw. The text itself: [`Fixer::repeat`].
+    /// Does what `throw new Error(message)` does in a JavaScript rule. It's for a rule that can't do its job, for example because
+    /// a file named in its options is missing. `name` is the class of the error, and `at` is the node whose listener throws.
+    ///
+    /// The severity of the rule doesn't matter. With an oxlint config, the file gets one error that has no rule name and that no
+    /// comment disables, and nothing else from this rule. Other rules still run. With an ESLint config, or with none, the run
+    /// ends with exit code 2.
+    ///
+    /// Only one throw per file counts, so it's fine to call this for every node. The call returns, so `return` after it.
+    #[inline]
+    pub fn throw(&self, at: impl Spanned, name: &'static str, message: impl Into<Vec<u8>>) {
+        self.base.throw(at.span().start, name, message.into());
+    }
+
+    /// How often `" ".repeat(count)` of JavaScript repeats. `None`: it throws, and so does the rule: see [`Cx::throw`]. `at`: the
+    /// node that ESLint is at. The rules that oxlint has itself do not throw. The text itself: [`Fixer::repeat`].
     pub fn repeat_count(&self, count: f64, at: impl Spanned) -> Option<u64> {
-        self.base.repeat_count(count, at.span().start)
+        match self.base.repeat_count(count) {
+            Ok(count) => Some(count),
+            Err(message) => {
+                self.throw(at, "RangeError", message);
+                None
+            }
+        }
     }
 
     /// A selector that the rule listens for cannot be matched. ESLint throws when it reads the selectors, before it comes to
@@ -165,7 +187,8 @@ impl<'a, R: Rule> Cx<'a, R> {
         *self.base.file.sink.thrown.borrow_mut() = Some(Thrown {
             rule: self.base.rule,
             at: None,
-            error: error.message().to_vec(),
+            name: "Error",
+            message: error.message().to_vec(),
         });
     }
 
@@ -245,26 +268,39 @@ impl<'a> CxBase<'a> {
         }
     }
 
-    fn repeat_count(&self, count: f64, at: u32) -> Option<u64> {
+    /// `Err`: the message of the `RangeError`.
+    fn repeat_count(&self, count: f64) -> Result<u64, Vec<u8>> {
         // `ToIntegerOrInfinity`
         let whole = if count.is_nan() { 0.0 } else { count.trunc() };
-        let error = match whole {
-            _ if self.file.language().is_oxlint => return Some(whole.max(0.0) as u64),
+        let message = match whole {
             _ if whole < 0.0 || whole.is_infinite() => {
                 let count = crate::utils::text::number_to_string(count);
-                [&b"RangeError: Invalid count value: "[..], &count].concat()
+                [&b"Invalid count value: "[..], &count].concat()
             }
-            _ if whole > crate::fix::MAX_STRING_LENGTH as f64 => {
-                b"RangeError: Invalid string length".to_vec()
-            }
-            _ => return Some(whole as u64),
+            _ if whole > crate::fix::MAX_STRING_LENGTH as f64 => b"Invalid string length".to_vec(),
+            _ => return Ok(whole as u64),
         };
-        let (rule, mut thrown) = (self.rule, self.file.sink.thrown.borrow_mut());
-        let at = Some(at);
-        if thrown.as_ref().is_none_or(|it| at < it.at) {
-            *thrown = Some(Thrown { rule, at, error });
+        let name = self.meta.name.as_bytes();
+        match self.file.language().is_oxlint && crate::linter::config::is_rule_of_oxlint(name) {
+            true => Ok(whole.max(0.0) as u64),
+            false => Err(message),
         }
-        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn throw(&self, at: u32, name: &'static str, message: Vec<u8>) {
+        let (rule, at) = (self.rule, Some(at));
+        let mut thrown = self.file.sink.thrown.borrow_mut();
+        // Listeners are called in no particular order here. ESLint gets to the first node in the text first.
+        if thrown.as_ref().is_none_or(|it| at < it.at) {
+            *thrown = Some(Thrown {
+                rule,
+                at,
+                name,
+                message,
+            });
+        }
     }
 
     #[cold]

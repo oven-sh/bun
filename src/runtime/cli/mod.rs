@@ -1623,8 +1623,9 @@ pub(crate) mod command {
         &[]
     }
 
-    /// The flags of `command` that stand before it, as in `bun --check format`, and then what follows it. If they were dropped,
-    /// `--check` would write. `knows` tells whether `command` has a flag. The others are for `bun`, or come from `BUN_OPTIONS`.
+    /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
+    /// they were dropped, `--check` would write. `knows` tells whether `command` has a flag. The others are for `bun`, or come
+    /// from `BUN_OPTIONS`.
     fn with_own_flags_before(
         argv: &[&'static bun_core::ZStr],
         command: &[u8],
@@ -1636,7 +1637,7 @@ pub(crate) mod command {
         };
         let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
         let mut args: Vec<_> = before
-            .filter(|arg| arg.as_bytes().starts_with(b"--"))
+            .filter(|arg| arg.as_bytes().starts_with(b"-"))
             .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
             .copied()
             .collect();

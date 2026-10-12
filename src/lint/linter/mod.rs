@@ -809,21 +809,29 @@ impl<S: RuleSet> Linter<S> {
         };
         let mut diagnostics = crate::runner::run(file, &enabled, wants_fixes);
         if let Some(thrown) = file.sink.thrown.take() {
-            let said = [&thrown.error[..], b"\nOccurred while linting ", file.path()];
-            let mut said = said.concat();
-            if let Some(at) = thrown.at {
-                let id = ran(thrown.rule as usize).map(|it| it.id().to_vec());
-                let line = file.line_of(at).to_string();
-                said.extend_from_slice(b":");
-                said.extend_from_slice(line.as_bytes());
-                said.extend_from_slice(b"\nRule: \"");
-                said.extend_from_slice(&id.unwrap_or_default());
-                said.extend_from_slice(b"\"");
-            }
-            return LintResult {
-                thrown: Some(said),
-                ..LintResult::default()
+            // "error:" stands for the plain `Error:` where the run ends.
+            let said = match (thrown.name, file.language().is_oxlint) {
+                ("Error", false) => thrown.message,
+                (name, _) => [name.as_bytes(), b": ", &thrown.message].concat(),
             };
+            let id = ran(thrown.rule as usize).map_or_else(Vec::new, |it| it.id().to_vec());
+            let error = ThrownError {
+                said: &said,
+                line: thrown.at.map(|at| file.line_of(at)),
+                rule: thrown.at.map(|_| &id[..]),
+            };
+            match error.outcome(file.path(), config) {
+                Ok(problem) => {
+                    diagnostics.retain(|it| it.rule != thrown.rule);
+                    problems.push(problem);
+                }
+                Err(thrown) => {
+                    return LintResult {
+                        thrown: Some(thrown),
+                        ..LintResult::default()
+                    };
+                }
+            }
         }
         problems.reserve(diagnostics.len());
         let order: Vec<u32> = match (wants_places, file.language().is_oxlint) {
@@ -1131,42 +1139,67 @@ fn js_failure(
     path: &[u8],
     config: &ResolvedConfig,
 ) -> Result<LintMessage, Vec<u8>> {
-    let message = &failure.message[..];
-    if !config.prefers_typescript_rules {
-        let mut thrown = [message, b"\nOccurred while linting ", path].concat();
-        if let Some(line) = failure.line {
-            thrown.extend_from_slice(format!(":{line}").as_bytes());
+    let error = ThrownError {
+        said: &failure.message,
+        line: failure.line,
+        rule: rule.map(|it| &it.configured.rule.id[..]),
+    };
+    error.outcome(path, config)
+}
+
+/// An error that a rule has thrown, whether the rule is JavaScript or calls [`Cx::throw`](crate::context::Cx::throw).
+struct ThrownError<'e> {
+    /// The error as the tool prints it, without the stack.
+    said: &'e [u8],
+    /// The line of the node that was being visited. `None`: the rule threw in `create`, or it wasn't a rule that threw.
+    line: Option<u32>,
+    /// ESLint's `ruleId`
+    rule: Option<&'e [u8]>,
+}
+
+impl ThrownError<'_> {
+    /// `path`: the file that was being linted. `Ok`: oxlint reports this for the file and goes on. `Err`: ESLint ends the run and
+    /// prints this.
+    fn outcome(&self, path: &[u8], config: &ResolvedConfig) -> Result<LintMessage, Vec<u8>> {
+        if !config.prefers_typescript_rules {
+            let occurred: &[u8] = b"\nOccurred while linting ";
+            return Err(match (self.line, self.rule) {
+                (None, Some(rule)) => {
+                    let loading: &[u8] = b"Error while loading rule '";
+                    [loading, rule, b"': ", self.said, occurred, path].concat()
+                }
+                (line, rule) => {
+                    let line = line.map_or_else(String::new, |line| format!(":{line}"));
+                    let named = rule.map(|rule| [b"\nRule: \"", rule, b"\""].concat());
+                    let named = named.unwrap_or_default();
+                    [self.said, occurred, path, line.as_bytes(), &named].concat()
+                }
+            });
         }
-        if let Some(rule) = rule {
-            thrown.extend_from_slice(b"\nRule: \"");
-            thrown.extend_from_slice(&rule.configured.rule.id);
-            thrown.push(b'"');
-        }
-        return Err(thrown);
+        Ok(LintMessage {
+            rule_id: None,
+            severity: Severity::Error,
+            message: [
+                b"Error running JS plugin.\nFile path: ",
+                path,
+                b"\n",
+                self.said,
+            ]
+            .concat(),
+            message_id: None,
+            line: 0,
+            column: 0,
+            end: None,
+            is_fatal: true,
+            fix: None,
+            suggestions: Vec::new(),
+            suppressions: Vec::new(),
+            comments_apply_at: None,
+            not_numbers: NotNumbers::default(),
+            details: None,
+            constant_help: None,
+        })
     }
-    Ok(LintMessage {
-        rule_id: None,
-        severity: Severity::Error,
-        message: [
-            b"Error running JS plugin.\nFile path: ",
-            path,
-            b"\n",
-            message,
-        ]
-        .concat(),
-        message_id: None,
-        line: 0,
-        column: 0,
-        end: None,
-        is_fatal: true,
-        fix: None,
-        suggestions: Vec::new(),
-        suppressions: Vec::new(),
-        comments_apply_at: None,
-        not_numbers: NotNumbers::default(),
-        details: None,
-        constant_help: None,
-    })
 }
 
 /// Applies the comments of a file to its configuration.

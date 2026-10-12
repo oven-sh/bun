@@ -63,14 +63,14 @@ enum Stage {
 
 impl SyntaxError {
     /// An error of oxc whose first label is `label`.
-    fn of_oxc(label: Span, message: Vec<u8>) -> SyntaxError {
+    fn of_oxc(label: Span, message: impl Into<Vec<u8>>) -> SyntaxError {
         SyntaxError {
             at: label.start,
             end: match label.end == label.start {
                 true => Diagnostic::NO_LENGTH,
                 false => label.end,
             },
-            message,
+            message: message.into(),
             of_oxc: OfOxc::default(),
         }
     }
@@ -82,19 +82,19 @@ impl SyntaxError {
     }
 
     /// `text`: what it says at the first label.
-    fn says(mut self, text: Cow<'static, str>) -> SyntaxError {
-        self.of_oxc.first_label = text;
+    fn says(mut self, text: impl Into<Cow<'static, str>>) -> SyntaxError {
+        self.of_oxc.first_label = text.into();
         self
     }
 
     /// One more label.
-    fn and(mut self, label: Span, text: Cow<'static, str>) -> SyntaxError {
-        self.of_oxc.labels.push((label, text));
+    fn and(mut self, label: Span, text: impl Into<Cow<'static, str>>) -> SyntaxError {
+        self.of_oxc.labels.push((label, text.into()));
         self
     }
 
-    fn help(mut self, text: Cow<'static, str>) -> SyntaxError {
-        self.of_oxc.help = text;
+    fn help(mut self, text: impl Into<Cow<'static, str>>) -> SyntaxError {
+        self.of_oxc.help = text.into();
         self
     }
 

@@ -206,10 +206,12 @@ describe.concurrent("/* eslint rule: .. */ comments", () => {
         context.report({ node, message: "depth " + depth + ", innermost " + value });
       },
     });
+    const self = { anyOf: [{ type: "number" }, { type: "array", items: { $ref: "#/definitions/self" } }] };
     export default {
       rules: {
         unchecked: { meta: { schema: false }, create },
         anything: { meta: { schema: [{}] }, create },
+        recursive: { meta: { schema: { definitions: { self }, type: "array", items: [self] } }, create },
       },
     };
   `;
@@ -244,6 +246,12 @@ describe.concurrent("/* eslint rule: .. */ comments", () => {
     expect(said).toEqual([
       [invalid(`<${depth} [><${depth} ]>`, `<${depth + 1} [><${depth + 1} ]>`)],
       [invalid(`<${depth} {"a":>1<${depth} }>`, `[<${depth} {"a":>1<${depth} }>]`)],
+    ]);
+  });
+
+  test("a schema that refers to itself runs out of stack like Ajv does", async () => {
+    expect(await messages(`mini/recursive: [2, ${"[".repeat(depth)}1${"]".repeat(depth)}]`)).toEqual([
+      `mini/recursive: Inline configuration for rule "mini/recursive" is invalid:\n\tMaximum call stack size exceeded\n`,
     ]);
   });
 

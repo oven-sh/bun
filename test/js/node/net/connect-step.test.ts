@@ -19,11 +19,14 @@ const harness = typeof Bun !== "undefined" ? await import("harness") : undefined
 
 type Lookup = NonNullable<net.TcpSocketConnectOpts["lookup"]>;
 
+// A connect on a handle that has one in flight: libuv refuses it on POSIX, and on Windows ConnectEx does: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/win/tcp.c#L900-L918
+const busy = process.platform === "win32" ? "EISCONN" : "EALREADY";
+
 async function listening() {
-  let connections = 0;
+  const accepted: net.Socket[] = [];
   let onConnection = () => {};
   const server = net.createServer(connection => {
-    connections++;
+    accepted.push(connection);
     connection.on("error", () => {});
     connection.resume();
     onConnection();
@@ -34,14 +37,18 @@ async function listening() {
     port,
     // The accept queue is in order: when this connection is accepted, every earlier one was counted.
     async connections() {
-      const accepted = new Promise<void>(resolve => (onConnection = resolve));
+      const probed = new Promise<void>(resolve => (onConnection = resolve));
       const probe = net.connect(port, "127.0.0.1");
       probe.on("error", () => {});
-      await accepted;
+      await probed;
       probe.destroy();
-      return connections - 1;
+      return accepted.length - 1;
     },
-    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+    // A connection that the client lost track of must not keep the server open.
+    close() {
+      for (const connection of accepted) connection.destroy();
+      return new Promise<void>(resolve => server.close(() => resolve()));
+    },
   };
 }
 
@@ -119,26 +126,48 @@ describe("the step from a lookup result to the connect call", () => {
     }
   });
 
-  for (const [name, again] of [
-    ["a second connect()", (socket: net.Socket, port: number) => socket.connect(port, "127.0.0.1")],
+  // Node.js closes the handle under the first request there, and then fails an internal assertion.
+  const bunOnly = process.versions.bun ? test : test.skip;
+  const twice: Lookup = (_hostname, _options, callback) => {
+    callback(null, "127.0.0.1", 4);
+    callback(null, "127.0.0.1", 4);
+  };
+  const list = ((_hostname, _options, callback) =>
+    process.nextTick(callback, null, [
+      { address: "127.0.0.1", family: 4 },
+      { address: "::1", family: 6 },
+    ])) as Lookup;
+  for (const [run, name, connect] of [
+    [test, "a second connect()", (s, port) => s.connect(port, "127.0.0.1").connect(port, "127.0.0.1")],
     [
+      test,
       "a second and a third connect()",
-      (socket: net.Socket, port: number) => socket.connect(port, "127.0.0.1").connect(port, "127.0.0.1"),
+      (s, port) => s.connect(port, "127.0.0.1").connect(port, "127.0.0.1").connect(port, "127.0.0.1"),
     ],
-  ] as const) {
-    test(`${name} while the first is in flight fails with EALREADY`, async () => {
+    [
+      test,
+      "a lookup callback that runs twice",
+      (s, port) => s.connect({ host: "example.invalid", port, autoSelectFamily: false, lookup: twice }),
+    ],
+    [
+      bunOnly,
+      "a second connect() to a list of addresses",
+      (s, port) =>
+        s.connect(port, "127.0.0.1").connect({ host: "example.invalid", port, autoSelectFamily: true, lookup: list }),
+    ],
+  ] as [typeof test, string, (socket: net.Socket, port: number) => void][]) {
+    run(`${name} fails while the first connect is in flight`, async () => {
       const server = await listening();
       try {
         const socket = new net.Socket();
         const closed = record(socket);
-        socket.connect(server.port, "127.0.0.1");
-        again(socket, server.port);
+        connect(socket, server.port);
         const events = await closed;
         const connections = await server.connections();
         assert.deepStrictEqual(events, [
           "attempt 127.0.0.1 4",
           "attempt 127.0.0.1 4",
-          "error EALREADY connect",
+          `error ${busy} connect`,
           "close true",
         ]);
         // The first attempt was in flight when the socket was destroyed.
@@ -148,30 +177,6 @@ describe("the step from a lookup result to the connect call", () => {
       }
     });
   }
-
-  test("a lookup callback that runs twice fails the second connect with EALREADY", async () => {
-    const server = await listening();
-    try {
-      const lookup: Lookup = (_hostname, _options, callback) => {
-        callback(null, "127.0.0.1", 4);
-        callback(null, "127.0.0.1", 4);
-      };
-      const socket = new net.Socket();
-      const closed = record(socket);
-      socket.connect({ host: "example.invalid", port: server.port, autoSelectFamily: false, lookup });
-      const events = await closed;
-      const connections = await server.connections();
-      assert.deepStrictEqual(events, [
-        "attempt 127.0.0.1 4",
-        "attempt 127.0.0.1 4",
-        "error EALREADY connect",
-        "close true",
-      ]);
-      assert.ok(connections <= 1, `the server accepted ${connections} connections`);
-    } finally {
-      await server.close();
-    }
-  });
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.

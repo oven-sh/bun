@@ -1886,8 +1886,8 @@ function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
   // TCPWrap::Connect parses the address in the family of the call: https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L465-L474
   if ((addressType === 6) !== StringPrototypeIncludes.$call(address, ":")) return uv().UV_EINVAL;
-  // uv_tcp_connect allows one connect in flight per handle: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tcp.c#L288-L289
-  if (self._handle?.readyState === 2) return uv().UV_EALREADY;
+  // uv_tcp_connect allows one connect in flight per handle, and ConnectEx reports it as EISCONN: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tcp.c#L288-L289
+  if (self._handle?.readyState === 2) return process.platform === "win32" ? uv().UV_EISCONN : uv().UV_EALREADY;
   traceConnectStart(req);
   return kConnectDispatch(self, req, {
     hostname: address,
@@ -3511,6 +3511,11 @@ function internalConnectMultiple(context, canceled?) {
 
   if (err) {
     const ex = new ExceptionWithHostPort(err, "connect", address, port);
+    // An earlier connect() of this socket is in flight on the handle: the next attempt would close the handle under it.
+    if (self._handle?.readyState === 2) {
+      self.destroy(ex);
+      return;
+    }
     ArrayPrototypePush.$call(context.errors, ex);
 
     self.emit("connectionAttemptFailed", address, port, addressType, ex);

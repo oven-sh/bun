@@ -1011,8 +1011,7 @@ impl JSTranspiler {
         // is uniquely owned at init time, so `&mut` projection is alias-free.
         let transpiler = unsafe { this.transpiler.get_mut() };
         transpiler.set_log(&raw mut config.log);
-        // `set_log` does not re-point `options.log`, which `configure_defines`
-        // below logs through. It must not stay on the moved-from stack slot.
+        // `set_log` does not cover `options.log`, which `configure_defines` logs through.
         transpiler.options.log = &raw mut config.log;
 
         transpiler.options.no_macros = config.no_macros;

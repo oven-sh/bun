@@ -190,9 +190,73 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isContextSensitiveFunctionLikeDeclaration`
     fn is_context_sensitive_function_like_declaration(&self, file: FileId, f: FnId) -> bool {
-        self.has_context_sensitive_parameters(file, f)
-            || self.has_context_sensitive_return_expression(file, f)
-            || self.has_context_sensitive_yield_expression(file, f)
+        /// Of fewer functions in each other nothing is kept.
+        const MANY: u64 = 8;
+        // It is asked of each function from every one around it, each time down to the last, so what many of them come to is
+        // kept. It depends on the tree alone. A function that returns nothing but a function is what that one is, unless its
+        // own parameters decide: so not by recursion.
+        let times_cut_short = self.times_cut_short.get();
+        let asked_before = self.context_sensitivity_asked.get();
+        let (mut at, mut passed) = (f, 0);
+        let answer = loop {
+            (self.context_sensitivity_asked).set(self.context_sensitivity_asked.get() + 1);
+            if let Some(&known) = self.context_sensitive_functions.borrow().get(&(file, at)) {
+                break known;
+            }
+            if self.has_context_sensitive_parameters(file, at) {
+                break true;
+            }
+            let Some(returned) = self.only_function_returned(file, at) else {
+                break self.has_context_sensitive_return_expression(file, at)
+                    || self.has_context_sensitive_yield_expression(file, at);
+            };
+            (at, passed) = (returned, passed + 1);
+        };
+        // Where the stack was low the answer is that of who asked.
+        if self.context_sensitivity_asked.get() - asked_before > MANY
+            && self.times_cut_short.get() == times_cut_short
+        {
+            let mut known = self.context_sensitive_functions.borrow_mut();
+            let mut at = Some(f);
+            for _ in 0..=passed {
+                let Some(it) = at else { break };
+                known.insert((file, it), answer);
+                at = self.only_function_returned(file, it);
+            }
+        }
+        answer
+    }
+
+    /// The function expression that is all that `f` returns, where `hasContextSensitiveReturnExpression` and
+    /// `hasContextSensitiveYieldExpression` ask nothing else.
+    fn only_function_returned(&self, file: FileId, f: FnId) -> Option<FnId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let func = &hir[f];
+        if !func.type_params.is_empty()
+            || func.ret.is_some()
+            || func.flags.contains(Flags::GENERATOR)
+        {
+            return None;
+        }
+        let value = match func.body {
+            FnBody::None => return None,
+            FnBody::Expr(body) => body,
+            FnBody::Block(_) => {
+                let mut returns = bound.ids(bound.fns[f.idx()].returns);
+                match (returns.next().map(|s| hir[s].kind), returns.next()) {
+                    (Some(StmtKind::Return(value)), None) if value.is_some() => value,
+                    _ => return None,
+                }
+            }
+        };
+        match hir[value].kind {
+            ExprKind::Fn(returned)
+                if !matches!(hir[returned].kind, FnKind::Getter | FnKind::Setter) =>
+            {
+                Some(returned)
+            }
+            _ => None,
+        }
     }
 
     /// `HasContextSensitiveParameters`
@@ -300,6 +364,11 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
             return self.any_signature_while_arguments_are_checked();
         }
+        if self.calls_to_resolve_afresh.is_some()
+            && let Some(resolved) = self.resolve_signature_afresh(file, call)
+        {
+            return resolved;
+        }
         if let Some(known) = self.cached_resolved_signature(file, call) {
             return known;
         }
@@ -405,6 +474,37 @@ impl<'p, 's> Checker<'p, 's> {
             self.reported.extend(reported);
         }
         resolved
+    }
+
+    /// `resolved_signature` of one of `calls_to_resolve_afresh`, once for each. What is stored for the call, and what was
+    /// reported for it, stays as it is. `None`: it is not one of them, or it is asked for while it is resolved so: then
+    /// what is stored answers.
+    #[cold]
+    fn resolve_signature_afresh(&mut self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+        let (of, start, end) = self.calls_to_resolve_afresh?;
+        if of != file || !(start..end).contains(&self.hir(file)[call].pos) {
+            return None;
+        }
+        if let Some(&(_, known)) = self.calls_resolved_afresh.iter().find(|it| it.0 == call) {
+            return known;
+        }
+        let resolution_start = self.resolution_start;
+        if !self.enter(Query::Call(file, call)) {
+            return None;
+        }
+        let at = self.calls_resolved_afresh.len();
+        self.calls_resolved_afresh.push((call, None));
+        self.resolution_start = self.stack.len();
+        let around = self.call_resolution_errors.take();
+        let resolved = self.resolve_signature(file, call);
+        self.call_resolution_errors = around;
+        self.resolution_start = resolution_start;
+        self.resolved_meanwhile.push((file, call, resolved));
+        let resolved = self.with_return_type(resolved);
+        self.resolved_meanwhile.pop();
+        let _ = self.leave(Query::Call(file, call));
+        self.calls_resolved_afresh[at].1 = Some(resolved);
+        Some(resolved)
     }
 
     fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Args {
@@ -2071,7 +2171,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = self.members(ty) else {
             return ty;
         };
-        if members.shape().call.is_empty() && members.shape().construct.is_empty() {
+        if !members.has_signatures() {
             return ty;
         }
         // Also returns whether the result is `sigs` (`core.Same`).
@@ -2097,8 +2197,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             (out, is_same)
         };
-        let (call, is_same_call) = actual(self, &members.shape().call);
-        let (construct, is_same_construct) = actual(self, &members.shape().construct);
+        let (call, is_same_call) = actual(self, members.call_signatures());
+        let (construct, is_same_construct) = actual(self, members.construct_signatures());
         own.0 = true;
         own.1 |= !call.is_empty() || !construct.is_empty();
         if is_same_call && is_same_construct {
@@ -2111,7 +2211,7 @@ impl<'p, 's> Checker<'p, 's> {
             props.push(prop);
         }
         let arena = self.arena;
-        let index = members.shape().index.iter().map(|i| IndexInfo {
+        let index = members.index_infos().iter().map(|i| IndexInfo {
             value: self.instantiate(i.value, members.mapper),
             ..*i
         });
@@ -2766,7 +2866,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let members = self.members(ty)?;
-        let shape = members.shape();
+        let shape = members.whole_shape();
         let construct = kind == SignatureKind::Construct;
         let (own, other) = if construct {
             (&shape.construct, &shape.call)
@@ -3092,7 +3192,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !pulls
             && let ExprKind::Call(c) = hir[call].kind
             && let ExprKind::Fn(func) = hir[hir[c].callee].kind
-            && let Some(index) = hir.ids(hir[c].args).position(|a| a == arg)
+            && let Some(index) = super::context::index_of_node(hir, hir[c].args, arg)
         {
             let params = hir[func].params;
             let param = if index < params.len() {
@@ -3118,13 +3218,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => return None,
         };
-        let mut index = hir.ids(hir[id].args).position(|a| a == arg)?;
+        let mut index = super::context::index_of_node(hir, hir[id].args, arg)?;
         // `getEffectiveCallArguments`: a spread tuple counts as its elements, anything else as one
         // argument.
-        if hir
-            .ids(hir[id].args)
-            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
-        {
+        if self.spread_indices(file, call, hir[id].args).is_some() {
             let effective = self.effective_args(file, hir[id].args);
             index = effective.iter().position(
                 |a| matches!(a, Arg::Expr(e) | Arg::SpreadElement(_, _, _, e) if *e == arg),

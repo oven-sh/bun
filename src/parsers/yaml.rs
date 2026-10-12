@@ -78,6 +78,72 @@ impl YAML {
     }
 }
 
+/// A token of a stream, as a range of its text. What is between two tokens is white space.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct SourceToken {
+    pub kind: SourceTokenKind,
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SourceTokenKind {
+    Comment,
+    /// The `%` of a directive.
+    Directive,
+    DocumentStart,
+    DocumentEnd,
+    SequenceEntry,
+    MappingKey,
+    MappingValue,
+    CollectEntry,
+    SequenceStart,
+    SequenceEnd,
+    MappingStart,
+    MappingEnd,
+    Anchor,
+    Alias,
+    Tag,
+    /// With its quotes. Of a block scalar: from its `|` or `>` to where the next token can start.
+    Scalar,
+}
+
+impl YAML {
+    /// For who wants a stream as it is written: calls `read` with its documents and its tokens, comments among them, in
+    /// the order of the text. The syntax is what [`YAML::parse`] takes. What it means is not looked at: a scalar is
+    /// `true`, an alias is `false` and need not resolve, a node that is not written is `null`, a tag changes nothing, `<<`
+    /// is a key like another, an escape can be half of a surrogate pair. `Err`: what is wrong, and at which byte.
+    pub fn parse_as_written<T>(
+        text: &[u8],
+        read: impl FnOnce(&[Expr], &[SourceToken]) -> T,
+    ) -> Result<T, (ParseError, usize)> {
+        let bump = bun_alloc::Arena::new();
+        let mut allocator = ast::ASTMemoryAllocator::borrowing(&bump);
+        let _scope = allocator.enter();
+        let mut parser: Parser<Utf8> = Parser::init(&bump, text, CyclicAliases::Reject);
+        parser.written = Some(Vec::new());
+        match parser.parse() {
+            Ok(stream) => {
+                let documents: Vec<Expr> = stream.docs.iter().map(|doc| doc.root).collect();
+                Ok(read(
+                    &documents,
+                    parser.written.as_deref().unwrap_or_default(),
+                ))
+            }
+            Err(error) => Err((
+                error,
+                match error {
+                    ParseError::UnexpectedCharacter
+                    | ParseError::UnresolvedTagHandle
+                    | ParseError::UnexpectedDocumentStart
+                    | ParseError::UnexpectedDocumentEnd => parser.pos.cast(),
+                    _ => parser.token.start.cast(),
+                },
+            )),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
 pub enum YamlParseError {
     #[error("out of memory")]
@@ -2143,6 +2209,9 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) merge_props_budget: usize,
     pub(crate) alias_expansion_budget: usize,
+
+    /// The tokens so far, for [`YAML::parse_as_written`].
+    pub(crate) written: Option<Vec<SourceToken>>,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2187,6 +2256,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             least_stack_left: usize::MAX,
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
+            written: None,
         }
     }
 
@@ -2628,13 +2698,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // (including `?` paths). The post-`}` scan happens AFTER `FlowIn` is
         // popped, so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
-            {
-                // Unset `FlowKey` before propagating.
-                self.context.set(Context::FlowKey)?;
-                let r = self.scan(ScanOptions::default());
-                self.context.unset(Context::FlowKey);
-                r?;
-            }
+            self.scan(ScanOptions::default())?;
 
             while !matches!(self.token.data, TokenData::MappingEnd) {
                 // [142] `? …` and bare `:` are handled here so the key parse
@@ -2661,10 +2725,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             ..Default::default()
                         })?;
 
-                        self.context.set(Context::FlowKey)?;
-                        let r = self.scan(ScanOptions::default());
-                        self.context.unset(Context::FlowKey);
-                        r?;
+                        self.scan(ScanOptions::default())?;
                         continue;
                     }
                     TokenData::MappingEnd => {
@@ -2710,10 +2771,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
                 match self.token.data {
                     TokenData::CollectEntry => {
-                        self.context.set(Context::FlowKey)?;
-                        let r = self.scan(ScanOptions::default());
-                        self.context.unset(Context::FlowKey);
-                        r?;
+                        self.scan(ScanOptions::default())?;
                     }
                     TokenData::MappingEnd => {}
                     _ => return Err(Self::unexpected_token()),
@@ -3382,6 +3440,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// would otherwise be unresolved is looked up among the enclosing
     /// collections still being parsed (innermost first): a cyclic alias.
     fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr, usize), ParseError> {
+        if self.written.is_some() {
+            return Ok((Expr::init(E::Boolean { value: false }, Loc::EMPTY), 0));
+        }
         let name = name.slice(self.input);
         if let Some(anchored) = self.anchors.get(Enc::key_bytes(name)) {
             return Ok(*anchored);
@@ -3861,6 +3922,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn charge_alias_node(&mut self) -> Result<(), ParseError> {
+        if self.written.is_some() {
+            return Ok(());
+        }
         self.alias_expansion_budget = self
             .alias_expansion_budget
             .checked_sub(1)
@@ -3958,14 +4022,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             self.drop_anchors(node_props);
                             return Ok(copy);
                         }
-                        // [154] ns-s-implicit-yaml-key uses s-separate-in-line
-                        // (same line only); [145] in flow-map uses s-separate
-                        // (spans lines, per yaml-test-suite 4MUZ etc.),
-                        // handled by the FlowKey return above.
-                        if alias_line != self.token.line && !opts.explicit_mapping_key {
-                            return Err(ParseError::MultilineImplicitKey);
-                        }
-
                         // [192] implicit key sits at s-indent(n) (spaces only).
                         if alias_tab_after_indent
                             && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
@@ -3978,6 +4034,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 self.drop_anchors(node_props);
                                 return Ok(copy);
                             }
+                        }
+
+                        // [154] ns-s-implicit-yaml-key uses s-separate-in-line
+                        // (same line only); [145] in flow-map uses s-separate
+                        // (spans lines, per yaml-test-suite 4MUZ etc.),
+                        // handled by the FlowKey return above.
+                        if alias_line != self.token.line && !opts.explicit_mapping_key {
+                            return Err(ParseError::MultilineImplicitKey);
                         }
 
                         // [147] flow-map value is ns-flow-node, not a pair.
@@ -4022,10 +4086,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if self.context.get() == Context::FlowKey {
                             break 'node seq;
                         }
-                        if sequence_line != self.token.line && !opts.explicit_mapping_key {
-                            return Err(ParseError::MultilineImplicitKey);
-                        }
-
                         // [192] implicit key sits at s-indent(n) (spaces only).
                         if sequence_tab_after_indent
                             && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
@@ -4037,6 +4097,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if current_mapping_indent == sequence_indent {
                                 break 'node seq;
                             }
+                        }
+
+                        if sequence_line != self.token.line && !opts.explicit_mapping_key {
+                            return Err(ParseError::MultilineImplicitKey);
                         }
 
                         // [147] flow-map value is ns-flow-node, not a pair.
@@ -4103,10 +4167,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if self.context.get() == Context::FlowKey {
                             break 'node map;
                         }
-                        if mapping_line != self.token.line && !opts.explicit_mapping_key {
-                            return Err(ParseError::MultilineImplicitKey);
-                        }
-
                         // [192] implicit key sits at s-indent(n) (spaces only).
                         if mapping_tab_after_indent
                             && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
@@ -4118,6 +4178,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             if current_mapping_indent == mapping_indent {
                                 break 'node map;
                             }
+                        }
+
+                        if mapping_line != self.token.line && !opts.explicit_mapping_key {
+                            return Err(ParseError::MultilineImplicitKey);
                         }
 
                         // [147] flow-map value is ns-flow-node, not a pair.
@@ -4855,6 +4919,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                     self.skip_s_white();
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
+                        let start = self.pos;
                         self.inc(1);
                         while !self.is_b_char_or_eof() {
                             if Enc::wide(self.next()) == 0 {
@@ -4862,6 +4927,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             self.inc(1);
                         }
+                        self.note_written(SourceTokenKind::Comment, start);
                     }
                     __c = Enc::wide(self.next());
                     continue;
@@ -5521,6 +5587,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if cp > 0x10_FFFF {
             return Err(ParseError::UnexpectedCharacter);
         }
+        if self.written.is_some() {
+            return Ok(());
+        }
 
         // JSON encodes supplementary code points as a `\uD8xx\uDCxx` surrogate
         // pair; YAML 1.2 is a JSON superset. Lone surrogates remain an error.
@@ -5892,6 +5961,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                         self.inc(1);
                     }
+                    self.note_written(SourceTokenKind::Comment, start);
                     continue;
                 }
                 0x26 /* '&' */ => {
@@ -6057,6 +6127,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         };
         self.token = token;
+        if self.written.is_some() {
+            self.note_written_token();
+        }
 
         match self.context.get() {
             Context::BlockOut | Context::BlockIn => {}
@@ -6065,6 +6138,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if !opts.outside_context
                         && self.token.line != previous_token_line
                         && self.token.indent.is_less_than_or_equal(block_indent)
+                        && !matches!(
+                            self.token.data,
+                            TokenData::SequenceEnd | TokenData::MappingEnd
+                        )
                     {
                         return Err(Self::unexpected_token());
                     }
@@ -6073,6 +6150,55 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
 
         Ok(())
+    }
+
+    /// Lists a token from `start` to the cursor, in the place of one that starts there too: that has been scanned again.
+    /// The comment behind the header of a block scalar has been listed before the scalar.
+    fn note_written(&mut self, kind: SourceTokenKind, start: Pos) {
+        let (start, end) = (start.cast() as u32, self.pos.cast() as u32);
+        let token = SourceToken { kind, start, end };
+        if let Some(tokens) = &mut self.written {
+            let behind = tokens.iter().rev().take_while(|it| it.start >= start);
+            let at = tokens.len() - behind.count();
+            match tokens.get_mut(at) {
+                Some(same) if same.start == start => *same = token,
+                _ => tokens.insert(at, token),
+            }
+        }
+    }
+
+    /// Lists the token that has been scanned, and takes from it what it means.
+    #[cold]
+    fn note_written_token(&mut self) {
+        let mut start = self.token.start;
+        let kind = match &mut self.token.data {
+            TokenData::Eof | TokenData::Reserved => return,
+            TokenData::SequenceEntry => SourceTokenKind::SequenceEntry,
+            TokenData::MappingKey => SourceTokenKind::MappingKey,
+            TokenData::MappingValue => SourceTokenKind::MappingValue,
+            TokenData::CollectEntry => SourceTokenKind::CollectEntry,
+            TokenData::SequenceStart => SourceTokenKind::SequenceStart,
+            TokenData::SequenceEnd => SourceTokenKind::SequenceEnd,
+            TokenData::MappingStart => SourceTokenKind::MappingStart,
+            TokenData::MappingEnd => SourceTokenKind::MappingEnd,
+            TokenData::Anchor(_) => SourceTokenKind::Anchor,
+            TokenData::Alias(_) => SourceTokenKind::Alias,
+            TokenData::Tag(tag) => {
+                *tag = NodeTag::None;
+                SourceTokenKind::Tag
+            }
+            TokenData::Directive => SourceTokenKind::Directive,
+            TokenData::DocumentStart => SourceTokenKind::DocumentStart,
+            TokenData::DocumentEnd => SourceTokenKind::DocumentEnd,
+            TokenData::Scalar(scalar) => {
+                scalar.data = NodeScalar::Boolean(true);
+                if !matches!(scalar.style, ScalarStyle::Plain { .. }) {
+                    start = start.sub(1);
+                }
+                SourceTokenKind::Scalar
+            }
+        };
+        self.note_written(kind, start);
     }
 
     // ── character predicates / skip helpers ─────────────────────────────────
@@ -6178,6 +6304,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             if !whitespace {
                 return Err(ParseError::UnexpectedCharacter);
             }
+            let start = self.pos;
             self.inc(1);
             while !self.is_b_char_or_eof() {
                 if Enc::wide(self.next()) == 0 {
@@ -6185,6 +6312,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 self.inc(1);
             }
+            self.note_written(SourceTokenKind::Comment, start);
         }
 
         if self.pos.is_less_than(self.input.len())

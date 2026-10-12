@@ -105,6 +105,8 @@ fn run_tasks_until_done(
                 return true;
             }
 
+            // A script that has ended makes room for one that waits.
+            closure.installer.run_available_scripts(log_level);
             manager.report_slow_lifecycle_scripts();
 
             let pending_task_count = manager.pending_task_count();

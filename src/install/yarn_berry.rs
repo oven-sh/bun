@@ -121,22 +121,8 @@ fn may_hold_merge_key(data: &[u8]) -> bool {
 }
 
 /// Text with a malformed escape stays as written: it then names nothing in the lockfile.
-fn percent_decode(s: &[u8]) -> Vec<u8> {
+fn decoded_or_as_written(s: &[u8]) -> Vec<u8> {
     bun_url::PercentEncoding::decode_alloc(s).map_or_else(|_| s.to_vec(), Vec::from)
-}
-
-/// `encodeURIComponent`, which is how yarn embeds a locator in `::locator=`.
-fn percent_encode(s: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len() + 16);
-    for &c in s {
-        if c.is_ascii_alphanumeric() || strings::contains_char(b"-_.!~*'()", c) {
-            out.push(c);
-        } else {
-            out.push(b'%');
-            out.extend_from_slice(&bun_core::fmt::hex2_upper(c));
-        }
-    }
-    out
 }
 
 /// `name@rest`, keeping a leading scope `@`.
@@ -156,7 +142,7 @@ fn split_reference_params(reference: &[u8]) -> (&[u8], Vec<(&[u8], Vec<u8>)>) {
     };
     let params = strings::split(tail, b"&")
         .filter_map(|kv| strings::split_once_char(kv, b'='))
-        .map(|(k, v)| (k, percent_decode(v)))
+        .map(|(k, v)| (k, decoded_or_as_written(v)))
         .collect();
     (head, params)
 }
@@ -410,13 +396,17 @@ fn project_patch_paths(source: &[u8], params: &Params<'_>) -> Option<Vec<Vec<u8>
 fn decode_patch_spec(rest: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<(&[u8], Vec<u8>)>) {
     let (spec, params) = split_reference_params(rest);
     let (inner, source) = strings::split_once_char(spec, b'#').unwrap_or((spec, &b""[..]));
-    (percent_decode(inner), percent_decode(source), params)
+    (
+        decoded_or_as_written(inner),
+        decoded_or_as_written(source),
+        params,
+    )
 }
 
 /// The key of `locator_to_entry`: no `::params`, percent-decoded (a nested `patch:` encodes twice).
 fn locator_key(name: &[u8], reference: &[u8]) -> Vec<u8> {
     let (head, _) = split_reference_params(reference);
-    [name, b"@", &percent_decode(head)].concat()
+    [name, b"@", &decoded_or_as_written(head)].concat()
 }
 
 /// `file:./x#./x` -> (`file:`, `./x`), also for `portal:` and `link:`
@@ -432,7 +422,7 @@ fn split_folder_protocol(head: &[u8]) -> Option<(&'static [u8], &[u8])> {
 
 /// `name@workspace:path` -> `path`; `name@portal:./p::locator=<owner>` -> `<owner dir>/p`.
 fn locator_dir(encoded: &[u8], depth: u8) -> Option<Vec<u8>> {
-    let decoded = percent_decode(encoded);
+    let decoded = decoded_or_as_written(encoded);
     let (_, reference) = split_locator(&decoded)?;
     if let Some(path) = reference.strip_prefix(b"workspace:") {
         return Some(path.to_vec());
@@ -1037,7 +1027,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         .resize(dep_count, INVALID_PACKAGE_ID);
     let mut key: Vec<u8> = Vec::with_capacity(128);
     // yarn binds the target of a `resolutions` rule to the root workspace
-    let root_locator = percent_encode(&[entries[root_entry].name, b"@workspace:."].concat());
+    let root_locator =
+        strings::encode_uri_component(&[entries[root_entry].name, b"@workspace:."].concat());
 
     for pkg_id in 0..this.packages.len() {
         // this package's yarn locator, as (name, reference)
@@ -1066,9 +1057,9 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         };
         let owner_name = owner.as_ref().map_or(&b""[..], |(n, _)| n);
         // relative protocols (`file:`, `portal:`, `link:`) are keyed by the declaring package
-        let owner_locator: Option<Vec<u8>> = owner
-            .as_ref()
-            .map(|(name, reference)| percent_encode(&[&name[..], b"@", reference].concat()));
+        let owner_locator: Option<Vec<u8>> = owner.as_ref().map(|(name, reference)| {
+            strings::encode_uri_component(&[&name[..], b"@", reference].concat())
+        });
         let is_patched = patched_packages.contains_key(&(pkg_id as PackageID));
 
         let deps = this.packages.items_dependencies()[pkg_id];

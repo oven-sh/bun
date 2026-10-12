@@ -281,7 +281,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env.map
             .put(b"npm_lifecycle_script", original_script)
             .expect("unreachable");
-        crate::cli::check_command::note_package_script(env, name, cwd);
+        crate::cli::script_or_command::note_package_script(env, name, cwd);
 
         let mut copy_script_capacity: usize = original_script.len();
         for part in passthrough {

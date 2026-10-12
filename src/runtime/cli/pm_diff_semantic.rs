@@ -3,7 +3,7 @@
 //! became dead is), what is shown is the author's text (comments, types, JSX and names intact).
 
 use crate::cli::pm_diff_normalize::Normalized;
-use crate::test_runner::diff::text_diff;
+use bun_text_diff as text_diff;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Operation {

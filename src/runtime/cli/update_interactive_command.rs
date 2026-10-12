@@ -32,7 +32,7 @@ use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
 use crate::cli::cli_dupe;
-use crate::cli::outdated_command::{printed, visible_width};
+use crate::cli::outdated_command::{printed, printed_width};
 
 /// Plain `text` when `link` is empty.
 struct TerminalHyperlink<'a> {
@@ -81,7 +81,7 @@ impl OutdatedPackage {
         use semver::version::ChangedVersion;
         let target = self.target_version();
         let (Some(current), Some(update)) =
-            (parse_version(&self.current_version), parse_version(target))
+            (min_of_valid(&self.current_version), min_of_valid(target))
         else {
             return CheckboxColor::Green;
         };
@@ -744,13 +744,13 @@ impl UpdateInteractiveCommand {
         for pkg in packages {
             widths.name = widths
                 .name
-                .max(visible_width(&printed(&pkg.name)) + pkg.tag().len());
+                .max(printed_width(&printed(&pkg.name)) + pkg.tag().len());
             widths.current = widths.current.max(pkg.current_version.len());
             widths.target = widths.target.max(pkg.update_version.len());
             widths.latest = widths.latest.max(pkg.latest_version.len());
             widths.workspace = widths
                 .workspace
-                .max(visible_width(&printed(&pkg.workspace_name)));
+                .max(printed_width(&printed(&pkg.workspace_name)));
             widths.show_workspace |= !pkg.workspace_name.is_empty();
         }
 
@@ -825,7 +825,7 @@ impl UpdateInteractiveCommand {
         use strings::visible::width::exclude_ansi_colors::utf8_index_at_width;
 
         let text = printed(text);
-        if visible_width(&text) <= max_width {
+        if printed_width(&text) <= max_width {
             return text;
         }
 
@@ -843,9 +843,9 @@ impl UpdateInteractiveCommand {
         let end_width = available_width - start_width;
 
         let (start, rest) = text.split_at(utf8_index_at_width(text.as_bytes(), start_width));
-        let excess = visible_width(rest).saturating_sub(end_width);
+        let excess = printed_width(rest).saturating_sub(end_width);
         let mut cut = utf8_index_at_width(rest.as_bytes(), excess);
-        if visible_width(&rest[..cut]) < excess {
+        if printed_width(&rest[..cut]) < excess {
             // A 2-column character straddles the cut.
             cut = utf8_index_at_width(rest.as_bytes(), excess + 1);
         }
@@ -859,7 +859,7 @@ impl UpdateInteractiveCommand {
         if underline {
             Output::print(format_args!("\x1B[4m"));
         }
-        match (parse_version(version), parse_version(current)) {
+        match (min_of_valid(version), min_of_valid(current)) {
             (Some(full), Some(current_full)) if truncated.as_bytes() == version => {
                 bun_core::pretty!("{}", full.diff_fmt(current_full, version, current));
             }
@@ -868,7 +868,7 @@ impl UpdateInteractiveCommand {
         if underline {
             Output::print(format_args!("\x1B[24m"));
         }
-        visible_width(&truncated)
+        printed_width(&truncated)
     }
 
     /// `packages` is not empty.
@@ -1101,7 +1101,7 @@ impl UpdateInteractiveCommand {
                         Self::truncate_with_ellipsis(&pkg.name, available_name_width, false);
                     let name_padding = columns
                         .name
-                        .saturating_sub(visible_width(&display_name) + tag.len());
+                        .saturating_sub(printed_width(&display_name) + tag.len());
 
                     let package_url =
                         if Output::enable_ansi_colors_stdout() && pkg.uses_default_registry {
@@ -1145,7 +1145,7 @@ impl UpdateInteractiveCommand {
                     print_spaces(
                         columns
                             .current
-                            .saturating_sub(visible_width(&truncated_current))
+                            .saturating_sub(printed_width(&truncated_current))
                             + 2,
                     );
 
@@ -1432,7 +1432,7 @@ fn print_spaces(count: usize) {
     Output::print(format_args!("{:count$}", ""));
 }
 
-fn parse_version(version: &[u8]) -> Option<semver::Version> {
+fn min_of_valid(version: &[u8]) -> Option<semver::Version> {
     let parsed = semver::Version::parse(SlicedString::init(version, version));
     parsed.valid.then(|| parsed.version.min())
 }

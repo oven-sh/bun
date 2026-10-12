@@ -1,8 +1,12 @@
 // What `--check` checks does not depend on the kind of project that the entry point is in, on how Bun gets to the entry
 // point, or on the command: every kind of project, with every kind of entry point, with and without a type error.
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
+import { endChildren, longLimit, spawn } from "../children";
+
+afterAll(endChildren);
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
@@ -275,7 +279,8 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
     ...Object.fromEntries(inApp),
     [join(kind.app, "seen.ts")]: `export type Seen = number;\n`,
   });
-  await using proc = Bun.spawn({
+  await using proc = spawn({
+    timeout: longLimit,
     cmd: [bunExe(), ...argumentsOf(command, kind, entry, entry.main(isCorrect, seen))],
     cwd: join(String(dir), kind.app),
     env,
@@ -297,6 +302,23 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
     ran: isCorrect && command === "bun --check",
     exitCode: isCorrect ? 0 : 1,
   });
+});
+
+// Of a line of more than 1,000 bytes only the beginning is kept with an error: a bundle on one line can have thousands.
+test("an error far into a long line has its place in a build, and no line of text", async () => {
+  const before = `export const s = "${Buffer.alloc(1100, "\u6f22").toString()}"; `;
+  using dir = tempDir("bun-check", {
+    "tsconfig.json": config({ noEmit: true }),
+    "index.ts": `${before}export const n: number = "1";\n`,
+    "build.ts": `
+      const { logs } = await Bun.build({ check: true, throw: false, entrypoints: ["index.ts"] });
+      console.log(JSON.stringify(logs.map(({ position }) => [position.line, position.column, position.lineText ?? ""])));
+    `,
+  });
+  await using proc = spawn({ timeout: longLimit, cmd: [bunExe(), "build.ts"], cwd: String(dir), env, stdout: "pipe" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual([[1, before.length + "export const ".length + 1, ""]]);
+  expect(exitCode).toBe(0);
 });
 
 test("a byte order mark is not a column, wherever the text comes from", async () => {
@@ -322,7 +344,8 @@ test("a byte order mark is not a column, wherever the text comes from", async ()
     `,
   });
   const run = async (cmd: string[], stdin?: string) => {
-    await using proc = Bun.spawn({
+    await using proc = spawn({
+      timeout: longLimit,
       cmd: [bunExe(), ...cmd],
       cwd: String(dir),
       env,
@@ -382,7 +405,8 @@ test("Bun.build: the check has the conditions and the loaders of the build, not 
     [false, ["imported.script TS2322"]],
   ];
   for (const flags of [[], ["--conditions=mine"]]) {
-    await using proc = Bun.spawn({
+    await using proc = spawn({
+      timeout: longLimit,
       cmd: [bunExe(), ...flags, "build.ts"],
       cwd: String(dir),
       env,
@@ -393,3 +417,49 @@ test("Bun.build: the check has the conditions and the loaders of the build, not 
     expect([flags, stderr, JSON.parse(stdout), exitCode]).toEqual([flags, "", expected, 0]);
   }
 });
+
+// The check runs on the pool of threads that the bundler parses on, and reads on the pool that it reads on. With a file or
+// a build more than there are threads, one that waited on a thread for what only that pool can do would wait for ever.
+test("a check in a bundle of more files than there are threads, and more such builds at once", async () => {
+  const count = availableParallelism() + 1;
+  const names = Array.from({ length: count }, (_, i) => `f${i}`);
+  using dir = tempDir("bun-check", {
+    "tsconfig.json": config({ noEmit: true }),
+    ...Object.fromEntries(names.map((name, i) => [`${name}.ts`, `export const ${name}: number = ${i};\n`])),
+    "index.ts": names.map(name => `import { ${name} } from "./${name}";\n`).join("") + `export default [${names}];\n`,
+    "wrong.ts": `import all from "./index";\nexport const wrong: string = all[0];\n`,
+    "build.ts": `
+      const builds = Array.from({ length: ${isDebug || isASAN ? 4 : count} }, (_, i) =>
+        Bun.build({ entrypoints: [i === 0 ? "wrong.ts" : "index.ts"], outdir: "out" + i, throw: false, check: true }));
+      console.log(JSON.stringify((await Promise.all(builds)).map(it => it.success)));
+    `,
+  });
+  const run = async (cmd: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      // Less than the test has: one that hangs does not outlive it.
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { codes: (stdout + stderr).match(/TS\d+/g) ?? [], stdout, exitCode };
+  };
+  const [right, wrong, builds] = await Promise.all([
+    run(["build", "--check", "index.ts", "--outdir", "out"]),
+    run(["build", "--check", "wrong.ts", "--outdir", "out-wrong"]),
+    run(["build.ts"]),
+  ]);
+  expect([right.codes, right.exitCode]).toEqual([[], 0]);
+  expect([wrong.codes, wrong.exitCode]).toEqual([["TS2322"], 1]);
+  const succeeded: boolean[] = JSON.parse(builds.stdout);
+  expect([succeeded.length > 3, succeeded.indexOf(false), succeeded.lastIndexOf(false), builds.exitCode]).toEqual([
+    true,
+    0,
+    0,
+    0,
+  ]);
+}, 60_000);

@@ -51,12 +51,9 @@ impl Segment<'_> {
     }
 
     fn creates_array(self) -> bool {
-        self.bracketed && (self.is_append() || array_index(self.name).is_some())
+        self.bracketed
+            && (self.is_append() || bun_core::fmt::parse_decimal::<usize>(self.name).is_some())
     }
-}
-
-fn array_index(name: &[u8]) -> Option<usize> {
-    bun_core::fmt::parse_decimal::<usize>(name)
 }
 
 impl PmPkgCommand {
@@ -441,7 +438,7 @@ impl PmPkgCommand {
         };
         let label_len = label.len();
         match &value.data {
-            ExprData::EArray(array) => match array_index(segment.name) {
+            ExprData::EArray(array) => match bun_core::fmt::parse_decimal::<usize>(segment.name) {
                 Some(index) => {
                     if let Some(item) = array.items.slice().get(index) {
                         let _ = write!(label, "[{index}]");
@@ -533,7 +530,7 @@ impl PmPkgCommand {
 
         if let Some(array) = container.data.e_array_mut() {
             let len = array.items.len();
-            let index = match array_index(segment.name) {
+            let index = match bun_core::fmt::parse_decimal::<usize>(segment.name) {
                 _ if segment.is_append() => len,
                 Some(index) if index <= len => index,
                 Some(index) => {
@@ -653,7 +650,9 @@ impl PmPkgCommand {
         }
 
         let mut child = if let Some(array) = container.data.e_array_mut() {
-            let Some(index) = array_index(name).filter(|&index| index < array.items.len()) else {
+            let Some(index) = bun_core::fmt::parse_decimal::<usize>(name)
+                .filter(|&index| index < array.items.len())
+            else {
                 return false;
             };
             if rest.is_empty() {

@@ -893,7 +893,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    fn run_available_scripts(&mut self, log_level: Options::LogLevel) {
+    pub(crate) fn run_available_scripts(&mut self, log_level: Options::LogLevel) {
         let mut i: usize = self.pending_lifecycle_scripts.len();
         while i > 0 {
             i -= 1;
@@ -1028,7 +1028,9 @@ impl<'a> PackageInstaller<'a> {
             while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
                 >= self.manager().options.max_concurrent_lifecycle_scripts
             {
-                self.manager_mut().sleep();
+                // Not `sleep`, which returns when every script has ended: one that ends makes room.
+                self.manager_mut().tick_lifecycle_scripts();
+                self.manager_mut().report_slow_lifecycle_scripts();
             }
 
             self.spawn_scripts(entry, log_level);

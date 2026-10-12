@@ -28,7 +28,7 @@ pub(crate) fn printed(name: &[u8]) -> String {
     escape_control_chars(name).to_string()
 }
 
-pub(crate) fn visible_width(printed: &str) -> usize {
+pub(crate) fn printed_width(printed: &str) -> usize {
     strings::visible::width::exclude_ansi_colors::utf8(printed.as_bytes())
 }
 
@@ -320,11 +320,11 @@ impl OutdatedCommand {
             };
 
             let alias_len = alias.map_or(0, |alias| {
-                visible_width(&printed(alias)) + ALIAS_SEPARATOR.len()
+                printed_width(&printed(alias)) + ALIAS_SEPARATOR.len()
             });
             fit(
                 0,
-                visible_width(&printed(package_name))
+                printed_width(&printed(package_name))
                     + alias_len
                     + behavior_label(dep.behavior).len(),
             );
@@ -344,7 +344,7 @@ impl OutdatedCommand {
             let workspace_name = manager.lockfile.packages.items_name()
                 [row.workspace_pkg_id as usize]
                 .slice(string_buf);
-            fit(4, visible_width(&printed(workspace_name)));
+            fit(4, printed_width(&printed(workspace_name)));
 
             outdated_ids.push(*row);
         }
@@ -359,7 +359,7 @@ impl OutdatedCommand {
         for item in &rows {
             if let Some(names) = &item.grouped_workspace_names {
                 column_inside_lengths[4] =
-                    column_inside_lengths[4].max(visible_width(&printed(names)));
+                    column_inside_lengths[4].max(printed_width(&printed(names)));
                 has_catalog_deps = true;
             }
         }
@@ -452,12 +452,12 @@ impl OutdatedCommand {
                 start_cell();
                 let behavior_str = behavior_label(dep.behavior);
                 let name = printed(package_name);
-                let mut name_len = visible_width(&name) + behavior_str.len();
+                let mut name_len = printed_width(&name) + behavior_str.len();
                 let dep_name = dep.name.slice(declared.string_bytes());
                 if dep_name != package_name {
                     let alias = printed(dep_name);
                     bun_core::pretty!("{}<d>{}<r>", alias, ALIAS_SEPARATOR);
-                    name_len += visible_width(&alias) + ALIAS_SEPARATOR.len();
+                    name_len += printed_width(&alias) + ALIAS_SEPARATOR.len();
                 }
                 bun_core::pretty!("{}<d>{}<r>", name, behavior_str);
                 end_cell(0, name_len);
@@ -501,7 +501,7 @@ impl OutdatedCommand {
                     };
                     let workspace_name = printed(workspace_name);
                     bun_core::pretty!("{}", workspace_name);
-                    end_cell(4, visible_width(&workspace_name));
+                    end_cell(4, printed_width(&workspace_name));
                 }
 
                 bun_core::pretty!("{}\n", symbols.vertical_edge());

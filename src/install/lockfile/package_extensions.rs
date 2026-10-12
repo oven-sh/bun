@@ -6,6 +6,7 @@ use bun_alloc::AllocError;
 use bun_ast::Expr;
 use bun_collections::index_sort;
 use bun_core::fmt::format_json_string_utf8;
+use bun_semver::string::Builder;
 use bun_semver::{self as semver, SlicedString, String as SemverString};
 
 use crate::dependency::{self, Behavior, NpmAliasRegistry, TagExt as _, VersionTag};
@@ -67,15 +68,11 @@ const GROUPS: [(&[u8], Behavior); 3] = [
     (b"peerDependencies", Behavior::PEER),
 ];
 
-fn hash(text: &[u8]) -> u64 {
-    semver::string::Builder::string_hash(text)
-}
-
 impl Edge {
     fn new(name: &[u8], literal: &[u8], behavior: Behavior) -> Edge {
         Edge {
             name: Box::from(name),
-            name_hash: hash(name),
+            name_hash: Builder::string_hash(name),
             literal: Box::from(literal),
             behavior,
         }
@@ -131,7 +128,7 @@ impl Rule {
                 if peer_meta.get(b"optional").and_then(|e| e.as_bool()) != Some(true) {
                     return;
                 }
-                let name_hash = hash(name);
+                let name_hash = Builder::string_hash(name);
                 match edges
                     .iter_mut()
                     .find(|edge| edge.name_hash == name_hash && edge.behavior.is_peer())
@@ -143,7 +140,7 @@ impl Rule {
         }
 
         Ok(Rule {
-            name_hash: hash(selector.name),
+            name_hash: Builder::string_hash(selector.name),
             range: Box::from(selector.range),
             edges,
         })
@@ -301,7 +298,11 @@ impl PackageExtensions {
                 };
                 while let Some(name) = names.next() {
                     if let Some(name) = name.as_utf8_string_literal() {
-                        self.record(Applied(hash(label), hash(name), kind));
+                        self.record(Applied(
+                            Builder::string_hash(label),
+                            Builder::string_hash(name),
+                            kind,
+                        ));
                     }
                 }
             }
@@ -332,7 +333,7 @@ impl PackageExtensions {
 
 impl Lockfile {
     fn package_extension_key(&self, id: PackageID) -> u64 {
-        hash(&crate::dedupe::label(self, id))
+        Builder::string_hash(&crate::dedupe::label(self, id))
     }
 
     fn package_extension_row(
@@ -583,7 +584,7 @@ impl Lockfile {
                 continue;
             }
             let label = crate::dedupe::label(self, id as PackageID);
-            let package = hash(&label);
+            let package = Builder::string_hash(&label);
             if !applied.iter().any(|applied| applied.0 == package) {
                 continue;
             }

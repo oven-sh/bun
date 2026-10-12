@@ -2322,6 +2322,70 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("scripts that run at 
     30_000,
   );
 
+  test.skipIf(isWindows)(
+    "a script that ends makes room for the next one, while another goes on",
+    async () => {
+      using ctx = await setupScriptPackages(
+        linker,
+        Object.fromEntries(
+          names.map(name => [
+            name,
+            { scripts: { postinstall: `echo ${name} >> "$STARTED" && read line < "$GATES/${name}"` } },
+          ]),
+        ),
+      );
+      await writeFile(
+        ctx.packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+          trustedDependencies: names,
+        }),
+      );
+      expect((await ctx.bun("install", "--lockfile-only")).exitCode).toBe(0);
+
+      const gates = join(ctx.packageDir, "gates");
+      await mkdir(gates);
+      expect(Bun.spawnSync({ cmd: ["mkfifo", ...names.map(name => join(gates, name))] }).exitCode).toBe(0);
+      const pipes = new Map(
+        names.map(name => [name, openSync(join(gates, name), fsConstants.O_RDWR | fsConstants.O_NONBLOCK)]),
+      );
+      const log = join(ctx.packageDir, "started.txt");
+      const started = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--concurrent-scripts=2"],
+        cwd: ctx.packageDir,
+        env: { ...ctx.env, STARTED: log, GATES: gates },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      try {
+        // The first one goes on to the end: each of the others has to start beside it.
+        for (let count = 2; count <= names.length; count++) {
+          while (started().length < count) {
+            if (proc.exitCode !== null) throw new Error(`bun install exited with ${proc.exitCode}`);
+            await Bun.sleep(1);
+          }
+          expect(started()).toHaveLength(count);
+          writeSync(pipes.get(started()[count - 1])!, "\n");
+        }
+        writeSync(pipes.get(started()[0])!, "\n");
+        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      } finally {
+        rmSync(gates, { recursive: true, force: true });
+        for (const pipe of pipes.values()) {
+          writeSync(pipe, "\n");
+          closeSync(pipe);
+        }
+      }
+    },
+    10_000,
+  );
+
   test("packages that a later install trusts, one script at a time", async () => {
     using ctx = await setupScriptPackages(
       linker,

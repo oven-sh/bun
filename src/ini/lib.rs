@@ -9,23 +9,9 @@ use bun_ast::Loc;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// npm's `ini` trims keys, values and section names with `String.prototype.trim`, whose set is wider than ASCII whitespace.
-pub(crate) fn trim_js_whitespace(mut s: &[u8]) -> &[u8] {
-    while let (Some(c), n) = bstr::decode_utf8(s)
-        && bun_core::strings::is_js_whitespace(c as u32)
-    {
-        s = &s[n..];
-    }
-    trim_js_whitespace_right(s)
-}
-
-pub(crate) fn trim_js_whitespace_right(mut s: &[u8]) -> &[u8] {
-    while let (Some(c), n) = bstr::decode_last_utf8(s)
-        && bun_core::strings::is_js_whitespace(c as u32)
-    {
-        s = &s[..s.len() - n];
-    }
-    s
-}
+pub(crate) use bun_core::strings::{
+    trim_js_whitespace, trim_js_whitespace_end as trim_js_whitespace_right,
+};
 
 #[inline]
 pub(crate) fn should_skip_line(line: &[u8]) -> bool {

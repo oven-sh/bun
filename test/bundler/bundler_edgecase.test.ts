@@ -4356,10 +4356,10 @@ describe("bundler", () => {
       `,
     },
     onAfterBundle(api) {
-      // Both start before the wrapper suspends, in import order. b is not
-      // async, so it can throw: the list is a generator.
+      // a starts, then b, then the wrapper waits for a. The `.catch` gives
+      // a's promise a handler for when b throws.
       expect(api.readFile("/out.js").replace(/\s+/g, " ")).toContain(
-        "await Promise.all(function* () { yield init_a(); init_b(); }());",
+        "Promise.resolve(init_a()).catch(() => {}); init_b(); init_a() && await init_a();",
       );
     },
   });
@@ -4514,6 +4514,115 @@ describe("bundler", () => {
       validate({ stderr }) {
         expect(stderr).toContain("error: E-r");
       },
+    },
+  });
+  // a and b both wait for d. a also imports s, after d. a is first in import
+  // order, so it continues first when d settles.
+  itBundled("edgecase/ImportersOfOneAsyncModuleContinueInImportOrder", {
+    files: {
+      "/entry.js": /* js */ `import "./x.js"; console.log("entry");`,
+      "/x.js": /* js */ `
+        import "./a.js";
+        import "./b.js";
+        console.log("x body");
+        setTimeout(() => import("./x.js"));
+      `,
+      "/a.js": /* js */ `
+        import "./d.js";
+        import "./s.js";
+        console.log("A");
+      `,
+      "/b.js": /* js */ `
+        import "./d.js";
+        console.log("B");
+      `,
+      "/d.js": /* js */ `
+        console.log("d start");
+        await 0;
+        console.log("d end");
+      `,
+      "/s.js": /* js */ `console.log("s");`,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        d start
+        s
+        d end
+        A
+        B
+        x body
+        entry
+      `,
+    },
+  });
+  // plugin.js waits for registry.js and also imports a sync module. It
+  // continues as soon as registry.js settles, before the entry that awaits
+  // the `import()` of registry.js.
+  itBundled("edgecase/ImporterOfAsyncModuleContinuesBeforeImportCallback", {
+    files: {
+      "/entry.js": /* js */ `
+        const registry = import("./registry.js");
+        import("./plugin.js");
+        const { plugins } = await registry;
+        console.log("plugins:", JSON.stringify(plugins));
+      `,
+      "/plugin.js": /* js */ `
+        import { plugins } from "./registry.js";
+        import { tag } from "./util.js";
+        plugins.push(tag("p1"));
+      `,
+      "/registry.js": /* js */ `
+        export const plugins = [];
+        await 0;
+      `,
+      "/util.js": /* js */ `
+        const seen = new Map(Object.entries({}));
+        export const tag = name => (seen.set(name, true), "plugin:" + name);
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `plugins: ["plugin:p1"]`,
+    },
+  });
+  // b is async only because it imports a, and a is still in its first
+  // synchronous segment when b runs. An import cycle does not wait for that:
+  // b runs at once, before the later dependencies of a.
+  itBundled("edgecase/ImportCycleMemberRunsBeforeLaterDependency", {
+    files: {
+      "/entry.js": /* js */ `import "./a.js"; console.log("entry");`,
+      "/a.js": /* js */ `
+        import "./b.js";
+        import "./t.js";
+        import "./s.js";
+        console.log("a body");
+      `,
+      "/b.js": /* js */ `
+        import "./a.js";
+        globalThis.bReady = true;
+        console.log("b body");
+      `,
+      "/t.js": /* js */ `
+        console.log("t start");
+        await 0;
+        console.log("t end");
+      `,
+      "/s.js": /* js */ `
+        console.log("s sees b:", globalThis.bReady);
+        setTimeout(() => import("./a.js"));
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        b body
+        t start
+        s sees b: true
+        t end
+        a body
+        entry
+      `,
     },
   });
   // b throws after a started. The import fails with b's error, d does not

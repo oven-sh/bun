@@ -278,13 +278,8 @@ pub(crate) fn convert_stmts_for_chunk(
                                 && c.graph.files_live.is_set(other_source_index)
                             {
                                 stmts.inside_wrapper_prefix.append_dependency(
-                                    Expr::init(
-                                        E::Call {
-                                            target: Expr::init_identifier(wrapper_ref, stmt.loc),
-                                            ..Default::default()
-                                        },
-                                        stmt.loc,
-                                    ),
+                                    wrapper_ref,
+                                    stmt.loc,
                                     flag.is_async_or_has_async_dependency,
                                 )?;
                             }

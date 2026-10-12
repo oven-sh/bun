@@ -523,7 +523,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // up being CommonJS modules.
     stmts
         .inside_wrapper_prefix
-        .finish(c.promise_ref, temp_arena, &mut stmts.all_stmts);
+        .finish(c.promise_ref, &mut stmts.all_stmts);
     stmts
         .all_stmts
         .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());

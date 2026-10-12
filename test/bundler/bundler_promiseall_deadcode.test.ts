@@ -385,4 +385,136 @@ describe("bundler", () => {
       expect(bundled).not.toMatch(/await\s+Promise\.all\s*\(/);
     },
   });
+
+  // The importer below is not wrapped (nothing `import()`s or `require()`s it),
+  // so its `await Promise.all([...])` is at the top level of the chunk. The
+  // `import()` calls wrap p.js and q.js (`init_p`, `init_q`), and their
+  // top-level await makes those wrappers async. With the `__promiseAll`
+  // helper this output was `ReferenceError: __promiseAll is not defined`.
+  itBundled("bundler/an unwrapped entry joins two async ESM wrappers with Promise.all", {
+    files: {
+      "/entry.js": `
+        import "./p.js";
+        import "./q.js";
+        import("./p.js");
+        import("./q.js");
+        console.log("entry");
+      `,
+      "/p.js": `
+        await Promise.resolve();
+        console.log("p");
+        export const p = 1;
+      `,
+      "/q.js": `
+        await Promise.resolve();
+        console.log("q");
+        export const q = 1;
+      `,
+    },
+    run: {
+      stdout: "p\nq\nentry",
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      expect(bundled).toMatch(/await\s+Promise\.all\s*\(\s*\[\s*init_p\(\),\s*init_q\(\)\s*\]\s*\)/);
+      expect(bundled).not.toContain("__promiseAll");
+    },
+  });
+
+  itBundled("bundler/an unwrapped entry joins three async ESM wrappers with Promise.all", {
+    files: {
+      "/entry.js": `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        console.log(a, b, c);
+        const mods = await Promise.all([import("./a.js"), import("./b.js"), import("./c.js")]);
+        console.log(mods.map(m => Object.keys(m)).join());
+      `,
+      "/a.js": `export const a = await Promise.resolve("A");`,
+      "/b.js": `export const b = await Promise.resolve("B");`,
+      "/c.js": `export const c = await Promise.resolve("C");`,
+    },
+    run: {
+      stdout: "A B C\na,b,c",
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      expect(bundled).toMatch(/await\s+Promise\.all\s*\(\s*\[\s*init_a\(\),\s*init_b\(\),\s*init_c\(\)\s*\]\s*\)/);
+      expect(bundled).not.toContain("__promiseAll");
+    },
+  });
+
+  itBundled("bundler/an unwrapped file that is not the entry joins two async ESM wrappers with Promise.all", {
+    files: {
+      "/entry.js": `
+        import { joined } from "./mid.js";
+        console.log(joined);
+        const [{ a }, { b }] = await Promise.all([import("./a.js"), import("./b.js")]);
+        console.log(a + b === joined);
+      `,
+      "/mid.js": `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        export const joined = a + b;
+      `,
+      "/a.js": `export const a = await Promise.resolve("A");`,
+      "/b.js": `export const b = await Promise.resolve("B");`,
+    },
+    run: {
+      stdout: "AB\ntrue",
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      expect(bundled).toMatch(/\/\/ mid\.js\s+await\s+Promise\.all\s*\(\s*\[\s*init_a\(\),\s*init_b\(\)\s*\]\s*\)/);
+      expect(bundled).not.toContain("__promiseAll");
+    },
+  });
+
+  itBundled("bundler/an unwrapped entry awaits one async ESM wrapper without Promise.all", {
+    files: {
+      "/entry.js": `
+        import { a } from "./a.js";
+        console.log(a);
+        console.log(Object.keys(await import("./a.js")).join());
+      `,
+      "/a.js": `export const a = await Promise.resolve("A");`,
+    },
+    run: {
+      stdout: "A\na",
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      expect(bundled).toContain("init_a() && await init_a();");
+      expect(bundled).not.toContain("Promise.all(");
+    },
+  });
+
+  // Only `import` statements join the `await Promise.all([...])`. An `import()`
+  // of a second async module calls `init_c()` where the expression is.
+  itBundled("bundler/an import() of a second async module does not join the wrapper's await", {
+    files: {
+      "/entry.js": `
+        const { run } = await import("./lazy.js");
+        await run();
+      `,
+      "/lazy.js": `
+        import { a } from "./a.js";
+        export async function run() {
+          const { c } = await import("./c.js");
+          console.log(a, c);
+        }
+      `,
+      "/a.js": `export const a = await Promise.resolve("A");`,
+      "/c.js": `export const c = await Promise.resolve("C");`,
+    },
+    run: {
+      stdout: "A C",
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      expect(bundled).toMatch(/var init_lazy = __esm\(async \(\) => \{\s*init_a\(\) && await init_a\(\);/);
+      expect(bundled).not.toContain("Promise.all(");
+    },
+  });
 });

@@ -2,7 +2,7 @@ use crate::mal_prelude::*;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::Error as BunError;
-use bun_alloc::{AllocError, Arena as Bump, ArenaVecExt as _};
+use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
 use bun_core::{self as bun, FeatureFlags, Output};
@@ -2345,17 +2345,11 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 // Replace the statement with a call to "init()"
-                let init_call = Expr::init(
-                    E::Call {
-                        target: Expr::init_identifier(wrapper_ref, loc),
-                        ..Default::default()
-                    },
+                stmts.inside_wrapper_prefix.append_dependency(
+                    wrapper_ref,
                     loc,
-                );
-
-                stmts
-                    .inside_wrapper_prefix
-                    .append_dependency(init_call, other_flags.is_async_or_has_async_dependency)?;
+                    other_flags.is_async_or_has_async_dependency,
+                )?;
             }
         }
 
@@ -5114,19 +5108,27 @@ pub struct StmtList {
 
 /// The dependency statements that run inside a wrapper before the module
 /// body, in source order. An async dependency and the statements after it
-/// share one `await`, so each one starts before the wrapper suspends:
-/// `await Promise.all([init_a(), init_d()])`. When one of them can throw, the
-/// list is `function* () { yield init_a(); init_b(); }()`: `Promise.all` takes
-/// one promise at a time, so a throw leaves no started promise without a handler.
+/// end in one `await`, so each dependency starts before the wrapper suspends.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
     joined: Vec<Joined>,
 }
 
 enum Joined {
-    /// The `init_x()` of an async dependency.
-    Async(Expr),
+    /// The wrapper of an async dependency. `init_x()` returns its promise,
+    /// the same one on every call.
+    Async(Ref, Loc),
     Sync(Stmt),
+}
+
+fn init_call(wrapper_ref: Ref, loc: Loc) -> Expr {
+    Expr::init(
+        E::Call {
+            target: Expr::init_identifier(wrapper_ref, loc),
+            ..Default::default()
+        },
+        loc,
+    )
 }
 
 impl InsideWrapperPrefix {
@@ -5159,6 +5161,8 @@ impl InsideWrapperPrefix {
                 .all(|decl| matches!(decl.binding.data, bun_ast::binding::Data::BIdentifier(_)));
             debug_assert!(binds_identifiers);
             if binds_identifiers {
+                // `var ns = require_x();` after an async dependency: `var ns;`
+                // goes above the joined statements and `ns = require_x();` among them.
                 let mut hoisted = G::DeclList::init_capacity(local.decls.len());
                 for decl in local.decls.iter() {
                     hoisted.push(G::Decl {
@@ -5202,115 +5206,143 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
+    /// `wrapper_ref` is the `init_x` of a wrapped ESM dependency.
     pub(crate) fn append_dependency(
         &mut self,
-        init_call: Expr,
+        wrapper_ref: Ref,
+        loc: Loc,
         is_async: bool,
     ) -> Result<(), AllocError> {
         if is_async {
-            self.joined.push(Joined::Async(init_call));
+            self.joined.push(Joined::Async(wrapper_ref, loc));
             return Ok(());
         }
         self.append_non_dependency(Stmt::alloc(
             S::SExpr {
-                value: init_call,
+                value: init_call(wrapper_ref, loc),
                 ..Default::default()
             },
-            init_call.loc,
+            loc,
         ))
     }
 
-    /// Moves the statements to the end of `out`, the `await` last.
-    pub(crate) fn finish(&mut self, promise_ref: Ref, bump: &Bump, out: &mut Vec<Stmt>) {
+    /// Moves the statements to the end of `out`, the `await` last:
+    ///
+    /// ```text
+    /// Promise.resolve(init_a()).catch(() => {});
+    /// init_b();
+    /// init_a() && await init_a();
+    /// ```
+    ///
+    /// The first line starts `a` and gives its promise a handler, so a throw
+    /// from `init_b()` leaves no unhandled rejection. The last line waits
+    /// only for a promise: a call back into a module that is in its first
+    /// synchronous segment returns `undefined`, and an import cycle does not
+    /// wait for it. Two or more async dependencies end in
+    /// `await Promise.all([init_a(), init_d()])`.
+    pub(crate) fn finish(&mut self, promise_ref: Ref, out: &mut Vec<Stmt>) {
         out.append(&mut self.stmts);
+        if self.joined.is_empty() {
+            return;
+        }
 
-        let awaited = match self.joined.as_slice() {
-            [] => return,
-            [Joined::Async(init_call)] => *init_call,
-            joined => {
-                let list = if joined.iter().all(|item| matches!(item, Joined::Async(_))) {
-                    let mut items = bun_ast::ExprNodeList::init_capacity(joined.len());
-                    for item in joined {
-                        if let Joined::Async(init_call) = item {
-                            items.append_assume_capacity(*init_call);
-                        }
-                    }
-                    Expr::init(
-                        E::Array {
-                            items,
+        let promise_method = |name: &'static [u8], argument: Expr| {
+            let mut args = bun_ast::ExprNodeList::init_capacity(1);
+            args.append_assume_capacity(argument);
+            Expr::init(
+                E::Call {
+                    target: Expr::init(
+                        E::Dot {
+                            target: Expr::init_identifier(promise_ref, Loc::EMPTY),
+                            name: name.into(),
+                            name_loc: Loc::EMPTY,
                             ..Default::default()
                         },
                         Loc::EMPTY,
-                    )
-                } else {
-                    let mut body = bun_alloc::ArenaVec::with_capacity_in(joined.len(), bump);
-                    for item in joined {
-                        body.push(match item {
-                            Joined::Async(init_call) => Stmt::alloc(
-                                S::SExpr {
-                                    value: Expr::init(
-                                        E::Yield {
-                                            value: Some(*init_call),
-                                            is_star: false,
-                                        },
-                                        Loc::EMPTY,
-                                    ),
-                                    ..Default::default()
-                                },
-                                Loc::EMPTY,
-                            ),
-                            Joined::Sync(stmt) => *stmt,
-                        });
-                    }
-                    let mut flags = bun_ast::flags::FunctionSet::empty();
-                    flags.insert(bun_ast::flags::Function::IsGenerator);
-                    Expr::init(
-                        E::Call {
-                            target: Expr::init(
-                                E::Function {
-                                    func: G::Fn {
-                                        flags,
-                                        body: G::FnBody {
-                                            stmts: bun_ast::StoreSlice::new_mut(
-                                                body.into_bump_slice_mut(),
-                                            ),
-                                            loc: Loc::EMPTY,
-                                        },
+                    ),
+                    args,
+                    ..Default::default()
+                },
+                Loc::EMPTY,
+            )
+        };
+
+        let last_sync = self
+            .joined
+            .iter()
+            .rposition(|item| matches!(item, Joined::Sync(_)));
+        let mut awaited = bun_ast::ExprNodeList::init_capacity(self.joined.len());
+        for (index, item) in self.joined.iter().enumerate() {
+            match *item {
+                Joined::Sync(stmt) => out.push(stmt),
+                Joined::Async(wrapper_ref, loc) => {
+                    awaited.push(init_call(wrapper_ref, loc));
+                    if last_sync.is_some_and(|last| index < last) {
+                        let mut handler = bun_ast::ExprNodeList::init_capacity(1);
+                        handler.append_assume_capacity(Expr::init(E::Arrow::default(), Loc::EMPTY));
+                        out.push(Stmt::alloc(
+                            S::SExpr {
+                                value: Expr::init(
+                                    E::Call {
+                                        target: Expr::init(
+                                            E::Dot {
+                                                target: promise_method(
+                                                    b"resolve",
+                                                    init_call(wrapper_ref, loc),
+                                                ),
+                                                name: b"catch".into(),
+                                                name_loc: Loc::EMPTY,
+                                                ..Default::default()
+                                            },
+                                            Loc::EMPTY,
+                                        ),
+                                        args: handler,
                                         ..Default::default()
                                     },
-                                },
-                                Loc::EMPTY,
-                            ),
-                            ..Default::default()
+                                    Loc::EMPTY,
+                                ),
+                                ..Default::default()
+                            },
+                            loc,
+                        ));
+                    }
+                }
+            }
+        }
+
+        let value = match (awaited.len(), &self.joined[0]) {
+            (1, &Joined::Async(wrapper_ref, loc)) => Expr::init(
+                E::Binary {
+                    op: bun_ast::OpCode::BinLogicalAnd,
+                    left: init_call(wrapper_ref, loc),
+                    right: Expr::init(
+                        E::Await {
+                            value: init_call(wrapper_ref, loc),
                         },
                         Loc::EMPTY,
-                    )
-                };
-
-                let mut args = bun_ast::ExprNodeList::init_capacity(1);
-                args.append_assume_capacity(list);
-                Expr::init(
-                    E::Call {
-                        target: Expr::init(
-                            E::Dot {
-                                target: Expr::init_identifier(promise_ref, Loc::EMPTY),
-                                name: b"all".into(),
-                                name_loc: Loc::EMPTY,
+                    ),
+                },
+                Loc::EMPTY,
+            ),
+            _ => Expr::init(
+                E::Await {
+                    value: promise_method(
+                        b"all",
+                        Expr::init(
+                            E::Array {
+                                items: awaited,
                                 ..Default::default()
                             },
                             Loc::EMPTY,
                         ),
-                        args,
-                        ..Default::default()
-                    },
-                    Loc::EMPTY,
-                )
-            }
+                    ),
+                },
+                Loc::EMPTY,
+            ),
         };
-
         out.push(Stmt::alloc(
             S::SExpr {
-                value: Expr::init(E::Await { value: awaited }, Loc::EMPTY),
+                value,
                 ..Default::default()
             },
             Loc::EMPTY,

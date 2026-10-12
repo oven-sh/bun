@@ -273,8 +273,9 @@ impl Rule for PreferRegexLiterals {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // Finding the calls takes resolving every name of the file.
-        file.mentions("RegExp").then_some(())
+        // Finding the calls takes resolving every name of the file. ESLint also finds `globalThis["Reg" + "Exp"]`.
+        let may_be_computed = || file.mentions_any(&["global", "globalThis", "self", "window"]);
+        (file.mentions("RegExp") || !file.language().is_oxlint && may_be_computed()).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

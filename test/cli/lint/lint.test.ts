@@ -5689,6 +5689,26 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(0);
     });
 
+    // As ESLint 10.12.
+    test("a name that no file mentions is found where it is put together", async () => {
+      const files = {
+        "eslint.config.js": config({ "prefer-regex-literals": "error" }),
+        "a.js": `new globalThis["Reg" + "Exp"]("a");\n`,
+        "b.js": `const { ["Reg" + "Exp"]: R } = globalThis;\nnew R("a");\n`,
+        "c.js": `new globalThis[["Reg", "Exp"].join("")]("a");\n`,
+        "d.js": `new globalThis.globalThis["Reg" + "Exp"]("a");\n`,
+        "e.js": `new window["Reg" + "Exp"]("a");\n`,
+      };
+      const { stdout } = await lint(files, ["-f", "unix"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "<dir>/a.js:1:1: Use a regular expression literal instead of the 'RegExp' constructor. [Error/prefer-regex-literals]
+        <dir>/b.js:2:1: Use a regular expression literal instead of the 'RegExp' constructor. [Error/prefer-regex-literals]
+        <dir>/c.js:1:1: Use a regular expression literal instead of the 'RegExp' constructor. [Error/prefer-regex-literals]
+
+        3 problems"
+      `);
+    });
+
     test("--help", async () => {
       const { stdout, exitCode } = await lint({}, ["--help"]);
       expect(stdout).toContain("bun lint");

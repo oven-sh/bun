@@ -389,7 +389,8 @@ function emitMetadata(target: object[] = events) {
 // tracing activated.
 function emitWorkerThreadName(name: unknown, threadId: number) {
   if (!activated) return;
-  events.push({
+  // The worker's thread runs by now, so this must not call out (a replaced Array.prototype.push).
+  $arrayPush(events, {
     pid: process.pid,
     tid: threadId + 1,
     ts: 0,

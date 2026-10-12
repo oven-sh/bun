@@ -19,6 +19,8 @@ struct WorkerOptions {
     String name;
     bool mini { false };
     bool unref { false };
+    // worker_threads `env: SHARE_ENV` was asked for. The start step resolves it to sharedEnvStore.
+    bool shareEnv { false };
     // worker_threads `env: SHARE_ENV`: the environment tree resolved on the parent
     // thread, which this worker joins instead of receiving an env snapshot.
     RefPtr<Bun::SharedEnvStore> sharedEnvStore;

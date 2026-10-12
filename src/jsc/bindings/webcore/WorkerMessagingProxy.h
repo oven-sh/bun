@@ -69,10 +69,11 @@ class WorkerMessagingProxy final : public ThreadSafeRefCounted<WorkerMessagingPr
 
 public:
     enum class State : uint8_t {
-        Pending, // created; the worker thread is not spawned yet, or is starting up
+        Unstarted, // created; there is no thread, and nothing keeps the Worker object alive
+        Pending, // startWorkerGlobalScope() spawned the thread; it is starting up
         Running, // workerGlobalScopeStarted() has run on the worker thread
         Closing, // workerGlobalScopeDestroyedInternal() is dispatching 'close' on the parent
-        Closed, // the thread is joined and released; nothing further will happen
+        Closed, // the thread is joined and released, or there never was one; nothing further will happen
     };
 
     static Ref<WorkerMessagingProxy> create(Worker&, ScriptExecutionContext& parentContext, WorkerOptions&&);
@@ -81,13 +82,15 @@ public:
     // -- WorkerGlobalScopeProxy (parent thread) --------------------------------------------------
     // Validates the options and allocates the thread object. startWorkerGlobalScope() spawns the thread.
     ExceptionOr<void> prepareWorkerGlobalScope(const String& scriptURL);
-    // Cannot reject an option: what it reads was validated above. Fails only if the OS refuses the thread.
+    // Unstarted -> Pending, once: in any other state it starts nothing and takes nothing. Cannot reject an
+    // option: what it reads was validated above. Fails only if the OS refuses the thread.
     ExceptionOr<void> startWorkerGlobalScope(Ref<SerializedScriptValue>&& workerDataAndEnvironmentData, Vector<TransferredMessagePort>&& dataMessagePorts, RefPtr<Bun::SharedEnvStore>&&);
-    // Releases a thread object that was never started. Dispatches nothing.
+    // Unstarted -> Closed: releases the thread object that has no thread. Dispatches nothing.
     void discardUnstartedWorkerGlobalScope();
+    // Asks the thread to stop. An Unstarted worker has none: it is released and never starts.
     void terminateWorkerGlobalScope();
     void postMessageToWorkerGlobalScope(MessageWithMessagePorts&&);
-    // Queued while Pending, posted while Running, refused (false) once Closing.
+    // Queued while Pending, posted while Running, refused (false) while Unstarted and once Closing.
     bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
     void setKeepAlive(bool);
     void workerObjectDestroyed();
@@ -95,7 +98,13 @@ public:
     // workerGlobalScopeDestroyedInternal() would have released. Parent thread.
     void parentContextWillDestroy();
 
-    bool hasPendingActivity() const { return m_state.load() != State::Closed; }
+    // Also read on the GC thread. An Unstarted worker that is dropped is collected, which releases it.
+    bool hasPendingActivity() const
+    {
+        auto state = m_state.load();
+        return state != State::Unstarted && state != State::Closed;
+    }
+    bool isUnstarted() const { return m_state.load() == State::Unstarted; }
     bool isOnline() const { return m_state.load() == State::Running; }
     bool isClosingOrClosed() const { return m_state.load() >= State::Closing; }
 
@@ -149,10 +158,10 @@ private:
     WorkerOptions m_options;
 
     // The native thread object (src/jsc/web_worker.rs). Holds one ref on it from
-    // prepareWorkerGlobalScope() until releaseWorkerThread().
+    // prepareWorkerGlobalScope() until releaseWorkerThread() or discardUnstartedWorkerGlobalScope().
     void* m_workerThread { nullptr };
 
-    std::atomic<State> m_state { State::Pending };
+    std::atomic<State> m_state { State::Unstarted };
 
     // Pending -> Running happens under this lock so a task posted while Pending is either queued here
     // (and run by workerGlobalScopeStarted) or posted directly, never lost.

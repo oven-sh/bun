@@ -5,7 +5,8 @@
 //!
 //!   - the C++ `WorkerMessagingProxy` (the parent<->worker relationship object,
 //!     see WorkerMessagingProxy.h) holds one ref from `create()` until it has
-//!     joined the thread (`releaseWorkerThread()`), and
+//!     joined the thread (`releaseWorkerThread()`), or until it drops a worker
+//!     that never started, and
 //!   - the running thread holds one for the whole of `thread_main`.
 //!
 //! `proxy` points back at the messaging proxy, which the thread also holds a
@@ -22,7 +23,7 @@
 //!                      teardown, free per-thread state, `workerGlobalScopeDestroyed`.
 //!   Then the thread drops its self-ref and returns; the parent joins it.
 //!
-//! Children: every worker created on a thread is registered on that thread's
+//! Children: every worker started on a thread is registered on that thread's
 //! `VirtualMachine.child_workers` (parent thread only). When a thread exits —
 //! the main thread in `global_exit`, a worker in `shutdown()` — its stop phase
 //! has already asked each child to terminate; it then joins each child and
@@ -194,7 +195,7 @@ unsafe extern "C" {
 /// Children created by a child are handled by that child's own `shutdown()`
 /// before it can be joined, so this is transitively complete.
 pub fn join_child_workers(parent: &mut VirtualMachine) {
-    // `child_workers` is only touched on this (the parent) thread: `create()`
+    // `child_workers` is only touched on this (the parent) thread: `start()`
     // pushes, `release_parent_poll_ref()` removes, and this takes the rest.
     let children = core::mem::take(&mut parent.child_workers);
     for child in children {
@@ -283,8 +284,9 @@ impl WebWorker {
     // Construction (parent thread)
     // =========================================================================
 
-    /// Validate the options and allocate the thread object (one ref, the proxy's). On failure: null, `error_message`
-    /// set and nothing to clean up.
+    /// Validate the options and allocate the thread object (one ref, the proxy's). Until `start()` it has no thread
+    /// and the parent does not know it, so `deref()` is its whole release. On failure: null, `error_message` set and
+    /// nothing to clean up.
     #[unsafe(export_name = "WebWorker__create")]
     pub(crate) unsafe extern "C" fn create(
         proxy: *mut c_void,
@@ -387,7 +389,7 @@ impl WebWorker {
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
         // The construction ref, handed to C++.
-        let worker = bun_ptr::RefPtr::new(WebWorker {
+        bun_ptr::RefPtr::new(WebWorker {
             messaging_proxy: proxy,
             parent,
             hot_reload: parent_ref.hot_reload,
@@ -424,13 +426,11 @@ impl WebWorker {
             exit_called: AtomicBool::new(false),
             terminated_by_parent: AtomicBool::new(false),
         })
-        .into_raw();
-        // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
-        unsafe { (*parent).child_workers.push(worker) };
-        worker
+        .into_raw()
     }
 
-    /// Spawn the thread of a worker `create()` made, once, on the same thread. False if the OS refused it.
+    /// Spawn the thread of a worker `create()` made, once, on the same thread, and make it a child of the parent.
+    /// False if the OS refused it.
     #[unsafe(export_name = "WebWorker__start")]
     pub(crate) unsafe extern "C" fn start(this: *mut WebWorker, default_unref: bool) -> bool {
         let worker_ref = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
@@ -511,6 +511,9 @@ impl WebWorker {
         match spawn {
             Ok(handle) => {
                 worker_ref.join_handle.set(Some(handle));
+                // An exiting parent joins it from here on.
+                // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
+                unsafe { (*worker_ref.parent).child_workers.push(this) };
                 true
             }
             Err(_) => {

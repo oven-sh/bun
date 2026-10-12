@@ -137,6 +137,20 @@ test("a context stopped while workerData is serialized: the Worker starts nothin
   expect({ stopped, threadId: worker.threadId }).toEqual({ stopped: true, threadId: -1 });
 });
 
+// node:worker_threads used to pass its own Worker as a third argument. It has its own two steps now.
+test("the global Worker takes no third argument: the process 'worker' event has the Worker itself", async () => {
+  using dir = tempDir("worker-transfer-list", { "entry.js": "" });
+  const { promise, resolve } = Promise.withResolvers();
+  process.once("worker", resolve);
+  const worker = Reflect.construct(GlobalWorker, [join(String(dir), "entry.js"), {}, "a third argument"]);
+  try {
+    expect(await promise).toBe(worker);
+  } finally {
+    process.off("worker", resolve);
+    worker.terminate();
+  }
+});
+
 describe.concurrent("in a process of its own", () => {
   async function run(script: string, entry = neverLoaded) {
     await using proc = Bun.spawn({
@@ -230,5 +244,148 @@ describe.concurrent("in a process of its own", () => {
       join(String(dir), "entry.js"),
     );
     expect(result).toEqual({ stdout: "prototype getter", stderr: "", exitCode: 0 });
+  });
+
+  // node:worker_threads registers its listeners before the transfer and before the thread. The rows that
+  // Node has too are in worker-transfer-list-node.test.ts. One process at a time: a debug build takes
+  // seconds for each.
+  describe.serial("a node:worker_threads constructor that throws in its own listener registrations", () => {
+    const reportingEntry = { "entry.js": `require("node:fs").writeSync(1, "the entry ran\\n");` };
+
+    test("a subclass whose on() throws leaves no Worker, no 'worker' event and no thread", async () => {
+      using dir = tempDir("worker-transfer-list", reportingEntry);
+      const result = await run(
+        `
+        const { Worker: ThreadWorker } = require("node:worker_threads");
+        const { heapStats } = require("bun:jsc");
+        let events = 0;
+        process.on("worker", () => events++);
+        class Deaf extends ThreadWorker {
+          on() {
+            throw new Error("on() override");
+          }
+        }
+        const thrown = new Set();
+        let bytes = 0;
+        for (let i = 0; i < 20; i++) {
+          const buf = new ArrayBuffer(8);
+          try {
+            new Deaf(process.argv.at(-1), { workerData: buf, transferList: [buf] });
+            thrown.add("did not throw");
+          } catch (e) {
+            thrown.add(e.message);
+          }
+          bytes += buf.byteLength;
+        }
+        setImmediate(() => {
+          Bun.gc(true);
+          const workers = heapStats().objectTypeCounts.Worker ?? 0;
+          const collected = workers < 10 ? "yes" : workers + " of 20 remain";
+          console.log(JSON.stringify({ thrown: [...thrown], bytes, events, collected }));
+        });
+      `,
+        join(String(dir), "entry.js"),
+      );
+      expect(result).toEqual({
+        stdout: JSON.stringify({ thrown: ["on() override"], bytes: 160, events: 0, collected: "yes" }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("a function that the constructor calls for its listeners throws: the caller keeps its transfer list", async () => {
+      using dir = tempDir("worker-transfer-list", reportingEntry);
+      const result = await run(
+        `
+        const { Worker: ThreadWorker, MessagePort } = require("node:worker_threads");
+        const { Readable } = require("node:stream");
+        const kept = {};
+        for (const [name, object, key] of [
+          ["Readable.prototype.on", Readable.prototype, "on"],
+          ["EventTarget.prototype.addEventListener", EventTarget.prototype, "addEventListener"],
+          ["Function.prototype.bind", Function.prototype, "bind"],
+          ["MessagePort.prototype.unref", MessagePort.prototype, "unref"],
+        ]) {
+          const buf = new ArrayBuffer(8);
+          const original = object[key];
+          object[key] = function () {
+            object[key] = original;
+            throw new Error("replaced");
+          };
+          try {
+            new ThreadWorker(process.argv.at(-1), { workerData: buf, transferList: [buf] });
+            kept[name] = "did not throw";
+          } catch (e) {
+            kept[name] = e.message + ", " + buf.byteLength + " bytes";
+          } finally {
+            object[key] = original;
+          }
+        }
+        console.log(JSON.stringify(kept));
+      `,
+        join(String(dir), "entry.js"),
+      );
+      expect(result).toEqual({
+        stdout: JSON.stringify({
+          "Readable.prototype.on": "replaced, 8 bytes",
+          "EventTarget.prototype.addEventListener": "replaced, 8 bytes",
+          "Function.prototype.bind": "replaced, 8 bytes",
+          "MessagePort.prototype.unref": "replaced, 8 bytes",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // A termination runs no catch block, so the constructor cannot release what it made. A worker that has no
+    // thread keeps nothing alive: it is collected, after the collection that closes its ports.
+    test("a vm timeout inside on() leaves no Worker and no thread", async () => {
+      using dir = tempDir("worker-transfer-list", reportingEntry);
+      const result = await run(
+        `
+        const { Worker: ThreadWorker } = require("node:worker_threads");
+        const { heapStats } = require("bun:jsc");
+        const vm = require("node:vm");
+        class Spin extends ThreadWorker {
+          on() {
+            for (;;) {}
+          }
+        }
+        const entry = process.argv.at(-1);
+        function workers() {
+          Bun.gc(true);
+          Bun.gc(true);
+          return heapStats().objectTypeCounts.Worker ?? 0;
+        }
+        // This one loads the modules that the constructor needs and throws in its last step. So the timeout
+        // below stops on(), not the load of a module.
+        try {
+          new ThreadWorker(entry, { workerData: () => {} });
+        } catch {}
+        setImmediate(() => {
+          const before = workers();
+          const buf = new ArrayBuffer(8);
+          const context = vm.createContext({
+            construct: () => new Spin(entry, { workerData: buf, transferList: [buf] }),
+          });
+          let code = "did not throw";
+          try {
+            vm.runInContext("construct()", context, { timeout: 200 });
+          } catch (e) {
+            code = e.code;
+          }
+          setImmediate(() => {
+            console.log(JSON.stringify({ code, bytes: buf.byteLength, left: workers() - before }));
+          });
+        });
+      `,
+        join(String(dir), "entry.js"),
+      );
+      expect(result).toEqual({
+        stdout: JSON.stringify({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT", bytes: 8, left: 0 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });

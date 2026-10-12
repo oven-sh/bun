@@ -319,8 +319,8 @@ pub struct VirtualMachine {
     /// The `WebWorker` whose thread this VM runs on (`None` on the main thread).
     /// The thread holds a ref on it for its whole life.
     pub worker: Option<*const c_void>,
-    /// Workers created on this thread and not yet released by it. Parent-thread
-    /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
+    /// Workers started on this thread and not yet released by it. Parent-thread
+    /// only: `WebWorker::start` pushes, `release_parent_poll_ref` removes,
     /// `join_child_workers` drains at exit.
     pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.

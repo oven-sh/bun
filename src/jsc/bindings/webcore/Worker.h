@@ -48,11 +48,14 @@ class Worker final : public RefCounted<Worker>, public EventTargetWithInlineData
     WTF_MAKE_TZONE_ALLOCATED(Worker);
 
 public:
-    // Validates the options and allocates the worker. start() spawns its thread.
+    // Validates the options and allocates the worker. Until start() spawns its thread, once, the worker keeps
+    // nothing alive: it is released when it is dropped.
     static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, const String& url, WorkerOptions&&);
     ExceptionOr<void> start(Ref<SerializedScriptValue>&& workerDataAndEnvironmentData, Vector<TransferredMessagePort>&& dataMessagePorts, RefPtr<Bun::SharedEnvStore>&&);
-    // For a constructor that throws between create() and start(): releases the worker that has no thread.
+    // For a constructor that throws between create() and start(): releases the worker that has no thread now,
+    // not when it is collected. Does nothing after start().
     void discardUnstarted();
+    bool isUnstarted() const { return m_contextProxy->isUnstarted(); }
     ~Worker();
 
     // ActiveDOMObject.
@@ -64,7 +67,7 @@ public:
     void terminate();
     // terminate() was called or the thread has gone; the object dispatches nothing further.
     bool wasTerminated() const { return m_wasTerminated || m_contextProxy->isClosingOrClosed(); }
-    // The thread has exited (or never started). threadId reads -1 from here on, as in Node.
+    // The thread has exited, or the worker was released without one. threadId reads -1 from here on, as in Node.
     bool hasExited() const { return m_contextProxy->isClosingOrClosed(); }
     bool isOnline() const { return m_contextProxy->isOnline(); }
     void setKeepAlive(bool);

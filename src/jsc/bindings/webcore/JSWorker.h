@@ -90,4 +90,11 @@ template<> struct JSDOMWrapperConverterTraits<Worker> {
     using ToWrappedReturnType = Worker*;
 };
 
+// For node:worker_threads' Worker constructor: createWorker(filename, options) returns a Worker that has no
+// thread, startWorker(worker, workerData, transferList) transfers and spawns, queueWorkerEvent(nodeWorker)
+// queues the process 'worker' event.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateNodeWorker);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionStartNodeWorker);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionQueueNodeWorkerEvent);
+
 } // namespace WebCore

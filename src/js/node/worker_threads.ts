@@ -84,7 +84,13 @@ const {
   13: _MessagePort,
   14: MessageChannel,
   15: BroadcastChannel,
-  16: WebWorker,
+  // The two steps of the native `new Worker()`. createWorker validates the options and returns a
+  // worker that has no thread. startWorker serializes workerData, takes the transfer list and
+  // spawns the thread. The Worker constructor below registers its listeners between them.
+  16: createWorker,
+  17: startWorker,
+  // Queues the process 'worker' event for the next tick.
+  18: queueWorkerEvent,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -102,10 +108,9 @@ const {
   typeof globalThis.MessagePort,
   typeof globalThis.MessageChannel,
   typeof globalThis.BroadcastChannel,
-  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-  // instance. This is so that it can emit the `worker` event on the process with the
-  // node:worker_threads instance instead of the Web Worker instance.
-  new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
+  (filename: string, options: Bun.WorkerOptions) => WebWorker,
+  (worker: WebWorker, workerData: unknown, transferList: unknown[]) => void,
+  (worker: Worker) => void,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -555,8 +560,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
     return value;
   }
   // replace() reads property getters and Proxy traps (Object.keys,
-  // Object.getPrototypeOf, value[key]), and the options spread reads
-  // getters on the user's options object — any of which can throw after
+  // Object.getPrototypeOf, value[key]), any of which can throw after
   // handles are already neutered. Roll back here too so a throwing
   // workerData graph doesn't orphan the fds it transferred.
   let packed;
@@ -575,7 +579,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   // detached from this thread (fd === -1, like node), but no marker will
   // deserialize it on the worker side - close the orphaned fd instead of
   // leaking it (node's worker-side instance is reclaimed by GC). This runs
-  // only after WebWorker construction succeeds: if construction throws, the
+  // only after the worker started: if the constructor throws, the
   // rollback above must still find the fd open to restore the handle (node
   // leaves the handle fully usable in that case).
   packed[kFinalizeJSTransferables] = function finalizeJSTransferables() {
@@ -813,6 +817,9 @@ class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
   #name: string;
+  // False while the constructor runs its listener registrations, which a subclass can
+  // override: the native worker exists, and it has no thread yet.
+  #started = false;
   #exited = false;
   #stdinPort;
   #stdoutPort;
@@ -861,15 +868,9 @@ class Worker extends EventEmitter {
     }
 
     let portToMain;
+    // workerData and the transfer list, as packJSTransferables() returns them.
+    let transfer;
     try {
-      // Neuter transferred FileHandles only AFTER name/filename validation so a
-      // validation throw above leaves them intact (matching node, which validates
-      // before processing the transferList). Past this point every throw goes
-      // through the catch below, which calls kRestoreJSTransferables — and revokes
-      // the eval blob URL when packJSTransferables itself throws (duplicate
-      // transferList entry or a busy FileHandle's kTransfer()).
-      options = packJSTransferables(options);
-
       // Captured stdio: one control MessageChannel per requested stream; the parent keeps
       // one end, the other rides in workerData and the worker rebinds its stdio to it.
       const stdioForWorker: any = {};
@@ -907,35 +908,31 @@ class Worker extends EventEmitter {
       const publicChannel = new MessageChannel();
       this.#publicPort = publicChannel.port1;
       const parentPortForWorker = publicChannel.port2;
-      const workerDataWrapper: any = {
-        [BUN_WORKER_MESSAGING_KEY]: portToWorker,
-        [BUN_WORKER_PARENT_PORT_KEY]: parentPortForWorker,
-        data: options.workerData,
-      };
-      // stdout/stderr always create channels (stdin only when requested), so the
-      // worker always receives a stdio control object.
-      workerDataWrapper[BUN_WORKER_STDIO_KEY] = stdioForWorker;
-      options = {
+
+      // From here to startWorker() the order is Node's (lib/internal/worker.js): the native
+      // worker, then every listener, then the transfer, then the thread. The listeners call
+      // out: a subclass can override on() and emit(). If one of them throws, the caller
+      // keeps its transfer list and there is no thread.
+      const nativeOptions: any = {
         ...options,
         // Pass the parent's already-normalized/validated name so the worker can
         // use it verbatim (native cannot distinguish omitted from explicit "").
         name: this.#name,
-        workerData: workerDataWrapper,
-        transferList: options.transferList
-          ? [...options.transferList, portToWorker, parentPortForWorker, ...stdioTransfer]
-          : [portToWorker, parentPortForWorker, ...stdioTransfer],
+        // These two go to startWorker().
+        workerData: undefined,
+        transferList: undefined,
       };
-
       // env: SHARE_ENV becomes a native boolean flag so it passes native option
       // validation and the native side skips the env snapshot and shares the store.
-      if ((options as any).env === SHARE_ENV) {
-        options = { ...options, env: undefined, shareEnv: true } as NodeWorkerOptions;
-      } else if ((options as any).shareEnv !== undefined) {
+      if (nativeOptions.env === SHARE_ENV) {
+        nativeOptions.env = undefined;
+        nativeOptions.shareEnv = true;
+      } else if (nativeOptions.shareEnv !== undefined) {
         // shareEnv is internal — only `env: SHARE_ENV` may enable it. Strip a
         // user-supplied value so it can't trigger env sharing on its own.
-        options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
+        nativeOptions.shareEnv = undefined;
       }
-      this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
+      this.#worker = createWorker(filename, nativeOptions);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
       // port on first read (node's kIncrementsPortRef).
@@ -945,58 +942,93 @@ class Worker extends EventEmitter {
       // process.stdout per worker, tripping MaxListenersExceededWarning.
       if (stdoutAutoPipe) this.#stdout.on("data", chunk => process.stdout.write(chunk));
       if (stderrAutoPipe) this.#stderr.on("data", chunk => process.stderr.write(chunk));
+      // The threadId exists from createWorker() on; register the hub-side control
+      // port with the messaging hub now.
+      this.#messagingThreadId = this.#worker.threadId;
+      messaging.registerMainThreadPort(this.#messagingThreadId, portToMain);
+      this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
+      this.#worker.addEventListener("error", this.#onError.bind(this));
+      this.#worker.addEventListener("open", this.#onOpen.bind(this), {
+        once: true,
+      });
+      // Messages from parentPort.postMessage() arrive on the public port. Listening
+      // starts the port. Node's setupPortReferencing: the port counts toward the
+      // parent's liveness only while this Worker has 'message' listeners (and
+      // ref()/unref() also touch it, together with the handle).
+      this.#publicPort.addEventListener("message", this.#onMessage.bind(this));
+      this.#publicPort.addEventListener("messageerror", this.#onMessageError.bind(this));
+      this.#publicPort.unref();
+      const publicPort = this.#publicPort;
+      this.on("newListener", function (this: Worker, name) {
+        if (name === "message" && this.listenerCount("message") === 0) publicPort.ref();
+      });
+      this.on("removeListener", function (this: Worker, name) {
+        if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
+      });
+      // A worker may also use the Web Worker global `postMessage()` / `self.onmessage`
+      // pair, which travels through the Worker object itself; surface those too.
+      this.#worker.addEventListener("message", this.#onMessage.bind(this));
+      this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
+
+      if (this.#urlToRevoke) {
+        if (!urlRevokeRegistry) {
+          urlRevokeRegistry = new FinalizationRegistry<string>(url => {
+            URL.revokeObjectURL(url);
+          });
+        }
+        urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
+      }
+
+      // Node takes the transfer list here, when it posts workerData. A FileHandle in the
+      // list is neutered only now, so it was open while the listeners above ran.
+      transfer = packJSTransferables({ workerData: options.workerData, transferList: options.transferList });
+      const workerDataWrapper: any = {
+        [BUN_WORKER_MESSAGING_KEY]: portToWorker,
+        [BUN_WORKER_PARENT_PORT_KEY]: parentPortForWorker,
+        data: transfer.workerData,
+      };
+      // stdout/stderr always create channels (stdin only when requested), so the
+      // worker always receives a stdio control object.
+      workerDataWrapper[BUN_WORKER_STDIO_KEY] = stdioForWorker;
+      startWorker(
+        this.#worker,
+        workerDataWrapper,
+        transfer.transferList
+          ? [...transfer.transferList, portToWorker, parentPortForWorker, ...stdioTransfer]
+          : [portToWorker, parentPortForWorker, ...stdioTransfer],
+      );
     } catch (e) {
+      // Nothing was transferred and there is no thread, or the OS refused the thread.
+      // Release what this constructor made now: the listeners above keep the ports
+      // alive, and the ports keep this object alive, until the ports close. A native
+      // worker that has no thread is released by terminate().
+      this.#worker?.terminate();
+      if (this.#messagingThreadId !== undefined) {
+        messaging.destroyMainThreadPort(this.#messagingThreadId);
+        this.#messagingThreadId = undefined;
+      }
+      if (portToMain) nativeMessagePortClose.$call(portToMain);
+      if (this.#publicPort) nativeMessagePortClose.$call(this.#publicPort);
+      if (this.#stdinPort) nativeMessagePortClose.$call(this.#stdinPort);
+      if (this.#stdoutPort) nativeMessagePortClose.$call(this.#stdoutPort);
+      if (this.#stderrPort) nativeMessagePortClose.$call(this.#stderrPort);
       // Restore any transferList handles that were already neutered by
       // packJSTransferables, so their fds aren't orphaned.
-      options[kRestoreJSTransferables]?.();
+      transfer?.[kRestoreJSTransferables]?.();
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
       }
       throw e;
     }
-    // threadId is only assigned once the WebWorker exists; register the hub-side
-    // control port with the messaging hub now.
-    this.#messagingThreadId = this.#worker.threadId;
-    messaging.registerMainThreadPort(this.#messagingThreadId, portToMain);
+    this.#started = true;
     // The transfer is committed - release fds that were transferred but are
     // not referenced from workerData (nothing will deserialize them).
-    options[kFinalizeJSTransferables]?.();
+    transfer[kFinalizeJSTransferables]?.();
     // Tracing active (CLI flag or dynamic enable): record the Node-style
     // `[worker N] <name>` thread-name metadata event. No-op when tracing is
     // off — the agent module is a tiny one-time load.
-    require("internal/trace_events").emitWorkerThreadName(options.name, this.#worker.threadId);
-    this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
-    this.#worker.addEventListener("error", this.#onError.bind(this));
-    this.#worker.addEventListener("open", this.#onOpen.bind(this), {
-      once: true,
-    });
-    // Messages from parentPort.postMessage() arrive on the public port. Listening
-    // starts the port. Node's setupPortReferencing: the port counts toward the
-    // parent's liveness only while this Worker has 'message' listeners (and
-    // ref()/unref() also touch it, together with the handle).
-    this.#publicPort.addEventListener("message", this.#onMessage.bind(this));
-    this.#publicPort.addEventListener("messageerror", this.#onMessageError.bind(this));
-    this.#publicPort.unref();
-    const publicPort = this.#publicPort;
-    this.on("newListener", function (this: Worker, name) {
-      if (name === "message" && this.listenerCount("message") === 0) publicPort.ref();
-    });
-    this.on("removeListener", function (this: Worker, name) {
-      if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
-    });
-    // A worker may also use the Web Worker global `postMessage()` / `self.onmessage`
-    // pair, which travels through the Worker object itself; surface those too.
-    this.#worker.addEventListener("message", this.#onMessage.bind(this));
-    this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
-
-    if (this.#urlToRevoke) {
-      if (!urlRevokeRegistry) {
-        urlRevokeRegistry = new FinalizationRegistry<string>(url => {
-          URL.revokeObjectURL(url);
-        });
-      }
-      urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
-    }
+    require("internal/trace_events").emitWorkerThreadName(this.#name, this.#worker.threadId);
+    queueWorkerEvent(this);
   }
 
   get threadId() {
@@ -1078,6 +1110,13 @@ class Worker extends EventEmitter {
       },
       { once: true },
     );
+    // As in Node, there is no thread to stop before the constructor starts it: this
+    // call only waits for the exit. The promise is not kept, so a later terminate()
+    // stops the worker.
+    if (!this.#started) {
+      this.#publicPort.ref();
+      return promise;
+    }
     // Keep the event loop alive until termination completes so the returned
     // promise still resolves even if the worker was unref()'ed.
     this.#worker.ref();
@@ -1157,7 +1196,7 @@ class Worker extends EventEmitter {
       if (includeObjectsCollectedByMinorGC !== undefined)
         validateBoolean(includeObjectsCollectedByMinorGC, "options.includeObjectsCollectedByMinorGC");
     }
-    if (this.#exited) {
+    if (this.#exited || !this.#started) {
       return Promise.$reject($ERR_WORKER_NOT_RUNNING("Worker instance not running"));
     }
     // Bun has no allocation-sampling heap profiler; yield a valid but empty

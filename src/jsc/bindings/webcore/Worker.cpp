@@ -357,7 +357,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 17);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 19);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     RETURN_IF_EXCEPTION(scope, {});
@@ -393,7 +393,12 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 15, JSBroadcastChannel::getConstructor(vm, globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 16, JSWorker::getConstructor(vm, globalObject));
+    // The two steps of `new Worker()`, and the process 'worker' event that the global constructor queues itself.
+    array->putDirectIndex(globalObject, 16, JSFunction::create(vm, globalObject, 2, "createWorker"_s, jsFunctionCreateNodeWorker, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 17, JSFunction::create(vm, globalObject, 3, "startWorker"_s, jsFunctionStartNodeWorker, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 18, JSFunction::create(vm, globalObject, 1, "queueWorkerEvent"_s, jsFunctionQueueNodeWorkerEvent, ImplementationVisibility::Public, NoIntrinsic));
     RETURN_IF_EXCEPTION(scope, {});
     return array;
 }

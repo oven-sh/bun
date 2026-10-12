@@ -5,7 +5,7 @@
 //
 // Differences from node: thread info comes from initThreadInfo (Bun assigns threadId
 // differently); createMainThreadPort is split into createMessagingChannel (before
-// `new Worker`) + registerMainThreadPort (after the threadId exists); and the
+// the native worker exists) + registerMainThreadPort (once it has a threadId); and the
 // `workerMessage` listeners are invoked directly because Bun's process.emit cannot
 // report no-listeners or a throwing listener (see receiveMessageFromWorker).
 
@@ -161,7 +161,7 @@ function receiveMessageFromWorker(source, value, memory) {
 }
 
 // Bun half of Node's createMainThreadPort: create the channel linking a (future)
-// thread to the main thread. Called before `new Worker`.
+// thread to the main thread. Called before the native worker exists.
 function createMessagingChannel() {
   const { port1, port2 } = new MessageChannel();
   // port1 (portToMain) stays with the hub; port2 (portToWorker) is transferred to
@@ -170,7 +170,8 @@ function createMessagingChannel() {
 }
 
 // Bun half of Node's createMainThreadPort: register the hub-side port now that the
-// child's threadId is known. Called after `new Worker`.
+// child's threadId is known. Called before the child's thread starts: a Worker
+// constructor that then throws calls destroyMainThreadPort.
 function registerMainThreadPort(threadId: number, portToMain: any) {
   const registrationMessage = {
     type: messageTypes.REGISTER_MAIN_THREAD_PORT,

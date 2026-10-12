@@ -49,6 +49,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerMessagingProxy);
 extern "C" {
 
 // Validates the options and allocates the thread object holding one ref for the caller. Null (with errorMessage set) otherwise.
+// Until WebWorker__start() it has no thread and the parent does not know it: WebWorker__deref() is its whole release.
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
@@ -68,7 +69,8 @@ void* WebWorker__create(
     size_t execArgvLen,
     BunString* preloadModulesPtr,
     size_t preloadModulesLen);
-// Takes the keep-alive on the parent event loop and spawns the thread. False if the OS refused it.
+// Takes the keep-alive on the parent event loop, spawns the thread and makes it a child of the parent. False if the
+// OS refused it.
 bool WebWorker__start(void*, bool unrefByDefault);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
@@ -110,16 +112,13 @@ WorkerMessagingProxy::~WorkerMessagingProxy()
 
 ExceptionOr<void> WorkerMessagingProxy::prepareWorkerGlobalScope(const String& scriptURL)
 {
-    ASSERT(m_scriptExecutionContext && m_scriptExecutionContext->isContextThread());
     ASSERT(!m_workerThread);
 
     // Constructed on a context whose active objects were already stopped: the Worker was stopped
-    // at birth (suspendIfNeeded -> stop -> terminate) and there is nothing to start.
-    if (m_askedToTerminate) {
-        m_state.store(State::Closed);
-        m_scriptExecutionContext = nullptr;
+    // at birth (suspendIfNeeded -> stop), which released it, and there is nothing to start.
+    if (m_state.load() != State::Unstarted)
         return {};
-    }
+    ASSERT(m_scriptExecutionContext && m_scriptExecutionContext->isContextThread());
 
     Vector<BunString> preloadModules;
     preloadModules.reserveInitialCapacity(m_options.preloadModules.size());
@@ -140,8 +139,6 @@ ExceptionOr<void> WorkerMessagingProxy::prepareWorkerGlobalScope(const String& s
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
 
-    // The thread holds a ref on the proxy until releaseWorkerThread().
-    ref();
     BunString errorMessage = BunStringEmpty;
     bool errorIsInvalidExecArgv = false;
     BunString name = Bun::toString(m_options.name);
@@ -169,7 +166,6 @@ ExceptionOr<void> WorkerMessagingProxy::prepareWorkerGlobalScope(const String& s
 
     if (!m_workerThread) {
         m_state.store(State::Closed);
-        deref();
         return Exception { errorIsInvalidExecArgv ? WORKER_INVALID_EXEC_ARGV : TypeError, errorMessage.transferToWTFString() };
     }
     return {};
@@ -179,16 +175,20 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(Ref<SerializedScr
 {
     ASSERT(!m_scriptExecutionContext || m_scriptExecutionContext->isContextThread());
 
-    // Stopped at birth, or by script that ran while workerData was serialized: nothing starts or takes the data.
-    if (m_askedToTerminate) {
-        discardUnstartedWorkerGlobalScope();
+    // Released (its context stopped at birth, or while workerData was serialized) or started already:
+    // nothing starts or takes the data.
+    if (m_state.load() != State::Unstarted)
         return {};
-    }
     m_options.workerDataAndEnvironmentData = WTF::move(workerDataAndEnvironmentData);
     m_options.dataMessagePorts = WTF::move(dataMessagePorts);
     m_options.sharedEnvStore = WTF::move(sharedEnvStore);
+    // The thread holds a ref on the proxy until releaseWorkerThread(), and reports 'online' only from Pending.
+    ref();
+    m_state.store(State::Pending);
     if (!WebWorker__start(m_workerThread, m_options.unref)) {
-        discardUnstartedWorkerGlobalScope();
+        releaseWorkerThread();
+        m_options = {};
+        m_scriptExecutionContext = nullptr;
         return Exception { TypeError, "Failed to spawn worker thread"_s };
     }
     return {};
@@ -197,8 +197,11 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(Ref<SerializedScr
 void WorkerMessagingProxy::discardUnstartedWorkerGlobalScope()
 {
     ASSERT(!m_scriptExecutionContext || m_scriptExecutionContext->isContextThread());
-    // The Worker object, which calls this, holds a ref: the one dropped here is not the last.
-    releaseWorkerThread();
+    if (m_state.load() != State::Unstarted)
+        return;
+    m_state.store(State::Closed);
+    if (void* workerThread = std::exchange(m_workerThread, nullptr))
+        WebWorker__deref(workerThread);
     // Nothing reads the options of a worker that never ran: free them now, not when the Worker is collected.
     m_options = {};
     m_scriptExecutionContext = nullptr;
@@ -209,13 +212,18 @@ void WorkerMessagingProxy::terminateWorkerGlobalScope()
     if (m_askedToTerminate)
         return;
     m_askedToTerminate = true;
+    if (m_state.load() == State::Unstarted) {
+        discardUnstartedWorkerGlobalScope();
+        return;
+    }
     if (m_workerThread)
         WebWorker__requestTermination(m_workerThread);
 }
 
 void WorkerMessagingProxy::setKeepAlive(bool keepAlive)
 {
-    if (m_askedToTerminate || m_keepAliveReleased || !m_workerThread)
+    // Unstarted: start() takes the keep-alive, as the `ref` option says.
+    if (m_askedToTerminate || m_keepAliveReleased || !m_workerThread || m_state.load() == State::Unstarted)
         return;
     WebWorker__setRef(m_workerThread, keepAlive);
 }
@@ -261,6 +269,7 @@ bool WorkerMessagingProxy::postTaskToWorkerGlobalScope(Function<void(ScriptExecu
             return true;
         case State::Running:
             break;
+        case State::Unstarted:
         case State::Closing:
         case State::Closed:
             return false;
@@ -566,7 +575,7 @@ void WorkerMessagingProxy::releaseWorkerThread()
     WebWorker__join(workerThread);
     WebWorker__deref(workerThread);
     m_state.store(State::Closed);
-    // The ref prepareWorkerGlobalScope() took on behalf of the thread.
+    // The ref startWorkerGlobalScope() took on behalf of the thread.
     deref();
 }
 

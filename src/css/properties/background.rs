@@ -787,7 +787,7 @@ impl BackgroundHandler {
                     self.flush(dest, context);
                     let arena = dest.bump();
                     let mut unparsed = val.deep_clone(arena);
-                    context.add_unparsed_fallbacks(arena, &mut unparsed);
+                    context.add_unparsed_fallbacks(arena, &mut unparsed, val, dest.len() + 1);
                     if let Some(prop) = BackgroundProperty::try_from_property_id(val.property_id) {
                         self.flushed_properties.insert(prop);
                     }
@@ -1176,7 +1176,7 @@ impl crate::small_list::ImageFallback for Background {
     }
 }
 
-fn is_background_property(property_id: PropertyId) -> bool {
+pub(crate) fn is_background_property(property_id: PropertyId) -> bool {
     matches!(
         property_id,
         PropertyId::BackgroundColor

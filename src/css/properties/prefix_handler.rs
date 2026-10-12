@@ -132,10 +132,17 @@ impl FallbackHandler {
                 return false;
             };
 
-            context.add_unparsed_fallbacks(arena, &mut unparsed);
-            if let Some(i) = *index {
+            // A value some target may drop cannot take the slot of a base whose copies are still staged.
+            let replaced = index.filter(|_| {
+                context.supports.is_empty()
+                    || !context.has_live_copy(val.property_id)
+                    || val.value.is_valid_at_parse_time()
+            });
+            if let Some(i) = replaced {
+                context.add_unparsed_fallbacks(arena, &mut unparsed, val, dest.len());
                 dest[i] = Property::Unparsed(unparsed);
             } else {
+                context.add_unparsed_fallbacks(arena, &mut unparsed, val, dest.len() + 1);
                 *index = Some(dest.len());
                 dest.push(Property::Unparsed(unparsed));
             }

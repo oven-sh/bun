@@ -367,6 +367,11 @@ impl<R> StyleRule<R> {
         );
         context.handler_context.context = DeclarationContext::None;
 
+        // Each tail prints this rule's selectors once more.
+        for _ in 0..context.handler_context.tails.len() {
+            self.charge_selector_expansion(context)?;
+        }
+
         if self.rules.v.len() > 0 {
             self.minify_nested_rules(context, unused)?;
             if unused && self.rules.v.len() == 0 {

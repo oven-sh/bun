@@ -2,29 +2,57 @@ use crate::css_parser as css;
 
 use css::css_rules::media::MediaRule;
 
-use css::css_properties::PropertyId;
-use css::css_properties::custom::{Fallbacks, UnparsedProperty};
+use css::css_properties::background::is_background_property;
+use css::css_properties::border::is_border_property;
+use css::css_properties::border_image::is_border_image_property;
+use css::css_properties::custom::{CustomPropertyName, Fallbacks, UnparsedProperty};
+use css::css_properties::{PropertyId, PropertyIdTag};
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
 use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_collections::ArrayHashMap;
+use bun_core::strings;
+
+/// A fallback declaration staged for an `@supports` rule.
+pub(crate) struct StagedCopy {
+    property: css::Property,
+    /// Address of the declaration in the block's source list that staged this. Compared, never read through.
+    source: usize,
+    /// Index in the handler's output list from which later output lands behind the base declaration.
+    later_from: usize,
+}
+
+impl StagedCopy {
+    fn property_id(&self) -> PropertyId {
+        self.property.property_id()
+    }
+
+    /// The index in `source` of the declaration that staged this.
+    fn source_index(&self, source: &[css::Property]) -> usize {
+        self.source.wrapping_sub(source.as_ptr().addr()) / core::mem::size_of::<css::Property>()
+    }
+}
 
 /// The copies one `@supports` rule holds for one importance, in source order.
 #[derive(Default)]
 pub(crate) struct StagedList {
-    copies: Vec<css::Property>,
+    copies: Vec<StagedCopy>,
     /// How many of `copies` each property id has, so that a retract scans back no further than its earliest one.
     counts: Vec<(PropertyId, usize)>,
 }
 
 impl StagedList {
-    fn push(&mut self, copy: css::Property) {
+    fn push(&mut self, copy: StagedCopy) {
         let id = copy.property_id();
         match self.counts.iter_mut().find(|(counted, _)| *counted == id) {
             Some((_, count)) => *count += 1,
             None => self.counts.push((id, 1)),
         }
         self.copies.push(copy);
+    }
+
+    fn holds(&self, id: PropertyId) -> bool {
+        self.counts.iter().any(|(counted, _)| *counted == id)
     }
 
     /// Removes every copy of `id`.
@@ -49,6 +77,23 @@ impl StagedList {
         }
         self.copies.truncate(kept);
     }
+
+    /// Moves out the copies that belong with the output at and behind index `cut`.
+    fn split_off(&mut self, cut: usize) -> StagedList {
+        let at = self.copies.partition_point(|copy| copy.later_from <= cut);
+        let mut behind = StagedList::default();
+        for copy in self.copies.drain(at..) {
+            let id = copy.property_id();
+            self.counts.retain_mut(|(counted, count)| {
+                if *counted == id {
+                    *count -= 1;
+                }
+                *count > 0
+            });
+            behind.push(copy);
+        }
+        behind
+    }
 }
 
 pub struct SupportsEntry {
@@ -60,6 +105,14 @@ pub struct SupportsEntry {
 // No explicit deinit — all fields own their storage and drop automatically.
 
 impl SupportsEntry {
+    fn list(&self, important: bool) -> &StagedList {
+        if important {
+            &self.important_declarations
+        } else {
+            &self.declarations
+        }
+    }
+
     fn list_mut(&mut self, important: bool) -> &mut StagedList {
         if important {
             &mut self.important_declarations
@@ -71,6 +124,37 @@ impl SupportsEntry {
     fn is_empty(&self) -> bool {
         self.declarations.copies.is_empty() && self.important_declarations.copies.is_empty()
     }
+}
+
+/// The declarations behind a cut in a style rule's block, printed as a rule of their own behind the `@supports` rules of what precedes them.
+pub(crate) struct Tail {
+    declarations: Vec<css::Property>,
+    important: bool,
+    supports: Vec<SupportsEntry>,
+}
+
+/// The group a declaration of `id` can be overridden within: the `background` properties, the `border` and `border-image` properties, or the property alone.
+fn family_of(id: PropertyId) -> PropertyIdTag {
+    let tag = id.tag();
+    if is_background_property(id) {
+        PropertyIdTag::Background
+    } else if is_border_property(tag) || is_border_image_property(tag) {
+        PropertyIdTag::Border
+    } else {
+        tag
+    }
+}
+
+/// Whether `declaration` is `all`, which the parser keeps as an unknown property.
+fn is_all(declaration: &css::Property) -> bool {
+    let css::Property::Custom(custom) = declaration else {
+        return false;
+    };
+    matches!(
+        custom.name,
+        CustomPropertyName::Unknown(name)
+            if strings::eql_case_insensitive_ascii_check_length(name.v(), b"all")
+    )
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -87,6 +171,7 @@ pub struct PropertyHandlerContext<'a> {
     pub(crate) targets: css::targets::Targets,
     pub(crate) is_important: bool,
     pub(crate) supports: Vec<SupportsEntry>,
+    pub(crate) tails: Vec<Tail>,
     pub(crate) ltr: Vec<css::Property>,
     pub(crate) rtl: Vec<css::Property>,
     pub(crate) dark: Vec<css::Property>,
@@ -105,6 +190,7 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: *targets,
             is_important: false,
             supports: Vec::new(),
+            tails: Vec::new(),
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -119,6 +205,7 @@ impl<'a> PropertyHandlerContext<'a> {
             targets: self.targets,
             is_important: false,
             supports: Vec::new(),
+            tails: Vec::new(),
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -165,12 +252,20 @@ impl<'a> PropertyHandlerContext<'a> {
         unsafe { bun_collections::detach_ref(self.arena) }
     }
 
-    /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
+    /// Clone a property list into a bump-allocated `DeclarationList`.
     /// (`'static` per crate-wide `'bump`-erasure; see rules/mod.rs decl_block_static.)
     #[inline]
-    fn clone_decls(&self, list: &[css::Property]) -> css::DeclarationList<'static> {
+    fn clone_decls<'p>(
+        &self,
+        list: impl IntoIterator<Item = &'p css::Property>,
+    ) -> css::DeclarationList<'static> {
         let bump: &'static Bump = self.bump_static();
-        bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
+        bun_alloc::vec_from_iter_in(list.into_iter().map(|p| p.deep_clone(bump)), bump)
+    }
+
+    #[inline]
+    fn clone_copies(&self, list: &StagedList) -> css::DeclarationList<'static> {
+        self.clone_decls(list.copies.iter().map(|copy| &copy.property))
     }
 
     pub(crate) fn get_supports_rules<T>(
@@ -182,8 +277,17 @@ impl<'a> PropertyHandlerContext<'a> {
         }
 
         let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
+        self.push_supports_rules(&self.supports, style_rule, &mut dest);
+        dest
+    }
 
-        for entry in &self.supports {
+    fn push_supports_rules<T>(
+        &self,
+        entries: &[SupportsEntry],
+        style_rule: &css::StyleRule<T>,
+        dest: &mut Vec<css::CssRule<T>>,
+    ) {
+        for entry in entries {
             dest.push(css::CssRule::Supports(css::SupportsRule {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
@@ -191,9 +295,9 @@ impl<'a> PropertyHandlerContext<'a> {
                         selectors: style_rule.selectors.deep_clone(),
                         vendor_prefix: css::VendorPrefix::NONE,
                         declarations: css::DeclarationBlock {
-                            declarations: self.clone_decls(&entry.declarations.copies),
+                            declarations: self.clone_copies(&entry.declarations),
                             important_declarations: self
-                                .clone_decls(&entry.important_declarations.copies),
+                                .clone_copies(&entry.important_declarations),
                         },
                         rules: css::CssRuleList::default(),
                         loc: style_rule.loc,
@@ -201,6 +305,28 @@ impl<'a> PropertyHandlerContext<'a> {
                 },
                 loc: style_rule.loc,
             }));
+        }
+    }
+
+    /// Each tail as a style rule with `style_rule`'s selectors, followed by its own `@supports` rules.
+    pub(crate) fn get_tail_rules<T>(&self, style_rule: &css::StyleRule<T>) -> Vec<css::CssRule<T>> {
+        let mut dest: Vec<css::CssRule<T>> = Vec::new();
+
+        for tail in &self.tails {
+            let mut declarations = css::DeclarationBlock::new_in(self.bump_static());
+            if tail.important {
+                declarations.important_declarations = self.clone_decls(&tail.declarations);
+            } else {
+                declarations.declarations = self.clone_decls(&tail.declarations);
+            }
+            dest.push(css::CssRule::Style(css::StyleRule {
+                selectors: style_rule.selectors.deep_clone(),
+                vendor_prefix: style_rule.vendor_prefix,
+                declarations,
+                rules: css::CssRuleList::default(),
+                loc: style_rule.loc,
+            }));
+            self.push_supports_rules(&tail.supports, style_rule, &mut dest);
         }
 
         dest
@@ -318,6 +444,7 @@ impl<'a> PropertyHandlerContext<'a> {
         // Per-element `deinit()` calls dropped — Vec::clear drops each element,
         // and SupportsEntry / Property own their resources via Drop.
         self.supports.clear();
+        self.tails.clear();
         self.ltr.clear();
         self.rtl.clear();
         self.dark.clear();
@@ -325,11 +452,7 @@ impl<'a> PropertyHandlerContext<'a> {
 }
 
 impl<'a> PropertyHandlerContext<'a> {
-    pub(crate) fn add_conditional_property(
-        &mut self,
-        condition: css::SupportsCondition,
-        property: css::Property,
-    ) {
+    fn add_conditional_property(&mut self, condition: css::SupportsCondition, copy: StagedCopy) {
         if self.context != DeclarationContext::StyleRule {
             return;
         }
@@ -340,22 +463,25 @@ impl<'a> PropertyHandlerContext<'a> {
             .iter_mut()
             .find(|entry| condition.eql(&entry.condition))
         {
-            entry.list_mut(important).push(property);
+            entry.list_mut(important).push(copy);
         } else {
             let mut entry = SupportsEntry {
                 condition,
                 declarations: StagedList::default(),
                 important_declarations: StagedList::default(),
             };
-            entry.list_mut(important).push(property);
+            entry.list_mut(important).push(copy);
             self.supports.push(entry);
         }
     }
 
+    /// `source` is the declaration as it sits in the block being minified; `later_from` is the index in the handler's output list from which later output lands behind the base.
     pub(crate) fn add_unparsed_fallbacks(
         &mut self,
         bump: &bun_alloc::Arena,
         unparsed: &mut UnparsedProperty,
+        source: &UnparsedProperty,
+        later_from: usize,
     ) {
         if self.context != DeclarationContext::StyleRule
             && self.context != DeclarationContext::StyleAttribute
@@ -372,11 +498,15 @@ impl<'a> PropertyHandlerContext<'a> {
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
             self.add_conditional_property(
                 condition_and_fallback.0,
-                css::Property::Unparsed(UnparsedProperty {
-                    // `PropertyId` is `Copy`.
-                    property_id: unparsed.property_id,
-                    value: condition_and_fallback.1,
-                }),
+                StagedCopy {
+                    property: css::Property::Unparsed(UnparsedProperty {
+                        // `PropertyId` is `Copy`.
+                        property_id: unparsed.property_id,
+                        value: condition_and_fallback.1,
+                    }),
+                    source: core::ptr::from_ref(source).addr(),
+                    later_from,
+                },
             );
         }
     }
@@ -396,4 +526,155 @@ impl<'a> PropertyHandlerContext<'a> {
             !entry.is_empty()
         });
     }
+
+    /// Whether an earlier declaration of the rule in hand has a copy of `property_id` staged.
+    pub(crate) fn has_live_copy(&self, property_id: PropertyId) -> bool {
+        self.context == DeclarationContext::StyleRule
+            && self
+                .supports
+                .iter()
+                .any(|entry| entry.list(self.is_important).holds(property_id))
+    }
+
+    /// Cuts the output lists in front of each declaration that competes with a staged copy, and parks what is behind a cut in `tails`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn split_at_competitors(
+        &mut self,
+        source: &css::DeclarationBlock<'_>,
+        output: &mut css::DeclarationList<'_>,
+        important_output: &mut css::DeclarationList<'_>,
+    ) {
+        if self.context != DeclarationContext::StyleRule {
+            return;
+        }
+
+        // Departs from lightningcss on purpose: it prints every copy behind the whole rule, where the copy beats later declarations that the cascade puts after it.
+        self.split_list(&source.declarations, output, false);
+        self.split_list(&source.important_declarations, important_output, true);
+        self.supports.retain(|entry| !entry.is_empty());
+    }
+
+    fn split_list(
+        &mut self,
+        source: &[css::Property],
+        output: &mut css::DeclarationList<'_>,
+        important: bool,
+    ) {
+        debug_assert!(
+            self.supports.iter().all(|entry| {
+                let copies = &entry.list(important).copies;
+                copies.is_sorted_by(|a, b| a.source < b.source && a.later_from <= b.later_from)
+                    && copies
+                        .iter()
+                        .all(|copy| copy.source_index(source) < source.len())
+            }),
+            "staged copies are in source order and point into the block being minified"
+        );
+
+        // Source order decides whether anything competes: handlers that buffer emit earlier declarations behind a base.
+        let uncopied: Vec<Vec<(PropertyIdTag, usize)>> = self
+            .supports
+            .iter()
+            .map(|entry| last_uncopied(&entry.list(important).copies, source))
+            .collect();
+
+        let mut cuts: Vec<usize> = Vec::new();
+        let mut cursors = vec![0usize; self.supports.len()];
+        let mut has_copies = false;
+        let mut competed: Vec<PropertyIdTag> = Vec::new();
+        for (index, declaration) in output.iter().enumerate() {
+            for ((entry, cursor), uncopied) in self.supports.iter().zip(&mut cursors).zip(&uncopied)
+            {
+                let copies = &entry.list(important).copies;
+                while let Some(copy) = copies.get(*cursor).filter(|copy| copy.later_from <= index) {
+                    *cursor += 1;
+                    has_copies = true;
+                    let family = family_of(copy.property_id());
+                    let at = copy.source_index(source);
+                    if !competed.contains(&family)
+                        && uncopied
+                            .iter()
+                            .any(|&(later, last)| later == family && last > at)
+                    {
+                        competed.push(family);
+                    }
+                }
+            }
+            if has_copies
+                && (is_all(declaration) || competed.contains(&family_of(declaration.property_id())))
+            {
+                cuts.push(index);
+                has_copies = false;
+                competed.clear();
+            }
+        }
+
+        let arena = self.arena;
+        let mut tails: Vec<Tail> = Vec::with_capacity(cuts.len());
+        for &cut in cuts.iter().rev() {
+            let mut declarations: Vec<css::Property> = Vec::with_capacity(output.len() - cut);
+            while let Some(declaration) = output.pop() {
+                declarations.push(declaration);
+                if output.len() == cut {
+                    break;
+                }
+            }
+            declarations.reverse();
+
+            let mut supports: Vec<SupportsEntry> = Vec::new();
+            for entry in &mut self.supports {
+                let behind = entry.list_mut(important).split_off(cut);
+                if behind.copies.is_empty() {
+                    continue;
+                }
+                let mut tail_entry = SupportsEntry {
+                    condition: entry.condition.deep_clone(arena),
+                    declarations: StagedList::default(),
+                    important_declarations: StagedList::default(),
+                };
+                *tail_entry.list_mut(important) = behind;
+                supports.push(tail_entry);
+            }
+
+            tails.push(Tail {
+                declarations,
+                important,
+                supports,
+            });
+        }
+        self.tails.extend(tails.into_iter().rev());
+    }
+}
+
+/// The last index in `source`, per family in `copies`, of a declaration that staged none of them: one that did shadows the earlier copies inside the same `@supports` rule.
+fn last_uncopied(copies: &[StagedCopy], source: &[css::Property]) -> Vec<(PropertyIdTag, usize)> {
+    let mut families: Vec<PropertyIdTag> = Vec::new();
+    for copy in copies {
+        let family = family_of(copy.property_id());
+        if !families.contains(&family) {
+            families.push(family);
+        }
+    }
+
+    let mut found: Vec<(PropertyIdTag, usize)> = Vec::with_capacity(families.len());
+    let mut sources = copies
+        .iter()
+        .rev()
+        .map(|copy| copy.source_index(source))
+        .peekable();
+    for (index, declaration) in source.iter().enumerate().rev() {
+        if found.len() == families.len() {
+            break;
+        }
+        // `all: revert-layer` is the placeholder of a slot whose declaration no handler took.
+        if sources.next_if_eq(&index).is_some() || matches!(declaration, css::Property::All(_)) {
+            continue;
+        }
+        let family = family_of(declaration.property_id());
+        if families.contains(&family) && !found.iter().any(|&(later, _)| later == family) {
+            found.push((family, index));
+        }
+    }
+    found
 }

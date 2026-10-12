@@ -550,7 +550,12 @@ impl BorderImageHandler {
                             unparsed.deep_clone(arena)
                         };
 
-                    context.add_unparsed_fallbacks(arena, &mut unparsed_clone);
+                    context.add_unparsed_fallbacks(
+                        arena,
+                        &mut unparsed_clone,
+                        unparsed,
+                        dest.len() + 1,
+                    );
                     self.flushed_properties.insert(
                         BorderImageProperty::try_from_property_id(unparsed_clone.property_id.tag())
                             .unwrap(),
@@ -699,7 +704,7 @@ impl BorderImageHandler {
     }
 }
 
-fn is_border_image_property(property_id: PropertyIdTag) -> bool {
+pub(crate) fn is_border_image_property(property_id: PropertyIdTag) -> bool {
     matches!(
         property_id,
         PropertyIdTag::BorderImageSource

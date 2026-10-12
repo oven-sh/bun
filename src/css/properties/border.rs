@@ -612,6 +612,7 @@ pub struct BorderHandler {
 }
 
 // Real `handle_property`/`finalize` bodies live in `border_handler_body` below.
+pub(crate) use border_handler_body::is_border_property;
 mod border_handler_body {
     use super::*;
     use crate::generics::{CssEql, DeepClone};
@@ -1593,7 +1594,7 @@ mod border_handler_body {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             if logical_supported {
                 let mut up = unparsed.deep_clone(arena);
-                context.add_unparsed_fallbacks(arena, &mut up);
+                context.add_unparsed_fallbacks(arena, &mut up, unparsed, dest.len() + 1);
                 self.flushed_properties
                     .insert(BorderProperty::try_from_property_id(up.property_id.tag()).unwrap());
                 dest.push(Property::Unparsed(up));
@@ -1604,7 +1605,7 @@ mod border_handler_body {
                 ($id:ident) => {{
                     let _ = &dest; // autofix
                     let mut upppppppppp = unparsed.with_property_id(arena, PropertyId::$id);
-                    context.add_unparsed_fallbacks(arena, &mut upppppppppp);
+                    context.add_unparsed_fallbacks(arena, &mut upppppppppp, unparsed, dest.len());
                     self.flushed_properties
                         .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
                     // Intentionally not pushed to dest (preserves existing behavior; likely a bug).
@@ -1651,7 +1652,7 @@ mod border_handler_body {
                 PropertyIdTag::BorderBlockEndStyle => prop!(BorderBottomStyle),
                 _ => {
                     let mut up = unparsed.deep_clone(arena);
-                    context.add_unparsed_fallbacks(arena, &mut up);
+                    context.add_unparsed_fallbacks(arena, &mut up, unparsed, dest.len() + 1);
                     self.flushed_properties.insert(
                         BorderProperty::try_from_property_id(up.property_id.tag()).unwrap(),
                     );
@@ -1665,7 +1666,7 @@ mod border_handler_body {
     // is_border_property
     // ──────────────────────────────────────────────────────────────────────────
 
-    fn is_border_property(property_id: PropertyIdTag) -> bool {
+    pub(crate) fn is_border_property(property_id: PropertyIdTag) -> bool {
         use PropertyIdTag as P;
         matches!(
             property_id,

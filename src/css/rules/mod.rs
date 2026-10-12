@@ -718,6 +718,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 
     // Built before the merge below, which can move this rule's selectors into the previous rule.
     let supps = context.handler_context.get_supports_rules::<R>(sty);
+    let tails = context.handler_context.get_tail_rules::<R>(sty);
 
     // Attempt to merge the new rule with the last rule we added.
     let mut merged = false;
@@ -779,6 +780,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     struct IncompatibleRuleEntry<R> {
         rule: style::StyleRule<R>,
         supports: Vec<CssRule<R>>,
+        tails: Vec<CssRule<R>>,
         logical: Vec<CssRule<R>>,
     }
     let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
@@ -800,10 +802,12 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         };
         clone.update_prefix(context);
         let s = context.handler_context.get_supports_rules::<R>(&clone);
+        let t = context.handler_context.get_tail_rules::<R>(&clone);
         let l = context.handler_context.get_additional_rules::<R>(&clone);
         incompatible_rules.append(IncompatibleRuleEntry {
             rule: clone,
             supports: s,
+            tails: t,
             logical: l,
         });
     }
@@ -880,6 +884,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         rules.append(&mut log.v);
     }
     rules.extend(supps);
+    // Pushed as written: another minify would lower a tail that is kept for the browsers that read it, and the duplicate check would drop the head it follows.
+    rules.extend(tails);
     while incompatible_rules.len() > 0 {
         let entry = incompatible_rules.ordered_remove(0);
         if !entry.rule.is_empty() {
@@ -891,6 +897,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             rules.append(&mut log.v);
         }
         rules.extend(entry.supports);
+        rules.extend(entry.tails);
     }
     if let Some(nested) = nested_rule {
         rules.push(CssRule::Style(nested));

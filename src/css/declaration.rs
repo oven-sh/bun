@@ -98,6 +98,9 @@ impl<'bump> DeclarationBlock<'bump> {
 
         handler.finalize(context);
         important_handler.finalize(context);
+        if !context.supports.is_empty() {
+            context.split_at_competitors(self, &mut handler.decls, &mut important_handler.decls);
+        }
         // The old bumpalo Vecs drop implicitly on overwrite (arena reclaims
         // on reset).
         self.important_declarations =

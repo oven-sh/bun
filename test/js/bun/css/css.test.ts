@@ -4,7 +4,7 @@
 
 import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -7913,14 +7913,16 @@ describe("css tests", () => {
 
     // An unparsed declaration whose color is wider than sRGB (`color: var(--c, lab(50% 20 30))`) is
     // printed in sRGB, and its P3 and LAB forms follow the style rule as `@supports` rules. A later
-    // declaration of the same rule has to win wherever it wins in the source: the copies are dropped
-    // when it replaces the value in every browser.
+    // declaration of the same rule has to win wherever it wins in the source. The copies are dropped
+    // when it replaces the value in every browser; otherwise the rule is cut in front of it and the
+    // rest of the block is printed as a second rule behind the copies.
     describe("@supports color fallbacks and later declarations", () => {
       const targets = { chrome: 87 << 16, edge: 88 << 16, firefox: 78 << 16, safari: 14 << 16 };
       const minified = (source: string) => cssInternals.minifyTest(source, "", targets);
 
-      // lab(50% 20 30) is #a16945 in sRGB.
+      // lab(50% 20 30) is #a16945 in sRGB, oklch(70% .1 200) is #40b1b7.
       const brown = { p3: "color(display-p3 .598686 .422118 .293048)", lab: "lab(50% 20 30)" };
+      const teal = { p3: "color(display-p3 .381906 .685023 .710512)", lab: "lab(66.1711% -31.3595 -12.905)" };
       /** The two `@supports` rules of the declaration `declare` prints for a color. */
       const copies = (declare: (color: string) => string, selector = ".x", color = brown) =>
         `@supports (color:color(display-p3 0 0 0)){${selector}{${declare(color.p3)}}}` +
@@ -7959,6 +7961,108 @@ describe("css tests", () => {
           [".x{margin:0}.x{color:var(--c,lab(50% 20 30));color:red}", ".x{color:red;margin:0}"],
           // A declaration behind a nested rule is hoisted into the block.
           [".x{color:var(--c,lab(50% 20 30));.y{margin:0} color:red}", ".x{color:red}.x .y{margin:0}"],
+        ])("%s", (source, expected) => {
+          expect(minified(source)).toBe(expected);
+        });
+      });
+
+      describe("a later declaration that only competes is printed behind them", () => {
+        test.each([
+          // A shorthand behind a longhand, and a longhand behind a shorthand.
+          [
+            ".x{background-color:var(--bg,oklch(70% 0.1 200));background:none}",
+            `.x{background-color:var(--bg,#40b1b7)}${copies(c => `background-color:var(--bg,${c})`, ".x", teal)}.x{background:0 0}`,
+          ],
+          [
+            ".x{border-color:var(--b,oklch(70% 0.1 200));border:0}",
+            `.x{border-color:var(--b,#40b1b7)}${copies(c => `border-color:var(--b,${c})`, ".x", teal)}.x{border:0}`,
+          ],
+          [
+            ".x{border-top-color:var(--b,lab(50% 20 30));border-color:red}",
+            `.x{border-top-color:var(--b,#a16945)}${copies(c => `border-top-color:var(--b,${c})`)}.x{border-color:red}`,
+          ],
+          [
+            ".x{background:var(--bg,lab(50% 20 30));background-color:red}",
+            `.x{background:var(--bg,#a16945)}${copies(c => `background:var(--bg,${c})`)}.x{background-color:red}`,
+          ],
+          // The whole rest of the block follows, not only the declaration that competes.
+          [
+            ".x{border-left-color:var(--b,lab(50% 20 30));border:1px solid red;border-top-width:2px}",
+            `.x{border-left-color:var(--b,#a16945)}${copies(c => `border-left-color:var(--b,${c})`)}.x{border:1px solid red;border-top-width:2px}`,
+          ],
+          [".x{color:var(--c,lab(50% 20 30));all:unset}", `.x{color:var(--c,#a16945)}${colorCopies}.x{all:unset}`],
+          [
+            ".x{color:var(--c,lab(50% 20 30));all:unset;margin:0}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{all:unset;margin:0}`,
+          ],
+          // A value only some browsers accept is printed as written: a browser that drops it keeps the copy.
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}`,
+          ],
+          [
+            ".x{color:var(--c,lab(50% 20 30))!important;color:oklch(50% .1 40)!important}",
+            `.x{color:var(--c,#a16945)!important}${copies(c => `color:var(--c,${c})!important`)}.x{color:oklch(50% .1 40)!important}`,
+          ],
+          [
+            ".x{text-shadow:0 0 var(--s) lab(50% 20 30);text-shadow:0 0 oklch(50% .1 40)}",
+            `.x{text-shadow:0 0 var(--s)#a16945}${copies(c => `text-shadow:0 0 var(--s)${c}`)}.x{text-shadow:0 0 oklch(50% .1 40)}`,
+          ],
+          // A value without var() may be dropped by any browser, so the sRGB base stays in front of it.
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:foo(1)}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:foo(1)}`,
+          ],
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:revert}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:revert}`,
+          ],
+          [
+            ".x{background-color:var(--a,lab(50% 20 30));background-color:foo(1)}",
+            `.x{background-color:var(--a,#a16945)}${copies(c => `background-color:var(--a,${c})`)}.x{background-color:foo(1)}`,
+          ],
+          [
+            ".x{text-shadow:0 0 var(--s) lab(50% 20 30);text-shadow:none}",
+            `.x{text-shadow:0 0 var(--s)#a16945}${copies(c => `text-shadow:0 0 var(--s)${c}`)}.x{text-shadow:none}`,
+          ],
+          [
+            ".x{box-shadow:0 0 var(--s) lab(50% 20 30);box-shadow:none}",
+            `.x{box-shadow:0 0 var(--s)#a16945}${copies(c => `box-shadow:0 0 var(--s)${c}`)}.x{box-shadow:none}`,
+          ],
+          [
+            ".x{-webkit-box-shadow:0 0 var(--s) lab(50% 20 30);box-shadow:var(--x)}",
+            `.x{-webkit-box-shadow:0 0 var(--s)#a16945}${copies(c => `-webkit-box-shadow:0 0 var(--s)${c}`)}.x{box-shadow:var(--x)}`,
+          ],
+        ])("%s", (source, expected) => {
+          expect(minified(source)).toBe(expected);
+        });
+      });
+
+      describe("the rule behind the cut keeps its place among the other rules", () => {
+        test.each([
+          // The head merges into the previous rule with the same selector, or with the same declarations.
+          [
+            ".x{margin:0}.x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}",
+            `.x{color:var(--c,#a16945);margin:0}${colorCopies}.x{color:oklch(50% .1 40)}`,
+          ],
+          [
+            ".y{color:var(--c,#a16945)}.x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}",
+            `.y,.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}`,
+          ],
+          // Chrome 87 has no :is(), so the selector list is split and each part gets its own copies and tail.
+          [
+            ".x,.y:focus-visible{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}` +
+              `.y:focus-visible{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, ".y:focus-visible")}.y:focus-visible{color:oklch(50% .1 40)}`,
+          ],
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40);.y{margin:0}}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}.x .y{margin:0}`,
+          ],
+          [
+            "@media (min-width:100px){.x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}}",
+            `@media (min-width:100px){.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}}`,
+          ],
         ])("%s", (source, expected) => {
           expect(minified(source)).toBe(expected);
         });
@@ -8043,6 +8147,93 @@ describe("css tests", () => {
           `.y,.x{color:var(--c,#a16945)}${colorCopies}`,
         );
       });
+
+      // Each tail prints the rule's selectors once more, so it counts against the selector expansion limit.
+      describe("tails of a nested rule", () => {
+        const list = (name: string) => Array.from({ length: 64 }, (_, i) => `.${name}${i}`).join(",");
+        const pair = "color:var(--c,lab(50% 20 30));color:oklch(50% .1 40);";
+        // 64 * 64 selectors for `.b*`, and as many for `.c` and for each of its tails: 65,536 with 14 tails.
+        const nested = (pairs: number) =>
+          `${list("a")}{${list("b")}{.c{${Buffer.alloc(pairs * pair.length, pair).toString()}}}}`;
+
+        test("fit the selector expansion limit", () => {
+          const last = ".b63 .c{color:oklch(50% .1 40)}";
+          expect(minified(nested(14)).slice(-last.length)).toBe(last);
+        });
+
+        test("count against the selector expansion limit", () => {
+          expect(() => minified(nested(15))).toThrow("Nested CSS rules expand to more than 65536 selectors");
+        });
+      });
+
+      const sheet =
+        ".x{color:var(--c,lab(50% 20 30));color:red}.y{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}";
+      const built = `.x{color:red}.y{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, ".y")}.y{color:oklch(50% .1 40)}\n`;
+
+      test("bun build --minify", async () => {
+        using dir = tempDir("css-supports-later-declaration", { "in.css": sheet });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--minify", "in.css"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe(built);
+        expect(exitCode).toBe(0);
+      });
+
+      test("Bun.build", async () => {
+        using dir = tempDir("css-supports-later-declaration", { "in.css": sheet });
+        const build = await Bun.build({ entrypoints: [join(String(dir), "in.css")], minify: true });
+        expect(await build.outputs[0].text()).toBe(built);
+      });
+
+      // One block with thousands of overrides: a cut at every pair, a retract at every pair, and
+      // retracts that find nothing among thousands of staged copies. Each is one pass over the block,
+      // with no recursion per cut.
+      test("thousands of overrides in one block minify in linear time", async () => {
+        const script = `
+          const { minifyTest } = require("bun:internal-for-testing").cssInternals;
+          const targets = { chrome: 87 << 16, edge: 88 << 16, firefox: 78 << 16, safari: 14 << 16 };
+          const n = 2000;
+          const repeat = text => Buffer.alloc(n * text.length, text).toString();
+          const p3 = "color(display-p3 .598686 .422118 .293048)";
+          const lab = "lab(50% 20 30)";
+          const copies = declarations =>
+            "@supports (color:color(display-p3 0 0 0)){.x{" + declarations(p3) + "}}" +
+            "@supports (color:lab(0% 0 0)){.x{" + declarations(lab) + "}}";
+          const border = color => repeat("border-top-color:var(--b," + color + ");");
+          const blocks = {
+            cuts: [
+              repeat("color:var(--c,lab(50% 20 30));color:oklch(50% .1 40);"),
+              repeat(".x{color:var(--c,#a16945)}" + copies(c => "color:var(--c," + c + ")")) + ".x{color:oklch(50% .1 40)}",
+            ],
+            retracts: [repeat("color:var(--c,lab(50% 20 30));color:red;"), ".x{color:red}"],
+            misses: [
+              border(lab) + repeat("color:var(--d);"),
+              ".x{" + border("#a16945") + "color:var(--d)}" + copies(c => border(c).slice(0, -1)),
+            ],
+          };
+          for (const [name, [block, expected]] of Object.entries(blocks)) {
+            const out = minifyTest(".x{" + block + "}", "", targets);
+            console.log(name + ":" + (out === expected ? "OK" : "got " + out.length + " bytes, expected " + expected.length));
+          }
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 60_000,
+          killSignal: "SIGKILL",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("cuts:OK\nretracts:OK\nmisses:OK\n");
+        expect(proc.signalCode).toBeNull();
+        expect(exitCode).toBe(0);
+      }, 90_000);
     });
 
     // rgb()/hsl() whose alpha is only known at runtime (var(), calc(var()), ...)

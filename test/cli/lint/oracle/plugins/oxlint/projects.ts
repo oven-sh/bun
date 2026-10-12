@@ -3415,6 +3415,93 @@ export const projects: Project[] = [
     },
   },
   {
+    name: "names/that-oxc-has-no-reference-for",
+    about:
+      "for oxc only an expression and the name in `export { a }` refer to a variable; the names after a dot are names like any other",
+    config: rules(["typescript", "react"], {
+      "no-undef": "error",
+      "id-length": "error",
+      "id-match": ["error", "^[a-z]+$"],
+    }),
+    files: {
+      "import-equals.ts": lines(
+        `import aa = Xx.Y.Z;`,
+        `import bb = Xx;`,
+        `export import cc = Xx.Y;`,
+        `import dd = require("x");`,
+      ),
+      "namespace-export.d.ts": lines(`export as namespace Z;`, `export = Yy;`),
+      "predicates.ts": lines(
+        `function ff(aa: unknown): yy is string { return true; }`,
+        `function gg(aa: unknown): asserts zz {}`,
+        `ff(1); gg(1);`,
+      ),
+      "import-types.ts": lines(
+        `let aa: import("x").Y.Z;`,
+        `let bb: typeof import("x").Y;`,
+        `let cc: typeof Xx.Y.Z;`,
+        `let dd: Xx.Y.Z;`,
+      ),
+      "heritage.ts": lines(
+        `interface aa extends Xx {}`,
+        `interface bb extends Xx.Yy {}`,
+        `interface cc extends Xx.Xx {}`,
+        `class dd implements Xx {}`,
+        `class ee implements Xx.Yy, Xx.Yy.Zz {}`,
+        `class ff extends Xx.Yy {}`,
+        `interface hh extends Xx<Yy>, Xx.Yy<Zz.Ww> {}`,
+      ),
+      "tags.tsx": lines(
+        `let aa = <A-b />;`,
+        `let bb = <a:b />;`,
+        `let cc = <this />;`,
+        `let dd = <Foo />;`,
+        `let ee = <Foo></Foo>;`,
+        `let ff = <Foo.Bar.Baz></Foo.Bar.Baz>;`,
+        `let gg = <foo.Bar />;`,
+        `let hh = <A:B c:d="1" />;`,
+        `const Loc = 1; let ii = <Loc />; let jj = <Loc.X />;`,
+      ),
+      "tags.jsx": lines(`let aa = <A-b />;`, `let bb = <a:b />;`, `let dd = <Foo />;`, `let ff = <Foo.Bar />;`),
+      "exports.ts": lines(`export { aa };`, `export { bb as cc };`, `export type { dd };`, `export default Xx;`),
+    },
+  },
+  {
+    name: "parentheses/that-hide-what-is-in-them",
+    about: "for oxc the parentheses are a node, and these rules do not look into it",
+    config: rules(["typescript"], {
+      "no-object-constructor": "error",
+      "no-eq-null": "error",
+      "no-new-wrappers": "error",
+      "no-new-native-nonconstructor": "error",
+      "typescript/no-var-requires": "error",
+      "typescript/no-this-alias": "error",
+      "no-implicit-coercion": "error",
+      "no-empty-pattern": "error",
+      "typescript/explicit-member-accessibility": "error",
+    }),
+    files: {
+      "object.ts": lines(`(Object)(); new (Object)(); Object(); new Object(); (Object)(1);`),
+      "null.ts": lines(`a == ((null)); a == null; (null) != a; ((a)) == null;`),
+      "new.ts": lines(
+        `new (Symbol)(""); new (String)(""); new (BigInt)(1); new String(""); new (Number); new Symbol();`,
+      ),
+      "require.ts": lines(
+        `const a = ((require))("foo"); const b = (require)("foo"); const c = require("foo"); const d = (require("foo"));`,
+      ),
+      "this.ts": lines(
+        `var foo = (bar), baz = (this); const a = this; let b = (this); c = this; c = (this); a! = this; (d) = this; (e as any) = this; f.g = this; const { h } = this; [i] = this;`,
+      ),
+      "not.ts": lines(`if (!!(!!foo.length)) {} !!a; !!(a); !(!a); !!(!!a); -(-a); - -a;`),
+      "patterns.ts": lines(
+        `[] = x; ({} = x); [[]] = x; ({ a: {} } = x); for ([] of x); function f([], {}) {} const [] = x, {} = x;`,
+      ),
+      "keys.ts": lines(
+        `export class Foo { static [(a, "bar")] = 1; [(b)] = 2; ["c"] = 3; [d]() {} [(e)]() {} get [(f)]() { return 1; } "g" = 1; 1 = 2; }`,
+      ),
+    },
+  },
+  {
     name: "sort-keys/one-report",
     about: "one report for an object, at the object",
     config: rules([], { "sort-keys": "error" }),

@@ -26,6 +26,7 @@
 use super::*;
 use crate::bind::Parent;
 use crate::resolve::{ModuleKind, ScriptTarget};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 // ───────────────────────────── the text ─────────────────────────────
@@ -118,7 +119,7 @@ pub(super) fn is_with_statement(hir: &File, s: StmtId) -> bool {
 
 /// The parts of `range` that are in none of `holes`.
 fn parts_outside(range: (u32, u32), mut holes: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
-    holes.sort_unstable();
+    holes.shared_sort_unstable();
     let (mut from, mut parts) = (range.0, Vec::new());
     for (start, end) in holes {
         if from < start {
@@ -982,7 +983,7 @@ impl Checker<'_, '_> {
                 }
             }
         }
-        again.sort_unstable();
+        again.shared_sort_unstable();
         again
     }
 

@@ -1,9 +1,10 @@
 use crate::autolinks::is_list_item_mark;
+use crate::compat;
 use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
-use core::mem::{align_of, size_of};
+use core::mem::size_of;
 
 type BlockHeader = parser::BlockHeader;
 
@@ -29,11 +30,15 @@ impl Parser<'_> {
         }
 
         self.end_current_block()?;
+        if self.track {
+            self.renderer.ptr.line_starts(&self.line_starts);
+        }
 
         // Build ref def hashtable
         self.build_ref_def_hashtable()?;
 
         // Process all blocks
+        self.line_beg = OFF::MAX;
         self.leave_child_containers(0)?;
         self.process_all_blocks()?;
 
@@ -49,12 +54,23 @@ impl Parser<'_> {
         line: &mut Line,
     ) -> Result<(), parser::Error> {
         let mut off = off_start;
+        self.line_beg = off_start;
+        if self.track {
+            self.line_starts.push(off_start);
+        }
         let mut total_indent: u32 = 0;
         let mut n_parents: u32 = 0;
         let mut n_brothers: u32 = 0;
         let mut n_children: u32 = 0;
         let mut container = Container::default();
         let prev_line_has_list_loosening_effect = self.last_line_has_list_loosening_effect;
+        // The line before is the marker of a list item and nothing else.
+        let follows_empty_item = self.last_header_opens_list_item
+            && self.current_block.is_none()
+            && !self.last_list_item_starts_with_two_blank_lines;
+        let follows_task_mark = core::mem::take(&mut self.last_line_is_only_a_task_mark);
+        // Nothing is on the line but the markers of containers that were open before it.
+        let mut is_empty = false;
 
         *line = Line::default();
         line.enforce_new_block = false;
@@ -71,8 +87,20 @@ impl Parser<'_> {
         // container's contents_indent. This ensures nested containers compare
         // against the correct relative indentation rather than the absolute column.
         let mut remaining_indent = total_indent;
+        self.is_directive_end = false;
         while n_parents < self.n_containers {
             let c = &self.containers[n_parents as usize];
+            if c.ch == b':' {
+                // Its end comes before anything that is open in it sees the line
+                if remaining_indent < self.code_indent_offset && self.ends_directive(off, c.start) {
+                    self.is_directive_end = true;
+                    break;
+                }
+                remaining_indent -= remaining_indent.min(c.contents_indent);
+                line.indent = remaining_indent;
+                n_parents += 1;
+                continue;
+            }
             if c.ch == b'>' {
                 // Blockquote continuation
                 if off < self.size
@@ -122,6 +150,7 @@ impl Parser<'_> {
                     && self.containers[n_parents as usize].ch != b'>'
                 {
                     n_parents += 1;
+                    line.indent = 0;
                 }
             }
         }
@@ -129,17 +158,31 @@ impl Parser<'_> {
         // Track effective pivot type — brother/child containers reset this to .blank
         let mut effective_pivot_type = pivot_line.r#type;
 
+        let interrupts_for_micromark =
+            compat::what_interrupts_does_so_for_the_whole_line(&self.flags)
+                && n_parents == self.n_containers
+                && matches!(pivot_line.r#type, LineType::Text | LineType::Indentedcode);
+
         // Determine line type
         loop {
+            if self.is_directive_end {
+                line.r#type = LineType::Blank;
+                self.html_block_type = 0;
+                break;
+            }
+
             // Check for fenced code continuation/closing (BEFORE blank line check, like md4c)
             if effective_pivot_type == LineType::Fencedcode {
                 line.beg = off;
 
                 // Check for closing fence
-                if line.indent < self.code_indent_offset {
+                if line.indent < self.code_indent_offset && n_parents == self.n_containers {
                     if self.is_closing_code_fence(off, pivot_line.data) {
                         line.r#type = LineType::Blank; // ending fence treated as blank
                         self.last_line_has_list_loosening_effect = false;
+                        if let Some(cb_off) = self.current_block {
+                            self.get_block_header_at(cb_off).flags |= types::BLOCK_CLOSED;
+                        }
                         break;
                     }
                 }
@@ -164,7 +207,11 @@ impl Parser<'_> {
                     // HTML block is implicitly ended when enclosing container closes
                     self.html_block_type = 0;
                 } else {
-                    if self.is_html_block_end_condition(off, self.html_block_type) {
+                    if self.is_html_block_end_condition(off, self.html_block_type)
+                        && !(line.indent > 0
+                            && self.html_block_type >= 6
+                            && compat::only_a_line_without_blanks_ends_html(&self.flags))
+                    {
                         // Save type before clearing (md4c uses a local variable)
                         let ended_type = self.html_block_type;
                         self.html_block_type = 0;
@@ -173,7 +220,11 @@ impl Parser<'_> {
                         if ended_type == 6 || ended_type == 7 {
                             line.r#type = LineType::Blank;
                             line.indent = 0;
+                            is_empty = true;
                             break;
+                        }
+                        if let Some(cb_off) = self.current_block {
+                            self.get_block_header_at(cb_off).flags |= types::BLOCK_CLOSED;
                         }
                     }
                     line.r#type = LineType::Html;
@@ -184,6 +235,7 @@ impl Parser<'_> {
 
             // Check for blank line
             if off >= self.size || helpers::is_newline(self.text[off as usize]) {
+                is_empty = n_brothers + n_children == 0;
                 // Indented code continuation through blank lines
                 if effective_pivot_type == LineType::Indentedcode && n_parents == self.n_containers
                 {
@@ -209,21 +261,12 @@ impl Parser<'_> {
                     // A list item can begin with at most one blank line.
                     if n_parents > 0
                         && self.containers[(n_parents - 1) as usize].ch != b'>'
+                        && !self.containers[(n_parents - 1) as usize].is_task
                         && n_brothers + n_children == 0
                         && self.current_block.is_none()
-                        && self.block_bytes.len() > size_of::<BlockHeader>()
+                        && self.last_header_opens_list_item
                     {
-                        let align_mask_: usize = align_of::<BlockHeader>() - 1;
-                        let top_off = (self.block_bytes.len() - size_of::<BlockHeader>()
-                            + align_mask_)
-                            & !align_mask_;
-                        if top_off + size_of::<BlockHeader>() <= self.block_bytes.len() {
-                            let top_type =
-                                self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
-                            if top_type == BlockType::Li as u8 {
-                                self.last_list_item_starts_with_two_blank_lines = true;
-                            }
-                        }
+                        self.last_list_item_starts_with_two_blank_lines = true;
                     }
                 }
                 break;
@@ -236,18 +279,14 @@ impl Parser<'_> {
                         && self.containers[(n_parents - 1) as usize].ch != b'>'
                         && n_brothers + n_children == 0
                         && self.current_block.is_none()
-                        && self.block_bytes.len() > size_of::<BlockHeader>()
+                        && self.last_header_opens_list_item
                     {
-                        let top_type =
-                            self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
-                        if top_type == BlockType::Li as u8 {
-                            n_parents -= 1;
-                            line.indent = total_indent;
-                            if n_parents > 0 {
-                                line.indent -= line
-                                    .indent
-                                    .min(self.containers[(n_parents - 1) as usize].contents_indent);
-                            }
+                        n_parents -= 1;
+                        line.indent = total_indent;
+                        if n_parents > 0 {
+                            line.indent -= line
+                                .indent
+                                .min(self.containers[(n_parents - 1) as usize].contents_indent);
                         }
                     }
                     self.last_list_item_starts_with_two_blank_lines = false;
@@ -273,7 +312,7 @@ impl Parser<'_> {
                 && n_parents == self.n_containers
             {
                 let setext_result = self.is_setext_underline(off);
-                if setext_result.is_setext {
+                if setext_result.is_setext && !self.current_block_is_only_ref_defs() {
                     line.r#type = LineType::Setextunderline;
                     line.data = setext_result.level;
                     break;
@@ -304,6 +343,8 @@ impl Parser<'_> {
                         effective_pivot_type = LineType::Blank;
 
                         container = cont_result.container;
+                        container.mark_beg = off;
+                        container.mark_end = cont_result.off;
                         off = cont_result.off;
 
                         total_indent += container.contents_indent - container.mark_indent;
@@ -327,6 +368,8 @@ impl Parser<'_> {
                         self.containers[n_parents as usize].mark_indent = container.mark_indent;
                         self.containers[n_parents as usize].contents_indent =
                             container.contents_indent;
+                        self.containers[n_parents as usize].mark_beg = container.mark_beg;
+                        self.containers[n_parents as usize].mark_end = container.mark_end;
 
                         // HTML block ends when a new sibling container starts
                         self.html_block_type = 0;
@@ -350,12 +393,19 @@ impl Parser<'_> {
                 let cont_result = self.is_container_mark(line.indent, off);
                 if cont_result.is_container {
                     container = cont_result.container;
+                    container.mark_beg = off;
+                    container.mark_end = cont_result.off;
 
                     // List mark can't interrupt paragraph unless it's > or ordered starting at 1
-                    if effective_pivot_type == LineType::Text && n_parents == self.n_containers {
-                        if (cont_result.off >= self.size
-                            || helpers::is_newline(self.ch(cont_result.off)))
+                    if (effective_pivot_type == LineType::Text && n_parents == self.n_containers)
+                        || interrupts_for_micromark
+                    {
+                        let after_mark =
+                            helpers::line_indentation(self.text, 0, cont_result.off).off;
+                        if (after_mark >= self.size || helpers::is_newline(self.ch(after_mark)))
                             && container.ch != b'>'
+                            && container.ch != b'^'
+                            && container.ch != b':'
                         {
                             // Blank after list mark can't interrupt paragraph
                         } else if (container.ch == b'.' || container.ch == b')')
@@ -374,12 +424,22 @@ impl Parser<'_> {
 
                             if off >= self.size || helpers::is_newline(self.text[off as usize]) {
                                 container.contents_indent += 1;
+                            } else if container.ch == b'>' {
+                                // Only the 1st space after '>' is part of the mark
+                                line.indent = line.indent.saturating_sub(1);
                             } else if line.indent <= self.code_indent_offset {
                                 container.contents_indent += line.indent;
                                 line.indent = 0;
                             } else {
                                 container.contents_indent += 1;
                                 line.indent -= 1;
+                            }
+                            if container.ch == b'^' {
+                                container.contents_indent = 4;
+                                line.indent = 0;
+                            }
+                            if container.ch == b':' {
+                                container.contents_indent = container.mark_indent;
                             }
 
                             if n_brothers + n_children == 0 {
@@ -407,12 +467,22 @@ impl Parser<'_> {
 
                         if off >= self.size || helpers::is_newline(self.text[off as usize]) {
                             container.contents_indent += 1;
+                        } else if container.ch == b'>' {
+                            // Only the 1st space after '>' is part of the mark
+                            line.indent = line.indent.saturating_sub(1);
                         } else if line.indent <= self.code_indent_offset {
                             container.contents_indent += line.indent;
                             line.indent = 0;
                         } else {
                             container.contents_indent += 1;
                             line.indent -= 1;
+                        }
+                        if container.ch == b'^' {
+                            container.contents_indent = 4;
+                            line.indent = 0;
+                        }
+                        if container.ch == b':' {
+                            container.contents_indent = container.mark_indent;
                         }
 
                         if n_brothers + n_children == 0 {
@@ -429,12 +499,6 @@ impl Parser<'_> {
                         continue;
                     }
                 }
-            }
-
-            // Check for table continuation
-            if effective_pivot_type == LineType::Table && n_parents == self.n_containers {
-                line.r#type = LineType::Table;
-                break;
             }
 
             // Check for ATX header
@@ -480,7 +544,9 @@ impl Parser<'_> {
             // Check for opening code fence
             if line.indent < self.code_indent_offset
                 && off < self.size
-                && (self.text[off as usize] == b'`' || self.text[off as usize] == b'~')
+                && (self.text[off as usize] == b'`'
+                    || self.text[off as usize] == b'~'
+                    || (self.text[off as usize] == b'$' && self.flags.math_blocks))
             {
                 let fence_result = self.is_opening_code_fence(off);
                 if fence_result.is_fence {
@@ -492,17 +558,42 @@ impl Parser<'_> {
             }
 
             // Check for HTML block start
-            if off < self.size && self.text[off as usize] == b'<' && !self.flags.no_html_blocks {
+            if line.indent < self.code_indent_offset
+                && off < self.size
+                && self.text[off as usize] == b'<'
+                && !self.flags.no_html_blocks
+            {
                 self.html_block_type = self.is_html_block_start_condition(off);
 
                 // Type 7 can't interrupt paragraph
                 if self.html_block_type == 7 && effective_pivot_type == LineType::Text {
-                    self.html_block_type = 0;
+                    if n_parents < self.n_containers
+                        && n_brothers + n_children == 0
+                        && compat::complete_tag_ends_lazy_paragraph(&self.flags)
+                    {
+                        n_parents = self.n_containers;
+                    } else {
+                        self.html_block_type = 0;
+                    }
+                }
+                if self.html_block_type > 0
+                    && effective_pivot_type == LineType::Text
+                    && n_brothers + n_children == 0
+                    && compat::tag_does_not_end_a_list(&self.flags)
+                    && self.containers_up_to_quote() <= n_parents
+                {
+                    n_parents = self.n_containers;
                 }
 
                 if self.html_block_type > 0 {
+                    line.data = if self.html_block_type <= 5 {
+                        types::BLOCK_HTML_UNTIL_TEXT
+                    } else {
+                        0
+                    };
                     if self.is_html_block_end_condition(off, self.html_block_type) {
                         self.html_block_type = 0;
+                        line.data |= types::BLOCK_CLOSED;
                     }
                     line.enforce_new_block = true;
                     line.r#type = LineType::Html;
@@ -510,8 +601,54 @@ impl Parser<'_> {
                 }
             }
 
+            // Check for a leaf block of the consumer's own
+            if let Some(extensions) = self.extensions
+                && line.indent < self.code_indent_offset
+                && off < self.size
+                && self.starts_extension_leaf[self.text[off as usize] as usize]
+            {
+                let interrupts_paragraph = effective_pivot_type == LineType::Text;
+                let end = (extensions.leaf)(&types::LeafStart {
+                    text: self.text,
+                    off,
+                    indent: line.indent,
+                    is_in_container: if interrupts_paragraph && n_brothers + n_children == 0 {
+                        self.n_containers > 0
+                    } else {
+                        n_parents + n_brothers + n_children > 0
+                    },
+                    interrupts_paragraph,
+                    starts_container: &|line_beg| self.starts_container_in_paragraph(line_beg),
+                });
+                if let Some(end) = end {
+                    self.html_block_type = 0;
+                    line.data = types::BLOCK_EXTENSION | types::BLOCK_CLOSED;
+                    line.enforce_new_block = true;
+                    line.r#type = LineType::Html;
+                    let end = end.clamp(off, self.size);
+                    while self.track
+                        && let Some(len) = bun_core::strings::index_of_char_usize(
+                            &self.text[off as usize..end as usize],
+                            b'\n',
+                        )
+                    {
+                        off += len as OFF + 1;
+                        self.line_starts.push(off);
+                    }
+                    off = end;
+                    break;
+                }
+            }
+
+            // Check for table continuation
+            if effective_pivot_type == LineType::Table && n_parents == self.n_containers {
+                line.r#type = LineType::Table;
+                break;
+            }
+
             // Check for table underline
             if self.flags.tables
+                && line.indent < self.code_indent_offset
                 && effective_pivot_type == LineType::Text
                 && off < self.size
                 && (self.text[off as usize] == b'|'
@@ -528,7 +665,15 @@ impl Parser<'_> {
                     let header_line = self.current_block_lines[self.current_block_lines.len() - 1];
                     let header_cols =
                         self.count_table_row_columns(header_line.beg, header_line.end);
-                    if header_cols == tbl_result.col_count {
+                    let is_header_too_far_in = header_line.indent >= self.code_indent_offset
+                        && compat::indented_line_is_no_table_header(&self.flags);
+                    let interrupts_paragraph = self.current_block_lines.len() > 1
+                        && compat::table_does_not_interrupt_a_paragraph(&self.flags);
+                    if (header_cols == tbl_result.col_count
+                        || compat::table_header_has_any_number_of_cells(&self.flags))
+                        && !is_header_too_far_in
+                        && !interrupts_paragraph
+                    {
                         line.data = tbl_result.col_count;
                         line.r#type = LineType::Tableunderline;
                         break;
@@ -538,7 +683,12 @@ impl Parser<'_> {
 
             // Default: normal text line
             line.r#type = LineType::Text;
-            if effective_pivot_type == LineType::Text && n_brothers + n_children == 0 {
+            if (effective_pivot_type == LineType::Text
+                || (follows_empty_item
+                    && (follows_task_mark || compat::text_goes_on_in_an_empty_item(&self.flags))))
+                && n_brothers + n_children == 0
+                && self.directives.last().is_none_or(|it| *it < n_parents)
+            {
                 // Lazy continuation
                 n_parents = self.n_containers;
             }
@@ -572,10 +722,15 @@ impl Parser<'_> {
                     task_container.is_task = true;
                     task_container.task_mark_off = OFF::try_from(tmp + 1).expect("int cast");
                     off = OFF::try_from(tmp + 3).expect("int cast");
-                    while off < self.size && helpers::is_whitespace(self.text[off as usize]) {
+                    while off < self.size && helpers::is_blank(self.text[off as usize]) {
                         off += 1;
                     }
                     line.beg = off;
+                    // Nothing else is on the line
+                    if off >= self.size || helpers::is_newline(self.text[off as usize]) {
+                        line.r#type = LineType::Blank;
+                        self.last_line_is_only_a_task_mark = true;
+                    }
                 }
             }
 
@@ -583,11 +738,18 @@ impl Parser<'_> {
         }
 
         // Scan for end of line
-        while off < self.size && !helpers::is_newline(self.text[off as usize]) {
-            off += 1;
-        }
+        let rest = &self.text[off as usize..];
+        off = match if self.has_carriage_return {
+            bun_core::strings::index_of_any(rest, b"\r\n")
+        } else {
+            bun_core::strings::index_of_char_usize(rest, b'\n')
+        } {
+            Some(len) => off + len as OFF,
+            None => self.size,
+        };
 
         line.end = off;
+        let raw_end = off;
 
         // Trim trailing closing marks for ATX header
         if line.r#type == LineType::Atxheader {
@@ -652,6 +814,7 @@ impl Parser<'_> {
         if n_children == 0 && n_parents + n_brothers < self.n_containers {
             self.leave_child_containers(n_parents + n_brothers)?;
         }
+        self.is_directive_end = false;
 
         // Enter brother containers
         if n_brothers > 0 {
@@ -664,6 +827,7 @@ impl Parser<'_> {
                     0
                 },
                 types::BLOCK_CONTAINER_CLOSER,
+                (self.line_beg, self.container_end(n_parents), 0),
             )?;
             self.push_container_bytes(
                 BlockType::Li,
@@ -673,6 +837,11 @@ impl Parser<'_> {
                     0
                 },
                 types::BLOCK_CONTAINER_OPENER,
+                (
+                    self.containers[n_parents as usize].mark_beg,
+                    self.containers[n_parents as usize].mark_end,
+                    self.containers[n_parents as usize].mark_indent,
+                ),
             )?;
             self.containers[n_parents as usize].is_task = container.is_task;
             self.containers[n_parents as usize].task_mark_off = container.task_mark_off;
@@ -680,6 +849,14 @@ impl Parser<'_> {
 
         if n_children > 0 {
             self.enter_child_containers(n_children)?;
+        }
+
+        if self.track {
+            let count = match is_empty {
+                true => self.containers_up_to_quote(),
+                false => self.n_containers,
+            };
+            self.set_container_ends(count, raw_end);
         }
 
         Ok(())
@@ -756,21 +933,13 @@ impl Parser<'_> {
                 blk.data = line.data;
                 blk.flags |= types::BLOCK_SETEXT_HEADER;
             }
-            // Add the underline line (md4c stores it for ref def interaction)
-            self.add_line_to_current_block(line)?;
+            // The underline is not a line of the block: a reference definition
+            // at the end of it does not go on with the underline.
             self.end_current_block()?;
-            if self.current_block.is_none() {
-                // Block was closed normally
-                *pivot_line = Line {
-                    r#type: LineType::Blank,
-                    ..Line::default()
-                };
-            } else {
-                // Block stayed open: all body was consumed as link ref defs,
-                // underline downgraded to start of a new paragraph (md4c behavior)
-                line.r#type = LineType::Text;
-                *pivot_line = *line;
-            }
+            *pivot_line = Line {
+                r#type: LineType::Blank,
+                ..Line::default()
+            };
             return Ok(());
         }
 
@@ -840,11 +1009,16 @@ impl Parser<'_> {
             _ => BlockType::P,
         };
 
+        // Of a line of HTML, `data` are flags.
+        let (flags, data) = match block_type {
+            BlockType::Html => (line.data, 0),
+            _ => (0, line.data),
+        };
         let aligned = self.append_block_header(BlockHeader {
             block_type,
             _pad: [0; 3],
-            flags: 0,
-            data: line.data,
+            flags,
+            data,
             n_lines: 0,
         })?;
 
@@ -890,22 +1064,10 @@ impl Parser<'_> {
             }
             let hdr = self.get_block_header_at(cb_off);
 
-            // Handle setext heading after ref def consumption
-            if hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0 {
-                if hdr.n_lines > 1 {
-                    // Remove the underline (last line)
-                    hdr.n_lines -= 1;
-                    let _ = self.current_block_lines.pop();
-                } else if hdr.n_lines == 1 {
-                    // Only underline left after eating ref defs → convert to paragraph,
-                    // keep block open so subsequent lines join this paragraph (md4c behavior)
-                    hdr.block_type = BlockType::P;
-                    hdr.flags &= !types::BLOCK_SETEXT_HEADER;
-                    return Ok(()); // Don't close the block!
-                } else {
-                    // All lines consumed (shouldn't normally happen)
-                    hdr.flags |= types::BLOCK_REF_DEF_ONLY;
-                }
+            // All lines consumed (`current_block_is_only_ref_defs` keeps such a
+            // block from becoming a heading)
+            if is_setext && hdr.n_lines == 0 {
+                hdr.flags |= types::BLOCK_REF_DEF_ONLY;
             }
 
             // Write accumulated lines to block_bytes
@@ -923,6 +1085,39 @@ impl Parser<'_> {
             self.current_block = None;
         }
         Ok(())
+    }
+
+    /// Whether nothing of the current block is left once its reference
+    /// definitions are taken away: then there is nothing for a line under it to
+    /// make a heading of.
+    fn current_block_is_only_ref_defs(&mut self) -> bool {
+        let Some(first) = self.current_block_lines.first() else {
+            return false;
+        };
+        if self.ch(first.beg) != b'[' {
+            return false;
+        }
+        self.buffer.clear();
+        for vline in &self.current_block_lines {
+            if !self.buffer.is_empty() {
+                self.buffer.push(b'\n');
+            }
+            self.buffer
+                .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
+        }
+        let merged = core::mem::take(&mut self.buffer);
+        let mut pos: usize = 0;
+        while pos < merged.len() {
+            match self.parse_ref_def(&merged, pos) {
+                Some(result) if !self.normalize_label(result.label).is_empty() => {
+                    pos = result.end_pos;
+                }
+                _ => break,
+            }
+        }
+        let is_only_ref_defs = pos >= merged.len();
+        self.buffer = merged;
+        is_only_ref_defs
     }
 
     pub(crate) fn consume_ref_defs_from_current_block(&mut self) {
@@ -984,6 +1179,23 @@ impl Parser<'_> {
             }
             if end_pos >= merged.len() && (end_pos == pos || merged[end_pos - 1] != b'\n') {
                 newlines += 1;
+            }
+            if self.track {
+                let first = self.current_block_lines.get(lines_consumed as usize);
+                let last = self
+                    .current_block_lines
+                    .get((lines_consumed + newlines).saturating_sub(1) as usize);
+                if let (Some(first), Some(last)) = (first, last) {
+                    self.renderer.ptr.definition(&types::Definition {
+                        beg: first.beg,
+                        end: last.end,
+                        label: result.label,
+                        dest: result.dest,
+                        title: result.title,
+                        lines: &self.current_block_lines
+                            [lines_consumed as usize..(lines_consumed + newlines) as usize],
+                    });
+                }
             }
             lines_consumed += newlines;
             pos = end_pos;

@@ -274,7 +274,7 @@ pub(super) fn listen<'a>(
         let tree_start = out.len();
         let is_typescript_estree =
             Dialect::of(file) != Dialect::Espree && !file.language().is_oxlint;
-        let alternates = match flags & ask::WANTS_ALTERNATES != 0 && is_typescript_estree {
+        let alternates = match is_typescript_estree {
             true => layouts::alternates(writer.view()),
             false => Vec::new(),
         };

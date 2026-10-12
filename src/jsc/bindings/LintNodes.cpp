@@ -233,9 +233,9 @@ private:
         if (!first || !second)
             return {};
         if (tag == 9 || tag == 10) {
-            // acorn has `{ pattern, flags }` and `{ raw, cooked }`. typescript-estree has both by name.
+            // acorn and oxlint have `{ pattern, flags }` and `{ raw, cooked }`. typescript-estree has both by name.
             auto kind = m_host->nodes.kindFor(m_host->isEspree(), m_host->isOxlint());
-            bool secondIsFirst = tag == 9 ? kind == LintNodeState::TypeScript : kind == LintNodeState::Espree;
+            bool secondIsFirst = tag == 9 ? kind == LintNodeState::TypeScript : kind >= LintNodeState::Espree;
             JSObject* object = constructEmptyObject(m_globalObject);
             if (secondIsFirst)
                 object->putDirect(m_vm, tag == 9 ? m_flags : m_raw, second);
@@ -395,7 +395,6 @@ bool LintNodeState::load(JSGlobalObject* globalObject, LintHost* host)
     m_templates.grow(templateCount);
     m_typeNames.grow(typeCount);
     m_knownStrings.grow(stringCount);
-    m_prototypes.grow(size_t(typeCount) * 2);
     return true;
 }
 
@@ -417,17 +416,11 @@ JSString* LintNodeState::knownString(VM& vm, LintHost* host, uint32_t index)
     return slot.get();
 }
 
-JSObject* LintNodeState::prototype(VM& vm, JSGlobalObject* globalObject, LintHost* host, LayoutKind kind, uint8_t type)
+JSObject* LintNodeState::prototype(VM& vm, JSGlobalObject* globalObject, LintHost* host, LayoutKind kind)
 {
     if (kind == TypeScript)
         return globalObject->objectPrototype();
-    if (kind <= OldEspree) {
-        auto& slot = m_prototypes[size_t(type) * 2 + kind];
-        if (!slot)
-            slot.set(vm, host, constructEmptyObject(globalObject, nodePrototype.get()));
-        return slot.get();
-    }
-    auto& slot = m_sharedPrototypes[kind];
+    auto& slot = m_sharedPrototypes[kind == OxlintEspree ? Oxlint : kind];
     if (slot)
         return slot.get();
     JSObject* prototype = constructEmptyObject(globalObject);
@@ -461,7 +454,7 @@ JSObject* LintNodeState::makeTemplate(JSGlobalObject* globalObject, LintHost* ho
     for (size_t i = 0; i < properties.size(); i += 2)
         count += has(properties[i + 1]);
     // It's made the way a plugin could make it, so that the Structure knows about what isn't a plain property.
-    JSFinalObject* like = JSFinalObject::create(vm, JSFinalObject::createStructure(vm, globalObject, prototype(vm, globalObject, host, kind, type), count));
+    JSFinalObject* like = JSFinalObject::create(vm, JSFinalObject::createStructure(vm, globalObject, prototype(vm, globalObject, host, kind), count));
     m_templates[index].set(vm, host, like);
     for (size_t i = 0; i < properties.size(); i += 2) {
         uint32_t what = properties[i + 1];
@@ -475,7 +468,7 @@ JSObject* LintNodeState::makeTemplate(JSGlobalObject* globalObject, LintHost* ho
             for (auto& list : host->tokens.listsOfProgram) {
                 if (list.name != key)
                     continue;
-                if (kind == Oxlint)
+                if (kind >= Oxlint)
                     like->putDirectNonIndexAccessor(vm, key, list.getter.get(), static_cast<unsigned>(PropertyAttribute::Accessor));
                 else
                     like->putDirectCustomAccessor(vm, key, list.customValue.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
@@ -512,7 +505,7 @@ JSObject* LintNodeState::visitorKeys(JSGlobalObject* globalObject, LintHost* hos
         if (type == noType)
             keys.append(jsOwnedString(vm, AtomString("argument"_s)));
         else {
-            const Layout& layout = m_layouts[isEspree ? OldEspree : OldTypeScript][type];
+            const Layout& layout = m_layouts[isEspree ? Espree : TypeScript][type];
             // In the order of the fields, which is the order of the traversal.
             for (uint32_t field = 0; field < layout.fieldCount; ++field) {
                 if (!(layout.visitorKeys >> field & 1))
@@ -525,19 +518,10 @@ JSObject* LintNodeState::visitorKeys(JSGlobalObject* globalObject, LintHost* hos
         }
         JSObject* list = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys);
         RETURN_IF_EXCEPTION(scope, void());
-        if (isExact) {
-            objectConstructorFreeze(globalObject, list);
-            RETURN_IF_EXCEPTION(scope, void());
-        }
+        objectConstructorFreeze(globalObject, list);
+        RETURN_IF_EXCEPTION(scope, void());
         all->putDirect(vm, Identifier::fromString(vm, AtomString(name(typeName))), list);
     };
-    if (!isExact) {
-        for (size_t type = 0; type < typeCount(); ++type) {
-            add(m_typeNameReferences[type], type);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-        return all;
-    }
     auto order = m_visitorKeyOrders[isEspree];
     for (size_t i = 0; i < order.size(); i += 2) {
         add(order[i], order[i + 1]);
@@ -674,21 +658,17 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
     return nodes;
 }
 
-// `defineNodes(prototype, isExact, deprecated)` is called once, while something is handled. `isExact`: the nodes are laid out as the
-// parser of the real tool lays them out. If not, all nodes inherit from `prototype`. `deprecated`: by `Type.property`, a getter and a
-// setter for the deprecated properties of typescript-estree.
+// `defineNodes(deprecated)` is called once, while something is handled. `deprecated`: by `Type.property`, a getter and a setter for the
+// deprecated properties of typescript-estree.
 JSC_DEFINE_HOST_FUNCTION(jsLintDefineNodes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);
-    JSObject* prototype = callFrame->argument(0).getObject();
-    JSObject* deprecated = callFrame->argument(2).getObject();
-    if (!prototype || !deprecated || host->nodes.isLoaded() || !host->nodes.load(globalObject, host))
+    JSObject* deprecated = callFrame->argument(0).getObject();
+    if (!deprecated || host->nodes.isLoaded() || !host->nodes.load(globalObject, host))
         return throwVMTypeError(globalObject, scope, "The layouts are not as expected"_s);
-    host->nodes.nodePrototype.set(vm, host, prototype);
     host->nodes.deprecated.set(vm, host, deprecated);
-    host->nodes.isExact = callFrame->argument(1).isTrue();
     return JSValue::encode(jsUndefined());
 }
 
@@ -704,23 +684,6 @@ JSC_DEFINE_HOST_FUNCTION(jsLintTypeId, (JSGlobalObject * globalObject, CallFrame
     RETURN_IF_EXCEPTION(scope, {});
     auto type = LintHost::from(globalObject)->nodes.typeNamed(text.data);
     return JSValue::encode(type ? jsNumber(*type) : jsUndefined());
-}
-
-// `nodePrototype(name)`: what the nodes of the type `name` inherit from in the tree of typescript-estree.
-JSC_DEFINE_HOST_FUNCTION(jsLintNodePrototype, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    LintHost* host = LintHost::from(globalObject);
-    JSValue name = callFrame->argument(0);
-    if (!name.isString() || !host->nodes.nodePrototype)
-        return throwVMTypeError(globalObject, scope, "Expected the name of a type"_s);
-    auto text = asString(name)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto type = host->nodes.typeNamed(text.data);
-    if (!type)
-        return throwVMTypeError(globalObject, scope, "Expected the name of a type"_s);
-    return JSValue::encode(host->nodes.prototype(vm, globalObject, host, LintNodeState::OldTypeScript, *type));
 }
 
 // `visitorKeys(isEspree)`: ESLint's `visitorKeys`. The same object each time.
@@ -972,9 +935,8 @@ extern "C" EncodedJSValue Bun__Lint__nodeFunctions(JSGlobalObject* globalObject)
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "shape"_s), JSFunction::create(vm, globalObject, 4, "shape"_s, jsLintShape, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "listen"_s), JSFunction::create(vm, globalObject, 2, "listen"_s, jsLintListen, ImplementationVisibility::Public));
-    object->putDirect(vm, Identifier::fromString(vm, "defineNodes"_s), JSFunction::create(vm, globalObject, 3, "defineNodes"_s, jsLintDefineNodes, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "defineNodes"_s), JSFunction::create(vm, globalObject, 1, "defineNodes"_s, jsLintDefineNodes, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "typeId"_s), JSFunction::create(vm, globalObject, 1, "typeId"_s, jsLintTypeId, ImplementationVisibility::Public));
-    object->putDirect(vm, Identifier::fromString(vm, "nodePrototype"_s), JSFunction::create(vm, globalObject, 1, "nodePrototype"_s, jsLintNodePrototype, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "visitorKeys"_s), JSFunction::create(vm, globalObject, 1, "visitorKeys"_s, jsLintVisitorKeys, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "codePaths"_s), JSFunction::create(vm, globalObject, 2, "codePaths"_s, jsLintCodePaths, ImplementationVisibility::Public));
     addLintHostFunctions(globalObject, object);

@@ -536,6 +536,15 @@ pub(super) fn jsx_text_value<'a>(e: Expr<'a>) -> Option<&'a [u8]> {
     })
 }
 
+/// The same for text that is nothing but whitespace, which [`crate::ast`] has no node for.
+pub(super) fn jsx_whitespace_value<'a>(v: VNode<'a>) -> &'a [u8] {
+    let is_espree = v.file().language().parser == crate::language::Parser::Espree;
+    match crate::ast::jsx_text_value_of(v.file().slice(v.span()), is_espree) {
+        std::borrow::Cow::Borrowed(text) => text,
+        std::borrow::Cow::Owned(text) => v.file().intern(&text).bytes(),
+    }
+}
+
 /// oxlint's `value` of a string that is the value of a JSX attribute, without braces: what is between the quotes, where it does not
 /// read `&amp;` and the like. `None`: `v` is not one, or the tree is not for oxlint's rules.
 pub(super) fn attribute_as_written<'a>(v: VNode<'a>) -> Option<&'a [u8]> {

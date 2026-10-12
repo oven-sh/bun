@@ -567,21 +567,14 @@ function listen(keys, wantsTree) {
   for (const { error } of keys) if (error !== null) throw new SyntaxError(error);
   const length = 1 + 2 * keys.length;
   if (listenWords.length < length) listenWords = new Uint32Array(2 * length);
-  // See `LACKS_TREE`, `WANTS_TREE`, `WANTS_ALL_EVENTS` and `WANTS_ALTERNATES` in `wire.rs`.
-  listenWords[0] =
-    (nodes.length === 0 ? 1 : 0) |
-    (wantsTree ? 2 : 0) |
-    (fileSettings.isLegacy === true ? 4 : 0) |
-    (hasExactNodes ? 8 : 0);
+  // See `LACKS_TREE`, `WANTS_TREE` and `WANTS_ALL_EVENTS` in `wire.rs`.
+  listenWords[0] = (nodes.length === 0 ? 1 : 0) | (wantsTree ? 2 : 0) | (fileSettings.isLegacy === true ? 4 : 0);
   for (let i = 0; i < keys.length; i++) {
     listenWords[1 + 2 * i] = keys[i].kind;
     listenWords[2 + 2 * i] = keys[i].number;
   }
   const [calls, made] = native.listen(listenWords, length);
-  if (made !== undefined) {
-    nodes = made;
-    if (!hasExactNodes) native.defineTokenLists(nodes[0]);
-  }
+  if (made !== undefined) nodes = made;
   return calls;
 }
 

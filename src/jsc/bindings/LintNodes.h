@@ -20,13 +20,12 @@ class LintHost;
 struct LintNodeState {
     // In the order of `Layout` in layouts.rs.
     enum LayoutKind : uint8_t {
-        OldTypeScript,
-        OldEspree,
         TypeScript,
         Espree,
         Oxlint,
+        OxlintEspree,
     };
-    static constexpr size_t layoutKinds = 5;
+    static constexpr size_t layoutKinds = 4;
     // What is in a property, if it isn't the field with that number.
     enum What : uint32_t {
         Type = 0xF0,
@@ -60,15 +59,11 @@ struct LintNodeState {
     // Asks Rust. Something has to be handled at the time. Returns false if the answer isn't as expected.
     bool load(JSC::JSGlobalObject*, LintHost*);
 
-    // The nodes are laid out as the parser of the real tool lays them out.
-    bool isExact { false };
     LayoutKind kindFor(bool isEspree, bool isOxlint) const
     {
-        // oxlint has one tree for all files. There's no layout of it for the tree of espree.
-        if (!isExact || (isOxlint && isEspree))
-            return isEspree ? OldEspree : OldTypeScript;
-        return isOxlint ? Oxlint : isEspree ? Espree
-                                            : TypeScript;
+        if (isOxlint)
+            return isEspree ? OxlintEspree : Oxlint;
+        return isEspree ? Espree : TypeScript;
     }
 
     size_t typeCount() const { return m_typeNames.size(); }
@@ -86,8 +81,8 @@ struct LintNodeState {
     JSC::JSString* typeName(JSC::VM&, LintHost*, uint8_t type);
     // One of `STRINGS` in src/lint/js_plugin/ast.rs. Null: there's no such string.
     JSC::JSString* knownString(JSC::VM&, LintHost*, uint32_t index);
-    // What the nodes of a type inherit from.
-    JSC::JSObject* prototype(JSC::VM&, JSC::JSGlobalObject*, LintHost*, LayoutKind, uint8_t type);
+    // What the nodes inherit from.
+    JSC::JSObject* prototype(JSC::VM&, JSC::JSGlobalObject*, LintHost*, LayoutKind);
     // ESLint's `visitorKeys`
     JSC::JSObject* visitorKeys(JSC::JSGlobalObject*, LintHost*, bool isEspree);
     std::optional<uint8_t> typeNamed(const WTF::String&) const;
@@ -96,7 +91,6 @@ struct LintNodeState {
     template<typename Visitor>
     void visit(Visitor& visitor)
     {
-        visitor.append(nodePrototype);
         visitor.append(deprecated);
         for (auto& it : m_visitorKeys)
             visitor.append(it);
@@ -108,12 +102,8 @@ struct LintNodeState {
             visitor.append(it);
         for (auto& it : m_knownStrings)
             visitor.append(it);
-        for (auto& it : m_prototypes)
-            visitor.append(it);
     }
 
-    // With the old layouts all nodes inherit from it.
-    JSC::WriteBarrier<JSC::JSObject> nodePrototype;
     // By `Type.property`: a getter and a setter.
     JSC::WriteBarrier<JSC::JSObject> deprecated;
 
@@ -135,8 +125,6 @@ private:
     WTF::Vector<JSC::WriteBarrier<JSC::JSObject>> m_templates;
     WTF::Vector<JSC::WriteBarrier<JSC::JSString>> m_typeNames;
     WTF::Vector<JSC::WriteBarrier<JSC::JSString>> m_knownStrings;
-    // With the old layouts: of each type, for typescript-estree and for espree.
-    WTF::Vector<JSC::WriteBarrier<JSC::JSObject>> m_prototypes;
     // By `LayoutKind`
     std::array<JSC::WriteBarrier<JSC::JSObject>, layoutKinds> m_sharedPrototypes;
     std::array<JSC::WriteBarrier<JSC::JSObject>, 2> m_visitorKeys;

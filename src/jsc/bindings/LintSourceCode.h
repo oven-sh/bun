@@ -100,7 +100,7 @@ struct LintSourceCodeState {
 // `nodeOrToken.loc`
 JSC::JSValue lintLocOf(JSC::JSGlobalObject*, LintHost*, JSC::JSValue nodeOrToken);
 
-// Adds `sourceCode`, `locGetter` and `locSetter` to the `native` object of the program in src/lint/js_plugin/worker.
+// Adds `sourceCode` to the `native` object of the program in src/lint/js_plugin/worker.
 void addLintSourceCodeFunctions(JSC::JSGlobalObject*, JSC::JSObject* native);
 
 } // namespace Bun

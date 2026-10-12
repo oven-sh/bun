@@ -12,6 +12,7 @@ import {
   globals as scopeGlobals,
 } from "./oracle/jsplugins/scopes/cases.mjs";
 import { cases as tokenCases, fileOf as tokenFileOf } from "./oracle/jsplugins/tokens/cases.mjs";
+import { cases as treeCases } from "./oracle/jsplugins/trees/cases.mjs";
 
 afterAll(endChildren);
 
@@ -2842,6 +2843,70 @@ test.concurrent(
   },
   timeout,
 );
+
+describe.concurrent("the nodes in JavaScript plugins", () => {
+  const oracle = join(import.meta.dir, "oracle", "jsplugins", "trees");
+  const dump = readFileSync(join(oracle, "dump.cjs"), "utf8");
+  // Recorded with ESLint 10.12.0, @typescript-eslint/parser 8.71.1 and oxlint 1.87.0 by record.mjs in that directory.
+  const expected: Record<"eslint" | "oxlint", Record<string, string>> = JSON.parse(
+    Buffer.from(Bun.zstdDecompressSync(readFileSync(join(oracle, "expected.json.zst")))).toString(),
+  );
+
+  test(
+    "they have the properties, the order, the attributes and the classes that espree and typescript-estree give them",
+    async () => {
+      const config = `const dump = require("./dump.cjs");
+        module.exports = [
+          { files: ${JSON.stringify(Object.keys(treeCases))}, plugins: { dump }, rules: { "dump/tree": "error" } },
+          ...["module", "script"].map(sourceType => ({
+            files: [sourceType + "*.js"],
+            languageOptions: { sourceType, parserOptions: { ecmaFeatures: { jsx: true } } },
+          })),
+          { files: ["*.ts", "*.tsx"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+        ];`;
+      const { raw, exitCode } = await lint({ "dump.cjs": dump, "eslint.config.cjs": config, ...treeCases }, [
+        "-f",
+        "json",
+        ...Object.keys(treeCases),
+      ]);
+      const results: { filePath: string; messages: { message: string }[] }[] = JSON.parse(raw);
+      // One node to a line, so that a difference can be read.
+      const lines = (tree: string | undefined) => tree?.split(/(?<=[[ ])(?=(?:Node )?\{ type: )/);
+      for (const file of Object.keys(treeCases)) {
+        const result = results.find(it => it.filePath.replaceAll("\\", "/").endsWith(`/${file}`));
+        expect({ file, trees: result?.messages.map(it => lines(it.message)) }).toEqual({
+          file,
+          trees: [lines(expected.eslint[file])],
+        });
+      }
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "they are laid out as in oxlint with its configuration",
+    async () => {
+      const config = { ignorePatterns: ["dump.cjs"], jsPlugins: ["./dump.cjs"], rules: { "dump/shapes": "error" } };
+      const files = Object.keys(expected.oxlint);
+      const { raw, exitCode } = await lint({ "dump.cjs": dump, ".oxlintrc.json": oxlintrc(config), ...treeCases }, [
+        "-f",
+        "json",
+        ...files,
+      ]);
+      const diagnostics: { filename: string; message: string }[] = JSON.parse(raw).diagnostics;
+      for (const file of files) {
+        const found = diagnostics.filter(it => it.filename.replaceAll("\\", "/") === file);
+        expect({ file, shapes: found.map(it => it.message.split("\n")) }).toEqual({
+          file,
+          shapes: [expected.oxlint[file].split("\n")],
+        });
+      }
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+});
 
 describe.concurrent("scopes in JavaScript plugins", () => {
   // Recorded with ESLint 10.12.0 and @typescript-eslint/parser 8.71.1 by record.mjs in that directory.

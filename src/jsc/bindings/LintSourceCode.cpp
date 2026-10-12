@@ -1135,7 +1135,7 @@ void defineLoc(JSGlobalObject* globalObject, LintHost* host, JSValue target, JSV
     JSObject* object = asObject(target);
     const Identifier& name = host->sourceCode.loc.name();
     Structure* structure = object->structure();
-    unsigned attributes = host->isOxlint() && host->nodes.isExact ? PropertyAttribute::DontEnum | PropertyAttribute::DontDelete : 0;
+    unsigned attributes = host->isOxlint() ? PropertyAttribute::DontEnum | PropertyAttribute::DontDelete : 0;
     // A node or a token that hasn't got one.
     if (object->type() == FinalObjectType && structure->isStructureExtensible() && structure->get(vm, name) == invalidOffset) [[likely]] {
         object->putDirect(vm, name, value, attributes);
@@ -1216,14 +1216,6 @@ JSValue lintLocOf(JSGlobalObject* globalObject, LintHost* host, JSValue nodeOrTo
 JSC_DEFINE_HOST_FUNCTION(jsLintLocGetter, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(computeLoc(globalObject, LintHost::from(globalObject), callFrame->thisValue()));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsLintLocSetter, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    defineLoc(globalObject, LintHost::from(globalObject), callFrame->thisValue(), callFrame->argument(0));
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
 }
 
 // ───────────── the class ─────────────
@@ -1462,8 +1454,6 @@ void addLintSourceCodeFunctions(JSGlobalObject* globalObject, JSObject* native)
     LintHost* host = LintHost::from(globalObject);
     host->sourceCode.locGetter.set(vm, host, JSFunction::create(vm, globalObject, 0, "get loc"_s, jsLintLocGetter, ImplementationVisibility::Public));
     host->sourceCode.lazyLocOfNode.set(vm, host, CustomGetterSetter::create(vm, lintLazyLocOfNode, nullptr));
-    native->putDirect(vm, Identifier::fromString(vm, "locGetter"_s), host->sourceCode.locGetter.get());
-    native->putDirect(vm, Identifier::fromString(vm, "locSetter"_s), JSFunction::create(vm, globalObject, 1, "set loc"_s, jsLintLocSetter, ImplementationVisibility::Public));
 }
 
 } // namespace Bun

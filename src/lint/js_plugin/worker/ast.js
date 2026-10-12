@@ -1,15 +1,10 @@
 // ------------- the syntax tree -------------
 //
-// `native.listen` makes the nodes of a file from the arrays that `ast.rs` describes: src/jsc/bindings/LintNodes.cpp. A node is an object
-// with the fields of its type as its own properties, as a parser makes it: rules go through `Object.keys(node)`. Only `loc` is
-// computed when it is asked for. What is here is what the nodes inherit.
+// `native.listen` makes the nodes of a file from the arrays that `ast.rs` describes: src/jsc/bindings/LintNodes.cpp. They are laid out
+// as the parser of the real tool lays them out: see `layouts.rs`. What is here is the deprecated properties of typescript-estree.
 
 // The nodes of the file, by their number. Empty: nobody has asked for them yet.
 let nodes = [];
-
-// `loc` becomes an own property the first time it is asked for: src/jsc/bindings/LintSourceCode.cpp.
-class Node {}
-Object.defineProperty(Node.prototype, "loc", { get: native.locGetter, set: native.locSetter, configurable: true });
 
 // By node: the node that typescript-estree makes for a deprecated property of it.
 const madeFor = new WeakMap();
@@ -17,7 +12,7 @@ const madeFor = new WeakMap();
 // typescript-estree converts what is behind a deprecated property a second time. So these are other nodes, and they have no `parent`:
 // nothing goes through them.
 function convertedAgain(value) {
-  if (!hasExactNodes || value === null || typeof value !== "object" || value instanceof RegExp) return value;
+  if (value === null || typeof value !== "object" || value instanceof RegExp) return value;
   if (Array.isArray(value)) return value.map(convertedAgain);
   const copy = {};
   for (const key of Reflect.ownKeys(value)) {
@@ -35,9 +30,7 @@ function makeFor(node, type, range, fields) {
     const { line, column } = sourceCode.getLocFromIndex(index);
     return { column, line };
   };
-  const made = hasExactNodes
-    ? { type, ...fields, range, loc: { end: at(range[1]), start: at(range[0]) } }
-    : Object.assign(Object.create(Node.prototype), { type, ...fields, range });
+  const made = { type, ...fields, range, loc: { end: at(range[1]), start: at(range[0]) } };
   madeFor.set(node, made);
   return made;
 }
@@ -55,7 +48,8 @@ const deprecated = {
       return madeFor.get(node);
     },
   },
-  TSEnumMember: { computed: node => node.id.type !== "Identifier" && node.id.type !== "Literal" },
+  // A name in brackets is a parsing error.
+  TSEnumMember: { computed: () => false },
   TSImportType: {
     argument: node => makeFor(node, "TSLiteralType", [...node.source.range], { literal: node.source }),
   },
@@ -84,20 +78,10 @@ function deprecatedAccessors(key, get) {
   ];
 }
 
-// The nodes are laid out as the parser of the real tool lays them out: see `layouts.rs`.
-const hasExactNodes = process.env.BUN_LINT_EXACT_NODES === "1";
-
 function defineNodes() {
   const accessors = {};
   for (const [name, properties] of Object.entries(deprecated)) {
     for (const [key, get] of Object.entries(properties)) accessors[`${name}.${key}`] = deprecatedAccessors(key, get);
   }
-  native.defineNodes(Node.prototype, hasExactNodes, accessors);
-  if (hasExactNodes) return;
-  for (const [name, properties] of Object.entries(deprecated)) {
-    for (const key of Object.keys(properties)) {
-      const [get, set] = accessors[`${name}.${key}`];
-      Object.defineProperty(native.nodePrototype(name), key, { get, set, configurable: true });
-    }
-  }
+  native.defineNodes(accessors);
 }

@@ -99,34 +99,31 @@ const OXLINT: &[u8] = b"\
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Layout {
-    /// What there was before: `type`, the fields as `crate::estree` has them, `start`, `end`, `range`, `parent`.
-    OldTypeScript,
-    OldEspree,
     TypeScript,
     Espree,
     Oxlint,
+    /// The order of oxlint for the tree of espree, which a JavaScript file has with its configuration too.
+    OxlintEspree,
 }
 
 impl Layout {
-    const ALL: [Layout; 5] = [
-        Layout::OldTypeScript,
-        Layout::OldEspree,
+    const ALL: [Layout; 4] = [
         Layout::TypeScript,
         Layout::Espree,
         Layout::Oxlint,
+        Layout::OxlintEspree,
     ];
 
     /// The tree is that of espree.
     fn is_espree(self) -> bool {
-        matches!(self, Layout::OldEspree | Layout::Espree)
+        matches!(self, Layout::Espree | Layout::OxlintEspree)
     }
 
     fn exceptions(self) -> &'static [u8] {
         match self {
-            Layout::OldTypeScript | Layout::OldEspree => b"",
             Layout::TypeScript => TYPESCRIPT,
             Layout::Espree => ESPREE,
-            Layout::Oxlint => OXLINT,
+            Layout::Oxlint | Layout::OxlintEspree => OXLINT,
         }
     }
 }
@@ -188,7 +185,11 @@ fn fields_in_order(
     };
     if let Some(listed) = listed {
         let names = strings::split(listed, b",").filter(|it| !it.is_empty());
-        return names.map(|it| (it, what(it))).collect();
+        let listed = names.map(|it| (it, what(it)));
+        // What only the tree of typescript-estree has.
+        return listed
+            .filter(|it| layout != Layout::OxlintEspree || it.1 != UNDEFINED)
+            .collect();
     }
     let mut names = fields.to_vec();
     names.retain(|it| !hidden.contains(it));
@@ -284,7 +285,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
                     &[TYPE_PROPERTY],
                     &[RANGE_PROPERTY, LOC_PROPERTY, PARENT_PROPERTY],
                 ),
-                _ => (
+                Layout::Oxlint | Layout::OxlintEspree => (
                     &[TYPE_PROPERTY],
                     &[
                         START_PROPERTY,

@@ -205,7 +205,7 @@ JSC_DECLARE_HOST_FUNCTION(jsLintIsSpaceBetweenTokens);
 JSC_DECLARE_HOST_FUNCTION(jsLintGetTokenOrCommentBefore);
 JSC_DECLARE_HOST_FUNCTION(jsLintGetTokenOrCommentAfter);
 
-// Adds `TokenStore` and `defineTokenLists` to `native`.
+// Adds `TokenStore` to `native`.
 void addLintTokenFunctions(JSC::JSGlobalObject*, JSC::JSObject* native);
 
 } // namespace Bun

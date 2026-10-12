@@ -1253,24 +1253,6 @@ JSC_DEFINE_HOST_FUNCTION(jsLintComments, (JSGlobalObject * globalObject, CallFra
     return listOfProgram(globalObject, true);
 }
 
-// `defineTokenLists(program)` adds `comments` and `tokens` to the `Program`.
-JSC_DEFINE_HOST_FUNCTION(jsLintDefineTokenLists, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* program = callFrame->argument(0).getObject();
-    if (!program)
-        return throwVMTypeError(globalObject, scope, "Expected a node"_s);
-    LintHost* host = LintHost::from(globalObject);
-    for (auto& list : host->tokens.listsOfProgram) {
-        if (host->isOxlint())
-            program->putDirectNonIndexAccessor(vm, list.name, list.getter.get(), static_cast<unsigned>(PropertyAttribute::Accessor));
-        else
-            program->putDirectCustomAccessor(vm, list.name, list.customValue.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
-    }
-    return JSValue::encode(jsUndefined());
-}
-
 EncodedJSValue lintTokensAndComments(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -1582,7 +1564,6 @@ void addLintTokenFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
     native->putDirect(vm, Identifier::fromString(vm, "TokenStore"_s), LintHost::from(globalObject)->tokens.constructor.get());
-    putFunction(globalObject, native, "defineTokenLists"_s, 1, jsLintDefineTokenLists);
 }
 
 } // namespace Bun

@@ -33,7 +33,9 @@ error: The update clause in this loop moves the variable in the wrong direction.
 warn: 'tax' is never reassigned. Use 'const' instead.  prefer-const
    at src/cart.ts:7:7
 
-Linted 1 file [11.08ms]
+2 problems (1 error, 1 warning)
+1 can be fixed with --fix
+Linted 1 file [5.17ms]
 ```
 
 `bun lint` checks every `.js`, `.jsx`, `.ts`, and `.tsx` file in the current directory (plus the `.mjs`, `.cjs`, `.mts`, `.cts` variants). It skips `node_modules` and anything in your `.gitignore`.
@@ -87,8 +89,11 @@ To create the section, run `bun lint --init`.
 A typo is an error, not a silent no-op:
 
 ```txt
-error: Unknown rule "no-consle" in bunfig.toml
+2 | "no-consle" = "warn"
+    ^
+error: Unknown rule "no-consle"
   Did you mean "no-console"?
+    at bunfig.toml:2:1
 ```
 
 ### Find a rule

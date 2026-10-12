@@ -26,7 +26,7 @@ To run your tests in `--watch` mode:
 bun --watch test
 ```
 
-Bun does not pass `--watch` or `--hot` to a `package.json` script. `bun --watch run dev` runs the `"dev"` script once and does not restart it. Put the flag in the script instead:
+When `--watch` or `--hot` comes before the name of a `package.json` script, Bun does not pass the flag to the script. `bun --watch run dev` runs the `"dev"` script once and does not restart it. Put the flag in the script instead:
 
 ```json package.json icon="file-json"
 {

@@ -58,7 +58,7 @@ bun run index.tsx --watch # ❌ don't do this
 
 `bun` ignores flags at the end of the command and passes them through to `index.tsx` itself.
 
-Bun does not pass `--watch` to a `package.json` script. `bun --watch run dev` runs the `"dev"` script once and does not restart it. Put the flag in the script instead, for example `"dev": "bun --watch server.ts"`.
+When `--watch` comes before the name of a `package.json` script, Bun does not pass it to the script. `bun --watch run dev` runs the `"dev"` script once and does not restart it. Put the flag in the script instead, for example `"dev": "bun --watch server.ts"`.
 
 </Note>
 

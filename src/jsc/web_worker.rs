@@ -304,21 +304,20 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        let mut temp_log = bun_ast::Log::default();
-        // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
-        // are scoped to each statement.
-        let prev_log = unsafe {
-            let prev = (*parent).transpiler.log;
-            (*parent).transpiler.set_log(&raw mut temp_log);
-            prev
-        };
+        // SAFETY: `parent` is the calling thread's live VM (BACKREF).
+        let prev_log = unsafe { (*parent).transpiler.log };
         // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard(temp_log, move |log| {
+        let mut restore = scopeguard::guard(bun_ast::Log::default(), move |log| {
             // SAFETY: `parent` outlives the guard (this call's frame).
             unsafe { (*parent).transpiler.set_log(prev_log) };
             drop(log);
         });
         let temp_log = &mut *restore;
+        // `set_log` after the log is inside the guard: the resolver logs to
+        // this address, and a move after `set_log` would leave it on a dead slot.
+        // SAFETY: `parent` is the calling thread's live VM; the guard restores
+        // `prev_log` before the temp log drops.
+        unsafe { (*parent).transpiler.set_log(&raw mut *temp_log) };
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =

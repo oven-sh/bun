@@ -37,6 +37,8 @@ namespace WebCore {
 template<typename Visitor>
 void JSMessageChannel::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
+    wrapped().port1().visitAsyncContext(visitor);
+    wrapped().port2().visitAsyncContext(visitor);
     visitor.addOpaqueRoot(WTF::getPtr(wrapped().port1()));
     visitor.addOpaqueRoot(WTF::getPtr(wrapped().port2()));
     // addWebCoreOpaqueRoot(visitor, wrapped().port1());

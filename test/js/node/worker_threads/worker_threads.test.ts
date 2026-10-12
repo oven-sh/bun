@@ -3340,3 +3340,129 @@ test("a ShadowRealm in a worker can import node:worker_threads", async () => {
   expect(stdout).toBe("true\n");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("MessagePort events preserve creation context across GC, transfer, and close", async () => {
+  await using child = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--expose-gc",
+      "-e",
+      /* js */ `
+      import assert from 'node:assert/strict';
+      import { AsyncLocalStorage } from 'node:async_hooks';
+      import { MessageChannel, receiveMessageOnPort, Worker } from 'node:worker_threads';
+
+      const context = new AsyncLocalStorage();
+      const channels = [];
+      const extraPorts = [];
+      function channel(store) {
+        const pair = context.run(store, () => new MessageChannel());
+        channels.push(pair);
+        return pair;
+      }
+      function observe(port, event) {
+        return new Promise((resolve, reject) => {
+          port.once(event, value => resolve({ value, store: context.getStore() }));
+          if (event !== 'messageerror') port.once('messageerror', reject);
+          if (event === 'message') port.once('close', () => reject(new Error('port closed before message')));
+        });
+      }
+      try {
+        // Neither port wrapper has been accessed when GC runs.
+        for (let i = 0; i < 1000; i++) channel({ id: i });
+        globalThis.gc();
+        await Promise.all(channels.map(async (pair, id) => {
+          const message = context.run('registration', () => observe(pair.port1, 'message'));
+          context.run('sender', () => pair.port2.postMessage(id));
+          const result = await message;
+          assert.equal(result.value, id);
+          assert.equal(result.store.id, id);
+        }));
+        // Both wrappers now exist when GC runs.
+        globalThis.gc();
+        const pair = channels[0];
+        const message = observe(pair.port1, 'message');
+        pair.port2.postMessage('again');
+        assert.equal((await message).store.id, 0);
+        context.run('manual', () => {
+          let calls = 0;
+          pair.port1.once('message', () => {
+            assert.equal(context.getStore(), 'manual');
+            calls++;
+          });
+          pair.port1.dispatchEvent(new MessageEvent('message', { data: 'manual' }));
+          assert.equal(calls, 1);
+        });
+        pair.port2.ref();
+        const localClose = observe(pair.port1, 'close');
+        const peerClose = observe(pair.port2, 'close');
+        context.run('closer', () => pair.port1.close());
+        assert.equal((await localClose).store.id, 0);
+        assert.equal((await peerClose).store.id, 0);
+
+        const outside = channel(undefined);
+        const outsideMessage = context.run('registration', () => observe(outside.port1, 'message'));
+        context.run('sender', () => outside.port2.postMessage('outside'));
+        assert.equal((await outsideMessage).store, undefined);
+
+        const carrier = channel('carrier');
+        const payload = channel('payload');
+        const arrival = observe(carrier.port1, 'message');
+        context.run('sender', () => carrier.port2.postMessage(payload.port1, [payload.port1]));
+        const received = await arrival;
+        assert.equal(received.store, 'carrier');
+        const transferred = received.value;
+        extraPorts.push(transferred);
+        const transferredMessage = observe(transferred, 'message');
+        payload.port2.postMessage('transferred');
+        assert.equal((await transferredMessage).store, undefined);
+        const transferredClose = observe(transferred, 'close');
+        context.run('closer', () => transferred.close());
+        assert.equal((await transferredClose).store, undefined);
+
+        const syncPayload = channel('sync-payload');
+        carrier.port2.postMessage(syncPayload.port1, [syncPayload.port1]);
+        const syncPort = context.run('sync-receiver', () => receiveMessageOnPort(carrier.port1).message);
+        extraPorts.push(syncPort);
+        const syncMessage = observe(syncPort, 'message');
+        syncPayload.port2.postMessage('sync');
+        assert.equal((await syncMessage).store, 'sync-receiver');
+        const syncClose = observe(syncPort, 'close');
+        syncPort.close();
+        assert.equal((await syncClose).store, 'sync-receiver');
+
+        const workerPair = channel('worker-pair');
+        const worker = new Worker(\`
+          const { parentPort } = require('node:worker_threads');
+          parentPort.once('message', port => { port.postMessage('worker'); port.close(); });
+        \`, { eval: true });
+        try {
+          const workerMessage = observe(workerPair.port1, 'message');
+          const workerError = new Promise((_, reject) => {
+            worker.once('error', reject);
+            worker.once('exit', code => reject(new Error('worker exited before reply: ' + code)));
+          });
+          worker.postMessage(workerPair.port2, [workerPair.port2]);
+          assert.deepEqual(await Promise.race([workerMessage, workerError]), { value: 'worker', store: 'worker-pair' });
+        } finally {
+          await worker.terminate();
+        }
+        assert.equal(context.getStore(), undefined);
+        console.log('MessagePort creation context passed');
+      } finally {
+        for (const { port1, port2 } of channels) { port1.close(); port2.close(); }
+        for (const port of extraPorts) port.close();
+      }
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "MessagePort creation context passed\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

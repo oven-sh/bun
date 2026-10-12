@@ -1683,11 +1683,22 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             }
         }
     }
+    // `bun why` and other commands that only read a lockfile load it apart from
+    // the manager's, and the manifests are fetched for the manager's.
+    let reads_only = !core::ptr::eq(&raw const *this, &raw const *manager.lockfile);
     for (pid, res) in this.packages.items_resolution().iter().enumerate() {
         if reachable[pid]
             && res.tag == crate::resolution::Tag::Npm
             && !this.packages.items_meta()[pid].integrity.tag.is_supported()
         {
+            if reads_only {
+                return Err(invalid_lockfile(
+                    log,
+                    format_args!(
+                        "yarn.lock is migrated with package integrity from the registry, which this command does not fetch; run `bun install` first"
+                    ),
+                ));
+            }
             return Err(invalid_lockfile(
                 log,
                 format_args!(
@@ -1760,30 +1771,17 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         return Err(invalid_lockfile(
             log,
             format_args!(
-                "migrating yarn.lock has to edit package.json ({}), and this command does not write package.json",
+                "migrating yarn.lock has to edit package.json ({}), and this command does not write package.json; run `bun install` first",
                 edited[0].1.join(", "),
             ),
         ));
     }
     for (target, changed) in edited {
-        if !silent {
-            let dirname =
-                bun_paths::dirname(&target.package_json_path).unwrap_or(&target.package_json_path);
-            let rel = strings::without_prefix(
-                dirname,
-                strings::without_trailing_slash(
-                    crate::bun_fs::FileSystem::instance().top_level_dir(),
-                ),
-            );
-            let rel = strings::trim_prefix(rel, b"/");
-            bun_core::pretty_errorln!(
-                "<d>{} in <r><green>{}{}package.json<r>",
-                changed.join(", "),
-                bstr::BStr::new(rel),
-                if rel.is_empty() { "" } else { "/" },
-            );
-        }
-        package_json_write_back::record(manager, target, false);
+        package_json_write_back::record_migration_edits(
+            manager,
+            target,
+            changed.join(", ").into_bytes().into_boxed_slice(),
+        );
     }
 
     Ok(LoadResult::Ok(LoadResultOk {

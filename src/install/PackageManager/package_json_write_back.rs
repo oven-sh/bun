@@ -27,19 +27,33 @@ pub(crate) struct EditedPackageJson {
     pub(crate) target: WorkspaceTarget,
     /// The command's positionals were applied to this file's dependency lists.
     pub(crate) received_requests: bool,
+    /// What a lockfile migration changed in this file, said once it is on disk.
+    pub(crate) migration_edits: Option<Box<[u8]>>,
 }
 
-fn push(edited: &mut Vec<EditedPackageJson>, target: WorkspaceTarget, received_requests: bool) {
-    match edited
-        .iter_mut()
-        .find(|e| e.target.name_hash == target.name_hash)
+fn push(
+    edited: &mut Vec<EditedPackageJson>,
+    target: WorkspaceTarget,
+    received_requests: bool,
+) -> &mut EditedPackageJson {
+    let at = match edited
+        .iter()
+        .position(|e| e.target.name_hash == target.name_hash)
     {
-        Some(existing) => existing.received_requests |= received_requests,
-        None => edited.push(EditedPackageJson {
-            target,
-            received_requests,
-        }),
-    }
+        Some(at) => {
+            edited[at].received_requests |= received_requests;
+            at
+        }
+        None => {
+            edited.push(EditedPackageJson {
+                target,
+                received_requests,
+                migration_edits: None,
+            });
+            edited.len() - 1
+        }
+    };
+    &mut edited[at]
 }
 
 pub(crate) fn record(
@@ -48,6 +62,16 @@ pub(crate) fn record(
     received_requests: bool,
 ) {
     push(&mut manager.edited_package_jsons, target, received_requests);
+}
+
+/// A package.json a lockfile migration edited in the cache. A command that does
+/// not save never writes it, so what changed is reported by `flush`.
+pub(crate) fn record_migration_edits(
+    manager: &mut PackageManager,
+    target: WorkspaceTarget,
+    edits: Box<[u8]>,
+) {
+    push(&mut manager.edited_package_jsons, target, false).migration_edits = Some(edits);
 }
 
 fn root_target() -> WorkspaceTarget {
@@ -403,10 +427,22 @@ pub fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
             PackageJSONEditor::edit_trusted_dependencies(&mut root, &mut trusted)?;
             print_package_json_into_cache_entry(entry, root);
         }
-        if unchanged_on_disk(manager, &e.target) {
-            continue;
+        let written = unchanged_on_disk(manager, &e.target) || write_target(manager, &e.target);
+        any_failed |= !written;
+        if let (true, Some(edits), false) = (
+            written,
+            &e.migration_edits,
+            manager.options.log_level.is_silent(),
+        ) {
+            let top_level_dir =
+                strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+            let path = strings::without_prefix(&e.target.package_json_path, top_level_dir);
+            bun_core::pretty_errorln!(
+                "<d>{} in <r><green>{}<r>",
+                bstr::BStr::new(edits),
+                bstr::BStr::new(strings::trim_prefix(path, b"/")),
+            );
         }
-        any_failed |= !write_target(manager, &e.target);
     }
     if any_failed {
         Global::exit(1);

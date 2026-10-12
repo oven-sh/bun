@@ -284,13 +284,42 @@ describe("yarn berry migration", () => {
     expect(dry.stderr).toContain(
       "error: migrating yarn.lock has to edit package.json (rewrote patch:/portal:/link: ranges, added patchedDependencies), and this command does not write package.json",
     );
+    expect(dry.stderr).toContain("run `bun install` first");
     expect(await Bun.file(join(dryDir, "package.json")).text()).toBe(before);
     expect(existsSync(join(dryDir, "bun.lock"))).toBeFalse();
+
+    // and neither do --no-save or `bun outdated`
+    for (const args of [["install", "--no-save"], ["outdated"]]) {
+      const dir = await fixture("patch");
+      const result = await run(dir, ...args);
+      expect(result.stderr).toContain("and this command does not write package.json; run `bun install` first");
+      expect(await Bun.file(join(dir, "package.json")).text()).toBe(before);
+      expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
+    }
+
+    // a command that only reads migrates in memory: nothing is written, and nothing says it was
+    const lsDir = await fixture("patch");
+    const ls = await run(lsDir, "pm", "ls");
+    expect(ls.stdout).toContain("no-deps@1.0.0");
+    expect(ls.stderr).not.toContain("in package.json");
+    expect(await Bun.file(join(lsDir, "package.json")).text()).toBe(before);
+    expect(existsSync(join(lsDir, "bun.lock"))).toBeFalse();
+    expect(ls.exitCode).toBe(0);
+
+    // `bun why` reads a lockfile without the registry, where the integrity comes from
+    const whyDir = await fixture("basic");
+    const why = await run(whyDir, "why", "no-deps");
+    expect(why.stderr).toContain(
+      "error: yarn.lock is migrated with package integrity from the registry, which this command does not fetch; run `bun install` first",
+    );
+    expect(existsSync(join(whyDir, "bun.lock"))).toBeFalse();
+    expect(why.exitCode).toBe(1);
 
     // --lockfile-only saves bun.lock, so it writes package.json too
     const lockOnlyDir = await fixture("patch");
     const lockOnly = await run(lockOnlyDir, "install", "--lockfile-only");
     expect(lockOnly.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(lockOnly.stderr).toContain("rewrote patch:/portal:/link: ranges, added patchedDependencies in package.json");
     expect(lockOnly.stderr).not.toContain("error:");
     expect((await Bun.file(join(lockOnlyDir, "package.json")).json()).dependencies["no-deps"]).toBe("1.0.0");
     expect(lockOnly.exitCode).toBe(0);
@@ -1436,6 +1465,87 @@ catalogs:
       "what-bin@1.0.0",
     ]);
     expect(url.exitCode).toBe(0);
+  });
+
+  test.concurrent("bun update <name> as the first command updates that package only", async () => {
+    const dir = await fixture("basic");
+
+    const { stderr, exitCode } = await run(dir, "update", "no-deps");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    // no-deps@^1.0.0 moves from 1.0.0 to the newest 1.x; the others keep yarn.lock's versions
+    expect(lockedVersions(await bunLockOf(dir))).toEqual([
+      "@types/is-number@1.0.0",
+      "a-dep@1.0.3",
+      "no-deps@1.1.0",
+      "one-range-dep@1.0.0",
+      "peer-deps-fixed@1.0.0",
+      "what-bin@1.0.0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bun patch --commit that has to migrate keeps the migration's package.json edits", async () => {
+    const packageJson = JSON.stringify({
+      name: "berry-patch-commit",
+      dependencies: { "no-deps": "^1.0.0", "local-portal": "portal:./local-portal" },
+    });
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": packageJson,
+        "local-portal/package.json": JSON.stringify({ name: "local-portal", version: "1.0.0" }),
+        "yarn.lock": yarnLock({
+          "berry-patch-commit@workspace:.": [
+            `resolution: "berry-patch-commit@workspace:."`,
+            `dependencies:`,
+            `  local-portal: "portal:./local-portal"`,
+            `  no-deps: "npm:^1.0.0"`,
+          ],
+          "local-portal@portal:./local-portal::locator=berry-patch-commit%40workspace%3A.": [
+            `resolution: "local-portal@portal:./local-portal::locator=berry-patch-commit%40workspace%3A."`,
+          ],
+          "no-deps@npm:^1.0.0": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+        }),
+      },
+    });
+
+    expect((await run(dir, "install")).exitCode).toBe(0);
+    expect((await run(dir, "patch", "no-deps")).exitCode).toBe(0);
+    await Bun.write(join(dir, "node_modules", "no-deps", "patched.txt"), "patched\n");
+    // back to the yarn project: the commit is the command that migrates
+    await Bun.write(join(dir, "package.json"), packageJson);
+    await rm(join(dir, "bun.lock"));
+
+    const { stderr, exitCode } = await run(dir, "patch", "--commit", "node_modules/no-deps");
+    expect(stderr).not.toContain("error:");
+    expect(await Bun.file(join(dir, "package.json")).json()).toEqual({
+      name: "berry-patch-commit",
+      dependencies: { "no-deps": "^1.0.0", "local-portal": "file:./local-portal" },
+      patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+    });
+    expect(await Bun.file(join(dir, "patches", "no-deps@1.0.0.patch")).text()).toContain("+patched");
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
+  });
+
+  test.concurrent("YARN_RC_FILENAME names the rc file", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        ...cleanProject(),
+        ".yarnrc.custom.yml": `npmRegistryServer: "http://127.0.0.1:${verdaccio.port}/"\n`,
+      },
+    });
+
+    const custom = await runWithEnv(dir, { YARN_RC_FILENAME: ".yarnrc.custom.yml" }, "pm", "migrate");
+    expect(custom.stderr).toContain(`error: yarn fetches "no-deps" from http://127.0.0.1:${verdaccio.port}/`);
+    expect(custom.exitCode).toBe(1);
+
+    // without it yarn reads .yarnrc.yml, and there is none
+    const standard = await run(dir, "pm", "migrate");
+    expect(standard.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(standard.exitCode).toBe(0);
   });
 
   test.concurrent("a file: folder two workspaces declare has one path, as in a fresh resolve", async () => {

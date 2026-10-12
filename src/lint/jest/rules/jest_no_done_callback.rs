@@ -1,4 +1,4 @@
-use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner};
+use crate::jest::{self, Arguments, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner};
 use bun_lint::prelude::*;
 
 /// This rule checks the function parameter of hooks & tests for use of the done argument, suggesting you return a promise
@@ -37,19 +37,20 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         return;
     }
     let is_jest_each = jest::get_node_name_vec(call_expr.callee()).last().is_some_and(|it| it.ends_with(b"each"));
-    let callback_index = match jest_fn_call.kind {
+    let arguments = call_expr.args();
+    let callback = match jest_fn_call.kind {
         // Of `.each` only the one with a template is looked at: its callback gets one object before `done`.
         JestFnKind::General(JestGeneralFnKind::Test | JestGeneralFnKind::Hook) if is_jest_each => {
             if call_expr.callee().tag() != ExprTag::TaggedTemplate {
                 return;
             }
-            1
+            arguments.get(1)
         }
-        JestFnKind::General(JestGeneralFnKind::Hook) => 0,
-        JestFnKind::General(JestGeneralFnKind::Test) => 1,
+        JestFnKind::General(JestGeneralFnKind::Hook) => arguments.first(),
+        JestFnKind::General(JestGeneralFnKind::Test) => Arguments::of(arguments, ctx.runner).callback,
         _ => return,
     };
-    if let Some(arg) = call_expr.args().get(callback_index).filter(|it| !it.is_parenthesized())
+    if let Some(arg) = callback.filter(|it| !it.is_parenthesized())
         && let Some(func) = arg.as_fn()
         && func.params().len() == 1 + usize::from(is_jest_each)
         && let Some(first_parameter) = func.params().first()

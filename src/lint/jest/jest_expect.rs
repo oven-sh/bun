@@ -2,7 +2,7 @@
 //! `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
-    AstKind, Ctx, EnclosingFunctions, ExpectError, JestFnKind, JestGeneralFnKind,
+    Arguments, AstKind, Ctx, EnclosingFunctions, ExpectError, JestFnKind, JestGeneralFnKind,
     KnownMemberExpressionParentKind, PossibleJestNode, Runner, Scopes, convert_pattern,
     enclosing_function, get_first_node_name, get_node_name, get_node_name_vec,
     is_type_of_jest_fn_call, is_vitest, is_vitest_import_source, iter_possible_jest_call_node,
@@ -360,7 +360,7 @@ pub(crate) mod valid_expect_in_promise {
         let Some(callback) = possible_jest_node
             .node
             .as_call()
-            .and_then(|it| it.args().get(1))
+            .and_then(|it| Arguments::of(it.args(), ctx.runner).callback)
         else {
             return;
         };

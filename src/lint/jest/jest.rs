@@ -1289,6 +1289,29 @@ fn is_valid_bun_call(name: &[u8], members: &[KnownMemberExpressionProperty]) -> 
     }
 }
 
+/// The callback and the options among the arguments of `test(..)`, `describe(..)` and their like.
+#[derive(Copy, Clone)]
+pub(crate) struct Arguments<'a> {
+    pub(crate) callback: Option<Expr<'a>>,
+    pub(crate) options: Option<Expr<'a>>,
+}
+
+impl<'a> Arguments<'a> {
+    /// For Jest and Vitest the callback is the second, as the rules of oxlint take it. `bun test` goes by which is a function:
+    /// `(title, callback, options)`, `(title, options, callback)`, `(callback, options)`, `(title, callback)`, `(title)`, `(callback)`.
+    pub(crate) fn of(arguments: List<'a, Expr<'a>>, runner: Runner) -> Self {
+        let is_function = |it: Option<Expr>| it.is_some_and(|it| it.tag() == ExprTag::Fn);
+        let [a, b, c] = [arguments.first(), arguments.get(1), arguments.get(2)];
+        let (callback, options) = match runner {
+            Runner::Jest | Runner::Vitest => (b, None),
+            Runner::Bun if is_function(c) && !is_function(b) => (c, b),
+            Runner::Bun if is_function(a) && !is_function(b) => (a, b),
+            Runner::Bun => (b, c),
+        };
+        Arguments { callback, options }
+    }
+}
+
 pub(crate) fn is_type_of_jest_fn_call<'a>(
     file: &'a File<'a>,
     possible_jest_node: PossibleJestNode<'a>,

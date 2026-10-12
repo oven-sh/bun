@@ -2,7 +2,7 @@
 //! module is a file of oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
-    Ctx, JestFnKind, JestGeneralFnKind, MemberExpressionElement, OxlintOrder,
+    Arguments, Ctx, JestFnKind, JestGeneralFnKind, MemberExpressionElement, OxlintOrder,
     ParsedGeneralJestFnCall, PossibleJestNode, Runner, Scopes, for_each_call_named_like,
     is_in_call_or_member, is_type_of_jest_fn_call, is_vitest, iter_possible_jest_call_node,
     iter_possible_jest_call_node_with_scope, mentions_jest_method, parent_expression,
@@ -99,8 +99,11 @@ pub(crate) mod no_disabled_tests {
         let JestFnKind::General(kind) = kind else {
             return;
         };
+        // With Bun a function is enough, and what a name stands for is not known.
+        let is_title = |it: Expr| matches!(it.tag(), ExprTag::String | ExprTag::Template);
         if kind == JestGeneralFnKind::Test
             && call_expr.args().len() < 2
+            && (ctx.runner != Runner::Bun || call_expr.args().first().is_none_or(is_title))
             && members
                 .iter()
                 .all(|member| member.is_name_unequal("todo") && member.is_name_unequal("todoIf"))
@@ -139,7 +142,8 @@ pub(crate) mod valid_describe_callback {
     const UNEXPECTED_RETURN_IN_DESCRIBE: Message =
         Message::new("", "Unexpected return statement in describe callback");
 
-    /// For Vitest and Bun the callback can be `async`. For Vitest there can be options before it. For Bun it can be all there is.
+    /// For Vitest and Bun the callback can be `async`, and there can be options before it. Bun waits for what it returns, takes
+    /// options after it too, and needs no title.
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let (is_for_vitest, is_for_bun) = (ctx.runner == Runner::Vitest, ctx.runner == Runner::Bun);
         let node = possible_jest_node.node;
@@ -164,11 +168,17 @@ pub(crate) mod valid_describe_callback {
             return;
         }
         let as_function = |arg: Expr<'a>| arg.as_fn().filter(|_| !arg.is_parenthesized());
-        let Some(second) = (arguments.get(1)).or_else(|| {
-            arguments
-                .first()
-                .filter(|it| is_for_bun && as_function(*it).is_some())
-        }) else {
+        let Some(second) = Arguments::of(arguments, ctx.runner).callback else {
+            // `describe(callback)`
+            let is_title = |it: Expr| {
+                matches!(
+                    it.tag(),
+                    ExprTag::String | ExprTag::Template | ExprTag::Number
+                )
+            };
+            if is_for_bun && !arguments.first().is_none_or(is_title) {
+                return;
+            }
             ctx.report(
                 arguments
                     .first()
@@ -188,7 +198,23 @@ pub(crate) mod valid_describe_callback {
             _ => second,
         };
         let Some(func) = as_function(callback) else {
-            ctx.report(callback.outer_span(), SECOND_ARGUMENT_MUST_BE_FUNCTION);
+            // What a name stands for is not known.
+            let is_no_function = matches!(
+                callback.tag(),
+                ExprTag::String
+                    | ExprTag::Template
+                    | ExprTag::Number
+                    | ExprTag::BigInt
+                    | ExprTag::True
+                    | ExprTag::False
+                    | ExprTag::Null
+                    | ExprTag::Regex
+                    | ExprTag::Object
+                    | ExprTag::Array
+            );
+            if !is_for_bun || is_no_function {
+                ctx.report(callback.outer_span(), SECOND_ARGUMENT_MUST_BE_FUNCTION);
+            }
             return;
         };
         if func.is_async() && !is_for_vitest && !is_for_bun {
@@ -200,6 +226,9 @@ pub(crate) mod valid_describe_callback {
             .any(|member| member.is_name_equal("each") || member.is_name_equal("for"));
         if !is_parameterized && !func.params().is_empty() {
             ctx.report(callback, UNEXPECTED_DESCRIBE_ARGUMENT);
+        }
+        if is_for_bun {
+            return;
         }
         match func.body() {
             FnBody::Expr(body)
@@ -353,6 +382,8 @@ pub(crate) mod valid_title {
                 .first()
                 .is_some_and(|member| member.is_name_equal("extend"))
                 || self.allow_arguments && arg.tag() == ExprTag::Ident && !arg.is_parenthesized()
+                // `test(() => {})`
+                || ctx.runner == Runner::Bun && arg.tag() == ExprTag::Fn
             {
                 return;
             }
@@ -1300,6 +1331,10 @@ pub(crate) mod prefer_todo {
         };
         if is_renamed && arguments.len() != 1 {
             report = report.help("Replace with `test.todo` or `it.todo`.");
+        }
+        // Neither `test.if(a)(..)` nor the options are taken away.
+        if ctx.runner == Runner::Bun && (!is_renamed || arguments.len() > 2) {
+            return;
         }
         report.fix(|fixer| {
             let fix = match callee.kind() {

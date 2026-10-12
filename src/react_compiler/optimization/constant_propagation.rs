@@ -28,8 +28,8 @@ use crate::collections::IdMap;
 use crate::diagnostics::JsString;
 use crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist;
 use crate::hir::cfg_utils::{
-    get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
-    remove_dead_do_while_statements, remove_unnecessary_try_catch, remove_unreachable_for_updates,
+    mark_instruction_ids, mark_predecessors, remove_dead_do_while_statements,
+    remove_unnecessary_try_catch, remove_unreachable_for_updates, reverse_postorder_blocks,
 };
 use crate::hir::environment::Environment;
 use crate::hir::{
@@ -99,9 +99,8 @@ fn constant_propagation_impl(
          * If terminals have changed then blocks may have become newly unreachable.
          * Re-run minification of the graph (incl reordering instruction ids)
          */
-        match get_reverse_postordered_blocks(&func.body, &func.instructions) {
-            Ok(blocks) => func.body.blocks = blocks,
-            Err(invariant) => return env.record_diagnostic(invariant),
+        if let Err(invariant) = reverse_postorder_blocks(&mut func.body) {
+            return env.record_diagnostic(invariant);
         }
         remove_unreachable_for_updates(&mut func.body);
         remove_dead_do_while_statements(&mut func.body);

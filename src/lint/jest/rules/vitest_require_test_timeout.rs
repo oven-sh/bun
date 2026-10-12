@@ -1,5 +1,5 @@
 use bun_lint_oxlint::ast_util::as_object_expression;
-use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, Runner};
+use crate::jest::{self, Arguments, Ctx, JestFnKind, JestGeneralFnKind, Runner};
 use bun_lint::prelude::*;
 
 /// Requires every test to have a timeout specified, either as a numeric third argument, a `{ timeout }` option, or via
@@ -81,14 +81,19 @@ fn run_once(ctx: &Ctx) {
                 {
                     continue;
                 }
-                // The options are the second argument, or the timeout is the third. With Bun the options can be the third too.
-                let options = |at: usize| arguments.get(at).and_then(|it| Some((it, as_object_expression(it)?)));
-                if let Some((options, test_config)) = options(1).or_else(|| options(2).filter(|_| is_bun)) {
+                // The options are the second argument, or the timeout is the third. With Bun either is what is no function.
+                let [options, timeout] = match is_bun {
+                    true => [Arguments::of(arguments, ctx.runner).options; 2],
+                    false => [arguments.get(1), arguments.get(2)],
+                };
+                if let Some(options) = options
+                    && let Some(test_config) = as_object_expression(options)
+                {
                     match value_of(test_config, "timeout") {
                         Some(value) => parse_timeout_value(value, ctx),
                         None => drop(ctx.report(options, TEST_OPTIONS_MISSING_TIMEOUT_PROPERTY)),
                     }
-                } else if let Some(last_argument) = arguments.get(2) {
+                } else if let Some(last_argument) = timeout {
                     if last_argument.tag() != ExprTag::Spread {
                         parse_timeout_value(last_argument, ctx);
                     }

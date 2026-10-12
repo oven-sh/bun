@@ -1167,6 +1167,12 @@
   "a.ts:4:25+1 eslint(no-shadow)",
   "a.ts:8:20+1 eslint(no-shadow)"
  ],
+ "no-useless-assignment/what-one-declarator-declares": [
+  "a.cjs:19:20+1 eslint(no-useless-assignment)",
+  "a.cjs:20:33+1 eslint(no-useless-assignment)",
+  "a.cjs:21:37+1 eslint(no-useless-assignment)",
+  "a.cjs:22:46+1 eslint(no-useless-assignment)"
+ ],
  "no-useless-assignment/finally": [
   "a.js:4:27+1 eslint(no-useless-assignment)",
   "a.js:6:27+1 eslint(no-useless-assignment)",

@@ -15,8 +15,8 @@ use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist;
 use crate::hir::cfg_utils::{
-    get_reverse_postordered_blocks, mark_instruction_ids, remove_dead_do_while_statements,
-    remove_unnecessary_try_catch, remove_unreachable_for_updates,
+    mark_instruction_ids, remove_dead_do_while_statements, remove_unnecessary_try_catch,
+    remove_unreachable_for_updates, reverse_postorder_blocks,
 };
 use crate::hir::{
     ArrayElement, BlockId, HirFunction, InstructionKind, InstructionValue, ObjectPropertyKey,
@@ -34,7 +34,7 @@ pub(crate) fn prune_maybe_throws(
     if let Some(terminal_mapping) = terminal_mapping {
         // If terminals have changed then blocks may have become newly unreachable.
         // Re-run minification of the graph (incl reordering instruction ids).
-        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions)?;
+        reverse_postorder_blocks(&mut func.body)?;
         remove_unreachable_for_updates(&mut func.body);
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);

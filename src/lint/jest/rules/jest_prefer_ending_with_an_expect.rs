@@ -1,4 +1,4 @@
-use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner};
+use crate::jest::{self, Arguments, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner};
 use bun_core::strings;
 use bun_lint::prelude::*;
 
@@ -44,7 +44,7 @@ impl Config {
         let Some(call_expr) = possible_jest_node.node.as_call() else {
             return;
         };
-        let Some(func) = call_expr.args().get(1).and_then(|it| it.as_fn().filter(|func| !it.is_parenthesized() && func.has_body()))
+        let Some(func) = Arguments::of(call_expr.args(), ctx.runner).callback.and_then(|it| it.as_fn().filter(|func| !it.is_parenthesized() && func.has_body()))
         else {
             return;
         };

@@ -996,7 +996,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         let items = self.s.ids.get(base..).unwrap_or_default();
         let len = items.len() as u32;
         match *items {
-            [only] => self.f.ids.push(only),
+            [only] if self.f.ids.len() < self.f.ids.capacity() => self.f.ids.push(only),
             _ => self.f.ids.extend_from_slice(items),
         }
         self.s.ids.truncate(base);
@@ -1064,8 +1064,9 @@ macro_rules! take_span {
         let start = $p.f.$field.len() as u32;
         let items = $p.s.$field.get(base..).unwrap_or_default();
         let len = items.len() as u32;
+        // A push that may grow the list keeps `only` in the frame of a recursive function.
         match *items {
-            [only] => $p.f.$field.push(only),
+            [only] if $p.f.$field.len() < $p.f.$field.capacity() => $p.f.$field.push(only),
             _ => $p.f.$field.extend_from_slice(items),
         }
         $p.s.$field.truncate(base);

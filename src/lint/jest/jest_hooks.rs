@@ -2,7 +2,7 @@
 //! `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
-    Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner, Scopes,
+    Arguments, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner, Scopes,
     first_identifier_of_chain, for_each_call_named_like, get_node_name_vec,
     is_type_of_jest_fn_call, iter_possible_jest_call_node, mention_bits, mentions_any,
     parse_general_jest_fn_call,
@@ -214,7 +214,8 @@ pub(crate) mod require_hook {
             let file = ctx.file;
             self.check_block_body(file.body(), ctx);
             for_each_call_named_like(file, &[JestGeneralFnKind::Describe], &mut |node| {
-                if let Some(callback) = node.as_call().and_then(|it| it.args().get(1))
+                if let Some(callback) =
+                    (node.as_call()).and_then(|it| Arguments::of(it.args(), ctx.runner).callback)
                     && !callback.is_parenthesized()
                     && let Some(statements) = callback.as_fn().and_then(Func::body_statements)
                     && is_type_of_jest_fn_call(

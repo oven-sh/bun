@@ -1605,7 +1605,14 @@ const testRules: Record<string, Case[]> = {
     `«test("a")»;`,
     `«test.failing("a")»;`,
     `«test.skipIf(a)("b")»;`,
+    `«test()»;`,
 
+    // A test needs no title.
+    `test(() => {});`,
+    `test(async () => {});`,
+    `test(function () {});`,
+    `test(() => {}, 1000);`,
+    `test(callback);`,
     // What depends on a condition is not disabled.
     `test.skipIf(a)("b", () => {});`,
     `test.if(a)("b", () => {});`,
@@ -1631,14 +1638,22 @@ const testRules: Record<string, Case[]> = {
     `describe(«"a"»);`,
     `«describe()»;`,
     `describe("a", «"b"»);`,
+    `describe("a", «{}»);`,
     `describe("a", «b => {}»);`,
-    `describe("a", () => {\n  «return 1;»\n});`,
-    // Only Vitest has options.
-    `describe("a", «{}», () => {});`,
+    `describe("a", {}, «b => {}»);`,
+    `describe(«b => {}»);`,
 
     `describe("a", () => {});`,
     `describe("a", async () => {});`,
+    `describe("a", () => {\n  return 1;\n});`,
+    `describe("a", () => tests());`,
+    `describe("a", callback);`,
+    `describe(callback);`,
     `describe(() => {});`,
+    `describe(() => {}, 1000);`,
+    `describe("a", () => {}, 1000);`,
+    `describe("a", () => {}, { timeout: 1000 });`,
+    `describe("a", { timeout: 1000 }, () => {});`,
     `describe.todo("a");`,
     `describe.skip("a");`,
     `describe.each([1])("a", b => {});`,
@@ -1682,6 +1697,8 @@ const testRules: Record<string, Case[]> = {
     { code: `describe(«add», () => {});`, options: [{ ignoreTypeOfDescribeName: false }] },
 
     `test("a", () => {});`,
+    `test(() => {});`,
+    `describe(() => {});`,
     `describe(add, () => {});`,
     `describe(Adder, () => {});`,
     `describe(1, () => {});`,
@@ -1699,6 +1716,38 @@ const testRules: Record<string, Case[]> = {
     `test("a", () => {\n  expectTypeOf(1).toBeNumber();\n});`,
     `test.skip("a", () => {});`,
     `test.todo("a", () => {});`,
+  ].map(inBunTest),
+
+  "no-done-callback": [
+    `test("a", «done» => {});`,
+    `test(«done» => {});`,
+    `test("a", «done» => {}, 1000);`,
+    `test("a", { retry: 1 }, «done» => {});`,
+    `test("a", () => {});`,
+  ].map(inBunTest),
+
+  "valid-expect-in-promise": [
+    `test("a", () => {\n  «b.then(c => {\n    expect(c).toBe(1);\n  });»\n});`,
+    `test(() => {\n  «b.then(c => {\n    expect(c).toBe(1);\n  });»\n});`,
+    `test("a", { retry: 1 }, () => {\n  «b.then(c => {\n    expect(c).toBe(1);\n  });»\n});`,
+    `test(async () => {\n  await b.then(c => {\n    expect(c).toBe(1);\n  });\n});`,
+  ].map(inBunTest),
+
+  "prefer-ending-with-an-expect": [
+    `«test»(() => {\n  expect(1).toBe(1);\n  a();\n});`,
+    `«test»("a", { retry: 1 }, () => {\n  expect(1).toBe(1);\n  a();\n});`,
+    `test(() => {\n  a();\n  expect(1).toBe(1);\n});`,
+  ].map(inBunTest),
+
+  "prefer-todo": [
+    { code: `«test»("a");`, output: `test.todo("a");` },
+    { code: `«test»("a", () => {});`, output: `test.todo("a");` },
+    // No fix takes away the options, or the whole test.
+    `«test»("a", () => {}, 1000);`,
+    `«test.if(a)»("b", () => {});`,
+    `«test.each([1])»("a", () => {});`,
+    `test(() => {});`,
+    `test("a", { retry: 1 }, () => {});`,
   ].map(inBunTest),
 
   "no-identical-title": [
@@ -1788,6 +1837,8 @@ const testRules: Record<string, Case[]> = {
   "require-hook": [
     `«setup()»;`,
     `describe("a", () => {\n  «setup()»;\n});`,
+    `describe(() => {\n  «setup()»;\n});`,
+    `describe("a", { timeout: 1000 }, () => {\n  «setup()»;\n});`,
 
     `setDefaultTimeout(1000);`,
     `mock.module("a", () => ({}));`,
@@ -1804,6 +1855,8 @@ const testRules: Record<string, Case[]> = {
 
   "require-test-timeout": [
     `«test("a", () => {})»;`,
+    `«test(() => {})»;`,
+    `test(() => {}, «{ retry: 1 }»);`,
     `test("a", () => {}, «{ retry: 1 }»);`,
     `test("a", «{ retry: 1 }», () => {});`,
     `test("a", () => {}, «-1»);`,
@@ -1814,6 +1867,8 @@ const testRules: Record<string, Case[]> = {
     `vi.setConfig({ testTimeout: 1000 });\n«test("a", () => {})»;`,
 
     `test("a", () => {}, 1000);`,
+    `test(() => {}, 1000);`,
+    `test(() => {}, { timeout: 1000 });`,
     `test("a", () => {}, { timeout: 1000 });`,
     `test("a", { timeout: 1000 }, () => {});`,
     `setDefaultTimeout(1000);\ntest("a", () => {});`,

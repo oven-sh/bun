@@ -45,6 +45,10 @@ pub struct State<'a> {
     roots: FxHashSet<Node<'a>>,
     /// The variables of which they do not tell. Nothing is reported about the others.
     unknown: FxHashSet<Binding<'a>>,
+    /// In a debug build: what all code paths with a variable that is looked at start with, and whether one is analyzed only to
+    /// see that nothing is reported in it.
+    all_roots: FxHashSet<Node<'a>>,
+    is_only_checked: bool,
     stack: Vec<ScopeStack<'a>>,
     /// Only the reachable ones.
     current_segments: CurrentSegments<'a>,
@@ -104,6 +108,13 @@ fn is_in_decorator_of_parameter<'a>(reference: Reference<'a>, scope: Scope<'a>) 
             reference.node().ancestors().find(|it| !is_part_of_expression(it)),
             Some(Node::Param(param)) if param.func().and_then(Func::scope) != Some(scope)
         )
+}
+
+/// oxlint 1.87 says nothing about what is not declared by exactly one `var`, `let`, `const` or `using`: a parameter, also that of
+/// a `catch`, a function, a class, the `arguments` of a function, `var a; var a;`.
+fn oxlint_passes_over(variable: Symbol) -> bool {
+    variable.file().language().is_oxlint
+        && (variable.declaration_count() != 1 || variable.declaration_kinds() != DeclarationKinds::VARIABLE)
 }
 
 /// Whether a variable of the scope of a module is exported, other than by `export default`.
@@ -1307,12 +1318,11 @@ fn end_of_block_around(blocks: &[Span], identifier: Span) -> Option<u32> {
 
 impl NoUselessAssignment {
     fn check_variable<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        if !variable.has_writes() || !variable.has_reads() {
+        if !variable.has_writes() || !variable.has_reads() || oxlint_passes_over(variable) {
             return;
         }
-        // To see that nothing is reported about a variable that is passed over.
         if cfg!(debug_assertions) {
-            cx.state.roots.extend(code_path_root(variable.scope()));
+            cx.state.all_roots.extend(code_path_root(variable.scope()));
         }
         // Nearly all are a name with an initializer that nothing else assigns to.
         if !variable.has_modifying_references()
@@ -1494,7 +1504,7 @@ impl NoUselessAssignment {
                 {
                     // Only a debug build gets here with a variable that was passed over. Types are not walked: of a name in
                     // one it is not known in which segment it is.
-                    if !cx.state.unknown.contains(&variable) {
+                    if cx.state.is_only_checked || !cx.state.unknown.contains(&variable) {
                         debug_assert!(variable.references().any(|it| is_type_only_reference(variable.symbol, it)));
                         continue 'variables;
                     }
@@ -1525,6 +1535,7 @@ impl NoUselessAssignment {
             Entry::Vacant(entry) => {
                 let scope = variable.scope();
                 let is_ignored = !cfg!(debug_assertions) && !state.unknown.contains(&variable)
+                    || oxlint_passes_over(variable.symbol)
                     || get_code_path_start_scope(scope, &state.code_path_start_scopes) != Some(top.scope)
                     || variable.class.is_none() && variable.symbol.is_marked_used()
                     || scope.kind() == ScopeKind::Module && is_exported(variable.symbol);
@@ -1643,8 +1654,8 @@ impl NoUselessAssignment {
             _ => return,
         };
         extract_identifiers_from_pattern(pattern, |identifier| {
-            let variable = identifier
-                .reference()
+            // `([a]) = b`, which TypeScript parses, assigns nothing.
+            let variable = (identifier.reference().filter(|it| it.is_write()))
                 .and_then(|it| Some(Binding::of(it.symbol()?, it)));
             Self::add_assignment(variable, identifier.span(), expression, cx);
         });
@@ -1672,8 +1683,21 @@ impl Rule for NoUselessAssignment {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        for root in std::mem::take(&mut cx.state.roots) {
+        // The `arguments` of a function is none of the symbols.
+        if !cx.language().is_oxlint && cx.file().mentions("arguments") {
+            for scope in cx.file().funcs().filter_map(Func::scope) {
+                if let Some(arguments) = scope.symbols().next().filter(|it| it.is_implicit_arguments()) {
+                    self.check_variable(arguments, cx);
+                }
+            }
+        }
+        let roots = std::mem::take(&mut cx.state.roots);
+        for &root in &roots {
             self.check_code_path(root, cx);
+        }
+        cx.state.is_only_checked = true;
+        for root in std::mem::take(&mut cx.state.all_roots).difference(&roots) {
+            self.check_code_path(*root, cx);
         }
     }
 }

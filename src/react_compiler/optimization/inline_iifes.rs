@@ -42,7 +42,7 @@
 
 use crate::collections::{IdBitSet, IdMap};
 use crate::hir::cfg_utils::{
-    create_temporary_place, get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
+    create_temporary_place, mark_instruction_ids, mark_predecessors, reverse_postorder_blocks,
 };
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
@@ -301,9 +301,8 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
 
         // If terminals have changed then blocks may have become newly unreachable.
         // Re-run minification of the graph (incl reordering instruction ids).
-        match get_reverse_postordered_blocks(&func.body, &func.instructions) {
-            Ok(blocks) => func.body.blocks = blocks,
-            Err(invariant) => return env.record_diagnostic(invariant),
+        if let Err(invariant) = reverse_postorder_blocks(&mut func.body) {
+            return env.record_diagnostic(invariant);
         }
         mark_instruction_ids(&mut func.body, &mut func.instructions);
         mark_predecessors(&mut func.body);

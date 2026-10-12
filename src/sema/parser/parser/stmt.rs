@@ -987,8 +987,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     // ───────────────────────────── statements ─────────────────────────────
 
-    /// `parseList(PCBlockStatements, parseStatement)`
-    #[inline]
+    /// `parseList(PCBlockStatements, parseStatement)`. It has no frame of its own: one is on the
+    /// stack for each `{` that is open.
+    #[inline(always)]
     pub(crate) fn statements_until_close_brace(&mut self) -> IdList<StmtId> {
         let base = self.s.ids.len();
         // Only a statement of the file makes it a module.

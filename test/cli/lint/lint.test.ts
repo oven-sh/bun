@@ -476,6 +476,30 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
+  // Each place is what ESLint 10.12.0 reports.
+  describe("no-useless-assignment as ESLint has it", () => {
+    const places = async (lines: string[]) => {
+      const files = { "eslint.config.js": config({ "no-useless-assignment": "error" }), "a.cjs": lines.join("\n") + "\n" };
+      const { raw } = await lint(files, ["-f", "unix", "a.cjs"]);
+      return [...raw.matchAll(/^a\.cjs:(\d+:\d+):/gm)].map(it => it[1]);
+    };
+
+    test("the `arguments` of a function is a variable", async () => {
+      expect(
+        await places([
+          `function a() { arguments = arguments + 1; }`,
+          `function b() { arguments = 1; }`,
+          `function c() { arguments = 1; d(arguments); arguments = 2; }`,
+          `function e() { arguments = 1; arguments = 2; d(arguments); }`,
+          `function f() { d(arguments); arguments++; }`,
+          `function g() { let h = 1; h = 2; d(h); arguments = arguments + 1; }`,
+          `function i() { arguments = 1; return () => arguments; }`,
+          `function j() { arguments = 1; return function () { return arguments; }; }`,
+        ]),
+      ).toEqual(["1:16", "3:45", "4:16", "5:30", "6:20", "6:40"]);
+    });
+  });
+
   describe("which files", () => {
     const files = {
       "eslint.config.js": config({ "no-debugger": "error" }),

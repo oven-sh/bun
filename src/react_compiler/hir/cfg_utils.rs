@@ -133,24 +133,6 @@ pub fn reverse_postorder_blocks(
     Ok(old)
 }
 
-/// [`reverse_postorder_blocks`] on a copy.
-pub fn get_reverse_postordered_blocks(
-    hir: &HIR,
-    _instructions: &[Instruction],
-) -> Result<IndexMap<BlockId, BasicBlock>, crate::diagnostics::CompilerDiagnostic> {
-    let order = postorder(hir)?;
-    let mut blocks = IndexMap::new();
-    for block_id in order.blocks.into_iter().rev() {
-        let block = hir.blocks.get(&block_id).unwrap();
-        if order.used.contains(block_id) {
-            blocks.insert(block_id, block.clone());
-        } else if order.used_fallthroughs.contains(block_id) {
-            blocks.insert(block_id, unreachable_block(block, block.preds.clone()));
-        }
-    }
-    Ok(blocks)
-}
-
 /// For each block with a `For` terminal whose update block is not in the
 /// blocks map, set update to None.
 pub fn remove_unreachable_for_updates(hir: &mut HIR) {

@@ -188,15 +188,47 @@ fn severity_in(options: &Options, category: &[u8]) -> Option<Severity> {
 
 const TYPESCRIPT: &[u8] = b"**/*.{ts,mts,cts,tsx}";
 
+/// Whether TypeScript files get type information in this run.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Types {
+    /// `--type-aware`, `typeAware = true` or `--type-check`.
+    On,
+    /// `--no-type-aware` or `typeAware = false`.
+    Off,
+    /// Neither flag was given, so files are type checked only if a rule that needs types is on. Naming the core rule of a
+    /// pair doesn't count. It isn't worth a type check on its own.
+    WhenNeeded,
+}
+
+/// Returns true if `object` turns on a rule that needs types, under that rule's own name.
+fn turns_on_typed_rule(registry: &Registry, object: &Json) -> bool {
+    let rules = object.get(b"rules").and_then(Json::as_object);
+    rules.unwrap_or_default().iter().any(|(name, setting)| {
+        let severity = match setting {
+            Json::Array(items) => items.first().and_then(severity_of),
+            setting => severity_of(setting),
+        };
+        let needs_types = registry
+            .find_by_any_name(name)
+            .is_some_and(|it| it.meta.requires_types);
+        needs_types && severity.is_some_and(|it| it != Severity::Off)
+    })
+}
+
 /// Makes a core rule and its typescript-eslint version ([`Registry::pair_of`]) behave as one rule, so a problem is never
 /// reported twice. Setting either name sets both. The core rule runs on JavaScript and the typescript-eslint version on
 /// TypeScript. If a config object sets both names, each one applies to its own language.
 ///
-/// The core rule also runs on TypeScript if the typescript-eslint version needs type information that this run doesn't
-/// have, or if only the core rule accepts the options.
-pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, has_types: bool) -> Vec<Json> {
+/// The core rule also runs on TypeScript if only it accepts the options, or if the typescript-eslint version needs type
+/// information and won't get it. See [`Types`].
+pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types) -> Vec<Json> {
     let id = |meta: &'static Meta| RuleId::Known(meta).to_vec();
     let off = || severity_name(Severity::Off);
+    let has_types = match types {
+        Types::On => true,
+        Types::Off => false,
+        Types::WhenNeeded => objects.iter().any(|it| turns_on_typed_rule(registry, it)),
+    };
     let mut split = Vec::with_capacity(objects.len());
     for object in objects {
         let rules = object.get(b"rules").and_then(Json::as_object);
@@ -239,7 +271,16 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, has_types: bo
                 true => (extension, base),
                 false => (base, extension),
             };
-            in_typescript.push((id(rests), off()));
+            // Leave a typed rule on if the user asked for it by name. It can't run, but the "Skipped" warning counts it.
+            let is_skipped = !can_run && of_extension.is_some();
+            in_typescript.push((
+                id(rests),
+                if is_skipped {
+                    for_typescript.clone()
+                } else {
+                    off()
+                },
+            ));
             in_typescript.push((id(runs), for_typescript.clone()));
         }
         let typescript = || Json::String(TYPESCRIPT.to_vec());

@@ -905,8 +905,13 @@ impl<'l> Loader<'l> {
 
     /// Calls [`native::split_pairs`] with this run's settings.
     fn split_pairs(&self, objects: Vec<Json>) -> Vec<Json> {
-        let has_types = self.options.type_aware == Some(true);
-        native::split_pairs(self.linter.registry(), objects, has_types)
+        let types = match self.options.type_aware {
+            Some(true) => native::Types::On,
+            Some(false) => native::Types::Off,
+            None if self.options.type_check => native::Types::On,
+            None => native::Types::WhenNeeded,
+        };
+        native::split_pairs(self.linter.registry(), objects, types)
     }
 
     /// ESLint's `calculateConfigArray`. `file_config`: what the configuration file exports. `is_of_eslint`: it is not what is
@@ -918,10 +923,10 @@ impl<'l> Loader<'l> {
         is_of_eslint: bool,
     ) -> Result<Config, Fatal> {
         let mut all = vec![file_config];
-        all.extend(match is_of_eslint {
-            true => self.added(base_path),
-            false => self.split_pairs(self.added(base_path)),
-        });
+        // `built_in` has already added these.
+        if is_of_eslint {
+            all.extend(self.added(base_path));
+        }
         let mut all = Json::Array(all);
         if !self.options.ignore {
             all = without_global_ignores(all);
@@ -1112,7 +1117,9 @@ impl<'l> Loader<'l> {
         }
         // Every file is in it, on whatever drive.
         let mut objects = vec![built_in_json(self.options.type_aware == Some(true))];
-        objects.extend(self.split_pairs(native::categories(self.linter.registry(), self.options)));
+        let mut of_user = native::categories(self.linter.registry(), self.options);
+        of_user.extend(self.added(b"/"));
+        objects.extend(self.split_pairs(of_user));
         let mut config = self.flat(b"/", Json::Array(objects), false)?;
         // Without a word: where the run has types, which then cost nothing more.
         config.infer_globals(match self.options.infer_globals {

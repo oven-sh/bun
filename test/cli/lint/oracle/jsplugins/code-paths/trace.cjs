@@ -1,6 +1,7 @@
 // A plugin that records what a rule can observe about code paths and reports it as one message per file.
-// `trace/all` lists every listener call in order (nodes and code path events). When a code path ends it adds the graph and
-// the order of `traverseSegments` with each option. `trace/layout` describes the properties of the objects.
+// `trace/all` lists every listener call in order (nodes and code path events) and adds the graph when a code path ends. In a
+// file named `*.traverse.*` it also adds the order of `traverseSegments` with each option.
+// `trace/layout` describes the properties of the objects.
 "use strict";
 
 const at = node => `${node.type}[${node.range}]`;
@@ -66,21 +67,20 @@ function traversals(codePath) {
   };
   run("all", () => {});
   const segments = segmentsOf(codePath);
-  if (segments.length > 8) return lines;
   for (const segment of segments) {
     run(`first ${segment.id}`, () => {}, { first: segment });
     run(`last ${segment.id}`, () => {}, { last: segment });
     run(`skip ${segment.id}`, (it, controller) => it === segment && controller.skip());
     run(`break ${segment.id}`, (it, controller) => it === segment && controller.break());
   }
-  if (segments.length > 4) return lines;
+  if (segments.length > 6) return lines;
   for (const first of segments)
     for (const last of segments) run(`${first.id} to ${last.id}`, () => {}, { first, last });
   return lines;
 }
 
-// The listeners of the rule. `done(lines)` is called when the code path of the program ends.
-function listeners(done) {
+// The listeners of `trace/all`. `done(lines)` is called when the code path of the program ends.
+function listeners(traverses, done) {
   const lines = [];
   const objects = new Map();
   const graphs = new Map();
@@ -109,7 +109,7 @@ function listeners(done) {
     onCodePathEnd(codePath, node) {
       lines.push(`onCodePathEnd ${name(codePath)} ${at(node)}${check(this, arguments, 2)}`);
       const finished = graph(codePath);
-      lines.push(...finished, ...traversals(codePath));
+      lines.push(...finished, ...(traverses ? traversals(codePath) : []));
       if (graphs.get(codePath) !== finished.join("\n")) lines.push("  The graph has changed since onCodePathStart.");
       if (codePath.upper === null) done(lines, node);
     },
@@ -128,7 +128,7 @@ const report = context => lines => context.report({ loc: { line: 1, column: 0 },
 module.exports = {
   meta: { name: "trace" },
   rules: {
-    all: { create: context => listeners(report(context)) },
+    all: { create: context => listeners(/\.traverse\.\w+$/.test(context.filename), report(context)) },
     layout: {
       create: context => ({
         onCodePathEnd(codePath) {
@@ -148,32 +148,6 @@ module.exports = {
           ]);
         },
       }),
-    },
-    // Records the same from ESLint's own analyzer, run over the tree that the rule is given. The option is the directory
-    // of the `eslint` package.
-    "with-eslint-analyzer": {
-      meta: { schema: [{ type: "string" }] },
-      create(context) {
-        const CodePathAnalyzer = require(`${context.options[0]}/lib/linter/code-path-analysis/code-path-analyzer.js`);
-        const { visitorKeys } = context.sourceCode;
-        return {
-          Program(program) {
-            const steps = [];
-            const analyzer = new CodePathAnalyzer({
-              enterNode: node => steps.push(["*", [node]]),
-              leaveNode: node => steps.push(["*:exit", [node]]),
-              emit: (event, args) => steps.push([event, args]),
-            });
-            (function visit(node) {
-              analyzer.enterNode(node);
-              for (const key of visitorKeys[node.type]) for (const child of [node[key]].flat()) if (child) visit(child);
-              analyzer.leaveNode(node);
-            })(program);
-            const called = listeners(report(context));
-            for (const [event, args] of steps) called[event].apply(undefined, args);
-          },
-        };
-      },
     },
   },
 };

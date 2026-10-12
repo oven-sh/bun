@@ -3,6 +3,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  bodyFor,
+  configFor,
   examplesOf,
   generatedFor,
   indexFor,
@@ -10,6 +12,7 @@ import {
   pageOf,
   pagesRoot,
   readPage,
+  writtenPart,
   type Example,
   type Rule,
 } from "../../../src/codegen/lint-rule-docs.ts";
@@ -35,6 +38,18 @@ const twinOf = (rule: Rule) =>
   rules.find(
     it => it.value === rule.value && [it.scope, rule.scope].sort().join() === "eslint,typescript" && it !== rule,
   )?.id;
+
+/** `compilerOptions` for the examples of rules that need types. */
+const typed = {
+  strict: true,
+  noEmit: true,
+  target: "esnext",
+  module: "esnext",
+  moduleResolution: "bundler",
+  jsx: "preserve",
+  lib: ["esnext", "dom"],
+  skipLibCheck: true,
+};
 
 const text = (page: string) => readFileSync(join(pagesRoot, page + ".mdx"), "utf8").replaceAll("\r\n", "\n");
 
@@ -65,6 +80,40 @@ describe("docs/lint/rules", () => {
   test("index.mdx is up to date", () => {
     // bun src/codegen/lint-rule-docs.ts --write
     expect(readFileSync(join(pagesRoot, "index.mdx"), "utf8").replaceAll("\r\n", "\n")).toBe(indexFor(rules));
+  });
+
+  test("the Configure section is up to date", () => {
+    // bun src/codegen/lint-rule-docs.ts --write
+    const stale = [...byPage].filter(([name, rule]) => {
+      const page = readPage(text(name));
+      return page && page.body !== bodyFor(rule, page.body);
+    });
+    expect(stale.map(([name]) => name)).toEqual([]);
+  });
+
+  test("snippets fit an 80-column terminal", () => {
+    const lines = [...byPage].flatMap(([name, rule]) => {
+      const config = configFor(rule, writtenPart(readPage(text(name))!.body));
+      return [...(config?.toggle ?? []), ...(config?.defaults?.lines ?? [])];
+    });
+    // `--explain` draws a frame to the left of the code.
+    expect(lines.filter(line => line.length > 78)).toEqual([]);
+  });
+
+  test("snippets that turn a rule off work", async () => {
+    const on = rules.filter(rule => rule.on_by_default);
+    const toggles = on.flatMap(rule => configFor(rule, writtenPart(readPage(text(pageOf(rule)))!.body))!.toggle);
+    expect(toggles.length).toBeGreaterThan(70);
+    using dir = tempDir("bun-lint-rule-docs", {
+      "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }),
+      "bunfig.toml": `[lint.rules]\n${toggles.join("\n")}\n`,
+    });
+    for (const file of ["a.js", "a.tsx"]) {
+      const { stdout, stderr } = await lint(String(dir), ["--print-config", file]);
+      expect(stderr).toBe("");
+      const printed: Record<string, [number]> = JSON.parse(stdout).rules;
+      expect(on.filter(rule => printed[rule.id]?.[0]).map(rule => rule.id)).toEqual([]);
+    }
   });
 
   // Each example becomes its own file, with a trailing `/* eslint rule: ... */` comment that enables the rule.
@@ -112,17 +161,7 @@ describe("docs/lint/rules", () => {
       const setting = JSON.stringify(["error", ...it.options]).replaceAll("*/", "*\\/");
       put(join(directoryOf(it), it.filename), `${it.code}\n/* eslint ${rule.id}: ${setting} */\n`);
       if (!rule.type_aware) continue;
-      const compilerOptions = {
-        strict: true,
-        noEmit: true,
-        target: "esnext",
-        module: "esnext",
-        moduleResolution: "bundler",
-        jsx: "preserve",
-        lib: ["esnext", "dom"],
-        skipLibCheck: true,
-        ...it.compilerOptions,
-      };
+      const compilerOptions = { ...typed, ...it.compilerOptions };
       put(join(directoryOf(it), "tsconfig.json"), JSON.stringify({ compilerOptions, include: ["."] }));
     }
 
@@ -209,6 +248,71 @@ describe("docs/lint/rules", () => {
       else if (it.want === "bad" && !reports) wrong.push(`${where}: not reported`);
       else if (it.count !== undefined && reports !== it.count)
         wrong.push(`${where}: ${reports} reports, not ${it.count}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  // Lints every example in the batch twice: with each rule just turned on, then with each rule's options snippet.
+  // The snippets claim to set every option to its default, so both runs must report the same.
+  test.concurrent.each(batches)("snippets load, and the defaults in them are real: %s", async (_, names) => {
+    using dir = tempDir("bun-lint-rule-docs", {
+      "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }),
+    });
+    const put = (path: string, content: string) => (
+      mkdirSync(dirname(join(String(dir), path)), { recursive: true }),
+      writeFileSync(join(String(dir), path), content)
+    );
+    const wrong: string[] = [];
+    const [plain, withOptions]: string[][] = [[], []];
+    for (const name of names) {
+      const rule = byPage.get(name);
+      const page = readPage(text(name));
+      if (!rule || !page) continue;
+      const written = writtenPart(page.body);
+      for (const it of examplesOf(name, written, 1).examples) {
+        const directory = `${name.replaceAll("/", "__")}__${it.line}`;
+        // bunfig.toml is the config here.
+        for (const [file, content] of Object.entries(it.files))
+          if (!/(^|\/)(eslint\.config\.|\.eslintrc)/.test(file)) put(`${directory}/${file}`, content);
+        put(`${directory}/${it.filename}`, it.code);
+        if (rule.type_aware)
+          put(
+            `${directory}/tsconfig.json`,
+            JSON.stringify({ compilerOptions: { ...typed, ...it.compilerOptions }, include: ["."] }),
+          );
+      }
+      const config = configFor(rule, written);
+      if (!config) continue;
+      const id = JSON.stringify(rule.id);
+      const on = rule.on_by_default ? [`${id} = "${rule.on_by_default}"`] : config.toggle;
+      // This rule does nothing until it gets an options object. Its page says so.
+      plain.push(...(rule.id === "react/boolean-prop-naming" ? [`${id} = ["error", {}]`] : on));
+      withOptions.push(...(config.defaults?.lines ?? on));
+      if (!config.defaults) continue;
+      const parsed: any = Bun.TOML.parse(`[lint.rules]\n${config.defaults.lines.join("\n")}\n`);
+      if (!Bun.deepEquals(parsed.lint.rules[rule.id].slice(1), config.defaults.options))
+        wrong.push(`${name}: the snippet sets ${JSON.stringify(parsed.lint.rules[rule.id].slice(1))}`);
+    }
+
+    const run = async (lines: string[]) => {
+      put("bunfig.toml", `[lint.rules]\n${lines.join("\n")}\n`);
+      const { stdout, stderr } = await lint(String(dir), ["-f", "json", "."]);
+      try {
+        const report: { filePath: string; messages: { ruleId: string | null }[] }[] = JSON.parse(stdout);
+        return new Map(report.map(it => [it.filePath, it.messages]));
+      } catch {
+        throw new Error(`bun lint printed no JSON: ${stderr.slice(0, 2000)}`);
+      }
+    };
+    const before = await run(plain);
+    expect(before.size).toBeGreaterThan(0);
+    if (withOptions.join() !== plain.join()) {
+      for (const [file, messages] of await run(withOptions)) {
+        const of = (list: typeof messages, id: string | null) => JSON.stringify(list.filter(it => it.ruleId === id));
+        for (const id of new Set([...messages, ...before.get(file)!].map(it => it.ruleId)))
+          if (of(messages, id) !== of(before.get(file)!, id))
+            wrong.push(`${id}: reports change with the options snippet in ${file.slice(String(dir).length + 1)}`);
+      }
     }
     expect(wrong).toEqual([]);
   });

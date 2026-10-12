@@ -684,6 +684,7 @@ impl PackageJSON {
                             || strings::contains_char(name, b'?')
                             || strings::contains_char(name, b'[')
                             || strings::contains_char(name, b'{')
+                            || glob::has_extglob_prefix(name)
                         {
                             has_globs = true;
                         } else {
@@ -717,6 +718,7 @@ impl PackageJSON {
                                 || strings::contains_char(name, b'?')
                                 || strings::contains_char(name, b'[')
                                 || strings::contains_char(name, b'{')
+                                || glob::has_extglob_prefix(name)
                             {
                                 // Normalize pattern to use forward slashes for cross-platform compatibility
                                 let normalized_pattern = Self::normalize_path_for_glob(pattern)

@@ -766,12 +766,13 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
 
         // Only `*` and literals are safe to lower. Reject anything NT cannot
-        // express (`[` `{` `\` `!`) or where NT semantics under-match glob
+        // express (`[` `{` `\` `!`, and `(` `|` for groups like `@(a|b)`) or where
+        // NT semantics under-match glob
         // (`?` matches one UTF-16 code unit, glob matches one codepoint).
         // `<` `>` `"` are NT wildcards; treating them as literals would over-match,
         // but they are invalid in Windows filenames so such a pattern never matches
         // anyway.
-        if strings::index_of_any(slice, b"?[{\\!<>\"").is_some() {
+        if strings::index_of_any(slice, b"?[{\\!<>\"(|").is_some() {
             return None;
         }
 
@@ -2071,8 +2072,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     fn check_special_syntax(pattern: &[u8]) -> bool {
         strings::index_of_any(pattern, Self::SYNTAX_TOKENS).is_some()
-            || strings::contains(pattern, b"@(")
-            || strings::contains(pattern, b"+(")
+            || crate::has_extglob_prefix(pattern)
     }
 
     fn make_component(pattern: &[u8], start_byte: u32, end_byte: u32) -> Option<Component> {

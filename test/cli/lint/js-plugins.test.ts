@@ -2633,41 +2633,57 @@ export default {
 describe.concurrent("code paths in JavaScript plugins", () => {
   const oracle = join(import.meta.dir, "oracle", "jsplugins", "code-paths");
   const trace = readFileSync(join(oracle, "trace.cjs"), "utf8");
-  // Recorded with ESLint 10.12.0 by record.mjs in that directory.
+  // Recorded with ESLint 10.12.0 and @typescript-eslint/parser 8.71.1 by record.mjs in that directory.
   const expected: Record<string, string> = JSON.parse(
     Buffer.from(Bun.zstdDecompressSync(readFileSync(join(oracle, "expected.json.zst")))).toString(),
   );
-  const eslintConfig = (rule: string) => `const trace = require("./trace.cjs");
-    module.exports = ["module", "script", "commonjs"].map(sourceType => ({
-      files: [sourceType + "/*.js"],
-      plugins: { trace },
-      rules: { "trace/${rule}": "error" },
-      languageOptions: { sourceType, parserOptions: { ecmaFeatures: { jsx: true } } },
-    }));`;
   const filesOf = (cases: typeof codePathCases) => Object.fromEntries(cases.map(it => [fileOf(it), it.code]));
   const slashes = (path: string) => path.replaceAll("\\", "/");
 
   test(
-    "events, graphs and traverseSegments match ESLint in JavaScript files",
+    "events, graphs, traverseSegments and the properties of the objects match ESLint in JavaScript files",
     async () => {
       const cases = codePathCases.filter(it => !isTypeScript(it));
-      const files = { "trace.cjs": trace, "eslint.config.cjs": eslintConfig("all"), ...filesOf(cases) };
+      const config = `const trace = require("./trace.cjs");
+        module.exports = [
+          { plugins: { trace } },
+          { files: ["layout.js"], rules: { "trace/layout": "error" } },
+          ...["module", "script", "commonjs"].map(sourceType => ({
+            files: [sourceType + "/*.js"],
+            rules: { "trace/all": "error" },
+            languageOptions: { sourceType, parserOptions: { ecmaFeatures: { jsx: true } } },
+          })),
+        ];`;
+      const files = { "trace.cjs": trace, "eslint.config.cjs": config, "layout.js": "a;", ...filesOf(cases) };
       const { raw, exitCode } = await lint(files, ["-f", "json"]);
       const results: { filePath: string; messages: { message: string }[] }[] = JSON.parse(raw);
+      const messagesOf = (file: string) =>
+        results.find(it => slashes(it.filePath).endsWith(`/${file}`))?.messages.map(it => it.message);
       for (const it of cases) {
-        const messages = results.find(result => slashes(result.filePath).endsWith(`/${fileOf(it)}`))?.messages;
-        expect({ name: it.name, traces: messages?.map(message => message.message) }).toEqual({
+        expect({ name: it.name, traces: messagesOf(fileOf(it)) }).toEqual({
           name: it.name,
           traces: [expected[it.name]],
         });
       }
+      // The message under ESLint 10.12.0.
+      expect(messagesOf("layout.js")?.map(it => it.split("\n"))).toEqual([
+        [
+          "CodePath own(id:value:wec,origin:value:wec,upper:value:wec,childCodePaths:value:wec,internal:value:) prototype(constructor:value:wc,initialSegment:getter:c,finalSegments:getter:c,returnedSegments:getter:c,thrownSegments:getter:c,traverseSegments:value:wc) keys(id,origin,upper,childCodePaths)",
+          "CodePathSegment own(id:value:wec,nextSegments:value:wec,prevSegments:value:wec,allNextSegments:value:wec,allPrevSegments:value:wec,reachable:value:wec,internal:value:) prototype(constructor:value:wc,isLoopedPrevSegment:value:wc) keys(id,nextSegments,prevSegments,allNextSegments,allPrevSegments,reachable)",
+          "in: initialSegment,traverseSegments,internal",
+          'JSON: {"id":"s1","origin":"program","upper":null,"childCodePaths":[]} {"id":"s1_1","nextSegments":[],"prevSegments":[],"allNextSegments":[],"allPrevSegments":[],"reachable":true}',
+          "the same array each time: true",
+          "without options: s1_1,s1_1,s1_1",
+          "controller: skip,break",
+        ],
+      ]);
       expect(exitCode).toBe(1);
     },
     timeout,
   );
 
   test(
-    "events, graphs and traverseSegments match ESLint's analyzer in TypeScript files",
+    "events and graphs match ESLint with typescript-eslint's parser in TypeScript files",
     async () => {
       const cases = codePathCases.filter(isTypeScript);
       const config = { ignorePatterns: ["trace.cjs"], jsPlugins: ["./trace.cjs"], rules: { "trace/all": "error" } };
@@ -2686,24 +2702,50 @@ describe.concurrent("code paths in JavaScript plugins", () => {
     timeout,
   );
 
+  // ESLint 9 removed `currentSegments`. The first test checks that it's gone with a flat configuration.
   test(
-    "CodePath and CodePathSegment have the same properties as in ESLint",
+    "codePath.currentSegments follows the traversal with an ESLint 8 configuration",
     async () => {
-      const files = { "trace.cjs": trace, "eslint.config.cjs": eslintConfig("layout"), "module/a.js": "a;" };
-      const { raw } = await lint(files, ["-f", "json"]);
-      // The message under ESLint 10.12.0.
+      const plugin = `module.exports = { rules: { paths: { create(context) {
+        const seen = [];
+        const stack = [];
+        const now = label => seen.push(label + " [" + stack.at(-1).currentSegments.map(it => it.id) + "]");
+        return {
+          onCodePathStart: codePath => stack.push(codePath),
+          onCodePathEnd(codePath, node) {
+            now("end");
+            stack.pop();
+            if (node.type === "Program") context.report({ node, message: seen.join(" ") });
+          },
+          onCodePathSegmentStart: segment => now("+" + segment.id),
+          onCodePathSegmentEnd: segment => now("-" + segment.id),
+          onUnreachableCodePathSegmentStart: segment => now("+" + segment.id),
+          onUnreachableCodePathSegmentEnd: segment => now("-" + segment.id),
+          ReturnStatement: () => now("return"),
+          ExpressionStatement: () => now("statement"),
+          "FunctionDeclaration:exit": () => now("exit"),
+        };
+      } } } };`;
+      const files = {
+        ".eslintrc.json": JSON.stringify({ root: true, plugins: ["foo"], rules: { "foo/paths": "error" } }),
+        "node_modules/eslint-plugin-foo/package.json": `{ "name": "eslint-plugin-foo", "main": "index.js" }`,
+        "node_modules/eslint-plugin-foo/index.js": plugin,
+        "a.js": "function f() { if (a) return; b(); throw c; d(); }\n",
+        // Two segments are current in the `finally` block, and the listener for the first already sees both.
+        "b.js": "function f() { try { if (a) return; b(); } finally { c(); } d(); }\n",
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", "a.js", "b.js"]);
       const results: { messages: { message: string }[] }[] = JSON.parse(raw);
-      expect(results.flatMap(result => result.messages.map(message => message.message.split("\n")))).toEqual([
+      // From ESLint's analyzer with the listeners called while it runs, as ESLint 8 calls them.
+      expect(results.map(result => result.messages.map(it => it.message))).toEqual([
         [
-          "CodePath own(id:value:wec,origin:value:wec,upper:value:wec,childCodePaths:value:wec,internal:value:) prototype(constructor:value:wc,initialSegment:getter:c,finalSegments:getter:c,returnedSegments:getter:c,thrownSegments:getter:c,traverseSegments:value:wc) keys(id,origin,upper,childCodePaths)",
-          "CodePathSegment own(id:value:wec,nextSegments:value:wec,prevSegments:value:wec,allNextSegments:value:wec,allPrevSegments:value:wec,reachable:value:wec,internal:value:) prototype(constructor:value:wc,isLoopedPrevSegment:value:wc) keys(id,nextSegments,prevSegments,allNextSegments,allPrevSegments,reachable)",
-          "in: initialSegment,traverseSegments,internal",
-          'JSON: {"id":"s1","origin":"program","upper":null,"childCodePaths":[]} {"id":"s1_1","nextSegments":[],"prevSegments":[],"allNextSegments":[],"allPrevSegments":[],"reachable":true}',
-          "the same array each time: true",
-          "without options: s1_1,s1_1,s1_1",
-          "controller: skip,break",
+          "+s1_1 [s1_1] +s2_1 [s2_1] -s2_1 [s2_1] +s2_2 [s2_2] return [s2_2] -s2_2 [s2_2] +s2_4 [s2_4] statement [s2_4] -s2_4 [s2_4] +s2_5 [s2_5] statement [s2_5] exit [s2_5] -s2_5 [s2_5] end [] -s1_1 [s1_1] end []",
+        ],
+        [
+          "+s1_1 [s1_1] +s2_1 [s2_1] -s2_1 [s2_1] +s2_3 [s2_3] return [s2_3] -s2_3 [s2_3] +s2_5 [s2_5] statement [s2_5] -s2_5 [s2_5] +s2_6 [s2_6,s2_7] +s2_7 [s2_6,s2_7] statement [s2_6,s2_7] -s2_7 [s2_6,s2_7] statement [s2_6] exit [s2_6] -s2_6 [s2_6] end [] -s1_1 [s1_1] end []",
         ],
       ]);
+      expect(exitCode).toBe(1);
     },
     timeout,
   );

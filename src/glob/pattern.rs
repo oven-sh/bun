@@ -59,6 +59,10 @@ pub struct Pattern {
     /// Every match starts with this many bytes of the pattern and ends with this many.
     start_len: u32,
     tail_len: u32,
+    /// Every match ends with one of these. Set instead of `tail_len` for a pattern that ends like `.{js,ts}`.
+    tails: Box<[Box<[u8]>]>,
+    /// The pattern is `**/*` followed by the tail, so a file name that ends with a tail is a match.
+    is_star_and_tail: bool,
     /// Every match contains this range of the pattern.
     inner: Range<u32>,
     /// The pattern is `**/name`, so only the last segment of a path matters.
@@ -115,6 +119,8 @@ impl Pattern {
             heads: Box::default(),
             start_len: 0,
             tail_len: 0,
+            tails: Box::default(),
+            is_star_and_tail: false,
             inner: 0..0,
             is_for_name: false,
             names: Box::default(),
@@ -183,6 +189,15 @@ impl Pattern {
         read.names = names.map(|it| it.start as u32..it.end as u32).collect();
         read.is_names_only = read.names.len() == starts.len();
         read.is_for_name = pattern.starts_with(b"**/") && stays(&(3..pattern.len()));
+        let (tails, tail_start) = tails(pattern, &shape);
+        read.is_star_and_tail = read.is_for_name
+            && tail_start == 4
+            && pattern.is_ascii()
+            && matcher::token_at(pattern, 3, &shape) == (Token::Star, 4);
+        if tails.len() > 1 || tails[0].len() != read.tail_len as usize {
+            read.tail_len = 0;
+            read.tails = tails.into_iter().map(Vec::into_boxed_slice).collect();
+        }
         read
     }
 
@@ -231,7 +246,8 @@ impl Pattern {
         // Most tails are a few bytes. Compare them inline.
         let tail = self.pattern.iter().rev().take(self.tail_len as usize);
         let ends_with_tail = path.len() >= self.tail_len as usize
-            && path.iter().rev().zip(tail).all(|(a, b)| a == b);
+            && path.iter().rev().zip(tail).all(|(a, b)| a == b)
+            && (self.tails.is_empty() || self.tails.iter().any(|it| path.ends_with(it)));
         ends_with_tail && self.matches_whole(candidate)
     }
 
@@ -247,7 +263,15 @@ impl Pattern {
             // `**` can't cross some dot segments. Ask the full pattern if the directory has one.
             Some(last) if self.is_for_name && *last != b'/' => {
                 let (before, name) = path.split_at(candidate.name_at);
-                self.asks(&self.pattern[3..], name).matches()
+                let is_name_match = match self.is_star_and_tail {
+                    true => match self.dots {
+                        Dots::Match => true,
+                        Dots::SkipTraversal => !matches!(name, b"." | b".."),
+                        Dots::Hide => !name.starts_with(b"."),
+                    },
+                    false => self.asks(&self.pattern[3..], name).matches(),
+                };
+                is_name_match
                     && (self.dots == Dots::Match
                         || !matcher::has_closed_segment::<false>(before, self.dots)
                         || self.asks(&self.pattern, path).matches())
@@ -306,6 +330,61 @@ pub fn of_fast_glob(written: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(pattern)
 }
 
+/// Expands the literals and groups of literals at the end of the pattern, like `.d.{ts,mts}`. Every match ends with one of
+/// the returned strings. Also returns the index where that part of the pattern starts.
+fn tails(pattern: &[u8], shape: &Shape) -> (Vec<Vec<u8>>, usize) {
+    // More tails than this cost more to compare than they save.
+    const MOST: usize = 16;
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < pattern.len() {
+        let (token, end) = matcher::token_at(pattern, at, shape);
+        tokens.push((token, at, end));
+        at = end;
+    }
+    // Built back to front.
+    let mut reversed = vec![Vec::new()];
+    let mut start = pattern.len();
+    for (index, &(token, at, end)) in tokens.iter().enumerate().rev() {
+        match token {
+            Token::Literal => {
+                // The `/` after `**` or after a group like `{**,a}` can match nothing.
+                let before = index.checked_sub(1).map(|it| tokens[it].0);
+                if pattern[at] == b'/'
+                    && matches!(before, Some(Token::Globstar | Token::Group { .. }))
+                {
+                    break;
+                }
+                for tail in &mut reversed {
+                    tail.push(pattern[at]);
+                }
+            }
+            Token::Group { first } if matches!(pattern[at], b'{' | b'@') => {
+                let mut inside = (first..end - 1).map(|it| matcher::token_at(pattern, it, shape).0);
+                if shape.is_sequence_at(first) || !inside.all(|it| it == Token::Literal) {
+                    break;
+                }
+                let alternatives = || shape.alternatives_at(first).map(|it| &pattern[it]);
+                if alternatives().count() * reversed.len() > MOST {
+                    break;
+                }
+                let longer = |tail: &Vec<u8>| {
+                    alternatives()
+                        .map(|it| tail.iter().chain(it.iter().rev()).copied().collect())
+                        .collect::<Vec<Vec<u8>>>()
+                };
+                reversed = reversed.iter().flat_map(longer).collect();
+            }
+            _ => break,
+        }
+        start = at;
+    }
+    for tail in &mut reversed {
+        tail.reverse();
+    }
+    (reversed, start)
+}
+
 /// Computes [`Pattern::heads`]. `runs` are the literal runs. `group` is the first group's start, first alternative and end.
 fn heads(
     pattern: &[u8],
@@ -329,13 +408,11 @@ fn heads(
         // `{a,b}/..`, `@(a|b)/..`
         Some((at, first, end)) if at == start.end && matches!(pattern[at], b'{' | b'@') => {
             let after = run_from(end);
-            let separator: &[u8] = if pattern[at] == b'{' { b"," } else { b"|" };
-            let inside = &pattern[first..end - 1];
             let mut tokens = (first..end - 1).map(|it| matcher::token_at(pattern, it, shape).0);
             if shape.is_sequence_at(first) || !tokens.all(|it| it == Token::Literal) {
                 return Box::default();
             }
-            for alternative in strings::split(inside, separator) {
+            for alternative in shape.alternatives_at(first).map(|it| &pattern[it]) {
                 let text = [
                     &pattern[start.clone()],
                     alternative,

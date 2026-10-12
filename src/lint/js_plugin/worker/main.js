@@ -1,3 +1,5 @@
+// Portions of this file are copied from ESLint, which is under the MIT License. The notice is in report.js.
+
 // ───────────── the program ─────────────
 //
 // It is the body of a function of `require`, `load`, which is `import()`, and of what it asks the other side with:
@@ -607,115 +609,108 @@ function lastDescendants() {
 
 // `codePath.origin`, in the order of `Origin` in `code_path/estree.rs`.
 const codePathOrigins = ["program", "function", "class-field-initializer", "class-static-block"];
-// Templates for `native.codePaths`, which builds the objects. Only ESLint's getters and methods live here.
-let codePathShapes;
-// The same for a configuration for ESLint 8, where a code path also has `currentSegments`.
-let legacyCodePathShapes;
-{
-  class CodePath {
-    get initialSegment() {
-      return this.internal.initialSegment;
-    }
-
-    get finalSegments() {
-      return this.internal.finalSegments;
-    }
-
-    get returnedSegments() {
-      return this.internal.returnedForkContext;
-    }
-
-    get thrownSegments() {
-      return this.internal.thrownForkContext;
-    }
-
-    traverseSegments(optionsOrCallback, callback) {
-      const hasOptions = typeof optionsOrCallback !== "function";
-      const options = (hasOptions && optionsOrCallback) || {};
-      const resolvedCallback = hasOptions ? callback : optionsOrCallback;
-      const startSegment = options.first || this.internal.initialSegment;
-      const lastSegment = options.last;
-      const visited = new Set();
-      const skipped = new Set();
-      const stack = [[startSegment, 0]];
-      let segment = null;
-      let broken = false;
-      const controller = {
-        skip() {
-          skipped.add(segment);
-        },
-        break() {
-          broken = true;
-        },
-      };
-      const isVisited = prevSegment => visited.has(prevSegment) || segment.isLoopedPrevSegment(prevSegment);
-      const isSkipped = prevSegment => skipped.has(prevSegment) || segment.isLoopedPrevSegment(prevSegment);
-      while (stack.length > 0) {
-        const record = stack.at(-1);
-        segment = record[0];
-        const index = record[1];
-        if (index === 0) {
-          const hasPrev = segment.prevSegments.length > 0;
-          if (visited.has(segment) || (segment !== startSegment && hasPrev && !segment.prevSegments.every(isVisited))) {
-            stack.pop();
-            continue;
-          }
-          visited.add(segment);
-          if (skipped.size > 0 && hasPrev && segment.prevSegments.every(isSkipped)) skipped.add(segment);
-          else {
-            resolvedCallback.call(this, segment, controller);
-            if (segment === lastSegment) controller.skip();
-            if (broken) break;
-          }
-        }
-        const end = segment.nextSegments.length - 1;
-        if (index < end) {
-          record[1] += 1;
-          stack.push([segment.nextSegments[index], 0]);
-        } else if (index === end) {
-          record[0] = segment.nextSegments[index];
-          record[1] = 0;
-        } else stack.pop();
-      }
-    }
+// `native.codePaths` builds the objects. Only ESLint's getters and methods live here.
+class CodePath {
+  get initialSegment() {
+    return this.internal.initialSegment;
   }
 
-  class CodePathSegment {
-    isLoopedPrevSegment(segment) {
-      return this.internal.loopedPrevSegments.includes(segment);
-    }
+  get finalSegments() {
+    return this.internal.finalSegments;
   }
 
-  const legacyPrototype = Object.defineProperties(
-    {},
-    {
-      ...Object.getOwnPropertyDescriptors(CodePath.prototype),
-      currentSegments: {
-        get() {
-          return this.internal.currentSegments;
-        },
-        configurable: true,
+  get returnedSegments() {
+    return this.internal.returnedForkContext;
+  }
+
+  get thrownSegments() {
+    return this.internal.thrownForkContext;
+  }
+
+  traverseSegments(optionsOrCallback, callback) {
+    const hasOptions = typeof optionsOrCallback !== "function";
+    const options = (hasOptions && optionsOrCallback) || {};
+    const resolvedCallback = hasOptions ? callback : optionsOrCallback;
+    const startSegment = options.first || this.internal.initialSegment;
+    const lastSegment = options.last;
+    const visited = new Set();
+    const skipped = new Set();
+    const stack = [[startSegment, 0]];
+    let segment = null;
+    let broken = false;
+    const controller = {
+      skip() {
+        skipped.add(segment);
       },
-    },
-  );
-  const codePathKeys = ["id", "origin", "upper", "childCodePaths", "internal"];
-  codePathShapes = [
-    native.shape(CodePath.prototype, codePathKeys, "", 1),
-    native.shape(
-      Object.prototype,
-      ["initialSegment", "finalSegments", "returnedForkContext", "thrownForkContext"],
-      null,
-    ),
-    native.shape(
-      CodePathSegment.prototype,
-      ["id", "nextSegments", "prevSegments", "allNextSegments", "allPrevSegments", "reachable", "internal"],
-      "",
-      1,
-    ),
-    native.shape(Object.prototype, ["used", "loopedPrevSegments"], true),
-  ];
-  legacyCodePathShapes = [native.shape(legacyPrototype, codePathKeys, "", 1), ...codePathShapes.slice(1)];
+      break() {
+        broken = true;
+      },
+    };
+    const isVisited = prevSegment => visited.has(prevSegment) || segment.isLoopedPrevSegment(prevSegment);
+    const isSkipped = prevSegment => skipped.has(prevSegment) || segment.isLoopedPrevSegment(prevSegment);
+    while (stack.length > 0) {
+      const record = stack.at(-1);
+      segment = record[0];
+      const index = record[1];
+      if (index === 0) {
+        const hasPrev = segment.prevSegments.length > 0;
+        if (visited.has(segment) || (segment !== startSegment && hasPrev && !segment.prevSegments.every(isVisited))) {
+          stack.pop();
+          continue;
+        }
+        visited.add(segment);
+        if (skipped.size > 0 && hasPrev && segment.prevSegments.every(isSkipped)) skipped.add(segment);
+        else {
+          resolvedCallback.call(this, segment, controller);
+          if (segment === lastSegment) controller.skip();
+          if (broken) break;
+        }
+      }
+      const end = segment.nextSegments.length - 1;
+      if (index < end) {
+        record[1] += 1;
+        stack.push([segment.nextSegments[index], 0]);
+      } else if (index === end) {
+        record[0] = segment.nextSegments[index];
+        record[1] = 0;
+      } else stack.pop();
+    }
+  }
 }
+
+class CodePathSegment {
+  isLoopedPrevSegment(segment) {
+    return this.internal.loopedPrevSegments.includes(segment);
+  }
+}
+
+const legacyPrototype = Object.defineProperties(
+  {},
+  {
+    ...Object.getOwnPropertyDescriptors(CodePath.prototype),
+    currentSegments: {
+      get() {
+        return this.internal.currentSegments;
+      },
+      configurable: true,
+    },
+  },
+);
+// Templates for `native.codePaths`.
+const codePathKeys = ["id", "origin", "upper", "childCodePaths", "internal"];
+const codePathShapes = [
+  native.shape(CodePath.prototype, codePathKeys, "", 1),
+  native.shape(Object.prototype, ["initialSegment", "finalSegments", "returnedForkContext", "thrownForkContext"], null),
+  native.shape(
+    CodePathSegment.prototype,
+    ["id", "nextSegments", "prevSegments", "allNextSegments", "allPrevSegments", "reachable", "internal"],
+    "",
+    1,
+  ),
+  native.shape(Object.prototype, ["used", "loopedPrevSegments"], true),
+];
+// The same for a configuration for ESLint 8, where a code path also has `currentSegments`.
+const legacyCodePathShapes = [native.shape(legacyPrototype, codePathKeys, "", 1), ...codePathShapes.slice(1)];
 
 // Walks the tree with `walk` and calls the code path listeners between the node listeners, where ESLint calls them. The
 // analysis is finished before the first listener runs, as in ESLint, so a rule sees the complete graph from the first event on.
@@ -725,13 +720,36 @@ function traverseWithCodePaths(walk, enter, leave) {
   const isLegacy = fileSettings.isLegacy === true;
   const [paths, segments] = native.codePaths(isLegacy ? legacyCodePathShapes : codePathShapes, codePathOrigins, buffer);
   if (isLegacy) for (const path of paths) path.internal.currentSegments = [];
-  // The code paths that have started and not ended, to keep `currentSegments` up to date.
+  // `internal` of the code paths that have started and not ended, to keep `currentSegments` up to date.
   const open = [];
+  // The segments that have ended since `currentSegments` was last replaced.
+  const ended = [];
+  // The start events before this index are in `currentSegments` already.
+  let included = 0;
   // Four words per event: see `code_path/estree.rs`.
   const events = new Uint32Array(buffer, 16, 4 * new Uint32Array(buffer, 0, 1)[0]);
   const callsByKind = codePathEventNames.map(name => codePathCalls.get(name) ?? []);
   let at = 0;
   let step = 0;
+  const isStart = kind => kind === 2 || kind === 4;
+  const isEnd = kind => kind === 3 || kind === 5;
+  const kindAt = index => (index < events.length && events[index] === step ? events[index + 1] & 7 : -1);
+  // ESLint 8 replaces `currentSegments` once per step, after the last end event and before the first start event. A new
+  // segment takes the place of the one that ended. `from`: the index of the first start event, if there is one.
+  const replaceCurrentSegments = from => {
+    const current = [...open.at(-1).currentSegments];
+    const places = ended.map(it => current.indexOf(it));
+    let count = 0;
+    for (; isStart(kindAt(from + 4 * count)); count++) {
+      const segment = segments[events[from + 4 * count + 2]];
+      if (count < places.length) current[places[count]] = segment;
+      else current.push(segment);
+    }
+    const removed = places.slice(count);
+    open.at(-1).currentSegments = current.filter((_, place) => !removed.includes(place));
+    ended.length = 0;
+    included = from + 4 * count;
+  };
   // Emits the events that come before the next step.
   const emit = () => {
     for (; at < events.length && events[at] === step; at += 4) {
@@ -739,7 +757,7 @@ function traverseWithCodePaths(walk, enter, leave) {
       const first = (kind < 2 ? paths : segments)[events[at + 2]];
       if (isLegacy) {
         if (kind === 0) open.push(first.internal);
-        else if (kind === 2 || kind === 4) open.at(-1).currentSegments = [...open.at(-1).currentSegments, first];
+        else if (isStart(kind) && at >= included) replaceCurrentSegments(at);
       }
       const node = nodes[events[at + 1] >>> 3];
       for (const { entry, listener } of callsByKind[kind]) {
@@ -749,8 +767,10 @@ function traverseWithCodePaths(walk, enter, leave) {
       }
       if (isLegacy) {
         if (kind === 1) open.pop();
-        else if (kind === 3 || kind === 5)
-          open.at(-1).currentSegments = open.at(-1).currentSegments.filter(it => it !== first);
+        else if (isEnd(kind)) {
+          ended.push(first);
+          if (!isEnd(kindAt(at + 4))) replaceCurrentSegments(at + 4);
+        }
       }
     }
     step++;

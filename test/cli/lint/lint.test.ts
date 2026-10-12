@@ -7730,8 +7730,8 @@ foo(b)
         };
         const isRunning = (pid: number) => {
           try {
-            // One that has ended, and that nobody has asked about yet, still has its number.
-            if (isLinux) return !/^\d+ \(.*\) Z /s.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+            // An exited process keeps its pid until it's reaped: state Z (zombie), then briefly X (dead).
+            if (isLinux) return !/^\d+ \(.*\) [ZX] /s.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
             process.kill(pid, 0);
             return true;
           } catch {
@@ -7748,7 +7748,10 @@ foo(b)
           await proc.exited;
           expect(await until(() => !isRunning(pid))).toBe(true);
         } finally {
-          if (isRunning(pid)) process.kill(pid, "SIGKILL");
+          // It may exit at any moment, so don't check first. ESRCH means it's already gone.
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
         }
       },
       timeout,

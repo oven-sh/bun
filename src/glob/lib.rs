@@ -16,6 +16,23 @@ pub use walk::GlobWalker;
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 
+/// Returns true if `text` has an unescaped `@(`, `+(` or `!(`.
+/// The other two extglob prefixes, `?` and `*`, are glob syntax on their own.
+pub fn has_extglob_prefix(text: &[u8]) -> bool {
+    let mut from = 0;
+    while let Some(paren) = bun_core::strings::index_of_char_pos(text, b'(', from) {
+        if paren > 0 && matches!(text[paren - 1], b'@' | b'+' | b'!') {
+            let before = &text[..paren - 1];
+            let backslashes = before.iter().rev().take_while(|it| **it == b'\\').count();
+            if backslashes % 2 == 0 {
+                return true;
+            }
+        }
+        from = paren + 1;
+    }
+    false
+}
+
 /// Returns true if the given string contains glob syntax,
 /// excluding those escaped with backslashes
 /// TODO: this doesn't play nicely with Windows directory separator and
@@ -26,10 +43,7 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
         return true;
     }
 
-    // `?(a)`, `*(a)` and `!(a)` are found by their first character.
-    if bun_core::strings::contains(potential_pattern, b"@(")
-        || bun_core::strings::contains(potential_pattern, b"+(")
-    {
+    if has_extglob_prefix(potential_pattern) {
         return true;
     }
 

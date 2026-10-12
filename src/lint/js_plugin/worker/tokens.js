@@ -1,4 +1,4 @@
-// Portions of this file are copied from ESLint, which is under the MIT License. The notice is in code_path.js.
+// Portions of this file are copied from ESLint, which is under the MIT License. The notice is in report.js.
 
 // ───────────── tokens and comments ─────────────
 //

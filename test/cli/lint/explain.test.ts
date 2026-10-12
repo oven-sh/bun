@@ -248,6 +248,9 @@ describe.concurrent("--explain", () => {
       "",
     ]);
     expect(stdout).toContain("\nExamples\n--------\n");
+    expect(stdout).toContain(
+      '\nConfigure\n---------\n\nOff by default. To turn it on:\n\nbunfig.toml\n\n+- toml\n| [lint.rules]\n| "eqeqeq" = "error" # or "warn"\n',
+    );
     // The file name of a code block.
     expect(stdout).toContain("\n\nbunfig.toml\n\n+- toml\n| [lint.rules]\n");
     expect(stdout).toEndWith(`\n${base}eslint/eqeqeq\n`);

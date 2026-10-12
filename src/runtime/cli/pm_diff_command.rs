@@ -190,7 +190,7 @@ fn filter_matches(filter: &[u8], path: &[u8]) -> bool {
     {
         return true;
     }
-    if strings::index_of_any(filter, b"*?[{").is_some() {
+    if strings::index_of_any(filter, b"*?[{").is_some() || bun_glob::has_extglob_prefix(filter) {
         return bun_glob::r#match(filter, path).matches()
             || (!strings::contains_char(filter, b'/')
                 && bun_glob::r#match(filter, bun_paths::basename(path)).matches());

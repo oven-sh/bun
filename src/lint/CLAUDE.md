@@ -76,7 +76,7 @@ bar();
 ## Options
 ````
 
-- You write `title` (the ID as reports print it), `description` (one line, at most 110 characters, no full stop) and the text. The rest of the frontmatter and `index.mdx` are generated:
+- You write `title` (the ID as reports print it), `description` (one line, at most 110 characters, no full stop) and the text. The rest of the frontmatter, the `## Configure` section and `index.mdx` are generated:
   ```sh
   bun src/codegen/lint-rule-docs.ts --write --bun=./build/debug/bun-debug
   ```
@@ -100,6 +100,16 @@ bar();
 - Say the problem, not "This rule enforces ..". Use normal programmer English. Be succinct. Small realistic examples (`user`, `items`, `save()`, not `foo`). The good example shows how to fix the bad one.
 - Every claim is shown by an example or read in the source. Do not write what you remember about the rule from another linter, and do not copy another tool's docs.
 - An options table (`Option | Default | What it does`) plus an example for each option that is not obvious.
+- **`## Configure` is generated. Don't edit it.** It sits between two marker comments, before `## Examples`. It shows how to turn the rule on in `bunfig.toml`, then every option set to its default. A deprecated rule and a rule that never reports don't get one. Names, types and enum values come from the rule's schema. For an oxlint port, which has no schema, they come from the options table and the `options` of the examples. A default comes from upstream's `defaultOptions`, then from `default` in the schema, then from what you write under `## Options`:
+
+  | You write                                                    | The snippet has                                                |
+  | ------------------------------------------------------------ | -------------------------------------------------------------- |
+  | `` `20` `` in the `Default` column: JSON in backticks        | `max = 20,`                                                    |
+  | Anything else in that column, such as "none"                 | `# max = <number>,`                                            |
+  | ``the value of `fn` if you set it, otherwise `"it"` `` in it | `withinDescribe = "it",`                                       |
+  | `` `"always"` (default) `` or ``The default is `"always"` `` | `"always"`, for an option that is a plain value, not an object |
+
+  The test lints every example on the page twice, with the rule only turned on and with that snippet. If the reports differ, a default is wrong.
 
 ### 4. Test it
 
@@ -110,7 +120,7 @@ bar();
 
 ```sh
 bun bd test test/cli/lint/bun-rules.test.ts -t no-foo
-bun bd test test/cli/lint/rule-docs.test.ts   # a page for every rule, frontmatter up to date, every example runs
+bun bd test test/cli/lint/rule-docs.test.ts   # a page for every rule, generated parts up to date, every example and snippet runs
 bun bd test test/cli/lint/conformance.test.ts
 ```
 

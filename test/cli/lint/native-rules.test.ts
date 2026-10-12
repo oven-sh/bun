@@ -102,9 +102,9 @@ const isTypeScript = (file: string) => /\.[cm]?tsx?$/.test(file);
 describe.concurrent("every built-in rule", () => {
   const sources = { "a.js": "", "b.jsx": "", "c.ts": "", "d.tsx": "" };
 
-  /** For each pair, returns the rule that doesn't run on `file` when there's no type information. */
+  /** For each pair, returns the rule that doesn't run on `file` when both names are set. */
   const resting = (rules: Listed[], file: string) =>
-    new Set(pairsOf(rules).map(it => (isTypeScript(file) && !it.typed ? it.base : it.extension)));
+    new Set(pairsOf(rules).map(it => (isTypeScript(file) ? it.base : it.extension)));
 
   /** Returns the severity of every rule configured for `file`. */
   async function configured(files: Record<string, string>, file: string) {
@@ -221,10 +221,7 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
   async function reports(pairs: Pair[], rules: Record<string, Setting>, args: string[] = []) {
     const { stdout, stderr } = await lint({ ...files, ...bunfig(rules) }, ["-f", "json", ...args]);
     expect(stderr).not.toContain("error:");
-    const results: {
-      filePath: string;
-      messages: { ruleId: string; severity: number }[];
-    }[] = JSON.parse(stdout);
+    const results: { filePath: string; messages: { ruleId: string; severity: number }[] }[] = JSON.parse(stdout);
     for (const { filePath, messages } of results) {
       const ids = new Set(messages.map(it => it.ruleId));
       expect([basename(filePath), pairs.filter(it => ids.has(it.base) && ids.has(it.extension))]).toEqual([
@@ -232,7 +229,7 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
         [],
       ]);
     }
-    return Object.fromEntries(
+    const byFile = Object.fromEntries(
       results.map(({ filePath, messages }) => {
         const name = basename(filePath);
         const own = pairs.find(it => it.base === name.slice(0, -3))!;
@@ -240,6 +237,7 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
         return [name, ofPair.map(it => `${it.severity} ${it.ruleId}`)];
       }),
     );
+    return { byFile, skipped: /Skipped (\d+) rules? that needs? type information/.exec(stderr)?.[1] };
   }
 
   /** One report per file. The core rule reports in .js files, the typescript-eslint version in .ts files if it can run. */
@@ -256,46 +254,138 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
       pairs.map(it => [name(it), [severity, ...(cases.find(([base]) => base === it.base)?.[2] ?? [])] as Setting]),
     );
 
+  // Flags, whether core names alone get type information, and whether typescript-eslint names do.
   test.each([
-    ["without types", []],
-    ["with types", ["--type-aware"]],
-  ])("every pair reports once per problem %s", async (_, args) => {
+    ["by default", [], false, true],
+    ["with --type-aware", ["--type-aware"], true, true],
+    ["with --no-type-aware", ["--no-type-aware"], false, false],
+  ])("every pair reports once per problem %s", async (_, args, coreNamesGetTypes, typedNamesGetTypes) => {
     const pairs = pairsOf(await listed());
     expect(pairs.map(it => it.base).sort()).toEqual(cases.map(it => it[0]));
     expect(pairs.length).toBe(26);
-    const hasTypes = args.length > 0;
-    const [byBase, byExtension, byBoth, byBothTheOtherWayRound] = await Promise.all([
-      reports(
-        pairs,
-        settings(pairs, it => it.base, "error"),
-        args,
-      ),
-      reports(
-        pairs,
-        settings(pairs, it => it.extension, "error"),
-        args,
-      ),
-      reports(
-        pairs,
-        {
-          ...settings(pairs, it => it.base, "warn"),
-          ...settings(pairs, it => it.extension, "error"),
-        },
-        args,
-      ),
-      reports(
-        pairs,
-        {
-          ...settings(pairs, it => it.extension, "error"),
-          ...settings(pairs, it => it.base, "warn"),
-        },
-        args,
-      ),
+    const typed = pairs.filter(it => it.typed).map(it => it.extension.slice("@typescript-eslint/".length));
+    expect(typed).toEqual([
+      "consistent-return",
+      "dot-notation",
+      "no-implied-eval",
+      "only-throw-error",
+      "prefer-destructuring",
+      "prefer-promise-reject-errors",
+      "require-await",
     ]);
-    expect(byBase).toEqual(expected(pairs, hasTypes, [2, 2]));
-    expect(byExtension).toEqual(expected(pairs, hasTypes, [2, 2]));
-    expect(byBoth).toEqual(expected(pairs, hasTypes, [1, 2]));
-    expect(byBothTheOtherWayRound).toEqual(expected(pairs, hasTypes, [1, 2]));
+    const [base, extension] = [(it: Pair) => it.base, (it: Pair) => it.extension];
+    const [byBase, byExtension, byBoth, byBothReversed] = await Promise.all([
+      reports(pairs, settings(pairs, base, "error"), args),
+      reports(pairs, settings(pairs, extension, "error"), args),
+      reports(pairs, { ...settings(pairs, base, "warn"), ...settings(pairs, extension, "error") }, args),
+      reports(pairs, { ...settings(pairs, extension, "error"), ...settings(pairs, base, "warn") }, args),
+    ]);
+    expect(byBase.byFile).toEqual(expected(pairs, coreNamesGetTypes, [2, 2]));
+    expect(byExtension.byFile).toEqual(expected(pairs, typedNamesGetTypes, [2, 2]));
+    expect(byBoth.byFile).toEqual(expected(pairs, typedNamesGetTypes, [1, 2]));
+    expect(byBothReversed.byFile).toEqual(expected(pairs, typedNamesGetTypes, [1, 2]));
+    // The warning only counts typed rules the user asked for by name.
+    const skipped = typedNamesGetTypes ? undefined : String(typed.length);
+    expect([byBase, byExtension, byBoth, byBothReversed].map(it => it.skipped)).toEqual([
+      undefined,
+      skipped,
+      skipped,
+      skipped,
+    ]);
+  });
+
+  describe("pairs whose typescript-eslint version needs types", () => {
+    // Only the typed rule knows that `g()` returns a promise, so it accepts `f`. The core rule reports it.
+    const files = {
+      "a.ts": "declare function g(): Promise<void>;\nexport async function f() {\n  return g();\n}\n",
+      "tsconfig.json": `{ "include": ["*.ts"] }`,
+    };
+    const [core, typed] = ["require-await", "@typescript-eslint/require-await"];
+    const coreReport = [`a.ts:2 ${core}`];
+    const run = async (bunfig: string, args: string[] = [], code = files["a.ts"]) => {
+      const { stdout, stderr } = await lint({ ...files, "a.ts": code, "bunfig.toml": bunfig }, ["-f", "json", ...args]);
+      return [problems(stdout), /Skipped \d+ rules?/.exec(stderr)?.[0]];
+    };
+    const rules = (...names: string[]) => `[lint.rules]\n${names.map(name => `"${name}" = "error"\n`).join("")}`;
+
+    test("naming the typed rule starts a type check", async () => {
+      expect(
+        await Promise.all([
+          run(rules(typed)),
+          run("", ["--rule", `${typed}: error`]),
+          run(`[[lint.overrides]]\nfiles = ["*.ts"]\nrules = { "${typed}" = "error" }\n`),
+        ]),
+      ).toEqual([
+        [[], undefined],
+        [[], undefined],
+        [[], undefined],
+      ]);
+    });
+
+    test("naming the core rule doesn't start a type check", async () => {
+      expect(
+        await Promise.all([
+          run(rules(core)),
+          run("", ["--rule", `${core}: error`]),
+          run(`[[lint.overrides]]\nfiles = ["*.ts"]\nrules = { "${core}" = "error" }\n`),
+        ]),
+      ).toEqual([
+        [coreReport, undefined],
+        [coreReport, undefined],
+        [coreReport, undefined],
+      ]);
+    });
+
+    test("the core name uses the typed rule when the run has types anyway", async () => {
+      expect(
+        await Promise.all([
+          run(rules(core), ["--type-aware"]),
+          run(`[lint]\ntypeAware = true\n${rules(core)}`),
+          run(rules(core, "@typescript-eslint/no-floating-promises")),
+          // `pedantic` has both names, and other typed rules.
+          run(`[lint.categories]\npedantic = "error"\n`).then(([found]) => [
+            (found as string[]).filter(it => it.endsWith("require-await")),
+            undefined,
+          ]),
+        ]),
+      ).toEqual([
+        [[], undefined],
+        [[], undefined],
+        [[], undefined],
+        [[], undefined],
+      ]);
+    });
+
+    test("typeAware = false falls back to the core rule and warns about the typed rule", async () => {
+      expect(
+        await Promise.all([
+          run(`[lint]\ntypeAware = false\n${rules(typed)}`),
+          run(rules(typed), ["--no-type-aware"]),
+          run(`[lint]\ntypeAware = false\n${rules(core)}`),
+        ]),
+      ).toEqual([
+        [coreReport, "Skipped 1 rule"],
+        [coreReport, "Skipped 1 rule"],
+        [coreReport, undefined],
+      ]);
+    });
+
+    test("a comment can't start a type check, so it falls back to the core rule", async () => {
+      const commented = (name: string) => `${files["a.ts"]}/* eslint ${name}: error */\n`;
+      expect(
+        await Promise.all([
+          run("", [], commented(typed)),
+          run("", [], commented(core)),
+          run("", ["--type-aware"], commented(typed)),
+          run("", ["--type-aware"], commented(core)),
+        ]),
+      ).toEqual([
+        [coreReport, undefined],
+        [coreReport, undefined],
+        [[], undefined],
+        [[], undefined],
+      ]);
+    });
   });
 
   const unused = {

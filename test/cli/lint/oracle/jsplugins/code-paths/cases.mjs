@@ -1,13 +1,15 @@
 // Inputs for the code path tests. A name with an extension is a TypeScript case. `sourceType` defaults to "module".
+// `traverse` also records `traverseSegments`, which is slow in a debug build and doesn't depend much on the input.
 export const isTypeScript = it => /\.tsx?$/.test(it.name);
-export const fileOf = it => (isTypeScript(it) ? it.name : `${it.sourceType ?? "module"}/${it.name}.js`);
+export const fileOf = it =>
+  isTypeScript(it) ? it.name : `${it.sourceType ?? "module"}/${it.name}${it.traverse ? ".traverse" : ""}.js`;
 
 export const cases = [
   { name: "empty", code: "" },
   { name: "only-comment", code: "// nothing\n" },
   { name: "directive", code: '"use strict";\n' },
   { name: "hashbang", code: "#!/usr/bin/env node\na;\n" },
-  { name: "while", code: "while (a) { b; }" },
+  { name: "while", traverse: true, code: "while (a) { b; }" },
   { name: "while-true", code: "while (true) { a; } b;" },
   { name: "while-false", code: "while (false) { a; } b;" },
   {
@@ -16,7 +18,7 @@ export const cases = [
   },
   { name: "do-while", code: "do { a; } while (b); c;" },
   { name: "do-while-true", code: "do { a; } while (true); c;" },
-  { name: "do-while-continue", code: "do { if (a) continue; b; } while (c); d;" },
+  { name: "do-while-continue", traverse: true, code: "do { if (a) continue; b; } while (c); d;" },
   { name: "do-while-break", code: "do { if (a) break; b; } while (c); d;" },
   { name: "for-full", code: "for (let i = 0; i < n; i++) { a; } b;" },
   { name: "for-none", code: "for (;;) { a; } b;" },
@@ -28,18 +30,27 @@ export const cases = [
   { name: "for-test-update", code: "for (;a;b) { c; } d;" },
   { name: "for-true", code: "for (;true;) { a; } b;" },
   { name: "for-false-update", code: "for (;false;a) { b; } c;" },
-  { name: "for-break-continue", code: "for (let i = 0; i < n; i++) { if (a) break; if (b) continue; c; } d;" },
+  {
+    name: "for-break-continue",
+    traverse: true,
+    code: "for (let i = 0; i < n; i++) { if (a) break; if (b) continue; c; } d;",
+  },
   { name: "for-in", code: "for (const k in o) { a; } b;" },
   { name: "for-in-expr", code: "for (a.b in o) { c; } d;" },
   { name: "for-in-pattern", code: "for ([a = 1, { b = c } ] in o) { d; }" },
   { name: "for-in-init", sourceType: "script", code: "for (var a = b in o) { c; }" },
   { name: "for-of", code: "for (const v of l) { a; } b;" },
   { name: "for-of-pattern-default", code: "for (const { a = b, c: [d = e] } of l) { f; }" },
-  { name: "for-of-break-continue", code: "for (const v of l) { if (a) break; if (b) continue; c; } d;" },
+  {
+    name: "for-of-break-continue",
+    traverse: true,
+    code: "for (const v of l) { if (a) break; if (b) continue; c; } d;",
+  },
   { name: "for-await", code: "async function f() { for await (const v of l) { if (v) continue; a; } b; }" },
   { name: "for-await-top", code: "for await (const v of l) { a; }" },
   {
     name: "labels-outer",
+    traverse: true,
     code: "outer: for (const a of b) { inner: for (const c of d) { if (e) continue outer; if (f) break outer; if (g) continue inner; if (h) break inner; i; } j; } k;",
   },
   {
@@ -57,13 +68,14 @@ export const cases = [
   { name: "try-catch", code: "try { a(); } catch (e) { b(); } c;" },
   { name: "try-catch-no-param", code: "try { a(); } catch { b(); } c;" },
   { name: "try-finally", code: "try { a(); } finally { b(); } c;" },
-  { name: "try-catch-finally", code: "try { a(); } catch (e) { b(); } finally { c(); } d;" },
+  { name: "try-catch-finally", traverse: true, code: "try { a(); } catch (e) { b(); } finally { c(); } d;" },
   { name: "try-empty", code: "try {} catch (e) {} finally {} a;" },
   { name: "try-return-try", code: "function f() { try { return a; } catch (e) { b; } finally { c; } d; }" },
   { name: "try-return-catch", code: "function f() { try { a(); } catch (e) { return b; } finally { c; } d; }" },
   { name: "try-return-finally", code: "function f() { try { a(); } catch (e) { b; } finally { return c; } d; }" },
   {
     name: "try-return-all",
+    traverse: true,
     code: "function f() { try { return a(); } catch (e) { return b(); } finally { return c(); } d; }",
   },
   { name: "try-throw-try", code: "function f() { try { throw a; } catch (e) { b; } finally { c; } d; }" },
@@ -86,6 +98,7 @@ export const cases = [
   },
   {
     name: "try-in-loop",
+    traverse: true,
     code: "for (const a of b) { try { if (c) continue; if (d) break; e(); } catch (f) { if (g) continue; if (h) break; } finally { i; } j; } k;",
   },
   { name: "try-finally-break", code: "for (;;) { try { a(); } finally { break; } } b;" },
@@ -129,10 +142,11 @@ export const cases = [
   { name: "try-await", code: "async function f() { try { await a; b; } catch (e) { await c; } finally { await d; } }" },
   { name: "switch-empty", code: "switch (a) {} b;" },
   { name: "switch-one", code: "switch (a) { case 1: b; } c;" },
-  { name: "switch-fallthrough", code: "switch (a) { case 1: b; case 2: c; break; case 3: d; } e;" },
+  { name: "switch-fallthrough", traverse: true, code: "switch (a) { case 1: b; case 2: c; break; case 3: d; } e;" },
   { name: "switch-default-last", code: "switch (a) { case 1: b; break; default: c; } d;" },
   {
     name: "switch-default-middle",
+    traverse: true,
     code: "switch (a) { case 1: b; break; default: c; case 2: d; break; case 3: e; } f;",
   },
   { name: "switch-default-first", code: "switch (a) { default: b; case 1: c; break; case 2: d; } e;" },
@@ -158,7 +172,7 @@ export const cases = [
   { name: "and", code: "a && b;" },
   { name: "or", code: "a || b;" },
   { name: "qq", code: "a ?? b;" },
-  { name: "logical-mixed", code: "a && b || c && d; (a ?? b) || c; a && (b ?? c);" },
+  { name: "logical-mixed", traverse: true, code: "a && b || c && d; (a ?? b) || c; a && (b ?? c);" },
   { name: "logical-chain", code: "a && b && c && d; a || b || c || d; a ?? b ?? c ?? d;" },
   { name: "logical-in-if", code: "if (a && b) c; else d; if (a || b) c; else d; if (a ?? b) c; else d;" },
   {
@@ -174,7 +188,7 @@ export const cases = [
   { name: "logical-assign-in-if", code: "if (a &&= b) c; else d; if (a ||= b) c; if (a ??= b) c; while (a &&= b) c;" },
   { name: "logical-assign-nested", code: "a &&= b ||= c ??= d; (a &&= b) && c; a && (b ||= c);" },
   { name: "ternary", code: "a ? b : c;" },
-  { name: "ternary-nested", code: "a ? b ? c : d : e ? f : g;" },
+  { name: "ternary-nested", traverse: true, code: "a ? b ? c : d : e ? f : g;" },
   {
     name: "ternary-in-condition",
     code: "if (a ? b : c) d; else e; while (a ? b : c) d; for (; a ? b : c; ) d; (a ? b : c) ? d : e;",
@@ -184,7 +198,7 @@ export const cases = [
   { name: "optional-computed", code: "a?.[b];" },
   { name: "optional-call", code: "a?.();" },
   { name: "optional-call-args", code: "a?.(b, c);" },
-  { name: "optional-chain-long", code: "a?.b.c?.d.e?.[f]?.(g)?.h();" },
+  { name: "optional-chain-long", traverse: true, code: "a?.b.c?.d.e?.[f]?.(g)?.h();" },
   { name: "optional-call-noargs-chain", code: "a?.()?.()?.b; a.b?.().c; a?.b?.();" },
   { name: "optional-parenthesized", code: "(a?.b).c; (a?.b)(); (a?.b)?.c; (a?.()).b?.c;" },
   { name: "optional-nested-in-args", code: "a?.(b?.c, d?.[e?.f]); a?.[b?.c]?.d;" },
@@ -234,7 +248,11 @@ export const cases = [
     code: "for (const [a = b] of c) d; for ({ a = b } of c) d; for (let { a = b } = c; d; e) f;",
   },
   { name: "destructuring-in-catch", code: "try { a; } catch ([b = c]) { d; }" },
-  { name: "generator", code: "function* g() { a; yield b; c; yield* d; e; const f = yield; return g; }" },
+  {
+    name: "generator",
+    traverse: true,
+    code: "function* g() { a; yield b; c; yield* d; e; const f = yield; return g; }",
+  },
   { name: "generator-yield-in-loop", code: "function* g() { for (const a of b) { yield a; } while (yield c) { d; } }" },
   {
     name: "generator-yield-in-expr",
@@ -266,6 +284,7 @@ export const cases = [
   { name: "class-field-this", code: "class A { a = this.b?.c; d = new.target; e = super.f; }" },
   {
     name: "class-static-block",
+    traverse: true,
     code: "class A { static { a; } static { if (b) c; else d; } static { try { e(); } catch { f; } } static {} }",
   },
   { name: "class-static-block-nested", code: "class A { static { class B { static { a; } b = c; } (() => d)(); } }" },
@@ -303,6 +322,7 @@ export const cases = [
   { name: "unreachable-if-both-return", code: "function f() { if (a) return b; else return c; d; e; }" },
   {
     name: "unreachable-nested",
+    traverse: true,
     code: "function f() { return; if (a) { b; } else { c; } while (d) { e; } for (;;) { f; } try { g; } catch { h; } finally { i; } switch (j) { case 1: k; } l && m; n ? o : p; q?.r; }",
   },
   {

@@ -69,6 +69,10 @@ fn read(line: &[u8], options: IgnoreOptions) -> Result<Option<Line>, ()> {
     written = &written[usize::from(is_negated)..];
     let is_for_directories = written.len() > 1 && written.ends_with(b"/");
     written = &written[..written.len() - usize::from(is_for_directories)];
+    // The crate also drops a `\` that escapes the trailing `/`.
+    if is_for_directories && options.has_braces {
+        written = written.strip_suffix(b"\\").unwrap_or(written);
+    }
     // A `/` anchors the line to the ignore file's directory. A leading `**/` undoes that.
     let mut is_anchored = strings::contains_char(written, b'/');
     written = written.strip_prefix(b"/").unwrap_or(written);

@@ -442,6 +442,7 @@ fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool
                                     state.glob_index + 1,
                                     path,
                                     state.path_index,
+                                    false,
                                     groups,
                                 );
                             }
@@ -511,6 +512,28 @@ fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool
                                             state.is_beside_dot |= found == b'.';
                                             state.path_index = state.wildcard.path_index;
                                             state.wildcard.path_index += 1;
+                                            state
+                                                .skip_to_separator::<WINDOWS>(path, is_end_invalid);
+                                        }
+                                    } else if !STRICT
+                                        && matches!(
+                                            glob.get(state.glob_index as usize),
+                                            Some(b'{' | b'@' | b'+')
+                                        )
+                                    {
+                                        // Same for a group after `**/`.
+                                        let start = Group::skip_to_start::<WINDOWS>(
+                                            glob,
+                                            state.glob_index,
+                                            path,
+                                            state.path_index,
+                                            true,
+                                            groups,
+                                        );
+                                        if start != state.path_index {
+                                            state.is_beside_dot = true;
+                                            state.path_index = start;
+                                            state.wildcard.path_index = start + 1;
                                             state
                                                 .skip_to_separator::<WINDOWS>(path, is_end_invalid);
                                         }
@@ -932,13 +955,15 @@ impl<'g> Group<'g> {
     }
 
     /// Returns the first index at or after `path_index` where an alternative of the group at `index` could start,
-    /// or the end of the segment.
+    /// or the end of the segment. With `by_segment`, only looks at the start of each segment and returns the last one
+    /// if none fits.
     #[inline(never)]
     fn skip_to_start<const WINDOWS: bool>(
         glob: &[u8],
         index: u32,
         path: &[u8],
         mut path_index: u32,
+        by_segment: bool,
         groups: &mut Groups<'_>,
     ) -> u32 {
         let Some(group) = Group::at(glob, index, Inside::NO_GROUP, groups) else {
@@ -949,7 +974,7 @@ impl<'g> Group<'g> {
         }
         let shape = groups.shape(glob);
         while let Some(&found) = path.get(path_index as usize)
-            && !is_separator::<WINDOWS>(found)
+            && (by_segment || !is_separator::<WINDOWS>(found))
         {
             let mut next = group.first as usize;
             while let Some(it) = shape.0.get(next) {
@@ -958,7 +983,15 @@ impl<'g> Group<'g> {
                 }
                 next = it.next as usize;
             }
-            path_index += u32::from(rune_len_at(path, path_index as usize));
+            if !by_segment {
+                path_index += u32::from(rune_len_at(path, path_index as usize));
+                continue;
+            }
+            let rest = &path[path_index as usize..];
+            match rest.iter().position(|it| is_separator::<WINDOWS>(*it)) {
+                Some(separator) => path_index += separator as u32 + 1,
+                None => break,
+            }
         }
         path_index
     }
@@ -1370,6 +1403,19 @@ impl Shape {
     pub(crate) fn is_sequence_at(&self, start: usize) -> bool {
         let first = self.group_at(start as u32);
         first.is_some_and(|it| self.0[it as usize].next == Alternative::IS_SEQUENCE)
+    }
+
+    /// Returns the range of each alternative of the group whose first alternative starts at `start`.
+    pub(crate) fn alternatives_at(
+        &self,
+        start: usize,
+    ) -> impl Iterator<Item = std::ops::Range<usize>> {
+        let mut next = self.group_at(start as u32).map(|it| it as usize);
+        std::iter::from_fn(move || {
+            let it = self.0.get(next?)?;
+            next = Some(it.next as usize);
+            Some(it.start as usize..it.end as usize)
+        })
     }
 
     /// Returns the index in `self` of the group whose first alternative starts at `start`.

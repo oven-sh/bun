@@ -11,6 +11,7 @@
 //!   match the selectors that rules listen for, as [`crate::selector`] tells.
 //! - `tokens.rs`: the tokens and the comments of [`crate::tokens`].
 //! - `scopes.rs`: the scopes, variables and references of [`crate::semantic`].
+//! - [`crate::code_path::estree`]: the code paths, their segments and the events, if a rule listens for one.
 //!
 //! So a file for which every rule returns no listeners costs no more than its text. Nothing is kept here about a realm: one
 //! that lacks a plugin, the options of a rule or the number of a selector says so.

@@ -781,11 +781,10 @@ where
 
     /// [`Self::discard_response_body`] for a request this context can no longer respond to.
     fn discard_handler_result(&self, global_this: &JSGlobalObject, result: JSValue) {
-        let resp_held = self.resp.get().is_some();
         let Some(promise) = result.as_any_promise() else {
-            // A thrown value (what `on_response` hands to `error()`). While `resp` is held it is
-            // dropped like a rejection below. After `server.upgrade()` nothing else reports it.
-            if !resp_held && result.to_error().is_some() {
+            // A thrown value (what `on_response` hands to `error()`). After
+            // `server.upgrade()` the handler ran on, and nothing else reports it.
+            if self.did_upgrade_web_socket() && result.to_error().is_some() {
                 let vm = global_this.bun_vm().as_mut();
                 let _ = vm.uncaught_exception(global_this, result, false);
                 return;
@@ -793,6 +792,7 @@ where
             Self::discard_response_body(global_this, result);
             return;
         };
+        let resp_held = self.resp.get().is_some();
         match promise.status() {
             // Only while `resp` is held: the `on_abort` that follows then reclaims the cell.
             jsc::PromiseStatus::Pending if resp_held => {
@@ -1076,27 +1076,23 @@ where
         self.promise_cell.set(JSValue::ZERO);
     }
 
-    /// Once the response is aborted or ended, the promise this context
+    /// Once the response is detached or ended, the promise this context
     /// subscribed to can no longer do anything for the request. Reclaim the
     /// cell's claim so the context is torn down now instead of when GC
     /// collects the promise; the settle reactions then see a null `take()`
-    /// and no-op, so a later rejection is dropped with the request. A no-op
-    /// when no claim is outstanding (the common case on paths reached from a
-    /// settle reaction, which already cleared the field).
+    /// and no-op. A no-op when no claim is outstanding (the common case on
+    /// paths reached from a settle reaction, which already cleared the field).
+    ///
+    /// An abort or an end also takes the handler's promise out of the cell, so
+    /// a later rejection is dropped with the request. After `server.upgrade()`
+    /// the handler is still running: its promise stays, and `on_reject`
+    /// reports a later rejection of it.
     pub(crate) fn reclaim_promise_cell(&self) {
         let cell = self.promise_cell.replace(JSValue::ZERO);
         if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
-            NativePromiseContext::take_held(cell);
-            self.deref();
-        }
-    }
-
-    /// [`Self::reclaim_promise_cell`] for `server.upgrade()`. The handler runs
-    /// on after the 101, so the cell keeps the handler's promise and
-    /// `on_reject` reports a later rejection of it.
-    pub(crate) fn reclaim_promise_cell_after_upgrade(&self) {
-        let cell = self.promise_cell.replace(JSValue::ZERO);
-        if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
+            if !self.did_upgrade_web_socket() {
+                NativePromiseContext::take_held(cell);
+            }
             self.deref();
         }
     }

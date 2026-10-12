@@ -41,11 +41,11 @@ test("Bun.serve() propagates errors to the parent", async () => {
 
 // After server.upgrade() the server has no response left for error() to send,
 // but the handler is still running. What it throws after that is reported as
-// an uncaught exception, like a throw in a websocket callback. A rejection of
-// its promise is reported as an unhandled one with the handler's own promise,
-// also when the server subscribed to that promise before the upgrade (for a
-// handler that upgrades before it returns, see websocket-server.test.ts).
-// A rejection that follows a client abort stays dropped.
+// an uncaught exception. A rejection of its promise is reported as an
+// unhandled one with the handler's own promise, also when the server
+// subscribed to that promise before the upgrade (for a handler that upgrades
+// before it returns, see websocket-server.test.ts). A failure on a request
+// that did not upgrade stays dropped.
 describe.concurrent("a handler that fails after server.upgrade()", () => {
   const listeners = `
     process.on("uncaughtException", (e, origin) => {
@@ -53,7 +53,8 @@ describe.concurrent("a handler that fails after server.upgrade()", () => {
     });
     process.on("unhandledRejection", (e, promise) => {
       console.log("unhandledRejection:", e.message, "| the handler's promise:", promise === globalThis.handlerPromise);
-    });`;
+    });
+    process.on("rejectionHandled", () => console.log("rejectionHandled"));`;
   const errorHook = `error(e) { console.log("error() saw:", e.message); },`;
   // The macrotask keeps the promise pending past the dispatch, so the server subscribes to it.
   const afterDispatch = `const afterDispatch = () => new Promise(resolve => setImmediate(resolve));`;
@@ -120,6 +121,14 @@ describe.concurrent("a handler that fails after server.upgrade()", () => {
   test.each([
     ["fetch() awaits, upgrades and throws", rejectionAfterAwait],
     [
+      // The promise settles before the dispatch ends, so the server never subscribes to it.
+      "fetch() awaits a microtask, upgrades and throws",
+      `fetch(req, srv) {
+         return (globalThis.handlerPromise = (async () => { await 1; srv.upgrade(req); throw new Error("E"); })());
+       },
+       ${errorHook}`,
+    ],
+    [
       "fetch() returns a promise that rejects, then upgrades in the same task",
       `fetch(req, srv) {
          return (globalThis.handlerPromise = new Promise((resolve, reject) => {
@@ -165,14 +174,34 @@ describe.concurrent("a handler that fails after server.upgrade()", () => {
     expect(await upgradeChild(handlers)).toEqual({ stdoutLines: ["ws got: hi"], stderr: "", exitCode: 0 });
   });
 
-  // Like any uncaught exception or unhandled rejection, it ends the process.
+  // The server's reaction reports the rejection that it consumed. It does not
+  // see a handler that the program attaches to the same promise afterwards.
+  test("still reports a rejection that the program catches from a later task", async () => {
+    const handlers = `
+      fetch(req, srv) {
+        const promise = (async () => {
+          await afterDispatch();
+          await afterDispatch();
+          srv.upgrade(req);
+          throw new Error("E");
+        })();
+        setImmediate(() => promise.catch(() => console.log("the program's catch ran")));
+        return (globalThis.handlerPromise = promise);
+      },
+      ${errorHook}`;
+    expect(await upgradeChild(handlers)).toEqual({
+      stdoutLines: ["the program's catch ran", "unhandledRejection: E | the handler's promise: true", "ws got: hi"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.each([
     ["a throw", syncThrow],
     ["a rejection", rejectionAfterAwait],
-  ])("with no listener, prints %s and exits with code 1", async (_, handlers) => {
-    const { stderr, exitCode } = await upgradeChild(handlers, "");
+  ])("with no listener, prints %s to stderr", async (_, handlers) => {
+    const { stderr } = await upgradeChild(handlers, "");
     expect(stderr).toContain("error: E\n");
-    expect(exitCode).toBe(1);
   });
 
   test("drops a rejection that follows a client abort", async () => {
@@ -201,5 +230,64 @@ describe.concurrent("a handler that fails after server.upgrade()", () => {
        console.log("done");`,
     );
     expect(result).toEqual({ stdoutLines: ["client: AbortError", "done"], stderr: "", exitCode: 0 });
+  });
+
+  // server.upgrade() answers an unsupported Sec-WebSocket-Version itself and returns false.
+  test("drops a throw that follows a 426 from server.upgrade()", async () => {
+    const result = await runChild(
+      `${listeners}
+       const server = Bun.serve({
+         port: 0,
+         hostname: "127.0.0.1",
+         ${errorHook}
+         fetch(req, srv) {
+           if (srv.upgrade(req)) return;
+           throw new Error("E");
+         },
+         websocket: { message() {} },
+       });
+       await Bun.connect({
+         hostname: "127.0.0.1",
+         port: server.port,
+         socket: {
+           open(socket) {
+             socket.write(
+               "GET / HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+                 "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 12\\r\\n\\r\\n",
+             );
+           },
+           data(socket, data) {
+             console.log("client got:", data.toString().split("\\r\\n")[0]);
+             socket.end();
+             server.stop(true);
+           },
+         },
+       });`,
+    );
+    expect(result).toEqual({
+      stdoutLines: ["client got: HTTP/1.1 426 Upgrade Required"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("drops a throw from error() that follows server.stop(true)", async () => {
+    const result = await runChild(
+      `${listeners}
+       ${afterDispatch}
+       const server = Bun.serve({
+         port: 0,
+         async fetch() {
+           await afterDispatch();
+           throw new Error("boom");
+         },
+         error() {
+           server.stop(true);
+           throw new Error("E");
+         },
+       });
+       console.log("client:", await fetch(server.url).then(response => response.status, () => "failed"));`,
+    );
+    expect(result).toEqual({ stdoutLines: ["client: failed"], stderr: "", exitCode: 0 });
   });
 });

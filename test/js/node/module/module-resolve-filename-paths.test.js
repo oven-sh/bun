@@ -1,10 +1,10 @@
 // Use bun:test in Bun, or node:test in Node.js
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import Module from "module";
+import { throws } from "node:assert/strict";
 import { tmpdir } from "os";
 import { dirname, join, resolve, toNamespacedPath } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
-import { throws } from "node:assert/strict";
 
 // Detect runtime and import appropriate test framework
 const isBun = typeof Bun !== "undefined";

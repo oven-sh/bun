@@ -475,7 +475,7 @@ for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(
   Object.defineProperty(FileContext.prototype, key, { ...descriptor, enumerable: false });
 }
 
-// That of oxlint is one for all files, since `createOnce` gets its context once.
+// That of oxlint is one for all files, since `createOnce` gets its context once: what it has is always that of the file being linted.
 const oxlintFileContext = Object.freeze(
   Object.defineProperties(
     {
@@ -864,9 +864,11 @@ function lint() {
     currentRule = entry;
     // A new context for each file, and a new `sourceCode`, as in ESLint: plugins keep what they know about a file in a `WeakMap`
     // under one of them.
+    // ESLint only knows `create`. A rule without it, which ESLint refuses, runs as in oxlint.
+    const { create, createOnce } = entry.rule;
     const listeners =
-      typeof entry.rule.createOnce === "function"
-        ? listenersOfOnce(entry, fileContext)
+      typeof createOnce === "function" && (fileSettings.freezes || typeof create !== "function")
+        ? listenersOfOnce(entry)
         : entry.rule.create(fileContext.extend(entry.own));
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
@@ -886,9 +888,9 @@ let afterHooks = [];
 
 // oxlint's alternative to `create`: the listeners are made once, `before` is called with each file and can refuse it, `after`
 // when the file is done.
-function listenersOfOnce(entry, fileContext) {
+function listenersOfOnce(entry) {
   if (entry.once === null) {
-    const { before, after, ...listeners } = entry.rule.createOnce(fileContext.extend(entry.own));
+    const { before, after, ...listeners } = entry.rule.createOnce(oxlintFileContext.extend(entry.own));
     entry.once = { before, after, listeners };
   }
   const { before, after, listeners } = entry.once;

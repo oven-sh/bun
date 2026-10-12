@@ -834,6 +834,32 @@ struct Builder<'t, 'a> {
     lists: Vec<u32>,
 }
 
+/// [`crate::utils::oxlint::is_strict_mode`] of a scope of a file that is no module. `known`: what it has found, by the id of the scope,
+/// so that it looks at each scope once.
+fn is_strict_for_oxlint(scope: Scope, known: &mut Vec<Option<bool>>) -> bool {
+    let mut asked = Vec::new();
+    let mut is_strict = false;
+    for it in scope.chain() {
+        let id = it.id().0 as usize;
+        if let Some(Some(found)) = known.get(id) {
+            is_strict = *found;
+            break;
+        }
+        asked.push(id);
+        if crate::utils::oxlint::makes_strict(it) {
+            is_strict = true;
+            break;
+        }
+    }
+    for id in asked {
+        if known.len() <= id {
+            known.resize(id + 1, None);
+        }
+        known[id] = Some(is_strict);
+    }
+    is_strict
+}
+
 impl<'t, 'a> Builder<'t, 'a> {
     /// Takes the scopes, variables, definitions and references from [`crate::semantic`].
     fn collect(&mut self, file: &'a File<'a>) {
@@ -846,10 +872,11 @@ impl<'t, 'a> Builder<'t, 'a> {
         // With a configuration of oxlint `Scope::is_strict` takes every file for a module.
         let is_no_module = file.language().is_oxlint
             && crate::utils::oxlint::source_type(file) != SourceType::Module;
+        let mut known_strict = Vec::new();
         for scope in file.scopes() {
             let index = self.scopes.len() as u32;
             let is_strict = match is_no_module {
-                true => crate::utils::oxlint::is_strict_mode(scope, file),
+                true => is_strict_for_oxlint(scope, &mut known_strict),
                 false => scope.is_strict(),
             };
             self.scopes.push(ScopeRecord {

@@ -3266,6 +3266,82 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 
+  // ESLint 10.12.0 reports the same for `both`, and refuses `once`: "Rule must be an object with a `create` method".
+  test(
+    "with a configuration of ESLint a rule with create is created for each file, and the context of createOnce is that of the file being linted",
+    async () => {
+      const files = {
+        "plugin.mjs": `const name = path => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\\\")) + 1);
+const say = (context, how) =>
+  [how, context.id, name(context.filename), name(context.physicalFilename), JSON.stringify(context.options), context.settings.which, context.languageOptions.sourceType, context.sourceCode.text.trim()].join(" ");
+let calls = 0;
+export default {
+  meta: { name: "p" },
+  rules: {
+    once: {
+      meta: { schema: false },
+      createOnce(context) {
+        const call = ++calls;
+        let seenBefore, program;
+        return {
+          before() { seenBefore = name(context.filename); },
+          Program(node) { program = node; context.report({ node, message: say(context, \`createOnce#\${call} before:\${seenBefore}\`) }); },
+          after() { context.report({ node: program, message: \`after \${name(context.filename)}\` }); },
+        };
+      },
+    },
+    both: {
+      meta: { schema: false },
+      create: context => ({ Program(node) { context.report({ node, message: say(context, "create") }); } }),
+      createOnce: context => ({ Program(node) { context.report({ node, message: say(context, "createOnce") }); } }),
+    },
+  },
+};
+`,
+        "eslint.config.mjs": `
+          import p from "./plugin.mjs";
+          export default [
+            { plugins: { p }, rules: { "p/once": ["error", "all"], "p/both": ["error", "all"] }, settings: { which: "all" } },
+            {
+              files: ["b.js"],
+              rules: { "p/once": ["error", "b"], "p/both": ["error", "b"] },
+              settings: { which: "b" },
+              languageOptions: { sourceType: "script" },
+            },
+          ];`,
+        "a.js": "a;\n",
+        "b.js": "b;\n",
+        "c.js": "c;\n",
+      };
+      const expected = [
+        `a.js p/once | createOnce#1 before:a.js p/once a.js a.js ["all"] all module a;`,
+        `a.js p/both | create p/both a.js a.js ["all"] all module a;`,
+        `a.js p/once | after a.js`,
+        `b.js p/once | createOnce#2 before:b.js p/once b.js b.js ["b"] b script b;`,
+        `b.js p/both | create p/both b.js b.js ["b"] b script b;`,
+        `b.js p/once | after b.js`,
+        `c.js p/once | createOnce#1 before:c.js p/once c.js c.js ["all"] all module c;`,
+        `c.js p/both | create p/both c.js c.js ["all"] all module c;`,
+        `c.js p/once | after c.js`,
+      ];
+      // In one realm, where the third file comes after two others, and in several.
+      const runs = await Promise.all(
+        ["1", "3"].map(threads => lint(files, ["--threads", threads, "-f", "json", "a.js", "b.js", "c.js"])),
+      );
+      for (const { raw, exitCode } of runs) {
+        const results: { filePath: string; messages: { ruleId: string; message: string }[] }[] = JSON.parse(raw);
+        const found = results.flatMap(({ filePath, messages }) =>
+          messages.map(
+            it => `${filePath.slice(-4)} ${it.ruleId} | ${it.message.replace(/createOnce#\d/, "createOnce#N")}`,
+          ),
+        );
+        expect(found).toEqual(expected.map(it => it.replace(/createOnce#\d/, "createOnce#N")));
+        expect(exitCode).toBe(1);
+      }
+    },
+    timeout,
+  );
+
   // As under ESLint 10.12.0.
   test(
     "a range with a hole is read like any other object",

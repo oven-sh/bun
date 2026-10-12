@@ -731,11 +731,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintListen, (JSGlobalObject * globalObject, CallFrame
         JSArray* nodes = makeLintNodes(globalObject, host, bytes.subspan(8 + callBytes));
         RETURN_IF_EXCEPTION(scope, {});
         // A copy. The host relies on its own list, and a plugin that has changed `Array.prototype` can get at what the program has.
-        JSArray* copy = tryCreateFilledLintArray(vm, globalObject, nodes->length());
+        ObjectInitializationScope initializationScope(vm);
+        JSArray* copy = JSArray::tryCreateUninitializedRestricted(initializationScope, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), nodes->length());
         if (!copy) [[unlikely]]
             return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
         for (unsigned i = 0; i < nodes->length(); ++i)
-            copy->setIndexQuickly(vm, i, nodes->getIndexQuickly(i));
+            copy->initializeIndex(initializationScope, i, nodes->getIndexQuickly(i));
         result->setIndexQuickly(vm, 1, copy);
     }
     return JSValue::encode(result);

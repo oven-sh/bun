@@ -2594,20 +2594,23 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       }
       this.rstCode = code;
       markStreamClosed(this);
-      // A pushed stream on the client has no writable side that can finish.
-      const writableFinished = this.writableFinished || this[kPush];
+      if (this[kPush]) {
+        // A pushed stream on the client has no writable side that can finish. _destroy() sends its reset.
+        scheduleDestroyIfNotDestroyed(this);
+        return;
+      }
       if (this.pending) {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
-      } else if (writableFinished || code) {
+      } else if (this.writableFinished || code) {
         setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));
       }
       // node destroys the stream once both halves have finished; without this a stream closed
       // while idle never emits 'close'.
-      if (writableFinished) {
+      if (this.writableFinished) {
         scheduleDestroyIfNotDestroyed(this);
       } else {
         this.once("finish", scheduleDestroyIfNotDestroyed.bind(null, this));

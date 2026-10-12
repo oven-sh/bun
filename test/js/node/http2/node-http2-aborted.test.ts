@@ -26,7 +26,7 @@ const INITIAL_WINDOW = 65535;
 const MAX_WINDOW = 2 ** 31 - 1;
 const BODY = Buffer.alloc(INITIAL_WINDOW * 4, "a");
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
-const F = { DATA: 0, HEADERS: 1, RST_STREAM: 3, SETTINGS: 4, GOAWAY: 7, WINDOW_UPDATE: 8 };
+const F = { DATA: 0, HEADERS: 1, RST_STREAM: 3, SETTINGS: 4, PUSH_PROMISE: 5, PING: 6, GOAWAY: 7, WINDOW_UPDATE: 8 };
 const END_STREAM = 0x1;
 const END_HEADERS = 0x4;
 const SETTINGS_INITIAL_WINDOW_SIZE = 4;
@@ -51,8 +51,8 @@ function u32(...values: number[]) {
   return b;
 }
 
-// A HEADERS frame for a request. The block is HPACK "literal header field never indexed, new name".
-function request(streamId: number, method: string, flags: number) {
+// The header block of a request: HPACK "literal header field never indexed, new name".
+function requestBlock(method: string) {
   const headers = [
     [":method", method],
     [":scheme", "http"],
@@ -65,19 +65,27 @@ function request(streamId: number, method: string, flags: number) {
     Buffer.from([v.length]),
     Buffer.from(v),
   ]);
-  return frame(F.HEADERS, flags | END_HEADERS, streamId, Buffer.concat(block));
+  return Buffer.concat(block);
 }
+
+const request = (streamId: number, method: string, flags: number) =>
+  frame(F.HEADERS, flags | END_HEADERS, streamId, requestBlock(method));
+
+const pushPromise = (streamId: number, promisedId: number) =>
+  frame(F.PUSH_PROMISE, END_HEADERS, streamId, Buffer.concat([u32(promisedId), requestBlock("GET")]));
 
 // A HEADERS frame for a response: ":status: 200" is entry 8 of the HPACK static table.
 const response = (streamId: number) => frame(F.HEADERS, END_HEADERS, streamId, Buffer.from([0x88]));
 
 const rstStream = (streamId: number, code: number = NGHTTP2_CANCEL) => frame(F.RST_STREAM, 0, streamId, u32(code));
 
+type Frame = { type: number; streamId: number; payload: Buffer };
+
 type RawPeer = {
   isServer: boolean;
   // The flow-control window this endpoint grants to the connection and to each stream.
   window?: number;
-  onHeaders?: (streamId: number, socket: Duplex) => void;
+  onFrame?: (frame: Frame, socket: Duplex) => void;
 };
 
 /**
@@ -87,7 +95,7 @@ type RawPeer = {
  *   - window INITIAL_WINDOW: a full window of DATA arrived. Flow control holds the rest.
  *   - window MAX_WINDOW: this endpoint stops reading at the first DATA frame. The socket holds the rest.
  */
-function rawPeer(socket: Duplex, { isServer, window = INITIAL_WINDOW, onHeaders }: RawPeer): Promise<number> {
+function rawPeer(socket: Duplex, { isServer, window = INITIAL_WINDOW, onFrame }: RawPeer): Promise<number> {
   const bodyHeld = Promise.withResolvers<number>();
   let buf = Buffer.alloc(0);
   let prefaceSeen = !isServer;
@@ -112,16 +120,16 @@ function rawPeer(socket: Duplex, { isServer, window = INITIAL_WINDOW, onHeaders 
       const type = buf[3];
       const flags = buf[4];
       const streamId = buf.readUInt32BE(5) & 0x7fffffff;
+      const payload = buf.subarray(9, 9 + length);
       buf = buf.subarray(9 + length);
       if (type === F.SETTINGS && !(flags & 1)) {
         socket.write(frame(F.SETTINGS, 1, 0));
-      } else if (type === F.HEADERS) {
-        onHeaders?.(streamId, socket);
       } else if (type === F.DATA) {
         received += length;
         if (window !== INITIAL_WINDOW) socket.pause();
         if (window !== INITIAL_WINDOW || received === INITIAL_WINDOW) bodyHeld.resolve(streamId);
       }
+      onFrame?.({ type, streamId, payload }, socket);
     }
   });
   return bodyHeld.promise;
@@ -172,6 +180,29 @@ async function rawClient(server: net.Server, frames: Buffer[], duplex = false) {
   socket.write(Buffer.concat([PREFACE, frame(F.SETTINGS, 0, 0), ...frames]));
   // Both sides of a pair: node asserts when a pair loses one side with a write in flight.
   return { socket, windowExhausted, close: () => sides.forEach(side => side.destroy()) };
+}
+
+type RawSide = { socket: Duplex; bodyHeld: Promise<number> };
+
+// A node:http2 client of a raw server. `run` gets the client and the raw side of its connection.
+async function connect<T>(
+  peer: Omit<RawPeer, "isServer">,
+  run: (client: http2.ClientHttp2Session, raw: Promise<RawSide>) => Promise<T>,
+) {
+  const raw = Promise.withResolvers<RawSide>();
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    sockets.push(socket);
+    raw.resolve({ socket, bodyHeld: rawPeer(socket, { isServer: true, ...peer }) });
+  });
+  const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+  try {
+    return await run(client, raw.promise);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    client.destroy();
+    server.close();
+  }
 }
 
 describe("ServerHttp2Stream 'aborted'", () => {
@@ -546,29 +577,6 @@ describe("Http2ServerRequest 'aborted'", () => {
 });
 
 describe("ClientHttp2Stream 'aborted'", () => {
-  type Raw = { socket: Duplex; bodyHeld: Promise<number> };
-
-  // A node:http2 client of a raw server. `run` gets the client and the raw side of its connection.
-  async function connect<T>(
-    peer: Omit<RawPeer, "isServer">,
-    run: (client: http2.ClientHttp2Session, raw: Promise<Raw>) => Promise<T>,
-  ) {
-    const raw = Promise.withResolvers<Raw>();
-    const sockets: net.Socket[] = [];
-    const server = net.createServer(socket => {
-      sockets.push(socket);
-      raw.resolve({ socket, bodyHeld: rawPeer(socket, { isServer: true, ...peer }) });
-    });
-    const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
-    try {
-      return await run(client, raw.promise);
-    } finally {
-      for (const socket of sockets) socket.destroy();
-      client.destroy();
-      server.close();
-    }
-  }
-
   // The client sends a request with a body. Once the raw server holds the rest of the body, `how`
   // says what leaves the request. With MAX_WINDOW the raw server answers the request first, so
   // the client has the window when it gets the response and sends the body then.
@@ -578,8 +586,9 @@ describe("ClientHttp2Stream 'aborted'", () => {
     { method = "POST", window = INITIAL_WINDOW } = {},
   ) {
     const answered = window === MAX_WINDOW;
-    const onHeaders = (streamId: number, socket: Duplex) => void (answered && socket.write(response(streamId)));
-    return await connect({ window, onHeaders }, async (client, raw) => {
+    const onFrame = ({ type, streamId }: Frame, socket: Duplex) =>
+      void (answered && type === F.HEADERS && socket.write(response(streamId)));
+    return await connect({ window, onFrame }, async (client, raw) => {
       const controller = new AbortController();
       const req = client.request({ ":method": method, ":path": "/" }, { endStream: false, signal: controller.signal });
       const outcome = outcomeOf(req);
@@ -660,8 +669,9 @@ describe("ClientHttp2Stream 'aborted'", () => {
 
   test("request() from an 'aborted' listener after signal.abort() with 12 MiB queued: sent", async () => {
     const retried = Promise.withResolvers<number>();
-    const onHeaders = (streamId: number) => void (streamId !== 1 && retried.resolve(streamId));
-    const streamId = await connect({ onHeaders }, async (client, raw) => {
+    const onFrame = ({ type, streamId }: Frame) =>
+      void (type === F.HEADERS && streamId !== 1 && retried.resolve(streamId));
+    const streamId = await connect({ onFrame }, async (client, raw) => {
       const controller = new AbortController();
       const req = client.request({ ":method": "POST", ":path": "/" }, { signal: controller.signal });
       req.on("error", () => {});
@@ -738,9 +748,10 @@ describe("ClientHttp2Stream 'aborted'", () => {
   // node ends the writable side of a request that has no body before it submits the request.
   describe("a request that nghttp2 refuses", () => {
     // A server resets these requests with PROTOCOL_ERROR. Bun's client does not send them.
-    const refuse = (streamId: number, socket: Duplex) => void socket.write(rstStream(streamId, NGHTTP2_PROTOCOL_ERROR));
+    const refuse = ({ type, streamId }: Frame, socket: Duplex) =>
+      void (type === F.HEADERS && socket.write(rstStream(streamId, NGHTTP2_PROTOCOL_ERROR)));
     const refused = (headers: http2.OutgoingHttpHeaders) =>
-      connect({ onHeaders: refuse }, client => outcomeOf(client.request(headers)));
+      connect({ onFrame: refuse }, client => outcomeOf(client.request(headers)));
 
     test("GET with a space in :path: not emitted", async () => {
       assert.deepStrictEqual(await refused({ ":path": "/a b" }), {
@@ -817,18 +828,38 @@ describe("pushed ClientHttp2Stream 'aborted'", () => {
     }
   }
 
-  for (const [name, close] of [
-    ["close(CANCEL) on the client", (pushed: Pushed) => pushed.client.close(NGHTTP2_CANCEL)],
-    ["RST_STREAM(CANCEL) from the server", (pushed: Pushed) => pushed.server.close(NGHTTP2_CANCEL)],
-  ] as const) {
-    test(`${name}: not emitted`, async () => {
-      const outcome = await push(async pushed => {
-        const closed = once(pushed.client, "close");
-        close(pushed);
-        await closed;
-        return { events: pushed.events, aborted: pushed.client.aborted };
-      });
-      assert.deepStrictEqual(outcome, { events: ["close"], aborted: false });
+  test("RST_STREAM(CANCEL) from the server: not emitted", async () => {
+    const outcome = await push(async pushed => {
+      const closed = once(pushed.client, "close");
+      pushed.server.close(NGHTTP2_CANCEL);
+      await closed;
+      return { events: pushed.events, aborted: pushed.client.aborted };
     });
-  }
+    assert.deepStrictEqual(outcome, { events: ["close"], aborted: false });
+  });
+
+  test("close(CANCEL) on the client: not emitted, one RST_STREAM", async () => {
+    const resets: number[] = [];
+    const pinged = Promise.withResolvers<void>();
+    const onFrame = ({ type, streamId, payload }: Frame, socket: Duplex) => {
+      // The raw server promises stream 2 and starts its response.
+      if (type === F.HEADERS) socket.write(Buffer.concat([pushPromise(streamId, 2), response(2)]));
+      else if (type === F.RST_STREAM) resets.push(payload.readUInt32BE(0));
+      else if (type === F.PING) pinged.resolve();
+    };
+    const outcome = await connect({ onFrame }, async client => {
+      client.request({ ":path": "/" }).on("error", () => {});
+      const [pushed] = (await once(client, "stream")) as [http2.ClientHttp2Stream];
+      const events: string[] = [];
+      pushed.on("aborted", () => events.push("aborted"));
+      const closed = once(pushed, "close");
+      pushed.close(NGHTTP2_CANCEL);
+      await closed;
+      // This PING leaves after every reset that close() and the destroy of the stream queued.
+      setImmediate(() => client.ping(() => {}));
+      await pinged.promise;
+      return { events, aborted: pushed.aborted, resets };
+    });
+    assert.deepStrictEqual(outcome, { events: [], aborted: false, resets: [NGHTTP2_CANCEL] });
+  });
 });

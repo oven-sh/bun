@@ -4,6 +4,7 @@ use super::errors_enums_names::{Location, is_ambient_enum, is_declared_before_us
 use super::errors_names_and_exports::fully_qualified_name_of;
 use super::*;
 use crate::bind::{Decl, PatParent, ScopeId, ScopeKind};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -836,7 +837,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        own.sort_unstable_by_key(|own| own.0);
+        own.shared_sort_unstable_by_key(|own| own.0);
         let this = match s.kind {
             ScopeKind::Class(c) => Some(self.files().sym(file, bound.class_symbol[c.idx()])),
             ScopeKind::Interface(i) => {

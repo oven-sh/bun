@@ -549,8 +549,8 @@ pub enum PropSource<'s> {
     /// `this.name = value` or `Object.defineProperty(f, "name", descriptor)`. A late bound symbol
     /// is identified by the symbol the binder created for its first declaration.
     Symbol(Sym),
-    /// A property of the given intersection: the properties of that name in several of its
-    /// constituents. It combines all of them.
+    /// A property of the given intersection or union: the properties of that name in several of
+    /// its constituents. It combines all of them.
     Intersected(TypeId, List<'s, Prop<'s>>),
     /// A property of the given mapped type (`containingType`). Its type is the template of that
     /// type instantiated with `Prop::mapper`: the mapper of the mapped type plus its type parameter
@@ -681,6 +681,9 @@ pub struct Shape<'s> {
     /// one. `mapType` iterates over a union of named unions by its origin, which is not the order
     /// of `CompareTypes`.
     pub spread_rank: u32,
+    /// The intersection that this has the properties of, and no more. Its signatures and index
+    /// signatures are elsewhere: `structured_members`.
+    pub properties_of: Option<TypeId>,
     /// For a type created by `getSignatureInstantiation` with `inferredTypeParameters`
     /// (`ObjectFlagsSingleSignatureType`), which creates a new type on every call: the outer type
     /// parameters of the signature's declaration instantiated with `t.mapper`, as a tuple.
@@ -794,6 +797,7 @@ impl<'s> Shape<'s> {
             default_of: None,
             spread_of: None,
             spread_rank: 0,
+            properties_of: None,
             single_signature_arguments: None,
             has_no_instantiable_symbol: false,
             pattern_at: None,
@@ -3346,6 +3350,7 @@ follow_struct!(Shape<'_> {
     default_of,
     spread_of,
     spread_rank,
+    properties_of,
     single_signature_arguments,
     has_no_instantiable_symbol,
     pattern_at,
@@ -3594,6 +3599,7 @@ clone_in_struct!(Shape {
     default_of,
     spread_of,
     spread_rank,
+    properties_of,
     single_signature_arguments,
     has_no_instantiable_symbol,
     pattern_at,
@@ -3900,6 +3906,22 @@ struct Taken<V> {
     /// In a debug build, after `number`: the records that were merged with another record, each
     /// with the id of that record. See `check_joined`.
     joined: Vec<(u32, V)>,
+}
+
+impl<V> Taken<V> {
+    fn map<U>(self, mut of: impl FnMut(V) -> U) -> Taken<U> {
+        let records = self.records.into_iter();
+        let joined = self.joined.into_iter();
+        Taken {
+            len: self.len,
+            records: records
+                .map(|(index, hash, record)| (index, hash, of(record)))
+                .collect(),
+            positions: self.positions,
+            parts: self.parts,
+            joined: joined.map(|(id, record)| (id, of(record))).collect(),
+        }
+    }
 }
 
 impl<V> Default for Taken<V> {
@@ -4336,7 +4358,8 @@ impl<'s> TypeStore<'s> {
         let (mut texts, mut components, mut mappers, mut sigs, mut types) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (task, link) in tasks.into_iter().zip(&links) {
-            texts.push((task.atoms, link));
+            // The texts of the interner are not in an arena: see `atom::Tables`.
+            texts.push((task.atoms.map(|text| crate::atom::Text::from(&*text)), link));
             components.push((task.components, link));
             mappers.push((task.mappers, link));
             sigs.push((task.sigs, link));
@@ -4346,7 +4369,7 @@ impl<'s> TypeStore<'s> {
             let spread = crate::atom::hash_of(&text);
             Placed::Indexed(text, spread)
         });
-        check_joined(atoms.halves().1, joined, |a, b| a == b);
+        check_joined(atoms.halves().1, joined, |a, b| **a == **b);
         let (_, joined) = put(
             self.components.halves(),
             components,

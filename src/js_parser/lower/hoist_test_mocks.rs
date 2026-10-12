@@ -60,7 +60,7 @@ pub(crate) fn drop_namespace_of_lowered_callee(
     is_lowered
 }
 
-impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEMA> {
+impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Whether `bun test` may transpile this file to something else than `bun run` does. Both find
     /// the same answer, and nothing that either does to the file takes any of it back: a record
     /// stays, and so does the symbol of a name that was looked up and that nothing binds.

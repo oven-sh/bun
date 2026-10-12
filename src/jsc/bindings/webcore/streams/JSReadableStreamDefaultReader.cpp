@@ -532,10 +532,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultR
     if (!stream)
         return throwVMTypeError(lexicalGlobalObject, scope, "ReadableStreamDefaultReader constructor requires a ReadableStream as its first argument"_s);
 
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    RETURN_IF_EXCEPTION(scope, {});
     // Same as getReader(): a lazy native/direct stream materializes before it is locked.
     stream->materializeIfNeeded(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = JSReadableStreamDefaultReader::create(vm, structure);
     setUpReadableStreamDefaultReader(lexicalGlobalObject, reader, stream);

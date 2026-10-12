@@ -286,7 +286,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
     if let (Some(home), false) = (home, read_home) {
         read_yarnrc_file(log, &mut out, home, rc_name, false)?;
     }
-    // A package of the registry has no catalog to read `catalog:` from: bun.lock and package.json get the catalog's range.
+    // Every rule is copied to package.json: bun has to take each range, and read it as bun.lock has it.
     let YarnRc {
         extensions,
         catalogs,
@@ -295,10 +295,30 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
     for extension in extensions {
         let added = (extension.dependencies.iter_mut()).chain(&mut extension.peer_dependencies);
         for (name, range) in added {
-            let in_catalog = (range.strip_prefix(b"catalog:"))
-                .and_then(|group| catalogs.get(group)?.get(&**name));
-            if let Some(in_catalog) = in_catalog {
+            if let Some(group) = range.strip_prefix(b"catalog:") {
+                // a package of the registry has no catalog to read it from
+                let Some(in_catalog) = catalogs.get(group).and_then(|g| g.get(&**name)) else {
+                    bail!(
+                        log,
+                        "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\", and the catalog has no \"{}\"",
+                        shown(&extension.key),
+                        shown(name),
+                        shown(range),
+                        shown(name),
+                    );
+                };
                 range.clone_from(in_catalog);
+            }
+            // there, `npm:^1` is an alias of a package called `^1`
+            *range = Box::from(strip_npm_protocol(range));
+            if !is_supported_specifier(range) {
+                bail!(
+                    log,
+                    "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\"; bun's packageExtensions take a version, a tag, a git repository or a tarball URL",
+                    shown(&extension.key),
+                    shown(name),
+                    shown(range),
+                );
             }
         }
     }
@@ -1147,20 +1167,27 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         let deps = this.packages.items_dependencies()[pkg_id];
         for dep_id in deps.begin()..deps.end() {
             let dep = this.buffers.dependencies[dep_id as usize].clone();
+            // The range yarn installs for the name can be the `catalog:` of another group.
+            let yarn_range = original_specs.by_dependency.get(&dep_id);
+            let catalog = match yarn_range.and_then(|range| range.strip_prefix(b"catalog:")) {
+                Some(group) => Some(sbuf!(this).append(group)?),
+                None if yarn_range.is_none() && dep.version.tag == VersionTag::Catalog => {
+                    Some(*dep.version.catalog())
+                }
+                None => None,
+            };
             let name = dep.name.slice(string_bytes!(this));
             let original_literal = dep.version.literal.slice(string_bytes!(this));
             // `catalog:` -> the catalog's range, which is what yarn keyed the entry by
-            let catalog_range: Option<Vec<u8>> = if dep.version.tag == VersionTag::Catalog {
+            let catalog_range: Option<Vec<u8>> = catalog.and_then(|group| {
                 this.catalogs
-                    .get(this, *dep.version.catalog(), dep.name)
+                    .get(this, group, dep.name)
                     .map(|d| d.version.literal.slice(string_bytes!(this)).to_vec())
-            } else {
-                None
-            };
-            let literal: &[u8] = match original_specs.by_dependency.get(&dep_id) {
-                Some(spec) => spec,
-                None => catalog_range.as_deref().unwrap_or(original_literal),
-            };
+            });
+            let literal: &[u8] = catalog_range
+                .as_deref()
+                .or_else(|| yarn_range.map(|range| &**range))
+                .unwrap_or(original_literal);
 
             let lookup = |key: &[u8]| -> Option<usize> { descriptor_to_entry.get(key).copied() };
 
@@ -1293,17 +1320,26 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                         }
                     }
                     if original_specs.in_several_groups.contains(&dep_id) {
-                        // this edge's own range, which bun reads, has to accept what yarn locked
-                        let accepted = match (dep.version.tag, bound.tag) {
-                            (VersionTag::Npm, ResolutionTag::Npm) => {
-                                dep.version.npm().version.satisfies(
-                                    bound.npm().version,
-                                    string_bytes!(this),
-                                    string_bytes!(this),
-                                )
+                        // this edge's own range, which bun reads (of its catalog), has to accept what yarn locked
+                        let own = match dep.version.tag {
+                            VersionTag::Catalog => this
+                                .catalogs
+                                .get(this, *dep.version.catalog(), dep.name)
+                                .map(|d| d.version),
+                            _ => Some(dep.version.clone()),
+                        };
+                        let accepted = match (own.as_ref().map(|v| v.tag), bound.tag) {
+                            (Some(VersionTag::Npm), ResolutionTag::Npm) => {
+                                own.as_ref().is_some_and(|v| {
+                                    v.npm().version.satisfies(
+                                        bound.npm().version,
+                                        string_bytes!(this),
+                                        string_bytes!(this),
+                                    )
+                                })
                             }
-                            (VersionTag::Workspace, ResolutionTag::Workspace)
-                            | (VersionTag::DistTag, ResolutionTag::Npm) => true,
+                            (Some(VersionTag::Workspace), ResolutionTag::Workspace)
+                            | (Some(VersionTag::DistTag), ResolutionTag::Npm) => true,
                             _ => false,
                         };
                         if !accepted {
@@ -1837,26 +1873,6 @@ fn extensions_of<'a>(
             for (dep_name, dep_range) in from {
                 if to.iter().chain(before).any(|(n, _)| *n == &**dep_name) {
                     continue;
-                }
-                if dep_range.starts_with(b"catalog:") {
-                    bail!(
-                        log,
-                        "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\", and the catalog has no \"{}\"",
-                        shown(&extension.key),
-                        shown(dep_name),
-                        shown(dep_range),
-                        shown(dep_name),
-                    );
-                }
-                // The rule is copied to package.json, where one such range has the whole rule ignored.
-                if !is_supported_specifier(dep_range) {
-                    bail!(
-                        log,
-                        "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\"; bun's packageExtensions take a version, a tag, a git repository or a tarball URL",
-                        shown(&extension.key),
-                        shown(dep_name),
-                        shown(dep_range),
-                    );
                 }
                 to.push((&**dep_name, &**dep_range));
             }

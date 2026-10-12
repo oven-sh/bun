@@ -738,6 +738,7 @@ impl<'a> Migrator<'a> {
                 {
                     self.local_declared.set(t as usize);
                 }
+                let has_entry = found.is_some();
                 if let Some((t, through_link)) = found
                     && !is_local
                     && !declares_folder
@@ -752,11 +753,14 @@ impl<'a> Migrator<'a> {
                         INVALID_PACKAGE_ID
                     }
                     None => {
-                        debug!(
-                            "could not find package '{}' from '{}'",
-                            bstr::BStr::new(name),
-                            bstr::BStr::new(key)
-                        );
+                        if !has_entry && !self.silent {
+                            bun_core::warn!(
+                                "skipped \"{}@{}\" from package-lock.json: no entry for this dependency of \"{}\"",
+                                bstr::BStr::new(name),
+                                bstr::BStr::new(spec),
+                                bstr::BStr::new(if key.is_empty() { &b"."[..] } else { key }),
+                            );
+                        }
                         continue;
                     }
                 };

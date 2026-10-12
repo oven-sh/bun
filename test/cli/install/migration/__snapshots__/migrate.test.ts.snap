@@ -3763,7 +3763,8 @@ bun install --frozen-lockfile exit code: 1
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures external-link-dep 1`] = `
-"migrated lockfile from package-lock.json
+"warn: skipped "app@file:./app" from package-lock.json: no entry for this dependency of "../cli-750"
+migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 

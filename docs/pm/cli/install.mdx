@@ -620,6 +620,8 @@ After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml
 
 Bun migrates a `yarn.lock` the same way when no `bun.lock` exists: both Yarn v1 lockfiles and Yarn 2+ ("Berry", the YAML format with a `__metadata` header) are converted to `bun.lock` during `bun install` or `bun pm migrate`, keeping every locked version. The original `yarn.lock` is left in place.
 
+A Yarn v1 lockfile that is older than `package.json` is still migrated: Bun resolves the dependencies it has no entry for and prints a warning that names them.
+
 A Yarn Berry lockfile is migrated only when Bun can keep everything it pins. If one package, patch, workspace or dependency cannot be carried over exactly, Bun prints the reason, does not migrate, and resolves from `package.json` instead (`bun pm migrate` exits with an error).
 
 For Yarn Berry lockfiles the migration handles:

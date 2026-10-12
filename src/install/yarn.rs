@@ -1922,6 +1922,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             lockfile::DependencyIDSlice::new(resolutions_off, dep_count);
     }
 
+    crate::migration::warn_unlocked_dependencies(this, manager, "yarn.lock");
+
     this.tag_workspace_links(manager.options.link_workspace_packages);
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
     // a tagged error until `From<SubtreeError>` lands.

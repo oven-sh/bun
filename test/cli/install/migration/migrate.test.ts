@@ -1328,6 +1328,32 @@ describe("package-lock.json migration fixes", () => {
     await frozen(dir);
   });
 
+  test.concurrent("a required dependency with no entry is reported", async () => {
+    using dir = synthetic("npm-migrate-no-entry", {
+      "package.json": JSON.stringify({ name: "no-entry", dependencies: { x: "1.0.0" } }),
+      "package-lock.json": JSON.stringify({
+        name: "no-entry",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "no-entry", dependencies: { x: "1.0.0" } },
+          "node_modules/x": {
+            version: "1.0.0",
+            resolved: "https://registry.npmjs.org/x/-/x-1.0.0.tgz",
+            dependencies: { y: "^1.0.0" },
+          },
+        },
+      }),
+    });
+
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).toContain(
+      'warn: skipped "y@^1.0.0" from package-lock.json: no entry for this dependency of "node_modules/x"',
+    );
+    expect(lock.packages.x[2]).toStrictEqual({});
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("unsupported specs are skipped, not fatal (B11)", async () => {
     using dir = synthetic("npm-migrate-b11", {
       "package.json": JSON.stringify({ name: "b11", dependencies: { x: "1.0.0" } }),

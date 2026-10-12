@@ -3,6 +3,7 @@
 
 pub use crate::args::UsageError;
 use crate::args::{Argument, Param, error};
+use crate::configs::{Flavor, is_category};
 use bun_clap as clap;
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -112,7 +113,7 @@ pub const PARAMS: &[Param] = &[
     ),
     clap::param!("--type-check                    With <b>--type-aware<r>: report type errors too"),
     clap::param!(
-        "-A, --allow <rule>...           With an <b>.oxlintrc.json<r>: turn a rule or a category off"
+        "-A, --allow <rule>...           Turn a rule off, or with an <b>.oxlintrc.json<r> a category"
     ),
     clap::param!("-W, --warn <rule>...            The same: make it a warning"),
     clap::param!("-D, --deny <rule>...            The same: make it an error"),
@@ -236,6 +237,71 @@ const ONLY_OF_OXLINT: [&[u8]; 11] = [
     b"lsp",
 ];
 
+/// Those of [`ONLY_OF_ESLINT`] that nothing can be done about with a configuration of oxlint.
+const NOTHING_TO_OXLINT: [&[u8]; 4] = [
+    b"ext",
+    b"parser",
+    b"plugin",
+    b"report-unused-inline-configs",
+];
+
+/// Those that ESLint 8 has and ESLint 9 has not.
+const ONLY_OF_ESLINT_8: [&[u8]; 4] = [
+    b"eslintrc",
+    b"env",
+    b"rulesdir",
+    b"resolve-plugins-relative-to",
+];
+
+/// A flag of the command line that only one of the two tools has.
+#[derive(Clone, Debug)]
+pub struct OfOneTool {
+    tool: Tool,
+    name: &'static [u8],
+    value: Vec<u8>,
+    is_on: bool,
+}
+
+impl OfOneTool {
+    /// Whether nothing can be done about it in a run that has a configuration of `flavor`.
+    fn means_nothing_to(&self, flavor: Flavor) -> bool {
+        let is_of_eslint_8 = ONLY_OF_ESLINT_8.contains(&self.name);
+        match (self.tool, flavor) {
+            // The opposite of `--no-eslintrc` asks for nothing.
+            _ if self.name == b"eslintrc" && self.is_on => false,
+            (Tool::Eslint, Flavor::Oxlint) => {
+                is_of_eslint_8 || NOTHING_TO_OXLINT.contains(&self.name)
+            }
+            (Tool::Eslint, Flavor::Eslint) => is_of_eslint_8,
+            (Tool::Eslint, Flavor::EslintRc | Flavor::BuiltIn) | (Tool::Oxlint, Flavor::Oxlint) => {
+                false
+            }
+            (Tool::Oxlint, _) => match self.name {
+                b"allow" | b"warn" | b"deny" => is_category(&self.value),
+                name => name.ends_with(b"-plugin"),
+            },
+        }
+    }
+
+    /// As it is written, and whose it is.
+    fn written(&self) -> (Vec<u8>, &'static [u8]) {
+        let flag: Vec<u8> = match self.name {
+            b"allow" => b"-A".to_vec(),
+            b"warn" => b"-W".to_vec(),
+            b"deny" => b"-D".to_vec(),
+            name if self.is_on => [b"--", name].concat(),
+            name => [b"--no-", name].concat(),
+        };
+        let space: &[u8] = if self.value.is_empty() { b"" } else { b" " };
+        let whose: &[u8] = match self.tool {
+            Tool::Oxlint => b"oxlint",
+            Tool::Eslint if ONLY_OF_ESLINT_8.contains(&self.name) => b"ESLint 8",
+            Tool::Eslint => b"ESLint",
+        };
+        ([&flag[..], space, &self.value].concat(), whose)
+    }
+}
+
 /// `--flavor`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Tool {
@@ -260,10 +326,8 @@ pub struct Options {
     pub config: Option<Vec<u8>>,
     pub config_lookup: bool,
     pub flavor: Option<Tool>,
-    /// The command line has a flag that ESLint has and oxlint has not.
-    pub has_flag_of_eslint: bool,
-    /// The other way round.
-    pub has_flag_of_oxlint: bool,
+    /// In the order of the command line.
+    pub of_one_tool: Vec<OfOneTool>,
     pub ext: Option<Vec<Vec<u8>>>,
     pub global: Vec<Vec<u8>>,
     pub parser: Option<Vec<u8>>,
@@ -365,8 +429,7 @@ impl Default for Options {
             config: None,
             config_lookup: true,
             flavor: None,
-            has_flag_of_eslint: false,
-            has_flag_of_oxlint: false,
+            of_one_tool: Vec::new(),
             ext: None,
             global: Vec::new(),
             parser: None,
@@ -477,7 +540,7 @@ fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<
 }
 
 /// optionator's `mergeRepeatedObjects`
-fn merge(into: &mut Vec<(Vec<u8>, Json)>, entries: Vec<(Vec<u8>, Json)>) {
+pub(crate) fn merge(into: &mut Vec<(Vec<u8>, Json)>, entries: Vec<(Vec<u8>, Json)>) {
     for (key, value) in entries {
         match into.iter_mut().find(|it| it.0 == key) {
             Some(entry) => entry.1 = value,
@@ -497,8 +560,20 @@ impl Options {
     ) -> Result<(), UsageError> {
         let text = value.unwrap_or_default();
         let owned = || Some(text.to_vec());
-        self.has_flag_of_eslint |= ONLY_OF_ESLINT.contains(&name);
-        self.has_flag_of_oxlint |= ONLY_OF_OXLINT.contains(&name) || name.ends_with(b"-plugin");
+        let is_of_oxlint = ONLY_OF_OXLINT.contains(&name) || name.ends_with(b"-plugin");
+        let is_of_eslint = ONLY_OF_ESLINT.contains(&name);
+        if is_of_oxlint || is_of_eslint {
+            self.of_one_tool.push(OfOneTool {
+                tool: if is_of_oxlint {
+                    Tool::Oxlint
+                } else {
+                    Tool::Eslint
+                },
+                name,
+                value: text.to_vec(),
+                is_on,
+            });
+        }
         match name {
             b"config" => self.config = owned(),
             b"config-lookup" => self.config_lookup = is_on,
@@ -677,9 +752,23 @@ impl Options {
 
     /// What is set so far was not written for ESLint or for oxlint.
     pub(crate) fn forget_whose_flags_it_has(&mut self) {
-        self.has_flag_of_eslint = false;
-        self.has_flag_of_oxlint = false;
+        self.of_one_tool.clear();
         self.has_type_aware_flag = false;
+    }
+
+    /// Whether the command line has a flag that `tool` has and the other tool has not.
+    pub(crate) fn has_flag_of(&self, tool: Tool) -> bool {
+        self.of_one_tool.iter().any(|it| it.tool == tool)
+    }
+
+    /// The first flag of the command line that nothing can be done about in a run that has a configuration of `flavor`: as it is
+    /// written, and whose it is.
+    pub(crate) fn flag_that_means_nothing_to(
+        &self,
+        flavor: Flavor,
+    ) -> Option<(Vec<u8>, &'static [u8])> {
+        let mut flags = self.of_one_tool.iter();
+        Some(flags.find(|it| it.means_nothing_to(flavor))?.written())
     }
 
     /// `args`: what follows `lint` on the command line.

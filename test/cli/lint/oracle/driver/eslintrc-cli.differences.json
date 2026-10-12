@@ -87,7 +87,6 @@
   "files: a broken link": "exit",
   "system: .eslintrc.json only, ESLINT_USE_FLAT_CONFIG=true": "text",
   "system: eslint.config.js only, ESLINT_USE_FLAT_CONFIG=false": "exit",
-  "system: both files, a flag of ESLint 8": "exit",
   "print-config: rules, env, globals, parserOptions, settings": "config",
   "print-config: rules about layout, on and off": "config",
   "print-config: an empty configuration": "config",

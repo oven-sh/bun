@@ -76,7 +76,8 @@ impl Rule for NoEmptyPattern {
             ExprTag::Array if e.as_array().is_some_and(List::is_empty) => "array",
             _ => return,
         };
-        if utils::is_assignment_target(e) {
+        // oxlint looks at what declares only.
+        if !cx.language().is_oxlint && utils::is_assignment_target(e) {
             report(e.span(), kind, cx);
         }
     }

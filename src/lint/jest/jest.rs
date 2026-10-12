@@ -684,7 +684,7 @@ impl PossibleJestNodes {
             .originals
             .get(original as usize)
             .map_or(local, |it| &**it);
-        let kind = JestFnKind::from(name);
+        let mut kind = JestFnKind::from(name);
         let is_valid = local != b"each"
             && match kind {
                 JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest) => true,
@@ -709,6 +709,15 @@ impl PossibleJestNodes {
                     });
                 }
                 ExprTag::Dot if !parent.is_private_member() => {}
+                // From the `b` of `a[b]` on oxlint goes by the `a`, unless `b` is imported by name.
+                ExprTag::Index
+                    if parent.object() != Some(at)
+                        && !frameworks.is_bun
+                        && original as usize >= self.originals.len() =>
+                {
+                    let first = first_identifier_of_chain(parent);
+                    kind = first.map_or(kind, |it| JestFnKind::from(it.bytes()));
+                }
                 ExprTag::Index | ExprTag::TaggedTemplate => {}
                 _ => return,
             }

@@ -18,6 +18,10 @@ impl NoVarRequires {
         if !callee.is_ident("require") || callee.symbol().is_some() {
             return;
         }
+        // For oxc `(require)` is no name.
+        if cx.language().is_oxlint && callee.is_parenthesized() {
+            return;
+        }
         let is_used = match e.parent() {
             // For oxlint it is used wherever it is not a statement, if it has one argument.
             parent if cx.language().is_oxlint => {

@@ -56,6 +56,10 @@ impl Rule for NoObjectConstructor {
         if !call.args().is_empty() || !call.callee().is_ident("Object") {
             return;
         }
+        // For oxc `(Object)` is no name.
+        if cx.language().is_oxlint && call.callee().is_parenthesized() {
+            return;
+        }
         if cx.file().global(b"Object").is_none() || Node::Expr(e).scope().resolve("Object").is_some() {
             return;
         }

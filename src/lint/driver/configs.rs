@@ -9,8 +9,9 @@
 //!
 //! No tool reads the files of another. So the one that the configuration of the working directory is for decides whose files
 //! count further down: templates, fixtures and examples have all sorts. `--flavor` says it where that directory has both.
+//! A flag that only one tool has says it there too, and where there is no file at all. It never takes the place of a file.
 
-use crate::cli::{Options, Tool};
+use crate::cli::{Options, Tool, merge};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Files, OfGit};
 use crate::print_config::object;
@@ -260,6 +261,8 @@ pub(crate) struct Loader<'l> {
     tool: OnceLock<Option<Flavor>>,
     /// [`Loader::undecided`]
     undecided: OnceLock<(Vec<u8>, Vec<u8>)>,
+    /// [`Loader::refused`]
+    refused: OnceLock<Vec<u8>>,
     /// `options.typeAware` of the configuration of the working directory, if that is one of oxlint.
     wants_types: OnceLock<Option<bool>>,
     /// The project is one of Vite+ without a configuration file of a linter: [`NAMES_OF_VITE`] are the files that count.
@@ -368,6 +371,11 @@ pub(crate) const CATEGORIES: [&[u8]; 6] = [
     b"restriction",
 ];
 
+/// Whether `-A`, `-W` and `-D` of oxlint take `name` for something else than a rule.
+pub(crate) fn is_category(name: &[u8]) -> bool {
+    CATEGORIES.contains(&name) || matches!(name, b"all" | b"nursery")
+}
+
 /// oxlint's `-A`, `-W` and `-D`, one after the other. They come after the `rules` of the file and
 /// before its `overrides`. A category is about all of its rules, also those that `rules` names.
 fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u8>)]) {
@@ -463,6 +471,7 @@ impl<'l> Loader<'l> {
             rulesdir: OnceLock::new(),
             tool: OnceLock::new(),
             undecided: OnceLock::new(),
+            refused: OnceLock::new(),
             wants_types: OnceLock::new(),
             is_of_vite: OnceLock::new(),
             searched_from: Default::default(),
@@ -606,6 +615,18 @@ impl<'l> Loader<'l> {
         self.by_file.lock().len() > 1
     }
 
+    /// `--rule` for ESLint, and before it `-A`, `-W` and `-D` of oxlint with a rule: the options that the rule has stay.
+    fn rules_of_the_command_line(&self) -> Vec<(Vec<u8>, Json)> {
+        let filters = self.options.filters.iter();
+        let filters = filters.filter(|it| !is_category(&it.1));
+        let mut rules = Vec::new();
+        for (severity, rule) in filters {
+            merge(&mut rules, vec![(rule.clone(), severity_name(*severity))]);
+        }
+        merge(&mut rules, self.options.rule.clone());
+        rules
+    }
+
     /// ESLint's `overrideConfig`, as `translateOptions` makes it from the command line.
     fn override_config(&self) -> Vec<Json> {
         let options = self.options;
@@ -626,7 +647,7 @@ impl<'l> Loader<'l> {
         if !language_options.is_empty() {
             first.push((&b"languageOptions"[..], object(language_options)));
         }
-        first.push((b"rules", Json::Object(options.rule.clone())));
+        first.push((b"rules", Json::Object(self.rules_of_the_command_line())));
         let mut linter_options = Vec::new();
         if options.report_unused_disable_directives {
             linter_options.push((
@@ -878,7 +899,8 @@ impl<'l> Loader<'l> {
 
     fn built_in(&self) -> Found {
         // What oxlint does without a file.
-        if self.tool() == Some(Flavor::Oxlint) {
+        if self.has_defaults_of_oxlint() {
+            self.check_flags(Flavor::Oxlint, None)?;
             let path = paths::join(self.cwd(), b".oxlintrc.json");
             return Ok(Arc::new(Loaded {
                 config: self.rc(&path, Json::Object(Vec::new()))?,
@@ -891,6 +913,7 @@ impl<'l> Loader<'l> {
                 for_eslint: None,
             }));
         }
+        self.check_flags(Flavor::BuiltIn, None)?;
         let preset: &[u8] = match self.options.type_aware {
             Some(true) => b"recommended-type-checked",
             _ => b"recommended",
@@ -963,6 +986,7 @@ impl<'l> Loader<'l> {
             },
             |it| it.0,
         );
+        self.check_flags(flavor, Some(path))?;
         if flavor == Flavor::Oxlint {
             let cannot_use = |why: &[u8]| {
                 Fatal([b"Cannot use the configuration file ", path, b":\n", why].concat())
@@ -1100,16 +1124,19 @@ impl<'l> Loader<'l> {
     fn load(&self, path: &[u8], base_path: &[u8]) -> Found {
         let slot = Arc::clone(self.by_file.lock().entry(path.to_vec()).or_default());
         slot.get_or_init(|| match path {
-            b"" if !self.options.config_lookup => Ok(Arc::new(Loaded {
-                config: self.flat(base_path, Json::Array(Vec::new()))?,
-                flavor: Flavor::Eslint,
-                wants_types: None,
-                denies_warnings: false,
-                max_warnings: None,
-                respects_eslint_comments: true,
-                checks_types: false,
-                for_eslint: self.for_eslint(None, base_path),
-            })),
+            b"" if !self.options.config_lookup => {
+                self.check_flags(Flavor::Eslint, None)?;
+                Ok(Arc::new(Loaded {
+                    config: self.flat(base_path, Json::Array(Vec::new()))?,
+                    flavor: Flavor::Eslint,
+                    wants_types: None,
+                    denies_warnings: false,
+                    max_warnings: None,
+                    respects_eslint_comments: true,
+                    checks_types: false,
+                    for_eslint: self.for_eslint(None, base_path),
+                }))
+            }
             b"" => self.built_in(),
             path => self.read(path, base_path),
         })
@@ -1138,11 +1165,10 @@ impl<'l> Loader<'l> {
                 let found = names.find(|it| is_there(directory, it.0))?;
                 Some((directory, found.0, found.1))
             });
-            // Flags that only oxlint has, or a file that only it reads.
-            let is_for_oxlint = options.has_flag_of_oxlint
-                || (options.config.as_ref()).is_some_and(|it| {
-                    is_written_for_oxlint(&paths::resolve(self.cwd(), &paths::from_native(it)))
-                });
+            let has_flag_of_oxlint = options.has_flag_of(Tool::Oxlint);
+            let names_file_of_oxlint = (options.config.as_ref()).is_some_and(|it| {
+                is_written_for_oxlint(&paths::resolve(self.cwd(), &paths::from_native(it)))
+            });
             if wanted.is_none() && options.config.is_none() {
                 let nearest = |flavor: Flavor| {
                     paths::ancestors(self.cwd()).find_map(|directory| {
@@ -1151,7 +1177,8 @@ impl<'l> Loader<'l> {
                         Some(paths::join(directory, found.0))
                     })
                 };
-                let by_flags = match (is_for_oxlint, options.has_flag_of_eslint) {
+                let has_flag_of_eslint = options.has_flag_of(Tool::Eslint);
+                let by_flags = match (has_flag_of_oxlint, has_flag_of_eslint) {
                     (true, false) => Some(Flavor::Oxlint),
                     (false, true) => Some(Flavor::Eslint),
                     _ => None,
@@ -1159,17 +1186,17 @@ impl<'l> Loader<'l> {
                 // Who has both runs both. A run that stands in for the wrong one leaves the rules of the other out, in silence.
                 match (nearest(Flavor::Eslint), nearest(Flavor::Oxlint), by_flags) {
                     (Some(_), Some(_), Some(flavor)) => return Some(flavor),
-                    (Some(_), None, Some(Flavor::Oxlint)) => return Some(Flavor::Oxlint),
                     // `bun lint` has the flag for both, ESLint has it not: a command that was written for one of the two was oxlint's.
                     (Some(_), Some(_), None)
-                        if options.has_type_aware_flag && !options.has_flag_of_eslint =>
+                        if options.has_type_aware_flag && !has_flag_of_eslint =>
                     {
                         return Some(Flavor::Oxlint);
                     }
                     (Some(of_eslint), Some(of_oxlint), None) => {
                         let _ = self.undecided.set((of_eslint, of_oxlint));
                     }
-                    (Some(of_eslint), None, None) => {
+                    // Most flags of oxlint mean something with the file too.
+                    (Some(of_eslint), None, None | Some(Flavor::Oxlint)) => {
                         if let Some((package, true, _)) = self.tools_of_the_package() {
                             let dependency = [&b"the dependency on oxlint in "[..], &package];
                             let _ = self.undecided.set((of_eslint, dependency.concat()));
@@ -1182,14 +1209,79 @@ impl<'l> Loader<'l> {
                 return Some(flavor);
             }
             let can_be_legacy =
-                wanted == Some(Flavor::Eslint) || wanted.is_none() && !is_for_oxlint;
+                wanted == Some(Flavor::Eslint) || wanted.is_none() && !names_file_of_oxlint;
             if can_be_legacy && paths::ancestors(self.cwd()).any(eslintrc::has_one) {
                 return Some(Flavor::EslintRc);
             }
-            let decided = wanted.or_else(|| is_for_oxlint.then_some(Flavor::Oxlint));
-            let of_the_package = self.tool_of_the_package(decided.is_some());
+            let decided = wanted.or_else(|| names_file_of_oxlint.then_some(Flavor::Oxlint));
+            let of_the_package = self.tool_of_the_package(decided.is_some() || has_flag_of_oxlint);
             decided.or(of_the_package)
         })
+    }
+
+    /// Whether the files that no configuration file is found for are linted as oxlint does without one. Where nothing else tells, a
+    /// flag that only oxlint has does. The files further down count all the same.
+    fn has_defaults_of_oxlint(&self) -> bool {
+        match self.tool() {
+            Some(tool) => tool == Flavor::Oxlint,
+            None => self.options.has_flag_of(Tool::Oxlint),
+        }
+    }
+
+    /// Whether `loaded` is what the files have that no configuration file is found for, where every directory tells for itself.
+    fn is_without_a_file(&self, loaded: &Arc<Loaded>) -> bool {
+        match loaded.flavor {
+            Flavor::BuiltIn => true,
+            Flavor::Oxlint if self.tool().is_none() => {
+                (self.load(b"", self.cwd())).is_ok_and(|built_in| Arc::ptr_eq(&built_in, loaded))
+            }
+            _ => false,
+        }
+    }
+
+    /// Fails if the command line has a flag of another tool that nothing can be done about with a configuration of `flavor`, which
+    /// is in `file` if it is in one.
+    fn check_flags(&self, flavor: Flavor, file: Option<&[u8]>) -> Result<(), Fatal> {
+        let Some((flag, whose)) = self.options.flag_that_means_nothing_to(flavor) else {
+            return Ok(());
+        };
+        let tool: &[u8] = match flavor {
+            Flavor::Oxlint => b"oxlint",
+            Flavor::EslintRc => b"ESLint 8",
+            Flavor::Eslint | Flavor::BuiltIn => b"ESLint",
+        };
+        let (before, after): (&[u8], &[u8]) = match file {
+            Some(_) => (b"with ", b", a configuration file of "),
+            None => (b"in a run that stands in for ", b""),
+        };
+        let refusal = [
+            &flag[..],
+            b" is a flag of ",
+            whose,
+            b". It means nothing ",
+            before,
+            file.unwrap_or_default(),
+            after,
+            tool,
+            b".",
+        ]
+        .concat();
+        Err(Fatal(self.refused.get_or_init(|| refusal).clone()))
+    }
+
+    /// What [`Loader::check_flags`] has failed with. Neither tool has an exit code for it.
+    pub(crate) fn refused(&self) -> Option<&[u8]> {
+        self.refused.get().map(Vec::as_slice)
+    }
+
+    /// The same for the file `name` of `directory`, which is one of [`Loader::names`] and would count but for a command line for
+    /// ESLint 8.
+    fn check_flags_of_eslint_8(&self, directory: &[u8], name: &[u8]) -> Result<(), Fatal> {
+        if self.options.config.is_some() {
+            return Ok(());
+        }
+        let flavor = (NAMES.iter().find(|it| it.0 == name)).map_or(Flavor::Oxlint, |it| it.1);
+        self.check_flags(flavor, Some(&paths::join(directory, name)))
     }
 
     /// Without any configuration file: oxlint, if the nearest `package.json` that depends on one of the two tools depends on it.
@@ -1276,16 +1368,30 @@ impl<'l> Loader<'l> {
         (best.and_then(|best| self.names().nth(best)), has_legacy)
     }
 
-    /// Whether the command line is one for ESLint 8: it has a flag that only that has, or `--config` names one of its files.
+    /// The configuration file of ESLint 9 or of oxlint that the files in `directory` have, if it is looked for: where it is, and
+    /// its name.
+    fn found<'d>(&self, directory: &'d [u8]) -> Option<(&'d [u8], &'static [u8])> {
+        paths::ancestors(directory).find_map(|directory| {
+            let mut names = self.names();
+            let name = names.find(|name| fs::is_file(&paths::join(directory, name)))?;
+            Some((directory, name))
+        })
+    }
+
+    /// Whether the command line is one for ESLint 8: it has a flag that only that has, and no file of another tool counts, or
+    /// `--config` names one of its files.
     fn is_command_line_of_eslint_8(&self) -> bool {
         *self.is_legacy.get_or_init(|| {
             let options = self.options;
-            if !options.eslintrc || !options.env.is_empty() || !options.rulesdir.is_empty() {
+            let has_flag =
+                !options.eslintrc || !options.env.is_empty() || !options.rulesdir.is_empty();
+            let Some(path) = &options.config else {
+                let is_for_oxlint = options.flavor == Some(Tool::Oxlint);
+                return has_flag && !is_for_oxlint && self.found(self.cwd()).is_none();
+            };
+            if has_flag {
                 return true;
             }
-            let Some(path) = &options.config else {
-                return false;
-            };
             // A file that can be either is one of oxlint, whatever the working directory has.
             eslintrc::is_one(&paths::resolve(self.cwd(), &paths::from_native(path)))
         })
@@ -1315,8 +1421,9 @@ impl<'l> Loader<'l> {
         if !options.plugin.is_empty() {
             entries.push((b"plugins", strings_of(&options.plugin)));
         }
-        if !options.rule.is_empty() {
-            entries.push((b"rules", Json::Object(options.rule.clone())));
+        let rules = self.rules_of_the_command_line();
+        if !rules.is_empty() {
+            entries.push((b"rules", Json::Object(rules)));
         }
         let unused = match options.report_unused_disable_directives {
             true => Some(Severity::Error),
@@ -1337,6 +1444,11 @@ impl<'l> Loader<'l> {
 
     fn read_legacy(&self, directory: Option<&[u8]>) -> Found {
         let (options, cwd) = (self.options, self.cwd());
+        let file = match &options.config {
+            Some(path) => Some(paths::resolve(cwd, &paths::from_native(path))),
+            None => directory.and_then(file_of_eslint),
+        };
+        self.check_flags(Flavor::EslintRc, file.as_deref())?;
         let rules = (!options.rulesdir.is_empty()).then(|| {
             self.rulesdir
                 .get_or_init(|| rulesdir::load(self.environment, &options.rulesdir))
@@ -1445,6 +1557,9 @@ impl<'l> Loader<'l> {
     /// The configuration of the files that are in `directory`: ESLint's `loadConfigArrayForFile`.
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
         if self.is_command_line_of_eslint_8() {
+            if let Some((directory, name)) = self.found(directory) {
+                self.check_flags_of_eslint_8(directory, name)?;
+            }
             let mut above = paths::ancestors(directory).filter(|_| self.options.eslintrc);
             return self.legacy(above.find(|it| eslintrc::has_one(it)));
         }
@@ -1467,6 +1582,7 @@ impl<'l> Loader<'l> {
         let mut found = None;
         // How many of `asked` have the configuration of the nearest directory with a file of ESLint 8.
         let mut legacy = None;
+        let reads_legacy = self.tool() != Some(Flavor::Oxlint);
         for ancestor in paths::ancestors(directory) {
             if let Some(known) = self.by_directory.lock().get(ancestor) {
                 found = Some(known.clone());
@@ -1479,12 +1595,14 @@ impl<'l> Loader<'l> {
                 found = Some(loaded);
                 break;
             }
-            if legacy.is_none() && eslintrc::has_one(ancestor) {
+            if legacy.is_none() && reads_legacy && eslintrc::has_one(ancestor) {
                 legacy = Some(asked.len());
             }
         }
         let is_other = |it: &Found| {
-            (it.as_ref()).is_ok_and(|it| matches!(it.flavor, Flavor::Eslint | Flavor::Oxlint))
+            (it.as_ref()).is_ok_and(|it| {
+                matches!(it.flavor, Flavor::Eslint | Flavor::Oxlint) && !self.is_without_a_file(it)
+            })
         };
         if let Some(count) = legacy.filter(|_| !found.as_ref().is_some_and(is_other)) {
             asked.truncate(count);
@@ -1517,11 +1635,21 @@ impl<'l> Loader<'l> {
         inherited: &Arc<Loaded>,
     ) -> Found {
         let has_one = self.has_one_configuration() && !self.is_command_line_of_eslint_8();
-        if has_one || self.options.disable_nested_config || !self.options.eslintrc {
+        if has_one || self.options.disable_nested_config {
             return Ok(Arc::clone(inherited));
         }
-        let is_legacy = matches!(inherited.flavor, Flavor::EslintRc | Flavor::BuiltIn);
-        match self.pick(directory, names) {
+        let picked = self.pick(directory, names);
+        if let (Some(name), _) = picked
+            && self.is_command_line_of_eslint_8()
+        {
+            self.check_flags_of_eslint_8(directory, name)?;
+        }
+        if !self.options.eslintrc {
+            return Ok(Arc::clone(inherited));
+        }
+        let is_legacy =
+            || inherited.flavor == Flavor::EslintRc || self.is_without_a_file(inherited);
+        match picked {
             (Some(name), _) if !self.is_command_line_of_eslint_8() => {
                 let loaded = self.load_the_only_one(directory, name);
                 match has_no_lint_field(&loaded) {
@@ -1530,7 +1658,9 @@ impl<'l> Loader<'l> {
                 }
             }
             (_, true)
-                if is_legacy && self.flat_config != Some(true) && eslintrc::has_one(directory) =>
+                if is_legacy()
+                    && self.flat_config != Some(true)
+                    && eslintrc::has_one(directory) =>
             {
                 self.legacy(Some(directory))
             }
@@ -1545,7 +1675,7 @@ impl<'l> Loader<'l> {
             |it: &Vec<u8>| fs::is_file(&paths::resolve(self.cwd(), &paths::from_native(it)));
         match &self.options.config {
             Some(path) if is_there(path) => is_json(path) && !self.is_command_line_of_eslint_8(),
-            _ => self.tool() == Some(Flavor::Oxlint),
+            _ => self.has_defaults_of_oxlint(),
         }
     }
 

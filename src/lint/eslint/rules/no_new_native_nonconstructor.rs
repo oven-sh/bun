@@ -29,7 +29,8 @@ impl Rule for NoNewNativeNonconstructor {
         let Some(name) = callee.as_ident() else {
             return;
         };
-        if !name.is_any(&["Symbol", "BigInt"]) {
+        // For oxc `(Symbol)` is no name.
+        if !name.is_any(&["Symbol", "BigInt"]) || cx.language().is_oxlint && callee.is_parenthesized() {
             return;
         }
         // typescript-eslint always has the variables, from the default library.

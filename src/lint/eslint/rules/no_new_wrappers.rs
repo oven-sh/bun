@@ -30,6 +30,10 @@ impl Rule for NoNewWrappers {
         let Some(name) = call.callee().as_ident() else {
             return;
         };
+        // For oxc `(String)` is no name.
+        if cx.language().is_oxlint && call.callee().is_parenthesized() {
+            return;
+        }
         let is_symbol = name.is("Symbol") && cx.language().is_oxlint;
         if !name.is_any(&["String", "Number", "Boolean"]) && !is_symbol {
             return;

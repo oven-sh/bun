@@ -3,6 +3,7 @@ use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::is_type_only_reference;
+use bun_lint_oxlint::module_record::ModuleRecord;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 use std::collections::hash_map::Entry;
@@ -45,6 +46,8 @@ pub struct State<'a> {
     roots: FxHashSet<Node<'a>>,
     /// The variables of which they do not tell. Nothing is reported about the others.
     unknown: FxHashSet<Binding<'a>>,
+    /// With a configuration of oxlint: the names under which the module exports something.
+    exported: Option<FxHashMap<Name<'a>, Span>>,
     /// In a debug build: what all code paths with a variable that is looked at start with, and whether one is analyzed only to
     /// see that nothing is reported in it.
     all_roots: FxHashSet<Node<'a>>,
@@ -135,6 +138,13 @@ fn oxlint_passes_over(variable: Symbol) -> bool {
         && oxlint_declarator(variable).is_none_or(|it| {
             it.var_kind() == VarKind::Const || it.init().is_some_and(|it| it.tag() == ExprTag::Fn && !it.is_parenthesized())
         })
+}
+
+/// For oxlint 1.87 a variable of any scope is exported if the module exports something under its name.
+fn oxlint_takes_for_exported<'a>(variable: Symbol<'a>, exported: &mut Option<FxHashMap<Name<'a>, Span>>) -> bool {
+    variable.file().language().is_oxlint
+        && (exported.get_or_insert_with(|| ModuleRecord::new(variable.file()).exported_bindings))
+            .contains_key(&variable.name())
 }
 
 /// For oxlint 1.87 only the first declarator of `var a = 1; var a = 2;` gives `a` a value. `at`: where the name is written in
@@ -1348,7 +1358,11 @@ fn end_of_block_around(blocks: &[Span], identifier: Span) -> Option<u32> {
 
 impl NoUselessAssignment {
     fn check_variable<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        if !variable.has_writes() || !variable.has_reads() || oxlint_passes_over(variable) {
+        if !variable.has_writes()
+            || !variable.has_reads()
+            || oxlint_passes_over(variable)
+            || oxlint_takes_for_exported(variable, &mut cx.state.exported)
+        {
             return;
         }
         if cfg!(debug_assertions) {
@@ -1566,6 +1580,7 @@ impl NoUselessAssignment {
                 let scope = variable.scope();
                 let is_ignored = !cfg!(debug_assertions) && !state.unknown.contains(&variable)
                     || oxlint_passes_over(variable.symbol)
+                    || oxlint_takes_for_exported(variable.symbol, &mut state.exported)
                     || get_code_path_start_scope(scope, &state.code_path_start_scopes) != Some(top.scope)
                     || variable.class.is_none() && variable.symbol.is_marked_used()
                     || scope.kind() == ScopeKind::Module && is_exported(variable.symbol);

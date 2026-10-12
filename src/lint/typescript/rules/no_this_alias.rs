@@ -17,6 +17,10 @@ const THIS_DESTRUCTURE: Message = Message::new(
 
 impl NoThisAlias {
     fn check<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // For oxc `(this)` is no `this`.
+        if cx.language().is_oxlint && this.is_parenthesized() {
+            return;
+        }
         // What `this` is assigned to: where it is, and its name if it is an identifier.
         let (id, name) = match this.parent() {
             // For oxlint without the type.
@@ -25,6 +29,18 @@ impl NoThisAlias {
             }
             Node::VarDecl(declaration) => (declaration.binding_span(), declaration.pat().as_ident()),
             Node::Expr(parent) => match parent.as_assign() {
+                // oxlint finds the `a` of `a! = this` and of `(a as T) = this`.
+                Some((_, target, value))
+                    if value == this
+                        && !utils::is_assignment_target(parent)
+                        && cx.language().is_oxlint
+                        && !matches!(target.tag(), ExprTag::Ident | ExprTag::Array | ExprTag::Object) =>
+                {
+                    match target.skip_type_wrappers().as_ident() {
+                        Some(name) => (target.skip_type_wrappers().span(), Some(name)),
+                        None => return,
+                    }
+                }
                 Some((_, target, value)) if value == this && !utils::is_assignment_target(parent) => {
                     (target.span(), target.as_ident())
                 }

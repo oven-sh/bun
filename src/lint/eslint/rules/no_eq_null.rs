@@ -16,7 +16,10 @@ impl Rule for NoEqNull {
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let (Some(op @ (BinOp::EqEq | BinOp::NotEq)), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right())
-            && (right.tag() == ExprTag::Null || left.tag() == ExprTag::Null)
+            // For oxc `(null)` is no `null`.
+            && [left, right]
+                .iter()
+                .any(|it| it.tag() == ExprTag::Null && !(cx.language().is_oxlint && it.is_parenthesized()))
         {
             let report = cx.report(e, UNEXPECTED);
             // oxlint's fix takes the place of all that is between the operands.

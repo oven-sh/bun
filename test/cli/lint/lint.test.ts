@@ -8014,14 +8014,14 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       expect(result.stderr).toContain(asks);
       expect(result.exitCode).toBe(2);
     }
-    // With the configuration of ESLint alone, the flag makes it a run of oxlint.
+    // With the configuration of ESLint alone, neither makes it a run of oxlint.
     const [byKey, byFlag, plain] = await Promise.all([
       run({ ...eslint, "bunfig.toml": "[lint]\ndenyWarnings = true\n" }, ["-f", "unix", "a.js"]),
       run(eslint, ["--deny-warnings", "-f", "unix", "a.js"]),
       run(eslint, ["-f", "unix", "a.js"]),
     ]);
     expect(byKey.stdout).toBe(plain.stdout);
-    expect(byFlag.stdout).not.toBe(plain.stdout);
+    expect(byFlag.stdout).toBe(plain.stdout);
   });
 
   test("bun/format holds a file against what bun format prints, with [format]", async () => {

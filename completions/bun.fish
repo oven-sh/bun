@@ -264,7 +264,7 @@ complete -c bun -n "__fish_seen_subcommand_from lint" -l "infer-globals" -d "The
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-infer-globals" -d "Without a configuration file: those of browsers and of Node.js"
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "p" -l "project" -r -F -d "The tsconfig.json for the rules that need types"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "type-check" -d "With --type-aware: report type errors too"
-complete -c bun -n "__fish_seen_subcommand_from lint" -s "A" -l "allow" -r -d "With an .oxlintrc.json: turn a rule or a category off"
+complete -c bun -n "__fish_seen_subcommand_from lint" -s "A" -l "allow" -r -d "Turn a rule off, or with an .oxlintrc.json a category"
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "W" -l "warn" -r -d "The same: make it a warning"
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "D" -l "deny" -r -d "The same: make it an error"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "deny-warnings" -d "Exit with 1 if there are warnings"

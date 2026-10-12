@@ -349,6 +349,13 @@ impl Run<'_> {
         self.out
     }
 
+    /// Refuses a flag of the tool that the run does not stand in for.
+    fn refuse_flag(mut self, text: &[u8]) -> Outcome {
+        self.error(text);
+        self.out.exit_code = 2;
+        self.out
+    }
+
     fn is_for_oxlint(&self) -> bool {
         self.is_for_oxlint
             .unwrap_or_else(|| configs::is_for_oxlint(self.options.flavor, &self.environment.cwd))
@@ -891,7 +898,8 @@ impl Run<'_> {
             discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
         }));
         let loader = Loader::new(&linter, options, environment, &js_plugins);
-        if let Some((of_eslint, of_oxlint)) = loader.undecided() {
+        // The list of the rules is the same for both.
+        if let Some((of_eslint, of_oxlint)) = loader.undecided().filter(|_| !options.rules) {
             self.error(
                 &[
                     b"Both ",
@@ -911,6 +919,9 @@ impl Run<'_> {
             .as_ref()
             .is_some_and(|it| it.flavor == Flavor::Oxlint);
         self.is_for_oxlint = Some(is_oxlint || of_cwd.is_none() && loader.is_for_oxlint());
+        if let Some(refusal) = loader.refused() {
+            return self.refuse_flag(refusal);
+        }
         let format = match self.format(is_oxlint) {
             Ok(format) => format,
             Err(error) => return self.refuse(&error),
@@ -1154,6 +1165,9 @@ impl Run<'_> {
             for line in unsupported.drain(..) {
                 self.warn(&line);
             }
+        }
+        if let Some(refusal) = loader.refused() {
+            return self.refuse_flag(refusal);
         }
         let Linted {
             mut results,

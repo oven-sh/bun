@@ -816,8 +816,8 @@ _bun_lint_completion() {
         '--project[The tsconfig.json for the rules that need types]:project:_files' \
         '-p[The tsconfig.json for the rules that need types]:project:_files' \
         '--type-check[With --type-aware\: report type errors too]' \
-        '--allow[With an .oxlintrc.json\: turn a rule or a category off]:allow' \
-        '-A[With an .oxlintrc.json\: turn a rule or a category off]:allow' \
+        '--allow[Turn a rule off, or with an .oxlintrc.json a category]:allow' \
+        '-A[Turn a rule off, or with an .oxlintrc.json a category]:allow' \
         '--warn[The same\: make it a warning]:warn' \
         '-W[The same\: make it a warning]:warn' \
         '--deny[The same\: make it an error]:deny' \

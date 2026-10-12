@@ -862,6 +862,7 @@ With `--allow-unsupported` these lines are warnings, and the exit code is that o
 | `2`  | A command line or configuration that cannot be used, an argument that matches no file, suppressions that no longer occur | Never, as in oxlint                                                                                                      |
 | `2`  | The configuration asks for [what cannot be linted](#what-cannot-be-linted)                                               | The same                                                                                                                 |
 | `2`  | [Both tools](#a-project-with-both-tools) have a configuration, and nothing says which one the run is for                 | The same                                                                                                                 |
+| `2`  | A [flag of the other tool](#flags-of-the-other-tool) that means nothing with this configuration                          | The same                                                                                                                 |
 
 ## Which configuration file
 
@@ -870,6 +871,8 @@ No tool reads the configuration files of another. So `bun lint` first decides wh
 - oxlint: `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`, `oxlint.config.mts`
 - ESLint: `eslint.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`
 - ESLint 8, if there is none of the above: [`.eslintrc` files](#eslintrc)
+
+If one tool has a file there, that file decides. No flag except `--flavor`, `-c`, and `--no-config-lookup` makes `bun lint` leave it out: see [Flags of the other tool](#flags-of-the-other-tool).
 
 Only the files of that tool count, also in the directories further down. For each file, `bun lint` uses the nearest of them: it looks in the directory of the file, then in each parent directory. Apart from the files of ESLint 8, configuration files are not merged.
 
@@ -898,7 +901,7 @@ eqeqeq = ["error", "smart"]
 
 The command line overrides `bunfig.toml`. `bunfig.toml` overrides the configuration file where the flag does.
 
-A key does not say which tool the run stands in for, as a flag of only one tool does. Use `flavor` for that.
+A key does not say which tool the run stands in for, as a flag of only one tool does. Use `flavor` for that. A key that means nothing to that tool has no effect.
 
 Bun reads the `bunfig.toml` of the working directory. Write `bun --config=other.toml lint` for another file.
 
@@ -924,11 +927,33 @@ If nothing says so, `bun lint` lints nothing and exits with code `2`. A run for 
 error: Both /app/eslint.config.js and /app/.oxlintrc.json are here. Say which one this run is for: --flavor=oxlint or --flavor=eslint.
 ```
 
-oxlint needs no configuration file. So `bun lint` asks the same in a project with an `eslint.config.js` and `oxlint` in the dependencies of `package.json`.
+oxlint needs no configuration file. So `bun lint` asks the same in a project with an `eslint.config.js` and `oxlint` in the dependencies of `package.json`. There a flag of oxlint does not answer: only `--flavor=oxlint` leaves the `eslint.config.js` out.
+
+### Flags of the other tool
+
+`bun lint` takes the flags of both tools. With a configuration file of one tool, a flag of the other keeps its meaning.
+
+| With a configuration of ESLint | Does                                                          |
+| ------------------------------ | ------------------------------------------------------------- |
+| `--silent`                     | Prints no problems. The exit code stays                       |
+| `--deny-warnings`              | Exits with `1` if there are warnings, like `--max-warnings 0` |
+| `-A`, `-W`, `-D <rule>`        | The same as `--rule '<rule>: off'`, `warn`, and `error`       |
+
+`--disable-nested-config`, `--fix-suggestions`, `--fix-dangerously`, and `--type-check` work too. With a configuration of oxlint, so do `--rule`, `--global`, `--parser-options`, `--no-inline-config`, `--fix-type`, `--fix-dry-run`, `--stdin`, and `-o`.
+
+A flag that can mean nothing there is an error, and `bun lint` exits with code `2`:
+
+- With a configuration of ESLint: `-A`, `-W`, and `-D` with a category or `all`, and `--import-plugin`, `--disable-oxc-plugin`, and the like.
+- With a configuration of oxlint: `--ext`, `--parser`, `--plugin`, and `--report-unused-inline-configs`.
+- With an `eslint.config.js` or a configuration of oxlint: `--env`, `--rulesdir`, `--no-eslintrc`, and `--resolve-plugins-relative-to` of ESLint 8.
+
+```txt
+error: --import-plugin is a flag of oxlint. It means nothing with /app/eslint.config.js, a configuration file of ESLint.
+```
 
 ### No configuration file
 
-Without any configuration file, `bun lint` uses the defaults of oxlint if the command line has a flag that only oxlint has, or if `package.json` depends on `oxlint`. Run `bun lint --init` to write these defaults to an `.oxlintrc.json`.
+Without any configuration file, `bun lint` uses the defaults of oxlint if the command line has a flag that only oxlint has, or if `package.json` depends on `oxlint`. Run `bun lint --init` to write these defaults to an `.oxlintrc.json`. Such a flag does not leave out a configuration file in a directory further down.
 
 ## Choose what to lint
 
@@ -1210,7 +1235,7 @@ bun lint [flags] [...files, directories or patterns]
 | `--infer-globals`, `--no-infer-globals`    | Take the globals of a file from the types of its project, or not   |
 | `--type-check`                             | With `--type-aware`: report type errors too                        |
 | `-p`, `--project <path>`                   | The `tsconfig.json` for the rules that need types                  |
-| `-A`, `-W`, `-D <rule or category>`        | Allow, warn about, or deny a rule, with an `.oxlintrc.json`        |
+| `-A`, `-W`, `-D <rule or category>`        | Allow, warn about, or deny a rule, or a category of oxlint         |
 | `--<name>-plugin`                          | Turn a plugin of oxlint on: `--import-plugin`, `--react-plugin`    |
 | `--disable-<name>-plugin`                  | Turn `unicorn`, `oxc`, or `typescript` off                         |
 | `--deny-warnings`                          | Exit with `1` if there are warnings                                |

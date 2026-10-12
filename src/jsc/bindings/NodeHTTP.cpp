@@ -838,7 +838,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetMaxHeadersCount, (JSGlobalObject * globalObjec
     return JSValue::encode(jsUndefined());
 }
 
-// What the lines of flattenRawHeaders() name (NodeHTTPRawHead in src/js/internal/http.ts - keep in sync).
+// What the lines of flattenRawHead() name (NodeHTTPRawHead in src/js/internal/http.ts - keep in sync).
 static constexpr uint32_t kRawHeadContentLength = 1 << 0;
 static constexpr uint32_t kRawHeadTransferEncoding = 1 << 1;
 static constexpr uint32_t kRawHeadChunked = 1 << 2;
@@ -848,7 +848,7 @@ static constexpr uint32_t kRawHeadClose = 1 << 5;
 static constexpr uint32_t kRawHeadPersist = 1 << 6;
 static constexpr uint32_t kRawHeadTrailer = 1 << 7;
 
-// The walk of flattenRawHeaders(): the checked name and value of each line, and what Node's matchHeader() notes about them.
+// The walk of flattenRawHead(): the checked name and value of each line, and what Node's matchHeader() notes about them.
 struct RawHeadWalk {
     JSGlobalObject* globalObject;
     JSSet* uniqueHeaders;
@@ -1163,8 +1163,8 @@ static void walkRawHead(RawHeadWalk& walk, JSValue headers)
     }
 }
 
-// flattenRawHeaders(headers, lenient, uniqueHeaders, out): the headers of a writeHead() with no header set before, checked in Node's order, as the [name, value, ...] list that the handles take. `out` gets the kRawHead* bits and the Content-Length number, also when the walk throws.
-JSC_DEFINE_HOST_FUNCTION(jsHTTPFlattenRawHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// flattenRawHead(headers, lenient, uniqueHeaders, out): the headers of a writeHead() with no header set before, checked in Node's order, as the [name, value, ...] list that the handles take. `out` gets the kRawHead* bits and the Content-Length number, also when the walk throws.
+JSC_DEFINE_HOST_FUNCTION(jsHTTPFlattenRawHead, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1201,8 +1201,8 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerMaxHeadersCount"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "setServerMaxHeadersCount"_s, jsHTTPSetMaxHeadersCount, ImplementationVisibility::Public), 0);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "flattenRawHeaders"_s)),
-        JSC::JSFunction::create(vm, globalObject, 4, "flattenRawHeaders"_s, jsHTTPFlattenRawHeaders, ImplementationVisibility::Public), 0);
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "flattenRawHead"_s)),
+        JSC::JSFunction::create(vm, globalObject, 4, "flattenRawHead"_s, jsHTTPFlattenRawHead, ImplementationVisibility::Public), 0);
     obj->putDirectNativeFunction(
         vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "drainMicrotasks"_s)),
         0, Bun__drainMicrotasksFromJS, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);

@@ -63,7 +63,7 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   http1ServerPipeline,
-  flattenRawHeaders,
+  flattenRawHead,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -2370,9 +2370,9 @@ function _writeHead(statusCode, reason, obj, response) {
   }
 }
 
-// The headers of a writeHead() on a response with no header set before, which Node renders as given (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L465-L468): the [name, value, ...] list of flattenRawHeaders(), and then its NodeHTTPRawHead bits.
+// The headers of a writeHead() on a response with no header set before, which Node renders as given (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L465-L468): the [name, value, ...] list of flattenRawHead(), and then its NodeHTTPRawHead bits.
 const kRawHead = Symbol("kRawHead");
-// What flattenRawHeaders() reports of one call: the NodeHTTPRawHead bits, and the number of the last Content-Length line.
+// What flattenRawHead() reports of one call: the NodeHTTPRawHead bits, and the number of the last Content-Length line.
 const rawHeadOut = new Float64Array(2);
 
 function setRawHead(response, headers) {
@@ -2384,7 +2384,7 @@ function setRawHead(response, headers) {
   rawHeadOut[0] = 0;
   try {
     try {
-      rawHead = flattenRawHeaders(headers, response._isLenientHeaderValidation(), response[kUniqueHeaders], rawHeadOut);
+      rawHead = flattenRawHead(headers, response._isLenientHeaderValidation(), response[kUniqueHeaders], rawHeadOut);
     } finally {
       // Node's matchHeader(), for each line that the walk reached.
       facts = rawHeadOut[0];

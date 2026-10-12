@@ -1945,7 +1945,12 @@ if (typeof Bun !== "undefined") {
               return "a";
             },
           };
-          const thrown = code(() => res.writeHead(200, { "X-A": value as any, ...rest }));
+          let thrown: string[] | undefined;
+          try {
+            res.writeHead(200, { "X-A": value as any, ...rest });
+          } catch (error: any) {
+            thrown = [error.code, error.message];
+          }
           const ended = code(() => res.end("ok"));
           if (ended) res.destroy();
           return { thrown, ended };
@@ -1955,7 +1960,10 @@ if (typeof Bun !== "undefined") {
           {
             headers: ["Transfer-Encoding: chunked"],
             body: "2\r\nok\r\n0\r\n\r\n",
-            result: { thrown: "ERR_HTTP_HEADERS_SENT", ended: undefined },
+            result: {
+              thrown: ["ERR_HTTP_HEADERS_SENT", "Cannot write headers after they are sent to the client"],
+              ended: undefined,
+            },
           },
         );
       });

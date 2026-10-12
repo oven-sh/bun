@@ -34,7 +34,9 @@ use bun_sema::config::{
 };
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
-use bun_sema::resolve::{AsRequire, Host, Resolver, ScriptKind, ancestors, join, typescript_path};
+use bun_sema::resolve::{
+    AsRequire, Host, Resolver, ScriptKind, ancestors, is_relative, join, typescript_path,
+};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{Disk, from_native};
@@ -590,6 +592,7 @@ impl<'h> Graph<'h> {
             module_directories,
             paths: &paths,
             through_paths: false,
+            as_import: false,
         };
         // No configuration of TypeScript has a say.
         let plain = self.resolver_of(b"", cwd);
@@ -620,6 +623,7 @@ impl<'h> Graph<'h> {
             module_directories: &[b"node_modules"],
             paths: &[],
             through_paths: true,
+            as_import: false,
         };
         let from_base_url = || {
             let base_url = base_url
@@ -773,6 +777,23 @@ impl<'h> Graph<'h> {
         let ProjectResolver {
             resolver, base_url, ..
         } = self.resolver_of(config, directory_of(from));
+        let as_node = self.flavor().resolves_as_node();
+        let code = || {
+            let how = AsRequire {
+                extensions: &EXTENSIONS,
+                module_directories: &[b"node_modules"],
+                paths: &[],
+                through_paths: true,
+                as_import: true,
+            };
+            let code = self.real(resolver.resolve_as_require(specifier, from, &how)?.0);
+            let is_external = is_in_package(&code);
+            Some((Cow::Owned(code), is_external))
+        };
+        // A directory whose `package.json` names an entry.
+        if as_node && specifier.starts_with(b".") && is_relative(specifier) {
+            return code();
+        }
         let from_base_url = || {
             let base_url = base_url
                 .as_ref()
@@ -782,41 +803,21 @@ impl<'h> Graph<'h> {
         let found = resolver
             .resolve_module_name(specifier, from, mode)
             .or_else(from_base_url);
-        if self.flavor().resolves_as_node()
+        // What TypeScript finds of a package are its types, in it or in `@types`. oxlint reads its code.
+        if as_node
             && found.as_ref().is_none_or(|it| is_in_package(it.file_name))
-            && let Some(entry) = self.entry_by_module_field(from, specifier)
+            && !matches!(specifier, [] | [b'.' | b'/' | b'#', ..])
         {
-            return Some((Cow::Owned(entry), true));
+            return code();
         }
         let found = found?;
-        let path = match self.flavor().resolves_as_node() {
+        let path = match as_node {
             true => {
                 Cow::Owned(self.real(self.as_node_finds(specifier, found.file_name)?.into_owned()))
             }
             false => Cow::Borrowed(found.file_name),
         };
         Some((path, found.is_external_library_import))
-    }
-
-    /// oxlint's resolver asks the `module` of a `package.json` before its `main`. TypeScript does not know it.
-    fn entry_by_module_field(&self, from: &[u8], package: &[u8]) -> Option<Vec<u8>> {
-        let names = if package.starts_with(b"@") { 2 } else { 1 };
-        if matches!(package, [] | [b'.' | b'/' | b'#', ..])
-            || strings::split(package, b"/").count() != names
-        {
-            return None;
-        }
-        let disk = self.store.disk();
-        let inside = [b"node_modules/", package].concat();
-        let mut directories = ancestors(directory_of(from)).map(|it| join(it, &inside));
-        let manifest = join(&directories.find(|it| disk.is_dir(it))?, b"package.json");
-        let json = bun_lint::json::parse(&disk.read(&manifest)?)?;
-        let module = json
-            .get(b"module")
-            .filter(|_| json.get(b"exports").is_none())?
-            .as_str()?;
-        let relative = [b"./", module.strip_prefix(b"./").unwrap_or(module)].concat();
-        self.resolve_relative_as_node(&manifest, &relative)?
     }
 
     /// `path` with symbolic links followed.

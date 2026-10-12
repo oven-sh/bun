@@ -145,16 +145,8 @@ fn is_id_used(state: &State, identifier_id: IdentifierId) -> bool {
 
 /// Mark the operands of an instruction, as TS `eachInstructionValueOperand` gives them.
 fn reference_operands(state: &mut State, env: &Environment, value: &InstructionValue) {
-    match value {
-        InstructionValue::ObjectMethod { lowered_func, .. }
-        | InstructionValue::FunctionExpression { lowered_func, .. } => {
-            for place in &env.functions[lowered_func.func.0 as usize].context {
-                reference(state, &env.identifiers, place.identifier);
-            }
-        }
-        _ => visitors::each_operand(value, |place| {
-            reference(state, &env.identifiers, place.identifier);
-        }),
+    for place in visitors::operands(value, &env.functions) {
+        reference(state, &env.identifiers, place.identifier);
     }
 }
 

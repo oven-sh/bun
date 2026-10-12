@@ -423,7 +423,7 @@ pub(crate) fn validate_hooks_usage(
                         value_kinds.insert(place.identifier, kind);
                     };
                     set_kind(&instr.lvalue);
-                    visitors::each_lvalue(&instr.value, set_kind);
+                    visitors::value_lvalues(&instr.value).for_each(set_kind);
                 }
                 InstructionValue::ObjectMethod { lowered_func, .. }
                 | InstructionValue::FunctionExpression { lowered_func, .. } => {
@@ -441,10 +441,10 @@ pub(crate) fn validate_hooks_usage(
                     let kind = get_kind_for_place(&instr.lvalue, &value_kinds, &env.identifiers);
                     value_kinds.insert(lvalue_id, kind);
                     // Also set kind for value-level lvalues (e.g. DeclareLocal, PrefixUpdate, PostfixUpdate)
-                    visitors::each_lvalue(&instr.value, |lv| {
+                    for lv in visitors::value_lvalues(&instr.value) {
                         let lv_kind = get_kind_for_place(lv, &value_kinds, &env.identifiers);
                         value_kinds.insert(lv.identifier, lv_kind);
-                    });
+                    }
                 }
             }
         }
@@ -536,19 +536,15 @@ fn hook_kind_display(kind: &HookKind) -> &'static str {
     }
 }
 
-/// Visit all operands of an instruction value (generic fallback).
-/// Uses the canonical `each_instruction_value_operand` from visitors.
+/// Visit all operands of an instruction value that is not a function (generic fallback).
 fn visit_all_operands(
     value: &InstructionValue,
     value_kinds: &ValueKinds,
     errors_by_loc: &mut IndexMap<SourceLocation, CompilerErrorDetail>,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
-    let mut result = Ok(());
-    visitors::each_operand(value, |place| {
-        if result.is_ok() {
-            result = visit_place(place, value_kinds, errors_by_loc, env);
-        }
-    });
-    result
+    for place in visitors::operands(value, &[]) {
+        visit_place(place, value_kinds, errors_by_loc, env)?;
+    }
+    Ok(())
 }

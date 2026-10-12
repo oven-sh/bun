@@ -5,7 +5,7 @@ use crate::diagnostics::{
 };
 use crate::hir::environment::Environment;
 use crate::hir::environment_config::ExhaustiveEffectDepsMode;
-use crate::hir::visitors::{each_lvalue, lvalues, operands, terminal_operands};
+use crate::hir::visitors::{lvalues, operands, terminal_operands, value_lvalues};
 use crate::hir::{
     AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier, IdentifierId,
     InstructionKind, InstructionValue, ManualMemoDependency, ManualMemoDependencyRoot,
@@ -765,7 +765,7 @@ fn collect_dependencies(
                 } => {
                     visit_candidate_dependency(destr_val, temporaries, &mut dependencies, &locals);
                     if destr_lv.kind != InstructionKind::Reassign {
-                        each_lvalue(&instr.value, |lv_place| {
+                        for lv_place in value_lvalues(&instr.value) {
                             temporaries.insert(
                                 lv_place.identifier,
                                 Temporary::Local {
@@ -776,7 +776,7 @@ fn collect_dependencies(
                                 },
                             );
                             locals.insert(lv_place.identifier);
-                        });
+                        }
                     }
                 }
                 InstructionValue::PropertyLoad {

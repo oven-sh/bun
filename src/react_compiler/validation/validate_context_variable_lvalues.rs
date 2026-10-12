@@ -192,24 +192,8 @@ fn validate_context_variable_lvalues_impl(
                 | InstructionValue::ObjectMethod { lowered_func, .. } => {
                     inner_function_ids.push(lowered_func.func);
                 }
-                _ => {
-                    for _ in value_lvalues(value) {
-                        errors.push_diagnostic(
-                            CompilerDiagnostic::new(
-                                ErrorCategory::Todo,
-                                "ValidateContextVariableLValues: unhandled instruction variant",
-                                None,
-                            )
-                            .with_detail(
-                                CompilerDiagnosticDetail::Error {
-                                    loc: value.loc().copied(),
-                                    message: None,
-                                    identifier_name: None,
-                                },
-                            ),
-                        );
-                    }
-                }
+                // Upstream has a Todo for an lvalue in any other value. There is none.
+                _ => debug_assert!(value_lvalues(value).next().is_none()),
             }
         }
     }

@@ -498,6 +498,23 @@ describe.concurrent("bun lint", () => {
         ]),
       ).toEqual(["1:16", "3:45", "4:16", "5:30", "6:20", "6:40"]);
     });
+
+    test("a `var` in the block of a `catch` writes the parameter of that name", async () => {
+      expect(
+        await places([
+          `function a() { try { g(); } catch (e) { h(e); var e = 1; } }`,
+          `function b() { try { g(); } catch (e) { h(e); e = 1; } }`,
+          `function c() { try { g(); } catch (e) { var e = 1; h(e); } }`,
+          `function d() { try { g(); } catch (e) { h(e); var e = 1; } h(e); }`,
+          `function f() { var e; try { g(); } catch (e) { h(e); var e = 1; } }`,
+          `function i() { try { g(); } catch (e) { var e = 1; var e = 2; h(e); } }`,
+          `function j() { try { g(); } catch (e) { { h(e); var e = 1; } } }`,
+          `function k() { try { g(); } catch (e) { h(e); for (var e = 1; ; ) break; } }`,
+          `function l() { try { g(); } catch (e) { h(e); } var e = 1; h(e); e = 2; }`,
+          `function m() { try { g(); } catch ({ e }) { h(e); e = 1; } }`,
+        ]),
+      ).toEqual(["1:51", "2:47", "4:51", "5:58", "6:45", "7:53", "8:56", "9:66", "10:51"]);
+    });
   });
 
   describe("which files", () => {

@@ -723,14 +723,7 @@ fn each_operand(
     functions: &[HirFunction],
     visit: &mut dyn FnMut(&Place),
 ) {
-    match value {
-        InstructionValue::ObjectMethod { lowered_func, .. }
-        | InstructionValue::FunctionExpression { lowered_func, .. } => {
-            let context = &functions[lowered_func.func.0 as usize].context;
-            context.iter().for_each(visit);
-        }
-        _ => visitors::each_operand(value, visit),
-    }
+    visitors::operands(value, functions).for_each(visit);
 }
 
 /// The identifiers that are interpolated as JSX children.

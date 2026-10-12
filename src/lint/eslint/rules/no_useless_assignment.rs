@@ -1635,7 +1635,12 @@ impl NoUselessAssignment {
                     } else {
                         pat.span()
                     };
-                    let variable = pat.symbol().map(Binding::outer);
+                    // In the block of `catch (e)`, `var e = 1` gives the value to the parameter.
+                    let written = match declarator.var_kind() {
+                        VarKind::Var => cx.file().reference_at(pat.span().start).and_then(Reference::symbol),
+                        _ => None,
+                    };
+                    let variable = written.or_else(|| pat.symbol()).map(Binding::outer);
                     Self::add_assignment(variable, identifier, Some(init.span()), cx);
                 });
                 return;

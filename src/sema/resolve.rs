@@ -1298,6 +1298,10 @@ pub struct AsRequire<'a> {
     /// `compilerOptions.paths` are asked before any of these, and `exports` of a package counts: as
     /// eslint-import-resolver-typescript has it.
     pub through_paths: bool,
+    /// As oxc-resolver under oxlint: the condition `import` counts and `types` does not, `a.ts` is found for `a.js`, the
+    /// entry of a package is its `module` or its `main`, or its `index` where these lead to nothing, and whatever
+    /// `exports` is, nothing else is asked.
+    pub as_import: bool,
 }
 
 /// `ForEachAncestorDirectory`: `dir`, then each of its ancestor directories up to the root.
@@ -1719,6 +1723,8 @@ struct Look<'a> {
     /// Not the rules of TypeScript but those of the package `resolve` 2.0 under eslint-import-resolver-node: see
     /// [`Resolver::resolve_as_require`].
     as_require: bool,
+    /// [`AsRequire::as_import`]
+    as_import: bool,
 }
 
 impl Look<'_> {
@@ -2754,6 +2760,7 @@ impl<'h> Resolver<'h> {
             all_features: self.options.forbids_self_name_references && mode != ResolutionMode::None,
             resolve_package_directory_only: false,
             as_require: false,
+            as_import: false,
         }
     }
 
@@ -2777,12 +2784,14 @@ impl<'h> Resolver<'h> {
         };
         let look = Look {
             esm: false,
+            import: how.as_import,
             // Nor is anything looked for in `@types`.
             typescript: false,
             declarations: false,
             ignores_exports: !how.through_paths,
             all_features: false,
             as_require: true,
+            as_import: how.as_import,
             ..self.look(ResolutionMode::Require, true, &outcome)
         };
         let from_dir = dirname::<Posix>(from);
@@ -3527,7 +3536,13 @@ impl<'h> Resolver<'h> {
             let named = |path: Vec<u8>| self.is_file(&path).then_some(path);
             let extensions = look.outcome.require_extensions.iter();
             let mut extended = extensions.map(|it| [path, *it].concat());
-            return named(path.to_vec()).or_else(|| extended.find_map(named));
+            let aliases: [(&[u8], &[u8]); 3] =
+                [(b".js", b".ts"), (b".mjs", b".mts"), (b".cjs", b".cts")];
+            let mut aliased = (aliases.iter().filter(|_| look.as_import))
+                .filter_map(|it| Some([path.strip_suffix(it.0)?, it.1].concat()));
+            return named(path.to_vec())
+                .or_else(|| aliased.find_map(named))
+                .or_else(|| extended.find_map(named));
         }
         if let Some(found) = self.load_module_from_file_no_implicit_extensions(path, look) {
             return Some(found);
@@ -3681,6 +3696,9 @@ impl<'h> Resolver<'h> {
                 self.node_load_module_by_relative_name(entry, ConsiderPackageJson::No, look)
             };
             let index = || self.file(&inside(candidate, b"index"), look);
+            if look.as_import {
+                return named(b"module").or_else(|| named(b"main")).or_else(index);
+            }
             let main = json
                 .and_then(|it| it.get(b"main"))
                 .filter(|it| !is_falsy(it));
@@ -3836,6 +3854,7 @@ impl<'h> Resolver<'h> {
             };
         }
         let package = self.package(&package_dir);
+        let is_directory = look.as_import && spec.ends_with(b"/");
         let has_exports_feature = look.all_features || self.options.has_exports_feature();
         let respects_exports = has_exports_feature && !look.ignores_exports;
         let exports = package
@@ -3855,7 +3874,7 @@ impl<'h> Resolver<'h> {
             // A directory inside a package that has its own `package.json` uses that one, unless
             // the package declares `exports`.
             if exports.is_none() {
-                if let Some(found) = self.file(&candidate, look) {
+                if !is_directory && let Some(found) = self.file(&candidate, look) {
                     return Found::File(found);
                 }
                 if let Some(found) = self.directory_entry(&candidate, Some(nested), true, look) {
@@ -3873,7 +3892,7 @@ impl<'h> Resolver<'h> {
         // The `exports` of a package are exhaustive: no file lookup, no directory lookup, no
         // `typesVersions`. `"exports": null` counts as absent.
         if let Some(exports) = exports
-            && !is_falsy(exports)
+            && (look.as_import || !is_falsy(exports))
         {
             return self.exports(&package_dir, exports, &combine_paths(b".", rest), look);
         }
@@ -3882,7 +3901,7 @@ impl<'h> Resolver<'h> {
                 ending_from_config: look.ending_from_config || has_extension_from_config,
                 ..look
             };
-            let from_file = if !rest.is_empty() || !look.esm {
+            let from_file = if (!rest.is_empty() || !look.esm) && !is_directory {
                 self.file(candidate, look)
             } else {
                 None
@@ -4309,7 +4328,6 @@ impl<'h> Resolver<'h> {
     fn condition_matches(&self, condition: &[u8], look: Look) -> bool {
         let by_mode: &[u8] = if look.import { b"import" } else { b"require" };
         condition == b"default"
-            || condition == b"types"
             || condition == by_mode
             || condition == b"node" && (self.options.resolves_like_node || look.all_features)
             || self
@@ -4317,7 +4335,8 @@ impl<'h> Resolver<'h> {
                 .custom_conditions
                 .iter()
                 .any(|c| c == condition)
-            || is_applicable_versioned_types_key(condition)
+            || !look.as_import
+                && (condition == b"types" || is_applicable_versioned_types_key(condition))
     }
 
     /// `loadModuleFromImports`: `#name`, through the `imports` of the nearest `package.json`.

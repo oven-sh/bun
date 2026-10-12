@@ -2633,6 +2633,100 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  // The value of a JSX pragma ends at white space or at a line break, in a `//` comment and in a
+  // `/* */` comment. So a pragma can have a line of its own in a block comment.
+  describe("JSX pragma value ends at a line break", () => {
+    const jsx = new Bun.Transpiler({
+      loader: "jsx",
+      autoImportJSX: true,
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+    const lineBreaks = { LF: "\n", CRLF: "\r\n", CR: "\r", "U+2028": "\u2028", "U+2029": "\u2029" };
+    const classic = "/** @jsxRuntime classic */\n";
+    const elements = "console.log(<a />, <></>);\n";
+    const factoryIsH = 'console.log(h("a", null), h(React.Fragment, null));\n';
+    // Each pragma, the text before it that makes its effect visible, and the output when it is followed.
+    const pragmas = [
+      ["@jsx h", classic, factoryIsH],
+      ["@jsxFrag F", classic, 'console.log(React.createElement("a", null), React.createElement(F, null));\n'],
+      [
+        "@jsxRuntime classic",
+        "",
+        'console.log(React.createElement("a", null), React.createElement(React.Fragment, null));\n',
+      ],
+      [
+        "@jsxImportSource ./my",
+        "",
+        'import { jsxDEV as jsxDEV_7x81h0kn, Fragment as Fragment_8vg9x3sq } from "./my/jsx-dev-runtime";\n' +
+          'console.log(jsxDEV_7x81h0kn("a", {}, undefined, false, undefined, this), jsxDEV_7x81h0kn(Fragment_8vg9x3sq, {}, undefined, false, undefined, this));\n',
+      ],
+    ];
+
+    for (const [pragma, before, output] of pragmas) {
+      it(`${pragma} on its own line of a block comment`, () => {
+        for (const [name, lineBreak] of Object.entries(lineBreaks)) {
+          for (const star of [" * ", ""]) {
+            const comment = `/*${star && "*"}${lineBreak}${star}${pragma}${lineBreak}${star && " "}*/\n`;
+            expect(jsx.transformSync(before + comment + elements), `${name}, "${star}" before the pragma`).toBe(output);
+          }
+        }
+      });
+
+      it(`${pragma} in a // comment`, () => {
+        for (const [name, lineBreak] of Object.entries(lineBreaks)) {
+          expect(jsx.transformSync(`${before}// ${pragma}${lineBreak}${elements}`), name).toBe(output);
+        }
+      });
+    }
+
+    it("one pragma on each line of a block comment", () => {
+      for (const [name, lineBreak] of Object.entries(lineBreaks)) {
+        for (const star of [" * ", ""]) {
+          const comment =
+            `/*${star && "*"}${lineBreak}` +
+            ["@jsxRuntime classic", "@jsx h", "@jsxFrag F"].map(pragma => star + pragma + lineBreak).join("") +
+            `${star && " "}*/\n`;
+          expect(jsx.transformSync(comment + elements), `${name}, "${star}" before each pragma`).toBe(
+            'console.log(h("a", null), h(F, null));\n',
+          );
+        }
+      }
+    });
+
+    it("two pragmas on one line", () => {
+      expect(jsx.transformSync("/** @jsxRuntime classic @jsx h */\n" + elements)).toBe(factoryIsH);
+    });
+
+    it("a member expression on its own line", () => {
+      expect(jsx.transformSync(`${classic}/**\n * @jsx a.b\n * @jsxFrag c.d\n */\n${elements}`)).toBe(
+        'console.log(a.b("a", null), a.b(c.d, null));\n',
+      );
+    });
+
+    it("text on the line after the pragma name is not the value", () => {
+      for (const comment of ["/* @jsx\n h */", "/* @jsx \n h */", "/**\n * @jsx\n * h\n */"]) {
+        expect(jsx.transformSync(`${classic}/* @jsx first */\n${comment}\n${elements}`), comment).toBe(
+          'console.log(first("a", null), first(React.Fragment, null));\n',
+        );
+      }
+    });
+
+    it("a pragma without a value keeps the value of an earlier pragma", () => {
+      for (const [pragma, before, output] of pragmas) {
+        const name = pragma.slice(0, pragma.indexOf(" "));
+        for (const comment of [`/* ${name} */`, `/*\n * ${name} \n */`, `// ${name} `, `// ${name}`]) {
+          expect(jsx.transformSync(`${before}/** ${pragma} */\n${comment}\n${elements}`), comment).toBe(output);
+        }
+      }
+    });
+
+    it("the value does not take an annotation at the start of the next line", () => {
+      expect(jsx.transformSync(`${classic}/* @jsx h\n@__PURE__ */ foo();\nconsole.log(<a />);\n`)).toBe(
+        'console.log(h("a", null));\n',
+      );
+    });
+  });
+
   // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
   // (prints symbol.original_name verbatim), so the `generatedSymbolName`
   // hash suffix on the automatic JSX runtime import is the sole collision

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "path";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -525,6 +526,169 @@ describe("bundler", () => {
     run: {
       stdout: `{\n  $$typeof: Symbol(hello_jsxDEV),\n  type: \"div\",\n  props: {\n    children: \"Hello World\",\n  },\n  key: undefined,\n}`,
     },
+  });
+
+  // The value of a pragma ends at the line break. So a pragma can have a line
+  // of its own in a block comment, and the next line can hold another pragma.
+  describe("pragma on its own line of a block comment", () => {
+    const lines = (...lines: string[]) => lines.join("\n") + "\n";
+    const h = { "h.ts": lines(`export const h = (tag: string) => "h: " + tag;`, `export const F = "F";`) };
+    const myRuntime = {
+      "my/jsx-dev-runtime.js": `export const jsxDEV = tag => "my runtime: " + tag;`,
+      "my/jsx-runtime.js": `export const jsx = tag => "my runtime: " + tag;`,
+    };
+    // The first file of each case is its entry point.
+    const cases: Record<string, { files: Record<string, string>; stdout: string }> = {
+      ImportSource: {
+        files: {
+          "index.jsx": lines("/**", " * @jsxImportSource ./my", " */", "console.log(<a />);"),
+          ...myRuntime,
+        },
+        stdout: "my runtime: a",
+      },
+      Factory: {
+        files: {
+          "index.tsx": lines(
+            "/** @jsxRuntime classic */",
+            "/**",
+            " * @jsx h",
+            " */",
+            `import { h } from "./h";`,
+            "console.log(<a />);",
+          ),
+          ...h,
+        },
+        stdout: "h: a",
+      },
+      Fragment: {
+        files: {
+          "index.tsx": lines(
+            "/** @jsxRuntime classic */",
+            "/** @jsx h */",
+            "/**",
+            " * @jsxFrag F",
+            " */",
+            `import { F, h } from "./h";`,
+            "console.log(<></>);",
+          ),
+          ...h,
+        },
+        stdout: "h: F",
+      },
+      // With the first comment, a build that does not follow `@jsxRuntime classic` imports ./my and not react.
+      Runtime: {
+        files: {
+          "index.tsx": lines(
+            "/** @jsxImportSource ./my */",
+            "/**",
+            " * @jsxRuntime classic",
+            " * @jsx h",
+            " */",
+            `import { h } from "./h";`,
+            "console.log(<a />);",
+          ),
+          ...h,
+          ...myRuntime,
+        },
+        stdout: "h: a",
+      },
+      FactoryWithRuntimeFromTsconfig: {
+        files: {
+          "index.tsx": lines("/**", " * @jsx h", " */", `import { h } from "./h";`, "console.log(<a />);"),
+          "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react" } }),
+          ...h,
+        },
+        stdout: "h: a",
+      },
+    };
+    const inRoot = (files: Record<string, string>) =>
+      Object.fromEntries(Object.entries(files).map(([file, source]) => ["/" + file, source]));
+
+    for (const [name, { files, stdout }] of Object.entries(cases)) {
+      itBundled(`jsx/PragmaOwnLine${name}`, {
+        files: inRoot(files),
+        target: "bun",
+        run: { stdout },
+      });
+
+      test.concurrent(`bun run: ${name}`, async () => {
+        using dir = tempDir(`jsx-pragma-own-line-${name}`, files);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), Object.keys(files)[0]],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).toBe("");
+        expect(out).toBe(stdout + "\n");
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    const localFactory = `const h = tag => "h: " + tag;`;
+    itBundled("jsx/PragmaOnEachLine", {
+      files: inRoot({
+        "index.js": lines(
+          `import "./all-four.jsx";`,
+          `import "./column-0-runtime.jsx";`,
+          `import "./column-0-fragment.jsx";`,
+        ),
+        "all-four.jsx": lines(
+          "/**",
+          " * @jsxImportSource ./my",
+          " * @jsxRuntime classic",
+          " * @jsx h",
+          " * @jsxFrag F",
+          " */",
+          localFactory,
+          `const F = "F";`,
+          `console.log("all-four:", <a />, <></>);`,
+        ),
+        "column-0-runtime.jsx": lines(
+          "/*",
+          "@jsxRuntime classic",
+          "@jsx h",
+          "*/",
+          localFactory,
+          `console.log("column-0-runtime:", <a />);`,
+        ),
+        "column-0-fragment.jsx": lines(
+          "/** @jsxRuntime classic */",
+          "/*",
+          "@jsx h",
+          "@jsxFrag F",
+          "*/",
+          localFactory,
+          `const F = "F";`,
+          `console.log("column-0-fragment:", <></>);`,
+        ),
+      }),
+      target: "bun",
+      run: { stdout: lines("all-four: h: a h: F", "column-0-runtime: h: a", "column-0-fragment: h: F") },
+    });
+
+    test("a warning about the value has the length of the value", async () => {
+      using dir = tempDir("jsx-pragma-own-line-warning", {
+        "index.jsx": lines("/**", " * @jsxRuntime bogus", " */", "export default <a />;"),
+      });
+
+      const { logs } = await Bun.build({ entrypoints: [join(String(dir), "index.jsx")], external: ["*"] });
+      expect(logs.map(log => ({ level: log.level, message: log.message, length: log.position?.length }))).toEqual([
+        { level: "warn", message: 'Unsupported JSX runtime: "bogus"', length: 5 },
+      ]);
+    });
+
+    test("the pragmas in a file without JSX give no warning", async () => {
+      using dir = tempDir("jsx-pragma-own-line-no-jsx", {
+        "index.js": lines("/**", " * @jsxRuntime classic", " * @jsx jsx", " */", "export default 1;"),
+      });
+
+      const { logs } = await Bun.build({ entrypoints: [join(String(dir), "index.js")] });
+      expect(logs.map(log => log.message)).toEqual([]);
+    });
   });
 
   // The classic transform reads the first member of the factory and fragment

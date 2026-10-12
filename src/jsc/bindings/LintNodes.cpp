@@ -233,9 +233,15 @@ private:
         if (!first || !second)
             return {};
         if (tag == 9 || tag == 10) {
+            // acorn has `{ pattern, flags }` and `{ raw, cooked }`. typescript-estree has both by name.
+            auto kind = m_host->nodes.kindFor(m_host->isEspree(), m_host->isOxlint());
+            bool secondIsFirst = tag == 9 ? kind == LintNodeState::TypeScript : kind == LintNodeState::Espree;
             JSObject* object = constructEmptyObject(m_globalObject);
+            if (secondIsFirst)
+                object->putDirect(m_vm, tag == 9 ? m_flags : m_raw, second);
             object->putDirect(m_vm, tag == 9 ? m_pattern : m_cooked, first);
-            object->putDirect(m_vm, tag == 9 ? m_flags : m_raw, second);
+            if (!secondIsFirst)
+                object->putDirect(m_vm, tag == 9 ? m_flags : m_raw, second);
             return object;
         }
         if (!first.isString() || !(isBigInt || second.isString()))
@@ -462,7 +468,7 @@ JSObject* LintNodeState::makeTemplate(JSGlobalObject* globalObject, LintHost* ho
         if (!has(what))
             continue;
         Identifier key = Identifier::fromString(vm, AtomString(name(properties[i])));
-        if (what == What::Loc && !hasEagerLoc) {
+        if (what == What::Loc) {
             // As in a token: a plain property to a plugin, which is computed from `range` when it's first read.
             like->putDirectCustomAccessor(vm, key, host->sourceCode.lazyLocOfNode.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
         } else if (what == What::Comments || what == What::Tokens) {
@@ -569,7 +575,6 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
         return outOfStep();
     uint32_t count = tree.count;
     auto kind = state.kindFor(host->isEspree(), host->isOxlint());
-    auto locKind = kind == LintNodeState::Espree ? LintLocShape::EspreeToken : LintLocShape::TypeScript;
 
     // Where the words of each node start.
     Vector<uint32_t> offsets(count);
@@ -656,9 +661,6 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
                     value = range;
                     break;
                 }
-                case What::Loc:
-                    value = state.hasEagerLoc ? JSValue(lintCreateLoc(vm, host, locKind, start, end)) : like->getDirect(offset);
-                    break;
                 default:
                     value = like->getDirect(offset);
                 }
@@ -672,23 +674,21 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
     return nodes;
 }
 
-// `defineNodes(prototype, flags, deprecated)` is called once, while something is handled. `flags`: 1 for nodes that are laid out as the
-// parser of the real tool lays them out, 2 for a `loc` that is made with the node. Without the first, all nodes inherit from
-// `prototype`. `deprecated`: by `Type.property`, a getter and a setter for the deprecated properties of typescript-estree.
+// `defineNodes(prototype, isExact, deprecated)` is called once, while something is handled. `isExact`: the nodes are laid out as the
+// parser of the real tool lays them out. If not, all nodes inherit from `prototype`. `deprecated`: by `Type.property`, a getter and a
+// setter for the deprecated properties of typescript-estree.
 JSC_DEFINE_HOST_FUNCTION(jsLintDefineNodes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);
     JSObject* prototype = callFrame->argument(0).getObject();
-    JSValue flags = callFrame->argument(1);
     JSObject* deprecated = callFrame->argument(2).getObject();
-    if (!prototype || !flags.isNumber() || !deprecated || host->nodes.isLoaded() || !host->nodes.load(globalObject, host))
+    if (!prototype || !deprecated || host->nodes.isLoaded() || !host->nodes.load(globalObject, host))
         return throwVMTypeError(globalObject, scope, "The layouts are not as expected"_s);
     host->nodes.nodePrototype.set(vm, host, prototype);
     host->nodes.deprecated.set(vm, host, deprecated);
-    host->nodes.isExact = JSC::toUInt32(flags.asNumber()) & 1;
-    host->nodes.hasEagerLoc = JSC::toUInt32(flags.asNumber()) & 2;
+    host->nodes.isExact = callFrame->argument(1).isTrue();
     return JSValue::encode(jsUndefined());
 }
 

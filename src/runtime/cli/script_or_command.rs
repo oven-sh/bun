@@ -17,8 +17,8 @@ pub(crate) enum Runs {
     Other,
 }
 
-/// Whether `arg` only asks `bun <command>` about itself or its config, like `--help`, so nothing is checked, linted or
-/// formatted.
+/// Whether `arg` only asks `bun <command>` about itself or its config, like `--help` does.
+/// Nothing is checked, linted or formatted then.
 fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
     let name = bun_core::strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
     let of_lint_and_format = matches!(

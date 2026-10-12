@@ -14,10 +14,32 @@ Object.defineProperty(Node.prototype, "loc", { get: native.locGetter, set: nativ
 // By node: the node that typescript-estree makes for a deprecated property of it.
 const madeFor = new WeakMap();
 
-// It has no `parent`: nothing goes through it.
+// typescript-estree converts what is behind a deprecated property a second time. So these are other nodes, and they have no `parent`:
+// nothing goes through them.
+function convertedAgain(value) {
+  if (!hasExactNodes || value === null || typeof value !== "object" || value instanceof RegExp) return value;
+  if (Array.isArray(value)) return value.map(convertedAgain);
+  const copy = {};
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === "parent") continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if ("value" in descriptor) descriptor.value = convertedAgain(descriptor.value);
+    Object.defineProperty(copy, key, descriptor);
+  }
+  return copy;
+}
+
 function makeFor(node, type, range, fields) {
-  if (!madeFor.has(node)) madeFor.set(node, Object.assign(Object.create(Node.prototype), { type, ...fields, range }));
-  return madeFor.get(node);
+  if (madeFor.has(node)) return madeFor.get(node);
+  const at = index => {
+    const { line, column } = sourceCode.getLocFromIndex(index);
+    return { column, line };
+  };
+  const made = hasExactNodes
+    ? { type, ...fields, range, loc: { end: at(range[1]), start: at(range[0]) } }
+    : Object.assign(Object.create(Node.prototype), { type, ...fields, range });
+  madeFor.set(node, made);
+  return made;
 }
 
 // The deprecated properties of typescript-estree: other properties by an older name, or in a node of their own. They are not
@@ -27,17 +49,24 @@ const deprecated = {
   ExportNamedDeclaration: { assertions: node => node.attributes },
   ExportAllDeclaration: { assertions: node => node.attributes },
   ImportExpression: { attributes: node => node.options },
-  TSEnumDeclaration: { members: node => node.body.members },
+  TSEnumDeclaration: {
+    members(node) {
+      if (!madeFor.has(node)) madeFor.set(node, convertedAgain(node.body.members));
+      return madeFor.get(node);
+    },
+  },
   TSEnumMember: { computed: node => node.id.type !== "Identifier" && node.id.type !== "Literal" },
-  TSImportType: { argument: node => makeFor(node, "TSLiteralType", [...node.source.range], { literal: node.source }) },
+  TSImportType: {
+    argument: node => makeFor(node, "TSLiteralType", [...node.source.range], { literal: node.source }),
+  },
   TSMappedType: {
     typeParameter: ({ key, constraint }, node) =>
       makeFor(node, "TSTypeParameter", [key.range[0], constraint.range[1]], {
         const: false,
-        constraint,
+        constraint: convertedAgain(constraint),
         default: undefined,
         in: false,
-        name: key,
+        name: convertedAgain(key),
         out: false,
       }),
   },
@@ -63,8 +92,7 @@ function defineNodes() {
   for (const [name, properties] of Object.entries(deprecated)) {
     for (const [key, get] of Object.entries(properties)) accessors[`${name}.${key}`] = deprecatedAccessors(key, get);
   }
-  const flags = (hasExactNodes ? 1 : 0) | (process.env.BUN_LINT_EAGER_LOC === "1" ? 2 : 0);
-  native.defineNodes(Node.prototype, flags, accessors);
+  native.defineNodes(Node.prototype, hasExactNodes, accessors);
   if (hasExactNodes) return;
   for (const [name, properties] of Object.entries(deprecated)) {
     for (const key of Object.keys(properties)) {

@@ -2043,8 +2043,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }
 
-    /// Prints the flags for `bun lint --help` and `bun format --help`: the common ones, or with `all`, every flag under its
-    /// heading.
+    /// Prints the flags for `bun lint --help` and `bun format --help`: the common ones, or with `all`, every flag by group.
     fn print_flags(help: &bun_lint_driver::cli::Help, all: bool) {
         if all {
             for group in help.groups {

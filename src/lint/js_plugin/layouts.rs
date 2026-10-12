@@ -383,10 +383,17 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
             _ => return true,
         }
     };
+    // `{ with: { .. } }` in `import("a", { with: { .. } })` as a type.
+    let is_options = |id: u32| {
+        type_of(id) == Some(NodeType::ObjectExpression)
+            && type_of(tree.parents[id as usize]) == Some(NodeType::TSImportType)
+    };
     let is_alternate = |id: u32, node_type: NodeType| {
         let parent = tree.parents[id as usize];
         let around = type_of(parent);
         match node_type {
+            NodeType::ObjectExpression => is_options(id),
+            NodeType::Property => is_options(parent),
             NodeType::Program
             | NodeType::ClassBody
             | NodeType::ImportDefaultSpecifier
@@ -413,6 +420,9 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
                 }
                 Some(NodeType::TSModuleDeclaration) => {
                     !matches!(field(parent, Field::Kind), Value::Str(b"global"))
+                }
+                Some(NodeType::Property) => {
+                    is_options(tree.parents[parent as usize]) && is_in(id, parent, Field::Key)
                 }
                 Some(NodeType::TSQualifiedName) => {
                     let mut outer = parent;

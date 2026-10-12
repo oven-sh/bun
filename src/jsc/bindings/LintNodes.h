@@ -62,8 +62,6 @@ struct LintNodeState {
 
     // The nodes are laid out as the parser of the real tool lays them out.
     bool isExact { false };
-    // `loc` is made with the node, and not when it's first read.
-    bool hasEagerLoc { false };
     LayoutKind kindFor(bool isEspree, bool isOxlint) const
     {
         // oxlint has one tree for all files. There's no layout of it for the tree of espree.

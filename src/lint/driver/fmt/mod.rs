@@ -1371,9 +1371,8 @@ impl Run<'_> {
         // The largest first, so that no thread begins it when the others are nearly done.
         sort_slice_by(&mut work[..], |a, b| b.1.size.cmp(&a.1.size));
         let started = Instant::now();
-        // This has to come before any other thread runs. It starts JavaScriptCore, which the first config pattern compiled
-        // on another thread would otherwise do, and the thread that starts JavaScriptCore becomes its main thread.
-        // The pool's threads have enough stack to walk a tree as deep as a parser allows.
+        // Has to come before the first parallel region. The pool's threads have enough stack to walk a tree as deep as a parser
+        // allows.
         bun_sema_driver::use_a_pool_of_their_own("Bun Format");
         let bridge = (!handed_over.is_empty()).then(|| {
             let size: u64 = handed_over.iter().map(|it| it.1.size).sum();

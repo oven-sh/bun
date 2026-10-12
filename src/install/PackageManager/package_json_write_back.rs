@@ -437,10 +437,14 @@ pub fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
             let top_level_dir =
                 strings::without_trailing_slash(FileSystem::instance().top_level_dir());
             let path = strings::without_prefix(&e.target.package_json_path, top_level_dir);
+            let path = path
+                .strip_prefix(b"/")
+                .or_else(|| path.strip_prefix(b"\\"))
+                .unwrap_or(path);
             bun_core::pretty_errorln!(
                 "<d>{} in <r><green>{}<r>",
                 bstr::BStr::new(edits),
-                bstr::BStr::new(strings::trim_prefix(path, b"/")),
+                bstr::BStr::new(path),
             );
         }
     }

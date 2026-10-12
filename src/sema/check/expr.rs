@@ -561,10 +561,12 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         is_rechecked: bool,
     ) -> Option<TypeId> {
-        let first = self
-            .stack
-            .iter()
-            .rposition(|&q| q == Query::Expr(file, e))?;
+        let q = Query::Expr(file, e);
+        // FOR SPEED, as in `enter`: the stack is searched only if a query of its class is on it.
+        if self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] == 0 {
+            return None;
+        }
+        let first = self.stack.iter().rposition(|&it| it == q)?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         let is_checked_once = !is_rechecked && self.is_rechecking();
         // Hides the first visit from `enter`, which still fails when time, native stack or query
@@ -714,15 +716,18 @@ impl<'p, 's> Checker<'p, 's> {
         // of the literal. Without type variables there, or in a contextual type pushed for a part
         // along the way, no `const` type variable can be the contextual type further in.
         let (mut top, mut highest, mut may_be_expected) = (e, ExprId::NONE, false);
+        let is_pushed_with_type_variables = |info: &&ContextualInfo| {
+            info.file == file && info.t.is_some_and(|t| self.has_type_variables(t))
+        };
+        let pushed_with_type_variables: SmallVec<[ExprId; 4]> = (self.contextual.iter())
+            .filter(is_pushed_with_type_variables)
+            .map(|info| info.node)
+            .collect();
         loop {
             // `isValidConstAssertionArgument`: the contextual type is requested for nothing else.
             if self.is_valid_const_assertion_argument(file, top) {
                 highest = top;
-                may_be_expected |= self.contextual.iter().any(|info| {
-                    info.file == file
-                        && info.node == top
-                        && info.t.is_some_and(|t| self.has_type_variables(t))
-                });
+                may_be_expected |= pushed_with_type_variables.contains(&top);
             }
             top = match self.const_context_parent(file, top) {
                 ControlFlow::Continue(outer) => outer,
@@ -2392,7 +2397,7 @@ impl<'p, 's> Checker<'p, 's> {
             && hir[class].extends.is_some()
             && !self.class_declaration_extends_null(self.class_sym(file, class))
             && flow.is_some()
-            && !self.is_post_super(file, flow, false, &mut Vec::new())
+            && !self.is_post_super(file, flow, &mut Vec::new())
         {
             self.error_at(self.place_of_token(file, hir[e].pos), code, &[]);
         }
@@ -5217,9 +5222,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                 // `CheckModeTypeOnly`: while a loop analysis is in progress the operand types may
-                // be narrower than the final ones.
+                // be narrower than the final ones. Not above a resolution, which is computed in the
+                // normal mode, with an empty `flowLoopStack`, and stored: nothing reports later.
                 let (l, r) = self.check_operands(file, left, right);
-                if self.flow_loops.is_empty() {
+                let is_in_flow_loop = (self.flow_loops.last())
+                    .is_some_and(|pushed| self.is_flow_loop_visible(pushed.5));
+                if !is_in_flow_loop {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.

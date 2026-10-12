@@ -23,6 +23,7 @@ use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share};
 use crate::types::{Link, Marks, OwnRecords, OwnStore};
+use crate::util::SharedSort;
 use crate::util::{InParallel, for_each_mut};
 use std::cell::{RefCell, UnsafeCell};
 
@@ -470,7 +471,7 @@ fn publish_tables<'s>(
     {
         // The largest first, so that no thread begins it when the others are nearly done.
         let mut by_size: Vec<&mut (usize, Entries<'s>)> = followed.iter_mut().collect();
-        by_size.sort_by_key(|it| std::cmp::Reverse(it.1.len));
+        by_size.shared_sort_by_key(|it| std::cmp::Reverse(it.1.len));
         let links: Vec<&Link> = finished.iter().map(|it| &it.link).collect();
         for_each_mut(&mut by_size, in_parallel, &|(task, entries)| {
             tables[entries.slot as usize].follow(entries, links[*task]);
@@ -528,7 +529,7 @@ fn publish_tables<'s>(
         }
     }
     chains.retain(|chain| chain.len != 0);
-    chains.sort_by_key(|chain| std::cmp::Reverse(chain.len));
+    chains.shared_sort_by_key(|chain| std::cmp::Reverse(chain.len));
     let tasks = finished.len();
     for_each_mut(&mut chains, in_parallel, &|chain| {
         // By task: the published handles of the entries of the previous stage, indexed by their

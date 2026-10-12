@@ -129,79 +129,97 @@ impl Checker<'_, '_> {
 
     /// For the expression `e`, and for the name of a property access `e`.
     pub(super) fn enclosing_scope_of_expr(&self, file: FileId, e: ExprId) -> ScopeId {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut at = e;
-        loop {
-            // The operand of `typeof` in a type.
-            if bound.is_in_type_query(at)
-                && let Some(&scope) = bound.expr_scope.get(&at)
-            {
-                return or_file_scope(scope);
+        // Few expressions are further from what decides, and for these nothing is kept. From each operand of `a + a + ..`
+        // it is as far as what is left of the chain.
+        const PLAIN_STEPS: usize = 32;
+        let (mut at, mut steps) = (e, 0);
+        let mut passed = Vec::new();
+        let scope = loop {
+            if steps >= PLAIN_STEPS {
+                if let Some(&known) = self.scopes_of_what_is_in.borrow().get(&(file, at)) {
+                    break known;
+                }
+                passed.push(at);
             }
-            match bound.expr_parent[at.idx()] {
-                Parent::Expr(outer) | Parent::PropKey(outer, _) if outer.is_some() => at = outer,
-                Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => {
-                    at = bound.prop_owner[p.idx()];
-                }
-                Parent::Stmt(s) if s.is_some() => {
-                    return self.enclosing_scope_of_statement(file, s);
-                }
-                Parent::VarInit(d) => return self.enclosing_scope_of_variable(file, d),
-                Parent::ParamDefault(p) => {
-                    return self.enclosing_scope_of_function(file, bound.param_fn[p.idx()]);
-                }
-                Parent::PatPropDefault(p) => {
-                    return self.enclosing_scope_of_pat(file, hir[p].value);
-                }
-                Parent::PatElemDefault(p) => return self.enclosing_scope_of_pat(file, hir[p].pat),
-                Parent::PropKey(..)
-                | Parent::PatKey(_)
-                | Parent::MemberKey(_)
-                | Parent::MethodKey(_) => {
-                    return self.enclosing_scope_of_computed_name(file, at);
-                }
-                Parent::MemberInit(m) => return self.enclosing_scope_of_member(file, m),
-                Parent::FnBody(f) => return self.enclosing_scope_of_function(file, f),
-                Parent::EnumInit(m) => {
-                    return or_file_scope(scope_of_enum_member(bound, m));
-                }
-                Parent::Case(c) => {
-                    let s = bound.case_stmt[c.idx()];
-                    if s.is_none() {
-                        return ScopeId(0);
-                    }
-                    // The clauses are in the scope the case block creates, like their statements.
-                    if let StmtKind::Switch { cases, .. } = hir[s].kind
-                        && let Some(first) = cases.iter().find_map(|c| hir.ids(hir[c].body).next())
-                    {
-                        return or_file_scope(bound.stmt_scope[first.idx()]);
-                    }
-                    return or_file_scope(bound.stmt_scope[s.idx()]);
-                }
-                // `node.Parent` of the expression itself is the `ExpressionWithTypeArguments`, which is not in the expression.
-                Parent::ClassExtends(c) => {
-                    return or_file_scope(match bound.expr_scope.get(&at) {
-                        Some(&base_expression) if at != e => base_expression,
-                        _ => bound.class_scope[c.idx()],
-                    });
-                }
-                Parent::Decorator(c, owner) => {
-                    return match owner {
-                        DecoratorOwner::Class(_) => or_file_scope(bound.class_scope[c.idx()]),
-                        DecoratorOwner::Member(m) => self.enclosing_scope_of_member(file, m),
-                        DecoratorOwner::Param(p) => {
-                            self.enclosing_scope_of_function(file, bound.param_fn[p.idx()])
-                        }
-                    };
-                }
-                Parent::Module(m) => return or_file_scope(bound.module_scope[m.idx()]),
-                Parent::Expr(_)
-                | Parent::Prop(_)
-                | Parent::Stmt(_)
-                | Parent::File
-                | Parent::None => return ScopeId(0),
+            match self.enclosing_scope_or_outer_expr(file, at, at != e) {
+                Ok(scope) => break scope,
+                Err(outer) => at = outer,
             }
+            steps += 1;
+        };
+        if !passed.is_empty() {
+            let mut known = self.scopes_of_what_is_in.borrow_mut();
+            known.extend(passed.into_iter().map(|it| ((file, it), scope)));
         }
+        scope
+    }
+
+    /// The scope, if what `at` is in decides it, or else the expression around `at`. `is_around`: not `at` is asked about
+    /// but something in it.
+    fn enclosing_scope_or_outer_expr(
+        &self,
+        file: FileId,
+        at: ExprId,
+        is_around: bool,
+    ) -> Result<ScopeId, ExprId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // The operand of `typeof` in a type.
+        if bound.is_in_type_query(at)
+            && let Some(&scope) = bound.expr_scope.get(&at)
+        {
+            return Ok(or_file_scope(scope));
+        }
+        Ok(match bound.expr_parent[at.idx()] {
+            Parent::Expr(outer) | Parent::PropKey(outer, _) if outer.is_some() => {
+                return Err(outer);
+            }
+            Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => {
+                return Err(bound.prop_owner[p.idx()]);
+            }
+            Parent::Stmt(s) if s.is_some() => self.enclosing_scope_of_statement(file, s),
+            Parent::VarInit(d) => self.enclosing_scope_of_variable(file, d),
+            Parent::ParamDefault(p) => {
+                self.enclosing_scope_of_function(file, bound.param_fn[p.idx()])
+            }
+            Parent::PatPropDefault(p) => self.enclosing_scope_of_pat(file, hir[p].value),
+            Parent::PatElemDefault(p) => self.enclosing_scope_of_pat(file, hir[p].pat),
+            Parent::PropKey(..)
+            | Parent::PatKey(_)
+            | Parent::MemberKey(_)
+            | Parent::MethodKey(_) => self.enclosing_scope_of_computed_name(file, at),
+            Parent::MemberInit(m) => self.enclosing_scope_of_member(file, m),
+            Parent::FnBody(f) => self.enclosing_scope_of_function(file, f),
+            Parent::EnumInit(m) => or_file_scope(scope_of_enum_member(bound, m)),
+            Parent::Case(c) => {
+                let s = bound.case_stmt[c.idx()];
+                if s.is_none() {
+                    return Ok(ScopeId(0));
+                }
+                // The clauses are in the scope the case block creates, like their statements.
+                if let StmtKind::Switch { cases, .. } = hir[s].kind
+                    && let Some(first) = cases.iter().find_map(|c| hir.ids(hir[c].body).next())
+                {
+                    return Ok(or_file_scope(bound.stmt_scope[first.idx()]));
+                }
+                or_file_scope(bound.stmt_scope[s.idx()])
+            }
+            // `node.Parent` of the expression itself is the `ExpressionWithTypeArguments`, which is not in the expression.
+            Parent::ClassExtends(c) => or_file_scope(match bound.expr_scope.get(&at) {
+                Some(&base_expression) if is_around => base_expression,
+                _ => bound.class_scope[c.idx()],
+            }),
+            Parent::Decorator(c, owner) => match owner {
+                DecoratorOwner::Class(_) => or_file_scope(bound.class_scope[c.idx()]),
+                DecoratorOwner::Member(m) => self.enclosing_scope_of_member(file, m),
+                DecoratorOwner::Param(p) => {
+                    self.enclosing_scope_of_function(file, bound.param_fn[p.idx()])
+                }
+            },
+            Parent::Module(m) => or_file_scope(bound.module_scope[m.idx()]),
+            Parent::Expr(_) | Parent::Prop(_) | Parent::Stmt(_) | Parent::File | Parent::None => {
+                ScopeId(0)
+            }
+        })
     }
 
     /// For the name `pat` of a variable, a parameter or a binding element.

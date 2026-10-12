@@ -28,6 +28,7 @@ use crate::resolve::{
     is_declaration_file_name, is_relative, is_rooted_disk_path, join, known_extension,
     node_module_path_parts, normalize_path, object_kind, path_is_relative, remove_file_extension,
 };
+use crate::util::SharedSort;
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
@@ -1886,7 +1887,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if !candidates.is_empty() {
             // The first of the shortest chains.
-            candidates.sort_by(|a, b| self.compare_symbol_chains(a, b));
+            candidates.shared_sort_by(|a, b| self.compare_symbol_chains(a, b));
             return candidates.swap_remove(0);
         }
         if table == Table::Globals {
@@ -1980,7 +1981,7 @@ impl<'p, 's> Checker<'p, 's> {
                     candidates.push(alias);
                 }
             }
-            candidates.sort_by(|&a, &b| self.compare_symbols_of_chain(a, b));
+            candidates.shared_sort_by(|&a, &b| self.compare_symbols_of_chain(a, b));
             if let Some(&first) = candidates.first() {
                 return Some(first);
             }
@@ -2230,7 +2231,7 @@ impl<'p, 's> Checker<'p, 's> {
                     break;
                 }
             }
-            matches.sort_by(|&a, &b| self.compare_symbols_of_chain(a, b));
+            matches.shared_sort_by(|&a, &b| self.compare_symbols_of_chain(a, b));
         }
         let matches = Rc::new(matches);
         self.emit_resolver_links
@@ -6439,7 +6440,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // `comparePathsByRedirect`. Names that differ only in case are in no particular order there.
         let is_case_sensitive = self.files().is_case_sensitive;
-        paths.sort_by(|a, b| {
+        paths.shared_sort_by(|a, b| {
             distance(&a.0)
                 .cmp(&distance(&b.0))
                 .then(b.1.cmp(&a.1))
@@ -6914,7 +6915,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             named.push((parent, name));
         }
-        named.sort_by(|a, b| self.sort_by_best_name(a, b));
+        named.shared_sort_by(|a, b| self.sort_by_best_name(a, b));
         named.into_iter().map(|parent| parent.0).collect()
     }
 

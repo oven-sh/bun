@@ -20,7 +20,9 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, FdExt, SystemError};
+#[cfg(not(windows))]
+use bun_sys::FdExt;
+use bun_sys::{self, Fd, SystemError};
 use enumset::EnumSet;
 
 use crate::api::bun_spawn::stdio::{self, Stdio};
@@ -258,7 +260,6 @@ impl ShellSubprocess {
     /// The shell is single-threaded; `process` is set for the lifetime of
     /// `ShellSubprocess` until `close_process`.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn proc(&self) -> &mut Process {
         self.process.as_ref().expect("process closed").process_mut()
     }
@@ -403,9 +404,9 @@ impl ShellSubprocess {
         }
     }
 
-    /// Tear down a subprocess whose stdio start() failed. Marks pending pipe readers as
-    /// errored so PipeReader.deinit's done-assert passes, drops the exit handler so a
-    /// later onProcessExit doesn't touch the freed Subprocess, then deinits.
+    /// Tear down a subprocess whose stdio start() failed. Ends the child, marks pending pipe
+    /// readers as errored so PipeReader.deinit's done-assert passes, drops the exit handler so
+    /// a later onProcessExit doesn't touch the freed Subprocess, then deinits.
     ///
     /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
     /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
@@ -416,7 +417,10 @@ impl ShellSubprocess {
         {
             // SAFETY: `this` is the live allocation; it is deliberately leaked below,
             // so release the Ctrl+C accounting by hand.
-            unsafe { (*this).ctrl_c_child = None };
+            unsafe {
+                let _ = (*this).try_kill(SignalCode::SIGKILL as i32);
+                (*this).ctrl_c_child = None;
+            }
             return;
         }
         #[cfg(not(windows))]
@@ -442,6 +446,10 @@ impl ShellSubprocess {
                     }
                 }
             }
+            // Nothing reports its exit from here on, so nothing would reap it either.
+            let _ = subproc
+                .proc()
+                .kill_and_reap(&mut bun_core::ffi::zeroed::<bun_spawn::Rusage>());
             subproc.proc().set_exit_handler_default();
             // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
         }
@@ -880,9 +888,6 @@ impl ShellSubprocess {
         };
         if let Some(err) = stdin_start_err {
             let sys_err = err.to_shell_system_error();
-            // SAFETY: scoped `&mut` for the kill; `abort_after_failed_start`
-            // then consumes the allocation.
-            let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
             Self::abort_after_failed_start(subprocess);
             return Err(ShellErr::Sys(sys_err));
         }
@@ -898,8 +903,6 @@ impl ShellSubprocess {
             )
         } {
             let sys_err = err.to_shell_system_error();
-            // SAFETY: scoped `&mut` for the kill; see above.
-            let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
             Self::abort_after_failed_start(subprocess);
             return Err(ShellErr::Sys(sys_err));
         }
@@ -914,8 +917,6 @@ impl ShellSubprocess {
             )
         } {
             let sys_err = err.to_shell_system_error();
-            // SAFETY: scoped `&mut` for the kill; see above.
-            let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
             Self::abort_after_failed_start(subprocess);
             return Err(ShellErr::Sys(sys_err));
         }
@@ -941,8 +942,9 @@ impl ShellSubprocess {
                 break 'brk Some(exited.code);
             }
 
+            // How it ended is not known. The command has to finish all the same.
             if matches!(status, Status::Err(_)) {
-                // TODO: handle error
+                break 'brk Some(1);
             }
 
             if let Some(code) = status.signal().map(|signal| signal.to_exit_code()) {
@@ -979,6 +981,7 @@ pub enum Writable {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Inherit,
     Ignore,
@@ -1064,7 +1067,7 @@ impl Writable {
                 Stdio::Inherit => {
                     return Ok(Writable::Inherit);
                 }
-                Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
+                Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
                 Stdio::Ipc | Stdio::Capture(_) => {
@@ -1108,6 +1111,7 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )))
                 }
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
                     let fd = *memfd;
@@ -1154,6 +1158,7 @@ impl Writable {
                 // `buffer` drops here with the variant already `Ignore`, so a
                 // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd(fd) => {
                 fd.close();
                 *self = Writable::Ignore;
@@ -1170,7 +1175,7 @@ impl Writable {
 
 pub(crate) enum Readable {
     Fd,
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Pipe(Arc<PipeReader>),
     Inherit,
@@ -1267,7 +1272,6 @@ impl Readable {
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
-                Stdio::Memfd(_) => Readable::Ignore,
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
@@ -1302,6 +1306,7 @@ impl Readable {
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(memfd) => {
                     let fd = *memfd;
                     // Ownership of the fd transfers to `Readable::Memfd`. Swap in
@@ -1338,6 +1343,7 @@ impl Readable {
 
     pub(crate) fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Readable::Memfd(fd) => {
                 *self = Readable::Closed;
                 fd.close();
@@ -1497,7 +1503,7 @@ pub(crate) struct PipeReader {
     pub(crate) process: Option<*mut ShellSubprocess>,
     pub(crate) event_loop: EventLoopHandle,
     pub(crate) state: PipeReaderState,
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     pub(crate) stdio_result: StdioResult,
     pub(crate) out_type: OutKind,
     pub(crate) captured_writer: CapturedWriter,
@@ -1734,24 +1740,21 @@ impl PipeReader {
             captured_writer.dead = false;
         }
 
-        #[allow(unused_mut)]
-        let mut reader = IOReader::init::<PipeReader>();
         #[cfg(not(windows))]
-        let stdio_result = result;
+        let reader = IOReader::init::<PipeReader>();
+        // With `Box<uv::Pipe>` the pipe cannot be aliased, so ownership transfers to
+        // `reader.source`; `start()` goes through `start_with_current_pipe`.
         #[cfg(windows)]
-        // With `Box<uv::Pipe>` the pipe cannot be aliased, so ownership
-        // transfers to `reader.source` (`stdio_result` is never read again
-        // on Windows — `start()` goes through `start_with_current_pipe`).
-        let stdio_result = match result {
-            StdioResult::Buffer(buf) => {
-                reader.set_source(bun_io::Source::Pipe(buf));
-                StdioResult::Unavailable
+        let reader = {
+            let mut reader = IOReader::init::<PipeReader>();
+            match result {
+                StdioResult::Buffer(buf) => reader.set_source(bun_io::Source::Pipe(buf)),
+                StdioResult::BufferFd(fd) => {
+                    reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)))
+                }
+                StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
             }
-            StdioResult::BufferFd(fd) => {
-                reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
-                StdioResult::BufferFd(fd)
-            }
-            StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
+            reader
         };
 
         // Allocate directly into the Arc so the address is stable BEFORE we
@@ -1769,7 +1772,8 @@ impl PipeReader {
             process: Some(process),
             reader,
             event_loop,
-            stdio_result,
+            #[cfg(not(windows))]
+            stdio_result: result,
             out_type,
             state: PipeReaderState::Pending,
             captured_writer,

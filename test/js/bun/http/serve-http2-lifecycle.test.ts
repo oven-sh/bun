@@ -134,7 +134,7 @@ describe("Bun.serve http2 lifecycle", () => {
       const chunks: Buffer[] = [];
       let headers: http2.IncomingHttpHeaders = {};
       r.on("response", h => (headers = h));
-      r.on("data", c => chunks.push(c));
+      r.on("data", (c: Buffer) => chunks.push(c));
       r.on("end", () => resolve({ status: Number(headers[":status"]), headers, body: Buffer.concat(chunks) }));
       r.on("error", reject);
       // 12 × 512 KB; at 700 ms per delivered chunk the stream sits paused

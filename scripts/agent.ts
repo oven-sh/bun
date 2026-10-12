@@ -91,16 +91,19 @@ interface RequestOptions {
 }
 
 /**
- * A request to the cloud's metadata or secret service. Those are not always up
- * yet when the agent starts at boot, so a failed attempt is repeated, a little
- * later each time. A 400, 404 or 422 is an answer, not a failure to repeat.
+ * A request to a cloud's service. The metadata and secret services are not
+ * always up yet when the agent starts at boot, and a connection to any of them
+ * can time out, so a failed attempt is repeated, a little later each time. A
+ * 400, 404, 409 or 422 is an answer, not a failure to repeat. `status` is that
+ * of the last response, if the last attempt got one.
  */
 export async function request(
   url: string,
   options: RequestOptions,
-): Promise<{ error: Error | undefined; body: unknown }> {
+): Promise<{ error: Error | undefined; body: unknown; status: number | undefined }> {
   const { method = "GET", headers = {}, body: input, json, attempts } = options;
   let error: Error | undefined;
+  let status: number | undefined;
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) {
       await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
@@ -112,17 +115,19 @@ export async function request(
       body = json && response.ok ? await response.json() : await response.text();
     } catch (cause) {
       error = new Error(`Fetch failed: ${method} ${url}`, { cause });
+      status = undefined;
       continue;
     }
+    status = response.status;
     if (response.ok) {
-      return { error: undefined, body };
+      return { error: undefined, body, status };
     }
-    error = new Error(`Fetch failed: ${method} ${url}: ${response.status} ${response.statusText}`, { cause: body });
-    if (response.status === 400 || response.status === 404 || response.status === 422) {
-      return { error, body };
+    error = new Error(`Fetch failed: ${method} ${url}: ${status} ${response.statusText}`, { cause: body });
+    if (status === 400 || status === 404 || status === 409 || status === 422) {
+      return { error, body, status };
     }
   }
-  return { error, body: undefined };
+  return { error, body: undefined, status };
 }
 
 /** The temp directory to use on this machine. */

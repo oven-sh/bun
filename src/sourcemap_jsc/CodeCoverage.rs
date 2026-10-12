@@ -109,30 +109,38 @@ impl<'a> Report<'a> {
         // functionHasExecutedCache), so we must preserve write provenance.
         let vm = global_this.vm_ptr();
 
-        let mut result: Option<Report<'a>> = None;
+        let mut generator = Generator::default();
 
-        let mut generator = Generator {
-            result: &mut result,
-            byte_range_mapping,
-        };
-
-        // SAFETY: `vm` is the live `*mut VM` owning `global_this`; Generator and the
-        // callback are kept alive for the duration of the FFI call;
-        // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
-        let ok = unsafe {
-            CodeCoverage__withBlocksAndFunctions(
-                vm,
-                generator.byte_range_mapping.source_id,
-                (&raw mut generator).cast::<c_void>(),
-                ignore_sourcemap_,
-                Generator::do_,
-            )
-        };
-        if !ok {
-            return None;
+        for &source_id in &byte_range_mapping.source_ids {
+            // SAFETY: `vm` is the live VM of `global_this`; the callback runs before the call returns.
+            let ok = unsafe {
+                CodeCoverage__withBlocksAndFunctions(
+                    vm,
+                    source_id,
+                    (&raw mut generator).cast::<c_void>(),
+                    Generator::do_,
+                )
+            };
+            if !ok {
+                return None;
+            }
         }
 
-        result
+        if generator.loads == 0 {
+            return None;
+        }
+        if generator.loads > 1 {
+            fold(&mut generator.blocks);
+            fold(&mut generator.function_blocks);
+        }
+
+        Some(bun_core::handle_oom(
+            byte_range_mapping.generate_report_from_blocks(
+                &generator.blocks,
+                &generator.function_blocks,
+                ignore_sourcemap_,
+            ),
+        ))
     }
 }
 
@@ -566,23 +574,25 @@ unsafe extern "C" {
         vm: *mut VM,
         source_id: i32,
         ctx: *mut c_void,
-        ignore_sourcemap: bool,
-        cb: extern "C" fn(&mut Generator, *const BasicBlockRange, usize, usize, bool),
+        cb: extern "C" fn(&mut Generator, *const BasicBlockRange, usize, usize),
     ) -> bool;
 }
 
-struct Generator<'a, 'r> {
-    byte_range_mapping: &'a ByteRangeMapping,
-    result: &'r mut Option<Report<'a>>,
+/// What JSC recorded for one file, under each of its SourceIDs.
+#[derive(Default)]
+struct Generator {
+    blocks: Vec<BasicBlockRange>,
+    function_blocks: Vec<BasicBlockRange>,
+    /// SourceIDs that had anything compiled.
+    loads: usize,
 }
 
-impl Generator<'_, '_> {
+impl Generator {
     extern "C" fn do_(
         this: &mut Generator,
         blocks_ptr: *const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
-        ignore_sourcemap: bool,
     ) {
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
@@ -603,11 +613,22 @@ impl Generator<'_, '_> {
             return;
         }
 
-        *this.result = this
-            .byte_range_mapping
-            .generate_report_from_blocks(blocks, function_blocks, ignore_sourcemap)
-            .ok();
+        this.blocks.extend_from_slice(blocks);
+        this.function_blocks.extend_from_slice(function_blocks);
+        this.loads += 1;
     }
+}
+
+/// One range per `[start, end)`, executed if it executed under any SourceID.
+fn fold(ranges: &mut Vec<BasicBlockRange>) {
+    ranges.sort_unstable_by_key(|r| (r.start_offset, r.end_offset));
+    ranges.dedup_by(|next, kept| {
+        (next.start_offset, next.end_offset) == (kept.start_offset, kept.end_offset) && {
+            kept.has_executed |= next.has_executed;
+            kept.execution_count = kept.execution_count.saturating_add(next.execution_count);
+            true
+        }
+    });
 }
 
 #[repr(C)]
@@ -621,12 +642,15 @@ pub struct BasicBlockRange {
 
 pub struct ByteRangeMapping {
     pub(crate) line_offset_table: line_offset_table::List,
-    pub(crate) source_id: i32,
+    /// JSC records coverage per `SourceProvider`, and each load of the file makes one.
+    pub(crate) source_ids: Vec<i32>,
+    /// Of the text `line_offset_table` was built from.
+    source_hash: u64,
     pub source_url: Utf8Bytes<'static>,
 }
 
 // Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
-// `ByteRangeMapping__find`), so use the identity context instead of
+// `find`), so use the identity context instead of
 // re-hashing them.
 pub type ByteRangeMappingHashMap =
     bun_collections::HashMap<u64, ByteRangeMapping, bun_collections::IdentityContext<u64>>;
@@ -1009,13 +1033,15 @@ impl ByteRangeMapping {
 
     pub(crate) fn compute(
         source_contents: &[u8],
+        source_hash: u64,
         source_id: i32,
         source_url: Utf8Bytes<'static>,
     ) -> ByteRangeMapping {
         ByteRangeMapping {
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
                 .unwrap_or_else(|_| bun_alloc::out_of_memory()),
-            source_id,
+            source_ids: vec![source_id],
+            source_hash,
             source_url,
         }
     }
@@ -1035,18 +1061,39 @@ extern "C" fn ByteRangeMapping__generate(
     let source_url = str_.clone().into_utf8();
     let hash = bun_wyhash::hash(source_url.slice());
     let source_contents = source_contents_str.to_utf8();
+    let source_hash = bun_wyhash::hash(source_contents.slice());
 
-    let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, source_url);
+    // Another text replaces the entry: the line table and the saved source map describe one text.
+    if let Some(existing) = map.get_mut(&hash)
+        && existing.source_hash == source_hash
+    {
+        existing.source_ids.push(source_id);
+        return;
+    }
+
+    let new_value =
+        ByteRangeMapping::compute(source_contents.slice(), source_hash, source_id, source_url);
     map.insert(hash, new_value);
 }
 
+/// For a provider that wraps another one. `module._compile()` wraps a text of its own.
 #[unsafe(no_mangle)]
-extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
-    this.source_id
+extern "C" fn ByteRangeMapping__addSourceID(
+    source_url: &bun_core::String,
+    source_contents: &bun_core::String,
+    source_id: i32,
+) {
+    let Some(mut this) = find(source_url) else {
+        return;
+    };
+    // SAFETY: pointer into the thread-local map, valid for this call.
+    let this = unsafe { this.as_mut() };
+    if this.source_hash == bun_wyhash::hash(source_contents.to_utf8().slice()) {
+        this.source_ids.push(source_id);
+    }
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn ByteRangeMapping__find(path: &bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
+fn find(path: &bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
 
     let map_ptr = thread_map_opt()?;
@@ -1057,31 +1104,21 @@ extern "C" fn ByteRangeMapping__find(path: &bun_core::String) -> Option<NonNull<
     Some(NonNull::from(entry))
 }
 
+/// The table row of `source_url`. `undefined`: nothing compiled yet. `null`: not instrumented.
 #[unsafe(no_mangle)]
 extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
     source_url: &bun_core::String,
-    blocks_ptr: NonNull<BasicBlockRange>,
-    blocks_len: usize,
-    function_start_offset: usize,
     ignore_sourcemap: bool,
 ) -> JSValue {
-    let Some(this_ptr) = ByteRangeMapping__find(source_url) else {
+    let Some(this_ptr) = find(source_url) else {
         return JSValue::NULL;
     };
     // SAFETY: pointer into the thread-local map, valid for this call.
     let this = unsafe { &*this_ptr.as_ptr() };
 
-    // SAFETY: blocks_ptr[0..blocks_len] is a valid contiguous C array from JSC.
-    let all = unsafe { core::slice::from_raw_parts(blocks_ptr.as_ptr(), blocks_len) };
-    let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
-    let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
-    if function_blocks.len() > 1 {
-        function_blocks = &function_blocks[1..];
-    }
-    let report = match this.generate_report_from_blocks(blocks, function_blocks, ignore_sourcemap) {
-        Ok(r) => r,
-        Err(_) => return global_this.throw_out_of_memory_value(),
+    let Some(report) = Report::generate(global_this, this, ignore_sourcemap) else {
+        return JSValue::UNDEFINED;
     };
 
     let thresholds = Fraction::default();

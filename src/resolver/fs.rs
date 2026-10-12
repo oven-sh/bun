@@ -1038,7 +1038,6 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         file_contents_ptr,
         shared_buffer.list.as_ptr()
     ));
-    let _ = file_contents_ptr;
     let file_contents: &'buf [u8] = &shared_buffer.list[..file_contents_len];
     Ok(PathContentsPair {
         contents: Cow::Borrowed(file_contents),

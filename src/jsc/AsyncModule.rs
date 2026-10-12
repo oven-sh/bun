@@ -850,7 +850,6 @@ impl AsyncModule {
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
-        let _ = vm;
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
@@ -1052,7 +1051,6 @@ impl AsyncModule {
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
-        let _ = vm;
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));

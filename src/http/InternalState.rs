@@ -2,9 +2,23 @@ use crate::Error;
 use bun_core::MutableString;
 use bun_core::Output;
 
+use crate::decompressor::has_zlib_header;
 use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
+
+/// Bounds the allocation that an untrusted gzip trailer can ask libdeflate's exact-size call for.
+const EXACT_SIZE_INFLATE_MAX: usize = 32 * 1024 * 1024;
+
+/// ISIZE, the last 4 bytes of a gzip stream: the decoded size of its last member, modulo 4 GB.
+fn gzip_trailer_size(buffer: &[u8]) -> Option<usize> {
+    if buffer.len() <= 16 || buffer.len() >= 1024 * 1024 * 1024 {
+        return None;
+    }
+    buffer
+        .last_chunk::<4>()
+        .map(|size| u32::from_le_bytes(*size) as usize)
+}
 
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
@@ -219,6 +233,20 @@ impl<'a> InternalState<'a> {
         self.flags.decompress_output_pending
     }
 
+    /// A complete gzip body that only an unbudgeted pass can inflate in one libdeflate call.
+    pub(crate) fn wants_exact_size_inflate(&self) -> bool {
+        bun_core::feature_flags::is_libdeflate_enabled()
+            && self.encoding == Encoding::Gzip
+            && !self.flags.is_libdeflate_fast_path_disabled
+            && !self.flags.is_redirect_pending
+            && matches!(self.decompressor, Decompressor::None)
+            && self.is_done()
+            && gzip_trailer_size(&self.compressed_body.list).is_some_and(|size| {
+                size > crate::http_thread::LIBDEFLATE_SHARED_BUFFER_LEN
+                    && size < EXACT_SIZE_INFLATE_MAX
+            })
+    }
+
     /// True when a socket close during `in_progress` completes the body rather
     /// than failing it: chunked decoder already in the trailers state, or a
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
@@ -280,41 +308,36 @@ impl<'a> InternalState<'a> {
                 {
                     break 'libdeflate;
                 }
+                let format = match self.encoding {
+                    Encoding::Gzip => bun_libdeflate::Encoding::Gzip,
+                    // zlib-ng alone judges a zlib-wrapped body: libdeflate accepts more streams.
+                    Encoding::Deflate if has_zlib_header(buffer) => break 'libdeflate,
+                    Encoding::Deflate => bun_libdeflate::Encoding::Deflate,
+                    _ => unreachable!(),
+                };
                 self.flags.is_libdeflate_fast_path_disabled = true;
 
                 log!("Decompressing {} bytes with libdeflate\n", buffer.len());
                 let deflater = crate::http_thread().deflater();
 
-                // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
-                // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.
                 // If we know that the stream is going to be larger than our
                 // pre-allocated buffer, then let's dynamically allocate the exact
                 // size.
                 if self.encoding == Encoding::Gzip
-                    && buffer.len() > 16
-                    && buffer.len() < 1024 * 1024 * 1024
+                    && let Some(estimated_size) = gzip_trailer_size(buffer)
+                    && estimated_size > deflater.shared_buffer.len()
                 {
-                    let estimated_size: u32 = u32::from_le_bytes(
-                        buffer[buffer.len() - 4..][..4]
-                            .try_into()
-                            .expect("infallible: size matches"),
-                    );
                     // Under an output budget only `shared_buffer`'s worth may come out in one shot.
-                    if (estimated_size as usize) > deflater.shared_buffer.len()
-                        && max_output != usize::MAX
-                    {
+                    if max_output != usize::MAX {
                         break 'libdeflate;
                     }
-                    // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
-                    if (estimated_size as usize) > deflater.shared_buffer.len()
-                        && estimated_size < 32 * 1024 * 1024
-                    {
+                    if estimated_size < EXACT_SIZE_INFLATE_MAX {
                         self.decoded_body.list.clear();
                         // A trailer can lie; the streaming path below allocates only what is really there.
                         if self
                             .decoded_body
                             .list
-                            .try_reserve_exact(estimated_size as usize)
+                            .try_reserve_exact(estimated_size)
                             .is_err()
                         {
                             break 'libdeflate;
@@ -343,15 +366,7 @@ impl<'a> InternalState<'a> {
                     .decompressor
                     .as_deref_mut()
                     .expect("set in HttpThread::deflater()");
-                let result = decompressor.decompress(
-                    buffer,
-                    &mut deflater.shared_buffer,
-                    match self.encoding {
-                        Encoding::Gzip => bun_libdeflate::Encoding::Gzip,
-                        Encoding::Deflate => bun_libdeflate::Encoding::Deflate,
-                        _ => unreachable!(),
-                    },
-                );
+                let result = decompressor.decompress(buffer, &mut deflater.shared_buffer, format);
 
                 // libdeflate decodes a single member; unconsumed input means
                 // a multi-member gzip stream. Let the zlib path handle it.
@@ -371,7 +386,6 @@ impl<'a> InternalState<'a> {
                     still_needs_to_decompress = false;
                 }
             }
-            let _ = is_final_chunk;
         }
 
         // Slow path, or brotli: use the .decompressor

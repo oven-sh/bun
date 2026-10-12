@@ -16,7 +16,7 @@ function acceptFor(key) {
 export function encodeCloseFrame(code = 1000, reason = "") {
   const reasonBuf = Buffer.from(reason, "utf8");
   const payloadLen = 2 + reasonBuf.length; // 2 bytes for code + reason
-  const header = [];
+  const header: number[] = [];
   let headerLen = 2;
   if (payloadLen < 126) {
     // masked bit (0x80) + length
@@ -46,7 +46,7 @@ export function encodeCloseFrame(code = 1000, reason = "") {
   return buf;
 }
 export function decodeFrames(buffer) {
-  const messages = [];
+  const messages: (string | { type: string; data?: Buffer })[] = [];
   let i = 0;
   while (i + 2 <= buffer.length) {
     const start = i;

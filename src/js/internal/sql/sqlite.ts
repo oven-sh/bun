@@ -499,12 +499,11 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {
     return connection;
   }
-  isConnectionInTransaction(connection: BunSQLiteModule.Database): boolean {
+  rollbackFailedCommit(connection: BunSQLiteModule.Database): void {
     try {
-      return connection.inTransaction;
+      if (connection.inTransaction) connection.run("ROLLBACK");
     } catch {
-      // The getter throws on a closed database.
-      return false;
+      // The database is closed, or ROLLBACK failed too. The caller gets the COMMIT error.
     }
   }
   array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {

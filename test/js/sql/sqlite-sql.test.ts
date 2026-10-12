@@ -1289,39 +1289,40 @@ describe("Transactions", () => {
   test("a failed COMMIT is rolled back: SQLITE_BUSY", async () => {
     using dir = tempDir("sqlite-commit-busy", {});
     const dbPath = path.join(String(dir), "busy.db");
-    await using writer = new SQL({ adapter: "sqlite", filename: dbPath });
-    await writer`CREATE TABLE t (v TEXT)`;
-    await writer`INSERT INTO t VALUES ('seed')`;
-
     let failed: string;
+    let next: string;
     {
-      // The read lock of a second connection makes the COMMIT of the writer fail.
-      using reader = new Database(dbPath);
-      reader.run("BEGIN DEFERRED");
-      reader.query("SELECT count(*) FROM t").get();
-      failed = await writer
+      await using writer = new SQL({ adapter: "sqlite", filename: dbPath });
+      await writer`CREATE TABLE t (v TEXT)`;
+      await writer`INSERT INTO t VALUES ('seed')`;
+      {
+        // The read lock of a second connection makes the COMMIT of the writer fail.
+        using reader = new Database(dbPath);
+        reader.run("BEGIN DEFERRED");
+        reader.query("SELECT count(*) FROM t").get();
+        failed = await writer
+          .begin(async tx => {
+            await tx`INSERT INTO t VALUES ('in the failed transaction')`;
+          })
+          .then(
+            () => "committed",
+            e => e.code,
+          );
+        reader.run("ROLLBACK");
+      }
+
+      await writer`INSERT INTO t VALUES ('later')`;
+      next = await writer
         .begin(async tx => {
-          await tx`INSERT INTO t VALUES ('in the failed transaction')`;
+          await tx`INSERT INTO t VALUES ('in the next transaction')`;
         })
         .then(
           () => "committed",
-          e => e.code,
+          e => e.message,
         );
-      reader.run("ROLLBACK");
     }
 
-    await writer`INSERT INTO t VALUES ('later')`;
-    const next = await writer
-      .begin(async tx => {
-        await tx`INSERT INTO t VALUES ('in the next transaction')`;
-      })
-      .then(
-        () => "committed",
-        e => e.message,
-      );
-    await writer.close();
-
-    // A write that is still inside an open transaction does not reach the file.
+    // The writer is closed. A write that was still inside an open transaction is not in the file.
     using file = new Database(dbPath, { readonly: true });
     const onDisk = file.query<{ v: string }, []>("SELECT v FROM t ORDER BY rowid").all();
     expect({ failed, next, onDisk: onDisk.map(row => row.v) }).toEqual({
@@ -1331,7 +1332,39 @@ describe("Transactions", () => {
     });
   });
 
-  test("a failed COMMIT with no open transaction sends no ROLLBACK", async () => {
+  test("a write right after a failed COMMIT is kept", async () => {
+    // An insert on the instance adds the missing parent row `hops` microtasks after the callback.
+    // Before COMMIT it joins the transaction, and COMMIT succeeds. After the failed COMMIT it runs
+    // outside of the transaction: a ROLLBACK that comes later must not take it away.
+    const outcomes: { begin: string; parents: number }[] = [];
+    for (let hops = 0; hops <= 12; hops++) {
+      await using db = new SQL("sqlite://:memory:");
+      await db`PRAGMA foreign_keys = ON`;
+      await db`CREATE TABLE parent (id INTEGER PRIMARY KEY)`;
+      await db`CREATE TABLE child (parent_id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)`;
+      const inserted = Promise.withResolvers<unknown>();
+      const begin = await db
+        .begin(async tx => {
+          await tx`INSERT INTO child VALUES (99)`;
+          void (async () => {
+            for (let i = 0; i < hops; i++) await null;
+            inserted.resolve(db`INSERT INTO parent VALUES (99)`);
+          })();
+        })
+        .then(
+          () => "committed",
+          e => e.code,
+        );
+      await inserted.promise;
+      const [{ parents }] = await db`SELECT count(*) AS parents FROM parent`;
+      outcomes.push({ begin, parents });
+    }
+
+    expect(outcomes.filter(outcome => outcome.parents !== 1)).toEqual([]);
+    expect(outcomes.map(outcome => outcome.begin)).toContain("SQLITE_CONSTRAINT_FOREIGNKEY");
+  });
+
+  test("a failed COMMIT with no open transaction rejects with the COMMIT error", async () => {
     const failed = await sql
       .begin(async tx => {
         await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
@@ -1341,7 +1374,6 @@ describe("Transactions", () => {
         () => "committed",
         e => e.message,
       );
-    // A ROLLBACK here would fail and replace this error.
     expect(failed).toBe("cannot commit - no transaction is active");
   });
 

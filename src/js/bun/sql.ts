@@ -887,14 +887,15 @@ const SQL = function SQL(
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
       }
       // SQLite keeps the transaction open when COMMIT fails with SQLITE_BUSY or for a deferred
-      // foreign key. It runs COMMIT inside the handler, so the handler reads the state: one
-      // microtask later another begin() on the connection can have opened its own transaction.
+      // foreign key. It runs COMMIT inside the handler, and the adapter rolls back in that same
+      // call: after it, other statements of the connection run, and a write between the failed
+      // COMMIT and a later ROLLBACK would be lost.
       const commit_result = await run_internal_transaction_sql(
         COMMIT_COMMAND,
-        pool.isConnectionInTransaction &&
+        pool.rollbackFailedCommit &&
           ((query, handle, err) => {
             if (queryFromTransactionHandler.$call(pooledConnection, state.queries, query, handle, err)) {
-              needs_rollback = pool.isConnectionInTransaction!(pooledConnection);
+              pool.rollbackFailedCommit!(pooledConnection);
             }
           }),
       );

@@ -2175,6 +2175,7 @@ test("destroy() of the unused response of an 'upgrade' request writes nothing in
     client.on("error", () => {});
     client.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
     await once(client, "close");
+    expect(response).toBeInstanceOf(Response);
     expect(received).toBe(reply);
   } finally {
     client.destroy();

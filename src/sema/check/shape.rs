@@ -1227,6 +1227,10 @@ impl<'p, 's> Checker<'p, 's> {
                     self.resolving_at_base_types.pop();
                     inherits
                 };
+                // `thisArgument` of `resolveObjectTypeMembers` is `t` itself for the reference that
+                // inherits: a `this` type in its place is not the reference that keeps these members.
+                let is_at_base_types = !matches!(self.data(this), TypeData::ThisParam(_))
+                    && self.base_types_so_far.iter().any(|it| it.0 == target);
                 let (key, under) = if declared != ty
                     && (inherits_from_type_arguments
                         || self
@@ -1235,7 +1239,7 @@ impl<'p, 's> Checker<'p, 's> {
                             .get(&self.task, &target)
                             .is_some()
                         || is_other_inheriting
-                        || self.base_types_so_far.iter().any(|it| it.0 == target))
+                        || is_at_base_types)
                 {
                     (ty, mapper)
                 } else if binding == MemberBinding::Early

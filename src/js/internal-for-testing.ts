@@ -43,6 +43,13 @@ export const highwayStringsForTesting: (
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
+// The target Highway dispatches to on this CPU: "AVX2", "NEON_BF16", ...
+export const highwayTargetForTesting: () => string = $newCppFunction(
+  "highway_strings_testing.cpp",
+  "Bun__highwayTargetForTesting",
+  0,
+);
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {

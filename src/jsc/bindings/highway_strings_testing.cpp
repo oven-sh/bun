@@ -12,6 +12,8 @@
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSCast.h>
+#include <hwy/per_target.h>
+#include <hwy/targets.h>
 
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
@@ -100,6 +102,11 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         return {};
     }
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(static_cast<double>(result))));
+}
+
+BUN_DEFINE_HOST_FUNCTION(Bun__highwayTargetForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSC::JSValue::encode(JSC::jsString(JSC::getVM(globalObject), WTF::String::fromLatin1(hwy::TargetName(hwy::DispatchedTarget()))));
 }
 
 } // namespace Bun

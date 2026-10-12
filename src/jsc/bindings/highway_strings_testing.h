@@ -11,4 +11,7 @@ namespace Bun {
 //   (op: string, haystack: Uint8Array, arg: number | Uint8Array) -> number
 BUN_DECLARE_HOST_FUNCTION(Bun__highwayStringsForTesting);
 
+// () -> string, the name of the target Highway dispatches to on this CPU ("AVX2", "NEON_BF16", ...).
+BUN_DECLARE_HOST_FUNCTION(Bun__highwayTargetForTesting);
+
 } // namespace Bun

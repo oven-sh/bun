@@ -154,7 +154,7 @@ macro_rules! buffered_fields {
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
             awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
-            union_properties union_objects intersection_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
+            union_properties union_objects intersection_objects listed_properties keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults
             circular_type_param_defaults conditionals
             mapped_param_constraints
@@ -361,6 +361,10 @@ pub struct Program<'s> {
     /// An object type with the signatures and the index signatures of an intersection:
     /// `structured_members`.
     intersection_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
+    /// `resolvedProperties` of an intersection, where `getPropertiesOfUnionOrIntersectionType`
+    /// assigned it while the members of a constituent were still in place: an object type with
+    /// the properties it found. `getPropertyOfType` finds the others by name all the same.
+    listed_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
     /// `get_literal_type_from_properties` without index flags. Instantiations under several
     /// mappers arrive at one object type.
     keys_of_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
@@ -541,6 +545,7 @@ impl<'s> Program<'s> {
             mapped_targets: ById::new_in(session),
             union_objects: ById::new_in(session),
             intersection_objects: ById::new_in(session),
+            listed_properties: ById::new_in(session),
             keys_of_properties: ById::new_in(session),
             inferred_constraints: ById::new_in(session),
             constraints: ById::new_in(session),
@@ -844,6 +849,10 @@ impl<'s> Program<'s> {
             resolved_meanwhile: Vec::new(),
             signatures_resolved_within: Vec::new(),
             restrictive_instantiations: Default::default(),
+            unresolved_renamed_params: Default::default(),
+            restrictive_instantiations_kept: Default::default(),
+            kept_a_renamed_param: Default::default(),
+            instantiating_generic_argument: None,
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
@@ -1704,6 +1713,18 @@ pub struct Checker<'p, 's> {
     /// `cachedTypes[CachedTypeKindRestrictiveInstantiation][t] == t`: the conditional types that
     /// `getRestrictiveInstantiation` has returned.
     restrictive_instantiations: crate::util::FxHashSet<TypeId>,
+    /// The type parameters that `getUniqueTypeParameters` renamed and whose constraint nothing has
+    /// asked for since (`tp.constraint == nil`). They have no constraint declaration, so
+    /// `getRestrictiveTypeParameter` returns such a type parameter itself.
+    unresolved_renamed_params: crate::util::FxHashSet<TypeId>,
+    /// `cachedTypes[CachedTypeKindRestrictiveInstantiation]`, of the types in which a renamed type
+    /// parameter was left as it is: the entry stays when the constraint is asked for later.
+    restrictive_instantiations_kept: crate::util::FxHashMap<TypeId, TypeId>,
+    /// Whether the restrictive instantiation in progress left such a type parameter as it is.
+    kept_a_renamed_param: std::cell::Cell<bool>,
+    /// The argument whose generic signature `instantiateTypeWithSingleGenericCallSignature` is
+    /// instantiating, and the depth of `stack` when it began: `currentNode` is still the argument.
+    instantiating_generic_argument: Option<(FileId, ExprId, usize)>,
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),
@@ -2747,6 +2768,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// change `currentNode`.
     /// `None`: `currentNode` is what `checkSourceElement` set, see `current_source_element`.
     pub(super) fn current_node(&self) -> Option<CurrentNode> {
+        if let Some((file, e, depth)) = self.instantiating_generic_argument
+            && !(self.stack.iter().skip(depth)).any(|&q| self.is_check_expression(q))
+        {
+            return Some(CurrentNode::Expr(file, e));
+        }
         let innermost_expr = (self.stack.iter().zip(&self.frames))
             .rposition(|(&q, frame)| !frame.is_quick_type && self.is_check_expression(q));
         // `checkSourceElement` has set it since the innermost `checkExpression` began.

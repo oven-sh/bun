@@ -5034,14 +5034,10 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut source_extends = self.cond_extends(source);
                     let target_extends = self.cond_extends(target);
                     let mut mapper = MapperId::IDENTITY;
-                    // Instantiated from one declaration, both sides have the same `infer` type
-                    // parameters: each that occurs in the extends type maps to itself. For one that
-                    // does not, nothing is inferred.
-                    if !source_params.is_empty()
-                        && (source_extends != target_extends
-                            || (self.params_mentioned_in(source_extends, &source_params))
-                                .contains(&false))
-                    {
+                    // Also when both sides have the same extends type: the inference asks for the
+                    // variances of the generic types in it, and in a cycle of variance
+                    // computations what they are depends on who asks first.
+                    if !source_params.is_empty() {
                         let around = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
                             &source_params,
@@ -5859,9 +5855,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let provisional = self.provisional_shapes.len();
         let has_properties = properties.unwrap_or(source);
-        let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
+        let (Some(sm), Some(mut tm)) = (self.members(has_properties), self.members(target)) else {
             return Ternary::FALSE;
         };
+        // `getPropertiesOfType(target)`: the list that an intersection keeps.
+        if matches!(self.data(target), TypeData::Intersection(_))
+            && let Some(listed) = self.p.listed_properties.get(&self.task, &target)
+            && let Some(listed) = self.members(listed)
+        {
+            tm = listed;
+        }
         // A cached shape does not change. An intersection has its signatures elsewhere.
         let is_intersection = |c: &Self, ty| matches!(c.data(ty), TypeData::Intersection(_));
         if self.provisional_shapes.len() == provisional

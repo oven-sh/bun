@@ -4394,10 +4394,52 @@ impl<'p, 's> Checker<'p, 's> {
         // A constituent whose members are in place does not have all of them yet.
         let is_in_place = self.non_cacheable_mark() != counters;
         match self.leave(q) {
-            Ok(_) if is_in_place => self.provisional_shape(shape),
+            Ok(_) if is_in_place => {
+                // `d.resolvedProperties = props`: the list stays as it is, unless an evaluation
+                // of it around this one ends later.
+                if !self.stack.contains(&q)
+                    && self.p.listed_properties.get(&self.task, &ty).is_none()
+                    && !self.is_listed_by_an_earlier_check(parts)
+                {
+                    let listed = self.synth(shape.clone_in(self.arena));
+                    (self.p.listed_properties).insert(&self.task, ty, listed, Stored::new());
+                }
+                self.provisional_shape(shape)
+            }
             Ok(stored) => self.keep_shape(ty, shape, stored),
             Err(open) => self.cache_shape_provisionally(q, shape, open),
         }
+    }
+
+    /// Whether the check of an earlier file has listed the properties of an intersection of
+    /// `parts` already: one checker visits the files in order, and `checkMappedType` resolves the
+    /// template type of a mapped type before anything asks for its members. The task of a later
+    /// file cannot see that, so it is decided from where the constituents in place are declared.
+    fn is_listed_by_an_earlier_check(&self, parts: &[TypeId]) -> bool {
+        let Some(visited) = self.task.file else {
+            return false;
+        };
+        let (files, options) = (self.files(), &self.p.files.options);
+        let (rank, count) = (files.rank_of_file(visited), self.task.checker_count);
+        let from = self.resolution_start;
+        parts.iter().any(|&part| {
+            let TypeData::Anon {
+                origin: Origin::Mapped(of, _),
+                ..
+            } = *self.data(part)
+            else {
+                return false;
+            };
+            let other = files.rank_of_file(of);
+            let is_checked = !(self.hir(of).kind == FileKind::Declaration
+                && (options.skip_lib_check
+                    || options.skip_default_lib_check && files.module(of).is_lib));
+            of != visited
+                && other < rank
+                && other.checked_rem(count) == rank.checked_rem(count)
+                && is_checked
+                && self.stack[from..].contains(&Query::Shape(part))
+        })
     }
 
     fn shape_of_synth(&mut self, object: TypeId) -> Built<'p> {
@@ -6955,6 +6997,23 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.begin_scope();
         self.never_in_progress.push(ty);
         self.never_in_progress_from.push(self.stack.len());
+        // `getPropertiesOfUnionOrIntersectionType` asks each member for its properties. For an
+        // instantiable member that is `getReducedApparentType`: its base constraint is resolved
+        // here, with the errors and the cycles of that.
+        if let TypeData::Intersection(members) = self.data(ty) {
+            let members: SmallVec<[TypeId; 4]> = members.iter().copied().collect();
+            for &member in &members {
+                if self.is_instantiable(member) {
+                    self.apparent_type(member);
+                }
+            }
+            // It lists the properties: while the members of a constituent are in place, the
+            // list it assigns lacks them.
+            let from = self.resolution_start;
+            if (members.iter()).any(|&member| self.stack[from..].contains(&Query::Shape(member))) {
+                self.properties_of_intersection(ty, &members);
+            }
+        }
         // `isNeverReducedProperty`
         let is_never = self.has_property_in_several_members(ty)
             && match self.may_have_never_reduced_property(ty, false) {

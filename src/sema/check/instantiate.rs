@@ -290,7 +290,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. Restrictive type
     /// parameters map to themselves, so the restrictive instantiation of a restrictive instantiation is itself.
     pub(super) fn restrictive_instantiation(&mut self, t: TypeId) -> TypeId {
+        if !self.restrictive_instantiations_kept.is_empty()
+            && let Some(&kept) = self.restrictive_instantiations_kept.get(&t)
+        {
+            return kept;
+        }
+        self.kept_a_renamed_param.set(false);
         let result = self.instantiate_type_parameters(t, |c, param| match c.data(param) {
+            // `tp.constraint == nil && getConstraintDeclaration(tp) == nil`
+            TypeData::TypeParam(..) if c.unresolved_renamed_params.contains(&param) => {
+                c.kept_a_renamed_param.set(true);
+                param
+            }
             TypeData::Marker(
                 Marker::Super | Marker::Other | Marker::SuperForCheck | Marker::Restrictive(_),
             ) => param,
@@ -307,6 +318,10 @@ impl<'p, 's> Checker<'p, 's> {
         // Only `getConstraintOfDistributiveConditionalType` asks.
         if matches!(self.data(result), TypeData::Cond { .. }) {
             self.restrictive_instantiations.insert(result);
+        }
+        if self.kept_a_renamed_param.get() {
+            self.restrictive_instantiations_kept.insert(t, result);
+            self.restrictive_instantiations_kept.insert(result, result);
         }
         result
     }

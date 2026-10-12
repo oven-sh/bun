@@ -1576,7 +1576,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.is_generic(extends_ty)
                 || check_tuples && self.has_generic_element(extends_ty)
             {
-                break self.deferred_conditional_type(
+                let deferred = self.deferred_conditional_type(
                     file,
                     node,
                     mapper,
@@ -1584,6 +1584,8 @@ impl<'p, 's> Checker<'p, 's> {
                     for_constraint,
                     alias,
                 );
+                self.instantiate_narrowed_check_type(file, node, mapper);
+                break deferred;
             }
             let extends_is_top = self.has_any_flag(extends_ty) || extends_ty == TypeId::UNKNOWN;
             let (branch, branch_mapper, is_false_branch) = if !extends_is_top
@@ -1609,7 +1611,7 @@ impl<'p, 's> Checker<'p, 's> {
                 (no, mapper, true)
             } else {
                 if !extends_is_top && !self.is_assignable_restrictive(check_ty, extends_ty) {
-                    break self.deferred_conditional_type(
+                    let deferred = self.deferred_conditional_type(
                         file,
                         node,
                         mapper,
@@ -1617,6 +1619,8 @@ impl<'p, 's> Checker<'p, 's> {
                         for_constraint,
                         alias,
                     );
+                    self.instantiate_narrowed_check_type(file, node, mapper);
+                    break deferred;
                 }
                 (yes, combined, false)
             };
@@ -1673,6 +1677,24 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `newConditionalType`, with `alias`. Without one it has `instantiateTypeAlias(root.alias,
     /// mapper)`, which the node determines.
+    /// `result.checkType = c.instantiateType(root.checkType, mapper)` of a deferred conditional
+    /// type. The pieces are instantiated when they are read, except a check type that the true
+    /// branch of an enclosing conditional type narrows: instantiating that substitution type
+    /// compares the base type with the constraint, and when it does so shows.
+    fn instantiate_narrowed_check_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+    ) {
+        if let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind {
+            let declared = self.type_from_node(file, check);
+            if matches!(self.data(declared), TypeData::Substitution { .. }) {
+                self.instantiate(declared, mapper);
+            }
+        }
+    }
+
     fn deferred_conditional_type(
         &self,
         file: FileId,

@@ -9519,7 +9519,9 @@ declare module "bun" {
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
    * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
-   * images don't shift colour.
+   * images don't shift colour. The output is always RGB. Bun does not write
+   * a profile for another colour model (greyscale, CMYK), or a payload that
+   * is not an ICC profile.
    *
    * @example
    * ```ts

@@ -2395,6 +2395,27 @@ impl<'p, 's> Checker<'p, 's> {
         func: FnId,
         index: usize,
     ) -> Option<TypeId> {
+        self.contextual_param_type_from(file, func, index, true)
+    }
+
+    /// `getContextuallyTypedParameterType` as `getTypeForVariableLikeDeclaration` calls it while
+    /// `links.resolvedType` of the parameter is nil: with `getContextualSignature` as it is now.
+    pub(super) fn get_contextually_typed_parameter_type(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        index: usize,
+    ) -> Option<TypeId> {
+        self.contextual_param_type_from(file, func, index, false)
+    }
+
+    fn contextual_param_type_from(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        index: usize,
+        is_assigned: bool,
+    ) -> Option<TypeId> {
         // `isContextSensitiveFunctionOrObjectLiteralMethod`
         let owner = self.takes_context(file, func)?;
         if !self.is_context_sensitive(file, owner) {
@@ -2403,7 +2424,10 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(actual) = self.iife_param_type(file, func, index) {
             return actual;
         }
-        let sig = self.assigned_contextual_signature(file, func)?;
+        let sig = match is_assigned {
+            true => self.assigned_contextual_signature(file, func)?,
+            false => self.contextual_signature(file, func)?,
+        };
         self.contextual_param_type_in(file, func, index, sig)
     }
 

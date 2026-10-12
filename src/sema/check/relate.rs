@@ -1307,12 +1307,9 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     break 'members false;
                 };
-                let (a, b) = (self.enum_member_type(member), self.enum_member_type(other));
-                let value = |c: &Self, ty: TypeId| match c.data(ty) {
-                    TypeData::EnumLit { value, .. } => Some(*value),
-                    _ => None,
-                };
-                let (code, values) = match (value(self, a), value(self, b)) {
+                let actual = self.enum_member_value_of_symbol(member);
+                let expected = self.enum_member_value_of_symbol(other);
+                let (code, values) = match (actual, expected) {
                     (Some(actual), Some(expected)) if !Self::is_equal_value(actual, expected) => {
                         (4125, [Some(expected), Some(actual)])
                     }
@@ -1873,7 +1870,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut pairs = self.types().mapping(mapper).to_vec();
         for (i, &param) in params.iter().enumerate() {
-            pairs.push((param, self.get_inferred_type(&context, i, false)));
+            // `combineTypeMappers(context.mapper, mapper)`: an inferred type is instantiated
+            // with `mapper`.
+            let inferred = self.get_inferred_type(&context, i, false);
+            pairs.push((param, self.instantiate(inferred, mapper)));
         }
         let combined = self.types().mapper(pairs);
         let declared = self.type_from_node(file, nodes[2]);
@@ -3583,14 +3583,8 @@ impl<'p, 's> Checker<'p, 's> {
             let is_this = matches!(self.data(arg), TypeData::ThisParam(_));
             if is_this || matches!(self.data(arg), TypeData::TypeParam(..)) {
                 // The constraint of a `this` type is the class or interface it belongs to.
-                let is_unconstrained = ignore_constraints
-                    || !is_this && {
-                        // The constraint is resolved only to build the key, so a cycle through here is not an error.
-                        self.eager.push(self.stack.len());
-                        let constraint = self.constraint_of_type_param(arg);
-                        self.eager.pop();
-                        constraint.is_none()
-                    };
+                let is_unconstrained =
+                    ignore_constraints || !is_this && self.constraint_of_type_param(arg).is_none();
                 if !is_unconstrained {
                     key.constrained = true;
                 } else if let Some(index) = key.type_param_index(arg) {

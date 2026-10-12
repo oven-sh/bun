@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::utils::oxlint::after_comment_decoration;
 
 /// Enforce using `@ts-expect-error` over `@ts-ignore`.
 pub struct PreferTsExpectError;
@@ -31,7 +32,7 @@ fn is_valid_ts_ignore_present(comment: Token) -> bool {
     strings::trim_js_whitespace_start(rest).starts_with(TS_IGNORE)
 }
 
-/// The same for oxlint: any number of `/`, and of `*` in a block, with blanks between them. Only a `\n` ends a line.
+/// The same for oxlint. Only a `\n` ends a line.
 fn is_valid_ts_ignore_present_for_oxlint(comment: Token) -> bool {
     let (value, is_block) = (comment.comment_value(), comment.kind() == TokenKind::Block);
     let mut rest = value;
@@ -39,13 +40,7 @@ fn is_valid_ts_ignore_present_for_oxlint(comment: Token) -> bool {
         let lines = value.strip_suffix(b"\n").unwrap_or(value);
         rest = strings::last_index_of_char(lines, b'\n').and_then(|at| lines.get(at + 1..)).unwrap_or(lines);
     }
-    loop {
-        rest = match strings::trim_unicode_whitespace_start(rest) {
-            [b'/', after @ ..] => after,
-            [b'*', after @ ..] if is_block => after,
-            trimmed => return trimmed.starts_with(TS_IGNORE) && comment.kind() != TokenKind::Shebang,
-        };
-    }
+    after_comment_decoration(rest, is_block).starts_with(TS_IGNORE) && comment.kind() != TokenKind::Shebang
 }
 
 impl Rule for PreferTsExpectError {

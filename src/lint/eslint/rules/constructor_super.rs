@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
 use rustc_hash::FxHashMap;
@@ -209,7 +210,13 @@ fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSup
         return false;
     };
     let (file, callee, whole) = (constructor.file(), call.callee().span(), constructor.span());
-    if file.language().is_oxlint && call.callee().parent().as_expr().is_some_and(Expr::is_parenthesized) {
+    // oxlint finds none in parentheses, and none that is not reached, which only a `throw` can be the cause of here.
+    if file.language().is_oxlint
+        && let Node::Expr(e) = call.callee().parent()
+        && (e.is_parenthesized()
+            || strings::contains(file.slice(Span::new(whole.start, callee.start)), b"throw")
+                && matches!(e.parent(), Node::Stmt(statement) if !statement.is_reachable()))
+    {
         return false;
     }
     if !constructor.returns().all(|it| it.span().start > callee.start) {

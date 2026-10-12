@@ -358,6 +358,18 @@ pub fn get_function_name_with_kind(func: Func) -> Vec<u8> {
     out
 }
 
+/// Where oxlint looks for `@ts-ignore` and the like in a line of a comment: after any number of `/`, and of `*` in a block,
+/// with blanks between them.
+pub fn after_comment_decoration(mut line: &[u8], is_block: bool) -> &[u8] {
+    loop {
+        line = match bun_core::strings::trim_unicode_whitespace_start(line) {
+            [b'/', after @ ..] => after,
+            [b'*', after @ ..] if is_block => after,
+            trimmed => return trimmed,
+        };
+    }
+}
+
 /// `format_word_list`: `a`, `a and b`, `a, b, and c`.
 pub fn format_word_list(words: &[&[u8]]) -> Vec<u8> {
     let mut out = Vec::new();

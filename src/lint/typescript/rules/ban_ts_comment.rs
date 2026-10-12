@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::utils::oxlint::after_comment_decoration;
 use bun_lint::utils::text::number_to_string;
 use bun_lint::utils::ts_utils::get_string_length;
 
@@ -66,8 +67,12 @@ struct MatchedTsDirective<'a> {
 /// `/^\s*@ts-(?<directive>a|b)(?<description>.*)/` for the `directives` `a` and `b`, on text
 /// without line breaks after the directive.
 fn match_directive<'a>(text: &'a [u8], directives: [&'static str; 2]) -> Option<MatchedTsDirective<'a>> {
-    let rest = strings::trim_js_whitespace_start(text).strip_prefix(b"@ts-")?;
-    directives.into_iter().find_map(|directive| {
+    directive_at(strings::trim_js_whitespace_start(text), &directives)
+}
+
+fn directive_at<'a>(text: &'a [u8], directives: &[&'static str]) -> Option<MatchedTsDirective<'a>> {
+    let rest = text.strip_prefix(b"@ts-")?;
+    directives.iter().find_map(|&directive| {
         Some(MatchedTsDirective {
             directive,
             description: rest.strip_prefix(directive.as_bytes())?,
@@ -96,16 +101,40 @@ fn find_directive_in_comment(comment: Token<'_>) -> Option<MatchedTsDirective<'_
     match_directive(rest, SUPPRESSIONS)
 }
 
+/// oxlint's `find_ts_comment_directive`, and what it passes over then. Only a `\n` ends a line.
+fn find_directive_in_comment_for_oxlint(comment: Token<'_>) -> Option<MatchedTsDirective<'_>> {
+    let (value, is_block) = (comment.comment_value(), comment.kind() == TokenKind::Block);
+    if comment.kind() == TokenKind::Shebang {
+        return None;
+    }
+    let line = match strings::last_index_of_char(value, b'\n').filter(|_| is_block) {
+        Some(at) => value.get(at + 1..)?,
+        None => value,
+    };
+    let found = directive_at(
+        after_comment_decoration(line, is_block),
+        &["expect-error", "ignore", "nocheck", "check"],
+    )?;
+    // A pragma has two slashes.
+    let is_no_pragma = is_block || strings::trim_unicode_whitespace_start(value).starts_with(b"/");
+    (!(is_no_pragma && matches!(found.directive, "check" | "nocheck"))).then_some(found)
+}
+
 impl BanTsComment {
     fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
+        let is_oxlint = file.language().is_oxlint;
         for comment in file.comments() {
-            let Some(MatchedTsDirective { directive, description }) = find_directive_in_comment(comment) else {
+            let found = match is_oxlint {
+                true => find_directive_in_comment_for_oxlint(comment),
+                false => find_directive_in_comment(comment),
+            };
+            let Some(MatchedTsDirective { directive, description }) = found else {
                 continue;
             };
             // oxlint does not ask where the comment is.
             if directive == "nocheck"
-                && !file.language().is_oxlint
+                && !is_oxlint
                 && let Some(first_statement) = file.body().first()
             {
                 let start = first_statement.export_span().unwrap_or_else(|| first_statement.span()).start;
@@ -155,15 +184,22 @@ impl BanTsComment {
                     cx.report(place, TS_DIRECTIVE_COMMENT).data("directive", directive);
                 }
                 DirectiveConfig::AllowedWithDescription(format) => {
-                    let length = get_string_length(strings::trim_js_whitespace(description));
-                    if (length as f64) < self.minimum_description_length {
+                    // oxlint counts bytes, and looks at the format whatever the length is.
+                    let length = match is_oxlint {
+                        true => strings::trim_unicode_whitespace(description).len(),
+                        false => get_string_length(strings::trim_js_whitespace(description)),
+                    };
+                    let is_short = (length as f64) < self.minimum_description_length;
+                    if is_short {
                         cx.report(place, TS_DIRECTIVE_COMMENT_REQUIRES_DESCRIPTION)
                             .data("directive", directive)
                             .data(
                                 "minimumDescriptionLength",
                                 number_to_string(self.minimum_description_length),
                             );
-                    } else if let Some(format) = format
+                    }
+                    if (is_oxlint || !is_short)
+                        && let Some(format) = format
                         && !format.test(description)
                     {
                         cx.report(place, TS_DIRECTIVE_COMMENT_DESCRIPTION_NOT_MATCH_PATTERN)

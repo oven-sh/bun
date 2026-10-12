@@ -2,6 +2,7 @@ use super::constructor_super::first_super_statement;
 use bun_core::strings;
 use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::plain;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -64,6 +65,24 @@ impl<'a> State<'a> {
         segments.retain(|it| it.is_reachable());
         Some(segments)
     }
+}
+
+/// `contains_this_or_super_in_args` of oxlint: a `this` or a `super` that is an argument, the object of one, what one calls
+/// or the object of that, or such an argument of an argument.
+fn oxlint_contains_this_or_super<'a>(args: List<'a, Expr<'a>>) -> bool {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return false;
+    }
+    let is_either = |e: Expr<'_>| matches!(plain(e).map(Expr::tag), Some(ExprTag::This | ExprTag::Super));
+    let is_member_of_either = |e: Expr<'_>| matches!(plain(e).map(Expr::kind), Some(ExprKind::Dot { obj, .. }) if is_either(obj));
+    args.iter().any(|arg| {
+        is_either(arg)
+            || is_member_of_either(arg)
+            || plain(arg).and_then(Expr::as_call).is_some_and(|call| {
+                let callee = call.callee();
+                is_either(callee) || is_member_of_either(callee) || oxlint_contains_this_or_super(call.args())
+            })
+    })
 }
 
 /// Whether there is a `this` or a `super` in `node`.
@@ -143,6 +162,15 @@ impl NoThisBeforeSuper {
     }
 
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let is_oxlint = cx.language().is_oxlint;
+        // For oxlint the fields and the static blocks of a class in the constructor are a part of the constructor.
+        if is_oxlint
+            && matches!(node, Node::Expr(_) | Node::Member(_))
+            && let Some(code_path) = cx.state.constructor_of_derived_class()
+        {
+            cx.state.func_infos.push(FuncInfo { is_constructor_of_derived_class: true, code_path });
+            return;
+        }
         let super_class = match node {
             Node::Func(func) if cx.state.constructor == Some(func) => match func.owner() {
                 Node::Member(member) if member.is_constructor() => match member.parent() {
@@ -154,13 +182,16 @@ impl NoThisBeforeSuper {
             _ => None,
         };
         cx.state.func_infos.push(FuncInfo {
-            is_constructor_of_derived_class: super_class.is_some_and(|it| !ast_utils::is_null_or_undefined(it)),
+            is_constructor_of_derived_class: super_class.is_some_and(|it| match is_oxlint {
+                true => it.tag() != ExprTag::Null || it.is_parenthesized(),
+                false => !ast_utils::is_null_or_undefined(it),
+            }),
             code_path,
         });
     }
 
     fn on_code_path_end<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state.func_infos.pop().is_some_and(|it| it.is_constructor_of_derived_class) {
+        if !cx.state.func_infos.pop().is_some_and(|it| it.is_constructor_of_derived_class && it.code_path == code_path) {
             return;
         }
         // ESLint's `onCodePathSegmentLoop` marks the segments of a loop before all of which `super()` is
@@ -205,7 +236,18 @@ impl NoThisBeforeSuper {
         let Node::Expr(e) = node else {
             return;
         };
-        if e.tag() == ExprTag::Super && ast_utils::is_callee(e) || e.is_jsx_tag_name() {
+        let is_oxlint = cx.language().is_oxlint;
+        if e.tag() == ExprTag::Super && ast_utils::is_callee(e) {
+            // oxlint takes `super()` for called before its arguments. If it sees a `this` in them, it is never called.
+            let call = e.parent().as_expr().and_then(Expr::as_call).filter(|_| is_oxlint);
+            if !call.is_some_and(|call| oxlint_contains_this_or_super(call.args())) {
+                if is_oxlint {
+                    Self::mark_as_called(cx);
+                }
+                return;
+            }
+        }
+        if e.is_jsx_tag_name() && !is_oxlint {
             return;
         }
         for segment in cx.state.segments_before_call_of_super().unwrap_or_default() {
@@ -219,9 +261,12 @@ impl NoThisBeforeSuper {
         let Node::Expr(e) = node else {
             return;
         };
-        if !e.as_call().is_some_and(|call| call.callee().tag() == ExprTag::Super) {
-            return;
+        if e.as_call().is_some_and(|call| call.callee().tag() == ExprTag::Super) && !cx.language().is_oxlint {
+            Self::mark_as_called(cx);
         }
+    }
+
+    fn mark_as_called(cx: &mut Cx<'_, Self>) {
         for segment in cx.state.segments_before_call_of_super().unwrap_or_default() {
             if let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) {
                 info.super_called = true;

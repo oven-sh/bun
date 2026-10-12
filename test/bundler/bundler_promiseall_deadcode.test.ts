@@ -98,7 +98,7 @@ describe("bundler", () => {
           return "A string from StoreFunc" + somePromise;
         }
         var init_StoreDependency = __esm(async () => {
-          await init_StoreDependencyAsync();
+          init_StoreDependencyAsync() && await init_StoreDependencyAsync();
         });
 
         // SecondElementImport.ts
@@ -107,7 +107,7 @@ describe("bundler", () => {
           return formValue.key;
         }
         var init_SecondElementImport = __esm(async () => {
-          await init_BaseElement();
+          init_BaseElement() && await init_BaseElement();
         });
 
         // BaseElementImport.ts
@@ -116,7 +116,7 @@ describe("bundler", () => {
           return SecondElementImport();
         }
         var init_BaseElementImport = __esm(async () => {
-          await init_SecondElementImport();
+          init_SecondElementImport() && await init_SecondElementImport();
         });
 
         // BaseElement.ts
@@ -149,7 +149,7 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=721434D005877A6764756E2164756E21
+        //# debugId=A3D4E03C198A1ACB64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

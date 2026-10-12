@@ -1030,22 +1030,38 @@ pub struct VarDecl {
 /// [`FileIn::rare_syntax`]
 pub mod rare {
     /// An `await` or a `yield` is between the parentheses of a parameter list.
-    pub const SUSPENDS_IN_PARAMETERS: u8 = 1 << 0;
+    pub const SUSPENDS_IN_PARAMETERS: u32 = 1 << 0;
     /// A variable statement, a function or a class is the body of an `if`, a loop, a `with` or a label.
-    pub const DECLARATION_AS_BODY: u8 = 1 << 1;
+    pub const DECLARATION_AS_BODY: u32 = 1 << 1;
     /// A getter has parameters, or a setter has none, several, or a rest parameter.
-    pub const ODD_ACCESSOR: u8 = 1 << 2;
+    pub const ODD_ACCESSOR: u32 = 1 << 2;
     /// `{ a = 1 }` where an expression can be.
-    pub const DEFAULT_IN_OBJECT: u8 = 1 << 3;
+    pub const DEFAULT_IN_OBJECT: u32 = 1 << 3;
     /// A class has a second constructor or an `async` one, a member that is called `prototype` or `#constructor`, one that is
     /// called `constructor` and is not its constructor, or two with one private name.
-    pub const NOTABLE_CLASS_MEMBER: u8 = 1 << 4;
+    pub const NOTABLE_CLASS_MEMBER: u32 = 1 << 4;
     /// There is a private name that no class of the file declares, or `super.#a`.
-    pub const ODD_PRIVATE_NAME: u8 = 1 << 5;
+    pub const ODD_PRIVATE_NAME: u32 = 1 << 5;
     /// `delete a`, `delete a.#b`
-    pub const DELETES_A_NAME: u8 = 1 << 6;
+    pub const DELETES_A_NAME: u32 = 1 << 6;
     /// The body of a function starts with a string, which may be a directive.
-    pub const DIRECTIVE_IN_FUNCTION: u8 = 1 << 7;
+    pub const DIRECTIVE_IN_FUNCTION: u32 = 1 << 7;
+    /// A type parameter has a modifier: `<const T>`, `<in T>`.
+    pub const TYPE_PARAMETER_MODIFIER: u32 = 1 << 8;
+    /// `T?`, `?T`, `T!` or `!T` is a type, outside a comment.
+    pub const JSDOC_TYPE: u32 = 1 << 9;
+    /// There is a type predicate: `a is T`, `asserts a`.
+    pub const TYPE_PREDICATE: u32 = 1 << 10;
+    /// Something other than a plain name or member is assigned to, incremented or decremented (`[a] = b`, `a?.b = 1`,
+    /// `a()++`), or the head of a `for-in` / `for-of` is an expression.
+    pub const ODD_TARGET: u32 = 1 << 16;
+    /// A scope may declare a name twice in a way that oxc rejects. Only set for oxc's dialect.
+    pub const MAY_REDECLARE: u32 = 1 << 17;
+    /// A JavaScript file may export a name twice, or have `export { a }` and not declare `a` at its top level. Only set for
+    /// oxc's dialect.
+    pub const ODD_EXPORT: u32 = 1 << 18;
+    /// An `await`, a `yield` or an `await using` is in a static block, or in a function in one.
+    pub const SUSPENDS_IN_STATIC_BLOCK: u32 = 1 << 24;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1104,6 +1120,13 @@ pub enum DiagnosticKind {
     Grammar,
     /// `c.error`. Not suppressed by parse diagnostics.
     Checker,
+    /// An error of oxc's parser that TypeScript leaves to its checker. Only `Dialect::oxc` has these, and only `bun lint` reads
+    /// them. `bun_sema_parser`'s `oxc.rs` says what is in the fields.
+    Oxc,
+    /// The same, where oxc's parser gives up.
+    OxcFatal,
+    /// The same from the pass that builds oxc's scopes, which doesn't run on a file that its parser has an error for.
+    OxcSemantic,
 }
 
 /// `ast.Diagnostic`
@@ -2027,7 +2050,7 @@ pub struct FileIn<S: Storage> {
     pub may_bind_a_parameter_twice: bool,
     /// Bits of [`rare`]: syntax that nearly no file has, which the parser notices on its way. Only `bun_sema_parser` sets
     /// them, also for what a speculative parse has given up.
-    pub rare_syntax: u8,
+    pub rare_syntax: u32,
     /// Diagnostics produced while parsing the file.
     pub diagnostics: S::Kept<Diagnostic>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of

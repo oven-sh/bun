@@ -191,23 +191,23 @@ pub(crate) fn placeholder(json: &Json) -> Option<&[u8]> {
 
 /// `options` as ajv sees them and as `JSON.stringify` prints them: a `Map`, a `Date` or a `RegExp` is an object without properties.
 fn without_placeholders(json: &Json) -> Json {
-    match json {
-        Json::Array(items) => Json::Array(items.iter().map(without_placeholders).collect()),
-        Json::Object(entries)
-            if entries
-                .iter()
-                .any(|it| it.0 == b"$unserializable" || it.0 == b"$regexp") =>
-        {
-            Json::Object(Vec::new())
+    let mut copy = json.clone();
+    let mut unseen = vec![&mut copy];
+    while let Some(next) = unseen.pop() {
+        match next {
+            Json::Array(items) => unseen.extend(items),
+            Json::Object(entries)
+                if entries
+                    .iter()
+                    .any(|it| it.0 == b"$unserializable" || it.0 == b"$regexp") =>
+            {
+                entries.clear();
+            }
+            Json::Object(entries) => unseen.extend(entries.iter_mut().map(|it| &mut it.1)),
+            _ => {}
         }
-        Json::Object(entries) => {
-            let entries = entries
-                .iter()
-                .map(|it| (it.0.clone(), without_placeholders(&it.1)));
-            Json::Object(entries.collect())
-        }
-        other => other.clone(),
     }
+    copy
 }
 
 /// The same for the rule that ESLint calls `id`, whether it is implemented or not.
@@ -237,10 +237,7 @@ fn validate_found(
 
 /// `meta.schema` of the rule that ESLint calls `id`. `None`: it takes no options, or there is no such rule.
 pub(crate) fn schema_of(id: &[u8]) -> Option<Json> {
-    match find(id)? {
-        Json::Array(parts) => parts.into_iter().next(),
-        _ => None,
-    }
+    find(id)?.into_array()?.into_iter().next()
 }
 
 /// Validates `options` with `schema`, which is `meta.schema`, as ESLint 8 does: it knows no `meta.defaultOptions`.
@@ -277,6 +274,10 @@ fn validate_with(
         Ok(options) => return Ok(options),
         Err(errors) => errors,
     };
+    // Ajv's functions call each other for every level of the options. ESLint reports the `RangeError` like any other error.
+    if errors.is_empty() {
+        return Err(b"\tMaximum call stack size exceeded\n".to_vec());
+    }
     let mut message = Vec::new();
     for error in &errors {
         message.extend_from_slice(b"\tValue ");
@@ -302,7 +303,7 @@ fn validate_with(
     Err(message)
 }
 
-/// Same as [`validate_with`], but returns the raw Ajv errors.
+/// Same as [`validate_with`], but returns the raw Ajv errors. None at all means the stack was too small for the options.
 fn errors_of(
     schema: Option<&Json>,
     defaults: &[Json],
@@ -331,14 +332,15 @@ fn errors_of(
     let mut validator = Validator {
         root: &schema,
         errors: Vec::new(),
-        at: Vec::new(),
+        is_out_of_stack: false,
     };
     let mut options = Json::Array(options);
-    if validator.validate(&schema, &mut options) {
-        return Ok(match options {
-            Json::Array(options) => options,
-            _ => Vec::new(),
-        });
+    let is_valid = validator.validate(&schema, &mut options);
+    if validator.is_out_of_stack {
+        return Err(Vec::new());
+    }
+    if is_valid {
+        return Ok(options.into_array().unwrap_or_default());
     }
     Err(validator.errors)
 }

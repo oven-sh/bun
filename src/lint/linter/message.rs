@@ -242,6 +242,8 @@ pub struct Details {
     pub labels: Vec<((u32, u32), (u32, u32), Cow<'static, str>)>,
     pub help: Cow<'static, str>,
     pub note: Cow<'static, str>,
+    /// 1038: oxlint's `code` of the message, which is from no rule, is `TS(1038)`. 0: it has none.
+    pub typescript_code: u16,
 }
 
 impl Default for LintMessage {
@@ -324,36 +326,64 @@ impl<'a> Locator<'a> {
 
 /// `JSON.stringify(value)`
 pub fn write_json(out: &mut Vec<u8>, value: &Json) {
-    match value {
-        Json::Null => out.extend_from_slice(b"null"),
-        Json::Bool(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
-        Json::Number(value) if !value.is_finite() => out.extend_from_slice(b"null"),
-        Json::Number(value) => {
-            out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value))
-        }
-        Json::String(value) => json_stringify(value, out),
-        Json::Array(items) => {
-            out.push(b'[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                write_json(out, item);
+    write_json_with(out, value, |out, number| match number.is_finite() {
+        true => out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number)),
+        false => out.extend_from_slice(b"null"),
+    });
+}
+
+/// [`write_json`] with another way to write numbers. It doesn't recurse, so it can write the options from a comment, which are
+/// nested as deep as the comment likes.
+pub(crate) fn write_json_with(
+    out: &mut Vec<u8>,
+    mut value: &Json,
+    write_number: fn(&mut Vec<u8>, f64),
+) {
+    // The arrays and objects around `value`, each with how many of its children are written.
+    let mut open: Vec<(&Json, usize)> = Vec::new();
+    loop {
+        match value {
+            Json::Null => out.extend_from_slice(b"null"),
+            Json::Bool(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
+            Json::Number(value) => write_number(out, *value),
+            Json::String(value) => json_stringify(value, out),
+            Json::Array(_) => {
+                out.push(b'[');
+                open.push((value, 0));
             }
-            out.push(b']');
-        }
-        Json::Object(entries) => {
-            out.push(b'{');
-            for (i, (key, value)) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                json_stringify(key, out);
-                out.push(b':');
-                write_json(out, value);
+            Json::Object(_) => {
+                out.push(b'{');
+                open.push((value, 0));
             }
-            out.push(b'}');
         }
+        value = loop {
+            let Some((parent, written)) = open.last_mut() else {
+                return;
+            };
+            let at = *written;
+            *written += 1;
+            let comma: &[u8] = if at > 0 { b"," } else { b"" };
+            match parent {
+                Json::Array(items) => match items.get(at) {
+                    Some(item) => {
+                        out.extend_from_slice(comma);
+                        break item;
+                    }
+                    None => out.push(b']'),
+                },
+                Json::Object(entries) => match entries.get(at) {
+                    Some((key, value)) => {
+                        out.extend_from_slice(comma);
+                        json_stringify(key, out);
+                        out.push(b':');
+                        break value;
+                    }
+                    None => out.push(b'}'),
+                },
+                _ => {}
+            }
+            open.pop();
+        };
     }
 }
 
@@ -405,6 +435,8 @@ pub(crate) fn write_js_string(out: &mut Vec<u8>, value: &Json) {
             out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value))
         }
         Json::String(value) => out.extend_from_slice(value),
+        // `Array.prototype.join` calls itself too, and throws where this stops.
+        Json::Array(_) if !bun_core::StackCheck::init().is_safe_to_recurse() => {}
         Json::Array(items) => {
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {

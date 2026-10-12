@@ -174,8 +174,10 @@ impl<'t> Listed<'t> {
                     b"tsconfigRootDir",
                     b"projectFolderIgnoreList",
                 ] {
-                    let value = options.get(name).unwrap_or(&Json::Null);
-                    value.stringify(&mut text);
+                    match options.get(name) {
+                        Some(value) => value.stringify(&mut text),
+                        None => text.extend_from_slice(b"null"),
+                    }
                     text.push(b'\n');
                 }
                 *by_text.entry(text).or_insert_with(|| {
@@ -684,7 +686,8 @@ pub(crate) fn lint(
                 (None, None) => continue,
             };
             // The fixes of the last pass are taken back.
-            if matches!(&result.messages[..], [only] if is_parse_error(only))
+            if !result.messages.is_empty()
+                && result.messages.iter().all(is_parse_error)
                 && let (Some(before), Some((rules, was_fixed, fixes))) =
                     (state.previous.take(), state.last_pass.take())
             {

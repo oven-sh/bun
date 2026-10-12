@@ -14,7 +14,9 @@ use crate::util::FxHashMap;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 
-#[derive(Debug, Clone, PartialEq)]
+/// A value can be nested as deep as memory allows: `JSON.parse` has no limit, and rules read files with it. So `drop`, `clone`
+/// and `==`, which can't report that the stack is full, keep their place in a list and never recurse.
+#[derive(Debug)]
 pub enum Json {
     Null,
     Bool(bool),
@@ -23,6 +25,123 @@ pub enum Json {
     Array(Vec<Json>),
     /// In source order: the order of `exports` conditions matters.
     Object(Vec<(Vec<u8>, Json)>),
+}
+
+impl Json {
+    fn children_mut(&mut self) -> impl Iterator<Item = &mut Json> {
+        let (items, entries) = match self {
+            Json::Array(items) => (&mut items[..], &mut [][..]),
+            Json::Object(entries) => (&mut [][..], &mut entries[..]),
+            _ => (&mut [][..], &mut [][..]),
+        };
+        let values = entries.iter_mut().map(|it| &mut it.1);
+        items.iter_mut().chain(values)
+    }
+
+    fn children(&self) -> impl Iterator<Item = &Json> {
+        let items = self.as_array().unwrap_or_default();
+        let entries = self.as_object().unwrap_or_default();
+        items.iter().chain(entries.iter().map(|it| &it.1))
+    }
+
+    fn has_children(&self) -> bool {
+        match self {
+            Json::Array(items) => !items.is_empty(),
+            Json::Object(entries) => !entries.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Moves the arrays and objects directly inside `self` to `nested`.
+    fn unnest(&mut self, nested: &mut Vec<Json>) {
+        let inner = self.children_mut().filter(|it| it.has_children());
+        nested.extend(inner.map(|it| std::mem::replace(it, Json::Null)));
+    }
+
+    /// `self` without what is inside its arrays and objects, which are `null` in the copy.
+    fn clone_one_level(&self) -> Json {
+        match self {
+            Json::Null => Json::Null,
+            Json::Bool(it) => Json::Bool(*it),
+            Json::Number(it) => Json::Number(*it),
+            Json::String(it) => Json::String(it.clone()),
+            Json::Array(items) => Json::Array(items.iter().map(|_| Json::Null).collect()),
+            Json::Object(entries) => {
+                let names = entries.iter().map(|it| (it.0.clone(), Json::Null));
+                Json::Object(names.collect())
+            }
+        }
+    }
+
+    /// Whether `self` and `other` are equal if what is inside their arrays and objects is.
+    fn eq_one_level(&self, other: &Json) -> bool {
+        match (self, other) {
+            (Json::Null, Json::Null) => true,
+            (Json::Bool(a), Json::Bool(b)) => a == b,
+            (Json::Number(a), Json::Number(b)) => a == b,
+            (Json::String(a), Json::String(b)) => a == b,
+            (Json::Array(a), Json::Array(b)) => a.len() == b.len(),
+            (Json::Object(a), Json::Object(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.0 == b.0)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Drop for Json {
+    fn drop(&mut self) {
+        if !self.has_children() {
+            return;
+        }
+        let mut nested = Vec::new();
+        self.unnest(&mut nested);
+        while let Some(mut next) = nested.pop() {
+            next.unnest(&mut nested);
+        }
+    }
+}
+
+impl Clone for Json {
+    fn clone(&self) -> Json {
+        let mut copy = self.clone_one_level();
+        if !self.has_children() {
+            return copy;
+        }
+        let mut unfinished = vec![(self, &mut copy)];
+        while let Some((from, to)) = unfinished.pop() {
+            for (from, to) in from.children().zip(to.children_mut()) {
+                *to = from.clone_one_level();
+                if from.has_children() {
+                    unfinished.push((from, to));
+                }
+            }
+        }
+        copy
+    }
+}
+
+impl PartialEq for Json {
+    fn eq(&self, other: &Json) -> bool {
+        if !self.eq_one_level(other) {
+            return false;
+        }
+        if !self.has_children() {
+            return true;
+        }
+        let mut unfinished = vec![(self, other)];
+        while let Some((a, b)) = unfinished.pop() {
+            for (a, b) in a.children().zip(b.children()) {
+                if !a.eq_one_level(b) {
+                    return false;
+                }
+                if a.has_children() {
+                    unfinished.push((a, b));
+                }
+            }
+        }
+        true
+    }
 }
 
 /// `jsonwire.AppendQuote` under `AllowInvalidUTF8`, without `EscapeForHTML` and `EscapeForJS`.
@@ -100,9 +219,10 @@ impl Json {
         }
     }
 
+    /// Of two entries with one key the last counts, as for `JSON.parse`.
     pub fn get(&self, key: &[u8]) -> Option<&Json> {
         match self {
-            Json::Object(entries) => entries.iter().find(|e| e.0 == key).map(|e| &e.1),
+            Json::Object(entries) => entries.iter().rfind(|e| e.0 == key).map(|e| &e.1),
             _ => None,
         }
     }
@@ -131,6 +251,28 @@ impl Json {
     pub fn as_object(&self) -> Option<&[(Vec<u8>, Json)]> {
         match self {
             Json::Object(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    /// A type with a `Drop` can't be taken apart by a pattern. These three do that.
+    pub fn into_string(mut self) -> Option<Vec<u8>> {
+        match &mut self {
+            Json::String(s) => Some(std::mem::take(s)),
+            _ => None,
+        }
+    }
+
+    pub fn into_array(mut self) -> Option<Vec<Json>> {
+        match &mut self {
+            Json::Array(a) => Some(std::mem::take(a)),
+            _ => None,
+        }
+    }
+
+    pub fn into_object(mut self) -> Option<Vec<(Vec<u8>, Json)>> {
+        match &mut self {
+            Json::Object(o) => Some(std::mem::take(o)),
             _ => None,
         }
     }

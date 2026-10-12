@@ -1,5 +1,6 @@
 //! Import and export declarations.
 
+use super::declared::Declares;
 use super::stmt::Start;
 use super::{ListKind, Parser, ctx, take_span};
 use crate::Refusal;
@@ -634,12 +635,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         for index in specs..self.s.import_specs.len() {
             let ImportSpec { local, pos, .. } = self.s.import_specs[index];
             self.note_identifier(local, pos);
+            self.declare(local, Declares::Import);
         }
         if default.is_some() {
             self.note_identifier(default, default_pos);
+            self.declare(default, Declares::Import);
         }
         if namespace.is_some() {
             self.note_identifier(namespace, namespace_pos);
+            self.declare(namespace, Declares::Import);
         }
         let named = take_span!(self, import_specs, specs);
         let declaration = self.f.add_import(Import {
@@ -717,6 +721,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         };
         self.semicolon();
         self.note_identifier(name, name_pos);
+        self.declare(name, Declares::Import);
         let declaration = self.f.add_import_equals(ImportEquals {
             name,
             name_pos,

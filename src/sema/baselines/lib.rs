@@ -1485,8 +1485,8 @@ fn run_one(
         match bun_sema::config_options::from_text(name.as_bytes(), value.as_bytes()) {
             // `getOptionValue`: an option declared `IsFilePath` is resolved against the current
             // directory.
-            Some((name @ (b"outDir" | b"rootDir" | b"declarationDir"), Json::String(path))) => {
-                let path = absolute(&text(&path), &cwd).into_bytes();
+            Some((name @ (b"outDir" | b"rootDir" | b"declarationDir"), Json::String(ref path))) => {
+                let path = absolute(&text(path), &cwd).into_bytes();
                 reported.push((name.to_owned(), Json::String(path)))
             }
             Some((name, value)) => reported.push((name.to_owned(), value)),

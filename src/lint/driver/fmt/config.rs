@@ -311,9 +311,8 @@ fn write_as_shown(out: &mut Vec<u8>, value: &Json) {
 
 /// The object `before` with the keys of the object `after`, both as JSON. `after` if one is no object.
 fn merged_objects(before: &[u8], after: &[u8]) -> Vec<u8> {
-    let (Some(Json::Object(mut entries)), Some(Json::Object(added))) =
-        (bun_lint::json::parse(before), bun_lint::json::parse(after))
-    else {
+    let object = |text| bun_lint::json::parse(text).and_then(Json::into_object);
+    let (Some(mut entries), Some(added)) = (object(before), object(after)) else {
         return after.to_vec();
     };
     for (name, value) in added {

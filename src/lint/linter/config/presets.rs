@@ -44,9 +44,9 @@ fn canonical(name: &[u8]) -> Option<Vec<u8>> {
 pub(super) fn find(name: &[u8]) -> Option<Vec<Json>> {
     let mut objects = Vec::new();
     for object in parse(&canonical(name)?)? {
-        match object {
-            Json::String(other) => objects.extend(parse(&other)?),
-            object => objects.push(object),
+        match &object {
+            Json::String(other) => objects.extend(parse(other)?),
+            _ => objects.push(object),
         }
     }
     Some(objects)
@@ -62,8 +62,5 @@ fn parse(name: &[u8]) -> Option<Vec<Json>> {
         .filter_map(|line| strings::split_once_char(line, b'\t'))
         .find(|it| it.0 == name)?
         .1;
-    match crate::json::parse(json)? {
-        Json::Array(objects) => Some(objects),
-        _ => None,
-    }
+    crate::json::parse(json)?.into_array()
 }

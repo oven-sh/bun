@@ -299,7 +299,7 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
             second.extend(object.get(key).map(|it| (key, it.clone())));
         }
         second.push((b"rules", Json::Object(in_typescript)));
-        let Json::Object(mut first) = object else {
+        let Some(mut first) = object.into_object() else {
             continue;
         };
         first.retain(|it| it.0 != b"rules");

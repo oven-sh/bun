@@ -266,8 +266,7 @@ pub(crate) fn parse_json_like_config(text: &[u8]) -> Result<Vec<(Vec<u8>, Json)>
     wrapped.extend_from_slice(&normalized);
     wrapped.push(b'}');
     match json_v8::parse(&wrapped) {
-        Ok(Json::Object(items)) => Ok(items),
-        Ok(_) => Ok(Vec::new()),
+        Ok(value) => Ok(value.into_object().unwrap_or_default()),
         Err(error) => {
             let mut message = b"Failed to parse JSON from '".to_vec();
             message.extend_from_slice(&normalized);

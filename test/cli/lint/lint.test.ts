@@ -620,6 +620,436 @@ describe.concurrent("bun lint", () => {
     );
   });
 
+  // Each row is what oxlint 1.87 prints. oxc's parser reports these, so the file isn't linted. tsc leaves them to its checker
+  // (TS1308, TS1163), and typescript-estree says nothing.
+  test("with .oxlintrc.json `await` outside an async function and `yield` outside a generator are errors", async () => {
+    const all = "ts tsx mts cts js jsx mjs cjs";
+    const typescript = "ts tsx mts cts";
+    // "await@15": the error about `await`, at offset 15. "linted": no error, and the `debugger` in the last line is reported.
+    const rows: [extensions: string, code: string, found: string][] = [
+      [all, "function f() { await g(); }", "await@15"],
+      [all, "function f() { return await g; }", "await@22"],
+      [all, "function f() { await 1; }", "await@15"],
+      [all, "const f = () => { await g(); };", "await@18"],
+      [all, "const f = () => await g();", "await@16"],
+      [all, "class A { m() { await g(); } }", "await@16"],
+      [all, "class A { get x() { return await g(); } }", "await@27"],
+      [all, "class A { constructor() { await g(); } }", "await@26"],
+      [all, "const o = { m() { await g(); } };", "await@18"],
+      [all, "[1].forEach(x => { await g(x); });", "await@19"],
+      [all, "async function a() { function b() { await g(); } }", "await@36"],
+      [all, "async function a() { [1].forEach(x => { await g(x); }); }", "await@40"],
+      [all, "function* f() { await g(); }", "await@16"],
+      [all, "function f() { await using x = g(); }", "await@15"],
+      [all, "function f() { for (await using x of y) ; }", "await@20"],
+      [all, "function f() { class A { x = await g(); } }", "await@29"],
+      [all, "async function f() { class A { x = await g(); } }", "await@35"],
+      [all, "function f() { class A { [await g()]() {} } }", "await@26"],
+      [all, "function f() { function h(a = await g()) {} }", "await@30"],
+      [all, "function f(a = () => await g()) {}", "await@21"],
+      // One error: what follows the first `await` is read as if it were in an async function.
+      [all, "function f() { await await g; }", "await@15"],
+      [all, "function f() { await x(await y); }", "await@15"],
+      // In an async function, or not a keyword.
+      [all, "async function f() { await g(); }", "linted"],
+      [all, "const f = async () => await g();", "linted"],
+      [all, "function f() { return async () => await g(); }", "linted"],
+      [all, "function f() { return o.await; }", "linted"],
+      // A name in a script, reserved in a module.
+      ["ts tsx cts js jsx cjs", "function f() { await (g()); }", "linted"],
+      ["mts mjs", "function f() { await (g()); }", "The keyword 'await' is reserved @15+5"],
+      ["ts tsx cts js jsx cjs", "function f() { await; }", "linted"],
+      ["mts mjs", "function f() { await; }", "The keyword 'await' is reserved @15+5"],
+      ["ts tsx cts js jsx cjs", "function f() { return await in x; }", "linted"],
+      ["mts mjs", "function f() { return await in x; }", "The keyword 'await' is reserved @22+5"],
+      ["ts tsx cts js jsx cjs", "function f() { return await instanceof X; }", "linted"],
+      ["mts mjs", "function f() { return await instanceof X; }", "The keyword 'await' is reserved @22+5"],
+      ["ts tsx cts js jsx cjs", "function f() { for (await of x) ; }", "linted"],
+      ["mts mjs", "function f() { for (await of x) ; }", "The keyword 'await' is reserved @20+5"],
+      ["ts tsx cts js jsx cjs", "var await; await = 1;", "linted"],
+      // Outside every function: by the name of the file.
+      ["ts tsx mts js jsx mjs", "await g();", "linted"],
+      ["cts cjs", "await g();", "await@0"],
+      ["ts tsx js jsx", "class A { x = await g(); }", "linted"],
+      ["mts cts mjs cjs", "class A { x = await g(); }", "await@14"],
+      ["ts tsx mts js jsx mjs", "class A { [await g()]() {} }", "linted"],
+      ["cts cjs", "class A { [await g()]() {} }", "await@11"],
+      ["ts tsx js jsx", "function f(a = await g()) {}", "await expression not allowed in formal parameter @15+9"],
+      ["mts cts mjs cjs", "function f(a = await g()) {}", "await@15"],
+      [
+        "ts tsx mts js jsx mjs",
+        "const f = (a = await g()) => a;",
+        "await expression not allowed in formal parameter @15+9",
+      ],
+      ["cts cjs", "const f = (a = await g()) => a;", "await@15"],
+      // Yield.
+      [all, "function f() { yield 1; }", "yield@15"],
+      [all, "function f() { yield g(); }", "yield@15"],
+      [all, "const f = () => { yield 1; };", "yield@18"],
+      [all, "class A { m() { yield 1; } }", "yield@16"],
+      [all, "class A { x = yield g; }", "yield@14"],
+      [all, "async function f() { yield 1; }", "yield@21"],
+      [all, "function* a() { function b() { yield 1; } }", "yield@31"],
+      [all, "function* a() { [1].forEach(x => { yield x; }); }", "yield@35"],
+      [all, "function a(x = yield g) {}", "yield@15"],
+      [all, "yield g;", "yield@0"],
+      [all, "function f() { yield yield g; }", "yield@15"],
+      [all, "function* f() { yield 1; }", "linted"],
+      ["ts tsx cts js jsx cjs", "function f() { yield (g()); }", "linted"],
+      ["mts mjs", "function f() { yield (g()); }", "The keyword 'yield' is reserved @15+5"],
+      ["ts tsx cts js jsx cjs", "function f() { yield; }", "linted"],
+      ["mts mjs", "function f() { yield; }", "The keyword 'yield' is reserved @15+5"],
+      ["ts tsx cts js jsx cjs", "function f() { return yield in x; }", "linted"],
+      ["mts mjs", "function f() { return yield in x; }", "The keyword 'yield' is reserved @22+5"],
+      ["ts tsx cts js jsx cjs", "var yield; yield = 1;", "linted"],
+      // TypeScript.
+      [typescript, "function f(): void { await g<string>(); }", "await@21"],
+      [typescript, "function f() { await g as any; }", "await@15"],
+      [typescript, "namespace N { await g(); }", "await@14"],
+      [typescript, "namespace N { export const x = await g(); }", "await@31"],
+      ["ts tsx mts", "export namespace N { await g(); }", "linted"],
+      ["cts", "export namespace N { await g(); }", "await@21"],
+      [typescript, "declare namespace N { const x = await g; }", "await@32"],
+      [typescript, "namespace N { yield g; }", "yield@14"],
+      ["ts tsx", "enum E { A = await g }", "linted"],
+      ["mts cts", "enum E { A = await g }", "await@13"],
+      ["ts tsx mts", "export enum E { A = await g }", "linted"],
+      ["cts", "export enum E { A = await g }", "await@20"],
+      [typescript, "function f() { enum E { A = await g } }", "await@28"],
+      [typescript, "async function f() { enum E { A = await g } }", "await@34"],
+      ["ts tsx", "type T = { [await g]: 1 };", "linted"],
+      ["mts cts", "type T = { [await g]: 1 };", "await@12"],
+      [typescript, "function f() { type T = { [await g]: 1 }; }", "await@27"],
+      ["ts tsx", "function f(): { [await g]: 1 } { return null!; }", "linted"],
+      ["mts cts", "function f(): { [await g]: 1 } { return null!; }", "await@17"],
+      [typescript, "function o() { @dec(await g()) class A {} }", "await@20"],
+      [typescript, "async function o() { @dec(await g()) class A {} }", "linted"],
+      ["ts tsx", "declare const x = await g;", "linted"],
+      ["mts cts", "declare const x = await g;", "await@18"],
+      [typescript, "function f() { let x: { [yield g]: 1 }; }", "yield@25"],
+      // Arrow parameters are read in the context around the arrow function.
+      [
+        all,
+        "async function f() { const h = (a = await g()) => a; }",
+        "await expression not allowed in formal parameter @36+9",
+      ],
+      [all, "function f() { const h = (a = await g()) => a; }", "await@30"],
+      [all, "const f = async (a = await g()) => a;", "await expression not allowed in formal parameter @21+9"],
+      [
+        all,
+        "function* f() { const h = (a = yield g) => a; }",
+        "yield expression not allowed in formal parameter @31+7",
+      ],
+      // `await` and `using` on two lines are no declaration.
+      ["ts tsx cts js jsx cjs", "function f() { await\nusing x = g(); }", "linted"],
+      ["mts mjs", "function f() { await\nusing x = g(); }", "The keyword 'await' is reserved @15+5"],
+      [
+        all,
+        "function f() { for await (const x of y) ; }",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @19+5",
+      ],
+      // Static blocks.
+      [all, "class A { static { await g(); } }", "Cannot use await in class static initialization block @19+5"],
+      [all, "class A { static { await (g()); } }", "Cannot use await in class static initialization block @19+5"],
+      [
+        all,
+        "async function o() { class A { static { await g(); } } }",
+        "Cannot use await in class static initialization block @40+5",
+      ],
+      [
+        all,
+        "class A { static { class B { [await g()]() {} } } }",
+        "Cannot use await in class static initialization block @30+5",
+      ],
+      [
+        all,
+        "class A { static { for await (const x of y) ; } }",
+        "Cannot use 'for await' in class static initialization block @19+26",
+      ],
+      [
+        all,
+        "class A { static { await using x = g(); } }",
+        "Cannot use 'await using' in class static initialization block @19+20",
+      ],
+      [all, "class A { static { const f = () => await g(); } }", "await@35"],
+      [all, "class A { static { function f() { await g(); } } }", "await@34"],
+      [all, "class A { static { async function f() { await g(); } } }", "linted"],
+      [all, "class A { static { yield g; } }", "yield@19"],
+    ];
+    const cases = rows.flatMap(([extensions, code, found], i) =>
+      extensions.split(" ").map(extension => ({ name: `a${i}.${extension}`, code, found })),
+    );
+    const files = Object.fromEntries(cases.map(({ name, code }) => [name, code + "\ndebugger;\n"]));
+    const config = { categories: { correctness: "off" }, rules: { "no-debugger": "error" } };
+    const { raw } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json"]);
+    const words: Record<string, string> = {
+      "`await` is only allowed within async functions and at the top levels of modules": "await",
+      "A 'yield' expression is only allowed in a generator body.": "yield",
+    };
+    type Diagnostic = { filename: string; code?: string; message: string; labels: { span: Record<string, number> }[] };
+    const found: Record<string, string[]> = Object.fromEntries(cases.map(({ name }) => [name, []]));
+    for (const { filename, code, message, labels } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      const { offset, length } = labels[0].span;
+      if (code === "eslint(no-debugger)") found[filename].push("linted");
+      else if (message in words && length === 5) found[filename].push(`${words[message]}@${offset}`);
+      else found[filename].push(`${message} @${offset}+${length}`);
+    }
+    expect(found).toEqual(Object.fromEntries(cases.map(({ name, found }) => [name, [found]])));
+  });
+
+  // Each row is what oxlint 1.87 does. oxc can't parse Flow. Where it fails on a JavaScript file whose first comment has `@flow`,
+  // oxlint prints nothing about the file.
+  test("with .oxlintrc.json a file that doesn't parse is skipped silently if its first comment has @flow", async () => {
+    // "silent": nothing is printed. "error": only a syntax error. "linted": the `debugger` in the last line is reported.
+    const rows: [extension: string, code: string, outcome: "silent" | "error" | "linted"][] = [
+      ["js", "// @flow\ntype A = number;", "silent"],
+      ["js", "// @flow\nimport typeof X from 'x';", "silent"],
+      ["js", "// @flow\nimport typeof { X } from 'x';", "silent"],
+      ["js", "// @flow\nimport typeof * as X from 'x';", "silent"],
+      ["js", "// @flow\nimport { typeof X } from 'x';", "silent"],
+      ["js", "// @flow\ndeclare export function f(): void;", "silent"],
+      ["js", "/**\n * @flow strict\n */\nimport typeof X from 'x';", "silent"],
+      ["js", "#!/usr/bin/env node\n// @flow\nimport typeof X from 'x';", "silent"],
+      ["js", "'use strict';\n// @flow\nimport typeof X from 'x';", "silent"],
+      ["jsx", "// @flow\nimport typeof X from 'x';", "silent"],
+      ["mjs", "// @flow\nimport typeof X from 'x';", "silent"],
+      ["cjs", "// @flow\nimport typeof X from 'x';", "silent"],
+      ["js", "import /* @flow */ typeof X from 'x';", "silent"],
+      ["js", "type /* @flow */ A = number;", "silent"],
+      ["js", "foo( // @flow\n;", "silent"],
+      // Oxc's lexer hasn't come to the comment yet.
+      ["js", "import typeof /* @flow */ X from 'x';", "error"],
+      ["js", "import typeof X from 'x';\n// @flow", "error"],
+      ["js", "type A /* @flow */ = number;", "error"],
+      ["js", "type A = number; // @flow", "error"],
+      ["js", "type A = number;\n// @flow", "error"],
+      ["js", "foo(; // @flow", "error"],
+      // Only the first comment counts, and only in JavaScript.
+      ["js", "// first\n// @flow\nimport typeof X from 'x';", "error"],
+      ["js", "// @noflow\nimport typeof X from 'x';", "error"],
+      ["js", "import typeof X from 'x';", "error"],
+      ["ts", "// @flow\nimport typeof X from 'x';", "error"],
+      ["js", "// @flow\nfoo();", "linted"],
+      // Oxc goes on after these errors, to the end of the file, so it comes to the comment.
+      ["js", "function f() { await g(); }\n// @flow", "silent"],
+      ["js", "function f() { yield 1; }\n// @flow", "silent"],
+      ["js", "function f() { await g(); } // @flow\nlet = ;", "silent"],
+      ["js", "function f() { await g(); }\nlet = ;\n// @flow", "error"],
+      ["js", "function f(a: number) {}\n// @flow", "error"],
+      ["js", "// @flow\nfunction f(a: number) {}", "silent"],
+    ];
+    const files = Object.fromEntries(
+      rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\ndebugger;\n"]),
+    );
+    const config = { categories: { correctness: "off" }, rules: { "no-debugger": "error" } };
+    const { raw } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json"]);
+    const codes: Record<string, (string | undefined)[]> = Object.fromEntries(
+      Object.keys(files).map(name => [name, []]),
+    );
+    for (const { filename, code } of JSON.parse(raw).diagnostics as { filename: string; code?: string }[]) {
+      codes[filename].push(code);
+    }
+    const outcome = (found: (string | undefined)[]) =>
+      found.length === 0 ? "silent" : found.every(it => it === undefined) ? "error" : found.join();
+    expect(Object.fromEntries(Object.entries(codes).map(([name, found]) => [name, outcome(found)]))).toEqual(
+      Object.fromEntries(
+        rows.map(([extension, , expected], i) => [
+          `a${i}.${extension}`,
+          expected === "linted" ? "eslint(no-debugger)" : expected,
+        ]),
+      ),
+    );
+  });
+
+  // Each text is what oxlint 1.87 prints with --threads 1. It prints the files in no particular order in two of the formats.
+  test("with .oxlintrc.json every format has the code, the help and every occurrence of a syntax error", async () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-debugger": "error" } }),
+      "f1.ts": "class A { constructor(); }\n",
+      "f2.ts": "function f() { await g(); await h(); }\n",
+      "f3.ts": "export = a;\nexport const b = 1;\n",
+      "f4.ts": "debugger;\n",
+      "f5.js": "class A { static { await g(); } }\n",
+    };
+    const names = Object.keys(files).slice(1);
+    const print = async (format: string) => {
+      const { raw, stdout, exitCode } = await lint(files, ["--threads", "1", "-f", format, ...names]);
+      expect(exitCode).toBe(1);
+      // Only this one has the directory in it.
+      return (format === "stylish" ? stdout : raw)
+        .replace(/\x1b\[[0-9;]*m/g, "")
+        .replace(/Finished in [\d.]+ms/, "Finished in Nms");
+    };
+    const [unix, github, junit, json, gitlab, stylish, checkstyle] = await Promise.all(
+      ["unix", "github", "junit", "json", "gitlab", "stylish", "checkstyle"].map(print),
+    );
+    expect(unix.split("\n")).toEqual([
+      "f1.ts:1:11: Constructor implementation is missing. [Error/TS(2390)]",
+      "f2.ts:1:16: `await` is only allowed within async functions and at the top levels of modules [Error]",
+      "f2.ts:1:27: `await` is only allowed within async functions and at the top levels of modules [Error]",
+      "f3.ts:1:1: An export assignment cannot be used in a module with other exported elements [Error/TS(2309)]",
+      "f4.ts:1:1: `debugger` statement is not allowed [Error/eslint(no-debugger)]",
+      "f5.js:1:20: Cannot use await in class static initialization block [Error]",
+      "",
+      "6 problems",
+      "",
+    ]);
+    expect(github.split("\n")).toEqual([
+      "::error file=f1.ts,line=1,endLine=1,col=11,endColumn=22,title=TS(2390)::f1.ts:1:11: Constructor implementation is missing.",
+      "::error file=f2.ts,line=1,endLine=1,col=16,endColumn=21,title=oxlint::f2.ts:1:16: `await` is only allowed within async functions and at the top levels of modules",
+      "::error file=f2.ts,line=1,endLine=1,col=27,endColumn=32,title=oxlint::f2.ts:1:27: `await` is only allowed within async functions and at the top levels of modules",
+      "::error file=f3.ts,line=1,endLine=1,col=1,endColumn=12,title=TS(2309)::f3.ts:1:1: An export assignment cannot be used in a module with other exported elements",
+      "::error file=f4.ts,line=1,endLine=1,col=1,endColumn=10,title=eslint(no-debugger)::f4.ts:1:1: `debugger` statement is not allowed",
+      "::error file=f5.js,line=1,endLine=1,col=20,endColumn=25,title=oxlint::f5.js:1:20: Cannot use await in class static initialization block",
+      "",
+      "Found 0 warnings and 6 errors.",
+      "Finished in Nms on 5 files with 1 rules using 1 threads.",
+      "",
+    ]);
+    expect(junit.split("\n")).toEqual([
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<testsuites name="Oxlint" tests="6" failures="0" errors="6">',
+      '    <testsuite name="f1.ts" tests="1" disabled="0" errors="1" failures="0">',
+      '        <testcase name="TS(2390)">',
+      '            <error message="Constructor implementation is missing.">line 1, column 11, Constructor implementation is missing.</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      '    <testsuite name="f2.ts" tests="2" disabled="0" errors="2" failures="0">',
+      '        <testcase name="">',
+      '            <error message="`await` is only allowed within async functions and at the top levels of modules">line 1, column 16, `await` is only allowed within async functions and at the top levels of modules</error>',
+      "        </testcase>",
+      '        <testcase name="">',
+      '            <error message="`await` is only allowed within async functions and at the top levels of modules">line 1, column 27, `await` is only allowed within async functions and at the top levels of modules</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      '    <testsuite name="f3.ts" tests="1" disabled="0" errors="1" failures="0">',
+      '        <testcase name="TS(2309)">',
+      '            <error message="An export assignment cannot be used in a module with other exported elements">line 1, column 1, An export assignment cannot be used in a module with other exported elements</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      '    <testsuite name="f4.ts" tests="1" disabled="0" errors="1" failures="0">',
+      '        <testcase name="eslint(no-debugger)">',
+      '            <error message="`debugger` statement is not allowed">line 1, column 1, `debugger` statement is not allowed</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      '    <testsuite name="f5.js" tests="1" disabled="0" errors="1" failures="0">',
+      '        <testcase name="">',
+      '            <error message="Cannot use await in class static initialization block">line 1, column 20, Cannot use await in class static initialization block</error>',
+      "        </testcase>",
+      "    </testsuite>",
+      "</testsuites>",
+      "",
+    ]);
+    type Label = { span: { offset: number; length: number } };
+    const diagnostics = (JSON.parse(json).diagnostics as { labels: Label[] }[]).map(it => ({
+      ...it,
+      labels: it.labels.map(({ span }) => [span.offset, span.length]),
+    }));
+    expect(diagnostics).toEqual([
+      {
+        "message": "Constructor implementation is missing.",
+        "code": "TS(2390)",
+        "severity": "error",
+        "filename": "f1.ts",
+        "labels": [[10, 11]],
+      },
+      {
+        "message": "`await` is only allowed within async functions and at the top levels of modules",
+        "severity": "error",
+        "help": "Either remove this `await` or add the `async` keyword to the enclosing function",
+        "filename": "f2.ts",
+        "labels": [[15, 5]],
+      },
+      {
+        "message": "`await` is only allowed within async functions and at the top levels of modules",
+        "severity": "error",
+        "help": "Either remove this `await` or add the `async` keyword to the enclosing function",
+        "filename": "f2.ts",
+        "labels": [[26, 5]],
+      },
+      {
+        "message": "An export assignment cannot be used in a module with other exported elements",
+        "code": "TS(2309)",
+        "severity": "error",
+        "help":
+          "If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.",
+        "filename": "f3.ts",
+        "labels": [[0, 11]],
+      },
+      {
+        "message": "`debugger` statement is not allowed",
+        "code": "eslint(no-debugger)",
+        "severity": "error",
+        "url": "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
+        "help": "Remove the debugger statement",
+        "filename": "f4.ts",
+        "labels": [[0, 9]],
+      },
+      {
+        "message": "Cannot use await in class static initialization block",
+        "severity": "error",
+        "filename": "f5.js",
+        "labels": [[19, 5]],
+      },
+    ]);
+    type Issue = Record<"check_name" | "severity" | "fingerprint" | "description", string> & {
+      location: { path: string; lines: { begin: number } };
+    };
+    expect(
+      (JSON.parse(gitlab) as Issue[]).map(it => [
+        it.location.path,
+        it.location.lines.begin,
+        it.check_name,
+        it.severity,
+        it.fingerprint,
+        it.description,
+      ]),
+    ).toEqual([
+      ["f1.ts", 1, "TS(2390)", "critical", "106845087d5c5a0f", "Constructor implementation is missing."],
+      [
+        "f2.ts",
+        1,
+        "",
+        "critical",
+        "3f7536233e17e706",
+        "`await` is only allowed within async functions and at the top levels of modules",
+      ],
+      [
+        "f2.ts",
+        1,
+        "",
+        "critical",
+        "3f7536233e17e706",
+        "`await` is only allowed within async functions and at the top levels of modules",
+      ],
+      [
+        "f3.ts",
+        1,
+        "TS(2309)",
+        "critical",
+        "29f7a7c91515a896",
+        "An export assignment cannot be used in a module with other exported elements",
+      ],
+      ["f4.ts", 1, "eslint(no-debugger)", "critical", "9651ed4bad05aab3", "`debugger` statement is not allowed"],
+      ["f5.js", 1, "", "critical", "f7e9e2da0f31ec9c", "Cannot use await in class static initialization block"],
+    ]);
+    expect(stylish.trim().split("\n\n").sort()).toEqual([
+      "<dir>/f1.ts\n  1:11  error  Constructor implementation is missing.  TS(2390)",
+      "<dir>/f2.ts\n  1:16  error  `await` is only allowed within async functions and at the top levels of modules  \n  1:27  error  `await` is only allowed within async functions and at the top levels of modules  ",
+      "<dir>/f3.ts\n  1:1  error  An export assignment cannot be used in a module with other exported elements  TS(2309)",
+      "<dir>/f4.ts\n  1:1  error  `debugger` statement is not allowed  eslint(no-debugger)",
+      "<dir>/f5.js\n  1:20  error  Cannot use await in class static initialization block  ",
+      "✖ 6 problems (6 errors, 0 warnings)",
+    ]);
+    expect(checkstyle.match(/<file .*?<\/file>/g)?.sort()).toEqual([
+      '<file name="f1.ts"><error line="1" column="11" severity="error" message="Constructor implementation is missing." source="TS(2390)" /></file>',
+      '<file name="f2.ts"><error line="1" column="16" severity="error" message="`await` is only allowed within async functions and at the top levels of modules" source="" /><error line="1" column="27" severity="error" message="`await` is only allowed within async functions and at the top levels of modules" source="" /></file>',
+      '<file name="f3.ts"><error line="1" column="1" severity="error" message="An export assignment cannot be used in a module with other exported elements" source="TS(2309)" /></file>',
+      '<file name="f4.ts"><error line="1" column="1" severity="error" message="`debugger` statement is not allowed" source="eslint(no-debugger)" /></file>',
+      '<file name="f5.js"><error line="1" column="20" severity="error" message="Cannot use await in class static initialization block" source="" /></file>',
+    ]);
+  });
+
   // Each row is what oxlint 1.87 does.
   test("with .oxlintrc.json a file is a script if nothing in it says that it is a module", async () => {
     const name = "var await = 1; f(await);\n";
@@ -1352,6 +1782,387 @@ describe.concurrent("bun lint", () => {
         expect(found.sort(byName)).toEqual(
           rows.map(([extension, , ...rest], i) => [`a${i}.${extension}`, ...rest]).sort(byName),
         );
+      });
+
+      type ErrorRow = [extension: string, code: string, errors: string];
+      type OxlintDiagnostic = {
+        filename: string;
+        message: string;
+        help?: string;
+        labels: { label?: string; span: { offset: number; length: number } }[];
+      };
+      /**
+       * Lints each row as a file of its own and returns the rows with what was printed: every error of the file in order, as
+       * its message (or the short word for it in `words`) and the offset and length of each label.
+       */
+      const withErrorsFound = async (rows: ErrorRow[], words: Record<string, string>) => {
+        const files = Object.fromEntries(rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\n"]));
+        const { raw } = await lint({ ".oxlintrc.json": quiet, ...files }, ["-f", "json"]);
+        const diagnostics = JSON.parse(raw).diagnostics as OxlintDiagnostic[];
+        const print = ({ message, labels }: OxlintDiagnostic) =>
+          `${words[message] ?? message} ${labels.map(({ span }) => `${span.offset}+${span.length}`).join(",")}`;
+        const found = rows.map(([extension, code], i): ErrorRow => {
+          const ofFile = diagnostics.filter(it => it.filename === `a${i}.${extension}`);
+          return [extension, code, ofFile.map(print).join(", ")];
+        });
+        return { found, diagnostics };
+      };
+
+      // Each row is what oxlint 1.87 prints. "" means that it lints the file. tsc and typescript-estree reject `<T>a = 1`,
+      // `a as T = 1` and `++<T>a`: to them a type assertion is no left-hand side.
+      test("assignment targets are checked like oxc's parser checks them", async () => {
+        const words: Record<string, string> = {
+          "Cannot assign to this expression": "cannot",
+          "Invalid rest element target in destructuring assignment": "rest",
+          "A rest parameter or binding pattern may not have a trailing comma.": "comma",
+          "Spread must be last element": "last",
+          "Only '=' operator can be used for specifying default value.": "operator",
+          "Invalid left-hand side in assignment": "pattern",
+          "The left-hand side of an assignment expression must be a variable or a property access.": "instantiation",
+        };
+        const helps: Record<string, string> = {
+          rest: "Expected an identifier or member expression, like `...rest` or `...obj.prop`.",
+          comma: "Remove the trailing comma here",
+          operator: "Replace this operator with `=`.",
+        };
+        const rows: ErrorRow[] = [
+          ["js", "a = 1;", ""],
+          ["ts", "a.b = 1;", ""],
+          ["js", "a[0] = 1;", ""],
+          ["ts", "(a) = 1;", ""],
+          ["js", "((a)) = 1;", ""],
+          ["ts", "(a.b) = 1;", ""],
+          ["ts", "this.a = 1;", ""],
+          ["js", "this = 1;", "cannot 0+4"],
+          ["js", "[a] = b;", ""],
+          ["ts", "[a, b] = c;", ""],
+          ["js", "[a = 1] = b;", ""],
+          ["ts", "[a.b] = c;", ""],
+          ["js", "[(a)] = b;", ""],
+          ["ts", "[(a.b)] = c;", ""],
+          ["js", "[[a]] = b;", ""],
+          ["ts", "[{a}] = b;", ""],
+          ["js", "[...a] = b;", ""],
+          ["ts", "[...a.b] = c;", ""],
+          ["js", "[...[a]] = b;", ""],
+          ["ts", "[...{a}] = b;", ""],
+          ["js", "[...a, b] = c;", "last 1+4"],
+          ["ts", "[...a,] = b;", "comma 5+1"],
+          ["js", "[...a = 1] = b;", "rest 4+5, cannot 4+5"],
+          ["ts", "[...a()] = b;", "rest 4+3, cannot 4+3"],
+          ["js", "[...(a)] = b;", ""],
+          ["ts", "[...1] = b;", "rest 4+1, cannot 4+1"],
+          ["js", "[a, ...b, ] = c;", "comma 8+1"],
+          ["ts", "[, a] = b;", ""],
+          ["js", "[a,,] = b;", ""],
+          ["ts", "[a,] = b;", ""],
+          ["js", "([a]) = b;", "cannot 0+5"],
+          ["ts", "(([a])) = b;", "cannot 1+5"],
+          ["js", "({a}) = b;", "cannot 0+5"],
+          ["ts", "(({a})) = b;", "cannot 1+5"],
+          ["js", "[([a])] = b;", "cannot 1+5"],
+          ["ts", "[({a})] = b;", "cannot 1+5"],
+          ["js", "({ a: ([b]) } = c);", "cannot 6+5"],
+          ["ts", "({ a: ({b}) } = c);", "cannot 6+5"],
+          ["js", "({a} = b);", ""],
+          ["ts", "({a, b} = c);", ""],
+          ["js", "({a: b} = c);", ""],
+          ["ts", "({a: b.c} = d);", ""],
+          ["js", "({a: (b)} = c);", ""],
+          ["ts", "({a = 1} = b);", ""],
+          ["js", "({a: b = 1} = c);", ""],
+          ["ts", "({...a} = b);", ""],
+          ["js", "({...a.b} = c);", ""],
+          ["ts", "({...(a)} = b);", ""],
+          ["js", "({...a, b} = c);", "last 2+4"],
+          ["ts", "({...a,} = b);", "comma 6+1"],
+          ["js", "({...a = 1} = b);", "rest 5+5, cannot 5+5"],
+          ["ts", "({...a()} = b);", "rest 5+3, cannot 5+3"],
+          ["js", "({...{a}} = b);", "rest 5+3"],
+          ["ts", "({...[a]} = b);", "rest 5+3"],
+          ["js", "({a() {}} = b);", "cannot 3+5"],
+          ["ts", "({get a() {}} = b);", "cannot 7+5"],
+          ["js", "({set a(v) {}} = b);", "cannot 7+6"],
+          ["ts", "({async a() {}} = b);", "cannot 9+5"],
+          ["js", "({'a': b} = c);", ""],
+          ["ts", "({[a]: b} = c);", ""],
+          ["js", "({1: b} = c);", ""],
+          ["js", "({a: 1} = b);", "cannot 5+1"],
+          ["ts", "({a: b()} = c);", "cannot 5+3"],
+          ["js", "({a: b += 1} = c);", "operator 5+6"],
+          ["ts", "[a += 1] = b;", "operator 1+6"],
+          ["js", "[a *= 1] = b;", "operator 1+6"],
+          ["ts", "({a: b ??= 1} = c);", "operator 5+7"],
+          ["js", "({a: b?.c} = d);", "cannot 5+4"],
+          ["ts", "[a?.b] = c;", "cannot 1+4"],
+          ["js", "a?.b = 1;", "cannot 0+4"],
+          ["ts", "a?.b.c = 1;", "cannot 0+6"],
+          ["js", "a?.[0] = 1;", "cannot 0+6"],
+          ["ts", "a?.() = 1;", "cannot 0+5"],
+          ["js", "(a?.b) = 1;", "cannot 1+4"],
+          ["ts", "(a?.b).c = 1;", ""],
+          ["js", "a?.b++;", "cannot 0+4"],
+          ["ts", "++a?.b;", "cannot 2+4"],
+          ["js", "a?.b += 1;", "cannot 0+4"],
+          ["ts", "1 = 2;", "cannot 0+1"],
+          ["js", "'a' = 1;", "cannot 0+3"],
+          ["ts", "`a` = 1;", "cannot 0+3"],
+          ["js", "null = 1;", "cannot 0+4"],
+          ["ts", "true = 1;", "cannot 0+4"],
+          ["js", "a() = 1;", "cannot 0+3"],
+          ["ts", "new a = 1;", "cannot 0+5"],
+          ["js", "new a() = 1;", "cannot 0+7"],
+          ["ts", "a`b` = 1;", "cannot 0+4"],
+          ["js", "(a, b) = 1;", "cannot 1+4"],
+          ["ts", "(a = 1) = 2;", "cannot 1+5"],
+          ["js", "(a ? b : c) = 1;", "cannot 1+9"],
+          ["ts", "(a + b) = 1;", "cannot 1+5"],
+          ["js", "(-a) = 1;", "cannot 1+2"],
+          ["ts", "(() => 1) = 1;", "cannot 1+7"],
+          ["js", "(function(){}) = 1;", "cannot 1+12"],
+          ["ts", "(class {}) = 1;", "cannot 1+8"],
+          ["js", "/a/ = 1;", "cannot 0+3"],
+          ["ts", "import.meta = 1;", "cannot 0+11"],
+          ["ts", "import('a') = 1;", "cannot 0+11"],
+          ["js", "a + b = 1;", "cannot 0+5"],
+          ["ts", "-a = 1;", "cannot 0+2"],
+          ["js", "!a = 1;", "cannot 0+2"],
+          ["ts", "typeof a = 1;", "cannot 0+8"],
+          ["js", "void a = 1;", "cannot 0+6"],
+          ["ts", "delete a = 1;", "cannot 0+8"],
+          ["js", "a * b = 1;", "cannot 0+5"],
+          ["ts", "a && b = 1;", "cannot 0+6"],
+          ["js", "a ?? b = 1;", "cannot 0+6"],
+          ["ts", "a in b = 1;", "cannot 0+6"],
+          ["js", "a instanceof b = 1;", "cannot 0+14"],
+          ["ts", "a < b = 1;", "cannot 0+5"],
+          ["js", "a++ = 1;", "cannot 0+3"],
+          ["ts", "++a = 1;", "cannot 0+3"],
+          ["js", "a ** b = 1;", "cannot 0+6"],
+          ["ts", "[a] += 1;", "pattern 0+3"],
+          ["js", "({a} += 1);", "pattern 1+3"],
+          ["ts", "[a] ||= 1;", "pattern 0+3"],
+          ["js", "([a]) += 1;", "cannot 0+5"],
+          ["ts", "a() += 1;", "cannot 0+3"],
+          ["js", "1 += 1;", "cannot 0+1"],
+          ["ts", "(a) += 1;", ""],
+          ["js", "(a.b) ||= 1;", ""],
+          ["ts", "a++;", ""],
+          ["js", "a.b++;", ""],
+          ["ts", "(a)++;", ""],
+          ["js", "((a))++;", ""],
+          ["ts", "(a.b)--;", ""],
+          ["js", "a()++;", "cannot 0+3"],
+          ["ts", "1++;", "cannot 0+1"],
+          ["js", "[a]++;", "cannot 0+3"],
+          ["ts", "({a})++;", "cannot 0+5"],
+          ["js", "([a])++;", "cannot 0+5"],
+          ["ts", "this++;", "cannot 0+4"],
+          ["ts", "(a++)++;", "cannot 1+3"],
+          ["js", "++a;", ""],
+          ["ts", "++a.b;", ""],
+          ["js", "++(a);", ""],
+          ["ts", "++a();", "cannot 2+3"],
+          ["js", "++1;", "cannot 2+1"],
+          ["ts", "++[a];", "cannot 2+3"],
+          ["js", "++{a};", "cannot 2+3"],
+          ["ts", "++-a;", "cannot 2+2"],
+          ["js", "++ ++a;", "cannot 0+6"],
+          ["ts", "++a++;", "cannot 2+3"],
+          ["js", "--(a, b);", "cannot 3+4"],
+          ["ts", "++this;", "cannot 2+4"],
+          ["js", "++new a;", "cannot 2+5"],
+          ["ts", "++(a = 1);", "cannot 3+5"],
+          ["js", "++typeof a;", "cannot 2+8"],
+          ["ts", "++!a;", "cannot 2+2"],
+          ["js", "for (a in b);", ""],
+          ["ts", "for (a.b in c);", ""],
+          ["js", "for ((a) in b);", ""],
+          ["ts", "for ([a] in b);", ""],
+          ["js", "for ({a} in b);", ""],
+          ["ts", "for (a() in b);", "cannot 5+3"],
+          ["js", "for (1 in b);", "cannot 5+1"],
+          ["ts", "for ([a()] in b);", "cannot 6+3"],
+          ["js", "for (([a]) in b);", "cannot 5+5"],
+          ["ts", "for (({a}) in b);", "cannot 5+5"],
+          ["js", "for (a = 1 in b);", "cannot 5+5"],
+          ["ts", "for (a, b in c);", "cannot 5+4"],
+          ["js", "for (a?.b in c);", "cannot 5+4"],
+          ["ts", "for (a + b in c);", "cannot 5+5"],
+          ["js", "for (-a in c);", "cannot 5+2"],
+          ["ts", "for (a of b);", ""],
+          ["js", "for (a.b of c);", ""],
+          ["ts", "for ((a) of b);", ""],
+          ["js", "for ([a] of b);", ""],
+          ["ts", "for ({a} of b);", ""],
+          ["js", "for (a() of b);", "cannot 5+3"],
+          ["ts", "for (1 of b);", "cannot 5+1"],
+          ["js", "for ([a()] of b);", "cannot 6+3"],
+          ["ts", "for (([a]) of b);", "cannot 5+5"],
+          ["js", "for (({a}) of b);", "cannot 5+5"],
+          ["ts", "for (a = 1 of b);", "cannot 5+5"],
+          ["js", "for (a, b of c);", "cannot 5+4"],
+          ["ts", "for (a?.b of c);", "cannot 5+4"],
+          ["js", "for ([...a, b] of c);", "last 6+4"],
+          ["ts", "for ({...a, b} of c);", "last 6+4"],
+          ["js", "for ([a = 1] of c);", ""],
+          ["ts", "for (this of c);", "cannot 5+4"],
+          ["js", "for (a + b of c);", "cannot 5+5"],
+          ["ts", "a() = 1; b() = 2;", "cannot 0+3"],
+          ["js", "[...a,] = b; c() = 1;", "comma 5+1, cannot 13+3"],
+          ["ts", "c() = 1; [...a,] = b;", "cannot 0+3"],
+          ["js", "[...a,] = b; [...c,] = d;", "comma 5+1, comma 18+1"],
+          ["ts", "({...{a}} = b); ({...[c]} = d);", "rest 5+3, rest 21+3"],
+          ["js", "x = (a() = 1);", "cannot 5+3"],
+          ["ts", "f(a() = 1);", "cannot 2+3"],
+          ["js", "[a() = 1] = b;", "cannot 1+3"],
+          ["ts", "({a: b() = 1} = c);", "cannot 5+3"],
+          ["js", "[[a()]] = b;", "cannot 2+3"],
+          ["ts", "[a, b(), c()] = d;", "cannot 4+3"],
+          ["js", "({a: 1, b: 2} = c);", "cannot 5+1"],
+          ["ts", "a = b() = 1;", "cannot 4+3"],
+          ["js", "a = [b()] = c;", "cannot 5+3"],
+          ["ts", "[a = b() = 1] = c;", "cannot 5+3"],
+          ["js", "let x = a() = 1;", "cannot 8+3"],
+          ["ts", "() => a() = 1;", "cannot 6+3"],
+          ["js", "a ? b() = 1 : c;", "cannot 4+3"],
+          ["ts", "a ? b : c() = 1;", "cannot 8+3"],
+          ["js", "async () => { await a = 1; };", "cannot 14+7"],
+          ["js", "function* g() { yield a = 1; }", ""],
+          ["ts", "async () => { (await a) = 1; };", "cannot 15+7"],
+          ["js", "async () => { ++await a; };", "cannot 16+7"],
+          ["ts", "a! = 1;", ""],
+          ["ts", "a!! = 1;", ""],
+          ["ts", "a.b! = 1;", ""],
+          ["ts", "a!.b = 1;", ""],
+          ["ts", "(a!) = 1;", ""],
+          ["ts", "(a)! = 1;", ""],
+          ["ts", "a()! = 1;", "cannot 0+4"],
+          ["ts", "a?.b! = 1;", "cannot 0+5"],
+          ["ts", "(a?.b)! = 1;", "cannot 0+7"],
+          ["ts", "[a]! = 1;", "cannot 0+4"],
+          ["ts", "([a]!) = 1;", "cannot 1+4"],
+          ["ts", "1! = 1;", "cannot 0+2"],
+          ["ts", "a!++;", ""],
+          ["ts", "++a!;", ""],
+          ["ts", "a()!++;", "cannot 0+4"],
+          ["ts", "[a!] = b;", ""],
+          ["ts", "({a: b!} = c);", ""],
+          ["ts", "[a()!] = b;", "cannot 1+4"],
+          ["ts", "[...a!] = b;", ""],
+          ["ts", "({...a!} = b);", ""],
+          ["ts", "for (a! of b);", ""],
+          ["ts", "for (a()! of b);", "cannot 5+4"],
+          ["ts", "(a as T) = 1;", ""],
+          ["ts", "(a.b as T) = 1;", ""],
+          ["ts", "(a() as T) = 1;", "cannot 1+8"],
+          ["ts", "([a] as T) = 1;", "cannot 1+8"],
+          ["ts", "({a} as T) = 1;", "cannot 1+8"],
+          ["ts", "((a) as T) = 1;", ""],
+          ["ts", "((a as T) as U) = 1;", ""],
+          ["ts", "(a as T as U) = 1;", ""],
+          ["ts", "(a! as T) = 1;", ""],
+          ["ts", "(1 as T) = 1;", "cannot 1+6"],
+          ["ts", "(a?.b as T) = 1;", "cannot 1+9"],
+          ["ts", "((a?.b) as T) = 1;", "cannot 1+11"],
+          ["ts", "(a as const) = 1;", ""],
+          ["ts", "a as T = 1;", ""],
+          ["ts", "a.b as T = 1;", ""],
+          ["ts", "a() as T = 1;", "cannot 0+8"],
+          ["ts", "[a] as T = 1;", "cannot 0+8"],
+          ["ts", "a as T as U = 1;", ""],
+          ["ts", "a as T += 1;", ""],
+          ["ts", "a as const = 1;", ""],
+          ["ts", "a + b as T = 1;", "cannot 0+10"],
+          ["ts", "-a as T = 1;", "cannot 0+7"],
+          ["ts", "a as T ? b : c = 1;", ""],
+          ["ts", "(a satisfies T) = 1;", ""],
+          ["ts", "(a() satisfies T) = 1;", "cannot 1+15"],
+          ["ts", "a satisfies T = 1;", ""],
+          ["ts", "a() satisfies T = 1;", "cannot 0+15"],
+          ["ts", "[a satisfies T] = b;", ""],
+          ["ts", "[a() satisfies T] = b;", "cannot 1+15"],
+          ["ts", "(<T>a) = 1;", ""],
+          ["ts", "(<T>a.b) = 1;", ""],
+          ["ts", "(<T>a()) = 1;", "cannot 1+6"],
+          ["ts", "(<T>[a]) = 1;", "cannot 1+6"],
+          ["ts", "<T>a = 1;", ""],
+          ["ts", "<T>a.b = 1;", ""],
+          ["ts", "<T>a() = 1;", "cannot 0+6"],
+          ["ts", "<T>[a] = 1;", "cannot 0+6"],
+          ["ts", "<T>(a) = 1;", ""],
+          ["ts", "<T><U>a = 1;", ""],
+          ["ts", "<T>a += 1;", ""],
+          ["ts", "<const>a = 1;", ""],
+          ["ts", "<T>a! = 1;", ""],
+          ["ts", "<T>a as U = 1;", ""],
+          ["ts", "<T>-a = 1;", "cannot 0+5"],
+          ["ts", "<T>a++;", ""],
+          ["ts", "(<T>a)++;", ""],
+          ["ts", "++<T>a;", ""],
+          ["ts", "++<T>a.b;", ""],
+          ["ts", "++<T>a();", "cannot 2+6"],
+          ["ts", "--<T><U>a;", ""],
+          ["ts", "++(<T>a);", ""],
+          ["ts", "++(a as T);", ""],
+          ["ts", "(a as T)++;", ""],
+          ["ts", "(a() as T)++;", "cannot 1+8"],
+          ["ts", "++a as T;", ""],
+          ["ts", "[<T>a] = b;", ""],
+          ["ts", "[a as T] = b;", ""],
+          ["ts", "[a() as T] = b;", "cannot 1+8"],
+          ["ts", "[<T>a()] = b;", "cannot 1+6"],
+          ["ts", "({a: <T>b} = c);", ""],
+          ["ts", "({a: b as T} = c);", ""],
+          ["ts", "({a: b() as T} = c);", "cannot 5+8"],
+          ["ts", "[...a as T] = b;", ""],
+          ["ts", "[...<T>a] = b;", ""],
+          ["ts", "({...a as T} = b);", ""],
+          ["ts", "({...<T>a} = b);", ""],
+          ["ts", "[...a() as T] = b;", "rest 4+8, cannot 4+8"],
+          ["ts", "[a as T = 1] = b;", ""],
+          ["ts", "[<T>a = 1] = b;", ""],
+          ["ts", "({a: b as T = 1} = c);", ""],
+          ["ts", "[[a] as T] = b;", "cannot 1+8"],
+          ["ts", "[({a}) as T] = b;", "cannot 1+10"],
+          ["ts", "for (a as T of b);", ""],
+          ["ts", "for (<T>a of b);", ""],
+          ["ts", "for (a() as T of b);", "cannot 5+8"],
+          ["ts", "for (<T>a() of b);", "cannot 5+6"],
+          ["ts", "for (a as T in b);", ""],
+          ["ts", "for (<T>a in b);", ""],
+          ["ts", "for ((a as T) of b);", ""],
+          ["ts", "for ([a as T] of b);", ""],
+          ["ts", "for (a satisfies T of b);", ""],
+          ["ts", "a<T> = 1;", "instantiation 0+4"],
+          ["ts", "(a<T>) = 1;", "instantiation 1+4"],
+          ["ts", "++a<T>;", "instantiation 2+4"],
+          ["ts", "[a<T>] = b;", "instantiation 1+4"],
+          ["ts", "(a<T> as U) = 1;", ""],
+          ["ts", "y = <T>a = 1;", ""],
+          ["ts", "<T>a = <T>b = 1;", ""],
+          ["ts", "f(<T>a = 1);", ""],
+          ["ts", "() => <T>a = 1;", ""],
+          ["ts", "x ? <T>a = 1 : 0;", ""],
+          ["ts", "x ? 0 : <T>a = 1;", ""],
+          ["ts", "let z = <T>a = 1;", ""],
+          ["ts", "<T>a = 1, <T>b = 2;", ""],
+          ["ts", "for (<T>a = 0;;);", ""],
+          ["ts", "<T>this.a = 1;", ""],
+          ["ts", "<T>a[0] = 1;", ""],
+          ["ts", "<T>a?.b = 1;", "cannot 0+7"],
+          ["ts", "<T>new a = 1;", "cannot 0+8"],
+          ["ts", "<T>a`b` = 1;", "cannot 0+7"],
+          ["ts", "<T>(a, b) = 1;", "cannot 0+9"],
+          ["ts", "<T>{ a } = b;", "cannot 0+8"],
+          ["ts", "<T>1 = 1;", "cannot 0+4"],
+          ["ts", "typeof <T>a = 1;", "cannot 0+11"],
+          ["ts", "-<T>a = 1;", "cannot 0+5"],
+          ["ts", "y = -<T>a = 1;", "cannot 4+5"],
+        ];
+        const { found, diagnostics } = await withErrorsFound(rows, words);
+        expect(found).toEqual(rows);
+        for (const { message, help } of diagnostics) expect([message, help]).toEqual([message, helps[words[message]]]);
       });
 
       // oxlint 1.87.0: "Identifier `a` has already been declared", at the first of the two. The parser, which has the names in
@@ -4895,7 +5706,9 @@ describe.concurrent("bun lint", () => {
         .split("\n")
         .filter(line => line.endsWith("]"))
         .sort(),
-    ).toEqual(Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${refused} [Error]`] : [])));
+    ).toEqual(
+      Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${refused} [Error/TS(2309)]`] : [])),
+    );
   });
 
   // The same.

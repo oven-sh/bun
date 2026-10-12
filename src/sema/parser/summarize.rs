@@ -277,6 +277,8 @@ fn file_read_as(
                     true => Vec::new(),
                     false => vec![error],
                 },
+                // Those that the lexer got past. oxlint looks for `@flow` in the first.
+                comments: std::mem::take(&mut file.comments),
                 ..Default::default()
             };
             return file;

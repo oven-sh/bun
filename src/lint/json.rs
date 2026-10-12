@@ -12,9 +12,9 @@ use bun_parsers::json5::JSON5Parser;
 use bun_parsers::toml::TOML;
 use bun_parsers::yaml::{CyclicAliases, YAML};
 
-/// How deep a value can be nested that outlives what reads it. What walks it afterwards needs room on the stack for each
-/// level too: with frames of another size, perhaps on another thread, and `Drop`, `Clone` and `==` cannot ask whether there
-/// is any. So what builds one has a quarter of the smallest stack.
+/// Limits how deep a value from a config file can be nested. Most code that walks a config recurses without checking the
+/// stack, with frames of other sizes and maybe on another thread. So whatever builds a value for it only gets a quarter of
+/// the smallest stack.
 #[derive(Copy, Clone)]
 pub(crate) struct RoomToNest(bun_core::StackCheck);
 
@@ -166,12 +166,12 @@ fn from_expr(expr: &Expr, room: RoomToNest) -> Option<Json> {
                     continue;
                 };
                 // `String(key)`, but for a key that is an array or an object.
-                let key = match from_expr(key, room)? {
-                    Json::String(key) => key,
-                    Json::Number(key) => number_to_string(key),
+                let key = match &mut from_expr(key, room)? {
+                    Json::String(key) => std::mem::take(key),
+                    Json::Number(key) => number_to_string(*key),
                     key => {
                         let mut text = Vec::new();
-                        write_json(&mut text, &key);
+                        write_json(&mut text, key);
                         text
                     }
                 };

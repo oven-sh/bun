@@ -1,8 +1,9 @@
 //! Types, and the declarations that consist of types.
 
 use super::class::declared_key;
+use super::declared::Declares;
 use super::stmt::{ModifiersOf, Start};
-use super::{GrammarError, ListKind, Parser, ctx, take_span};
+use super::{GrammarError, ListKind, Parser, ctx, oxc, take_span};
 use crate::Refusal;
 use crate::lexer::Mark;
 use crate::token::T;
@@ -129,7 +130,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         self.next();
         // "The type following 'extends' is not permitted to be another conditional type"
-        let saved = self.enter_context(ctx::DISALLOW_CONDITIONAL_TYPES, 0);
+        let inside = ctx::DISALLOW_CONDITIONAL_TYPES | ctx::CONDITIONAL_EXTENDS;
+        let saved = self.enter_context(inside, 0);
         let extends = self.ty();
         self.context = saved;
         self.expect(T::Question);
@@ -260,7 +262,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let name_pos = self.pos();
         let type_params = self.type_parameters();
         let anchor = self.pos();
+        let odd_parameters = self.odd_parameters;
         let (this_param, params) = self.parameters(0);
+        let parameters = (odd_parameters, this_param);
         self.expect(T::EqualsGreaterThan);
         let ret = self.type_or_type_predicate();
         let func = self.f.add_fn(Func {
@@ -276,6 +280,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             anchor,
             start,
         });
+        if self.is_odd_function((kind, flags), parameters, &FnBody::None) {
+            self.check_function_like_oxc(func, 0);
+        }
         self.finish_type(TypeNodeKind::Fn(func), start)
     }
 
@@ -302,6 +309,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 let (param, start) = self.identifier();
                 self.next();
                 let ty = self.ty();
+                self.f.rare_syntax |= rare::TYPE_PREDICATE;
                 let kind = TypeNodeKind::Predicate {
                     param,
                     ty,
@@ -405,7 +413,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             T::Readonly => {
                 self.next();
+                let operand_start = self.pos();
                 let operand = self.nested_type_operator();
+                let is_list = |it: &TypeNode| {
+                    matches!(it.kind, TypeNodeKind::Array(_) | TypeNodeKind::Tuple(_))
+                        && it.pos == operand_start
+                };
+                if self.reports_like_oxc() && !self.f.types.get(operand.idx()).is_some_and(is_list)
+                {
+                    oxc::readonly_type(&mut self.f.diagnostics, start);
+                }
                 self.finish_type(TypeNodeKind::Readonly(operand), start)
             }
             T::Unique => {
@@ -471,6 +488,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             flags: Flags::empty(),
             modifiers: Span::EMPTY,
         });
+        if !self.has_context(ctx::CONDITIONAL_EXTENDS) && self.reports_like_oxc() {
+            oxc::infer_type(&mut self.f.diagnostics, (start, self.lx.full_start));
+        }
         self.finish_type(TypeNodeKind::Infer(param), start)
     }
 
@@ -505,6 +525,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     // A `JSDocNullableType`, which the checker reports unless it is an element of
                     // a tuple: see `take_back_nullable_type`.
                     self.next();
+                    self.f.rare_syntax |= rare::JSDOC_TYPE;
                     let kind = TypeNodeKind::JSDoc {
                         ty,
                         kind: JSDocTypeKind::Nullable,
@@ -516,6 +537,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 // A `JSDocNonNullableType`, which the checker reports.
                 T::Exclamation => {
                     self.next();
+                    self.f.rare_syntax |= rare::JSDOC_TYPE;
                     let kind = TypeNodeKind::JSDoc {
                         ty,
                         kind: JSDocTypeKind::NonNullable,
@@ -659,6 +681,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.f.types.pop();
                     self.next();
                     let ty = self.ty();
+                    self.f.rare_syntax |= rare::TYPE_PREDICATE;
                     let kind = TypeNodeKind::Predicate {
                         param: known::this,
                         ty,
@@ -747,6 +770,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return self.add_type(TypeNodeKind::Keyword(Keyword::Any), start, start + 1);
         }
         let ty = self.nested_type_operator();
+        self.f.rare_syntax |= rare::JSDOC_TYPE;
         let kind = match token {
             T::Exclamation => JSDocTypeKind::NonNullable,
             _ => JSDocTypeKind::Nullable,
@@ -780,6 +804,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true => self.ty(),
             false => TypeNodeId::NONE,
         };
+        self.f.rare_syntax |= rare::TYPE_PREDICATE;
         let kind = TypeNodeKind::Predicate {
             param,
             ty,
@@ -1272,6 +1297,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
             }
             has_extends |= is_extends;
+            if !is_extends && self.reports_like_oxc() {
+                oxc::interface_implements(&mut self.f.diagnostics, keyword);
+            }
             self.next();
             let base = self.s.ids.len();
             let mut element_error = None;
@@ -1571,6 +1599,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         self.leave_list(lists);
         self.expect(T::CloseBracket);
+        if self.reports_like_oxc() && self.s.tuple_elems[base..].iter().any(|it| it.optional) {
+            oxc::tuple_elements(&mut self.f.diagnostics, &self.s.tuple_elems[base..]);
+        }
         let elements = take_span!(self, tuple_elems, base);
         self.finish_type(TypeNodeKind::Tuple(elements), start)
     }
@@ -1950,6 +1981,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             (!params.is_empty() && self.lx.src.get(last as usize) == Some(&b',')).then_some(last);
         self.expect(T::CloseBracket);
         let ty = self.type_annotation();
+        if ty.is_none() && self.reports_like_oxc() {
+            let brackets = (bracket, self.prev_end());
+            oxc::index_signature_without_type(&mut self.f.diagnostics, brackets);
+        }
         self.context = saved;
         self.type_member_semicolon();
         self.check_index_signature_parameters(params, comma, (start.pos, self.prev_end()));
@@ -1998,7 +2033,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             // `createMissingList`
             _ => self.full_start().saturating_sub(1),
         };
+        let odd_parameters = self.odd_parameters;
         let (this_param, params) = self.parameters(0);
+        let parameters = (odd_parameters, this_param);
         self.note_parameters_of_accessor(kind, params);
         // `shouldParseReturnType`: "This is easy to get backward, especially in type contexts, so
         // parse the type anyway"
@@ -2013,7 +2050,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true => self.type_or_type_predicate(),
             false => TypeNodeId::NONE,
         };
-        self.f.add_fn(Func {
+        let func = self.f.add_fn(Func {
             kind,
             flags,
             name,
@@ -2025,7 +2062,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             body: FnBody::None,
             anchor,
             start,
-        })
+        });
+        if self.is_odd_function((kind, flags), parameters, &FnBody::None) {
+            self.check_function_like_oxc(func, 0);
+        }
+        func
     }
 
     /// `parseTypeMember`
@@ -2083,6 +2124,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 && self.token() == T::OpenBracket
                 && self.is_index_signature()
             {
+                if member.flags.intersects(!Flags::READONLY) && self.reports_like_oxc() {
+                    oxc::index_signature(&mut self.f, member.modifiers, Flags::READONLY);
+                }
                 return self.index_signature(start, member.flags, member.modifiers);
             }
             // `parsePropertyOrMethodSignature`
@@ -2132,6 +2176,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             pos: start.full,
             end: self.prev_end(),
         };
+        if !member.modifiers.is_empty() && self.reports_like_oxc() {
+            oxc::type_member(&mut self.f, &member);
+        }
         member
     }
 
@@ -2170,6 +2217,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     ) -> StmtId {
         self.next();
         let (name, name_pos) = self.identifier();
+        self.declare(name, Declares::Interface);
         let saved = self.enter_context(ctx::TYPE, 0);
         let type_params = self.type_parameters();
         let (extends, other_heritage) = self.interface_heritage();
@@ -2204,6 +2252,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.error_and_go_on(1142, self.range_of_token(), &[]);
         }
         let (name, name_pos) = self.identifier();
+        self.declare(name, Declares::Alias);
         let saved = self.enter_context(ctx::TYPE, 0);
         let type_params = self.type_parameters();
         self.context = saved;

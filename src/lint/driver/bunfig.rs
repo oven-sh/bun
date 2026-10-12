@@ -229,10 +229,10 @@ fn give(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusa
 /// What is written after the flag `param` for `value`. A flag takes a number if the help calls what it takes `<n>`.
 /// `what`: what is expected where it is a string that is taken.
 fn text_of(param: &Param, value: &Expr, what: &str) -> Result<Vec<u8>, Refusal> {
-    match (bun_lint::json::from_parsed(value), param.id.value) {
-        (Some(Json::Number(number)), b"n") => Ok(number_to_string(number)),
+    match (&mut bun_lint::json::from_parsed(value), param.id.value) {
+        (Some(Json::Number(number)), b"n") => Ok(number_to_string(*number)),
         (_, b"n") => expected("number", value),
-        (Some(Json::String(text)), _) => Ok(text),
+        (Some(Json::String(text)), _) => Ok(std::mem::take(text)),
         _ => expected(what, value),
     }
 }
@@ -249,9 +249,7 @@ fn entries(section: &Expr) -> Result<Vec<(Key, &Expr)>, Refusal> {
     };
     let entries = table.properties.iter().filter_map(|it| {
         let (key, value) = (it.key.as_ref()?, it.value.as_ref()?);
-        let Some(Json::String(name)) = bun_lint::json::from_parsed(key) else {
-            return None;
-        };
+        let name = bun_lint::json::from_parsed(key)?.into_string()?;
         Some((Key { name, at: key.loc }, value))
     });
     Ok(entries.collect())
@@ -493,11 +491,11 @@ impl Feature {
             if matches!(self.table, As::Json(_)) {
                 continue;
             }
-            let text = match json_of(value)? {
-                Json::String(text) => text,
+            let text = match &mut json_of(value)? {
+                Json::String(text) => std::mem::take(text),
                 other => {
                     let mut text = Vec::new();
-                    write_json(&mut text, &other);
+                    write_json(&mut text, other);
                     text
                 }
             };
@@ -573,15 +571,11 @@ fn set_in_format(
 
 /// Parses one glob or an array of globs.
 fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, Refusal> {
-    let all: Vec<Vec<u8>> = match json_of(value)? {
-        Json::String(one) => vec![one],
+    let all: Vec<Vec<u8>> = match &mut json_of(value)? {
+        Json::String(one) => vec![std::mem::take(one)],
         Json::Array(all) => {
             Takes::Strings.check(value)?;
-            let text = |it| match it {
-                Json::String(text) => Some(text),
-                _ => None,
-            };
-            all.into_iter().filter_map(text).collect()
+            all.drain(..).filter_map(Json::into_string).collect()
         }
         _ => return expected("string or array", value),
     };
@@ -932,7 +926,7 @@ fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal>
 /// writable.
 fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     let one = |(name, value): (Key, &Expr)| {
-        let kind: &[u8] = match bun_lint::json::from_parsed(value) {
+        let kind: &[u8] = match &bun_lint::json::from_parsed(value) {
             Some(Json::Bool(true)) => b"writable",
             Some(Json::Bool(false)) => b"readonly",
             Some(Json::String(it)) if it == b"writable" => b"writable",

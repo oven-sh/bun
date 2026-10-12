@@ -3,7 +3,7 @@
 use super::scopes::ConfiguredGlobals;
 use crate::language::{Global, LanguageOptions, SourceType};
 use crate::linter::globals::config_globals_in_order;
-use crate::linter::write_json;
+use crate::linter::{write_json, write_json_with};
 use crate::options::Json;
 use crate::rule::Kind;
 use std::sync::Arc;
@@ -86,35 +86,12 @@ pub struct Configured {
 
 /// [`write_json`] that keeps an infinite number, which default options have: as a number too large for a double.
 fn write_option(out: &mut Vec<u8>, value: &Json) {
-    match value {
-        Json::Number(value) if value.is_infinite() => {
-            out.extend_from_slice(if *value > 0.0 { b"1e999" } else { b"-1e999" });
-        }
-        Json::Number(value) if value.is_nan() => out.extend_from_slice(b"{\"$number\":\"NaN\"}"),
-        Json::Array(items) => {
-            out.push(b'[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                write_option(out, item);
-            }
-            out.push(b']');
-        }
-        Json::Object(entries) => {
-            out.push(b'{');
-            for (i, (key, value)) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                write_json(out, &Json::String(key.clone()));
-                out.push(b':');
-                write_option(out, value);
-            }
-            out.push(b'}');
-        }
-        _ => write_json(out, value),
-    }
+    write_json_with(out, value, |out, number| match number {
+        f64::INFINITY => out.extend_from_slice(b"1e999"),
+        f64::NEG_INFINITY => out.extend_from_slice(b"-1e999"),
+        _ if number.is_nan() => out.extend_from_slice(b"{\"$number\":\"NaN\"}"),
+        _ => write_json(out, &Json::Number(number)),
+    });
 }
 
 impl Configured {

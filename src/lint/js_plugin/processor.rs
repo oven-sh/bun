@@ -282,9 +282,8 @@ impl Host<'_> {
         text: &[u8],
         lint: &mut (dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>> + Send),
     ) -> Result<Json, Vec<u8>> {
-        let Json::Array(mut parts) =
-            self.call_processor(vm, call::PREPROCESS, processor, path, text)?
-        else {
+        let returned = self.call_processor(vm, call::PREPROCESS, processor, path, text)?;
+        let Some(mut parts) = returned.into_array() else {
             return Err(OUT_OF_STEP.to_vec());
         };
         let (Some(found), Some(supports_autofix)) = (parts.pop(), parts.pop()) else {
@@ -294,15 +293,18 @@ impl Host<'_> {
         let Some(supports_autofix) = supports_autofix.as_bool() else {
             return Ok(Json::Array(vec![found]));
         };
-        let Json::Array(found) = found else {
+        let Some(found) = found.into_array() else {
             return Err(OUT_OF_STEP.to_vec());
         };
         let mut blocks = Vec::with_capacity(found.len());
-        for block in found {
-            blocks.push(match block {
-                Json::String(text) => Block::Unnamed(text),
-                Json::Array(parts) => match <[Json; 2]>::try_from(parts) {
-                    Ok([Json::String(path), Json::String(text)]) => Block::Named { path, text },
+        for mut block in found {
+            blocks.push(match &mut block {
+                Json::String(text) => Block::Unnamed(std::mem::take(text)),
+                Json::Array(parts) => match &mut parts[..] {
+                    [Json::String(path), Json::String(text)] => Block::Named {
+                        path: std::mem::take(path),
+                        text: std::mem::take(text),
+                    },
                     _ => return Err(OUT_OF_STEP.to_vec()),
                 },
                 _ => return Err(OUT_OF_STEP.to_vec()),

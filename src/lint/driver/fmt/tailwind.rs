@@ -112,9 +112,9 @@ fn key_of(class: &[u8]) -> Cow<'_, [u8]> {
     if strings::is_valid_utf8(class) {
         return Cow::Borrowed(class);
     }
-    match bun_lint::json::parse(&json_stringify_alloc(class)) {
-        Some(Json::String(key)) => Cow::Owned(key),
-        _ => Cow::Borrowed(class),
+    match bun_lint::json::parse(&json_stringify_alloc(class)).and_then(Json::into_string) {
+        Some(key) => Cow::Owned(key),
+        None => Cow::Borrowed(class),
     }
 }
 

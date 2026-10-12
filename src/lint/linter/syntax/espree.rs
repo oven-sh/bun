@@ -12,7 +12,7 @@
 mod early;
 pub(super) mod editions;
 
-use super::SyntaxError;
+use super::{Stage, SyntaxError};
 use crate::ast::{
     Expr, ExprTag, File, Func, Handle, Node, Param, Pat, PatTag, Stmt, StmtKind, StmtTag, VarKind,
 };
@@ -28,6 +28,7 @@ use bun_sema::hir::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 
 struct Checks<'a, 'c> {
     file: &'a File<'a>,
@@ -36,10 +37,12 @@ struct Checks<'a, 'c> {
     tops: Tops<'a>,
     /// The first error so far, and how far acorn has read when it throws it.
     first: Option<(u32, SyntaxError)>,
+    /// For oxc, which goes on after an error: all of them.
+    all: Vec<SyntaxError>,
     /// acorn notices what is being checked only when it has read this far.
     noticed: u32,
-    /// A module, or `impliedStrict`.
-    is_all_strict: bool,
+    /// A module, or `impliedStrict`. `None`: it is as oxc takes the file, which is asked where it matters.
+    is_all_strict: Option<bool>,
     /// The tree is whole: the parser has reported nothing.
     is_whole: bool,
     /// Only what Prettier refuses counts: see [`refusal_of_babel`].
@@ -108,8 +111,9 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
         candidates: None,
         tops: Tops::default(),
         first: None,
+        all: Vec::new(),
         noticed: 0,
-        is_all_strict: true,
+        is_all_strict: Some(true),
         is_whole: true,
         is_babel: false,
         is_oxc: false,
@@ -119,6 +123,7 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
         at: it.1.at,
         end: Diagnostic::NO_LENGTH,
         message: b"Unexpected token".to_vec(),
+        ..SyntaxError::default()
     })
 }
 
@@ -145,8 +150,14 @@ pub(super) fn module_syntax_in_commonjs<'a>(
     is_typescript: bool,
 ) -> Option<SyntaxError> {
     let tops = std::cell::RefCell::new(Tops::default());
-    let is_at_top_level =
-        |node: Node<'a>| !(tops.borrow_mut().outward(node)).any(|it| matches!(it, Node::Func(_)));
+    // oxc reads the parameters of an arrow function that isn't async in the context around it.
+    let is_at_top_level = |node: Node<'a>| {
+        let mut inner = node;
+        !(tops.borrow_mut().outward(node)).any(|it| {
+            let was_parameter = matches!(std::mem::replace(&mut inner, it), Node::Param(_));
+            matches!(it, Node::Func(func) if !(was_parameter && func.is_arrow() && !func.is_async()))
+        })
+    };
     let statement = (file.body().iter().find(is_module_syntax))
         .filter(|_| !is_typescript)
         .map(|it| {
@@ -188,6 +199,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
         at: first.0,
         end: first.1,
         message: first.2.into(),
+        ..SyntaxError::default()
     })
 }
 
@@ -208,8 +220,9 @@ pub(super) fn refusal_of_babel<'a>(
         candidates: candidates.as_ref(),
         tops: Tops::default(),
         first: None,
+        all: Vec::new(),
         noticed: 0,
-        is_all_strict: false,
+        is_all_strict: Some(false),
         is_whole: true,
         is_babel: true,
         is_oxc: false,
@@ -406,8 +419,9 @@ pub(super) fn first_error<'a>(
         candidates: None,
         tops: Tops::default(),
         first: None,
+        all: Vec::new(),
         noticed: 0,
-        is_all_strict: language.source_type == SourceType::Module || language.implied_strict,
+        is_all_strict: Some(language.source_type == SourceType::Module || language.implied_strict),
         is_whole: of_parser.is_none(),
         is_babel: false,
         is_oxc: false,
@@ -443,6 +457,7 @@ pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         at: first.span().start,
         end: first.span().end,
         message: b"'using' declarations are not allowed at the top level of a script".to_vec(),
+        ..SyntaxError::default()
     })
 }
 
@@ -461,27 +476,42 @@ pub(super) fn export_assignment_beside_exports<'a>(file: &'a File<'a>) -> Option
         end: assignment.span().end,
         message: b"An export assignment cannot be used in a module with other exported elements"
             .to_vec(),
-    })
+        ..SyntaxError::default()
+    }
+    .code(2309)
+    .help(Cow::Borrowed("If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement."))
+    .noticed_at(u32::MAX))
 }
 
 /// `for await` in a function that is not `async`, or in no function in a script, in the words of OXC. For a file that is CommonJS by
 /// its name see [`module_syntax_in_commonjs`].
-pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let is_refused = |it: &Stmt<'a>| {
-        matches!(it.kind(), StmtKind::ForOf { is_await: true, .. })
-            && match Node::Stmt(*it).enclosing_function() {
-                Some(func) => !func.is_async() && func.kind() != FnKind::StaticBlock,
-                None => is_script(file),
+pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+    let error = |it: Stmt<'a>| {
+        if !matches!(it.kind(), StmtKind::ForOf { is_await: true, .. }) {
+            return None;
+        }
+        let span = it.span();
+        match Node::Stmt(it).enclosing_function() {
+            Some(func) if func.kind() == FnKind::StaticBlock => {
+                let message = b"Cannot use 'for await' in class static initialization block";
+                return Some(SyntaxError::of_oxc(span, message.to_vec()));
             }
+            Some(func) if func.is_async() => return None,
+            None if !is_script(file) => return None,
+            _ => {}
+        }
+        let error = SyntaxError {
+            at: skip_trivia(file.text(), span.start + 3),
+            end: 0,
+            message: b"`for await` loops are only allowed within async functions and at the top levels of modules"
+                .to_vec(),
+            ..SyntaxError::default()
+        };
+        let help =
+            "Either remove this `await` or add the `async` keyword to the enclosing function";
+        Some(error.stage(Stage::Parser).help(Cow::Borrowed(help)))
     };
-    let refused = file.stmts_of_kind(StmtTag::ForOf).filter(is_refused);
-    let first = refused.map(|it| it.span().start).min()?;
-    Some(SyntaxError {
-        at: skip_trivia(file.text(), first + 3),
-        end: 0,
-        message: b"`for await` loops are only allowed within async functions and at the top levels of modules"
-            .to_vec(),
-    })
+    (file.stmts_of_kind(StmtTag::ForOf).filter_map(error)).collect()
 }
 
 /// `with` where the code is strict for OXC, and anywhere in TypeScript, in its words.
@@ -498,20 +528,17 @@ pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Option<SyntaxError>
         at: refused.map(|it| it.span().start).min()?,
         end: 0,
         message: b"'with' statements are not allowed".to_vec(),
+        ..SyntaxError::default()
     })
-}
-
-/// Whether the file has an `import` or an `export`.
-pub(super) fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
-    file.body().iter().any(|it| is_module_syntax(&it))
 }
 
 /// Those of the checks of [`first_error`] that OXC makes too, for a file that TypeScript's parser has nothing to say about: see
 /// [`super::oxc`]. OXC takes a file for a module if it has `import` or `export`.
-pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+pub(super) fn errors_of_oxc<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     // Of TypeScript `early_errors_of_oxc` asks for these only. Of JavaScript it asks for one expression in ten, which the
     // rules are about to want by kind anyway.
-    let kinds: &[ExprTag] = match file.has_rare_syntax(hir::rare::SUSPENDS_IN_PARAMETERS) {
+    let suspends = hir::rare::SUSPENDS_IN_PARAMETERS | hir::rare::SUSPENDS_IN_STATIC_BLOCK;
+    let kinds: &[ExprTag] = match file.has_rare_syntax(suspends) {
         true => &[
             ExprTag::PrivateIdentifier,
             ExprTag::Super,
@@ -535,33 +562,25 @@ pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> 
     });
     let mut checks = checks_of_oxc(file, candidates.as_ref());
     checks.early_errors_of_oxc();
-    checks.first.map(|it| it.1)
+    checks.all
 }
 
 /// Names that are keywords where they are, `eval` and `arguments` where they are written to, in JavaScript. In TypeScript OXC lets
 /// them pass in some of what is only declared, which acorn's checks know nothing about.
-///
-/// A file in which `arguments` is the only such name is not looked at. Many read it, and it takes a look at every name to see that
-/// none writes to it.
-pub(super) fn keywords_as_names_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let is_arguments = |&at: &u32| {
-        let text = file.text().get(at as usize..).unwrap_or_default();
-        text.starts_with(b"arguments")
-    };
-    let names = &file.hir.keyword_identifier_positions;
-    if !file.is_javascript() || names.iter().all(is_arguments) {
-        return None;
+pub(super) fn keywords_as_names_of_oxc<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+    if !file.is_javascript() || file.hir.keyword_identifier_positions.is_empty() {
+        return Vec::new();
     }
     let mut checks = checks_of_oxc(file, None);
     checks.keywords_as_names();
-    checks.first.map(|it| it.1)
+    checks.all
 }
 
 /// Those of them that OXC's parser makes itself. oxfmt runs nothing but the parser.
 pub(super) fn first_error_of_oxc_parser<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let mut checks = checks_of_oxc(file, None);
     checks.early_errors_of_oxc_parser();
-    checks.first.map(|it| it.1)
+    checks.all.into_iter().min_by_key(|it| it.at)
 }
 
 fn checks_of_oxc<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) -> Checks<'a, 'c> {
@@ -570,8 +589,9 @@ fn checks_of_oxc<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>)
         candidates,
         tops: Tops::default(),
         first: None,
+        all: Vec::new(),
         noticed: 0,
-        is_all_strict: has_module_syntax(file),
+        is_all_strict: None,
         // Nothing is asked of the scopes, to which a file is a module whatever is in it.
         is_whole: false,
         is_babel: false,
@@ -606,9 +626,23 @@ impl<'a, 'c> Checks<'a, 'c> {
         {
             return;
         }
+        if self.is_oxc {
+            return self.all.push(SyntaxError {
+                at,
+                end,
+                message,
+                ..SyntaxError::default()
+            });
+        }
         let noticed = self.noticed.max(at);
         if self.first.as_ref().is_none_or(|it| noticed < it.0) {
-            self.first = Some((noticed, SyntaxError { at, end, message }));
+            let error = SyntaxError {
+                at,
+                end,
+                message,
+                ..SyntaxError::default()
+            };
+            self.first = Some((noticed, error));
         }
     }
 
@@ -675,7 +709,7 @@ impl<'a, 'c> Checks<'a, 'c> {
 
     /// Whether a check for oxc has nothing to look for: the parser has not seen `bit` of `hir::rare`. The checks for acorn and
     /// Babel look at every file.
-    fn lacks(&self, bit: u8) -> bool {
+    fn lacks(&self, bit: u32) -> bool {
         self.is_oxc && !self.file.has_rare_syntax(bit)
     }
 
@@ -687,11 +721,17 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
+    /// All of the file is strict. oxc goes by the name of the file too: `.mjs` and `.mts` are modules whatever is in them.
+    fn is_all_strict(&self) -> bool {
+        self.is_all_strict
+            .unwrap_or_else(|| source_type(self.file) == SourceType::Module)
+    }
+
     /// Whether the code at `node` is strict.
     fn is_strict(&self, node: Node<'a>) -> bool {
         // What is only wrong in strict mode does not keep Prettier from formatting.
         !self.is_babel
-            && (self.is_all_strict
+            && (self.is_all_strict()
                 || match self.is_oxc {
                     true => is_strict_mode(node.scope(), self.file),
                     false => self.is_whole && node.scope().is_strict(),
@@ -981,7 +1021,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                     let keyword = self.before_token(at);
                     if is_after_export(self, keyword) {
                         self.unexpected(keyword);
-                    } else if argument == b"enum" || self.is_all_strict {
+                    } else if argument == b"enum" || self.is_all_strict() {
                         self.reserved(keyword);
                     } else {
                         self.unexpected(at);
@@ -1111,7 +1151,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             return;
         }
         // Code is strict in a module, after a directive, and in a class.
-        if !self.is_all_strict
+        if !self.is_all_strict()
             && (!(self.is_whole || self.is_oxc)
                 || !file.has_classes() && !file.mentions("use strict"))
         {
@@ -1125,12 +1165,20 @@ impl<'a, 'c> Checks<'a, 'c> {
             else {
                 continue;
             };
-            let is_name = matches!(
-                file.hir.exprs.get(operand.idx()).map(|it| it.kind),
-                Some(hir::ExprKind::Ident(_))
-            );
-            if is_name && self.is_strict(Node::Expr(it)) {
-                self.fail(it.span().start, "Deleting local variable in strict mode");
+            let Some(&hir::Expr {
+                kind: hir::ExprKind::Ident(_),
+                pos,
+                ..
+            }) = file.hir.exprs.get(operand.idx())
+            else {
+                continue;
+            };
+            match self.is_strict(Node::Expr(it)) {
+                true if self.is_oxc => {
+                    self.fail(pos, "Delete of an unqualified identifier in strict mode.")
+                }
+                true => self.fail(it.span().start, "Deleting local variable in strict mode"),
+                false => {}
             }
         }
         if !file.hir.with_bodies.is_empty() && !self.is_oxc {
@@ -1151,7 +1199,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                 && matches!(it.code, 1121 | 1487 | 1488 | 1489)
         };
         for it in file.hir.diagnostics.iter().filter(is_octal) {
-            let is_strict = self.is_all_strict
+            let is_strict = self.is_all_strict()
                 || (self.is_whole || self.is_oxc)
                     && (file.scopes())
                         .filter(|scope| scope.span().contains_offset(it.start))
@@ -1266,6 +1314,10 @@ impl<'a, 'c> Checks<'a, 'c> {
         } else if name == known::r#await && is_in_static_block {
             "Cannot use await in class static initialization block"
         } else if name == known::r#await && self.source_type() == SourceType::Module {
+            if self.is_oxc {
+                self.reserved(at);
+                return true;
+            }
             "Cannot use keyword 'await' outside an async function"
         } else if name == known::r#await
             || name == known::eval

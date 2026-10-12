@@ -100,7 +100,7 @@ pub struct FixReport {
 }
 
 fn is_fatal(result: &LintResult) -> bool {
-    matches!(&result.messages[..], [only] if only.is_fatal)
+    !result.messages.is_empty() && result.messages.iter().all(|it| it.is_fatal)
 }
 
 /// The text cannot be parsed. What is said about a comment with a configuration that cannot be read is fatal, too.

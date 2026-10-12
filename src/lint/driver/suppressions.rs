@@ -75,7 +75,8 @@ impl Suppressions {
             }
             read => read.ok(),
         };
-        let Some(Json::Object(files)) = text.and_then(|text| bun_lint::json::parse(&text)) else {
+        let parsed = text.and_then(|text| bun_lint::json::parse(&text));
+        let Some(files) = parsed.and_then(Json::into_object) else {
             return Err(Fatal(
                 [b"Failed to parse suppressions file at ", path].concat(),
             ));

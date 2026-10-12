@@ -2,6 +2,7 @@
 //! speculation, names and lists.
 
 mod class;
+mod declared;
 mod expr;
 mod flow;
 mod func;
@@ -10,6 +11,7 @@ pub(crate) mod jsdoc;
 mod json;
 mod jsx;
 mod module;
+mod oxc;
 mod pattern;
 mod recover;
 mod reparse;
@@ -22,6 +24,7 @@ use crate::{Options, Parsed, Refusal, Refused, Scratch};
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
+pub(crate) use declared::Declared;
 pub(crate) use recover::ListKind;
 pub use recover::keyword_suggestion;
 
@@ -47,6 +50,8 @@ pub(crate) mod ctx {
     pub(crate) const NO_ANONYMOUS_FUNCTION_TYPE: u32 = 1 << 8;
     /// In Flow: `A { }` is no record expression. The `{` is that of the class that extends `A`.
     pub(crate) const NO_RECORD: u32 = 1 << 9;
+    /// The node is in the `extends` clause of a conditional type.
+    pub(crate) const CONDITIONAL_EXTENDS: u32 = 1 << 10;
 }
 
 macro_rules! stacks {
@@ -157,6 +162,7 @@ pub(crate) struct Checkpoint {
     classes_around: u32,
     has_top_level_await: bool,
     unclaimed_nullable_types: u32,
+    declared: declared::Mark,
     jsdoc: jsdoc::Lens,
 }
 
@@ -194,8 +200,15 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     pub(crate) cleared_in_types: u32,
     /// How many `await` and `yield` expressions have been made.
     pub(crate) suspensions: u32,
+    /// `Dialect::oxc`, in a TypeScript file: see `oxc.rs`.
+    is_typescript_for_oxc: bool,
+    /// With `reports_like_oxc`: the class that is being parsed has an abstract member, or a method without a body.
+    pub(crate) has_odd_members: bool,
+    /// How many parameters have had a modifier, a `?` or `...`. It only grows.
+    pub(crate) odd_parameters: u32,
     /// The private names that the classes declare.
     pub(crate) declared_private_names: Vec<Atom>,
+    pub(crate) declared: Declared,
     pub(crate) has_top_level_await: bool,
     /// One of them can be nothing else: `await a`, `for await`, `await using`. Not `await (a)`, which calls `await` in a script.
     pub(crate) has_plain_top_level_await: bool,
@@ -275,6 +288,7 @@ struct Seed<'a> {
     lx: Lexer<'a>,
     file: FileBuilder,
     stacks: Stacks,
+    declared: Declared,
     options: Options,
     jsdoc: jsdoc::State,
 }
@@ -283,6 +297,7 @@ struct Seed<'a> {
 struct Harvest<'a> {
     lx: Lexer<'a>,
     stacks: Stacks,
+    declared: Declared,
     has_top_level_await: bool,
     has_plain_top_level_await: bool,
 }
@@ -306,6 +321,8 @@ pub(crate) fn run<'a>(
     let mut file = recycled_file(&mut f);
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
+    let mut declared = std::mem::take(&mut scratch.declared);
+    declared.begin(text.len(), options.dialect.oxc, options.is_javascript);
     let mut lx = Lexer::new(text, atoms, &mut scratch.names);
     lx.is_jsx = options.is_jsx;
     lx.recovers = options.recovers;
@@ -321,12 +338,14 @@ pub(crate) fn run<'a>(
         lx,
         file,
         stacks,
+        declared,
         options,
         jsdoc,
     };
     let Harvest {
         lx,
         stacks,
+        declared,
         has_top_level_await,
         has_plain_top_level_await,
     } = match is_general {
@@ -337,6 +356,7 @@ pub(crate) fn run<'a>(
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
     f.comments = lx.comments;
     scratch.stacks = stacks;
+    scratch.declared = declared;
     scratch.html_opens = lx.html_opens;
     scratch.has_only_ambiguous_awaits = has_top_level_await && !has_plain_top_level_await;
     if let Some(why) = refusal {
@@ -383,6 +403,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             lx,
             file,
             stacks,
+            declared,
             options,
             jsdoc,
         } = seed;
@@ -423,7 +444,11 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
                 false => ctx::YIELD | ctx::AWAIT,
             },
             suspensions: 0,
+            is_typescript_for_oxc: options.dialect.oxc && !options.is_javascript,
+            has_odd_members: false,
+            odd_parameters: 0,
             declared_private_names: Vec::new(),
+            declared,
             has_top_level_await: false,
             has_plain_top_level_await: false,
             has_await_in_statement: false,
@@ -456,10 +481,12 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         if scanned.iter().any(|it| !declared.contains(it)) {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
         }
+        self.note_odd_exports();
         *file = self.f;
         Harvest {
             lx: self.lx,
             stacks: self.s,
+            declared: self.declared,
             has_top_level_await: self.has_top_level_await,
             has_plain_top_level_await: self.has_plain_top_level_await,
         }
@@ -519,6 +546,10 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             self.end_of_file_jsdoc(reparsed);
         }
         self.f.body = self.take_ids(base);
+        if self.options.is_declaration_file && self.reports_like_oxc() {
+            let body = self.f.body;
+            oxc::statements_in_ambient_context(&mut self.f, body);
+        }
         self.take_errors_of_scanner();
         if self.reads_jsdoc() {
             self.finish_jsdoc();
@@ -847,6 +878,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             classes_around: self.classes_around,
             has_top_level_await: self.has_top_level_await,
             unclaimed_nullable_types: self.unclaimed_nullable_types,
+            declared: self.declared.mark(),
             jsdoc,
         }
     }
@@ -860,6 +892,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         self.classes_around = to.classes_around;
         self.has_top_level_await = to.has_top_level_await;
         self.unclaimed_nullable_types = to.unclaimed_nullable_types;
+        self.declared.rollback(to.declared);
         if self.reads_jsdoc() {
             self.rollback_jsdoc(to);
         }

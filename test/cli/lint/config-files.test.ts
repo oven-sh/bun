@@ -2872,6 +2872,29 @@ describe.concurrent("an .oxlintrc.json", () => {
     ).toEqual([1, 1, 1, 3, 1, 3, 3, null, null]);
   });
 
+  // Each count is what oxlint 1.87 prints. The rules run on the files of the override in both tools: only the count leaves them out.
+  test("number_of_rules leaves out what categories turn on for a plugin that only an override has", async () => {
+    const base = {
+      plugins: ["unicorn", "typescript", "import"],
+      categories: { correctness: "warn", suspicious: "warn" },
+    };
+    const count = async (config: object) => {
+      const files = { ".oxlintrc.json": JSON.stringify(config), "a.ts": "debugger;\n", "a.test.ts": "debugger;\n" };
+      return JSON.parse((await lint(files, ["-f", "json"])).raw).number_of_rules;
+    };
+    const named = { "jest/no-focused-tests": "error" };
+    expect(
+      await Promise.all([
+        count(base),
+        count({ ...base, overrides: [{ files: ["*.test.ts"], plugins: ["jest"] }] }),
+        count({ ...base, overrides: [{ files: ["*.test.ts"], plugins: ["jest"], rules: named }] }),
+        count({ ...base, overrides: [{ files: ["*.nothing"], plugins: ["jest"], rules: named }] }),
+        count({ ...base, overrides: [{ files: ["*.ts"], plugins: ["jest", "react"] }] }),
+        count({ overrides: [{ files: ["*.test.ts"], plugins: ["jest"] }] }),
+      ]),
+    ).toEqual([116, 116, 117, 117, 116, 96]);
+  });
+
   test("a comment that disables a rule which does not run on the file is unused, as for oxlint", async () => {
     const { problems } = await lint(
       {

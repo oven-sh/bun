@@ -354,6 +354,10 @@ fn limit_of_the_groups() -> Option<usize> {
 /// The memory budget for all VMs together: half of what's available on the machine or in the container. A linter shouldn't take
 /// over the machine.
 fn memory_for_engines() -> usize {
+    // How much happens to be free on the machine that runs a test must not decide the test.
+    if let Some(said) = memory_a_test_says() {
+        return said / 2;
+    }
     // macOS always reports next to nothing as free.
     let free = match cfg!(any(target_os = "linux", windows)) {
         true => crate::node::os::freemem() as usize,
@@ -366,10 +370,13 @@ fn memory_for_engines() -> usize {
     }) / 2
 }
 
+fn memory_a_test_says() -> Option<usize> {
+    bun_core::getenv_z(bun_core::zstr!("BUN_LINT_MEMORY")).and_then(limit_in)
+}
+
 /// Total memory of the machine or the container. Tests override it with `BUN_LINT_MEMORY`.
 pub(super) fn memory() -> usize {
-    let said = bun_core::getenv_z(bun_core::zstr!("BUN_LINT_MEMORY"));
-    said.and_then(limit_in).unwrap_or_else(|| {
+    memory_a_test_says().unwrap_or_else(|| {
         let machine = bun_core::get_total_memory_size();
         limit_of_the_groups().map_or(machine, |it| it.min(machine))
     })

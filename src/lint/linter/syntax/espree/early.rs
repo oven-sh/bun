@@ -93,19 +93,17 @@ impl<'a> Checks<'a, '_> {
     /// decorators, `accessor` and `import defer`, and it lets much pass that acorn does not.
     pub(super) fn early_errors_of_oxc(&mut self) {
         self.early_errors_of_oxc_parser();
-        // In TypeScript `a as T` can be assigned to.
-        if self.file.is_javascript() {
-            self.assignment_targets();
-        }
         self.regular_expressions();
         self.defaults_that_suspend(true);
+        self.suspensions_in_static_blocks();
         self.jumps();
         self.labels();
         // Nearly no file has any of what the rest looks for, and nothing in a declaration file runs.
         let file = self.file;
         let (kinds, counts) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
         let has_none = |tag: ExprTag| counts.get(2 * tag as usize) == Some(&0);
-        let has_nothing_rare = !file.has_rare_syntax(!rare::SUSPENDS_IN_PARAMETERS)
+        // The bits from 16 on are for other checks.
+        let has_nothing_rare = !file.has_rare_syntax(0xffff & !rare::SUSPENDS_IN_PARAMETERS)
             && kinds.len() == file.hir.exprs.len()
             && has_none(ExprTag::Super)
             && has_none(ExprTag::NewTarget)
@@ -1169,6 +1167,34 @@ impl<'a> Checks<'a, '_> {
                         self.fail(span.start, message);
                     }
                 }
+            }
+        }
+    }
+
+    /// For oxc: `await` and `await using` in a static block. A function in the block starts anew.
+    fn suspensions_in_static_blocks(&mut self) {
+        if self.lacks(rare::SUSPENDS_IN_STATIC_BLOCK) {
+            return;
+        }
+        let is_in_block = |node: Node<'a>| {
+            let function = node.enclosing_function();
+            function.is_some_and(|it| it.kind() == FnKind::StaticBlock)
+        };
+        for it in self.exprs_of(ExprTag::Await) {
+            if is_in_block(Node::Expr(it)) {
+                let start = it.span().start;
+                let keyword = crate::span::Span::new(start, start + 5);
+                let message = b"Cannot use await in class static initialization block";
+                self.fail_for(keyword, message.to_vec());
+            }
+        }
+        for it in self.file.stmts_of_kind(StmtTag::Var) {
+            let first = it.as_var().and_then(|it| it.first());
+            if first.is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)
+                && is_in_block(Node::Stmt(it))
+            {
+                let message = b"Cannot use 'await using' in class static initialization block";
+                self.fail_for(it.span(), message.to_vec());
             }
         }
     }

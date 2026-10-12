@@ -19,9 +19,14 @@ pub(crate) struct Run {
     pub(crate) seconds: f64,
 }
 
-/// `eslint(no-debugger)`, `typescript(no-explicit-any)`
+/// `eslint(no-debugger)`, `typescript(no-explicit-any)`, `TS(1038)`
 pub(super) fn code(message: &LintMessage) -> Option<Vec<u8>> {
-    let rule = message.rule_id.as_ref()?;
+    let Some(rule) = message.rule_id.as_ref() else {
+        let code = message.details.as_ref().map(|it| it.typescript_code);
+        return code
+            .filter(|it| *it != 0)
+            .map(|it| format!("TS({it})").into_bytes());
+    };
     let id = rule.to_vec();
     let (plugin, name) = parse_rule_id(&id);
     Some([scope_of(rule, plugin), b"(", name, b")"].concat())

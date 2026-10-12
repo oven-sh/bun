@@ -1292,7 +1292,7 @@ impl<'c> Legacy<'_, '_, 'c> {
             rules: part(b"rules"),
             settings: part(b"settings"),
         });
-        let Some(Json::Array(mut overrides)) = take(json, b"overrides") else {
+        let Some(mut overrides) = take(json, b"overrides").and_then(Json::into_array) else {
             return Ok(());
         };
         for (index, item) in overrides.iter_mut().enumerate() {

@@ -133,7 +133,7 @@ impl Settings {
         if !value.trim_ascii_start().starts_with(b"[") {
             return Ok(Some(vec![value.to_vec()]));
         }
-        let Some(Json::Array(items)) = bun_lint::json::parse(value) else {
+        let Some(items) = bun_lint::json::parse(value).and_then(Json::into_array) else {
             return Err(invalid(name, value));
         };
         let strings: Option<Vec<Vec<u8>>> = items

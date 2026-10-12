@@ -27,6 +27,11 @@ impl<P: AsRef<[u8]>> Prepared<P> {
         self.pattern.as_ref()
     }
 
+    /// What `new` was given.
+    pub fn source(&self) -> &P {
+        &self.pattern
+    }
+
     /// Answers like [`r#match`].
     pub fn r#match(&self, path: &[u8]) -> MatchResult {
         let pattern = self.pattern.as_ref();

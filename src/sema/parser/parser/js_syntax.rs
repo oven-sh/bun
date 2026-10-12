@@ -211,7 +211,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         match member.kind {
             MemberKind::IndexSignature => self.check_js_decorators(member.modifiers, false),
-            kind => self.check_js_modifiers(member.modifiers, kind == MemberKind::Constructor),
+            // oxc takes a decorator before a constructor.
+            kind => self.check_js_modifiers(
+                member.modifiers,
+                kind == MemberKind::Constructor && !self.options.dialect.oxc,
+            ),
         }
     }
 }

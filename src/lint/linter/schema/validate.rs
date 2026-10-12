@@ -61,8 +61,8 @@ pub(super) struct SchemaError {
 pub(super) struct Validator<'s> {
     pub(super) root: &'s Json,
     pub(super) errors: Vec<SchemaError>,
-    /// Path from the root to the value being checked.
-    pub(super) at: Vec<Step>,
+    /// The data is nested deeper than the stack has room for. Whatever else the validator says doesn't count.
+    pub(super) is_out_of_stack: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -95,16 +95,29 @@ fn has_type(data: &Json, name: &[u8]) -> bool {
 
 /// `fast-deep-equal`, and the opposite of ESLint's `containsDifferentProperty`: equal, whatever the order of the keys.
 pub(in crate::linter) fn is_equal(a: &Json, b: &Json) -> bool {
-    match (a, b) {
-        (Json::Array(a), Json::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| is_equal(a, b))
+    let mut unseen = Vec::new();
+    let mut pair = (a, b);
+    loop {
+        match pair {
+            (Json::Array(a), Json::Array(b)) if a.len() == b.len() => {
+                unseen.extend(a.iter().zip(b));
+            }
+            (Json::Object(a), Json::Object(entries)) if a.len() == entries.len() => {
+                for (key, a) in a {
+                    match pair.1.get(key) {
+                        Some(b) => unseen.push((a, b)),
+                        None => return false,
+                    }
+                }
+            }
+            (Json::Array(_) | Json::Object(_), _) => return false,
+            (a, b) if a != b => return false,
+            _ => {}
         }
-        (Json::Object(a), Json::Object(_)) => {
-            a.len() == b.as_object().map_or(0, <[_]>::len)
-                && a.iter()
-                    .all(|(key, a)| b.get(key).is_some_and(|b| is_equal(a, b)))
+        match unseen.pop() {
+            Some(next) => pair = next,
+            None => return true,
         }
-        _ => a == b,
     }
 }
 
@@ -204,9 +217,15 @@ impl<'s> Validator<'s> {
     fn error(&mut self, cx: Context, data: &Json, why: Why, message: &[&[u8]]) -> bool {
         if cx.makes_errors {
             self.errors.push(SchemaError {
-                path: self.at.clone(),
+                path: Vec::new(),
                 why,
-                data: data.clone(),
+                // An error is made at every level of the data under `anyOf`, and most are forgotten again. So an array or an
+                // object is only copied at the end, by `validate`. Ajv has a reference here, too.
+                data: match data {
+                    Json::Array(_) => Json::Array(Vec::new()),
+                    Json::Object(_) => Json::Object(Vec::new()),
+                    data => data.clone(),
+                },
                 message: message.concat(),
                 additional_property: None,
             });
@@ -236,19 +255,37 @@ impl<'s> Validator<'s> {
             is_composite: false,
             makes_errors: true,
         };
-        self.check(schema, data, cx)
+        let is_valid = self.check(schema, data, cx);
+        for error in &mut self.errors {
+            error.path.reverse();
+            let found = error.path.iter().try_fold(&*data, |at, step| match step {
+                Step::Index(index) => at.as_array()?.get(*index),
+                Step::Key(key) => at.get(key),
+            });
+            if let (Json::Array(_) | Json::Object(_), Some(found)) = (&error.data, found) {
+                error.data = found.clone();
+            }
+        }
+        is_valid
     }
 
-    /// Runs [`Validator::check`] on a child value, one `step` below the current one.
-    fn check_in(&mut self, step: Step, schema: &'s Json, data: &mut Json, cx: Context) -> bool {
-        self.at.push(step);
+    /// Runs [`Validator::check`] on a child value, one `step` below the current one. The errors from there get their paths
+    /// from the end to the start, a step at each level that they are passed up through.
+    fn check_in(&mut self, step: &Step, schema: &'s Json, data: &mut Json, cx: Context) -> bool {
+        let errors_before = self.errors.len();
         let is_valid = self.check(schema, data, cx);
-        self.at.pop();
+        for error in self.errors.iter_mut().skip(errors_before) {
+            error.path.push(step.clone());
+        }
         is_valid
     }
 
     fn check(&mut self, schema: &'s Json, data: &mut Json, cx: Context) -> bool {
-        if !bun_core::StackCheck::init().is_safe_to_recurse() || schema.as_object().is_none() {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            self.is_out_of_stack = true;
+            return true;
+        }
+        if schema.as_object().is_none() {
             return true;
         }
         // Next to `$ref`, other keywords are ignored.
@@ -438,7 +475,7 @@ impl<'s> Validator<'s> {
                         .get(i)
                         .or_else(|| additional.filter(|it| it.as_object().is_some()));
                     if let Some(item_schema) = item_schema
-                        && !self.check_in(Step::Index(i), item_schema, item, cx)
+                        && !self.check_in(&Step::Index(i), item_schema, item, cx)
                     {
                         return false;
                     }
@@ -449,7 +486,7 @@ impl<'s> Validator<'s> {
                     return true;
                 };
                 for (i, item) in items.iter_mut().enumerate() {
-                    if !self.check_in(Step::Index(i), item_schema, item, cx) {
+                    if !self.check_in(&Step::Index(i), item_schema, item, cx) {
                         return false;
                     }
                 }
@@ -638,7 +675,7 @@ impl<'s> Validator<'s> {
         if let Some(additional @ Json::Object(_)) = additional {
             for (key, value) in entries.iter_mut() {
                 if is_additional(key)
-                    && !self.check_in(Step::Key(key.clone()), additional, value, cx)
+                    && !self.check_in(&Step::Key(key.clone()), additional, value, cx)
                 {
                     return false;
                 }
@@ -647,7 +684,7 @@ impl<'s> Validator<'s> {
         for (key, property) in properties.iter().filter(|it| has_rules(&it.1)) {
             match entries.iter_mut().find(|it| it.0 == *key) {
                 Some((_, value)) => {
-                    if !self.check_in(Step::Key(key.clone()), property, value, cx) {
+                    if !self.check_in(&Step::Key(key.clone()), property, value, cx) {
                         return false;
                     }
                 }
@@ -663,7 +700,7 @@ impl<'s> Validator<'s> {
         for (regex, property) in &patterns {
             for (key, value) in entries.iter_mut() {
                 if regex.as_ref().is_some_and(|regex| regex.test(key))
-                    && !self.check_in(Step::Key(key.clone()), property, value, cx)
+                    && !self.check_in(&Step::Key(key.clone()), property, value, cx)
                 {
                     return false;
                 }

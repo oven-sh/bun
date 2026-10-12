@@ -665,7 +665,7 @@ impl<'e> Host<'e> {
             if kind == result::DONE && content.is_empty() {
                 return Ok((reported.take(), Vec::new()));
             }
-            let Some(Json::Array(parts)) = crate::json::parse(content) else {
+            let Some(parts) = crate::json::parse(content).and_then(Json::into_array) else {
                 return Err(OUT_OF_STEP.to_vec().into());
             };
             match kind {

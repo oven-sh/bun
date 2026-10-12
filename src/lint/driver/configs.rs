@@ -511,12 +511,12 @@ fn check_extends_of_program(config: &Json) -> Result<(), Vec<u8>> {
 }
 
 /// `preprocessConfig` under `--no-ignore`: an object that only has `ignores` loses them.
-fn without_global_ignores(json: Json) -> Json {
-    match json {
+fn without_global_ignores(mut json: Json) -> Json {
+    match &mut json {
         Json::Array(items) if bun_core::StackCheck::init().is_safe_to_recurse() => {
-            Json::Array(items.into_iter().map(without_global_ignores).collect())
+            Json::Array(items.drain(..).map(without_global_ignores).collect())
         }
-        Json::Object(mut entries) => {
+        Json::Object(entries) => {
             let is_meta = |key: &[u8]| matches!(key, b"name" | b"basePath");
             let is_ignores = |key: &[u8]| matches!(key, b"ignores" | b"$ignorePatterns");
             if entries.iter().any(|it| is_ignores(&it.0))
@@ -524,9 +524,9 @@ fn without_global_ignores(json: Json) -> Json {
             {
                 entries.retain(|it| !is_ignores(&it.0));
             }
-            Json::Object(entries)
+            json
         }
-        json => json,
+        _ => json,
     }
 }
 
@@ -930,10 +930,7 @@ impl<'l> Loader<'l> {
         let last = alone.map(|alone| Override {
             files: vec![b"**/*".to_vec()],
             rules: rules_of(alone),
-            globals: match globals_of(alone) {
-                Some(Json::Object(globals)) => globals,
-                _ => Vec::new(),
-            },
+            globals: (globals_of(alone).and_then(Json::into_object)).unwrap_or_default(),
             ..Override::default()
         });
         let last = last.filter(|it| !it.rules.is_empty() || !it.globals.is_empty());

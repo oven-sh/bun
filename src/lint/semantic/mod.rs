@@ -1073,6 +1073,11 @@ impl<'a> File<'a> {
         Scope::new(self, ScopeId(0))
     }
 
+    /// The scope that a name written at `pos` is declared in.
+    pub(crate) fn scope_at(&'a self, pos: u32) -> Scope<'a> {
+        Scope::new(self, ScopeId(self.scope_tree().scope_at(pos)))
+    }
+
     /// The scope of what is declared at the top level: the `Module` scope, the `Function` scope of
     /// CommonJS, or for a script the global scope.
     pub fn top_level_scope(&'a self) -> Scope<'a> {

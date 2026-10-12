@@ -52,6 +52,7 @@ pub use fixer::{
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
+pub(crate) use message::write_json_with;
 pub use message::{
     Data, Details, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind,
     Utf16Offsets, write_json, write_json_indented,
@@ -69,8 +70,8 @@ pub use resolved::{
 use resolved::{Prepared, Slot};
 pub use schema::{OptionMistake, Step, mistake_in_options, schema_and_defaults};
 pub use syntax::{
-    Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, refusal_of_oxfmt,
-    refusal_of_prettier, refused_by_prettier_with,
+    Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, parse_errors,
+    refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;
@@ -455,7 +456,8 @@ impl<S: RuleSet> Linter<S> {
     ) -> LintResult {
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
-        if let Some(fatal) = parse_error(file) {
+        let mut fatal = parse_errors(file);
+        if !fatal.is_empty() {
             let is_oxlint = file.language().is_oxlint;
             if is_oxlint && syntax::is_flow(file) {
                 return LintResult::default();
@@ -464,11 +466,11 @@ impl<S: RuleSet> Linter<S> {
             // passes on all that it reports. Here that is so where the tree is whole: the error is an early one.
             if !is_oxlint || file.types.is_none() || file.has_parse_errors() {
                 return LintResult {
-                    messages: vec![fatal],
+                    messages: fatal,
                     ..LintResult::default()
                 };
             }
-            problems.push(fatal);
+            problems.append(&mut fatal);
         }
         let is_refused = !problems.is_empty();
         let mut result = LintResult::default();
@@ -1088,6 +1090,7 @@ fn to_message(
                 labels: it.labels.into_iter().map(place).collect(),
                 help: it.help,
                 note: it.note,
+                typescript_code: 0,
             })
         }),
         constant_help: diagnostic.constant_help,

@@ -754,7 +754,7 @@ impl Reader<'_> {
             }
         }
         for extension in extensions {
-            let Json::Object(mut entries) = extension else {
+            let Some(mut entries) = extension.into_object() else {
                 return Err(ConfigError::new(&[b"Unexpected non-object config."]));
             };
             if entries.iter().any(|it| it.0 == b"basePath") {

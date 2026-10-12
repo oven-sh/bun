@@ -8,7 +8,6 @@
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_glob::{Candidate, Pattern};
-use bun_lint::options::Json;
 
 /// What a property is set to.
 #[derive(Clone, PartialEq)]
@@ -246,10 +245,9 @@ impl Value {
             // `String(value)`
             b"null" => Value::Text(written.to_vec()),
             _ => {
-                let string = || match is_one_string(written).then(|| bun_lint::json::parse(written))
-                {
-                    Some(Some(Json::String(text))) => Some(Value::Text(text)),
-                    _ => None,
+                let string = || {
+                    let parsed = is_one_string(written).then(|| bun_lint::json::parse(written));
+                    parsed??.into_string().map(Value::Text)
                 };
                 let as_written = || match is_known {
                     true => Value::Text(written.to_ascii_lowercase()),

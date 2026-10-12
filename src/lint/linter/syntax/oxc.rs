@@ -7,16 +7,22 @@
 //! All of this runs on every file, and nearly no file has such an error. So nothing here walks the expressions of a file in
 //! which no cheap sign says that there is something to find, or asks for them by kind.
 
-use super::{SyntaxError, espree};
-use crate::ast::{Class, Expr, File, Func, Handle, Module, Node, Param, StmtTag};
+mod names;
+mod targets;
+
+use super::{Stage, SyntaxError, espree, oxc_typescript};
+use crate::ast::{Class, Expr, File, FnBody, Func, Handle, Module, Node, Param, StmtTag};
+use crate::language::SourceType;
+use crate::span::Span;
 use crate::tokens::token_len;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ClassOwner, Parent};
 use bun_sema::hir::{
-    DiagnosticKind, ExprKind, Flags, FnKind, Modifier, ModifierKind, ModuleId, ParamId, PatKind,
-    StmtId, StmtKind, VarKind,
+    Diagnostic, DiagnosticKind, ExprKind, Flags, FnKind, Modifier, ModifierKind, ModuleId, ParamId,
+    PatKind, StmtId, StmtKind, VarKind,
 };
 use smallvec::SmallVec;
+use std::borrow::Cow;
 
 fn is_keyword(modifier: &Modifier, flag: Flags) -> bool {
     modifier.kind == ModifierKind::Keyword(flag)
@@ -60,7 +66,60 @@ fn error_of_grammar<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         at: first.start,
         end: first.end,
         message,
+        ..SyntaxError::default()
     })
+}
+
+/// Each `await` outside an async function and each `yield` outside a generator. The parser notes them for OXC, whose parser
+/// reports them.
+fn misplaced_suspensions<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+    let hir = &file.hir;
+    let is_in_body = |at: u32| {
+        let functions = (0..hir.fns.len() as u32).map(|it| Func::from_raw(file, it));
+        let bodies = functions.filter_map(|it| match it.body() {
+            _ if it.kind() == FnKind::StaticBlock || !it.is_in_tree() => None,
+            FnBody::Expr(body) => Some(body.span()),
+            _ => it.body_span(),
+        });
+        let statements = hir
+            .modules
+            .iter()
+            .filter_map(|it| hir.stmts.get(it.stmt.idx()));
+        let namespaces = statements.map(|it| Span::new(it.start, it.loc.end));
+        bodies
+            .chain(namespaces)
+            .any(|it| it.start <= at && at < it.end)
+    };
+    // A file that can still turn out to be a module may have an `await` outside every function and namespace.
+    let can_be_module = crate::utils::oxlint::is_either(file);
+    let misplaced = hir.diagnostics.iter().filter(|it| {
+        it.kind == DiagnosticKind::Grammar
+            && match it.code {
+                1163 => true,
+                1308 => !can_be_module || is_in_body(it.start),
+                _ => false,
+            }
+    });
+    let error = |it: &Diagnostic| {
+        let (message, help): (&[u8], _) = match it.code {
+            1163 => (
+                b"A 'yield' expression is only allowed in a generator body.",
+                "Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+            ),
+            _ => (
+                b"`await` is only allowed within async functions and at the top levels of modules",
+                "Either remove this `await` or add the `async` keyword to the enclosing function",
+            ),
+        };
+        let error = SyntaxError {
+            at: it.start,
+            end: 0,
+            message: message.to_vec(),
+            ..SyntaxError::default()
+        };
+        error.stage(Stage::Parser).help(Cow::Borrowed(help))
+    };
+    misplaced.map(error).collect()
 }
 
 /// The statement in whose head the list of declarations `statement` is: a `for`, a `for-in` or a `for-of`.
@@ -88,6 +147,7 @@ fn declaration_list<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
             end: 0,
             message: b"A variable declaration list must have at least one variable declarator."
                 .to_vec(),
+            ..SyntaxError::default()
         })
     });
     let loops = [(StmtTag::ForIn, "in"), (StmtTag::ForOf, "of")];
@@ -105,6 +165,7 @@ fn declaration_list<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
                     "Only a single variable declaration is allowed in a 'for...{word}' statement."
                 )
                 .into_bytes(),
+                ..SyntaxError::default()
             })
         })
     });
@@ -132,18 +193,20 @@ fn class_without_name<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         at,
         end: 0,
         message: b"A class declaration without the 'default' modifier must have a name.".to_vec(),
+        ..SyntaxError::default()
     })
 }
 
 /// A word that is reserved in strict code, where a name is read, declared or a label. For OXC a file is strict if it is a
-/// module, and nothing is reserved in what is only declared. Code that is strict for another reason is not looked at.
+/// module, which `.cts` is not whatever it exports, and nothing is reserved in what is only declared. Code that is strict for
+/// another reason is not looked at.
 fn reserved_word<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let hir = &file.hir;
     // The parser notes each name that is such a word, `eval` or `arguments`. Few files have one.
-    if hir.keyword_identifier_positions.is_empty()
-        || file.is_declaration_file()
-        || !espree::has_module_syntax(file)
-    {
+    if hir.keyword_identifier_positions.is_empty() || file.is_declaration_file() {
+        return None;
+    }
+    if crate::utils::oxlint::source_type(file) != SourceType::Module {
         return None;
     }
     let is_reserved = |name: Atom| {
@@ -190,6 +253,7 @@ fn reserved_word<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         at,
         end: 0,
         message: [b"The keyword '", word, b"' is reserved"].concat(),
+        ..SyntaxError::default()
     })
 }
 
@@ -220,6 +284,7 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
             VarKind::Const => b"Missing initializer in const declaration".to_vec(),
             _ => b"Using declarations must have an initializer.".to_vec(),
         },
+        ..SyntaxError::default()
     })
 }
 
@@ -231,7 +296,7 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     if !file.may_bind_a_parameter_twice() {
         return None;
     }
-    let mut first: Option<u32> = None;
+    let mut first: Option<(u32, u32)> = None;
     let mut names: SmallVec<[(Atom, u32); 8]> = SmallVec::new();
     for (i, raw) in hir.fns.iter().enumerate() {
         // One parameter binds a name twice only in a pattern, which is not looked for.
@@ -261,7 +326,7 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         let is_first = |i: usize| i == 0 || names[i - 1].0 != names[i].0;
         let twice = (0..names.len().saturating_sub(1))
             .filter(|&i| names[i].0 == names[i + 1].0 && is_first(i))
-            .map(|i| names[i].1);
+            .map(|i| (names[i].1, names[i + 1].1));
         let Some(at) = twice.min() else {
             continue;
         };
@@ -273,14 +338,20 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
             first = Some(at);
         }
     }
-    let at = first?;
+    let (at, again) = first?;
     let name = file.text().get(at as usize..)?;
     let name = name.get(..token_len(name))?;
-    Some(SyntaxError {
-        at,
-        end: 0,
-        message: [b"Identifier `", name, b"` has already been declared"].concat(),
-    })
+    let len = name.len() as u32;
+    let message = [b"Identifier `", name, b"` has already been declared"].concat();
+    let here = format!("`{}` has already been declared here", bstr::BStr::new(name));
+    Some(
+        SyntaxError::of_oxc(Span::new(at, at + len), message)
+            .says(Cow::Owned(here))
+            .and(
+                Span::new(again, again + len),
+                Cow::Borrowed("It can not be redeclared here"),
+            ),
+    )
 }
 
 /// `declare` at the head of a statement in what is ambient already: in a `declare namespace`, a `declare module`, `declare global`,
@@ -298,6 +369,7 @@ fn declare_in_ambient_context<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         at: declared.min()?,
         end: 0,
         message: b"A 'declare' modifier cannot be used in an already ambient context.".to_vec(),
+        ..SyntaxError::default()
     })
 }
 
@@ -320,38 +392,46 @@ fn deferred_import<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         at,
         end: 0,
         message: message.to_vec(),
+        ..SyntaxError::default()
     })
 }
 
-/// The error for which oxlint refuses a file in which TypeScript's parser has found none.
-pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let mut first: Option<SyntaxError> = None;
-    // Of two at one place, the one that is looked for first.
-    let mut note = |found: Option<SyntaxError>| {
-        if let Some(found) = found
-            && first.as_ref().is_none_or(|first| found.at < first.at)
-        {
-            first = Some(found);
-        }
-    };
+/// The errors for which oxlint refuses a file in which TypeScript's parser has found none, in the order in which it prints them.
+///
+/// A check hands in what it finds, in any order. For now most hand in only the first that they find.
+pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+    let mut all = oxc_typescript::errors(file);
     // acorn's checks have these for JavaScript.
     if !file.is_javascript() {
-        note(declare_in_ambient_context(file));
-        note(espree::export_assignment_beside_exports(file));
-        note(declaration_without_initializer(file));
-        note(declaration_list(file));
-        note(class_without_name(file));
+        all.extend(declare_in_ambient_context(file));
+        all.extend(espree::export_assignment_beside_exports(file));
+        all.extend(declaration_without_initializer(file));
+        all.extend(declaration_list(file));
+        all.extend(class_without_name(file));
     }
-    note(error_of_grammar(file));
-    note(espree::first_error_of_oxc(file));
-    note(espree::using_in_script(file));
-    note(espree::with_in_strict_code(file));
-    note(deferred_import(file));
-    note(espree::for_await_where_nothing_waits(file));
-    note(reserved_word(file));
-    note(espree::keywords_as_names_of_oxc(file));
-    note(duplicate_parameter(file));
-    first
+    all.extend(misplaced_suspensions(file));
+    all.extend(error_of_grammar(file));
+    all.extend(espree::errors_of_oxc(file));
+    all.extend(targets::errors(file));
+    all.extend(names::redeclarations(file));
+    all.extend(names::exports(file));
+    all.extend(espree::using_in_script(file));
+    all.extend(espree::with_in_strict_code(file));
+    all.extend(deferred_import(file));
+    all.extend(espree::for_await_where_nothing_waits(file));
+    all.extend(reserved_word(file));
+    all.extend(espree::keywords_as_names_of_oxc(file));
+    all.extend(duplicate_parameter(file));
+    if all.iter().any(|it| it.of_oxc.stage != Stage::Semantic) {
+        all.retain(|it| it.of_oxc.stage != Stage::Semantic);
+    }
+    // Of two at one place, the one that is looked for first.
+    all.sort_by_key(SyntaxError::order);
+    all.dedup_by(|a, b| a.at == b.at && a.order() == b.order() && a.message == b.message);
+    if let Some(fatal) = all.iter().position(|it| it.of_oxc.stage == Stage::Fatal) {
+        all.truncate(fatal + 1);
+    }
+    all
 }
 
 /// The same for oxfmt, which runs OXC's parser and not the pass that builds the scopes: that pass has most of the errors.

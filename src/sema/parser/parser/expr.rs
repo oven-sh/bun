@@ -138,6 +138,23 @@ fn is_in_list_of_type(text: &[u8], end: usize) -> bool {
 }
 
 /// The operator that a compound assignment combines with. `None` for `=`.
+/// A name or a member that is not part of an optional chain.
+#[inline(always)]
+fn is_plain_target(kind: ExprKind) -> bool {
+    matches!(
+        kind,
+        ExprKind::Ident(_)
+            | ExprKind::Dot {
+                chain: Chain::No,
+                ..
+            }
+            | ExprKind::Index {
+                chain: Chain::No,
+                ..
+            }
+    )
+}
+
 fn assignment_operator(token: T) -> Option<BinOp> {
     Some(match token {
         T::PlusEquals => BinOp::Add,
@@ -267,24 +284,40 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.f.parens.last().is_some_and(|last| last.0 == e)
     }
 
-    /// `IsLeftHandSideExpression` for `e`, which was just parsed.
-    fn is_left_hand_side(&self, e: ExprId) -> bool {
+    /// `IsLeftHandSideExpression` for `e`, which was just parsed and stands before an assignment operator. Sets
+    /// `rare::ODD_TARGET` unless it is a plain name or member.
+    fn is_left_hand_side(&mut self, e: ExprId) -> bool {
         let Some(expr) = self.f.exprs.get(e.idx()) else {
             return false;
         };
-        match expr.kind {
+        let kind = expr.kind;
+        if is_plain_target(kind) {
+            return true;
+        }
+        self.f.rare_syntax |= rare::ODD_TARGET;
+        match kind {
             ExprKind::Fn(f) => self.f[f].kind != FnKind::Arrow || self.is_parenthesized(e),
+            // oxc converts these into a target, and reports what can't be one. `<T>a = 1` and `a as T = 1` pass, `-a = 1` is
+            // "Cannot assign to this expression".
             ExprKind::Unary { .. }
             | ExprKind::Binary { .. }
-            | ExprKind::Assign { .. }
-            | ExprKind::Cond { .. }
-            | ExprKind::Spread(_)
             | ExprKind::Await(_)
-            | ExprKind::Yield { .. }
             | ExprKind::As { .. }
             | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_) => self.is_parenthesized(e),
+            | ExprKind::AsConst(_) => self.options.dialect.oxc || self.is_parenthesized(e),
+            ExprKind::Assign { .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::Spread(_)
+            | ExprKind::Yield { .. } => self.is_parenthesized(e),
             _ => true,
+        }
+    }
+
+    /// Sets `rare::ODD_TARGET` unless `target` is a plain name or member.
+    #[inline]
+    pub(crate) fn note_target(&mut self, target: ExprId) {
+        if !(self.f.exprs.get(target.idx())).is_some_and(|it| is_plain_target(it.kind)) {
+            self.f.rare_syntax |= rare::ODD_TARGET;
         }
     }
 
@@ -344,9 +377,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 if self.has_context(ctx::YIELD) {
                     return self.yield_expression();
                 }
-                // `isYieldExpression`: it is read as one. The checker reports it.
-                if !self.is_ecmascript && self.next_is_word_or_literal_on_same_line() {
-                    return self.yield_expression();
+                // `isYieldExpression`
+                if self.suspends_outside_context() {
+                    return self.yield_outside_generator();
                 }
             }
             _ => {}
@@ -390,27 +423,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return expression;
         }
         if token.is_assignment_operator() {
-            if !self.is_left_hand_side(expression) {
-                self.fail_unless_recovering();
-                return expression;
-            }
-            if let Some(Expr {
-                kind: ExprKind::Fn(_),
-                ..
-            }) = self.f.exprs.get(expression.idx())
-                && !self.is_parenthesized(expression)
-                && (!self.recovers() || self.is_ecmascript)
-            {
-                self.report();
-            }
-            self.next();
-            let value = self.assignment_expression_or_higher(allow_return_type);
-            let kind = ExprKind::Assign {
-                op: assignment_operator(token),
-                target: expression,
-                value,
-            };
-            return self.finish_expr(kind, start);
+            return self.assignment(expression, start, allow_return_type);
         }
         if token == T::Question {
             // `parseConditionalExpressionRest`
@@ -432,6 +445,33 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         expression
     }
 
+    /// The same at an assignment operator. Out of line: every expression goes through the caller.
+    #[inline(never)]
+    fn assignment(&mut self, target: ExprId, start: u32, allow_return_type: bool) -> ExprId {
+        let token = self.token();
+        if !self.is_left_hand_side(target) {
+            self.fail_unless_recovering();
+            return target;
+        }
+        if let Some(Expr {
+            kind: ExprKind::Fn(_),
+            ..
+        }) = self.f.exprs.get(target.idx())
+            && !self.is_parenthesized(target)
+            && (!self.recovers() || self.is_ecmascript)
+        {
+            self.report();
+        }
+        self.next();
+        let value = self.assignment_expression_or_higher(allow_return_type);
+        let kind = ExprKind::Assign {
+            op: assignment_operator(token),
+            target,
+            value,
+        };
+        self.finish_expr(kind, start)
+    }
+
     /// `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine`
     fn next_is_word_or_literal_on_same_line(&mut self) -> bool {
         self.look_ahead(|p| {
@@ -440,6 +480,44 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 && (p.token().is_identifier_or_keyword()
                     || matches!(p.token(), T::Number | T::BigInt | T::String))
         })
+    }
+
+    /// At an `await` or a `yield` that could be a name here: it's still read as the keyword before a word or a literal.
+    /// TypeScript's checker reports that. oxc's parser reports it, in JavaScript too, but `await in a` is a name to it.
+    fn suspends_outside_context(&mut self) -> bool {
+        if !self.options.dialect.oxc {
+            return !self.is_ecmascript && self.next_is_word_or_literal_on_same_line();
+        }
+        let is_await = self.token() == T::Await;
+        self.next_is_word_or_literal_on_same_line()
+            && match self.peek() {
+                T::In | T::InstanceOf => false,
+                T::Of => !is_await,
+                _ => true,
+            }
+    }
+
+    /// oxc reports the `yield`, then reads what follows as if it were in a generator: `yield yield a` is one error.
+    #[cold]
+    fn yield_outside_generator(&mut self) -> ExprId {
+        if !self.options.dialect.oxc {
+            return self.yield_expression();
+        }
+        self.flag(DiagnosticKind::Grammar, 1163, (self.pos(), 0), &[]);
+        let saved = self.enter_context(ctx::YIELD, 0);
+        let expression = self.yield_expression();
+        self.context = saved;
+        expression
+    }
+
+    /// The same for the operand of the `await` at `start`.
+    #[cold]
+    fn operand_of_await_outside_async(&mut self, start: u32) -> ExprId {
+        self.flag(DiagnosticKind::Grammar, 1308, (start, 0), &[]);
+        let saved = self.enter_context(ctx::AWAIT, 0);
+        let operand = self.simple_unary_expression();
+        self.context = saved;
+        operand
     }
 
     /// `parseYieldExpression`
@@ -790,8 +868,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.has_context(ctx::AWAIT) {
             return true;
         }
-        // "here we are using similar heuristics as 'isYieldExpression'". The checker reports it.
-        !self.is_ecmascript && self.next_is_word_or_literal_on_same_line()
+        // "here we are using similar heuristics as 'isYieldExpression'"
+        self.suspends_outside_context()
     }
 
     /// `parseSimpleUnaryExpression`
@@ -820,7 +898,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.has_plain_top_level_await = had_plain;
                 }
                 self.next();
-                let operand = self.simple_unary_expression();
+                let operand = match self.has_context(ctx::AWAIT) || !self.options.dialect.oxc {
+                    true => self.simple_unary_expression(),
+                    false => self.operand_of_await_outside_async(start),
+                };
                 self.suspensions += 1;
                 return self.finish_expr(ExprKind::Await(operand), start);
             }
@@ -866,15 +947,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn update_expression(&mut self) -> ExprId {
         let start = self.pos();
         match self.token() {
-            token @ (T::PlusPlus | T::MinusMinus) => {
-                self.next();
-                let operand = self.left_hand_side_expression();
-                let op = match token {
-                    T::PlusPlus => UnOp::PreInc,
-                    _ => UnOp::PreDec,
-                };
-                return self.finish_expr(ExprKind::Unary { op, operand }, start);
-            }
+            T::PlusPlus | T::MinusMinus => return self.prefix_update(),
             // For acorn an element is a primary expression.
             T::LessThan if self.options.is_jsx && !self.is_ecmascript => {
                 return self.jsx_element_or_fragment();
@@ -885,19 +958,43 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.rest_of_update(start, operand)
     }
 
+    /// `parseUpdateExpression`, at a `++` or a `--`.
+    #[inline(never)]
+    fn prefix_update(&mut self) -> ExprId {
+        let start = self.pos();
+        let op = match self.token() {
+            T::PlusPlus => UnOp::PreInc,
+            _ => UnOp::PreDec,
+        };
+        self.next();
+        // oxc reads a unary expression here, so `++<T>a` passes.
+        let operand = match self.options.dialect.oxc {
+            true => self.simple_unary_expression(),
+            false => self.left_hand_side_expression(),
+        };
+        self.note_target(operand);
+        self.finish_expr(ExprKind::Unary { op, operand }, start)
+    }
+
     /// What `parseUpdateExpression` does after `parseLeftHandSideExpressionOrHigher`.
     #[inline(always)]
     fn rest_of_update(&mut self, start: u32, operand: ExprId) -> ExprId {
-        let token = self.token();
-        if matches!(token, T::PlusPlus | T::MinusMinus) && !self.newline_before() {
-            self.next();
-            let op = match token {
-                T::PlusPlus => UnOp::PostInc,
-                _ => UnOp::PostDec,
-            };
-            return self.finish_expr(ExprKind::Unary { op, operand }, start);
+        if matches!(self.token(), T::PlusPlus | T::MinusMinus) && !self.newline_before() {
+            return self.postfix_update(start, operand);
         }
         operand
+    }
+
+    /// Out of line: every operand goes through the caller.
+    #[inline(never)]
+    fn postfix_update(&mut self, start: u32, operand: ExprId) -> ExprId {
+        let op = match self.token() {
+            T::PlusPlus => UnOp::PostInc,
+            _ => UnOp::PostDec,
+        };
+        self.next();
+        self.note_target(operand);
+        self.finish_expr(ExprKind::Unary { op, operand }, start)
     }
 
     /// `parseDecoratorExpression`
@@ -1801,7 +1898,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             T::Super => self.token_expr(ExprKind::Super),
             T::LessThan if self.is_ecmascript => self.jsx_element_or_fragment(),
-            T::Import if self.is_ecmascript => self.import_expression(),
+            // After `new`.
+            T::Import if self.is_ecmascript || self.options.dialect.oxc => self.import_expression(),
             _ if self.is_identifier() => {
                 self.take_as_name();
                 let name = self.lx.atom;

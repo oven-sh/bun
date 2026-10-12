@@ -1,7 +1,8 @@
 //! Classes.
 
+use super::declared::Declares;
 use super::stmt::{ModifiersOf, Start};
-use super::{ListKind, Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -73,6 +74,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             _ => self.pos(),
         };
         let class = self.class((start.pos, unnamed_at), base, class_flags);
+        if let Some(name) = self.f.classes.get(class.idx()).map(|it| it.name)
+            && name.is_some()
+        {
+            self.declare(name, Declares::Class);
+        }
         // In a namespace what has no name is not exported. For acorn and Babel only a default export
         // has none. In the list of the file `checkClassDeclaration` reports it.
         let is_ecmascript = self.is_ecmascript;
@@ -169,6 +175,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let mut other_extends: Vec<ExprId> = Vec::new();
         let mut other_implements: Vec<TypeNodeId> = Vec::new();
         let (mut has_extends, mut has_implements) = (false, false);
+        let mut first_implements = (0, 0);
         let lists = self.enter_list(ListKind::HeritageClauses);
         let mut is_first = true;
         while self.is_at_heritage_clause(std::mem::take(&mut is_first)) {
@@ -180,6 +187,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 (false, _, true) => 1175,
                 _ => 0,
             };
+            if !is_extends && !has_implements {
+                first_implements = keyword;
+            }
+            if matches!(misplaced, 1173 | 1175) && self.reports_like_oxc() {
+                let errors = &mut self.f.diagnostics;
+                oxc::misplaced_clause(errors, misplaced, first_implements, keyword);
+            }
             if misplaced != 0 && !heritage.has_error {
                 match self.is_ecmascript {
                     true => self.report(),
@@ -304,6 +318,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let less_than = (self.token() == T::LessThan).then(|| self.pos());
         let type_params = self.type_parameters();
+        // The name of a class expression is in one scope with its type parameters.
+        let named_alike = self.f.type_params.get(type_params.range());
+        if named_alike.is_some_and(|all| all.iter().any(|it| it.name == name)) {
+            self.may_redeclare();
+        }
         let empty_list = less_than.filter(|_| type_params.is_empty());
         let empty_list = empty_list.map(|less_than| (less_than, self.prev_end()));
         let heritage = self.class_heritage();
@@ -317,6 +336,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let has_members = self.expect(T::OpenBrace);
         let members = self.s.members.len();
         let decorators = self.s.decorators.len();
+        let has_odd_members = std::mem::take(&mut self.has_odd_members);
         let lists = self.enter_list(ListKind::ClassMembers);
         while has_members
             && self.is_in_list(T::CloseBrace)
@@ -336,6 +356,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.expect(T::CloseBrace);
         }
         self.classes_around -= 1;
+        if std::mem::replace(&mut self.has_odd_members, has_odd_members) {
+            let (written, place) = (&self.s.members[members..], self.place());
+            let is_abstract = flags.contains(Flags::ABSTRACT);
+            oxc::class_members(&mut self.f, self.lx.src, written, is_abstract, place);
+        }
         let members: Span<MemberId> = take_span!(self, members, members);
         for index in decorators..self.s.decorators.len() {
             let (member, decorator) = self.s.decorators[index];
@@ -472,6 +497,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 .find(is_keyword)
                 .map_or_else(|| self.pos(), |it| it.pos);
             let modifiers = self.take_modifiers(first_modifier);
+            if flags.intersects(!(Flags::READONLY | Flags::STATIC)) && self.reports_like_oxc() {
+                oxc::index_signature(&mut self.f, modifiers, Flags::READONLY | Flags::STATIC);
+            }
             let mut member = self.index_signature(start, flags, modifiers);
             member.name_pos = name_pos;
             if is_parent_ambient {
@@ -484,6 +512,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return self.s.members.push(member);
         }
         let is_default = flags.contains(Flags::DEFAULT);
+        let written = flags;
         // The checker reports these, which are in the list.
         flags -= Flags::CONST | Flags::EXPORT | Flags::DEFAULT;
         // `parseClassElement`: its own `declare` makes a property or a method ambient.
@@ -523,6 +552,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 )
             }
         };
+        let name = (name_pos, self.prev_end());
         key = declared_key(key, name_token, is_default);
         flags |= flags_of_member_name(name_token, name_kind, key);
         // Neither `tryParseConstructorDeclaration` nor the property without a name looks for it.
@@ -633,6 +663,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.missing_semicolon_after_property(name, has_type, has_initializer);
             }
         }
+        let context = self.context;
         self.context = saved;
         member.loc = TextRange {
             pos: start.full,
@@ -642,6 +673,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.member_jsdoc(&mut member, first_modifier);
         }
         member.modifiers = self.take_modifiers(first_modifier);
+        if self.reports_like_oxc() {
+            self.check_class_member_like_oxc(&member, written, name, context);
+        }
         if self.options.is_javascript {
             self.check_js_member(&member, question);
         }
@@ -672,10 +706,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         // The checker reports them.
         let modifiers = self.take_modifiers(first_modifier);
+        if !modifiers.is_empty() && self.reports_like_oxc() {
+            oxc::static_block(&mut self.f, modifiers);
+        }
         self.next();
         let open = self.pos();
         // `parseClassStaticBlockBody`
+        let suspensions = self.suspensions;
         let (body, _) = self.function_block(ctx::AWAIT);
+        if self.suspensions != suspensions {
+            self.f.rare_syntax |= rare::SUSPENDS_IN_STATIC_BLOCK;
+        }
         let func = self.f.add_fn(Func {
             kind: FnKind::StaticBlock,
             flags: Flags::STATIC,

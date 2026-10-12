@@ -153,6 +153,7 @@ pub struct Options {
 pub struct Scratch {
     names: names::Names,
     stacks: parser::Stacks,
+    declared: parser::Declared,
     /// A file that is no longer needed: its lists are for the next one, and so is the box. A file is large, and goes from
     /// hand to hand.
     recycled: Option<Box<FileBuilder>>,

@@ -446,7 +446,8 @@ test("a check in a bundle of more files than there are threads, and more such bu
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { codes: (stdout + stderr).match(/TS\d+/g) ?? [], stdout, exitCode };
+    // Not the "TS6" that the random name of the directory can have in it.
+    return { codes: (stdout + stderr).match(/\bTS\d{4,5}\b/g) ?? [], stdout, exitCode };
   };
   const [right, wrong, builds] = await Promise.all([
     run(["build", "--check", "index.ts", "--outdir", "out"]),

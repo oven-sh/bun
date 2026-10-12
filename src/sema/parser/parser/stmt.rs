@@ -1,6 +1,7 @@
 //! Statements and declarations.
 
-use super::{ListKind, Parser, ctx, take_span};
+use super::declared::Declares;
+use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::Atom;
@@ -161,7 +162,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `nextTokenIsBindingIdentifierOrStartOfDestructuring`
     fn is_let_declaration(&mut self) -> bool {
-        let is_ecmascript = self.is_ecmascript;
+        let is_ecmascript = self.is_ecmascript || self.options.dialect.oxc;
         self.look_ahead(|p| {
             p.next();
             match p.token() {
@@ -223,9 +224,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn is_await_using_declaration(&mut self) -> bool {
         self.look_ahead(|p| {
             p.next();
-            // Only acorn asks for `using` on the line of `await`.
+            // acorn and oxc ask for `using` on the line of `await`.
             p.token() == T::Using
-                && !(p.newline_before() && p.is_ecmascript)
+                && !(p.newline_before() && (p.is_ecmascript || p.options.dialect.oxc))
                 && p.next_is_binding_on_same_line(false)
         })
     }
@@ -272,6 +273,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 T::Var | T::Let | T::Const | T::Function | T::Class | T::Enum => return true,
                 T::Using => return self.is_using_declaration(),
                 T::Await => return self.is_await_using_declaration(),
+                // oxc takes `type await = 1` and `interface await {}` in an async function.
+                T::Interface | T::Type if self.options.dialect.oxc => {
+                    self.next();
+                    return (self.is_identifier() || self.token() == T::Await)
+                        && !self.newline_before();
+                }
                 T::Interface | T::Type => return self.next_is_identifier_on_same_line(),
                 T::Defer if self.recovers() => return self.next_is_identifier_on_same_line(),
                 T::Module | T::Namespace => {
@@ -465,6 +472,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 return flags;
             }
             let flag = modifier_flag(token);
+            if !flags.is_empty() && self.reports_like_oxc() {
+                oxc::modifier_after(&mut self.f.diagnostics, flags, flag, pos);
+            }
             flags |= flag;
             has_trailing_modifiers = has_trailing_decorators;
             self.s.modifiers.push(Modifier {
@@ -550,6 +560,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let statement = self.declaration_worker(start, base, flags);
         self.context = saved;
+        if flags.intersects(!(Flags::EXPORT | Flags::DEFAULT)) && self.reports_like_oxc() {
+            let now = self.prev_end();
+            oxc::declaration(&mut self.f, statement, now);
+        }
         if self.options.is_javascript {
             self.check_js_statement(statement);
         }
@@ -695,6 +709,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::Using => VarKind::Using,
             _ => {
                 self.note_await();
+                self.suspensions += 1;
+                // As for an `await` expression: `operand_of_await_outside_async`.
+                if self.options.dialect.oxc && !self.has_context(ctx::AWAIT) {
+                    self.flag(DiagnosticKind::Grammar, 1308, (self.pos(), 0), &[]);
+                }
                 self.next();
                 if self.token() != T::Using {
                     self.fail();
@@ -711,6 +730,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let saved = match is_in_for {
             true => self.enter_context(ctx::DISALLOW_IN, 0),
             false => self.enter_context(0, ctx::DISALLOW_IN),
+        };
+        let declares = match kind {
+            VarKind::Var => Declares::Var,
+            _ => Declares::Lexical,
         };
         let base = self.s.var_decls.len();
         let lists = self.enter_list(ListKind::VariableDeclarations);
@@ -740,6 +763,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
                 _ => self.identifier_or_pattern(),
             };
+            self.declare_pattern(pat, declares);
             let mut flags = flags;
             if !is_in_for
                 && self.token() == T::Exclamation
@@ -760,7 +784,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 T::Equals => self.initializer(),
                 _ => ExprId::NONE,
             };
-            self.s.var_decls.push(VarDecl {
+            let declaration = VarDecl {
                 pat,
                 ty,
                 init,
@@ -770,7 +794,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     pos: full,
                     end: self.prev_end(),
                 },
-            });
+            };
+            if flags.intersects(Flags::AMBIENT | Flags::DEFINITE)
+                && (init.is_some()
+                    || flags.contains(Flags::DEFINITE)
+                    || matches!(kind, VarKind::Using | VarKind::AwaitUsing))
+                && self.reports_like_oxc()
+            {
+                oxc::variable(&mut self.f, self.lx.src, &declaration);
+            }
+            self.s.var_decls.push(declaration);
             if !self.eat(T::Comma)
                 && !self.goes_on_without_comma(ListKind::VariableDeclarations, full)
             {
@@ -823,7 +856,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true => self.identifier(),
             false => self.missing_name(),
         };
+        self.declare(
+            name,
+            match flags.contains(Flags::CONST) {
+                true => Declares::ConstEnum,
+                false => Declares::Enum,
+            },
+        );
         let has_members = self.expect(T::OpenBrace);
+        let outer = self.open_scope();
         let saved = self.enter_context(0, self.cleared_in_types);
         let members = self.s.enum_members.len();
         let lists = self.enter_list(ListKind::EnumMembers);
@@ -835,13 +876,23 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let member = self.start();
             // The checker reports a number, a computed name and so on.
             let bigint = (self.token() == T::BigInt).then(|| self.lx.text());
+            let is_odd = matches!(self.token(), T::OpenBracket | T::Number | T::BigInt);
             let (mut key, mut name_kind, _) = self.property_name();
+            if is_odd && self.reports_like_oxc() {
+                let name = (member.pos, self.prev_end());
+                oxc::enum_member_name(&mut self.f.diagnostics, self.lx.src, name);
+            }
             if let Some(written) = bigint {
                 key = PropKey::Name(self.atom(written));
             }
             let (name, computed_name) = match key {
-                PropKey::Name(name) | PropKey::Private(name) => (name, ExprId::NONE),
+                PropKey::Name(name) | PropKey::Private(name) => {
+                    self.declare(name, Declares::EnumMember);
+                    (name, ExprId::NONE)
+                }
                 PropKey::Computed(e) => {
+                    // `["a"]` is a name to oxc.
+                    self.may_redeclare();
                     name_kind = NameKind::Identifier;
                     (Atom::NONE, e)
                 }
@@ -869,8 +920,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         self.leave_list(lists);
         self.context = saved;
+        self.close_scope(outer);
         if has_members {
             self.expect(T::CloseBrace);
+        }
+        if self.reports_like_oxc() {
+            oxc::enum_members(&mut self.f, &self.s.enum_members[members..]);
         }
         let members = take_span!(self, enum_members, members);
         let declaration = self.f.add_enum(Enum {
@@ -910,6 +965,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 if !is_string {
                     let modifiers = self.take_modifiers(base);
                     let identifier = self.identifier();
+                    self.declare(identifier.0, Declares::Namespace);
                     return self.namespace_declaration(
                         start,
                         modifiers,
@@ -979,7 +1035,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             self.f.list(&[inner])
         } else {
-            self.module_block()
+            let body = self.module_block();
+            if self.reports_like_oxc() {
+                oxc::namespace_body(&mut self.f, body, flags.contains(Flags::AMBIENT));
+            }
+            body
         };
         let declaration = self.f.add_module(Module {
             name: ModuleName::Ident(name),
@@ -1005,7 +1065,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true => self.enter_context(0, ctx::TOP_LEVEL | self.cleared_in_types),
             false => self.context,
         };
+        let outer = self.open_scope_for_vars();
         let list = self.statements_until_close_brace();
+        self.close_scope(outer);
         self.context = saved;
         self.expect(T::CloseBrace);
         list
@@ -1039,6 +1101,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `parseBlock`
     pub(crate) fn block(&mut self) -> StmtId {
+        let outer = self.open_scope();
+        let block = self.block_in_open_scope();
+        self.close_scope(outer);
+        block
+    }
+
+    /// The same for the block of a `catch`, which is one scope with the parameter.
+    #[inline(always)]
+    fn block_in_open_scope(&mut self) -> StmtId {
         let start = self.start();
         if !self.expect(T::OpenBrace) {
             return self.add_stmt(StmtKind::Block(IdList::EMPTY), start, Span::EMPTY);
@@ -1132,13 +1203,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.next();
         }
         self.expect(T::OpenParen);
+        let outer = self.open_scope();
         let mut init = StmtId::NONE;
         let mut starts_with_let = false;
         if self.token() != T::Semicolon {
             let at = self.start();
             starts_with_let = self.token() == T::Let;
             let is_declaration = match self.token() {
-                T::Let if self.is_ecmascript => self.is_let_declaration(),
+                T::Let if self.is_ecmascript || self.options.dialect.oxc => {
+                    self.is_let_declaration()
+                }
                 T::Var | T::Let | T::Const => true,
                 T::Using => self.look_ahead(|p| p.next_is_binding_on_same_line(true)),
                 T::Await => self.is_await_using_declaration(),
@@ -1155,6 +1229,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             init = self.add_stmt(kind, at, Span::EMPTY);
         }
         let is_expression = |it: &Stmt| matches!(it.kind, StmtKind::Expr(_));
+        if matches!(self.token(), T::Of | T::In)
+            && let Some(StmtKind::Expr(target)) = self.f.stmts.get(init.idx()).map(|it| it.kind)
+        {
+            self.note_target(target);
+        }
         if self.token() == T::Of
             && starts_with_let
             && self.f.stmts.get(init.idx()).is_some_and(is_expression)
@@ -1202,6 +1281,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 body,
             }
         };
+        self.close_scope(outer);
         if init.is_none() && !matches!(kind, StmtKind::For { .. }) {
             self.fail_unless_recovering();
         }
@@ -1273,6 +1353,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let expr = self.expression_allowing_in();
         self.expect(T::CloseParen);
         self.expect(T::OpenBrace);
+        let outer = self.open_scope();
         let base = self.s.cases.len();
         let mut defaults = 0;
         let lists = self.enter_list(ListKind::SwitchClauses);
@@ -1325,6 +1406,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             });
         }
         self.leave_list(lists);
+        self.close_scope(outer);
         self.expect(T::CloseBrace);
         let cases = take_span!(self, cases, base);
         self.add_stmt(StmtKind::Switch { expr, cases }, start, Span::EMPTY)
@@ -1336,10 +1418,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let block = self.block();
         let (mut param, mut handler, mut finalizer) = (VarDeclId::NONE, StmtId::NONE, StmtId::NONE);
         if self.eat(T::Catch) {
+            let outer = self.open_scope();
             if self.eat(T::OpenParen) {
                 // `parseVariableDeclaration`
                 let full = self.full_start();
                 let pat = self.identifier_or_pattern();
+                let is_name = |it: &Pat| matches!(it.kind, PatKind::Ident(_));
+                let declares = match self.f.pats.get(pat.idx()).is_some_and(is_name) {
+                    true => Declares::Parameter,
+                    false => Declares::Lexical,
+                };
+                self.declare_pattern(pat, declares);
                 let ty = self.type_annotation();
                 // `checkCatchClause` reports it.
                 let init = match self.token() {
@@ -1366,7 +1455,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
                 self.expect(T::CloseParen);
             }
-            handler = self.block();
+            handler = self.block_in_open_scope();
+            self.close_scope(outer);
         }
         if self.token() == T::Finally || handler.is_none() {
             // The block starts at the keyword.

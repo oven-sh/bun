@@ -1684,7 +1684,10 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         // One comment: thousands of them take a debug build minutes.
         const text = `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
         for (let i = 0; i < count; i++) files[`src/${i}.${extension}`] = text;
-        const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "--timing", "--threads", threads, "src"]);
+        // How many engines fit depends on how much memory is free, which is up to the machine that runs this.
+        const variables = { BUN_LINT_MEMORY: String(64 * 2 ** 30) };
+        const args = ["-f", "unix", "--timing", "--threads", threads, "src"];
+        const { stdout, stderr, exitCode } = await lint(files, args, [], variables);
         expect(exitCode).toBe(1);
         return { stdout, engines: Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]) };
       };

@@ -156,10 +156,7 @@ fn run(
 /// Finds the object that the script's `finish` wrote. `printed` is everything the script printed.
 fn handed_to_finish(printed: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
     let at = strings::last_index_of(printed, MARKER)?;
-    match bun_lint::json::parse(&printed[at + MARKER.len()..])? {
-        Json::Object(entries) => Some(entries),
-        _ => None,
-    }
+    bun_lint::json::parse(&printed[at + MARKER.len()..])?.into_object()
 }
 
 /// Paths of the modules a script loaded. It only reports them under `--doctor`. `printed` is everything it printed.

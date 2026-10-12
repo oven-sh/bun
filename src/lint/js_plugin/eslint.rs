@@ -159,7 +159,7 @@ impl Host<'_> {
         self.engine.with_vm(file.text.len(), &mut |vm| {
             returned = self.lint_in(vm, &message, configuration, run)
         })?;
-        let Some(Json::Array(parts)) = crate::json::parse(&returned?) else {
+        let Some(parts) = crate::json::parse(&returned?).and_then(Json::into_array) else {
             return Err(OUT_OF_STEP.to_vec().into());
         };
         let [shown, suppressed, deprecated] = &parts[..] else {

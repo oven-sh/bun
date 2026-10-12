@@ -228,7 +228,7 @@ pub struct File<'a> {
     hides_casts: bool,
     has_parse_errors: bool,
     may_bind_a_parameter_twice: bool,
-    rare_syntax: u8,
+    rare_syntax: u32,
 }
 
 impl<'a> File<'a> {
@@ -319,9 +319,9 @@ impl<'a> File<'a> {
         self.is_js
     }
 
-    /// Whether `hir::File::rare_syntax` has `bit`, which is one of `hir::rare`.
+    /// Whether `hir::File::rare_syntax` has `bit`, which is one of `hir::rare`, or one of several.
     #[inline]
-    pub(crate) fn has_rare_syntax(&self, bit: u8) -> bool {
+    pub(crate) fn has_rare_syntax(&self, bit: u32) -> bool {
         self.rare_syntax & bit != 0
     }
 

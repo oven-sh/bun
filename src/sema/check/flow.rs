@@ -5578,7 +5578,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some((of, Decl::Var(pat))) = self.files().value_declaration(sym) {
                 let symbol = self.bound(of).pat_symbol[pat.idx()];
                 if symbol.is_some() && self.is_parameter_or_mutable_local_variable(of, symbol) {
-                    let last = self.last_assignment_pos_of_global(of, symbol, pat);
+                    let last = self.last_assignment_pos_of_global(of, symbol, pat, file);
                     let pos = self.end_of_token_before(file, self.hir(file)[e].pos);
                     if last == 0 || last < pos {
                         return Crossing::Yes;
@@ -5602,22 +5602,47 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `lastAssignmentPos` of a `let` of `declare global { }` in `file`: `markNodeAssignments`
+    /// `lastAssignmentPos` of a `let` of `declare global { }` in `declaring`: `markNodeAssignments`
     /// resolves each assigned name, so it finds the assignments of the file that the binder left
     /// without a symbol.
-    fn last_assignment_pos_of_global(&self, file: FileId, symbol: SymbolId, pat: PatId) -> u32 {
-        self.ensure_assignments_marked(file, symbol);
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    ///
+    /// In the file that reads it, `referencing`, an assignment counts once a walk has got to it:
+    /// it is in another function than the declaration (`math.MaxInt32`).
+    fn last_assignment_pos_of_global(
+        &self,
+        declaring: FileId,
+        symbol: SymbolId,
+        pat: PatId,
+        referencing: FileId,
+    ) -> u32 {
+        self.ensure_assignments_marked(declaring, symbol);
+        let (hir, bound) = (self.hir(declaring), self.bound(declaring));
         let name = bound.symbols[symbol.idx()].name;
+        if referencing != declaring {
+            let (hir, bound) = (self.hir(referencing), self.bound(referencing));
+            let is_marked = bound.free_idents.iter().any(|&(target, _)| {
+                matches!(hir[target].kind, ExprKind::Ident(it) if it == name)
+                    && bound.get_assignment_target_kind(hir, target) != AssignmentKind::None
+                    && (self.is_marked_in_nested_function(
+                        referencing,
+                        Node::NONE,
+                        hir.node(target),
+                    ))
+                    .is_some()
+            });
+            if is_marked {
+                return u32::MAX;
+            }
+        }
         let declaring_function = function_or_source_file_of(hir, hir.node(pat));
-        let mut last = self.last_assignment_pos(file, symbol);
+        let mut last = self.last_assignment_pos(declaring, symbol);
         for &(target, _) in bound.free_idents.iter() {
             if matches!(hir[target].kind, ExprKind::Ident(it) if it == name)
                 && bound.get_assignment_target_kind(hir, target) != AssignmentKind::None
             {
                 let referencing_function = function_or_source_file_of(hir, hir.node(target));
                 last = last.max(if referencing_function == declaring_function {
-                    self.extend_assignment_position(file, target, hir[pat].pos)
+                    self.extend_assignment_position(declaring, target, hir[pat].pos)
                 } else {
                     u32::MAX
                 });
@@ -6043,6 +6068,13 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_some_assignment_marked_in_order(&self, file: FileId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !bound.unchecked_assignment_targets.is_empty() {
+            return true;
+        }
+        // An assignment to a name that the file does not declare: a `let` of `declare global`
+        // in another file has its marks from the walks that get to it.
+        if (bound.free_idents.iter()).any(|&(target, _)| {
+            bound.get_assignment_target_kind(hir, target) != AssignmentKind::None
+        }) {
             return true;
         }
         if bound.assignments.is_empty() {

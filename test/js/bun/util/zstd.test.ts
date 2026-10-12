@@ -265,8 +265,8 @@ describe("Zstandard compression", async () => {
           expect(syncDecompressed).toStrictEqual(asyncDecompressed);
 
           // Verify both match original
-          expect(syncDecompressed).toStrictEqual(input);
-          expect(asyncDecompressed).toStrictEqual(input);
+          expect(syncDecompressed).toStrictEqual<Uint8Array>(input);
+          expect(asyncDecompressed).toStrictEqual<Uint8Array>(input);
         });
       }
     });
@@ -584,7 +584,7 @@ describe("sync compression argument handling", () => {
   it("zstdCompressSync evaluates the options object before validating the input", () => {
     expect(() =>
       zstdCompressSync(42 as any, {
-        get level() {
+        get level(): never {
           throw new Error("level option was read");
         },
       }),
@@ -594,7 +594,7 @@ describe("sync compression argument handling", () => {
   it("gzipSync evaluates the options object before capturing the input", () => {
     const input = new Uint8Array(64).fill(97);
     const compressed = gzipSync(input, {
-      get level() {
+      get level(): 6 {
         input.buffer.transfer();
         return 6;
       },
@@ -605,7 +605,7 @@ describe("sync compression argument handling", () => {
   it("deflateSync evaluates the options object before capturing the input", () => {
     const input = new Uint8Array(64).fill(97);
     const compressed = deflateSync(input, {
-      get level() {
+      get level(): 6 {
         input.buffer.transfer();
         return 6;
       },
@@ -616,7 +616,7 @@ describe("sync compression argument handling", () => {
   it("gunzipSync evaluates the options object before validating the input", () => {
     expect(() =>
       gunzipSync(42 as any, {
-        get windowBits() {
+        get windowBits(): never {
           throw new Error("windowBits option was read");
         },
       }),
@@ -626,7 +626,7 @@ describe("sync compression argument handling", () => {
   it("inflateSync evaluates the options object before validating the input", () => {
     expect(() =>
       inflateSync(42 as any, {
-        get windowBits() {
+        get windowBits(): never {
           throw new Error("windowBits option was read");
         },
       }),

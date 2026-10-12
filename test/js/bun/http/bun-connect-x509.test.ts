@@ -94,7 +94,7 @@ describe("bun.connect", () => {
     using server = await defer.promise;
     using client = await defer2.promise;
     function check() {
-      const x509: import("node:crypto").X509Certificate = server.getX509Certificate();
+      const x509: import("node:crypto").X509Certificate = server.getX509Certificate()!;
       const peerX509: import("node:crypto").X509Certificate = client.getPeerX509Certificate();
       expect(x509.checkHost("localhost")).toBe("localhost");
       expect(peerX509.checkHost("localhost")).toBe("localhost");

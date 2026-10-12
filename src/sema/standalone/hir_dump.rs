@@ -66,12 +66,14 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         kind,
         has_module_syntax,
         is_js,
+        is_flow: _,
         check_directive,
         is_module_by_decree,
         has_errors,
         ran_out_of_stack: _,
         decorators,
         legacy_decorators,
+        may_bind_a_parameter_twice: _,
         diagnostics,
         syntax_errors,
         error_pos: _,
@@ -83,6 +85,8 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         body,
         references,
         comment_directives,
+        comments: _,
+        mentioned: _,
         with_bodies,
         body_starts: _,
         after_skipped,
@@ -95,15 +99,18 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         exports_from_expressions: _,
         has_parse_diagnostics,
         parens,
+        non_null_ends,
         jsx_expressions,
         jsx_pragmas,
         jsdoc_comments,
+        jsdoc_asterisks: _,
         jsdoc_hosts: _,
         jsdoc_types,
         jsdoc_modifiers,
         jsdoc_member_comments: _,
         jsdoc_param_errors,
         functions_with_param_tags: _,
+        unmatched_augments_tags: _,
         ids: _,
         numbers: _,
         exprs: _,
@@ -139,8 +146,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         bases: _,
         lazy: _,
         keyword_identifier_positions: _,
-        fn_nodes: _,
-        class_nodes: _,
     } = file;
     let mut d = Dump {
         file,
@@ -335,6 +340,12 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     put!(d, 0, "", "parens[{}]:", around.len());
     for (pos, kind, open, end) in around {
         put!(d, 1, "", "{kind} pos={pos} open={open} end={end}");
+    }
+
+    put!(d, 0, "", "non_null_ends[{}]:", non_null_ends.len());
+    for &(expr, end) in non_null_ends {
+        let pos = file.exprs.get(expr.idx()).map_or(u32::MAX, |expr| expr.pos);
+        put!(d, 1, "", "pos={pos} end={end}");
     }
 
     put!(d, 0, "", "jsx_expressions[{}]:", jsx_expressions.len());
@@ -1295,6 +1306,7 @@ impl Dump<'_, '_> {
             clause_end,
             namespace_start,
             named,
+            has_named_imports: _,
             type_only,
             is_deferred,
             mode,
@@ -1367,6 +1379,7 @@ impl Dump<'_, '_> {
     fn export(&mut self, depth: usize, label: &str, id: ExportId) {
         let Export {
             spec,
+            has_module_specifier: _,
             items,
             type_only,
             mode,
@@ -1409,9 +1422,10 @@ impl Dump<'_, '_> {
         let d = depth + 1;
         match kind {
             TypeNodeKind::Error | TypeNodeKind::UniqueSymbol => self.line(depth, label, &head),
-            TypeNodeKind::Heritage(expr) => {
+            TypeNodeKind::Heritage { expr, args } => {
                 self.line(depth, label, &head);
                 self.expr(d, "expr", expr);
+                self.list(d, "args", args, Self::ty);
             }
             TypeNodeKind::Keyword(keyword) => put!(self, depth, label, "{head} {keyword:?}"),
             TypeNodeKind::Ref { name, args } => {
@@ -1673,7 +1687,7 @@ fn stmt_kind_name(kind: StmtKind) -> &'static str {
 fn type_kind_name(kind: TypeNodeKind) -> &'static str {
     match kind {
         TypeNodeKind::Error => "Error",
-        TypeNodeKind::Heritage(_) => "Heritage",
+        TypeNodeKind::Heritage { .. } => "Heritage",
         TypeNodeKind::Keyword(_) => "Keyword",
         TypeNodeKind::Ref { .. } => "Ref",
         TypeNodeKind::StringLit(_) => "StringLit",

@@ -295,7 +295,11 @@ impl<'p, 's> Checker<'p, 's> {
             self.reduced(target);
         }
         let is_trial = error_node.is_some();
-        let is_related = self.try_is_type_related_to(source, target, relation, is_trial);
+        // What the run with `reportErrors` prints and then discards is numbered too.
+        let is_related = match is_trial && self.hands_out_symbol_ids() {
+            true => Ok(false),
+            false => self.try_is_type_related_to(source, target, relation, is_trial),
+        };
         let (is_related, diagnostic) = match (is_related, error_node) {
             (Ok(true), _) | (_, None) => {
                 self.end_comparison(is_outermost);
@@ -729,6 +733,11 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.equivalent_base_types.get(&self.task, &ty) {
             return known;
         }
+        // `ObjectFlagsIdenticalBaseTypeCalculated` is set before the base types are requested, so a recursive query gets nil.
+        let mut in_progress = self.identical_base_types_in_progress.iter();
+        if in_progress.any(|it| it.0 == ty) {
+            return None;
+        }
         let (mut has_heritage_clause, mut extends_entity_name, mut has_members) =
             (false, true, false);
         for &(file, decl) in self.files().decls_of(target).iter() {
@@ -766,7 +775,19 @@ impl<'p, 's> Checker<'p, 's> {
         {
             (None, true)
         } else {
-            let bases = self.base_types(target);
+            self.identical_base_types_in_progress
+                .push((ty, self.stack.len()));
+            let was_resolving = self.is_resolving(Query::Bases(target));
+            // With one checker they are resolved by now, and this is that resolution over again. Whether it began here, with the flag
+            // set, only the task of the declaring file knows, which reports 2310 if not. `checkClassLikeDeclaration` begins here: it
+            // checks the type arguments of the heritage clause first. So this is taken for a recursive query.
+            let is_repeated = was_resolving && self.are_base_types_resolved_by_check(target);
+            let bases = if is_repeated {
+                List::default()
+            } else {
+                self.base_types(target)
+            };
+            let found_cycle = was_resolving && !is_repeated && self.found_cycle;
             let base = match bases[..] {
                 [mut base] if !has_members => {
                     let args = self.type_arguments(ty);
@@ -784,10 +805,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => None,
             };
-            // `base_types` returns an empty list while that query is in progress on this checker, so `base` can be provisional. It is
-            // final only if it was computed from the cached base types.
+            self.identical_base_types_in_progress.pop();
+            // Where `pushTypeResolution` fails, `getBaseTypes` returns `resolvedBaseTypes` as it is, and what follows from that stays.
+            // Otherwise `base` is final only if it was computed from the cached base types.
             let cached = self.p.base_types.get_ref(&self.task, &target);
-            let is_final = has_members || cached.map(|it| &it[..]) == Some(&bases[..]);
+            let is_final =
+                has_members || found_cycle || cached.map(|it| &it[..]) == Some(&bases[..]);
             (base, is_final)
         };
         match self.end_scope_as(scope, !is_final) {
@@ -827,11 +850,11 @@ impl<'p, 's> Checker<'p, 's> {
         } else if self.is_reference_to_global(source, known::Object, 0) {
             self.report_error(r, 2696, &[]);
         } else if is_jsx && self.is_intersection(target) {
+            let (file, location) = (r.error_node.0, self.jsx_element_around(r.error_node));
             if let TypeData::Intersection(parts) = self.data(target)
-                && let Some(file) = self.task.file
                 && let (Some(a), Some(b)) = (
-                    self.jsx_type(file, Node::FILE, known::IntrinsicAttributes),
-                    self.jsx_type(file, Node::FILE, known::IntrinsicClassAttributes),
+                    self.jsx_type(file, location, known::IntrinsicAttributes),
+                    self.jsx_type(file, location, known::IntrinsicClassAttributes),
                 )
                 && (parts.contains(&a) || parts.contains(&b))
             {
@@ -852,6 +875,22 @@ impl<'p, 's> Checker<'p, 's> {
             let at = self.place_of_type_parameter_declaration(file, tp);
             r.related_info
                 .push(self.new_diagnostic(at, 2208, &[Arg::Bytes(&constraint)]));
+        }
+    }
+
+    /// `error_node` as the location that `getJsxNamespaceAt` resolves a name from: the opening of
+    /// the innermost JSX element around it. `Node::FILE`: there is none.
+    fn jsx_element_around(&mut self, error_node: Place) -> Node {
+        let (file, start, end) = error_node;
+        if end == 0 {
+            return Node::FILE;
+        }
+        let (hir, by_kind) = (self.hir(file), self.exprs_by_kind(file));
+        let elements = by_kind.of(ExprTag::Jsx).iter().copied();
+        let around = elements.filter(|&e| hir[e].pos <= start && start < hir[e].end);
+        match around.max_by_key(|&e| hir[e].pos) {
+            Some(element) => self.jsx_opening_like(file, element),
+            None => Node::FILE,
         }
     }
 
@@ -1028,12 +1067,7 @@ impl<'p, 's> Checker<'p, 's> {
             && target != TypeId::MARKER_SUPER_FOR_CHECK
             && target != TypeId::MARKER_SUB_FOR_CHECK
         {
-            // `base_constraint_of` is `None` for the constraint `unknown` too.
-            let constraint = match self.base_constraint_of(target) {
-                None => self.base_constraint_if_any(target, 0),
-                constraint => constraint,
-            };
-            match constraint {
+            match self.base_constraint_of(target) {
                 Some(constraint) if self.is_assignable(generalized_source, constraint) => {
                     let args = [generalized_source_name, target_name, Arg::Type(constraint)];
                     self.report_error(r, 5075, &args);
@@ -1152,37 +1186,6 @@ impl<'p, 's> Checker<'p, 's> {
             Some(i) => self.report_error(r, 2551, &[args[0], args[1], Arg::Prop(&properties[i])]),
             None => self.report_error(r, 2339, &args),
         }
-    }
-}
-
-// ───────────────────────────── recursive types ─────────────────────────────
-
-impl<'p, 's> Checker<'p, 's> {
-    /// `indexSignaturesRelatedTo` for `source`, the apparent type of `object`. It comes from no
-    /// declaration, so it is not known to have no other properties.
-    pub(super) fn report_index_signature_missing_in_object(
-        &mut self,
-        r: &mut Relater,
-        source: TypeId,
-        target: TypeId,
-    ) -> Ternary {
-        let Some(m) = self.members(target) else {
-            return Ternary::FALSE;
-        };
-        let index = &m.shape().index;
-        // When there is also a string index signature, anything is related to an index signature of
-        // type `any`.
-        let any_takes_all =
-            r.relation != Relation::StrictSubtype && index.iter().any(|i| i.key == TypeId::STRING);
-        let missing = index.iter().find(|i| {
-            let expected = self.instantiate(i.value, m.mapper);
-            !(any_takes_all && self.is_any(expected))
-        });
-        let Some(missing) = missing else {
-            return Ternary::TRUE;
-        };
-        self.report_error(r, 2329, &[Arg::Type(missing.key), Arg::Type(source)]);
-        Ternary::FALSE
     }
 }
 

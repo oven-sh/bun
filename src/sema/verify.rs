@@ -8,11 +8,12 @@ use crate::config::{
     Project, resolve_config_file_name_of_project_reference, starts_with_config_dir_template,
 };
 use crate::json::{Json, TsConfigSourceFile};
+use crate::program::COMPARE_PATHS_CASE_SENSITIVE;
 use crate::resolve::{
-    JsxEmit, ModuleKind, Options, combine_paths, ensure_path_is_non_module_name,
+    JsxEmit, ModuleKind, Options, combine_paths, displayed_path, ensure_path_is_non_module_name,
     get_relative_path_from_directory, get_root_length, path_is_relative, to_path,
 };
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet};
 use bun_core::lexer;
 use bun_core::strings;
 use bun_paths::platform::Posix;
@@ -38,7 +39,7 @@ fn parsed_list(value: &Json) -> Option<&[Json]> {
 }
 
 /// `IsIdentifierText`
-fn is_identifier_text(text: &[u8]) -> bool {
+pub(crate) fn is_identifier_text(text: &[u8]) -> bool {
     let (first, size) = lexer::char_and_size(text, 0);
     lexer::is_identifier_start(first as u32)
         && lexer::end_of_run(text, size, lexer::is_type_script_identifier_part) == text.len()
@@ -173,10 +174,6 @@ pub enum Place {
     /// `CreateDiagnosticAtReferenceSyntax`: at an element of `references`. No location if the index
     /// is out of range.
     Reference(usize),
-    /// `GetTsConfigPropArrayElementValue` of `GetMatchedFileSpec`: at the entry of `files` for the
-    /// file with this name. With it, the directory that the entries are relative to, and
-    /// `UseCaseSensitiveFileNames`.
-    File(Vec<u8>, Vec<u8>, bool),
     /// `GetOptionsSyntaxByArrayElementValue`: at the string in the array that is the value of the
     /// option. No location if it is not there.
     Element(&'static [u8], Vec<u8>),
@@ -194,6 +191,26 @@ pub struct Problem {
     /// `RelatedInformation`: the file, which can be `IN_CONFIGURATION`, the span, and the code of a
     /// message without arguments.
     pub related: Vec<(crate::program::FileId, u32, u32, u32)>,
+}
+
+/// What `Problem::span_in` finds for `Place::TopElement(name, spec)`, for every `spec` at once:
+/// thousands of entries of `files` can each be asked about.
+pub fn spans_of_top_elements(
+    file: &TsConfigSourceFile,
+    name: &[u8],
+) -> FxHashMap<Vec<u8>, (u32, u32)> {
+    let mut spans = FxHashMap::default();
+    let root = file.object_literal_expression();
+    let list = root.and_then(|root| file.property(root, name, None));
+    for e in list
+        .into_iter()
+        .flat_map(|p| file.elements(file.initializer(p)))
+    {
+        if let Json::String(spec) = file.convert_property_value_to_json(e) {
+            spans.entry(spec).or_insert_with(|| file.span(e));
+        }
+    }
+    spans
 }
 
 impl Problem {
@@ -226,15 +243,6 @@ impl Problem {
             let list = value_of(root, b"references")?;
             return file.elements(list).nth(index).map(|e| file.span(e));
         }
-        if let Place::File(name, base, is_case_sensitive) = &self.at {
-            let is_it = |&e: &_| {
-                let entry = file.convert_property_value_to_json(e);
-                let entry = entry.as_str().map(|it| crate::resolve::join(base, it));
-                entry.is_some_and(|it| crate::resolve::is_same_path(&it, name, *is_case_sensitive))
-            };
-            let mut entries = file.elements(value_of(root, b"files")?);
-            return entries.find(is_it).map(|e| file.span(e));
-        }
         if let Place::Top(name) | Place::TopElement(name, _) = &self.at {
             let list = value_of(root, name)?;
             let Place::TopElement(_, specified) = &self.at else {
@@ -261,7 +269,6 @@ impl Problem {
             | Place::Top(_)
             | Place::TopElement(..)
             | Place::Reference(_)
-            | Place::File(..)
             | Place::Element(..) => None,
             Place::Key(name, other) => file.property(written, name, Some(*other)).map(name_span),
             Place::Value(name) => file.property(written, name, empty_key2).map(value_span),
@@ -285,7 +292,7 @@ pub(crate) fn relative_from_file(from: &[u8], to: &[u8], is_case_sensitive: bool
 /// `verifyProjectReferences`: the diagnostics for the projects `root` references, directly or
 /// transitively, each with the configuration file that references it. `resolved`:
 /// `configToProjectReference`, the project of the configuration file with a `tspath.Path`, if the
-/// file exists.
+/// file can be read.
 pub fn verify_project_references<'a>(
     root: &'a Project,
     resolved: &dyn Fn(&[u8]) -> Option<&'a Project>,
@@ -315,22 +322,23 @@ pub fn verify_project_references<'a>(
             let problem = Problem::new(code, args, Place::Reference(index));
             out.push((parent.config_path.as_slice(), problem));
         };
+        let reference = displayed_path(reference);
         let Some(config) = config else {
-            say(6053, &[reference]);
+            say(6053, &[&reference]);
             continue;
         };
         if !parent.files.is_empty() {
             if !config.options.composite {
-                say(6306, &[reference]);
+                say(6306, &[&reference]);
             }
             if config.options.no_emit {
-                say(6310, &[reference]);
+                say(6310, &[&reference]);
             }
         }
         if !build_info_file_name.is_empty()
             && build_info_file_name == config.get_build_info_file_name()
         {
-            say(6377, &[&build_info_file_name, reference]);
+            say(6377, &[&displayed_path(&build_info_file_name), &reference]);
         }
         pending.push((config, 0));
     }
@@ -401,8 +409,8 @@ pub fn verify_compiler_options(
         let mut use_instead = Vec::new();
         if !config_path.is_empty() {
             let base_url = text(b"baseUrl");
-            let is_case_sensitive = options.use_case_sensitive_file_names;
-            let mut relative = relative_from_file(config_path, base_url, is_case_sensitive);
+            let mut relative =
+                relative_from_file(config_path, base_url, COMPARE_PATHS_CASE_SENSITIVE);
             // So `..` becomes `./..`.
             if !(relative.starts_with(b"./") || relative.starts_with(b"../")) {
                 relative.splice(0..0, *b"./");

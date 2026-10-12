@@ -693,12 +693,6 @@ extern "C" void bun_initialize_process()
     setvbuf(stderr, nullptr, _IONBF, 0);
 
 #if OS(LINUX)
-    // Prevent leaking inherited file descriptors on Linux
-    // This is less of an issue for macOS due to posix_spawn
-    // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
-    // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
-    bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
-
     execve_counting_pid = getpid();
 #endif
 
@@ -755,6 +749,29 @@ extern "C" void bun_initialize_process()
     ASSERT(devNullFd_ == -1 || devNullFd_ > 2);
     if (devNullFd_ > 2) {
         close(devNullFd_);
+    }
+
+    // Node's InitializeOncePerProcessInternal calls uv_disable_stdio_inheritance,
+    // including stdio and IPC: exec/spawn callers must explicitly opt back in.
+#if OS(LINUX) || OS(FREEBSD)
+    if (bun_close_range(0, ~0U, CLOSE_RANGE_CLOEXEC) != 0)
+#endif
+    {
+        // https://github.com/nodejs/node/blob/v24.21.0/deps/uv/src/unix/core.c#L800-L808
+        for (int fd = 0;; fd++) {
+            int flags;
+            do {
+                flags = fcntl(fd, F_GETFD);
+            } while (flags == -1 && errno == EINTR);
+            int result = flags;
+            if (flags != -1) {
+                do {
+                    result = fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+                } while (result == -1 && errno == EINTR);
+            }
+            if (result == -1 && fd > 15)
+                break;
+        }
     }
 
     // Restore TTY state on exit

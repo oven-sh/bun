@@ -452,7 +452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 self.note_tracked_namespace_use(namespace_ref);
                                 // Another `var` declaration is the same variable.
                                 if kind != LocalKind::KVar && !is_export {
-                                    self.note_destructured_locals(obj.properties());
+                                    self.note_destructured_declaration_locals(obj.properties());
                                 }
                             }
                         }
@@ -553,7 +553,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 self.dynamic_import_escaped_records
                                     .insert(req.import_record_index, ());
                             } else if kind != LocalKind::KVar && !is_export {
-                                self.note_destructured_locals(obj.properties());
+                                self.note_destructured_declaration_locals(obj.properties());
                             }
                         }
                         BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {

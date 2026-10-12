@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
+import { BundlerTestInput, decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output
 // directory, never relative to the importing chunk (esbuild's semantics).
@@ -2591,6 +2591,245 @@ describe("bundler", () => {
     },
     run: {
       stdout: "Disposing\ntrue",
+    },
+  });
+
+  // Lowering a top-level `using` moves the module body into a generated
+  // try/catch/finally. Hoisted functions, export getters and other files read
+  // the module's bindings from outside of it, and the linker hoists only
+  // top-level declarations out of an `__esm(() => { ... })` wrapper. So no
+  // declaration may stay inside the try. The fixture has every kind that ends
+  // up in there: exported and local let/const, the `using` itself, a
+  // destructuring pattern, a declaration without an initializer, classes that
+  // run code when they are defined, and the variable that
+  // `export default <expr>` becomes.
+  const loweredTopLevelUsing = {
+    Using: `using handle = { val: 42, [Symbol.dispose]() { state.disposed = true; } };`,
+    AwaitUsing: `await using handle = { val: 42, async [Symbol.asyncDispose]() { state.disposed = true; } };`,
+  };
+  const loweredTopLevelUsingModule = (kind: keyof typeof loweredTopLevelUsing) => /* js */ `
+    export const state = { disposed: false };
+    ${loweredTopLevelUsing[kind]}
+    export const result = handle.val;
+    const { val } = handle;
+    let assignedLater;
+    assignedLater = val + 1;
+    class Plain { get() { return val + 2; } }
+    class Local { static seen = handle.val + 3; }
+    export class Sub extends Local {}
+    export class WithStaticBlock { static seen; static { WithStaticBlock.seen = handle.val + 4; } }
+    export function internals() {
+      return [val, assignedLater, new Plain().get(), Local.seen];
+    }
+    export default { tag: "default", val };
+  `;
+  const loweredTopLevelUsingInEsmWrapper = (
+    kind: keyof typeof loweredTopLevelUsing,
+    target: "browser" | "node",
+  ): BundlerTestInput => ({
+    target,
+    backend: target === "node" ? "cli" : "api",
+    files: {
+      "/entry.js": /* js */ `
+        import def, { result, state, internals, Sub, WithStaticBlock } from "./lazy.js";
+        console.log(JSON.stringify(["static", result, state.disposed, internals(), Sub.seen, WithStaticBlock.seen, def]));
+        const mod = await import("./lazy.js");
+        console.log(JSON.stringify(["dynamic", mod.result, mod.state.disposed, mod.internals(), mod.Sub.seen, mod.WithStaticBlock.seen, mod.default]));
+      `,
+      "/lazy.js": loweredTopLevelUsingModule(kind),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("__esm(");
+      expect(out).toContain("__callDispose(");
+      // Everything the try block assigns is declared outside the wrapper in one declaration.
+      expect(out).toMatch(
+        /^var __stack, state, handle, result, val, assignedLater, Local, Sub, WithStaticBlock, lazy_default;$/m,
+      );
+      // A class that runs no code when it is defined leaves the try as a declaration.
+      expect(out).toMatch(/^class Plain \{$/m);
+    },
+    run: {
+      stdout: `
+        ["static",42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]
+        ["dynamic",42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]
+      `,
+    },
+  });
+  itBundled("edgecase/LoweredTopLevelUsingInEsmWrapper", loweredTopLevelUsingInEsmWrapper("Using", "browser"));
+  itBundled(
+    "edgecase/LoweredTopLevelAwaitUsingInEsmWrapper",
+    loweredTopLevelUsingInEsmWrapper("AwaitUsing", "browser"),
+  );
+  itBundled("edgecase/LoweredTopLevelUsingInEsmWrapperNodeTarget", loweredTopLevelUsingInEsmWrapper("Using", "node"));
+  itBundled(
+    "edgecase/LoweredTopLevelAwaitUsingInEsmWrapperNodeTarget",
+    loweredTopLevelUsingInEsmWrapper("AwaitUsing", "node"),
+  );
+
+  // Without the import() the module is inlined into the entry point, with no
+  // wrapper. The hoisted function still reads `Local`, and `Sub` extends it.
+  const loweredTopLevelUsingInlined = (kind: keyof typeof loweredTopLevelUsing): BundlerTestInput => ({
+    files: {
+      "/entry.js": /* js */ `
+        import def, { result, state, internals, Sub, WithStaticBlock } from "./lazy.js";
+        console.log(JSON.stringify([result, state.disposed, internals(), Sub.seen, WithStaticBlock.seen, def]));
+      `,
+      "/lazy.js": loweredTopLevelUsingModule(kind),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__esm(");
+      api.expectFile("/out.js").toContain("__callDispose(");
+    },
+    run: {
+      stdout: '[42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]',
+    },
+  });
+  itBundled("edgecase/LoweredTopLevelUsingInlined", loweredTopLevelUsingInlined("Using"));
+  itBundled("edgecase/LoweredTopLevelAwaitUsingInlined", loweredTopLevelUsingInlined("AwaitUsing"));
+
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`edgecase/LoweredTopLevelUsingRequiredFromCommonJS${format === "cjs" ? "ToCjs" : ""}`, {
+      target: "node",
+      format,
+      files: {
+        "/entry.cjs": /* js */ `
+          const lazy = require("./lazy.mjs");
+          console.log(JSON.stringify([lazy.result, lazy.state.disposed, lazy.internals(), lazy.Sub.seen, lazy.default]));
+        `,
+        "/lazy.mjs": loweredTopLevelUsingModule("Using"),
+      },
+      run: {
+        stdout: '[42,true,[42,43,44,45],45,{"tag":"default","val":42}]',
+      },
+    });
+  }
+
+  // A static import from a wrapped file is wrapped too.
+  itBundled("edgecase/LoweredTopLevelUsingUnderWrappedImporter", {
+    files: {
+      "/entry.js": /* js */ `
+        const outer = await import("./outer.js");
+        console.log(JSON.stringify(outer.view()));
+      `,
+      "/outer.js": /* js */ `
+        import def, { result, state, internals, Sub, WithStaticBlock } from "./lazy.js";
+        export function view() {
+          return [result, state.disposed, internals(), Sub.seen, WithStaticBlock.seen, def];
+        }
+      `,
+      "/lazy.js": loweredTopLevelUsingModule("Using"),
+    },
+    run: {
+      stdout: '[42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]',
+    },
+  });
+
+  // Two entry points read the bindings from a chunk that both share.
+  itBundled("edgecase/LoweredTopLevelUsingSharedChunk", {
+    files: {
+      "/a.js": /* js */ `
+        import def, { result, state, internals, Sub, WithStaticBlock } from "./lazy.js";
+        console.log(JSON.stringify(["a", result, state.disposed, internals(), Sub.seen, WithStaticBlock.seen, def]));
+      `,
+      "/b.js": /* js */ `
+        import def, { result, state, internals, Sub, WithStaticBlock } from "./lazy.js";
+        console.log(JSON.stringify(["b", result, state.disposed, internals(), Sub.seen, WithStaticBlock.seen, def]));
+      `,
+      "/lazy.js": loweredTopLevelUsingModule("Using"),
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    target: "node",
+    run: [
+      { file: "/out/a.js", stdout: '["a",42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]' },
+      { file: "/out/b.js", stdout: '["b",42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]' },
+    ],
+  });
+
+  itBundled("edgecase/LoweredTopLevelUsingEnumAndNamespaceInEsmWrapper", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const mod = await import("./lazy.ts");
+        console.log(JSON.stringify([mod.Color.Green, mod.Shape.sides, mod.local()]));
+      `,
+      "/lazy.ts": /* ts */ `
+        using handle = { val: 42, [Symbol.dispose]() {} };
+        export enum Color { Red, Green = handle.val + 1 }
+        export namespace Shape { export const sides = handle.val + 2; }
+        enum Hidden { Value = handle.val + 3 }
+        export function local() { return Hidden.Value; }
+      `,
+    },
+    run: {
+      stdout: "[43,44,45]",
+    },
+  });
+
+  // A destructured `await import()` or `require()` binds its locals to the
+  // exports of the other file when it stays a declaration. Next to a lowered
+  // top-level `using` it becomes an assignment and reads the namespace object.
+  const loweredTopLevelUsingNextToImports: BundlerTestInput["files"] = {
+    "/lazy.js": /* js */ `
+      using handle = { [Symbol.dispose]() {} };
+      const { count, bump } = await import("./counter.js");
+      const { two } = require("./two.js");
+      const ns = await import("./three.js");
+      export const viaImport = [count, bump(), count];
+      export const viaRequire = two;
+      export const viaNamespace = ns.three;
+    `,
+    "/counter.js": /* js */ `
+      export let count = 1;
+      export function bump() { return ++count; }
+    `,
+    "/two.js": /* js */ `
+      export const two = 2;
+      export const unusedTwo = "unused export of two.js";
+    `,
+    "/three.js": /* js */ `
+      export const three = 3;
+      export const unusedThree = "unused export of three.js";
+    `,
+  };
+  itBundled("edgecase/LoweredTopLevelUsingNextToImportsInEsmWrapper", {
+    target: "node",
+    files: {
+      "/entry.js": /* js */ `
+        import { viaImport, viaRequire, viaNamespace } from "./lazy.js";
+        console.log(JSON.stringify(["static", viaImport, viaRequire, viaNamespace]));
+        const mod = await import("./lazy.js");
+        console.log(JSON.stringify(["dynamic", mod.viaImport, mod.viaRequire, mod.viaNamespace]));
+      `,
+      ...loweredTopLevelUsingNextToImports,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm(");
+    },
+    run: {
+      stdout: `
+        ["static",[1,2,1],2,3]
+        ["dynamic",[1,2,1],2,3]
+      `,
+    },
+  });
+  itBundled("edgecase/LoweredTopLevelUsingNextToImportsInlined", {
+    target: "node",
+    files: {
+      "/entry.js": /* js */ `
+        import { viaImport, viaRequire, viaNamespace } from "./lazy.js";
+        console.log(JSON.stringify([viaImport, viaRequire, viaNamespace]));
+      `,
+      ...loweredTopLevelUsingNextToImports,
+    },
+    onAfterBundle(api) {
+      // Only the exports that the file reads stay in the namespace objects.
+      api.expectFile("/out.js").not.toContain("unused export of two.js");
+      api.expectFile("/out.js").not.toContain("unused export of three.js");
+    },
+    run: {
+      stdout: "[[1,2,1],2,3]",
     },
   });
 

@@ -1199,7 +1199,7 @@ impl<'a> Parser<'a> {
         //   export function fn() {
         //     return [foo, new Bar]
         //   }
-        //   class Bar {}
+        //   class Bar { static foo = foo }
         //
         // After ("fn" is hoisted, "Bar" is converted to "var"):
         //
@@ -1208,7 +1208,7 @@ impl<'a> Parser<'a> {
         //   }
         //   try {
         //     var foo = get();
-        //     var Bar = class {};
+        //     var Bar = class { static foo = foo };
         //   } catch (_) {
         //     ...
         //   } finally {
@@ -1217,6 +1217,7 @@ impl<'a> Parser<'a> {
         //
         // This is also necessary because other code might be appended to the code
         // that we're processing and expect to be able to access top-level variables.
+        // The bundler and the REPL hoist top-level declarations only: for them the "var" declarations also leave the try.
         p.will_wrap_module_in_try_catch_for_using = p.should_lower_using_declarations(stmts);
 
         // Bind symbols in a second pass over the AST. I started off doing this in a

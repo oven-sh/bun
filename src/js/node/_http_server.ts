@@ -2370,7 +2370,7 @@ function _writeHead(statusCode, reason, obj, response) {
   }
 }
 
-// The headers of a writeHead() on a response with no header set before, which Node renders as given (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L465-L468): the [name, value, ...] list of flattenRawHead(), and then its NodeHTTPRawHead bits.
+// The headers of a writeHead() on a response with no header set before, which Node renders as given (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L465-L468): what flattenRawHead() returns, a [name, value, ...] list and then its NodeHTTPRawHead bits.
 const kRawHead = Symbol("kRawHead");
 // What flattenRawHead() reports of one call: the NodeHTTPRawHead bits, and the number of the last Content-Length line.
 const rawHeadOut = new Float64Array(2);
@@ -2386,13 +2386,15 @@ function setRawHead(response, headers) {
     try {
       rawHead = flattenRawHead(headers, response._isLenientHeaderValidation(), response[kUniqueHeaders], rawHeadOut);
     } finally {
-      // Node's matchHeader(), for each line that the walk reached.
-      facts = rawHeadOut[0];
+      // Node's matchHeader(), for each line that the walk reached. `| 0` makes the bits an int32: a `&` of the double that a Float64Array gives is a slow path below the DFG.
+      facts = rawHeadOut[0] | 0;
       if (facts !== 0) matchRawHead(response, facts, rawHeadOut[1]);
     }
     if (!hasHandle) {
       // Node's _storeHeader renders the lines. A throw here comes before writeHead() marks the headers as sent.
+      rawHead.pop();
       response._storeHeader(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n`, rawHead);
+      rawHead.push(facts);
     } else {
       if (response[headerStateSymbol] === NodeHTTPHeaderState.sent) {
         // The toString() of a value sent the head from inside the walk. Node sends a second head then. A handle cannot.
@@ -2417,7 +2419,6 @@ function setRawHead(response, headers) {
     throw error;
   }
   // Also with no handle: one can come later, and it writes these lines.
-  rawHead.push(facts);
   response[kRawHead] = rawHead;
 }
 
@@ -2589,7 +2590,7 @@ function renderNativeHeaders(res) {
       // The lines that writeHead() took from its argument are the head, whatever the store holds by now.
       headersMap = null;
       const last = rawHead.length - 1;
-      for (let i = 0; i < last; i++) flat.push(rawHead[i]);
+      for (let i = 0; i < last; i += 2) flat.push(rawHead[i], rawHead[i + 1]);
       const facts = rawHead[last];
       hasDate = (facts & NodeHTTPRawHead.date) !== 0;
       hasConnection = (facts & (NodeHTTPRawHead.close | NodeHTTPRawHead.persist)) !== 0;

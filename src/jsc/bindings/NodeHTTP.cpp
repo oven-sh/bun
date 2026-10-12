@@ -855,7 +855,7 @@ struct RawHeadWalk {
     bool lenient;
     uint32_t facts { 0 };
     double contentLength { 0 };
-    MarkedArgumentBuffer lines;
+    MarkedArgumentBufferWithSize<32> lines;
 };
 
 // checkInvalidHeaderChar() of node:_http_common: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L214-L227
@@ -1163,7 +1163,7 @@ static void walkRawHead(RawHeadWalk& walk, JSValue headers)
     }
 }
 
-// flattenRawHead(headers, lenient, uniqueHeaders, out): the headers of a writeHead() with no header set before, checked in Node's order, as the [name, value, ...] list that the handles take. `out` gets the kRawHead* bits and the Content-Length number, also when the walk throws.
+// flattenRawHead(headers, lenient, uniqueHeaders, out): the headers of a writeHead() with no header set before, checked in Node's order, as the [name, value, ...] list that the handles take, and then the kRawHead* bits. `out` gets the bits and the Content-Length number, also when the walk throws.
 JSC_DEFINE_HOST_FUNCTION(jsHTTPFlattenRawHead, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1180,11 +1180,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPFlattenRawHead, (JSGlobalObject * globalObject, C
     out->typedVector()[1] = walk.contentLength;
     RETURN_IF_EXCEPTION(scope, {});
 
+    walk.lines.append(jsNumber(walk.facts));
     if (walk.lines.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), walk.lines)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), walk.lines)));
 }
 
 JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)

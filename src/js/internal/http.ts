@@ -21,13 +21,13 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, fla
     httpAllowHalfOpen: boolean,
   ) => void;
   setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
-  // The headers of writeHead(status, headers), checked in Node's order, as a [name, value, ...] list. `out` gets the NodeHTTPRawHead bits and the Content-Length number, also when it throws.
+  // The headers of writeHead(status, headers), checked in Node's order, as a [name, value, ...] list, and then the NodeHTTPRawHead bits. `out` gets the bits and the Content-Length number, also when it throws.
   flattenRawHead: (
     headers: unknown,
     lenient: boolean,
     uniqueHeaders: Set<string> | null | undefined,
     out: Float64Array,
-  ) => string[];
+  ) => (string | number)[];
   drainMicrotasks: () => void;
 };
 

@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include "LintPropertyCache.h"
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -24,6 +25,11 @@ struct LintSourceCodeState {
     template<typename Visitor>
     void visit(Visitor& visitor)
     {
+        range.visit(visitor);
+        loc.visit(visitor);
+        parent.visit(visitor);
+        type.visit(visitor);
+        visitor.append(locGetter);
         visitor.append(constructor);
         visitor.append(instanceStructure);
         visitor.append(servicesStructure);
@@ -52,8 +58,11 @@ struct LintSourceCodeState {
     }
 
     // Built once.
-    JSC::Identifier range, loc, parent, line, column, start, end, type, value, body, properties, elements, cases, commentsName;
+    LintPropertyCache range, loc, parent, type;
+    JSC::Identifier line, column, start, end, value, body, properties, elements, cases, commentsName;
     JSC::Identifier emitDecoratorMetadata, experimentalDecorators, isolatedDeclarations;
+    // The getter of `loc` that nodes and tokens inherit.
+    JSC::WriteBarrier<JSC::JSObject> locGetter;
     JSC::WriteBarrier<JSC::JSObject> constructor;
     JSC::WriteBarrier<JSC::Structure> instanceStructure;
     JSC::WriteBarrier<JSC::Structure> servicesStructure;
@@ -90,7 +99,7 @@ struct LintSourceCodeState {
     struct ConfigComment {
         uint32_t comment, label, valueStart, valueEnd, justificationStart, justificationEnd;
     };
-    WTF::Vector<ConfigComment> configComments;
+    std::span<const ConfigComment> configComments;
     JSC::WriteBarrier<JSC::JSArrayBuffer> treeBuffer;
     JSC::WriteBarrier<JSC::JSArray> nodes;
     std::span<const uint32_t> starts;
@@ -99,6 +108,9 @@ struct LintSourceCodeState {
     // By the number of a node: the number of the last node in it, or its own.
     WTF::Vector<uint32_t> lastDescendants;
 };
+
+// `nodeOrToken.loc`
+JSC::JSValue lintLocOf(JSC::JSGlobalObject*, LintHost*, JSC::JSValue nodeOrToken);
 
 // Adds `sourceCode`, `locGetter` and `locSetter` to the `native` object of the program in src/lint/js_plugin/worker.
 void addLintSourceCodeFunctions(JSC::JSGlobalObject*, JSC::JSObject* native);

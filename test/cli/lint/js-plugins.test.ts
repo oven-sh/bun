@@ -2867,6 +2867,31 @@ describe.concurrent("scopes in JavaScript plugins", () => {
   );
 });
 
+test.concurrent(
+  "context.sourceCode answers as in ESLint: text, lines, locations, indices, ancestors, directive comments, and what bad input throws",
+  async () => {
+    const oracle = join(import.meta.dir, "oracle", "jsplugins", "source-code");
+    const { texts } = require(join(oracle, "plugin.cjs"));
+    const files = {
+      "plugin.cjs": readFileSync(join(oracle, "plugin.cjs"), "utf8"),
+      "eslint.config.cjs": `const demo = require("./plugin.cjs");
+        module.exports = [{ plugins: { demo }, rules: { "demo/all": "error" } }];`,
+      ...texts,
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "json", ...Object.keys(texts)]);
+    const said = Object.fromEntries(
+      JSON.parse(raw).map((result: any) => [
+        result.filePath.replaceAll("\\", "/").split("/").at(-1),
+        JSON.parse(result.messages.find((it: any) => it.ruleId === "demo/all").message),
+      ]),
+    );
+    // Recorded with ESLint 10.12.0 by record.mjs in that directory.
+    expect(said).toEqual(JSON.parse(readFileSync(join(oracle, "expected.json"), "utf8")));
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
 describe.concurrent("code paths in JavaScript plugins", () => {
   const oracle = join(import.meta.dir, "oracle", "jsplugins", "code-paths");
   const trace = readFileSync(join(oracle, "trace.cjs"), "utf8");

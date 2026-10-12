@@ -5,6 +5,7 @@
 #include "LintReport.h"
 #include "LintSourceCode.h"
 #include "LintTokens.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSString.h>
@@ -37,7 +38,11 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*);
     static void destroy(JSC::JSCell*);
 
-    static LintHost* from(JSC::JSGlobalObject*);
+    // Of the global object of a function that `addLintHostFunctions` or a plugin's `sourceCode` has, which is a Zig::GlobalObject.
+    static LintHost* from(JSC::JSGlobalObject* globalObject)
+    {
+        return uncheckedDowncast<LintHost>(uncheckedDowncast<Zig::GlobalObject>(globalObject)->m_lintHost.getInitializedOnMainThread(globalObject));
+    }
 
     // A Structure for plain objects with `keys` as inline data properties, at the offsets 0, 1, 2 and so on.
     static JSC::Structure* createShape(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype, std::span<const ASCIILiteral> keys);
@@ -56,7 +61,12 @@ public:
     bool isEspree() const { return m_flags & 4; }
 
     // The index where each line starts. The first is 0.
-    const WTF::Vector<uint32_t>& lineStarts();
+    const WTF::Vector<uint32_t>& lineStarts()
+    {
+        if (m_lineStarts.isEmpty()) [[unlikely]]
+            findLineStarts();
+        return m_lineStarts;
+    }
     // Where `index` is. Nobody has to check it first. One past the end of the text counts as part of the last line, NaN too, and
     // a negative one is in line 0.
     struct Position {
@@ -83,6 +93,7 @@ private:
     }
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    void findLineStarts();
 
     JSC::WriteBarrier<JSC::Structure> m_positionStructure;
     JSC::WriteBarrier<JSC::Structure> m_locStructure;
@@ -93,6 +104,8 @@ private:
     bool m_isLinting { false };
     // Empty until it's asked for.
     WTF::Vector<uint32_t> m_lineStarts;
+    // The line that was found last. The next position that's asked for is mostly in it.
+    uint32_t m_lastLine { 1 };
 };
 
 // `target[name]`. An own data property of an ordinary object is found without a walk through the prototype chain.

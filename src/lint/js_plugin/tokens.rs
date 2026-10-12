@@ -35,14 +35,15 @@ fn write_decoded_values<'a>(file: &'a File<'a>, out: &mut Vec<u8>) {
     }
     let mut entries = Vec::new();
     let mut units = Vec::new();
-    let mut is_attribute = false;
+    let mut is_after_equals = false;
     for (index, token) in file.tokens().enumerate() {
+        let is_attribute = core::mem::replace(&mut is_after_equals, token.is_punctuator("="));
         let value = match token.kind() {
-            // The string of an attribute stays as it's written.
-            TokenKind::JsxText if !is_attribute => jsx_text_value_of(token.text(), true),
+            // The string of an attribute stays as it's written. For oxlint all text does.
+            TokenKind::JsxText if is_attribute || file.language().is_oxlint => continue,
+            TokenKind::JsxText => jsx_text_value_of(token.text(), true),
             _ => token.decoded_value(),
         };
-        is_attribute = token.is_punctuator("=");
         let Cow::Owned(value) = value else {
             continue;
         };

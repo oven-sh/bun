@@ -176,6 +176,8 @@ struct LintScopes {
                     return false;
                 break;
             case 1:
+                if (!isListOf(name, 0x10000))
+                    return false;
                 break;
             case 2:
                 if (name >= nameCount)
@@ -415,8 +417,12 @@ private:
         switch (word & 3) {
         case 0:
             return nameOfNode(number);
-        case 1:
-            return string(argumentsString);
+        case 1: {
+            if (!number)
+                return string(argumentsString);
+            Vector<char16_t, 32> units(m_message.list(number).size(), [&](size_t i) { return static_cast<char16_t>(m_message.list(number)[i]); });
+            return jsString(m_vm, String(units.span()));
+        }
         case 2:
             return m_names->getIndexQuickly(number);
         default: {
@@ -583,7 +589,8 @@ private:
                 value = (settings & 3) == 3 ? jsUndefined() : string(firstSetting + (settings & 3));
                 break;
             case Field::EslintExplicitGlobal:
-                value = jsBoolean(settings & 16);
+                // ESLint sets it for the names that it knows. A library of TypeScript isn't among what it knows.
+                value = settings & 8 ? jsBoolean(settings & 16) : jsUndefined();
                 break;
             case Field::Writeable:
                 value = jsBoolean(settings & 4);

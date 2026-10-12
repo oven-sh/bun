@@ -231,13 +231,16 @@ impl FileSettings {
         let globals = config_globals_in_order(language)
             .into_iter()
             .map(|(name, setting)| (name.into_owned().into(), setting));
-        let globals = ConfiguredGlobals::new(globals.collect());
+        let globals = ConfiguredGlobals::new(globals.collect(), language.lib_variables());
         let all_globals = globals
             .iter()
             .map(|(name, setting)| (name.to_vec(), string(setting_name(*setting))))
             .collect();
-        // 1: a type, 2: a value.
-        let libs = language.lib_variables().map(|(name, is_type, is_value)| {
+        // 1: a type, 2: a value. typescript-eslint defines the `const` of `x as const` after the libraries.
+        let libs = language
+            .lib_variables()
+            .chain([(&b"const"[..], true, false)]);
+        let libs = libs.map(|(name, is_type, is_value)| {
             (
                 name.to_vec(),
                 Json::Number(f64::from(u8::from(is_type) | (u8::from(is_value) << 1))),

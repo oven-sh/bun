@@ -34,8 +34,8 @@ class Token {
 }
 Object.defineProperty(Token.prototype, "loc", Object.getOwnPropertyDescriptor(Node.prototype, "loc"));
 
-// Everything below this line is also in src/jsc/bindings/LintTokens.cpp, which this turns on.
-const usesNativeTokens = process.env.BUN_LINT_NATIVE_TOKENS === "1";
+// Everything below this line is also in src/jsc/bindings/LintTokens.cpp, which is what runs unless this turns it off.
+const usesNativeTokens = process.env.BUN_LINT_NATIVE_TOKENS !== "0";
 
 // `{ count, starts, ends, kinds, objects }` for the tokens and for the comments. `null`: not asked for yet.
 let tokenList = null;

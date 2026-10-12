@@ -793,7 +793,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
             RETURN_IF_EXCEPTION(scope, );
         }
         if (loc.isUndefinedOrNull()) {
-            loc = lintGet(globalObject, node, state.name(Descriptor::Loc));
+            loc = lintLocOf(globalObject, host, node);
             RETURN_IF_EXCEPTION(scope, );
         }
         if (loc.isUndefinedOrNull()) [[unlikely]] {

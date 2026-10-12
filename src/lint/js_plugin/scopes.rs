@@ -173,6 +173,8 @@ enum Name {
     /// The `name` of this node, or its `value` if it's a `Literal`.
     Node(u32),
     Arguments,
+    /// A list of its UTF-16 code units, which isn't empty.
+    Units(u32),
     /// The key at this index of the configured globals.
     Configured(u32),
     /// A list with where the name starts and ends in the text.
@@ -184,6 +186,7 @@ impl Name {
         match self {
             Name::Node(id) => id << 2,
             Name::Arguments => 1,
+            Name::Units(list) => list << 2 | 1,
             Name::Configured(index) => index << 2 | 2,
             Name::Text(list) => list << 2 | 3,
         }
@@ -806,12 +809,17 @@ impl<'t, 'a> Builder<'t, 'a> {
             }
         }
 
+        let mut to_const = self.references_to_const().into_iter().peekable();
+        let mut is_first_to_const = true;
         let mut seen = FxHashSet::default();
         for reference in file.references_as_visited() {
             // A rule can't see a reference whose identifier isn't in the tree.
             let identifier = id(identifier(reference));
             if identifier == NONE {
                 continue;
+            }
+            while let Some(it) = to_const.next_if(|it| it.identifier < identifier) {
+                self.add_reference_to_const(it, std::mem::take(&mut is_first_to_const));
             }
             let global = reference.global();
             if let Some(global) = global
@@ -843,6 +851,53 @@ impl<'t, 'a> Builder<'t, 'a> {
                 name: reference.name().bytes(),
             });
         }
+        for it in to_const {
+            self.add_reference_to_const(it, std::mem::take(&mut is_first_to_const));
+        }
+    }
+
+    /// For typescript-eslint the `const` of `x as const` is a reference to a type that is called `const`, which it defines
+    /// along with the libraries.
+    fn references_to_const(&self) -> Vec<ReferenceRecord<'t>> {
+        let mut found = Vec::new();
+        if self.is_espree {
+            return found;
+        }
+        // By its block: the innermost scope.
+        let mut by_block: Option<FxHashMap<u32, u32>> = None;
+        let reference = NodeType::TSTypeReference as u8;
+        for (_, id) in (self.tree.types.iter().zip(0..)).filter(|it| *it.0 == reference) {
+            let identifier = id + 1;
+            let is_const = self.tree.is(identifier, NodeType::Identifier)
+                && (self.tree.nodes.get(identifier as usize))
+                    .is_some_and(|it| it.file().slice(it.span()) == b"const");
+            if !is_const {
+                continue;
+            }
+            let by_block = by_block
+                .get_or_insert_with(|| self.scopes.iter().map(|it| it.block).zip(0..).collect());
+            let mut node = id;
+            while node != NONE && !by_block.contains_key(&node) {
+                node = self.tree.parent(node);
+            }
+            found.push(ReferenceRecord {
+                identifier,
+                flags: u32::from((ReferenceFlags::READ | ReferenceFlags::TYPE).bits()) | TO_GLOBAL,
+                written: NONE,
+                variable: NONE,
+                from: by_block.get(&node).copied().unwrap_or(0),
+                name: b"const",
+            });
+        }
+        found
+    }
+
+    fn add_reference_to_const(&mut self, reference: ReferenceRecord<'t>, is_first: bool) {
+        if is_first {
+            let flags = IS_TYPE | IS_IN_LIB;
+            self.referred.push((self.references.len() as u32, flags));
+        }
+        self.references.push(reference);
     }
 
     /// Puts the references in typescript-eslint's order. Returns `scopeManager.scopes` in that order.
@@ -1022,12 +1077,30 @@ pub(super) struct ConfiguredGlobals {
     /// In the order of its keys.
     list: Vec<(Box<[u8]>, Global)>,
     index_of: FxHashMap<Box<[u8]>, usize>,
+    /// For each: [`IS_IN_LIB`] with [`IS_TYPE`] and [`IS_VALUE`] if a library of TypeScript defines it too.
+    lib_flags: Vec<u32>,
 }
 
 impl ConfiguredGlobals {
-    pub(super) fn new(list: Vec<(Box<[u8]>, Global)>) -> ConfiguredGlobals {
-        let index_of = list.iter().map(|it| it.0.clone()).zip(0..).collect();
-        ConfiguredGlobals { list, index_of }
+    /// `libs`: what the libraries of TypeScript define. The name, whether it's a type, whether it's a value.
+    pub(super) fn new<'n>(
+        list: Vec<(Box<[u8]>, Global)>,
+        libs: impl Iterator<Item = (&'n [u8], bool, bool)>,
+    ) -> ConfiguredGlobals {
+        let index_of: FxHashMap<Box<[u8]>, usize> =
+            list.iter().map(|it| it.0.clone()).zip(0..).collect();
+        let mut lib_flags = vec![0; list.len()];
+        for (name, is_type, is_value) in libs {
+            if let Some(&index) = index_of.get(name) {
+                lib_flags[index] =
+                    IS_IN_LIB | (u32::from(is_type) * IS_TYPE) | (u32::from(is_value) * IS_VALUE);
+            }
+        }
+        ConfiguredGlobals {
+            list,
+            index_of,
+            lib_flags,
+        }
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = &(Box<[u8]>, Global)> {
@@ -1157,7 +1230,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             }
             let (slot, flags) = (
                 &mut named.of_configured[index],
-                flags_of.of_configured[index],
+                flags_of.of_configured[index] | configured.lib_flags[index],
             );
             settings.push(GlobalSetting {
                 variable: define(slot, name, Name::Configured(index as u32), flags),
@@ -1168,8 +1241,31 @@ impl<'t, 'a> Builder<'t, 'a> {
                 comments: comment.map_or(0, |it| push_list(lists, &starts_of(&it.comments))),
             });
         }
+        // ESLint 8 counts what `/* eslint-env */` comments define among the configured globals.
+        for (name, implicit) in file.globals_of_environments_in_comments() {
+            let comment = file.global_in_comments(name);
+            let setting = comment.map_or(implicit, |it| it.setting);
+            if configured.index_of(name).is_some() || setting == Global::Off {
+                continue;
+            }
+            let units: Vec<u32> = (bun_core::strings::wtf8_to_utf16(name).iter())
+                .map(|&it| u32::from(it))
+                .collect();
+            let written = Name::Units(push_list(lists, &units));
+            let flags = flags_of.get(name).unwrap_or(0);
+            settings.push(GlobalSetting {
+                variable: define(named.slot(name), name, written, flags),
+                bits: setting_bits(implicit)
+                    | IS_NAMED
+                    | (u32::from(setting == Global::Writable) * IS_WRITEABLE)
+                    | (u32::from(comment.is_some()) * IS_EXPLICIT),
+                comments: comment.map_or(0, |it| push_list(lists, &starts_of(&it.comments))),
+            });
+        }
         for comment in file.globals_in_comments() {
-            if configured.index_of(&comment.name).is_some() || comment.setting == Global::Off {
+            let is_configured = configured.index_of(&comment.name).is_some()
+                || (file.global_of_environment_in_comments(&comment.name)).is_some();
+            if is_configured || comment.setting == Global::Off {
                 continue;
             }
             let span = comment.comments.first().map_or(Span::new(0, 0), |it| {
@@ -1413,42 +1509,42 @@ impl Builder<'_, '_> {
 
     /// From the `node` and the `parent` of a definition to the variables that have such a definition.
     fn declared_variables(&mut self, listed: &[u32], variables: &[u32], implicit: &[u32]) -> u32 {
-        let (mut keys, mut values) = (Vec::new(), Vec::new());
-        // The last variable that was added for each node. All definitions of a variable come one after the other.
-        let mut last = vec![NONE; self.tree.types.len()];
-        let mut add = |node: u32, variable: u32| {
-            if let Some(last) = last.get_mut(node as usize)
-                && std::mem::replace(last, variable) != variable
-            {
-                keys.push(node);
-                values.push(variable);
-            }
-        };
+        // The name, `node`, `parent` and variable of every definition. `eslint-scope` adds a variable to the list of a node when
+        // it comes to a definition.
+        let mut definitions = Vec::new();
         for &scope in listed {
             let at = variables[scope as usize] as usize;
             for &variable in &self.lists[at + 1..][..self.lists[at] as usize] {
                 for definition in self.definitions_of(&self.variables[variable as usize]) {
-                    let definition = &self.definitions[definition as usize];
-                    add(definition.node, variable);
-                    add(definition.parent, variable);
+                    let it = &self.definitions[definition as usize];
+                    definitions.push((it.name, it.node, it.parent, variable));
                 }
             }
         }
-        // `eslint-scope` makes the implicit globals last, one definition at a time, in the order of the assignments.
-        let mut assignments = Vec::new();
+        definitions.sort_by_key(|it| it.0);
+        // It makes the implicit globals last, in the order of the assignments.
+        let first_implicit = definitions.len();
         for (&pairs, variable) in implicit.iter().zip(self.variables.len() as u32..) {
             let at = pairs as usize;
             let pairs = self.lists[at + 1..][..self.lists[at] as usize]
                 .as_chunks::<2>()
                 .0;
-            assignments.extend(pairs.iter().map(|&[name, node]| (name, node, variable)));
+            definitions.extend(
+                pairs
+                    .iter()
+                    .map(|&[name, node]| (name, node, NONE, variable)),
+            );
         }
-        assignments.sort_unstable();
+        definitions[first_implicit..].sort_by_key(|it| it.0);
+
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
         let mut seen = FxHashSet::default();
-        for (_, node, variable) in assignments {
-            if node != NONE && seen.insert((node, variable)) {
-                keys.push(node);
-                values.push(variable);
+        for (_, node, parent, variable) in definitions {
+            for node in [node, parent] {
+                if node != NONE && seen.insert((node, variable)) {
+                    keys.push(node);
+                    values.push(variable);
+                }
             }
         }
         self.map_of(&keys, &values)

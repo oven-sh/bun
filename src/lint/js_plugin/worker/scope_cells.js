@@ -447,7 +447,7 @@ function libVariable(name) {
       references: [],
       scope: scopeData.manager.globalScope,
       writeable: false,
-      eslintExplicitGlobal: false,
+      eslintExplicitGlobal: undefined,
       eslintImplicitGlobalSetting: "readonly",
       eslintExplicitGlobalComments: undefined,
       isTypeVariable: (flags & 1) !== 0,
@@ -458,25 +458,19 @@ function libVariable(name) {
   return variable;
 }
 
-// Puts the rest of them into `variables` and `set` of the global scope.
+// Puts the rest of them into `variables` and `set` of the global scope. typescript-eslint defines what is in the libraries first.
 function addLibVariables() {
   if (scopeData.hasAllLibVariables) return;
   scopeData.hasAllLibVariables = true;
   const { globalScope } = scopeData.manager;
-  const variables = scopeData.mentionedGlobals;
-  const known = new Set(variables.map(it => it.name));
-  for (const name of Object.keys(fileSettings.libs)) {
-    if (known.has(name)) continue;
-    const variable = libVariable(name);
-    variables.push(variable);
-    Map.prototype.set.call(globalScope.set, name, variable);
-  }
-  Object.defineProperty(globalScope, "variables", {
-    value: variables,
-    writable: true,
-    enumerable: true,
-    configurable: true,
-  });
+  const isOfLib = it => it instanceof typescriptLayout.ImplicitLibVariable;
+  const mentioned = new Map(scopeData.mentionedGlobals.map(it => [it.name, it]));
+  // A name that the file declares as well is only among the others.
+  const ofLibs = Object.keys(fileSettings.libs).map(name => mentioned.get(name) ?? libVariable(name));
+  const value = [...ofLibs.filter(isOfLib), ...scopeData.mentionedGlobals.filter(it => !isOfLib(it))];
+  Map.prototype.clear.call(globalScope.set);
+  for (const variable of value) Map.prototype.set.call(globalScope.set, variable.name, variable);
+  Object.defineProperty(globalScope, "variables", { value, writable: true, enumerable: true, configurable: true });
 }
 
 function scopeManager() {

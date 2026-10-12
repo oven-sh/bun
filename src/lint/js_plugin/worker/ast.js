@@ -24,7 +24,7 @@ let tree = null;
 let nodes = [];
 
 // `loc` here and `SourceCode` in source_code.js are also in src/jsc/bindings/LintSourceCode.cpp, which this turns on.
-const usesNativeSourceCode = process.env.BUN_LINT_NATIVE_SOURCE_CODE === "1";
+const usesNativeSourceCode = process.env.BUN_LINT_NATIVE_SOURCE_CODE !== "0";
 
 class Node {
   get loc() {

@@ -59,11 +59,6 @@ void LintHost::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(LintHost);
 
-LintHost* LintHost::from(JSGlobalObject* globalObject)
-{
-    return uncheckedDowncast<LintHost>(defaultGlobalObject(globalObject)->m_lintHost.getInitializedOnMainThread(globalObject));
-}
-
 Structure* LintHost::createShape(VM& vm, JSGlobalObject* globalObject, JSObject* prototype, std::span<const ASCIILiteral> keys)
 {
     RELEASE_ASSERT(keys.size() <= JSFinalObject::maxInlineCapacity);
@@ -96,10 +91,9 @@ void LintHost::endFile(VM& vm)
     m_isLinting = false;
 }
 
-const Vector<uint32_t>& LintHost::lineStarts()
+void LintHost::findLineStarts()
 {
-    if (!m_lineStarts.isEmpty())
-        return m_lineStarts;
+    m_lastLine = 1;
     m_lineStarts.append(0);
     // `\r\n`, `\r`, `\n`, U+2028 and U+2029 end a line.
     auto scan = [&](auto characters) {
@@ -117,14 +111,19 @@ const Vector<uint32_t>& LintHost::lineStarts()
         scan(m_textString.span8());
     else
         scan(m_textString.span16());
-    return m_lineStarts;
 }
 
 LintHost::Position LintHost::positionOf(double index)
 {
     auto& starts = lineStarts();
-    size_t line = std::upper_bound(starts.begin(), starts.end(), index, [](double index, uint32_t start) { return index < start; }) - starts.begin();
-    return { static_cast<uint32_t>(line), line ? index - starts[line - 1] : PNaN };
+    size_t line = m_lastLine;
+    if (!(starts[line - 1] <= index && (line == starts.size() || index < starts[line]))) {
+        line = std::upper_bound(starts.begin(), starts.end(), index, [](double index, uint32_t start) { return index < start; }) - starts.begin();
+        if (!line)
+            return { 0, PNaN };
+        m_lastLine = static_cast<uint32_t>(line);
+    }
+    return { static_cast<uint32_t>(line), index - starts[line - 1] };
 }
 
 JSObject* LintHost::createPosition(VM& vm, double index)

@@ -2,19 +2,76 @@ use crate::css_parser as css;
 
 use css::css_rules::media::MediaRule;
 
-use css::css_properties::custom::UnparsedProperty;
+use css::css_properties::PropertyId;
+use css::css_properties::custom::{Fallbacks, UnparsedProperty};
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
 use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_collections::ArrayHashMap;
 
+/// The copies one `@supports` rule holds for one importance, in source order.
+#[derive(Default)]
+pub(crate) struct StagedList {
+    copies: Vec<css::Property>,
+    /// How many of `copies` each property id has, so that a retract scans back no further than its earliest one.
+    counts: Vec<(PropertyId, usize)>,
+}
+
+impl StagedList {
+    fn push(&mut self, copy: css::Property) {
+        let id = copy.property_id();
+        match self.counts.iter_mut().find(|(counted, _)| *counted == id) {
+            Some((_, count)) => *count += 1,
+            None => self.counts.push((id, 1)),
+        }
+        self.copies.push(copy);
+    }
+
+    /// Removes every copy of `id`.
+    fn retract(&mut self, id: PropertyId) {
+        let Some(counted) = self.counts.iter().position(|(counted, _)| *counted == id) else {
+            return;
+        };
+        let (_, mut left) = self.counts.swap_remove(counted);
+        let mut first = self.copies.len();
+        while left > 0 {
+            first -= 1;
+            if self.copies[first].property_id() == id {
+                left -= 1;
+            }
+        }
+        let mut kept = first;
+        for at in first..self.copies.len() {
+            if self.copies[at].property_id() != id {
+                self.copies.swap(kept, at);
+                kept += 1;
+            }
+        }
+        self.copies.truncate(kept);
+    }
+}
+
 pub struct SupportsEntry {
     pub(crate) condition: css::SupportsCondition,
-    pub(crate) declarations: Vec<css::Property>,
-    pub(crate) important_declarations: Vec<css::Property>,
+    pub(crate) declarations: StagedList,
+    pub(crate) important_declarations: StagedList,
 }
 
 // No explicit deinit — all fields own their storage and drop automatically.
+
+impl SupportsEntry {
+    fn list_mut(&mut self, important: bool) -> &mut StagedList {
+        if important {
+            &mut self.important_declarations
+        } else {
+            &mut self.declarations
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.declarations.copies.is_empty() && self.important_declarations.copies.is_empty()
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DeclarationContext {
@@ -134,8 +191,9 @@ impl<'a> PropertyHandlerContext<'a> {
                         selectors: style_rule.selectors.deep_clone(),
                         vendor_prefix: css::VendorPrefix::NONE,
                         declarations: css::DeclarationBlock {
-                            declarations: self.clone_decls(&entry.declarations),
-                            important_declarations: self.clone_decls(&entry.important_declarations),
+                            declarations: self.clone_decls(&entry.declarations.copies),
+                            important_declarations: self
+                                .clone_decls(&entry.important_declarations.copies),
                         },
                         rules: css::CssRuleList::default(),
                         loc: style_rule.loc,
@@ -276,34 +334,21 @@ impl<'a> PropertyHandlerContext<'a> {
             return;
         }
 
-        let found = 'brk: {
-            for supp in self.supports.iter_mut() {
-                if condition.eql(&supp.condition) {
-                    break 'brk Some(supp);
-                }
-            }
-            break 'brk None;
-        };
-
-        if let Some(entry) = found {
-            if self.is_important {
-                entry.important_declarations.push(property);
-            } else {
-                entry.declarations.push(property);
-            }
+        let important = self.is_important;
+        if let Some(entry) = self
+            .supports
+            .iter_mut()
+            .find(|entry| condition.eql(&entry.condition))
+        {
+            entry.list_mut(important).push(property);
         } else {
-            let mut important_declarations: Vec<css::Property> = Vec::new();
-            let mut declarations: Vec<css::Property> = Vec::new();
-            if self.is_important {
-                important_declarations.push(property);
-            } else {
-                declarations.push(property);
-            }
-            self.supports.push(SupportsEntry {
+            let mut entry = SupportsEntry {
                 condition,
-                declarations,
-                important_declarations,
-            });
+                declarations: StagedList::default(),
+                important_declarations: StagedList::default(),
+            };
+            entry.list_mut(important).push(property);
+            self.supports.push(entry);
         }
     }
 
@@ -319,6 +364,9 @@ impl<'a> PropertyHandlerContext<'a> {
         }
 
         let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
+        if !self.supports.is_empty() && unparsed.value.is_valid_at_parse_time() {
+            self.retract_conditional(unparsed.property_id, fallbacks.slice());
+        }
         // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
@@ -331,5 +379,21 @@ impl<'a> PropertyHandlerContext<'a> {
                 }),
             );
         }
+    }
+
+    /// Drops the staged copies of `property_id`, except in the `@supports` rules of `keep`, where the declaration in hand stages its own behind them.
+    pub(crate) fn retract_conditional(&mut self, property_id: PropertyId, keep: &[Fallbacks]) {
+        if self.context != DeclarationContext::StyleRule {
+            return;
+        }
+
+        // Departs from lightningcss on purpose: it prints these behind the rule, where they beat the later declaration that the cascade lets win in every browser.
+        let important = self.is_important;
+        self.supports.retain_mut(|entry| {
+            if !keep.iter().any(|(kept, _)| kept.eql(&entry.condition)) {
+                entry.list_mut(important).retract(property_id);
+            }
+            !entry.is_empty()
+        });
     }
 }

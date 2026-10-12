@@ -833,6 +833,31 @@ impl TokenList {
         fallbacks
     }
 
+    /// Whether every target keeps a declaration with this value at parse time: it holds a `var()` or `env()` reference, or is `inherit`, `initial` or `unset`.
+    pub(crate) fn is_valid_at_parse_time(&self) -> bool {
+        if let [TokenOrValue::Token(Token::Ident(keyword))] = self.v.as_slice() {
+            return crate::match_ignore_ascii_case! { *keyword, {
+                b"inherit" | b"initial" | b"unset" => true,
+                _ => false,
+            }};
+        }
+        self.has_reference()
+    }
+
+    fn has_reference(&self) -> bool {
+        self.v.iter().any(|token_or_value| match token_or_value {
+            TokenOrValue::Var(_) | TokenOrValue::Env(_) => true,
+            TokenOrValue::Function(f) => f.arguments.has_reference(),
+            TokenOrValue::UnresolvedColor(
+                UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. },
+            ) => alpha.has_reference(),
+            TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
+                light.has_reference() || dark.has_reference()
+            }
+            _ => false,
+        })
+    }
+
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 

@@ -1172,7 +1172,22 @@
   "a.cjs:20:33+1 eslint(no-useless-assignment)",
   "a.cjs:21:37+1 eslint(no-useless-assignment)",
   "a.cjs:22:46+1 eslint(no-useless-assignment)",
-  "c.cjs:2:5+1 eslint(no-useless-assignment)"
+  "c.cjs:2:5+1 eslint(no-useless-assignment)",
+  "d.cjs:10:42+1 eslint(no-useless-assignment)",
+  "d.cjs:10:75+1 eslint(no-useless-assignment)",
+  "d.cjs:1:33+1 eslint(no-useless-assignment)",
+  "d.cjs:1:40+1 eslint(no-useless-assignment)",
+  "d.cjs:3:40+1 eslint(no-useless-assignment)",
+  "d.cjs:4:44+1 eslint(no-useless-assignment)",
+  "d.cjs:5:49+1 eslint(no-useless-assignment)",
+  "d.cjs:6:33+1 eslint(no-useless-assignment)",
+  "d.cjs:7:51+1 eslint(no-useless-assignment)",
+  "d.cjs:8:54+1 eslint(no-useless-assignment)",
+  "e.cjs:10:40+1 eslint(no-useless-assignment)",
+  "e.cjs:5:50+1 eslint(no-useless-assignment)",
+  "e.cjs:7:51+1 eslint(no-useless-assignment)",
+  "e.cjs:8:48+1 eslint(no-useless-assignment)",
+  "e.cjs:9:42+1 eslint(no-useless-assignment)"
  ],
  "no-useless-assignment/finally": [
   "a.js:4:27+1 eslint(no-useless-assignment)",

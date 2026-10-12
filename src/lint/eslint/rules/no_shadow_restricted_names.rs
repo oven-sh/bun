@@ -104,7 +104,15 @@ impl Rule for NoShadowRestrictedNames {
         .pats(&[PatTag::Ident])
         .funcs()
         .classes()
-        .stmts(&[StmtTag::Module, StmtTag::Import]);
+        .type_params()
+        .stmts(&[
+            StmtTag::Module,
+            StmtTag::Import,
+            StmtTag::Interface,
+            StmtTag::TypeAlias,
+            StmtTag::Enum,
+            StmtTag::ImportEquals,
+        ]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -115,9 +123,15 @@ impl Rule for NoShadowRestrictedNames {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().pats(&[PatTag::Ident]).funcs().classes();
-        // `namespace globalThis {}`
+        // oxlint looks at all that oxc has a symbol for: `namespace globalThis {}`, `interface NaN {}`, `<Infinity>`.
         if file.language().is_oxlint {
-            on = on.stmts(&[StmtTag::Module]);
+            on = on.type_params().stmts(&[
+                StmtTag::Module,
+                StmtTag::Interface,
+                StmtTag::TypeAlias,
+                StmtTag::Enum,
+                StmtTag::ImportEquals,
+            ]);
         }
         on.stmts(&[StmtTag::Import])
     }
@@ -163,7 +177,25 @@ impl Rule for NoShadowRestrictedNames {
                     }
                 }
             }
-            _ => {}
+            _ => {
+                let name = match stmt.kind() {
+                    StmtKind::Interface(it) => it.name(),
+                    StmtKind::TypeAlias(it) => it.name(),
+                    StmtKind::Enum(it) => it.name(),
+                    StmtKind::ImportEquals(it) => it.name(),
+                    _ => return,
+                };
+                if Self::is_restricted(name.name(), cx) {
+                    Self::report_once(name.span(), name.name(), cx);
+                }
+            }
+        }
+    }
+
+    fn type_param<'a>(&self, param: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
+        let name = param.name();
+        if Self::is_restricted(name.name(), cx) {
+            Self::report_once(name.span(), name.name(), cx);
         }
     }
 
@@ -174,7 +206,7 @@ impl Rule for NoShadowRestrictedNames {
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(name) = func.name()
             && Self::is_restricted(name.name(), cx)
-            && func.has_body()
+            && (func.has_body() || cx.language().is_oxlint)
         {
             Self::report(name.span(), name.name(), func.symbol(), cx);
         }

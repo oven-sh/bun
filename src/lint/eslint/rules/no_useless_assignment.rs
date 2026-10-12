@@ -110,11 +110,38 @@ fn is_in_decorator_of_parameter<'a>(reference: Reference<'a>, scope: Scope<'a>) 
         )
 }
 
-/// oxlint 1.87 says nothing about what is not declared by exactly one `var`, `let`, `const` or `using`: a parameter, also that of
-/// a `catch`, a function, a class, the `arguments` of a function, `var a; var a;`.
+/// What oxlint 1.87 takes for the declaration of `variable`: the first, if that is a declarator.
+fn oxlint_declarator(variable: Symbol<'_>) -> Option<VarDecl<'_>> {
+    let first @ Declaration::Var(name) = variable.declarations().next()? else {
+        return None;
+    };
+    if variable.declaration_kinds().contains(DeclarationKinds::CATCH_CLAUSE) && first.is_catch_parameter() {
+        return None;
+    }
+    match name.parent() {
+        Node::VarDecl(declarator) => Some(declarator),
+        _ => first.node().and_then(|it| match it {
+            Node::VarDecl(declarator) => Some(declarator),
+            _ => None,
+        }),
+    }
+}
+
+/// oxlint 1.87 says nothing about what is first declared by something else than `var`, `let` or `using`: a parameter, also that
+/// of a `catch`, a function, a class, the `arguments` of a function, a `const`. Nor about what is declared with a function as
+/// its value.
 fn oxlint_passes_over(variable: Symbol) -> bool {
     variable.file().language().is_oxlint
-        && (variable.declaration_count() != 1 || variable.declaration_kinds() != DeclarationKinds::VARIABLE)
+        && oxlint_declarator(variable).is_none_or(|it| {
+            it.var_kind() == VarKind::Const || it.init().is_some_and(|it| it.tag() == ExprTag::Fn && !it.is_parenthesized())
+        })
+}
+
+/// For oxlint 1.87 only the first declarator of `var a = 1; var a = 2;` gives `a` a value. `at`: where the name is written in
+/// a declarator with an initializer.
+#[inline(never)]
+fn oxlint_does_not_see(variable: Symbol, at: u32) -> bool {
+    variable.file().language().is_oxlint && oxlint_declarator(variable).is_none_or(|it| !it.span().contains_offset(at))
 }
 
 /// Whether a variable of the scope of a module is exported, other than by `export default`.
@@ -187,6 +214,9 @@ impl<'a> Binding<'a> {
             || !is_type_only_reference(symbol, reference))
             && (!(symbol.declaration_kinds()).contains(DeclarationKinds::CLASS_NAME)
                 || Binding::of(symbol, reference) == self)
+            && !(reference.is_init()
+                && symbol.declaration_count() > 1
+                && oxlint_does_not_see(symbol, reference.ident().start()))
     }
 
     fn references(self) -> impl Iterator<Item = Reference<'a>> {
@@ -1640,7 +1670,9 @@ impl NoUselessAssignment {
                         VarKind::Var => cx.file().reference_at(pat.span().start).and_then(Reference::symbol),
                         _ => None,
                     };
-                    let variable = written.or_else(|| pat.symbol()).map(Binding::outer);
+                    let variable = written.or_else(|| pat.symbol()).map(Binding::outer).filter(|it| {
+                        it.symbol.declaration_count() <= 1 || !oxlint_does_not_see(it.symbol, pat.span().start)
+                    });
                     Self::add_assignment(variable, identifier, Some(init.span()), cx);
                 });
                 return;

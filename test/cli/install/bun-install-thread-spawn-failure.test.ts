@@ -151,9 +151,9 @@ test.skipIf(!isLinux || isMusl || isASAN || !cc)(
     });
     const shim = compileFixture(join(String(dir), "shim.c"), { flags: ["-ldl"] });
 
-    async function install(env: Record<string, string> = {}) {
+    async function install(env: Record<string, string> = {}, prefix: string[] = []) {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
+        cmd: [...prefix, bunExe(), "install"],
         cwd: String(dir),
         env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"), ...env },
         stdout: "pipe",
@@ -171,5 +171,19 @@ test.skipIf(!isLinux || isMusl || isASAN || !cc)(
     expect(stderr).not.toContain("error:");
     expect((await readdir(join(String(dir), "node_modules"))).sort()).toEqual(["one", "two"]);
     expect(exitCode).toBe(0);
+
+    // What is replaced is deleted on the pool too.
+    for (const prefix of [[], ["sh", "-c", 'ulimit -n 200 && exec "$0" "$@"']]) {
+      for (const name of ["one", "two"]) {
+        await rm(join(String(dir), "node_modules", name, "package.json"));
+        await Bun.write(
+          join(String(dir), "node_modules", name, "package.json"),
+          JSON.stringify({ name, version: "0.0.1" }),
+        );
+      }
+      const replaced = await install({ LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":") }, prefix);
+      expect(replaced).toEqual({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+      expect((await readdir(join(String(dir), "node_modules"))).sort()).toEqual(["one", "two"]);
+    }
   },
 );

@@ -967,8 +967,8 @@ test.concurrent("hoisted: dot entries and files are never touched even when the 
   expect(existsSync(integrity)).toBeTrue();
 });
 
-// `bun install` links a package in a `.bun-tmp-<hash>` directory next to it. One that is there
-// while no install is running is what a killed install left.
+// `bun install` links a package in a `.bun-tmp-<hash>` directory next to it, and moves the one it
+// replaces to `.old-<random>`. One that is there while no install is running is what a killed install left.
 test.concurrent("hoisted: what a killed install left in its staging directories is removed", async () => {
   using tmp = tempDir("prune-staging-leftovers", {
     "package.json": JSON.stringify({ name: "empty" }),
@@ -986,21 +986,22 @@ test.concurrent("hoisted: what a killed install left in its staging directories 
   const dir = String(tmp);
   const left = plant(dir, "node_modules/.bun-tmp-0123456789abcdef");
   const leftInScope = plant(dir, "node_modules/@scope/.bun-tmp-fedcba9876543210");
+  const movedAside = plant(dir, "node_modules/.old-0123456789ABCDEF");
   const cache = plant(dir, "node_modules/.cache/whatever@1.0.0");
-  const rows = ["- .bun-tmp-0123456789abcdef", "- @scope/.bun-tmp-fedcba9876543210"];
+  const rows = ["- .bun-tmp-0123456789abcdef", "- .old-0123456789ABCDEF", "- @scope/.bun-tmp-fedcba9876543210"];
 
   const dry = await prune(dir, "--dry-run");
   expect(dry.stderr).toBe("");
-  expect(lines(dry.stdout)).toEqual([BANNER, "", ...rows, CAN_BE_REMOVED(2, 0), APPLY_HINT()]);
+  expect(lines(dry.stdout)).toEqual([BANNER, "", ...rows, CAN_BE_REMOVED(3, 0), APPLY_HINT()]);
   expect(dry.exitCode).toBe(0);
-  expect([left, leftInScope].map(path => existsSync(path))).toEqual([true, true]);
+  expect([left, leftInScope, movedAside].map(path => existsSync(path))).toEqual([true, true, true]);
 
   const { stdout, stderr, exitCode } = await prune(dir);
   expect(stderr).toBe("");
-  expect(lines(stdout)).toEqual([BANNER, "", ...rows, REMOVED(2, 0)]);
+  expect(lines(stdout)).toEqual([BANNER, "", ...rows, REMOVED(3, 0)]);
   expect(exitCode).toBe(0);
   expect({
-    left: existsSync(left),
+    left: existsSync(left) || existsSync(movedAside),
     scope: existsSync(join(dir, "node_modules", "@scope")),
     cache: existsSync(cache),
   }).toEqual({ left: false, scope: false, cache: true });

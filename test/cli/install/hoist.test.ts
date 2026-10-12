@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "fs";
 import { exists, rm } from "fs/promises";
-import { bunEnv, bunExe, isASAN, pack, readdirSorted, runBunInstall, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, pack, readdirSorted, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 import { installEnv, TestRegistry } from "registry";
 
@@ -1269,9 +1269,9 @@ test.concurrent("a package stays under the host that bundles the version its pee
   expect(await layout()).toEqual(expected);
 });
 
-// Into a `node_modules` that was not there the hoisted linker links the packages of the cache on
-// the thread pool; over one that was, empty or not, each in its turn. Nothing else may differ.
-describe("a node_modules that was not there gets what an empty one gets", () => {
+// The hoisted linker links the packages of the cache on the thread pool. Where few files can be
+// open, and on Windows, the main thread links each in its turn. Nothing else may differ.
+describe("the thread pool links what the main thread links", () => {
   // Every entry below `dir`: its kind, its mode, and where it leads or what is in it.
   function entriesOf(dir: string, prefix = "", entries: Record<string, string> = {}) {
     for (const name of readdirSync(dir).sort()) {
@@ -1291,9 +1291,11 @@ describe("a node_modules that was not there gets what an empty one gets", () => 
     return entries;
   }
 
-  async function bun(cwd: string, cache: string, ...args: string[]) {
+  const withFewOpenFiles = isWindows ? [] : ["sh", "-c", 'ulimit -n 200 && exec "$0" "$@"'];
+  const bun = (cwd: string, cache: string, ...args: string[]) => run([bunExe(), ...args], cwd, cache);
+  async function run(cmd: string[], cwd: string, cache: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
+      cmd,
       cwd,
       env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cache },
       stdout: "pipe",
@@ -1385,14 +1387,20 @@ describe("a node_modules that was not there gets what an empty one gets", () => 
         const project = join(String(dir), "project");
         const lockfile = await prepare(project, join(String(dir), "cache"));
 
-        const install = async (name: string) => ({
-          ...(await bun(project, join(String(dir), cacheIs === "warm" ? "cache" : `cache-${name}`), "install")),
+        const install = async (name: string, prefix: string[] = []) => ({
+          ...(await run(
+            [...prefix, bunExe(), "install"],
+            project,
+            join(String(dir), cacheIs === "warm" ? "cache" : `cache-${name}`),
+          )),
           lockfile: readFileSync(join(project, "bun.lock"), "utf8"),
           ...installedIn(project),
         });
         removeNodeModules(project);
+        const inTurn = await install("in-turn", withFewOpenFiles);
+        removeNodeModules(project);
         mkdirSync(join(project, "node_modules"));
-        const inTurn = await install("in-turn");
+        expect(await install("into-an-empty-one")).toEqual(inTurn);
         removeNodeModules(project);
         const byThePool = await install("by-the-pool");
         expect(byThePool).toEqual(inTurn);

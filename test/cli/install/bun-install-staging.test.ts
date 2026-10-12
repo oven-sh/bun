@@ -69,6 +69,7 @@ type RegistryPackage = {
   tgz: Uint8Array;
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
+  bin?: string;
   // 1.0.0 unless it says otherwise.
   version?: string;
   // The tarball is not sent before this resolves.
@@ -98,6 +99,7 @@ function serveRegistry(packages: Record<string, RegistryPackage>) {
             version,
             scripts: pkg.scripts,
             dependencies: pkg.dependencies,
+            bin: pkg.bin,
             dist: { tarball: `${origin}/${name}-${version}.tgz` },
           },
         },
@@ -109,9 +111,10 @@ function serveRegistry(packages: Record<string, RegistryPackage>) {
 // Each test's bunfig names its own cache, which an inherited BUN_INSTALL_CACHE_DIR would override.
 const installEnv: Record<string, string | undefined> = { ...bunEnv, BUN_INSTALL_CACHE_DIR: undefined };
 
-async function bun(cwd: string, args: string[], env = installEnv) {
+const bun = (cwd: string, args: string[], env = installEnv) => spawned([bunExe(), ...args], cwd, env);
+async function spawned(cmd: string[], cwd: string, env = installEnv) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
+    cmd,
     cwd,
     env,
     stdout: "pipe",
@@ -192,6 +195,17 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
   meet();
   hold(newpath);
   return real_linkat(olddirfd, oldpath, newdirfd, newpath, flags);
+}
+
+// As overlayfs, which moves no directory of a lower layer.
+int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
+  static int (*real_renameat)(int, const char *, int, const char *);
+  if (!real_renameat) real_renameat = dlsym(RTLD_NEXT, "renameat");
+  if (getenv("STAGING_TEST_NOTHING_MOVES_ASIDE") && strncmp(newpath, ".old-", 5) == 0) {
+    errno = EXDEV;
+    return -1;
+  }
+  return real_renameat(olddirfd, oldpath, newdirfd, newpath);
 }
 
 // Only the files of the package count: bun unlinks other things on its way.
@@ -901,9 +915,9 @@ test.concurrent.skipIf(isWindows)(
   },
 );
 
-// Into a node_modules that was not there the hoisted linker links the packages that are in the
-// cache on the thread pool, several at a time. All else about them happens on the main thread,
-// in the order in which it links them itself over a node_modules that was there.
+// The hoisted linker links the packages of the cache on the thread pool, several at a time. All
+// else about them happens on the main thread, in the order in which it links them itself where
+// few files can be open.
 describe("hoisted linker: packages linked by the thread pool", () => {
   const FILES = 40;
   const pack = (name: string, more: { files?: string[]; [key: string]: unknown } = {}) => {
@@ -950,9 +964,12 @@ describe("hoisted linker: packages linked by the thread pool", () => {
     }
 
     const timeless = (text: string) => text.replace(/\[\d+(\.\d+)?m?s\]/g, "[time]");
-    const result = async () => {
+    const result = async (prefix: string[] = []) => {
       // clonefile, the default on macOS, copies the tree without naming its paths.
-      const { stdout, stderr, exitCode } = await install(root, ["--backend", "hardlink"]);
+      const { stdout, stderr, exitCode } = await spawned(
+        [...prefix, bunExe(), "install", "--backend", "hardlink"],
+        root,
+      );
       return {
         stdout: timeless(stdout),
         stderr: timeless(stderr),
@@ -961,8 +978,7 @@ describe("hoisted linker: packages linked by the thread pool", () => {
       };
     };
     rmSync(join(root, "node_modules"), { recursive: true });
-    mkdirSync(join(root, "node_modules"));
-    const inTurn = await result();
+    const inTurn = await result(["sh", "-c", 'ulimit -n 200 && exec "$0" "$@"']);
     rmSync(join(root, "node_modules"), { recursive: true });
     const byThePool = await result();
 
@@ -1111,18 +1127,212 @@ describe("hoisted linker: packages linked by the thread pool", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.skipIf(!shimDir)("two threads link at the same time", async () => {
-    using registry = serveRegistry(await packAll(["one", "two"]));
-    using dir = project("pool-two-threads", registry, { dependencies: { one: "1.0.0", two: "1.0.0" } });
+  // Without a second thread the first one waits for it until the test times out.
+  test.concurrent.skipIf(!shimDir).each([
+    ["there is no node_modules", [], (nodeModules: string) => rmSync(nodeModules, { recursive: true })],
+    [
+      "node_modules is empty",
+      [],
+      (nodeModules: string) => (rmSync(nodeModules, { recursive: true }), mkdirSync(nodeModules)),
+    ],
+    [
+      "node_modules lacks them",
+      [],
+      (nodeModules: string) => ["one", "two"].forEach(name => rmSync(join(nodeModules, name), { recursive: true })),
+    ],
+    [
+      "node_modules has other versions",
+      [],
+      (nodeModules: string) =>
+        ["one", "two"].forEach(name => {
+          // Not through the hard link, which is the cache's file too.
+          rmSync(join(nodeModules, name, "package.json"));
+          writeFileSync(join(nodeModules, name, "package.json"), JSON.stringify({ name, version: "0.0.1" }));
+          writeFileSync(join(nodeModules, name, "only-in-the-other-version.js"), "");
+        }),
+    ],
+    [
+      "--force",
+      ["--force"],
+      (nodeModules: string) =>
+        ["one", "two"].forEach(name => writeFileSync(join(nodeModules, name, "not-in-the-package.js"), "")),
+    ],
+  ] as const)("two threads link at the same time: %s", async (_state, args, change) => {
+    const names = ["kept", "one", "two"];
+    using registry = serveRegistry(await packAll(names));
+    using dir = project("pool-two-threads", registry, {
+      dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+    });
+    const root = String(dir);
+    const filesOf = (name: string) =>
+      (readdirSync(join(root, "node_modules", name), { recursive: true }) as string[]).filter(f => f.endsWith(".js"))
+        .length;
+
+    await warmUp(root);
+    change(join(root, "node_modules"));
+
+    const { stderr, exitCode } = await install(root, [...args], { ...preloadEnv(), STAGING_TEST_THREADS: "2" });
+    expect(stderr).not.toContain("error");
+    expect(entriesOf(join(root, "node_modules")).sort()).toEqual(names);
+    expect(names.map(filesOf)).toEqual(names.map(() => FILES));
+    expect(JSON.parse(readFileSync(join(root, "node_modules", "one", "package.json"), "utf8")).version).toBe("1.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  // The main thread links a folder. This one is in `a-host`, which comes before it and waits for the pool.
+  test.concurrent.each(["file:", "link:"])("a %s folder inside a package that the pool links", async protocol => {
+    const host = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name: "a-host", version: "1.0.0" }),
+        "package/inner/package.json": JSON.stringify({ name: "z-inner", version: "1.0.0" }),
+        "package/inner/index.js": "module.exports = 'inner';\n",
+      },
+      { compress: "gzip" },
+    ).bytes();
+    using registry = serveRegistry({ "a-host": { tgz: host }, "b-plain": { tgz: await pack("b-plain") } });
+    const dependencies = { "a-host": "1.0.0", "b-plain": "1.0.0" };
+    using dir = project("pool-folder-in-a-package", registry, { dependencies });
     const root = String(dir);
 
     await warmUp(root);
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "app",
+        dependencies: { ...dependencies, "z-inner": `${protocol}./node_modules/a-host/inner` },
+      }),
+    );
+    await warmUp(root);
     rmSync(join(root, "node_modules"), { recursive: true });
 
-    const { stderr, exitCode } = await install(root, [], { ...preloadEnv(), STAGING_TEST_THREADS: "2" });
+    const { stderr, exitCode } = await install(root);
     expect(stderr).not.toContain("error");
-    expect(readdirSync(join(root, "node_modules")).sort()).toEqual(["one", "two"]);
+    expect(readFileSync(join(root, "node_modules", "z-inner", "index.js"), "utf8")).toBe("module.exports = 'inner';\n");
     expect(exitCode).toBe(0);
+  });
+
+  // `b-patched` is trusted, so the main thread links it, after `a-plain`, which waits for the pool.
+  // It is the last thing that happens, and only then is its patch found to be applied to nothing yet.
+  test.concurrent("a patch that is applied after the last package was linked is waited for", async () => {
+    const files = ["index.js"];
+    using registry = serveRegistry({
+      "a-plain": { tgz: await pack("a-plain", { files }) },
+      "b-patched": { tgz: await pack("b-patched", { files }) },
+    });
+    using dir = project("pool-late-patch", registry, {
+      dependencies: { "a-plain": "1.0.0", "b-patched": "1.0.0" },
+      trustedDependencies: ["b-patched"],
+      patchedDependencies: { "b-patched@1.0.0": "b-patched.patch" },
+    });
+    const root = String(dir);
+    writeFileSync(
+      join(root, "b-patched.patch"),
+      `diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-module.exports = "b-patched/index.js";
++module.exports = "patched";
+`,
+    );
+
+    await warmUp(root);
+    rmSync(join(root, "node_modules"), { recursive: true });
+    for (const entry of readdirSync(join(root, ".bun-cache"))) {
+      if (entry.includes("_patch_hash=")) rmSync(join(root, ".bun-cache", entry), { recursive: true });
+    }
+
+    const { stdout, stderr, exitCode } = await install(root);
+    expect(stderr).not.toContain("error");
+    expect(stdout).toContain("2 packages installed");
+    expect(readFileSync(join(root, "node_modules", "b-patched", "index.js"), "utf8")).toBe(
+      'module.exports = "patched";\n',
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(!shimDir).each([
+    ["the pool", []],
+    ["the main thread", ["sh", "-c", 'ulimit -n 200 && exec "$0" "$@"']],
+  ])("a package that cannot be moved aside does not keep its files: %s", async (_who, prefix) => {
+    const names = ["one", "two", "three"];
+    using registry = serveRegistry(await packAll(names));
+    using dir = project("pool-nothing-moves-aside", registry, {
+      dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+    });
+    const root = String(dir);
+
+    await warmUp(root);
+    for (const name of names) {
+      // Not through the hard link, which is the cache's file too.
+      rmSync(join(root, "node_modules", name, "package.json"));
+      writeFileSync(join(root, "node_modules", name, "package.json"), JSON.stringify({ name, version: "0.0.1" }));
+      writeFileSync(join(root, "node_modules", name, "only-in-the-other-version.js"), "");
+    }
+
+    const { stderr, exitCode } = await spawned([...prefix, bunExe(), "install"], root, {
+      ...preloadEnv(),
+      STAGING_TEST_NOTHING_MOVES_ASIDE: "1",
+    });
+    expect(stderr).not.toContain("error");
+    expect(names.filter(name => existsSync(join(root, "node_modules", name, "only-in-the-other-version.js")))).toEqual(
+      [],
+    );
+    expect(entriesOf(join(root, "node_modules")).sort()).toEqual(names.toSorted());
+    expect(exitCode).toBe(0);
+  });
+
+  // Each host has a tree with three packages that have a script. One script runs at a time, and each
+  // waits for the bin of the last tree: it is linked when that tree is done, after which no script
+  // joins the ones that wait, and bun sees no script end before it has gone through them.
+  test.concurrent.skipIf(isWindows)("scripts start in the order in which the main thread starts them", async () => {
+    const hosts = Array.from({ length: 7 }, (_, i) => `host-${i}`);
+    const scripted = ["scripted-1", "scripted-2", "scripted-3"];
+    const nested = [...scripted, "plain-1", "plain-2", "tool"];
+    const files = ["index.js"];
+    const publish = async (name: string, more: Omit<RegistryPackage, "tgz"> = {}) => [
+      name,
+      { ...more, tgz: await pack(name, { files, ...more }) },
+    ];
+    const postinstall = `until [ -e "$LAST_BIN" ]; do :; done; echo "\${PWD#$PROJECT/node_modules/}" >> "$PROJECT/order"`;
+    using registry = serveRegistry(
+      Object.fromEntries(
+        await Promise.all([
+          ...hosts.map(name => publish(name, { dependencies: Object.fromEntries(nested.map(dep => [dep, "1.0.0"])) })),
+          ...scripted.map(name => publish(name, { scripts: { postinstall } })),
+          publish("plain-1"),
+          publish("plain-2"),
+          publish("tool", { bin: "index.js" }),
+          publish("root-filler", { version: "2.0.0" }),
+        ]),
+      ),
+    );
+    using dir = project("pool-script-order", registry, {
+      dependencies: {
+        ...Object.fromEntries(hosts.map(name => [name, "1.0.0"])),
+        ...Object.fromEntries(nested.map(name => [name, "npm:root-filler@2.0.0"])),
+      },
+      trustedDependencies: scripted,
+    });
+    const root = String(dir);
+    const env = {
+      ...installEnv,
+      PROJECT: root,
+      LAST_BIN: join(root, "node_modules", hosts.at(-1)!, "node_modules", ".bin", "tool"),
+    };
+
+    await warmUp(root, ["--ignore-scripts"]);
+    const order = async (prefix: string[]) => {
+      rmSync(join(root, "node_modules"), { recursive: true });
+      rmSync(join(root, "order"), { force: true });
+      const { stderr, exitCode } = await spawned([...prefix, bunExe(), "install", "--concurrent-scripts=1"], root, env);
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+      return readFileSync(join(root, "order"), "utf8").trim().split("\n");
+    };
+    const inTurn = await order(["sh", "-c", 'ulimit -n 200 && exec "$0" "$@"']);
+    expect(inTurn.toSorted()).toEqual(hosts.flatMap(host => scripted.map(name => `${host}/node_modules/${name}`)));
+    expect(await order([])).toEqual(inTurn);
   });
 
   // `scripted` sits below `a-host`, and its scripts start when that tree is done. `held-1` and

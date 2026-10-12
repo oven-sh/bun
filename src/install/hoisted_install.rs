@@ -20,7 +20,7 @@ use crate::{DependencyID, ExtractData, PackageID};
 use crate::PackageManager;
 use crate::bin_real as bin;
 use crate::package_install;
-use crate::package_installer::{LinkedAhead, NodeModulesFolder, PackageInstaller, TreeContext};
+use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
@@ -74,7 +74,7 @@ impl Drop for RestoreManager {
     }
 }
 
-/// Runs tasks whenever the event loop wakes up, until `links` is 0 or (`None`) nothing is pending.
+/// Runs tasks whenever the event loop wakes up, until `links` is 0 or (`None`) nothing is pending or links wait.
 fn run_tasks_until_done(
     mgr: *mut PackageManager,
     installer: &mut PackageInstaller<'_>,
@@ -121,8 +121,9 @@ fn run_tasks_until_done(
             match closure.links {
                 Some(links) => links.load(Ordering::Acquire) == 0,
                 None => {
-                    manager.pending_task_count() == 0
-                        && manager.has_no_more_pending_lifecycle_scripts()
+                    closure.installer.has_deferred_links()
+                        || (manager.pending_task_count() == 0
+                            && manager.has_no_more_pending_lifecycle_scripts())
                 }
             }
         }
@@ -145,6 +146,27 @@ fn run_tasks_until_done(
     unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
 
     closure.err.map_or(Ok(()), Err)
+}
+
+/// Has the pool link what waits for it, and what comes to wait meanwhile. Not from inside `run_tasks`.
+fn link_deferred(
+    mgr: *mut PackageManager,
+    installer: &mut PackageInstaller<'_>,
+    log_level: package_manager::Options::LogLevel,
+) -> crate::Result<()> {
+    while let Some((links, events)) = installer.take_deferred_links() {
+        // What was started before goes on while the pool links.
+        let mut ran_tasks = Ok(());
+        links.run(&mut || {
+            ran_tasks = run_tasks_until_done(mgr, installer, Some(&links.remaining));
+        });
+        ran_tasks?;
+        if !installer.manager().options.do_.install_packages() {
+            return Err(crate::Error::InstallFailed);
+        }
+        installer.finish_links(links, events, log_level);
+    }
+    Ok(())
 }
 
 pub(crate) fn install_hoisted_packages(
@@ -367,10 +389,8 @@ pub(crate) fn install_hoisted_packages(
                 staging_lock: None,
                 tree_dir: None,
                 // Windows: the hardlink backend has one queue of its own. A batch keeps up to 64 directories open.
-                linked_ahead: (cfg!(not(windows))
-                    && skip_delete
-                    && !FileSystem::instance().fs.need_to_close_files())
-                .then(|| LinkedAhead::init(&lockfile_ref)),
+                deferred: (cfg!(not(windows)) && !FileSystem::instance().fs.need_to_close_files())
+                    .then(|| DeferredLinks::init(&lockfile_ref)),
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
                     path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())
@@ -431,20 +451,8 @@ pub(crate) fn install_hoisted_packages(
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
 
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
-            if installer.links_ahead_from(node_modules.tree_id)
-                && let Some(links) = installer.collect_links(node_modules.tree_id)
-            {
-                // What was started before goes on while the pool links.
-                let mut ran_tasks = Ok(());
-                links.run(&mut || {
-                    ran_tasks =
-                        run_tasks_until_done(mgr_ptr, &mut installer, Some(&links.remaining));
-                });
-                ran_tasks?;
-                if !this.options.do_.install_packages() {
-                    return Err(crate::Error::InstallFailed);
-                }
-                installer.set_linked_ahead(links);
+            if installer.must_link_before(node_modules.tree_id) {
+                link_deferred(mgr_ptr, &mut installer, log_level)?;
             }
 
             installer.node_modules.path.truncate(top_level_len);
@@ -505,9 +513,14 @@ pub(crate) fn install_hoisted_packages(
             this.report_slow_lifecycle_scripts();
         }
 
-        while this.pending_task_count() > 0 && this.options.do_.install_packages() {
+        loop {
+            link_deferred(mgr_ptr, &mut installer, log_level)?;
+            if this.pending_task_count() == 0 || !this.options.do_.install_packages() {
+                break;
+            }
             run_tasks_until_done(mgr_ptr, &mut installer, None)?;
         }
+        installer.deferred = None;
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
@@ -521,7 +534,6 @@ pub(crate) fn install_hoisted_packages(
         // Every package is linked; the scripts still to run need no lock.
         installer.staging_lock = None;
         installer.tree_dir = None;
-        installer.linked_ahead = None;
 
         // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, Ordering::Relaxed);

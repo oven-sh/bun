@@ -792,6 +792,9 @@ pub(crate) struct LinkJob {
     pub(crate) destination_dir_subpath: bun_core::ZBox,
     /// See `PackageInstaller::copy_trees`.
     pub(crate) copy: bool,
+    pub(crate) skip_delete: bool,
+    /// From the main thread: `fast_random` gives every thread the same numbers.
+    pub(crate) random: u64,
     pub(crate) resolution_tag: resolution::Tag,
     pub(crate) result: std::sync::OnceLock<InstallResult>,
 }
@@ -812,7 +815,13 @@ impl LinkBatch {
         } else {
             PackageInstall::supported_method()
         };
-        let skip_delete = true;
+        // Here and not before: a package is away for no longer than it takes to link it.
+        let tree_dir = Dir::borrow(&job.tree_dir);
+        let old = if job.skip_delete {
+            None
+        } else {
+            move_aside(tree_dir, &job.destination_dir_subpath, job.random)
+        };
         let result = PackageFiles {
             cache_dir: job.cache_dir,
             cache_dir_subpath: &job.cache_dir_subpath,
@@ -820,12 +829,15 @@ impl LinkBatch {
         }
         .install(
             self.staging,
-            skip_delete,
-            Dir::borrow(&job.tree_dir),
+            job.skip_delete,
+            tree_dir,
             method,
             job.resolution_tag,
             None,
         );
+        if let Some(old) = old {
+            let _ = tree_dir.delete_tree(old.as_bytes());
+        }
         let _ = job.result.set(result);
     }
 
@@ -1784,64 +1796,72 @@ impl PackageFiles<'_> {
     }
 }
 
+/// What `move_aside` names begin with. What is left of one if bun dies stays until `bun prune`.
+pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
+
+/// Renames `subpath`, if it is there, to a name in `destination_dir` made of `random`. On any thread.
+fn move_aside(destination_dir: &Dir, subpath: &ZStr, random: u64) -> Option<bun_core::ZBox> {
+    let old = bun_core::ZBox::from_vec(
+        format!(
+            "{MOVED_ASIDE_PREFIX}{}",
+            bun_core::fmt::hex_upper(&random.to_ne_bytes())
+        )
+        .into_bytes(),
+    );
+    match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
+        Ok(()) => Some(old),
+        // overlayfs moves no directory of a lower layer. The new files must not join the old ones.
+        Err(err) if err.get_errno() == sys::E::EXDEV => {
+            let _ = destination_dir.delete_tree(subpath.as_bytes());
+            None
+        }
+        // It is not there, or it stays: what is in a mount point (EBUSY) is not bun's to delete.
+        Err(_) => None,
+    }
+}
+
 impl<'a> PackageInstall<'a> {
     pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) {
-        let mut rand_path_buf = [0u8; 48];
-        let rand_bytes = bun_core::fast_random().to_ne_bytes();
-        let temp_path = {
-            use std::io::Write;
-            let mut cursor = &mut rand_path_buf[..];
-            write!(cursor, ".old-{}", bun_core::fmt::hex_upper(&rand_bytes))
-                .expect("infallible: in-memory write");
-            let written = 48 - cursor.len();
-            rand_path_buf[written] = 0;
-            // SAFETY: NUL written at [written].
-            ZStr::from_buf(&rand_path_buf, written)
-        };
-
-        match sys::renameat(
-            destination_dir.fd(),
+        let Some(temp_path) = move_aside(
+            destination_dir,
             self.destination_dir_subpath,
-            destination_dir.fd(),
-            temp_path,
-        ) {
-            Err(_) => {
-                // if it fails, that means the directory doesn't exist or was inaccessible
-            }
-            Ok(_) => {
-                // Uninstall can sometimes take awhile in a large directory
-                // tree. Since we're renaming the directory to a randomly
-                // generated name, we can delete it in another thread without
-                // worrying about race conditions or blocking the main thread.
-                let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    bun_fs::FileSystem::instance().top_level_dir(),
-                    &[&self.node_modules.path, temp_path.as_bytes()],
-                );
-                let task = bun_core::heap::into_raw(Box::new(UninstallTask {
-                    absolute_path: absolute_path.to_vec().into_boxed_slice(),
-                    task: WorkPoolTask {
-                        callback: UninstallTask::run,
-                        node: ThreadPoolNode::default(),
-                    },
-                }));
-                let pm = crate::package_manager::get();
-                // SAFETY: `uninstall_before_install` runs on the install main thread.
-                // Raw-pointer field projection avoids forming `&mut PackageManager`
-                // (the caller `PackageInstaller` already holds one); `total_tasks` is
-                // main-thread-only state, `pending_tasks` is atomic. Mirrors
-                // `increment_pending_tasks`.
-                unsafe {
-                    *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
-                    (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
-                }
-                // SAFETY: task is a valid heap allocation; .task is the intrusive node.
-                PackageManager::get()
-                    .thread_pool
-                    .schedule(Batch::from(unsafe {
-                        core::ptr::addr_of_mut!((*task).task)
-                    }));
-            }
+            bun_core::fast_random(),
+        ) else {
+            return;
+        };
+        // What is scheduled on a pool whose first worker the OS refuses never runs.
+        let pool = &PackageManager::get().thread_pool;
+        pool.warm(1);
+        if !pool.has_workers() {
+            let _ = destination_dir.delete_tree(temp_path.as_bytes());
+            return;
         }
+        // A large tree takes a while to delete. Under its random name another thread can do that.
+        let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
+            bun_fs::FileSystem::instance().top_level_dir(),
+            &[&self.node_modules.path, temp_path.as_bytes()],
+        );
+        let task = bun_core::heap::into_raw(Box::new(UninstallTask {
+            absolute_path: absolute_path.to_vec().into_boxed_slice(),
+            task: WorkPoolTask {
+                callback: UninstallTask::run,
+                node: ThreadPoolNode::default(),
+            },
+        }));
+        let pm = crate::package_manager::get();
+        // SAFETY: `uninstall_before_install` runs on the install main thread.
+        // Raw-pointer field projection avoids forming `&mut PackageManager`
+        // (the caller `PackageInstaller` already holds one); `total_tasks` is
+        // main-thread-only state, `pending_tasks` is atomic. Mirrors
+        // `increment_pending_tasks`.
+        unsafe {
+            *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
+            (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
+        }
+        // SAFETY: task is a valid heap allocation; .task is the intrusive node.
+        pool.schedule(Batch::from(unsafe {
+            core::ptr::addr_of_mut!((*task).task)
+        }));
     }
 
     fn is_dangling_symlink(path: &ZStr) -> bool {
@@ -2072,14 +2092,11 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
         resolution_tag: resolution::Tag,
-        // See `LinkedAhead::missing`.
-        was_missing: bool,
     ) -> bool {
         match manager.get_preinstall_state(package_id) {
             // no entry name until extraction records a tarball's integrity
             _ if self.cache_dir_subpath.is_empty() => true,
             crate::PreinstallState::Done => false,
-            _ if was_missing => true,
             _ => {
                 let non_patched;
                 let entry: &ZStr = if self.patch.is_none() {

@@ -1692,7 +1692,7 @@ fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
     read_entries_and_leftovers(dir, false)
 }
 
-/// `leftovers`: also the `StagingPath`s and the `OldModules`, the only names with a leading dot.
+/// `leftovers`: also the `StagingPath`s, the `OldModules` and what was moved aside, the only names with a leading dot.
 fn read_entries_and_leftovers(dir: &Dir, leftovers: bool) -> Vec<(Box<[u8]>, EntryKind)> {
     let mut out = Vec::new();
     let mut iter = sys::iterate_dir(dir.fd());
@@ -1701,7 +1701,8 @@ fn read_entries_and_leftovers(dir: &Dir, leftovers: bool) -> Vec<(Box<[u8]>, Ent
         if name.first() == Some(&b'.')
             && !(leftovers
                 && (name.starts_with(StagingPath::PREFIX.as_bytes())
-                    || name.starts_with(OldModules::PREFIX.as_bytes())))
+                    || name.starts_with(OldModules::PREFIX.as_bytes())
+                    || name.starts_with(crate::package_install::MOVED_ASIDE_PREFIX.as_bytes())))
         {
             continue;
         }

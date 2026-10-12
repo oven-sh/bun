@@ -1197,7 +1197,7 @@ impl Config {
                 objects.flat_map(|it| &it.rules).filter(|it| *it.id == *id)
             };
             settings(false)
-                .last()
+                .next_back()
                 .is_some_and(|it| it.severity != Severity::Off)
                 || settings(true).any(|it| it.severity != Severity::Off)
         };

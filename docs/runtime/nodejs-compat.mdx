@@ -101,8 +101,6 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-When `spawn()` fails asynchronously, `exitCode` stays `null` until the deferred `error` event. Before emitting `error`, Bun sets `exitCode` to the negative errno. The `close` event receives that code and a `null` signal.
-
 🟡 IPC can send `net.Socket`, `net.Server` and `dgram.Socket` handles (including to and from Node.js processes), but not `http` server sockets. `serialization: "advanced"` only works between Bun processes, so use JSON serialization for Node.js ↔ Bun IPC. Missing `subprocess.channel.ref()`/`unref()`. You cannot pass a child's `stdout`/`stderr` as another child's `stdio`, and `spawnSync` does not return extra `stdio` pipes in `output`.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)

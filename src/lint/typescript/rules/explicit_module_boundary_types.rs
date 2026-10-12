@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::oxlint::{member_key_name, property_key_name};
 use bun_lint::utils::ts_scope::{
     ReturnTypeOptions, ancestor_has_return_type, check_function_expression_return_type,
     check_function_return_type, does_immediately_return_function_expression,
@@ -38,9 +39,7 @@ impl ExplicitModuleBoundaryTypes {
         if self.allowed_names.is_empty() {
             return false;
         }
-        let is_allowed = |name: Option<Name>| {
-            name.is_some_and(|name| self.allowed_names.iter().any(|allowed| **allowed == *name.bytes()))
-        };
+        let is_allowed = |name: Option<Name>| self.allows(name.map(Name::bytes));
         match func.owner() {
             Node::Stmt(_) => is_allowed(func.name().map(Ident::name)),
             Node::Member(member) => is_static_member_access_of_value(member, &self.allowed_names),
@@ -57,70 +56,58 @@ impl ExplicitModuleBoundaryTypes {
             _ => false,
         }
     }
-}
 
-/// The key, if oxlint has a name for it.
-fn oxlint_named_key<'a>(key: Option<Key<'a>>, file: &File<'a>) -> Option<Span> {
-    let key = key?;
-    matches!(key.kind(), KeyKind::Ident(_) | KeyKind::String(_) | KeyKind::ComputedString(_))
-        .then(|| key.inner_span(file))
-}
-
-/// What oxlint calls the target of a function: the nearest name around it. Whether it is the key of a property.
-fn oxlint_target(func: Func) -> Option<(Span, bool)> {
-    if let Some(name) = func.name() {
-        return Some((name.span(), false));
+    fn allows(&self, name: Option<&[u8]>) -> bool {
+        name.is_some_and(|name| self.allowed_names.iter().any(|allowed| **allowed == *name))
     }
-    let file = func.file();
-    for node in Node::Func(func).ancestors() {
-        let name = match node {
-            Node::Member(member) => {
-                if let Some(key) = oxlint_named_key(member.key(), file) {
-                    return Some((key, true));
-                }
-                // The name of the class is forgotten after the first member that has a name.
-                let Node::Class(class) = member.parent() else {
-                    return None;
-                };
-                let mut before = class.members().iter().take_while(|&it| it != member);
-                if before.any(|it| oxlint_named_key(it.key(), file).is_some()) {
-                    return None;
-                }
-                class.name()
+
+    /// The parameters without a type, or with `any`, each with the message if it has a name and the one if it has none.
+    fn untyped_parameters<'a>(
+        &self,
+        func: Func<'a>,
+        is_oxlint: bool,
+    ) -> impl Iterator<Item = (Param<'a>, Message, Message)> {
+        let allows_any = self.allow_arguments_explicitly_typed_as_any;
+        func.params_with_this().filter_map(move |param| {
+            // It has the type of its default value. oxlint looks at the annotation first, and not at `this`.
+            if param.default().is_some() && !(is_oxlint && param.ty().is_some())
+                || is_oxlint && func.this_param() == Some(param)
+            {
+                return None;
             }
-            Node::Prop(prop) => match oxlint_named_key(prop.key(), file) {
-                Some(key) => return Some((key, true)),
-                None => continue,
-            },
-            Node::VarDecl(declarator) => {
-                let pat = declarator.pat();
-                return (pat.tag() == PatTag::Ident).then(|| (pat.span(), false));
+            match param.ty() {
+                None => Some((param, MISSING_ARG_TYPE, MISSING_ARG_TYPE_UNNAMED)),
+                Some(ty) if !allows_any && ty.is_keyword(Keyword::Any) => Some((param, ANY_TYPED_ARG, ANY_TYPED_ARG_UNNAMED)),
+                Some(_) => None,
             }
-            Node::Func(around) => around.name(),
-            Node::Class(class) => class.name(),
-            _ => None,
-        };
-        if let Some(name) = name {
-            return Some((name.span(), false));
+        })
+    }
+
+    fn check_parameters<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
+        let is_oxlint = cx.language().is_oxlint;
+        for (param, named, unnamed) in self.untyped_parameters(func, is_oxlint) {
+            // oxlint points at the parameter with its modifiers, and for a rest parameter at all parameters.
+            let at = match (is_oxlint, param.is_rest()) {
+                (false, _) => param.span_without_modifiers(),
+                (true, false) => param.span(),
+                (true, true) => func.params_span().unwrap_or_else(|| param.span()),
+            };
+            let pattern = match (param.pat().kind(), param.is_rest()) {
+                (PatKind::Ident(name), _) => {
+                    cx.report(at, named).data("name", name);
+                    continue;
+                }
+                (PatKind::Missing, _) => continue,
+                (_, true) => "Rest",
+                (PatKind::Array(_), false) => "Array pattern",
+                (PatKind::Object(_), false) => "Object pattern",
+            };
+            cx.report(at, unnamed).data("type", pattern);
         }
     }
-    None
 }
 
-/// Where oxlint points for a function without a return type: at its target. But for an arrow function that is in no
-/// other function and is not the value of a property, at the `=>`. Without a target, at the parameters of an arrow
-/// function and at the start of another function.
-fn oxlint_place(func: Func) -> Span {
-    let start = func.estree_span().start;
-    match (oxlint_target(func), func.arrow_span()) {
-        (Some((key, true)), _) => key,
-        (_, Some(arrow)) if func.enclosing().is_none() => arrow,
-        (Some((name, _)), _) => name,
-        (None, Some(arrow)) => func.params_span().unwrap_or(arrow),
-        (None, None) => Span::new(start, start + "function".len() as u32),
-    }
-}
-
+/// typescript-eslint's rule.
 struct Checker<'a, 'c> {
     rule: &'c ExplicitModuleBoundaryTypes,
     cx: &'c Cx<'a, ExplicitModuleBoundaryTypes>,
@@ -283,12 +270,7 @@ impl<'a> Checker<'a, '_> {
     }
 
     fn check_empty_body_function_expression(&self, member: Member<'a>, func: Func<'a>) {
-        // oxlint says nothing about the return type of what has no body.
-        if !member.is_constructor()
-            && member.kind() != MemberKind::Setter
-            && func.return_type().is_none()
-            && !self.cx.language().is_oxlint
-        {
+        if !member.is_constructor() && member.kind() != MemberKind::Setter && func.return_type().is_none() {
             self.cx.report(func.estree_span(), MISSING_RETURN_TYPE);
         }
         self.check_parameters(func);
@@ -324,10 +306,10 @@ impl<'a> Checker<'a, '_> {
             && !member.flags().contains(Flags::ABSTRACT)
             && has_overload_signatures(Node::Member(member))
         {
-            return self.check_parameters_of_overloaded(func);
+            return;
         }
         check_function_expression_return_type(func, self.options_for(func), |loc| {
-            self.cx.report(if self.cx.language().is_oxlint { oxlint_place(func) } else { loc }, MISSING_RETURN_TYPE);
+            self.cx.report(loc, MISSING_RETURN_TYPE);
         });
         self.check_parameters(func);
     }
@@ -345,67 +327,444 @@ impl<'a> Checker<'a, '_> {
             return;
         }
         if self.rule.allow_overload_functions && has_overload_signatures(Node::Func(func)) {
-            return self.check_parameters_of_overloaded(func);
+            return;
         }
         check_function_return_type(func, self.options_for(func), |loc| {
-            self.cx.report(if self.cx.language().is_oxlint { oxlint_place(func) } else { loc }, MISSING_RETURN_TYPE);
+            self.cx.report(loc, MISSING_RETURN_TYPE);
         });
         self.check_parameters(func);
     }
 
-    /// With `allowOverloadFunctions` oxlint passes over the return type only.
-    fn check_parameters_of_overloaded(&mut self, func: Func<'a>) {
-        if self.cx.language().is_oxlint {
-            self.check_parameters(func);
-        }
-    }
-
     /// There is nothing to say about it, whatever it is part of.
     fn is_fully_typed(&self, func: Func<'a>) -> bool {
-        func.return_type().is_some() && self.untyped_parameters(func).next().is_none()
-    }
-
-    /// The parameters without a type, or with `any`, each with the message if it has a name and the one if it has none.
-    fn untyped_parameters(&self, func: Func<'a>) -> impl Iterator<Item = (Param<'a>, Message, Message)> {
-        let is_oxlint = self.cx.language().is_oxlint;
-        let allows_any = self.rule.allow_arguments_explicitly_typed_as_any;
-        func.params_with_this().filter_map(move |param| {
-            // It has the type of its default value. oxlint does not look at `this`.
-            if param.default().is_some() || is_oxlint && func.this_param() == Some(param) {
-                return None;
-            }
-            match param.ty() {
-                None => Some((param, MISSING_ARG_TYPE, MISSING_ARG_TYPE_UNNAMED)),
-                Some(ty) if !allows_any && ty.is_keyword(Keyword::Any) => Some((param, ANY_TYPED_ARG, ANY_TYPED_ARG_UNNAMED)),
-                Some(_) => None,
-            }
-        })
+        func.return_type().is_some() && self.rule.untyped_parameters(func, false).next().is_none()
     }
 
     fn check_parameters(&self, func: Func<'a>) {
-        let is_oxlint = self.cx.language().is_oxlint;
-        for (param, named, unnamed) in self.untyped_parameters(func) {
-            // oxlint points at the parameter with its modifiers, and for a rest parameter at all parameters.
-            let at = match (is_oxlint, param.is_rest()) {
-                (false, _) => param.span_without_modifiers(),
-                (true, false) => param.span(),
-                (true, true) => func.params_span().unwrap_or_else(|| param.span()),
-            };
-            let pattern = match (param.pat().kind(), param.is_rest()) {
-                (PatKind::Ident(name), _) => {
-                    self.cx.report(at, named).data("name", name);
-                    continue;
-                }
-                (PatKind::Missing, _) => continue,
-                (_, true) => "Rest",
-                (PatKind::Array(_), false) => "Array pattern",
-                (PatKind::Object(_), false) => "Object pattern",
-            };
-            self.cx.report(at, unnamed).data("type", pattern);
-        }
+        self.rule.check_parameters(func, self.cx);
     }
 }
 
+/// What oxlint points at for a function that has no name, and asks `allowedNames` about: the variable, the class or the
+/// key that it was last under.
+#[derive(Copy, Clone)]
+struct Target<'a> {
+    span: Span,
+    name: &'a [u8],
+    is_property: bool,
+}
+
+enum Step<'a> {
+    Visit(Node<'a>),
+    WalkClass(Class<'a>),
+    AssignmentTarget(Expr<'a>),
+    Statements(List<'a, Stmt<'a>>),
+    ForgetTarget,
+    InSetter(bool),
+    Overloaded(FxHashSet<Member<'a>>),
+    /// `place`: where it lacks a return type, unless it returns a function.
+    LeaveFunction { place: Option<Span>, forgets_target: bool },
+    LeaveClass,
+}
+
+/// oxlint's rule, its `ExplicitTypesChecker`. It goes down from what is exported, through every expression but calls and
+/// JSX elements, and judges each function that it comes to. An identifier it follows only where that is the export.
+struct OxlintChecker<'a, 'c> {
+    rule: &'c ExplicitModuleBoundaryTypes,
+    cx: &'c Cx<'a, ExplicitModuleBoundaryTypes>,
+    /// What is still to be done, the next at the end.
+    steps: Vec<Step<'a>>,
+    /// It is forgotten after what has set it, not set back.
+    target: Option<Target<'a>>,
+    /// The functions around, and the classes that [`Step::WalkClass`] went into. Whether a `return` of the function
+    /// has a function.
+    around: Vec<bool>,
+    in_setter: bool,
+    /// With `allowOverloadFunctions`, the methods of the class around that have overload signatures.
+    overloaded: FxHashSet<Member<'a>>,
+}
+
+/// oxlint's `get_typed_inner_expression`
+fn get_typed_inner_expression(mut e: Expr<'_>) -> Expr<'_> {
+    while let ExprKind::NonNull(inner) = e.kind() {
+        e = inner;
+    }
+    e
+}
+
+/// oxlint's `function_has_overload_signatures`: a declaration of the same variable has no body. For a function without
+/// a name, an `export default function ();` of the file.
+fn function_has_overload_signatures<'a>(func: Func<'a>) -> bool {
+    let is_signature = |other: Func<'a>| other != func && !other.has_body();
+    match func.name() {
+        Some(_) => func.symbol().is_some_and(|symbol| {
+            symbol.declarations().any(|it| matches!(it, Declaration::Fn(other) if is_signature(other)))
+        }),
+        None => func.file().body().iter().any(|statement| {
+            statement.is_default_export()
+                && statement.as_fn().is_some_and(|other| other.name().is_none() && is_signature(other))
+        }),
+    }
+}
+
+/// oxlint's `collect_overloaded_methods`
+fn overloaded_methods(class: Class<'_>) -> FxHashSet<Member<'_>> {
+    let methods = || {
+        class.members().iter().filter_map(|member| {
+            let is_method = matches!(
+                member.kind(),
+                MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor
+            );
+            let func = member.func().filter(|_| is_method && !member.key().is_some_and(Key::is_private))?;
+            Some((member, func.has_body(), (member.is_static(), member_key_name(member)?)))
+        })
+    };
+    let signatures: FxHashSet<_> = methods().filter(|it| !it.1).map(|it| it.2).collect();
+    methods().filter(|it| it.1 && signatures.contains(&it.2)).map(|it| it.0).collect()
+}
+
+impl<'a> OxlintChecker<'a, '_> {
+    fn check_export(&mut self, statement: Stmt<'a>) {
+        self.visit(statement);
+        while let Some(step) = self.steps.pop() {
+            let first = self.steps.len();
+            self.step(step);
+            if let Some(added) = self.steps.get_mut(first..) {
+                added.reverse();
+            }
+        }
+    }
+
+    fn visit(&mut self, node: impl Into<Node<'a>>) {
+        self.steps.push(Step::Visit(node.into()));
+    }
+
+    fn visit_all<T: Into<Node<'a>>>(&mut self, nodes: impl IntoIterator<Item = T>) {
+        self.steps.extend(nodes.into_iter().map(|it| Step::Visit(it.into())));
+    }
+
+    fn step(&mut self, step: Step<'a>) {
+        match step {
+            Step::Visit(Node::Stmt(statement)) => self.visit_export(statement),
+            Step::Visit(Node::VarDecl(declarator)) => self.visit_variable_declarator(declarator),
+            Step::Visit(Node::Expr(e)) => self.visit_expression(e),
+            Step::Visit(Node::Prop(prop)) => self.visit_object_property(prop),
+            Step::Visit(Node::Func(func)) => self.visit_function(func),
+            Step::Visit(Node::Class(class)) => self.visit_class(class),
+            Step::Visit(Node::Member(member)) => self.visit_class_element(member),
+            Step::Visit(_) => {}
+            Step::WalkClass(class) => {
+                self.around.push(false);
+                self.visit_all(class.decorators());
+                self.visit_all(class.extends());
+                self.visit_all(class.members());
+                self.steps.push(Step::LeaveClass);
+            }
+            Step::AssignmentTarget(e) => self.visit_assignment_target(e),
+            Step::Statements(statements) => self.visit_statements(statements),
+            Step::ForgetTarget => self.target = None,
+            Step::InSetter(was) => self.in_setter = was,
+            Step::Overloaded(was) => self.overloaded = was,
+            Step::LeaveFunction { place, forgets_target } => {
+                let returns_function = self.around.pop() == Some(true);
+                if let Some(place) = place.filter(|_| !returns_function) {
+                    self.cx.report(place, MISSING_RETURN_TYPE);
+                }
+                if forgets_target {
+                    self.target = None;
+                }
+            }
+            Step::LeaveClass => {
+                self.around.pop();
+            }
+        }
+    }
+
+    fn visit_export(&mut self, statement: Stmt<'a>) {
+        match statement.kind() {
+            StmtKind::Var(declarations) => self.visit_all(declarations),
+            StmtKind::Fn(func) => self.visit(func),
+            StmtKind::Class(class) if statement.is_default_export() => self.steps.push(Step::WalkClass(class)),
+            StmtKind::Class(class) => self.visit(class),
+            StmtKind::Enum(it) => self.visit_all(it.members().iter().filter_map(EnumMember::init)),
+            StmtKind::Module(module) => self.steps.push(Step::Statements(module.innermost().body())),
+            StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => self.run_on_exported_expression(e, true),
+            StmtKind::ExportNamed(export) => {
+                for specifier in export.items() {
+                    let scope = Node::ExportSpec(specifier).scope();
+                    self.run_on_identifier_reference(scope.resolve_name(specifier.local().name()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `is_export`: not an element or a property of what is exported.
+    fn run_on_exported_expression(&mut self, e: Expr<'a>, is_export: bool) {
+        let e = get_typed_inner_expression(e);
+        match e.kind() {
+            ExprKind::Ident(_) => self.run_on_identifier_reference(e.symbol()),
+            ExprKind::Fn(func) => self.visit(func),
+            ExprKind::Array(elements) if is_export => {
+                for element in elements {
+                    self.run_on_exported_expression(element, false);
+                }
+            }
+            ExprKind::Object(properties) if is_export => {
+                for property in properties.iter().filter(|it| it.kind() != PropKind::Spread) {
+                    if let Some(value) = property.value() {
+                        self.run_on_exported_expression(value, false);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// It goes by the first declaration.
+    fn run_on_identifier_reference(&mut self, symbol: Option<Symbol<'a>>) {
+        match symbol.and_then(|it| it.declarations().next()) {
+            Some(declaration @ Declaration::Var(_)) if !declaration.is_catch_parameter() => {
+                self.visit_all(declaration.node());
+            }
+            Some(Declaration::Fn(func)) => self.visit(func),
+            Some(Declaration::Class(class)) => self.steps.push(Step::WalkClass(class)),
+            _ => {}
+        }
+    }
+
+    fn with_target_binding(&mut self, name: Option<Ident<'a>>) -> bool {
+        if let Some(name) = name {
+            self.target = Some(Target { span: name.span(), name: name.bytes(), is_property: false });
+        }
+        name.is_some()
+    }
+
+    /// Not with a key whose name is nowhere in the file as it is, that of a number or a regular expression.
+    fn with_target_property(&mut self, key: Option<Key<'a>>) -> bool {
+        let Some(key) = key else {
+            return false;
+        };
+        let span = key.inner_span(self.cx.file());
+        let is_written = match key.kind() {
+            KeyKind::Private(_) | KeyKind::ComputedNumber(_) => false,
+            KeyKind::Number(_) => self.cx.file().slice(span).ends_with(b"n"),
+            KeyKind::Computed(e) => e.tag() != ExprTag::Regex,
+            _ => true,
+        };
+        let Some(name) = property_key_name(key).filter(|_| is_written) else {
+            return false;
+        };
+        self.target = Some(Target { span, name, is_property: true });
+        true
+    }
+
+    fn visit_variable_declarator(&mut self, declarator: VarDecl<'a>) {
+        if self.rule.options.allow_typed_function_expressions && declarator.ty().is_some() {
+            return;
+        }
+        let (Some(init), pat) = (declarator.init(), declarator.pat()) else {
+            return;
+        };
+        let Some(name) = pat.as_ident().filter(|it| !self.rule.allows(Some(it.bytes()))) else {
+            return;
+        };
+        if !matches!(
+            get_typed_inner_expression(init).tag(),
+            ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies
+        ) {
+            self.target = Some(Target { span: pat.span(), name: name.bytes(), is_property: false });
+            self.visit(init);
+            self.steps.push(Step::ForgetTarget);
+        }
+    }
+
+    fn visit_expression(&mut self, e: Expr<'a>) {
+        match e.kind() {
+            ExprKind::Call(_) => {}
+            ExprKind::Jsx(jsx) if !jsx.is_fragment() => {}
+            ExprKind::New(call) => self.visit(call.callee()),
+            ExprKind::As { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Satisfies { expr, .. }
+                if matches!(
+                    get_typed_inner_expression(expr).tag(),
+                    ExprTag::Fn | ExprTag::Object | ExprTag::Array
+                ) => {}
+            ExprKind::Assign { target, value, .. } => {
+                self.steps.push(Step::AssignmentTarget(target));
+                self.visit(value);
+            }
+            _ => Node::Expr(e).for_each_child(|child| self.visit(child)),
+        }
+    }
+
+    /// The properties of a pattern are no properties for oxlint.
+    fn visit_assignment_target(&mut self, e: Expr<'a>) {
+        match e.kind() {
+            _ if e.is_parenthesized() => self.visit_expression(e),
+            ExprKind::Array(elements) => self.steps.extend(elements.iter().map(Step::AssignmentTarget)),
+            ExprKind::Object(properties) => {
+                for property in properties {
+                    self.visit_all(property.computed_key());
+                    self.steps.extend(property.value().map(Step::AssignmentTarget));
+                }
+            }
+            ExprKind::Spread(rest) => self.steps.push(Step::AssignmentTarget(rest)),
+            _ => self.visit_expression(e),
+        }
+    }
+
+    /// Of statements it looks at the `return`s, or at the only one.
+    fn visit_statements(&mut self, statements: List<'a, Stmt<'a>>) {
+        let mut rest = statements.iter().skip_while(|it| it.directive().is_some());
+        if let (Some(only), None) = (rest.next(), rest.next())
+            && let Some(e) = only.as_expr()
+        {
+            return self.visit(e);
+        }
+        for value in statements.iter().filter_map(Stmt::as_return).flatten() {
+            if value.as_fn().is_some()
+                && !value.is_parenthesized()
+                && let Some(returns_function) = self.around.last_mut()
+            {
+                *returns_function = true;
+            }
+            self.visit(value);
+        }
+    }
+
+    fn visit_object_property(&mut self, prop: Prop<'a>) {
+        if prop.kind() == PropKind::Spread {
+            return self.visit_all(prop.value());
+        }
+        let was_in_setter = self.in_setter;
+        self.in_setter |= prop.kind() == PropKind::Setter;
+        let has_name = self.with_target_property(prop.key());
+        self.visit_all(prop.computed_key());
+        self.visit_all(prop.value());
+        self.steps.push(Step::InSetter(was_in_setter));
+        if has_name {
+            self.steps.push(Step::ForgetTarget);
+        }
+    }
+
+    fn visit_class(&mut self, class: Class<'a>) {
+        let has_name = self.with_target_binding(class.name());
+        self.visit_all(class.members());
+        if self.rule.allow_overload_functions {
+            let was = std::mem::replace(&mut self.overloaded, overloaded_methods(class));
+            self.steps.push(Step::Overloaded(was));
+        }
+        if has_name {
+            self.steps.push(Step::ForgetTarget);
+        }
+    }
+
+    fn visit_class_element(&mut self, member: Member<'a>) {
+        let (kind, flags) = (member.kind(), member.flags());
+        if flags.contains(Flags::PRIVATE)
+            || member.key().is_some_and(Key::is_private)
+            || kind == MemberKind::Property && !flags.contains(Flags::ACCESSOR) && member.ty().is_some()
+            || self.rule.allows(member_key_name(member))
+        {
+            return;
+        }
+        let has_name = match member.constructor_keyword() {
+            Some(keyword) => {
+                self.target = Some(Target { span: keyword.span(), name: keyword.bytes(), is_property: true });
+                true
+            }
+            None => self.with_target_property(member.key()),
+        };
+        match (kind, member.func()) {
+            (MemberKind::StaticBlock, Some(block)) => {
+                self.steps.extend(block.body_statements().map(Step::Statements));
+            }
+            (MemberKind::Method | MemberKind::Getter | MemberKind::Constructor, Some(func))
+                if !member.is_constructor() && !self.overloaded.contains(&member) =>
+            {
+                self.visit_all(member.decorators());
+                self.visit_all(member.computed_key());
+                self.visit(func);
+            }
+            (
+                MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor,
+                Some(func),
+            ) => self.rule.check_parameters(func, self.cx),
+            (MemberKind::Property, _) => {
+                self.visit_all(member.decorators());
+                self.visit_all(member.computed_key());
+                self.visit_all(member.init());
+            }
+            _ => {}
+        }
+        if has_name {
+            self.steps.push(Step::ForgetTarget);
+        }
+    }
+
+    fn visit_function(&mut self, func: Func<'a>) {
+        let forgets_target = self.with_target_binding(func.name());
+        self.around.push(false);
+        self.rule.check_parameters(func, self.cx);
+        let place = match func.return_type() {
+            Some(_) => None,
+            None if func.is_arrow() => self.check_arrow_without_return(func),
+            None if self.in_setter => None,
+            None => self.check_function_without_return(func),
+        };
+        self.steps.push(Step::LeaveFunction { place, forgets_target });
+    }
+
+    fn check_function_without_return(&mut self, func: Func<'a>) -> Option<Span> {
+        let body = func.body_statements()?;
+        if self.rule.allow_overload_functions && function_has_overload_signatures(func) {
+            return None;
+        }
+        if self.rule.options.allow_higher_order_functions {
+            self.steps.push(Step::Statements(body));
+        }
+        let name = func.name().map(Ident::bytes).or_else(|| self.target.map(|it| it.name));
+        let start = func.estree_span().start;
+        let keyword = || Span::new(start, start + "function".len() as u32);
+        (!self.rule.allows(name)).then(|| self.target.map_or_else(keyword, |it| it.span))
+    }
+
+    fn check_arrow_without_return(&mut self, arrow: Func<'a>) -> Option<Span> {
+        let place = match self.target {
+            Some(Target { span, is_property: true, .. }) => Some(span),
+            _ if self.around.len() == 1 => arrow.arrow_span(),
+            Some(target) => Some(target.span),
+            None => arrow.params_span().or_else(|| arrow.arrow_span()),
+        };
+        let unless_allowed = place.filter(|_| !self.rule.allows(self.target.map(|it| it.name)));
+        let body = match arrow.body() {
+            FnBody::Expr(body) if self.rule.options.allow_higher_order_functions => body,
+            FnBody::Block(statements) if self.rule.options.allow_higher_order_functions => {
+                self.steps.push(Step::Statements(statements));
+                return unless_allowed;
+            }
+            _ => return unless_allowed,
+        };
+        let mut inner = get_typed_inner_expression(body);
+        while let Some((expr, _)) = inner.as_satisfies() {
+            inner = get_typed_inner_expression(expr);
+        }
+        match inner.tag() {
+            ExprTag::AsConst
+                if self.rule.options.allow_direct_const_assertion_in_arrow_functions
+                    && !inner.is_angle_bracket_assertion() =>
+            {
+                None
+            }
+            ExprTag::Fn => {
+                self.visit(body);
+                None
+            }
+            // `allowedNames` is not asked.
+            _ => place,
+        }
+    }
+}
 impl Rule for ExplicitModuleBoundaryTypes {
     const META: Meta = Meta::typescript("explicit-module-boundary-types", Kind::Problem).reports_on_exit();
     const ON: On = On::new()
@@ -413,6 +772,8 @@ impl Rule for ExplicitModuleBoundaryTypes {
             StmtTag::Var,
             StmtTag::Fn,
             StmtTag::Class,
+            StmtTag::Enum,
+            StmtTag::Module,
             StmtTag::ExportDefault,
             StmtTag::ExportAssign,
             StmtTag::ExportNamed,
@@ -441,13 +802,29 @@ impl Rule for ExplicitModuleBoundaryTypes {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.language().is_oxlint {
+            true => Self::ON,
+            false => On::new()
+                .stmts(&[
+                    StmtTag::Var,
+                    StmtTag::Fn,
+                    StmtTag::Class,
+                    StmtTag::ExportDefault,
+                    StmtTag::ExportAssign,
+                    StmtTag::ExportNamed,
+                ])
+                .finish(),
+        }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Vec<Stmt<'a>>> {
         Some(Vec::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.tag() {
-            StmtTag::Var | StmtTag::Fn | StmtTag::Class => {
+            StmtTag::Var | StmtTag::Fn | StmtTag::Class | StmtTag::Enum | StmtTag::Module => {
                 if statement.is_exported() {
                     cx.state.push(statement);
                 }
@@ -468,6 +845,18 @@ impl Rule for ExplicitModuleBoundaryTypes {
         let mut exports = std::mem::take(&mut cx.state);
         if exports.is_empty() {
             return;
+        }
+        if cx.language().is_oxlint {
+            let mut checker = OxlintChecker {
+                rule: self,
+                cx,
+                steps: Vec::new(),
+                target: None,
+                around: Vec::new(),
+                in_setter: false,
+                overloaded: FxHashSet::default(),
+            };
+            return exports.into_iter().for_each(|statement| checker.check_export(statement));
         }
         // The order in which upstream leaves them.
         utils::sort::sort_unstable_by_key(&mut exports, |statement| statement.span().end);

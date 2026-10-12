@@ -146,6 +146,10 @@ pub struct State<'a> {
     /// The unreachable segments from where everything before has been marked as used, each with the
     /// age of the sets at that time.
     used_unreachable: FxHashMap<u32, u32>,
+    /// With a configuration of oxlint: whether a `return` statement is reported.
+    oxlint_useless: AncestorMemo<'a, bool>,
+    /// [`oxlint_is_at_the_end`]
+    oxlint_at_the_end: AncestorMemo<'a, bool>,
 }
 
 /// ESLint's `isReturned`: `segment` ends with a `return`, or it is unreachable.
@@ -329,7 +333,77 @@ fn what_is_known<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Known> {
     }
 }
 
+/// Whether the function ends after `child` for oxlint, as far as `parent`, which `child` is directly in, tells: it is the last
+/// statement of everything around it but a `case`. Whether it can be reached is not asked.
+fn oxlint_is_at_the_end<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> {
+    let is_last = |list: List<'a, Stmt<'a>>| list.last().map(Node::Stmt) == Some(child);
+    match parent {
+        Node::Func(func) => Some(func.body_statements().is_some_and(is_last)),
+        Node::Case(_) => None,
+        Node::Stmt(parent) => match parent.kind() {
+            StmtKind::Block(list) if !is_last(list) => Some(false),
+            StmtKind::Try { finalizer: Some(finalizer), .. } if Node::Stmt(finalizer) == child => Some(false),
+            _ => parent.is_loop().then_some(false),
+        },
+        _ => Some(false),
+    }
+}
+
+/// Whether one of `statements` is executed for oxlint if they are run into. `Some(false)`: a `break`, a `continue` or a
+/// `return` without a value comes first.
+fn oxlint_executes<'a>(statements: &mut dyn Iterator<Item = Stmt<'a>>) -> Option<bool> {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return Some(true);
+    }
+    for statement in statements {
+        let verdict = match statement.kind() {
+            StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Return(None) => Some(false),
+            StmtKind::Block(list) => oxlint_executes(&mut list.iter()),
+            StmtKind::Empty
+            | StmtKind::Fn(_)
+            | StmtKind::Class(_)
+            | StmtKind::Interface(_)
+            | StmtKind::TypeAlias(_)
+            | StmtKind::Enum(_)
+            | StmtKind::Module(_) => None,
+            _ => Some(true),
+        };
+        if verdict.is_some() {
+            return verdict;
+        }
+    }
+    None
+}
+
+/// [`oxlint_executes`] for what follows `child` in `case` and in the cases after it.
+fn oxlint_executes_after<'a>(child: Node<'a>, case: Case<'a>) -> Option<bool> {
+    let Node::Stmt(switch) = case.parent() else {
+        return None;
+    };
+    let StmtKind::Switch { cases, .. } = switch.kind() else {
+        return None;
+    };
+    let body = case.body();
+    let rest = std::iter::successors(body.after(child.span().start), |it| body.after(it.span().start));
+    let later = std::iter::successors(cases.after(case.span().start), |it| cases.after(it.span().start));
+    oxlint_executes(&mut rest.chain(later.flat_map(|it| it.body().iter())))
+}
+
 impl NoUselessReturn {
+    /// oxlint does not follow the ways through a function: it asks what is written after the `return`.
+    fn is_useless_for_oxlint<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> bool {
+        let at_the_end = &mut state.oxlint_at_the_end;
+        let is_useless = state.oxlint_useless.find(statement.into(), |child, parent| match parent {
+            Node::Case(case) => match oxlint_executes_after(child, case)? {
+                true => Some(false),
+                // It looks no further, not after the `switch` that the `break` leaves either.
+                false => Some(at_the_end.find(parent, oxlint_is_at_the_end) == Some(true)),
+            },
+            _ => oxlint_is_at_the_end(child, parent),
+        });
+        is_useless == Some(true)
+    }
+
     /// Checks the code path that starts with `root`.
     fn check_code_path<'a>(&self, root: Node<'a>, cx: &mut Cx<'a, Self>) {
         for step in steps_of_code_path(root, STATEMENTS, [StmtTag::Block, StmtTag::Try]) {
@@ -459,6 +533,12 @@ impl Rule for NoUselessReturn {
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if !matches!(statement.as_return(), Some(None)) {
+            return;
+        }
+        if cx.language().is_oxlint {
+            if Self::is_useless_for_oxlint(statement, &mut cx.state) {
+                self.report(statement, cx);
+            }
             return;
         }
         let known = cx.state.known.find(statement.into(), what_is_known);

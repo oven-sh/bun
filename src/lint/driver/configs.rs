@@ -109,7 +109,7 @@ const BUILT_IN: &[u8] = br#"[
     { "files": ["**/*.{ts,mts,cts,tsx}"], "extends": ["typescript-eslint/TYPESCRIPT"] },
     {
         "rules": {
-            "bun:test/no-disabled-tests": "error",
+            "bun:test/no-disabled-tests": "warn",
             "bun:test/no-export": "error",
             "bun:test/no-focused-tests": "error",
             "bun:test/valid-describe-callback": "error",

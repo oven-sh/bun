@@ -339,6 +339,8 @@ The path decides the language, the configuration, and whether the file is ignore
 
 With `--check` or `--list-different`, `(stdin)` is printed and the exit code is `1` if the code is not formatted. As in Prettier, code that cannot be parsed is reported with exit code `0`. With an `.oxfmtrc.json`, as in oxfmt, neither flag goes with `--stdin-filepath`.
 
+Code that `bun format` would leave as it is in a file, because of its language or of a plugin, is an error here too: nothing is printed, and the exit code is `2`. With `--allow-unsupported` it is a warning.
+
 ## If `package.json` has a `format` script
 
 Your script wins. `bun format` runs it, like `bun run format`. Inside that script, and in any script it starts, `bun format` is the formatter, so `"format": "bun format"` works.

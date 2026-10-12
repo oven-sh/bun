@@ -1230,6 +1230,41 @@ exports.format = async (text, options) => {
       timeout,
     );
 
+    // Who gets the text back with 0 takes it for formatted. Prettier 3.9.9 without the plugin: `Cannot find package`, and 2,
+    // whatever the flags.
+    describe.each([
+      ["prettier, prettier-plugin-svelte", []],
+      ["prettier-plugin-svelte", ["node_modules/prettier/package.json"]],
+      ["prettier", ["node_modules/prettier-plugin-svelte/package.json"]],
+    ])("from standard input, and not installed: %s", (missing, installed) => {
+      const project = {
+        ".prettierrc": files[".prettierrc"],
+        ...Object.fromEntries(installed.map(name => [name, "{}"])),
+      };
+      const stdin = "<p   >c</p>\n";
+      const unsupported = "1 file is in a language that bun format does not support yet, and left as it is: 1 .svelte";
+      test.each([[[]], [["--check"]], [["--list-different"]]])("%j", async flags => {
+        const result = await format(project, [...flags, "--stdin-filepath", "c.svelte"], { stdin });
+        expect(result.raw).toBe("");
+        expect(result.stderr.split("\n")).toEqual([
+          `[warn] Not installed: ${missing}. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.`,
+          `[error] ${unsupported}. With --allow-unsupported this is a warning.`,
+        ]);
+        expect(result.exitCode).toBe(2);
+      });
+      test.each([
+        [[], stdin],
+        [["--check"], ""],
+        [["--list-different"], ""],
+      ])("--allow-unsupported %j", async (flags, raw) => {
+        const args = ["--allow-unsupported", ...flags, "--stdin-filepath", "c.svelte"];
+        const result = await format(project, args, { stdin });
+        expect(result.raw).toBe(raw);
+        expect(result.stderr.split("\n").at(-1)).toBe(`[warn] ${unsupported}`);
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
     // Each thread that hands a file over waits for the answer, and Prettier reads files on threads too.
     test(
       "more files than there are threads",
@@ -1383,6 +1418,15 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     expect(without.files).toEqual(after);
     expect(without.stderr).not.toContain("does not support yet");
     expect(without.exitCode).toBe(0);
+    // oxfmt 0.72 formats the one, and gives the other back.
+    const piped = (config: string) =>
+      format({ ".oxfmtrc.json": config }, ["--stdin-filepath", "a.svelte"], { stdin: files["a.svelte"] });
+    expect(await piped('{ "svelte": {} }\n')).toMatchObject({
+      raw: "",
+      stderr: expect.stringContaining("does not support yet, and left as it is: 1 .svelte."),
+      exitCode: 2,
+    });
+    expect(await piped("{}\n")).toMatchObject({ raw: files["a.svelte"], stderr: "", exitCode: 0 });
     // Prettier has no TOML.
     expect(await different(files, [])).toEqual(["c.js"]);
     const broken = await format({ "b.toml": "a = = 1\n", ".oxfmtrc.json": "{}\n" }, [], { reads: ["b.toml"] });
@@ -1573,6 +1617,16 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     expect(flag.files["a.js"]).toBe(ugly);
     expect(flag.stderr).toContain("bun format does not have the plugin prettier-plugin-brace-style");
     expect(flag.exitCode).toBe(2);
+    for (const flags of [[], ["--check"], ["--list-different"]]) {
+      const piped = await format(files, [...flags, "--stdin-filepath", "d.js"], { stdin: ugly });
+      expect(piped.raw).toBe("");
+      expect(piped.stderr).toBe(
+        "[error] 1 file is left as it is: the configuration names plugins that bun format does not have, and that may print it in another way: prettier-plugin-brace-style, ./own.js. With --allow-unsupported it is formatted without.",
+      );
+      expect(piped.exitCode).toBe(2);
+    }
+    const args = ["--allow-unsupported", "--stdin-filepath", "d.js"];
+    expect(await format(files, args, { stdin: ugly })).toMatchObject({ raw: formatted, exitCode: 0 });
   });
 
   test("such a plugin in an override: the files that the override is for are left as they are", async () => {
@@ -1884,13 +1938,16 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       expect(result.exitCode).toBe(2);
     });
 
-    test("on standard input: what is read is printed", async () => {
+    test("on standard input: an error, as for a file, and nothing is printed", async () => {
       const config = JSON.stringify({ overrides });
       const result = await format({ ".prettierrc": config }, ["--stdin-filepath", "a.astro"], {
         stdin: files["a.astro"],
       });
-      expect(result.raw).toBe(files["a.astro"]);
-      expect(result.exitCode).toBe(0);
+      expect(result.raw).toBe("");
+      expect(result.stderr).toBe(
+        "[error] 1 file is in a language that bun format does not support yet, and left as it is: 1 .astro. With --allow-unsupported this is a warning.",
+      );
+      expect(result.exitCode).toBe(2);
     });
 
     test("in an .oxfmtrc.json, which has no such option: it does not count", async () => {

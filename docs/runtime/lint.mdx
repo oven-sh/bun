@@ -298,6 +298,8 @@ The rules of typescript-eslint are those of version 8. Where version 5, 6 or 7 i
 
 `bun lint` takes every flag of oxlint 1.87 except `--lsp`. See [Differences from oxlint](#differences-from-oxlint).
 
+`--rules -f json` lists the rules as oxlint does, with any configuration or none. Its `default` is `true` for the rules that oxlint turns on without a configuration file, which are not [those of `bun lint`](#without-a-configuration-file).
+
 If you run `oxlint && eslint`, say which tool each command replaces: `bun lint --flavor=oxlint && bun lint --flavor=eslint`. See [A project with both tools](#a-project-with-both-tools).
 
 In a project with `vite-plus` in its `package.json` and no configuration file of a linter, `bun lint` reads what `vp lint` reads: `lint` in the `vite.config.ts`.
@@ -790,7 +792,7 @@ A rule looks at a file only if the file imports from `"bun:test"`: with `import`
 
 A name that the file imports from `"vitest"`, `"@jest/globals"`, or another module is not Bun's. Most `jest/` and `vitest/` rules of oxlint pass over what a file imports from `"bun:test"`.
 
-[Without a configuration file](#without-a-configuration-file), these six rules are errors:
+[Without a configuration file](#without-a-configuration-file), these six rules are on. `bun:test/no-disabled-tests` is a warning, so a test that is skipped on purpose does not fail `bun lint`. The others are errors.
 
 | Rule                               | Reports                                                                            |
 | ---------------------------------- | ---------------------------------------------------------------------------------- |

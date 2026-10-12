@@ -81,6 +81,12 @@ fn has_classes_without_order(shown: &[u8]) -> Vec<u8> {
     [shown, what].concat()
 }
 
+/// `.svelte` of `src/a.svelte`. The name of a file that has no ending.
+fn ending_of(path: &[u8]) -> &[u8] {
+    let name = paths::basename(path);
+    strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..])
+}
+
 /// Prettier's message for a parser that it does not have.
 fn cannot_resolve_parser(parser: &[u8]) -> Vec<u8> {
     [b"Couldn't resolve parser \"", parser, b"\"."].concat()
@@ -969,16 +975,29 @@ impl Run<'_> {
             self.out.stdout = text;
             return self.out;
         }
-        // The language of a plugin: see `prettier.rs`.
-        if let Ok(scope) = configs.for_directory(paths::dirname(&path))
-            && language_of(configs, &scope, &path) == Language::Other
-            && !ignored.ignores_file(&path, configs.ignores_of(&scope))
-            && configs.plugin_that_reads(&scope, &path).is_some()
-            && [&b"prettier"[..]]
+        let scope = match configs.for_directory(paths::dirname(&path)) {
+            Ok(scope) => scope,
+            Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
+        };
+        let language = language_of(configs, &scope, &path);
+        let is_ignored = ignored.ignores_file(&path, configs.ignores_of(&scope));
+        // What has to be installed for the text to go to the project's own Prettier, and is not.
+        let mut not_installed: Vec<&[u8]> = Vec::new();
+        let is_of_plugin = configs.plugin_that_reads(&scope, &path).is_some();
+        if language == Language::Other && is_of_plugin {
+            for package in [&b"prettier"[..]]
                 .into_iter()
                 .chain(configs.packages_of_plugins(&scope, &path))
-                .all(|it| prettier::is_installed(&self.environment.cwd, it))
-        {
+            {
+                if !prettier::is_installed(&self.environment.cwd, package)
+                    && !not_installed.contains(&package)
+                {
+                    not_installed.push(package);
+                }
+            }
+        }
+        // The language of a plugin: see `prettier.rs`.
+        if language == Language::Other && !is_ignored && is_of_plugin && not_installed.is_empty() {
             let size = (1, text.len() as u64);
             let bridge = prettier::Prettier::new(self.environment, self.options, size);
             match bridge.format(&path, configs.path_of_config(&scope), &text) {
@@ -997,32 +1016,33 @@ impl Run<'_> {
             }
             return self.out;
         }
-        let found = configs
-            .for_directory(paths::dirname(&path))
-            .and_then(|scope| {
-                let of_config = configs.ignores_of(&scope);
-                let options = configs.options_for(&scope, &path)?;
-                let is_another_language = match language_of(configs, &scope, &path) {
-                    Language::Supported => false,
-                    Language::Other => true,
-                    // oxfmt gives a component back that it is not to format.
-                    Language::Unknown => {
-                        configs.is_oxfmt_for(&scope) && files::is_svelte_for_oxfmt(&path)
-                    }
-                };
-                Ok(
-                    (!ignored.ignores_file(&path, of_config) && !is_another_language)
-                        .then_some(options),
-                )
-            });
-        let mut options = match found {
-            Ok(Some(options)) => options,
-            Ok(None) => {
-                self.out.stdout = text;
-                return self.out;
-            }
+        let mut options = match configs.options_for(&scope, &path) {
+            Ok(options) => options,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
+        // oxfmt gives a component back that it is not to format.
+        let is_left_by_oxfmt = language == Language::Unknown
+            && configs.is_oxfmt_for(&scope)
+            && files::is_svelte_for_oxfmt(&path);
+        if is_ignored || is_left_by_oxfmt {
+            self.out.stdout = text;
+            return self.out;
+        }
+        // As for a file. Who gets the text back with 0 takes it for formatted.
+        let allows = self.options.allow_unsupported;
+        if language == Language::Other {
+            self.say_unsupported(&mut [(ending_of(&path), 1)], &not_installed);
+            if allows && !only_looks {
+                self.out.stdout = text;
+            }
+            return self.out;
+        }
+        let missing_plugins = configs.missing_plugins(&scope, &path);
+        if language == Language::Supported && !allows && !missing_plugins.is_empty() {
+            let names: Vec<&[u8]> = missing_plugins.iter().map(|it| &it[..]).collect();
+            self.say_left_for_plugins(1, &names);
+            return self.out;
+        }
         if Kind::with_options(&path, &options.options).is_none() {
             // `handleError` has nothing to say then. `listDifferent` has said it before.
             if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !only_looks {
@@ -1207,9 +1227,7 @@ impl Run<'_> {
                             }
                         }
                     }
-                    let name = paths::basename(&target.path);
-                    let kind =
-                        strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..]);
+                    let kind = ending_of(&target.path);
                     match others.iter_mut().find(|it| it.0 == kind) {
                         Some(entry) => entry.1 += 1,
                         None => others.push((kind, 1)),
@@ -1509,55 +1527,62 @@ impl Run<'_> {
             None => {}
         }
         if let (count @ 1.., names) = &left_for_plugins {
-            let (noun, it_is, it) = match *count {
-                1 => ("file is", "it is", "it"),
-                _ => ("files are", "they are", "them"),
-            };
-            let text = format!(
-                "{count} {noun} left as {it_is}: the configuration names plugins that bun format does not have, and that may print {it} in another way: "
-            );
-            let end = format!(". With --allow-unsupported {it_is} formatted without.");
-            self.error(&[text.as_bytes(), &names.join(&b", "[..]), end.as_bytes()].concat());
+            self.say_left_for_plugins(*count, names);
         }
         // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
         if !others.is_empty() {
-            sort_slice_by(&mut others[..], |a, b| {
-                b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0))
-            });
-            let count: usize = others.iter().map(|it| it.1).sum();
-            let (noun, it_is) = match count {
-                1 => ("file is", "it is"),
-                _ => ("files are", "they are"),
-            };
-            let kinds: Vec<Vec<u8>> = others
-                .iter()
-                .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
-                .collect();
-            let text = format!(
-                "{count} {noun} in a language that bun format does not support yet, and left as {it_is}: "
-            );
-            let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
-            if !not_installed.is_empty() {
-                let plugins = not_installed.join(&b", "[..]);
-                self.warn(
-                    &[
-                        &b"Not installed: "[..],
-                        &plugins,
-                        b". With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
-                    ]
-                    .concat(),
-                );
-            }
-            match options.allow_unsupported {
-                true => self.warn(&text),
-                false => {
-                    self.error(
-                        &[&text[..], b". With --allow-unsupported this is a warning."].concat(),
-                    );
-                }
-            }
+            self.say_unsupported(&mut others, &not_installed);
         }
         self.out
+    }
+
+    /// So many files are left alone because of plugins that are not there: `names`.
+    fn say_left_for_plugins(&mut self, count: usize, names: &[&[u8]]) {
+        let (noun, it_is, it) = match count {
+            1 => ("file is", "it is", "it"),
+            _ => ("files are", "they are", "them"),
+        };
+        let text = format!(
+            "{count} {noun} left as {it_is}: the configuration names plugins that bun format does not have, and that may print {it} in another way: "
+        );
+        let end = format!(". With --allow-unsupported {it_is} formatted without.");
+        self.error(&[text.as_bytes(), &names.join(&b", "[..]), end.as_bytes()].concat());
+    }
+
+    /// `others`: the endings of the files in another language, and how many have each. `not_installed`: the packages that would
+    /// have to be installed for them to go to the project's own Prettier.
+    fn say_unsupported(&mut self, others: &mut [(&[u8], usize)], not_installed: &[&[u8]]) {
+        sort_slice_by(others, |a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        let count: usize = others.iter().map(|it| it.1).sum();
+        let (noun, it_is) = match count {
+            1 => ("file is", "it is"),
+            _ => ("files are", "they are"),
+        };
+        let kinds: Vec<Vec<u8>> = others
+            .iter()
+            .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
+            .collect();
+        let text = format!(
+            "{count} {noun} in a language that bun format does not support yet, and left as {it_is}: "
+        );
+        let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
+        if !not_installed.is_empty() {
+            let plugins = not_installed.join(&b", "[..]);
+            self.warn(
+                &[
+                    &b"Not installed: "[..],
+                    &plugins,
+                    b". With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
+                ]
+                .concat(),
+            );
+        }
+        match self.options.allow_unsupported {
+            true => self.warn(&text),
+            false => {
+                self.error(&[&text[..], b". With --allow-unsupported this is a warning."].concat());
+            }
+        }
     }
 
     /// `oxfmt --init`

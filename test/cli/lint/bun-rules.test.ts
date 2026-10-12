@@ -2577,9 +2577,10 @@ test("test b", () => {
 expect(1).toBe(1);
 `;
     const files = { "a.test.js": code, "quiet.test.js": quiet };
-    const [plain, withBunfig] = await Promise.all([
+    const [plain, withBunfig, skipped] = await Promise.all([
       lint(files, ["-f", "json", "."]),
       lint({ ...files, "bunfig.toml": "[lint]\nmaxWarnings = 0\n" }, ["-f", "json", "."]),
+      lint({ "a.test.js": `import { test } from "bun:test";\ntest.skip("a", () => {});\n` }, ["-f", "unix", "."]),
     ]);
     const own = (all: string[]) => all.filter(it => it.includes(" bun:test/"));
     for (const { stdout } of [plain, withBunfig]) {
@@ -2592,10 +2593,14 @@ expect(1).toBe(1);
         "8 bun:test/valid-expect-in-promise",
       ]);
       expect(own(reported(stdout, "quiet.test.js"))).toEqual([]);
-      // Errors, as what else is on.
-      const messages = (JSON.parse(stdout) as { messages: { severity: number }[] }[]).flatMap(it => it.messages);
-      expect([...new Set(messages.map(it => it.severity))]).toEqual([2]);
+      // Errors, as what else is on, but for one.
+      const files = JSON.parse(stdout) as { messages: { ruleId: string; severity: number }[] }[];
+      const warnings = files.flatMap(it => it.messages).filter(it => it.severity !== 2);
+      expect(warnings.map(it => it.ruleId)).toEqual(["bun:test/no-disabled-tests"]);
     }
+    // A test that is skipped on purpose does not fail the run.
+    expect(unix(skipped.stdout)).toEqual(["2 Warning/bun:test/no-disabled-tests"]);
+    expect(skipped.exitCode).toBe(0);
   });
 
   test("a configuration file replaces the defaults", async () => {
@@ -2642,7 +2647,7 @@ expect(1).toBe(1);
 
   test("[lint.rules] of bunfig.toml and the command line", async () => {
     const skipped = `${only}test.skip("b", () => {});\n`;
-    const bunfig = `[lint.rules]\n"${name}" = "off"\n"bun:test/no-disabled-tests" = "warn"\n`;
+    const bunfig = `[lint.rules]\n"${name}" = "off"\n"bun:test/no-disabled-tests" = "error"\n`;
     const rule = (text: string) => lint({ "a.test.js": skipped }, ["--rule", text, "-f", "unix", "a.test.js"]);
     const filter = (...args: string[]) =>
       lint({ ".oxlintrc.json": "{}", "a.test.js": only }, [...args, "-f", "unix", "a.test.js"]);
@@ -2651,7 +2656,7 @@ expect(1).toBe(1);
       rule(`"${name}": off`),
       // ESLint takes the first colon for the end of the name.
       rule(`${name}: off`),
-      rule(`${name}:0,bun:test/no-disabled-tests:[1]`),
+      rule(`${name}:0,bun:test/no-disabled-tests:[2]`),
       rule(`{"${name}": "off"}`),
       filter("-D", name),
       filter("-W", name),
@@ -2662,11 +2667,11 @@ expect(1).toBe(1);
       filter("-D", "all"),
     ]);
     expect(found.map(it => unix(it.stdout))).toEqual([
-      ["3 Warning/bun:test/no-disabled-tests"],
-      ["3 Error/bun:test/no-disabled-tests"],
       ["3 Error/bun:test/no-disabled-tests"],
       ["3 Warning/bun:test/no-disabled-tests"],
+      ["3 Warning/bun:test/no-disabled-tests"],
       ["3 Error/bun:test/no-disabled-tests"],
+      ["3 Warning/bun:test/no-disabled-tests"],
       ["2 Error/bun:test(no-focused-tests)"],
       ["2 Warning/bun:test(no-focused-tests)"],
       ["2 Error/bun:test(no-focused-tests)"],
@@ -2856,13 +2861,13 @@ var a = b;
         "--print-config",
       ]),
     ]);
-    expect(Object.keys(JSON.parse(plain.stdout).rules).filter(it => it.startsWith("bun:test/"))).toEqual([
-      "bun:test/no-disabled-tests",
-      "bun:test/no-export",
-      "bun:test/no-focused-tests",
-      "bun:test/valid-describe-callback",
-      "bun:test/valid-expect",
-      "bun:test/valid-expect-in-promise",
+    expect(Object.entries(JSON.parse(plain.stdout).rules).filter(it => it[0].startsWith("bun:test/"))).toEqual([
+      ["bun:test/no-disabled-tests", [1]],
+      ["bun:test/no-export", [2]],
+      ["bun:test/no-focused-tests", [2]],
+      ["bun:test/valid-describe-callback", [2]],
+      ["bun:test/valid-expect", [2]],
+      ["bun:test/valid-expect-in-promise", [2]],
     ]);
     expect(JSON.parse(eslint.stdout).rules).toEqual({ [name]: [1] });
     expect(JSON.parse(eslint.stdout).plugins).toEqual(["@"]);
@@ -2871,10 +2876,13 @@ var a = b;
   });
 
   test("--rules lists them, without a category and without a page", async () => {
-    const [json, lines] = await Promise.all([
+    const [json, lines, alone] = await Promise.all([
       lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]),
       lint({}, ["--rules"]),
+      lint({}, ["--rules", "-f", "json"]),
     ]);
+    // `default` is what oxlint turns on without a configuration file, also where some of these rules are on.
+    expect(alone.stdout).toBe(json.stdout);
     const listed = (JSON.parse(json.stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun:test");
     expect(listed.map(it => it.value)).toEqual(Object.keys(twins));
     expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default, it.docs_url])))]).toEqual([

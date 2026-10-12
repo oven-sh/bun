@@ -172,7 +172,6 @@ struct SSABuilder {
     block_preds: Vec<(u32, u32)>,
     preds: Vec<BlockId>,
     unknown: HashSet<IdentifierId>,
-    context: HashSet<IdentifierId>,
     /// Indexed by `BlockId.0`.
     pending_phis: Vec<Vec<Phi>>,
     processed_functions: Vec<FunctionId>,
@@ -195,7 +194,6 @@ impl SSABuilder {
             block_preds: vec![(0, 0); num_blocks],
             preds: Vec::with_capacity(num_blocks),
             unknown: HashSet::default(),
-            context: HashSet::default(),
             pending_phis: vec![Vec::new(); num_blocks],
             processed_functions: Vec::new(),
             lookups: Vec::new(),
@@ -307,11 +305,6 @@ impl SSABuilder {
                 old_place.loc,
             )
             .into());
-        }
-
-        // Do not redefine context references.
-        if self.context.contains(&old_id) {
-            return Ok(self.get_place(old_place, env));
         }
 
         let new_id = self.make_id(old_id, env);

@@ -71,6 +71,22 @@ type Found = { code: string; labels: { span: { line: number; column: number } }[
 const placesOf = (found: unknown[]) =>
   (found as Found[]).map(it => [it.code, it.labels[0].span.line, it.labels[0].span.column]).sort();
 
+const memo = (params: string, values: string, listed: string) => `import { useMemo } from "react";
+
+export function Component({ ${params} }) {
+  const value = useMemo(() => [${values}], [${listed}]);
+  return <div>{value}</div>;
+}
+`;
+/** Dependencies that are not listed. The two tools sort them differently. */
+const unlisted: Files = {
+  "case.jsx": memo("Foo, bar", "Foo, bar", ""),
+  "names.jsx": memo("_a, $a, a1, a10, a9, A, a, B, b, é, e, f, z", "z, f, é, e, b, B, a, A, a9, a10, a1, $a, _a", ""),
+  "number.jsx": memo("x", "x.z, x[10], x[9], x.B, x.b, x.a, x.A, x.$d, x._c", ""),
+  "some.jsx": memo("Zed, alpha, Beta, gamma", "gamma, Zed, alpha, Beta", "gamma, Beta"),
+};
+const missingIn = (text: string) => Array.from(text.matchAll(/Missing dependency `([^`]+)`/g), it => it[1]);
+
 describe.concurrent(`bun lint: the rules of the React Compiler report what oxlint ${expected.oxlint} reports`, () => {
   test(
     "for oxlint's own test cases",
@@ -345,6 +361,22 @@ ${chain}
     },
   );
 
+  // What oxlint 1.87 reports.
+  test("dependencies that are missing are in the order of their bytes, after the list", async () => {
+    const { diagnostics, exit } = await report({ ".oxlintrc.json": rc(["react/memo-dependencies"]), ...unlisted });
+    const labels = (name: string) =>
+      (diagnostics[name] as { labels: { label: string; span: { line: number; column: number } }[] }[]).map(it => [
+        `${it.labels[0].span.line}:${it.labels[0].span.column}`,
+        ...missingIn(it.labels.map(label => label.label).join("\n")),
+      ]);
+    expect({ case: labels("case.jsx"), names: labels("names.jsx"), some: labels("some.jsx") }).toEqual({
+      case: [["4:43", "Foo", "bar"]],
+      names: [["4:79", "$a", "A", "B", "_a", "a", "a1", "a10", "a9", "b", "e", "f", "z", "é"]],
+      some: [["4:58", "Zed", "alpha"]],
+    });
+    expect(exit).toBe(1);
+  });
+
   test("a try in which nothing but a read that nobody uses can throw does not end the process", async () => {
     const { files, exit } = await report({
       ".oxlintrc.json": rc(),
@@ -446,6 +478,26 @@ describe.concurrent(
       },
       slow,
     );
+
+    // What the plugin reports. The report is at the first.
+    test("dependencies that are missing are in the order of localeCompare", async () => {
+      const { files, exitCode } = await messages(unlisted);
+      const found = Object.fromEntries(
+        Object.entries(files).map(([name, { messages }]) => [
+          name,
+          messages
+            .filter(it => it.ruleId === "react-hooks/memo-dependencies")
+            .map(it => [`${it.line}:${it.column}-${it.endLine}:${it.endColumn}`, ...missingIn(it.message)]),
+        ]),
+      );
+      expect(found).toEqual({
+        "case.jsx": [["4:37-4:40", "bar", "Foo"]],
+        "names.jsx": [["4:73-4:75", "_a", "$a", "a", "A", "a1", "a10", "a9", "b", "B", "e", "é", "f", "z"]],
+        "number.jsx": [["4:37-4:38", "x"]],
+        "some.jsx": [["4:44-4:49", "alpha", "Zed"]],
+      });
+      expect(exitCode).toBe(1);
+    });
 
     // The value is one of two, so it has the reasons of both, and so has what is read from it.
     test("of two reasons for which a value is frozen the message has the one that the compiler prefers, whichever came first", async () => {

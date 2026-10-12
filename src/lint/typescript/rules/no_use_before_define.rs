@@ -68,12 +68,21 @@ fn name_in_closing_tag(reference: Reference) -> Option<Span> {
     first.reference().is_none().then(|| first.span())
 }
 
+/// The `a` of `export default a` and of `export = a`, which can be a type: for oxc it is a value, as is what it finds under the name.
+fn oxlint_takes_for_a_value(variable: Symbol, reference: Reference) -> bool {
+    variable.file().language().is_oxlint
+        && matches!(reference.expr().map(Expr::parent), Some(Node::Stmt(it))
+            if matches!(it.tag(), StmtTag::ExportDefault | StmtTag::ExportAssign))
+        && variable.is_value_variable()
+        && !utils::oxlint::is_namespace_of_types(variable)
+}
+
 impl NoUseBeforeDefine {
     /// typescript-eslint's `isForbidden`.
     fn is_forbidden<'a>(&self, variable: Symbol<'a>, kind: DeclarationKind, reference: Reference<'a>) -> bool {
         let config = &self.config;
         if config.ignore_type_references
-            && (reference.is_type()
+            && (reference.is_type() && !oxlint_takes_for_a_value(variable, reference)
                 || reference_contains_type_query(reference)
                 || variable.file().language().is_oxlint && oxlint_is_in_key_of_type(reference))
         {

@@ -57,6 +57,10 @@ pub(crate) fn validate_exhaustive_dependencies(
         validate_memo,
         validate_effect: validate_effect.clone(),
         reactive: &reactive,
+        compare: match env.config.dependencies_are_sorted_by_bytes {
+            true => |a, b| a.cmp(b),
+            false => bun_core::strings::locale_compare,
+        },
         diagnostics: Vec::new(),
         invalid_memo_ids: HashSet::default(),
     };
@@ -200,12 +204,16 @@ fn contains_dep(deps: &[InferredDependency], dep: &InferredDependency) -> bool {
     deps.iter().any(|d| is_equal_temporary(d, dep))
 }
 
+/// Of two names, or two properties as texts.
+type Compare = fn(&[u8], &[u8]) -> std::cmp::Ordering;
+
 /// Callbacks for StartMemoize/FinishMemoize/Effect events
 struct Callbacks<'a> {
     start_memo: &'a mut Option<StartMemoInfo>,
     validate_memo: bool,
     validate_effect: ExhaustiveEffectDepsMode,
     reactive: &'a IdBitSet<IdentifierId>,
+    compare: Compare,
     diagnostics: Vec<CompilerDiagnostic>,
     /// manual_memo_ids that had validation errors (to set has_invalid_deps)
     invalid_memo_ids: HashSet<u32>,
@@ -887,6 +895,7 @@ fn collect_dependencies(
                                     inferred,
                                     &sm.deps.unwrap_or_else(|| hir_vec![]),
                                     cb.reactive,
+                                    cb.compare,
                                     sm.deps_loc.unwrap_or(None),
                                     ErrorCategory::MemoDependencies,
                                     "all",
@@ -1022,6 +1031,7 @@ fn collect_dependencies(
                                             fn_dep_list,
                                             &manual_memo_deps,
                                             cb.reactive,
+                                            cb.compare,
                                             manual_loc,
                                             ErrorCategory::EffectExhaustiveDependencies,
                                             effect_report_mode,
@@ -1132,6 +1142,7 @@ fn collect_dependencies(
                                             fn_dep_list,
                                             &manual_memo_deps,
                                             cb.reactive,
+                                            cb.compare,
                                             manual_loc,
                                             ErrorCategory::EffectExhaustiveDependencies,
                                             effect_report_mode,
@@ -1190,12 +1201,15 @@ fn collect_dependencies(
 // validateDependencies
 // =============================================================================
 
-fn cmp_property_literal(a: &PropertyLiteral, b: &PropertyLiteral) -> std::cmp::Ordering {
+/// As texts, a number too: `10` is before `9`.
+fn cmp_property_literal(
+    a: &PropertyLiteral,
+    b: &PropertyLiteral,
+    compare: Compare,
+) -> std::cmp::Ordering {
     match (a, b) {
-        (PropertyLiteral::String(a), PropertyLiteral::String(b)) => a.slice().cmp(b.slice()),
-        (PropertyLiteral::Number(a), PropertyLiteral::Number(b)) => a.value().total_cmp(&b.value()),
-        (PropertyLiteral::String(_), PropertyLiteral::Number(_)) => std::cmp::Ordering::Less,
-        (PropertyLiteral::Number(_), PropertyLiteral::String(_)) => std::cmp::Ordering::Greater,
+        (PropertyLiteral::String(a), PropertyLiteral::String(b)) => compare(a.slice(), b.slice()),
+        _ => compare(a.to_string().as_bytes(), b.to_string().as_bytes()),
     }
 }
 
@@ -1212,6 +1226,7 @@ fn validate_dependencies(
     mut inferred: Vec<InferredDependency>,
     manual_dependencies: &[ManualMemoDependency],
     reactive: &IdBitSet<IdentifierId>,
+    compare: Compare,
     manual_memo_loc: Option<SourceLocation>,
     category: ErrorCategory,
     exhaustive_deps_report_mode: &str,
@@ -1221,7 +1236,10 @@ fn validate_dependencies(
     // Sort dependencies by name and path. Upstream compares two that are not one variable by their
     // names alone. That is no order where two have one name, and a sort may panic on what is none.
     sort_slice_by(&mut inferred, |a, b| {
-        let names = name_of(a, identifiers).cmp(&name_of(b, identifiers));
+        let names = match (name_of(a, identifiers), name_of(b, identifiers)) {
+            (Some(a), Some(b)) => compare(a, b),
+            (a, b) => a.is_some().cmp(&b.is_some()),
+        };
         names.then_with(|| match (a, b) {
             (InferredDependency::Global { .. }, InferredDependency::Global { .. }) => {
                 std::cmp::Ordering::Equal
@@ -1249,7 +1267,7 @@ fn validate_dependencies(
                     let mut entries = a_path.iter().zip(b_path.iter()).map(|(ap, bp)| {
                         // An optional entry first.
                         (bp.optional.cmp(&ap.optional))
-                            .then_with(|| cmp_property_literal(&ap.property, &bp.property))
+                            .then_with(|| cmp_property_literal(&ap.property, &bp.property, compare))
                     });
                     entries
                         .find(|order| order.is_ne())

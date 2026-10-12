@@ -274,7 +274,8 @@ impl IdMatch {
         if let Some(name) = e.as_ident()
             && self.is_invalid(name, cx)
             && self.checks_reference(e, name, &mut cx.state)
-            && !e.is_jsx_tag_name()
+            // For oxc the `A` of `<A />` and of `<A.b />` is a reference like any other.
+            && (!e.is_jsx_tag_name() || cx.language().is_oxlint)
             && !is_reference_to_global_variable(e)
         {
             self.report(e.span(), name.bytes(), cx);
@@ -492,9 +493,11 @@ impl IdMatch {
 
     fn check_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match ty.kind() {
-            // The `a.b` of `extends a.b` and `implements a.b` is a `MemberExpression`.
+            // The `a.b` of `extends a.b` and `implements a.b` is a `MemberExpression`. For oxlint it is as in any type.
             TypeKind::Ref { name, .. }
-                if name.len() > 1 && estree_type_name(ty.into()) != "TSTypeReference" =>
+                if name.len() > 1
+                    && !cx.language().is_oxlint
+                    && estree_type_name(ty.into()) != "TSTypeReference" =>
             {
                 if !self.checks_properties {
                     return;

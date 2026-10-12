@@ -769,12 +769,7 @@ pub(crate) mod no_commented_out_tests {
             .filter(|it| strings::contains_char(it.text(), b'(') && !it.text().starts_with(b"#!"))
         {
             if is_commented_out_test(comment.comment_value()) {
-                let end = if comment.text().starts_with(b"/*") {
-                    2
-                } else {
-                    0
-                };
-                ctx.report(comment.span().shrink(2, end), NO_COMMENTED_OUT_TESTS);
+                ctx.report(comment.comment_value_span(), NO_COMMENTED_OUT_TESTS);
             }
         }
     }

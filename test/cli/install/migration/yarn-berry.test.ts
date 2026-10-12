@@ -2110,6 +2110,43 @@ catalogs:
     expect(await bunLockOf(dir)).toBe(bunLock);
   });
 
+  test.concurrent("a workspace folder with % and two hex digits in its name", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "berry-percent", workspaces: ["packages/*"] }),
+        "packages/50%ab/package.json": JSON.stringify({
+          name: "ws",
+          version: "1.0.0",
+          dependencies: { local: "file:./local" },
+        }),
+        "packages/50%ab/local/package.json": JSON.stringify({ name: "local", version: "1.0.0" }),
+        // yarn encodes the owner of a relative folder once: `%` is `%25`
+        "yarn.lock": yarnLock({
+          "berry-percent@workspace:.": [`resolution: "berry-percent@workspace:."`],
+          "local@file:./local::locator=ws%40workspace%3Apackages%2F50%25ab": [
+            `resolution: "local@file:./local#./local::hash=abc123&locator=ws%40workspace%3Apackages%2F50%25ab"`,
+          ],
+          "ws@workspace:packages/50%ab": [
+            `resolution: "ws@workspace:packages/50%ab"`,
+            `dependencies:`,
+            `  local: "file:./local"`,
+          ],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(lockedVersions(await bunLockOf(dir))).toEqual([
+      "local@file:packages/50%ab/local",
+      "ws@workspace:packages/50%ab",
+    ]);
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
+  });
+
   test.concurrent("a berry lockfile that holds the yarn v1 marker below its first lines", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },

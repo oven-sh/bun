@@ -583,12 +583,12 @@ fn locator_key(name: &[u8], reference: &[u8]) -> Vec<u8> {
     key
 }
 
-/// The project-relative directory of the package a (percent-encoded) locator
-/// names: `name@workspace:path` -> `path`; `name@portal:./p::locator=<owner>` ->
-/// `<owner dir>/p`. `None` for anything that is not a folder.
-fn locator_dir(encoded: &[u8], depth: u8) -> Option<Vec<u8>> {
-    let decoded = decoded_component(encoded);
-    let (_, reference) = split_locator(&decoded)?;
+/// The project-relative directory of the package a locator names:
+/// `name@workspace:path` -> `path`; `name@portal:./p::locator=<owner>` ->
+/// `<owner dir>/p`. `None` for anything that is not a folder. `locator` is a
+/// `::locator=` value as `split_reference_params` gives it, which is decoded.
+fn locator_dir(locator: &[u8], depth: u8) -> Option<Vec<u8>> {
+    let (_, reference) = split_locator(locator)?;
     if let Some(path) = reference.strip_prefix(b"workspace:") {
         return Some(path.to_vec());
     }

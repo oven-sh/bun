@@ -1409,9 +1409,8 @@ impl<'t, 'a> Builder<'t, 'a> {
         // A scope resolves its references when it ends, in the order in which it got them. It gets those of a scope inside it
         // when that one ends. The use that JSX makes of `React` goes straight to the scope that declares `React`, so it's there
         // before the references of the scopes that are still open.
-        let for_jsx: Vec<(u32, u32)> = (self.references.iter())
-            .filter(|it| it.made_at != it.identifier)
-            .map(|it| (it.variable, it.from))
+        let for_jsx: Vec<(ReferenceRecord, u32)> = (self.references.iter().copied().zip(0..))
+            .filter(|(it, _)| it.made_at != it.identifier)
             .collect();
         // For each scope: the last reference that is made before it ends.
         let mut last_in = vec![0; self.scopes.len() * usize::from(!for_jsx.is_empty())];
@@ -1425,17 +1424,22 @@ impl<'t, 'a> Builder<'t, 'a> {
                 }
             }
         }
-        for (variable, home) in for_jsx {
+        for (for_jsx, index) in for_jsx {
+            let home = for_jsx.from;
             values.sort_by_key(|&it| {
                 let reference = &self.references[it as usize];
-                if reference.variable != variable {
+                if reference.variable != for_jsx.variable {
                     return 0;
                 }
                 let mut scope = reference.from;
                 while let Some(upper) = self.scopes[scope as usize].upper.filter(|_| scope != home)
                 {
                     if upper == home {
-                        return 2 * last_in[scope as usize] + 1;
+                        // A scope that the JSX is in ends later, whether or not it has another reference.
+                        let block = self.scopes[scope as usize].block;
+                        let is_open = (block..=self.tree.last(block)).contains(&for_jsx.made_at);
+                        let last = last_in[scope as usize].max(index * u32::from(is_open));
+                        return 2 * last + 1;
                     }
                     scope = upper;
                 }

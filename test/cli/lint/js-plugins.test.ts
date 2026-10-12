@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
+import { cases as callCases } from "./oracle/jsplugins/calls/cases.mjs";
 import { cases as codePathCases, fileOf, isTypeScript } from "./oracle/jsplugins/code-paths/cases.mjs";
 import {
   cases as scopeCases,
@@ -2805,6 +2806,42 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
     timeout,
   );
 });
+
+// Recorded with ESLint 10.12.0 and @typescript-eslint/parser 8.71.1 by record.mjs in that directory.
+test.concurrent(
+  "the listeners of several rules are called in ESLint's order, for types, selectors, exits and code path events",
+  async () => {
+    const oracle = join(import.meta.dir, "oracle", "jsplugins", "calls");
+    const expected: Record<string, string> = JSON.parse(
+      Buffer.from(Bun.zstdDecompressSync(readFileSync(join(oracle, "expected.json.zst")))).toString(),
+    );
+    const config = `const log = require("./log.cjs");
+      module.exports = [
+        { files: ${JSON.stringify(Object.keys(callCases))}, plugins: { log }, rules: { "log/a": "error", "log/b": "error", "log/c": "error" } },
+        ...["module", "script"].map(sourceType => ({
+          files: [sourceType + ".js"],
+          languageOptions: { sourceType, parserOptions: { ecmaFeatures: { jsx: true } } },
+        })),
+        { files: ["types.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+      ];`;
+    const files = {
+      "log.cjs": readFileSync(join(oracle, "log.cjs"), "utf8"),
+      "eslint.config.cjs": config,
+      ...callCases,
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "json", ...Object.keys(callCases)]);
+    const results: { filePath: string; messages: { message: string }[] }[] = JSON.parse(raw);
+    for (const file of Object.keys(callCases)) {
+      const result = results.find(it => it.filePath.replaceAll("\\", "/").endsWith(`/${file}`));
+      expect({ file, calls: result?.messages.map(it => it.message.split("\n")) }).toEqual({
+        file,
+        calls: [expected[file].split("\n")],
+      });
+    }
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
 
 describe.concurrent("scopes in JavaScript plugins", () => {
   // Recorded with ESLint 10.12.0 and @typescript-eslint/parser 8.71.1 by record.mjs in that directory.

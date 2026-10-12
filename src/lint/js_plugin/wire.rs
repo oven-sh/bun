@@ -32,27 +32,33 @@ pub(super) mod ask {
     pub(crate) const SETTINGS: u32 = 2;
     /// JSON: `[rule, options, id, location, plugin]` for the rule at a position among those that run on the file.
     pub(crate) const CONFIGURED: u32 = 3;
-    /// Given JSON, selectors as text: JSON, for each `[number, attributeCount, identifierCount]`, or the message of what
-    /// ESLint throws.
+    /// Given JSON, selectors as text: JSON, for each its number, or the message of what ESLint throws.
     pub(crate) const SELECTORS: u32 = 4;
-    /// Given JSON, the numbers of selectors: the tree, and what matches each.
-    pub(crate) const AST: u32 = 5;
-    /// The same without the tree.
-    pub(crate) const MATCHES: u32 = 6;
-    /// The tokens and the comments.
+    /// The tokens, the comments, and the values of tokens that espree decodes. See `tokens.rs` for the layout.
     pub(crate) const TOKENS: u32 = 7;
+    /// Only the comments, which takes no scan of the file.
     pub(crate) const COMMENTS: u32 = 8;
-    /// Only after [`AST`].
+    /// Only after [`LISTEN`].
     pub(crate) const SCOPES: u32 = 9;
     /// Not a question. Given JSON, `[modules, bytes, milliseconds]`: what has been loaded since the last time, if that is
     /// measured.
     pub(crate) const LOADED: u32 = 10;
-    /// The code paths, their segments and the events. Only after [`AST`]. See `code_path/estree.rs` for the layout.
+    /// The code paths, their segments and the events. Only after [`LISTEN`]. See `code_path/estree.rs` for the layout.
     pub(crate) const CODE_PATHS: u32 = 11;
     /// Not a question. Given the reports about the file so far: see `reports.rs`.
     pub(crate) const REPORTS: u32 = 12;
     /// The comments that configure ESLint: see `directives.rs`.
     pub(crate) const CONFIG_COMMENTS: u32 = 13;
+    /// Given words, flags and then a kind and a number for each group of listeners: how many words the calls take and how many
+    /// bytes the tree, then the calls, as `calls.rs` describes them, then the tree. The flags are those below. The kinds are
+    /// 0 for entering a type, 1 for leaving it, 2 for a selector and 3 for an event of the code path analysis.
+    pub(crate) const LISTEN: u32 = 14;
+    /// The program doesn't have the tree yet. It comes if there are calls.
+    pub(crate) const LACKS_TREE: u32 = 1;
+    /// It comes in any case.
+    pub(crate) const WANTS_TREE: u32 = 2;
+    /// All events of the code path analysis are among the calls, also those that nothing listens for.
+    pub(crate) const WANTS_ALL_EVENTS: u32 = 4;
 }
 
 /// Appends `list` to `lists`, its length first, and returns its offset. The empty list is at offset 0, so `lists` has to start

@@ -1,24 +1,20 @@
 // ───────────── the syntax tree ─────────────
 //
-// Makes the nodes of a file from the arrays that `ast.rs` describes. A node is an object with the
-// fields of its type as its own properties, as a parser makes it: rules go through
+// What `native.listen` needs to make the nodes of a file from the arrays that `ast.rs` describes: src/jsc/bindings/LintNodes.cpp.
+// A node is an object with the fields of its type as its own properties, as a parser makes it: rules go through
 // `Object.keys(node)`. Only `loc` is computed when it is asked for.
 
-// The names of the types, by their number.
-let typeNames = [];
 // By the name of a type: its number.
 const typeIds = new Map();
 // ESLint's `visitorKeys`, for typescript-estree and for espree.
 const visitorKeys = [{}, {}];
-// For `native.nodes`, by dialect and type: what `native.shape` has made, and a bit for each field that a node does not have at all
+// For `native.listen`, by dialect and type: what `native.shape` has made, and a bit for each field that a node does not have at all
 // if there is nothing to say.
 const shapes = [[], []];
 const leftOutBits = [new Uint32Array(256), new Uint32Array(256)];
 let knownStrings = [];
 
-// The arrays of the file.
-let tree = null;
-// The nodes of the file, by their number.
+// The nodes of the file, by their number. Empty: nobody has asked for them yet.
 let nodes = [];
 
 // `loc` becomes an own property the first time it is asked for: src/jsc/bindings/LintSourceCode.cpp.
@@ -64,7 +60,6 @@ const deprecated = {
 // `types`: for each type `[name, [[field, flags], ..]]`. See `write_start` in `schema.rs`.
 function defineTypes(types, strings) {
   knownStrings = strings;
-  typeNames = types.map(type => type[0]);
   types.forEach(([name, fields], id) => {
     typeIds.set(name, id);
     for (const dialect of [0, 1]) {
@@ -96,38 +91,4 @@ function defineTypes(types, strings) {
       }
     }
   });
-}
-
-// The parts of the message that `ast.rs` writes that the traversal needs. `selectors`: how many were to be matched.
-function readTree(buffer, selectors) {
-  const header = new Uint32Array(buffer, 0, 10);
-  const [count, fields, lists, strings, twice, matches, numbers, , dialect] = header;
-  let at = 40;
-  const words = length => {
-    const part = new Uint32Array(buffer, at, length);
-    at += 4 * length;
-    return part;
-  };
-  at += 8 * numbers + 8 * count;
-  const parts = { count, dialect, parents: words(count) };
-  at += 4 * (fields + lists + strings);
-  parts.twice = words(twice);
-  parts.matches = readMatches(words(matches), selectors);
-  parts.types = new Uint8Array(buffer, at, count);
-  return parts;
-}
-
-// For each selector the numbers of the nodes that match.
-function readMatches(words, selectors) {
-  const matches = [];
-  for (let at = 0, i = 0; i < selectors; i++) {
-    matches.push(words.subarray(at + 1, at + 1 + words[at]));
-    at += 1 + words[at];
-  }
-  return matches;
-}
-
-// Makes all the nodes of `tree`: src/jsc/bindings/LintNodes.cpp.
-function makeNodes() {
-  nodes = native.nodes(shapes[tree.dialect], leftOutBits[tree.dialect], buffers[AST], text, knownStrings);
 }

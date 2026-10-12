@@ -3,7 +3,7 @@
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
-use super::{ast, directives, reports, schema, scopes, tokens};
+use super::{calls, directives, reports, schema, scopes, tokens};
 use crate::ast::File;
 use crate::code_path;
 use crate::estree::Dialect;
@@ -12,7 +12,6 @@ use crate::linter::write_json;
 use crate::options::Json;
 use crate::rule::Kind;
 use crate::selector::Selector;
-use bun_collections::ByteSet;
 use bun_core::printer::json_stringify;
 use bun_core::strings::Utf16OffsetTable;
 use bun_threading::Guarded;
@@ -476,13 +475,8 @@ impl<'e> Host<'e> {
                 }),
             };
             match parsed {
-                Ok((number, selector)) => {
-                    let counts = format!(
-                        "[{number},{},{}]",
-                        selector.attribute_count(),
-                        selector.identifier_count()
-                    );
-                    out.extend_from_slice(counts.as_bytes());
+                Ok((number, _)) => {
+                    out.extend_from_slice(number.to_string().as_bytes());
                 }
                 Err(error) => json_stringify(error.message(), out),
             }
@@ -490,16 +484,15 @@ impl<'e> Host<'e> {
         out.push(b']');
     }
 
-    /// Given JSON, the numbers of selectors, these.
-    fn selectors(&self, numbers: Option<&Json>) -> Vec<Option<Arc<Selector>>> {
-        let numbers = numbers.and_then(Json::as_array).unwrap_or_default();
-        if numbers.is_empty() {
+    /// The selectors with these numbers.
+    fn selectors_at(&self, numbers: impl Iterator<Item = u32>) -> Vec<Option<Arc<Selector>>> {
+        let mut numbers = numbers.peekable();
+        if numbers.peek().is_none() {
             return Vec::new();
         }
         let state = self.state.lock();
         numbers
-            .iter()
-            .map(|it| state.selectors.get(number(Some(it))? as usize)?.clone())
+            .map(|it| state.selectors.get(it as usize)?.clone())
             .collect()
     }
 
@@ -589,6 +582,8 @@ impl<'e> Host<'e> {
         message.extend_from_slice(if has_mark { &text[3..] } else { text });
 
         let mut nodes = None;
+        // What `code_path::estree::analyze` says about the file.
+        let mut code_paths: Option<Vec<u32>> = None;
         let reported = RefCell::new(Vec::new());
         let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
             _ if self.serve_any(asked, details, out) => {}
@@ -602,35 +597,18 @@ impl<'e> Host<'e> {
                 }
             }
             ask::SELECTORS => self.describe_selectors(details, out),
-            // The numbers of selectors. With `AST`: these, and those of the types that are listened to, if only they matter.
-            ask::AST | ask::MATCHES => {
-                let details = crate::json::parse(details);
-                let parts = details.as_ref().and_then(Json::as_array);
-                let (numbers, types) = match asked {
-                    ask::AST => (
-                        parts.and_then(|it| it.first()),
-                        parts.and_then(|it| it.get(1)),
-                    ),
-                    _ => (details.as_ref(), None),
-                };
-                let selectors = self.selectors(numbers);
+            ask::LISTEN => {
+                let words: Vec<u32> = (details.as_chunks::<4>().0.iter())
+                    .map(|it| u32::from_le_bytes(*it))
+                    .collect();
+                let selectors = self.selectors_at(calls::selector_numbers(&words));
                 let selectors: Vec<Option<&Selector>> =
                     selectors.iter().map(Option::as_deref).collect();
-                let types = types.and_then(Json::as_array).map(|types| {
-                    let mut listened = ByteSet::init_empty();
-                    for it in types.iter().filter_map(|it| number(Some(it))) {
-                        if let Ok(it) = u8::try_from(it) {
-                            listened.set(it as usize);
-                        }
-                    }
-                    listened
-                });
-                match asked {
-                    ask::AST => {
-                        nodes = Some(ast::write(file, &offsets, &selectors, types.as_ref(), out));
-                    }
-                    _ => ast::write_only_matches(file, &offsets, &selectors, out),
-                }
+                let known = calls::Known {
+                    nodes: &mut nodes,
+                    code_paths: &mut code_paths,
+                };
+                calls::listen(file, &offsets, &words, &selectors, known, out);
             }
             ask::REPORTS => reports::read(details, &offsets, &mut reported.borrow_mut()),
             ask::CONFIG_COMMENTS => directives::write(file, &offsets, out),
@@ -643,13 +621,9 @@ impl<'e> Host<'e> {
             }
             ask::CODE_PATHS => {
                 if let Some(numbered) = &nodes {
-                    let tree = code_path::estree::Tree {
-                        nodes: &numbered.nodes,
-                        types: &numbered.types,
-                        parents: &numbered.parents,
-                        twice: &numbered.twice,
-                    };
-                    wire::words(out, &code_path::estree::analyze(file, tree));
+                    let analyzed = code_paths
+                        .get_or_insert_with(|| code_path::estree::analyze(file, numbered.view()));
+                    wire::words(out, analyzed);
                 }
             }
             _ => {}

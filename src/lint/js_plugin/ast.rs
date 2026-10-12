@@ -14,10 +14,10 @@
 
 use super::wire;
 use crate::ast::File;
+use crate::code_path;
 use crate::estree::{Dialect, Nodes, Object, Sink, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
-use bun_collections::ByteSet;
 use bun_core::strings::Utf16OffsetTable;
 
 /// What the number in a word is.
@@ -146,7 +146,7 @@ pub(super) struct Numbered<'a> {
     pub(super) twice: Vec<u32>,
 }
 
-const HEADER: usize = 10;
+const HEADER: usize = 6;
 /// In the start of a pair of `strings`: it is in `extra`.
 const IN_EXTRA: u32 = 1 << 31;
 
@@ -160,7 +160,7 @@ struct Tree {
     lists: Vec<u32>,
     /// Pairs: where a string starts and ends, in the text of the file or in `extra`.
     strings: Vec<u32>,
-    /// The nodes that are in two fields of their parent, which ESLint comes to twice.
+    /// The nodes that are in two fields of their parent, which ESLint comes to twice. Not in the message: `calls.rs` reads it.
     twice: Vec<u32>,
     types: Vec<u8>,
     /// UTF-8.
@@ -187,7 +187,7 @@ struct Pending<'a> {
     to: Slot,
 }
 
-struct Writer<'a, 's> {
+pub(super) struct Writer<'a, 's> {
     text: &'a [u8],
     dialect: Dialect,
     offsets: &'s Utf16OffsetTable,
@@ -289,8 +289,33 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
     }
 }
 
+impl<'a> Numbered<'a> {
+    pub(super) fn view(&self) -> code_path::estree::Tree<'_, 'a> {
+        code_path::estree::Tree {
+            nodes: &self.nodes,
+            types: &self.types,
+            parents: &self.parents,
+            twice: &self.twice,
+        }
+    }
+}
+
 impl<'a> Writer<'a, '_> {
-    fn into_numbered(self) -> Numbered<'a> {
+    pub(super) fn view(&self) -> code_path::estree::Tree<'_, 'a> {
+        code_path::estree::Tree {
+            nodes: &self.nodes,
+            types: &self.tree.types,
+            parents: &self.tree.parents,
+            twice: &self.tree.twice,
+        }
+    }
+
+    /// The nodes that match each of the selectors.
+    pub(super) fn matches(&self) -> &[Vec<u32>] {
+        &self.matches
+    }
+
+    pub(super) fn into_numbered(self) -> Numbered<'a> {
         Numbered {
             nodes: self.nodes,
             types: self.tree.types,
@@ -467,15 +492,8 @@ impl<'a> Writer<'a, '_> {
     }
 }
 
-/// For each of the selectors: how many nodes match it, then these, in the order of their numbers.
-fn write_matches(matches: &[Vec<u32>], out: &mut Vec<u8>) {
-    for matches in matches {
-        wire::words(out, &[matches.len() as u32]);
-        wire::words(out, matches);
-    }
-}
-
-fn walk<'a, 's>(
+/// Goes through the tree of `file`, numbers the nodes, and notes which match `selectors`.
+pub(super) fn walk<'a, 's>(
     file: &'a File<'a>,
     offsets: &'s Utf16OffsetTable,
     selectors: &'s [Option<&'s Selector>],
@@ -502,62 +520,33 @@ fn walk<'a, 's>(
     writer
 }
 
-/// Appends the tree of `file`, and what matches `selectors`. `listened`: by the number of a type, whether somebody listens to it. A
-/// tree without nodes is appended if no such node is in the file and nothing matches: making the nodes is dearer than this.
-pub(super) fn write<'a>(
-    file: &'a File<'a>,
-    offsets: &Utf16OffsetTable,
-    selectors: &[Option<&Selector>],
-    listened: Option<&ByteSet>,
-    out: &mut Vec<u8>,
-) -> Numbered<'a> {
-    let writer = walk(file, offsets, selectors);
-    let tree = &writer.tree;
-    let is_listened = |listened: &ByteSet| tree.types.iter().any(|&it| listened.has(it));
-    if listened.is_some_and(|it| !is_listened(it)) && writer.matches.iter().all(Vec::is_empty) {
-        wire::words(out, &[0; HEADER]);
-        return writer.into_numbered();
+impl Writer<'_, '_> {
+    /// Appends the tree.
+    pub(super) fn append(&self, out: &mut Vec<u8>) {
+        let tree = &self.tree;
+        let header: [u32; HEADER] = [
+            tree.types.len() as u32,
+            tree.fields.len() as u32,
+            tree.lists.len() as u32,
+            tree.strings.len() as u32,
+            tree.numbers.len() as u32,
+            tree.extra.len() as u32,
+        ];
+        wire::words(out, &header);
+        for number in &tree.numbers {
+            out.extend_from_slice(&number.to_le_bytes());
+        }
+        for part in [
+            &tree.starts[..],
+            &tree.ends,
+            &tree.parents,
+            &tree.fields,
+            &tree.lists,
+            &tree.strings,
+        ] {
+            wire::words(out, part);
+        }
+        out.extend_from_slice(&tree.types);
+        out.extend_from_slice(&tree.extra);
     }
-    let matches: usize = writer.matches.iter().map(|it| it.len() + 1).sum();
-    let header: [u32; HEADER] = [
-        tree.types.len() as u32,
-        tree.fields.len() as u32,
-        tree.lists.len() as u32,
-        tree.strings.len() as u32,
-        tree.twice.len() as u32,
-        matches as u32,
-        tree.numbers.len() as u32,
-        tree.extra.len() as u32,
-        u32::from(writer.dialect == Dialect::Espree),
-        0,
-    ];
-    wire::words(out, &header);
-    for number in &tree.numbers {
-        out.extend_from_slice(&number.to_le_bytes());
-    }
-    for part in [
-        &tree.starts,
-        &tree.ends,
-        &tree.parents,
-        &tree.fields,
-        &tree.lists,
-        &tree.strings,
-        &tree.twice,
-    ] {
-        wire::words(out, part);
-    }
-    write_matches(&writer.matches, out);
-    out.extend_from_slice(&tree.types);
-    out.extend_from_slice(&tree.extra);
-    writer.into_numbered()
-}
-
-/// Appends only what matches `selectors`.
-pub(super) fn write_only_matches<'a>(
-    file: &'a File<'a>,
-    offsets: &Utf16OffsetTable,
-    selectors: &[Option<&Selector>],
-    out: &mut Vec<u8>,
-) {
-    write_matches(&walk(file, offsets, selectors).matches, out);
 }

@@ -20,7 +20,8 @@ struct LintSourceCodeState {
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, LintHost*);
     void endFile();
 
-    // The nodes of the current file by their number, and where they are. The spans point into `buffer`.
+    // The nodes of the current file by their number, and where they are. The spans point into `buffer`, or into memory that Rust keeps
+    // until the file is done if `buffer` is null.
     void setTree(JSC::VM&, LintHost*, JSC::JSArrayBuffer* buffer, JSC::JSArray* nodes, std::span<const uint32_t> starts, std::span<const uint32_t> ends, std::span<const uint32_t> parents);
 
     template<typename Visitor>

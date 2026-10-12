@@ -65,8 +65,6 @@ const START = 1;
 const SETTINGS = 2;
 const CONFIGURED = 3;
 const SELECTORS = 4;
-const AST = 5;
-const MATCHES = 6;
 const TOKENS = 7;
 const COMMENTS = 8;
 const SCOPES = 9;
@@ -75,6 +73,8 @@ const CODE_PATHS = 11;
 
 // By what was asked for: the last answer, which the next one overwrites.
 const buffers = [];
+// Native code reads what it needs where the other side has it, without a copy in one of `buffers`.
+const readsInPlace = process.env.BUN_LINT_IN_PLACE === "1";
 
 // Asks for something. The answer is in `buffers[kind]`. Returns its length.
 function ask(kind, details = "") {
@@ -491,21 +491,6 @@ function configure(id, position) {
 
 // ───────────── listeners ─────────────
 
-// All selectors that are not just the name of a type, by their text. The other side knows them by `number`.
-const selectors = new Map();
-// Those that the other side has not been asked about yet.
-let newSelectors = [];
-
-function describeNewSelectors() {
-  if (newSelectors.length === 0) return;
-  askForJson(SELECTORS, JSON.stringify(newSelectors.map(it => it.text))).forEach((it, i) => {
-    const selector = newSelectors[i];
-    if (typeof it === "string") selector.error = it;
-    else [selector.number, selector.attributes, selector.identifiers] = it;
-  });
-  newSelectors = [];
-}
-
 // In the order of the event kinds in `code_path/estree.rs`.
 const codePathEventNames = [
   "onCodePathStart",
@@ -516,17 +501,37 @@ const codePathEventNames = [
   "onUnreachableCodePathSegmentEnd",
   "onCodePathSegmentLoop",
 ];
-const codePathEvents = new Set(codePathEventNames);
 
-// The listeners of the file. By the number of a type: those for entering and for leaving a node of it.
-let enterByType = [];
-let exitByType = [];
-// By their text: `{ selector, calls }`, for the selectors that are listened for.
-let bySelector = new Map();
-// By the name of an event of the code path analysis. `null`: nothing listens for any.
-let codePathCalls = null;
-let hasListeners = false;
-let hasExitListeners = false;
+// By the key of a listener: `{ kind, number, error }`, what `LISTEN` in `wire.rs` knows it by. A selector also has its `text`.
+const listenedKeys = new Map();
+// The selectors that the other side has not been asked about yet.
+let newSelectors = [];
+
+function describeKey(key) {
+  let known = listenedKeys.get(key);
+  if (known !== undefined) return known;
+  const isExit = key.endsWith(":exit");
+  const type = typeIds.get(isExit ? key.slice(0, -5) : key);
+  const event = codePathEventNames.indexOf(key);
+  if (type !== undefined) known = { kind: isExit ? 1 : 0, number: type, error: null };
+  else if (event !== -1) known = { kind: 3, number: event, error: null };
+  else newSelectors.push((known = { kind: 2, number: -1, error: null, text: key }));
+  listenedKeys.set(key, known);
+  return known;
+}
+
+function describeNewSelectors() {
+  if (newSelectors.length === 0) return;
+  askForJson(SELECTORS, JSON.stringify(newSelectors.map(it => it.text))).forEach((it, i) => {
+    if (typeof it === "string") newSelectors[i].error = it;
+    else newSelectors[i].number = it;
+  });
+  newSelectors = [];
+}
+
+// The listeners of the file by their key, `{ entry, listener }` each, and the same by the order in which the keys came.
+let groupByKey = new Map();
+let groups = [];
 
 // The rule whose code is running, for the message of what it throws.
 let currentRule = null;
@@ -536,73 +541,17 @@ function addListeners(entry, listeners) {
   for (const key of Object.keys(listeners)) {
     const listener = listeners[key];
     if (typeof listener !== "function") continue;
-    const call = { entry, listener };
-    hasListeners = true;
-    const isExit = key.endsWith(":exit");
-    const type = typeIds.get(isExit ? key.slice(0, -5) : key);
-    if (type !== undefined) {
-      const byType = isExit ? exitByType : enterByType;
-      (byType[type] ??= []).push(call);
-      hasExitListeners ||= isExit;
-      continue;
+    let group = groupByKey.get(key);
+    if (group === undefined) {
+      groupByKey.set(key, (group = []));
+      groups.push(group);
     }
-    if (codePathEvents.has(key)) {
-      (codePathCalls ??= new Map()).set(key, [...(codePathCalls.get(key) ?? []), call]);
-      continue;
-    }
-    let selector = selectors.get(key);
-    if (selector === undefined) {
-      selector = { text: key, number: -1, isExit, attributes: 0, identifiers: 0, error: null };
-      selectors.set(key, selector);
-      newSelectors.push(selector);
-    }
-    hasExitListeners ||= isExit;
-    let listened = bySelector.get(key);
-    if (listened === undefined) bySelector.set(key, (listened = { selector, calls: [] }));
-    listened.calls.push(call);
+    group.push({ entry, listener });
   }
 }
 
-// ───────────── the parts of a file that are asked for ─────────────
-
-// The numbers of the selectors to match.
-function selectorRequest() {
-  describeNewSelectors();
-  return JSON.stringify(Array.from(bySelector.values(), it => it.selector.number));
-}
-
-// What matches the selectors of `bySelector`, in its order. `null`: not asked for yet.
-let matches = null;
-
-// The numbers of the types that are listened to. `null`: every node matters.
-function listenedTypes() {
-  if (codePathCalls !== null) return null;
-  return [...new Set([...Object.keys(enterByType), ...Object.keys(exitByType)])].map(Number);
-}
-
-// Nothing that is listened to is in the file, so its tree was not sent. Who asks for it now gets it.
-let isWithoutListened = false;
-
-// The `Program`. `null`, to `traverse`: nothing that is listened to is in the file.
-function program() {
-  if (tree === null) {
-    // Once the listeners are known, what matches comes with the tree.
-    const count = isTraversing ? bySelector.size : 0;
-    const types = isTraversing && !isWithoutListened ? listenedTypes() : null;
-    ask(AST, `[${isTraversing ? selectorRequest() : "[]"},${JSON.stringify(types)}]`);
-    if (new Uint32Array(buffers[AST], 0, 1)[0] === 0) {
-      isWithoutListened = true;
-      return null;
-    }
-    tree = readTree(buffers[AST], count);
-    if (isTraversing) matches = tree.matches;
-    makeNodes();
-    const root = nodes[0];
-    native.defineTokenLists(root);
-  }
-  return nodes[0];
-}
-
+// What `native.listen` is told.
+let listenWords = new Uint32Array(64);
 // 0: the tree of typescript-estree, 1: that of espree.
 let fileDialect = 0;
 
@@ -610,20 +559,52 @@ function dialect() {
   return fileDialect;
 }
 
-let descendants = null;
+// Tells the other side that `keys` are listened for. Returns the calls: see `calls.rs`. The nodes come along if there are calls and
+// they are not there yet, or if `wantsTree`.
+function listen(keys, wantsTree) {
+  describeNewSelectors();
+  for (const { error } of keys) if (error !== null) throw new SyntaxError(error);
+  const length = 1 + 2 * keys.length;
+  if (listenWords.length < length) listenWords = new Uint32Array(2 * length);
+  // See `LACKS_TREE`, `WANTS_TREE` and `WANTS_ALL_EVENTS` in `wire.rs`.
+  listenWords[0] = (nodes.length === 0 ? 1 : 0) | (wantsTree ? 2 : 0) | (fileSettings.isLegacy === true ? 4 : 0);
+  for (let i = 0; i < keys.length; i++) {
+    listenWords[1 + 2 * i] = keys[i].kind;
+    listenWords[2 + 2 * i] = keys[i].number;
+  }
+  const [calls, made] = native.listen(shapes[fileDialect], leftOutBits[fileDialect], knownStrings, listenWords, length);
+  if (made !== undefined) {
+    nodes = made;
+    native.defineTokenLists(nodes[0]);
+  }
+  return calls;
+}
 
-// By the number of a node: the number of the last node that is in it, or its own.
-function lastDescendants() {
-  if (descendants === null) {
-    const { count, parents } = tree;
-    descendants = new Uint32Array(count);
-    for (let id = count - 1; id > 0; id--) {
-      if (descendants[id] === 0) descendants[id] = id;
-      const parent = parents[id];
-      if (descendants[parent] < descendants[id]) descendants[parent] = descendants[id];
+// The `Program`
+function program() {
+  if (nodes.length === 0) listen([], true);
+  return nodes[0];
+}
+
+// Calls the listeners, in ESLint's order.
+function traverse() {
+  const calls = listen(Array.from(groupByKey.keys(), describeKey), false);
+  let emitAt = null;
+  for (let at = 0; at < calls.length; at += 2) {
+    const what = calls[at];
+    const group = groups[calls[at + 1]];
+    if (what >= 0x80000000) {
+      emitAt ??= openCodePaths();
+      emitAt(4 * (what - 0x80000000), group ?? []);
+      continue;
+    }
+    const node = (currentNode = nodes[what]);
+    for (let i = 0; i < group.length; i++) {
+      const { entry, listener } = group[i];
+      currentRule = entry;
+      listener(node);
     }
   }
-  return descendants;
 }
 
 // ───────────── code paths ─────────────
@@ -733,13 +714,14 @@ const codePathShapes = [
 // The same for a configuration for ESLint 8, where a code path also has `currentSegments`.
 const legacyCodePathShapes = [native.shape(legacyPrototype, codePathKeys, "", 1), ...codePathShapes.slice(1)];
 
-// Walks the tree with `walk` and calls the code path listeners between the node listeners, where ESLint calls them. The
-// analysis is finished before the first listener runs, as in ESLint, so a rule sees the complete graph from the first event on.
-function traverseWithCodePaths(walk, enter, leave) {
-  ask(CODE_PATHS);
-  const buffer = buffers[CODE_PATHS];
+// Makes the code paths of the file. The analysis is finished before the first listener runs, as in ESLint, so a rule sees the
+// complete graph from the first event on. Returns `emitAt(at, calls)`, which calls the listeners `calls` for the event that starts at
+// `at` in the events, which have four words each: see `code_path/estree.rs`. The events have to come in order.
+function openCodePaths() {
+  const buffer = readsInPlace ? undefined : (ask(CODE_PATHS), buffers[CODE_PATHS]);
   const isLegacy = fileSettings.isLegacy === true;
-  const [paths, segments] = native.codePaths(isLegacy ? legacyCodePathShapes : codePathShapes, codePathOrigins, buffer);
+  const shapesOfPaths = isLegacy ? legacyCodePathShapes : codePathShapes;
+  const [paths, segments, events] = native.codePaths(shapesOfPaths, codePathOrigins, buffer);
   if (isLegacy) for (const path of paths) path.internal.currentSegments = [];
   // `internal` of the code paths that have started and not ended, to keep `currentSegments` up to date.
   const open = [];
@@ -747,10 +729,7 @@ function traverseWithCodePaths(walk, enter, leave) {
   const ended = [];
   // The start events before this index are in `currentSegments` already.
   let included = 0;
-  // Four words per event: see `code_path/estree.rs`.
-  const events = new Uint32Array(buffer, 16, 4 * new Uint32Array(buffer, 0, 1)[0]);
-  const callsByKind = codePathEventNames.map(name => codePathCalls.get(name) ?? []);
-  let at = 0;
+  // That of the event that is being emitted.
   let step = 0;
   const isStart = kind => kind === 2 || kind === 4;
   const isEnd = kind => kind === 3 || kind === 5;
@@ -771,134 +750,29 @@ function traverseWithCodePaths(walk, enter, leave) {
     ended.length = 0;
     included = from + 4 * count;
   };
-  // Emits the events that come before the next step.
-  const emit = () => {
-    for (; at < events.length && events[at] === step; at += 4) {
-      const kind = events[at + 1] & 7;
-      const first = (kind < 2 ? paths : segments)[events[at + 2]];
-      if (isLegacy) {
-        if (kind === 0) open.push(first.internal);
-        else if (isStart(kind) && at >= included) replaceCurrentSegments(at);
-      }
-      const node = nodes[events[at + 1] >>> 3];
-      for (const { entry, listener } of callsByKind[kind]) {
-        currentRule = entry;
-        if (kind === 6) listener(first, segments[events[at + 3]], node);
-        else listener(first, node);
-      }
-      if (isLegacy) {
-        if (kind === 1) open.pop();
-        else if (isEnd(kind)) {
-          ended.push(first);
-          if (!isEnd(kindAt(at + 4))) replaceCurrentSegments(at + 4);
-        }
+  const emitAt = (at, calls) => {
+    step = events[at];
+    const kind = events[at + 1] & 7;
+    const first = (kind < 2 ? paths : segments)[events[at + 2]];
+    if (isLegacy) {
+      if (kind === 0) open.push(first.internal);
+      else if (isStart(kind) && at >= included) replaceCurrentSegments(at);
+    }
+    const node = nodes[events[at + 1] >>> 3];
+    for (const { entry, listener } of calls) {
+      currentRule = entry;
+      if (kind === 6) listener(first, segments[events[at + 3]], node);
+      else listener(first, node);
+    }
+    if (isLegacy) {
+      if (kind === 1) open.pop();
+      else if (isEnd(kind)) {
+        ended.push(first);
+        if (!isEnd(kindAt(at + 4))) replaceCurrentSegments(at + 4);
       }
     }
-    step++;
   };
-  walk(
-    id => {
-      emit();
-      enter(id);
-    },
-    id => {
-      emit();
-      leave(id);
-    },
-    () => true,
-  );
-  emit();
-}
-
-// ───────────── the traversal ─────────────
-
-let isTraversing = false;
-
-function callAll(calls, node) {
-  for (let i = 0; i < calls.length; i++) {
-    const call = calls[i];
-    currentRule = call.entry;
-    call.listener(node);
-  }
-}
-
-// ESLint's order of the selectors that match one node: the less specific first.
-function compareSelectors(a, b) {
-  return a.attributes - b.attributes || a.identifiers - b.identifiers || (a.text <= b.text ? -1 : 1);
-}
-
-// By the number of a node: the calls for the selectors that match it, with those for its type, in order.
-function callsByNode(isExit, byType) {
-  const listened = [...bySelector.values()];
-  const byNode = new Map();
-  listened.forEach(({ selector, calls }, i) => {
-    if (selector.isExit !== isExit) return;
-    for (const id of matches[i]) {
-      let list = byNode.get(id);
-      if (list === undefined) {
-        byNode.set(id, (list = []));
-        const type = tree.types[id];
-        const name = typeNames[type] + (isExit ? ":exit" : "");
-        if (byType[type]) list.push({ selector: { attributes: 0, identifiers: 1, text: name }, calls: byType[type] });
-      }
-      list.push({ selector, calls });
-    }
-  });
-  for (const [id, list] of byNode) {
-    list.sort((a, b) => compareSelectors(a.selector, b.selector));
-    byNode.set(
-      id,
-      list.flatMap(it => it.calls),
-    );
-  }
-  return byNode;
-}
-
-function traverse() {
-  isTraversing = true;
-  const root = program();
-  if (root !== null && matches === null && bySelector.size > 0) {
-    const length = ask(MATCHES, selectorRequest());
-    matches = readMatches(new Uint32Array(buffers[MATCHES], 0, length >> 2), bySelector.size);
-  }
-  for (const { selector } of bySelector.values()) {
-    if (selector.error !== null) throw new SyntaxError(selector.error);
-  }
-  if (root === null) return;
-  const { count, types, twice } = tree;
-  const enterByNode = bySelector.size > 0 ? callsByNode(false, enterByType) : null;
-  const exitByNode = bySelector.size > 0 ? callsByNode(true, exitByType) : null;
-  const enter = id => {
-    const calls = enterByNode?.get(id) ?? enterByType[types[id]];
-    if (calls !== undefined) callAll(calls, (currentNode = nodes[id]));
-  };
-  const exitCalls = id => exitByNode?.get(id) ?? exitByType[types[id]];
-  const leave = id => {
-    const calls = exitCalls(id);
-    if (calls !== undefined) callAll(calls, (currentNode = nodes[id]));
-  };
-  const visitedTwice = twice.length > 0 ? new Set(twice) : null;
-  if (codePathCalls === null && !hasExitListeners && visitedTwice === null) {
-    for (let id = 0; id < count; id++) enter(id);
-    return;
-  }
-  const last = lastDescendants();
-  // Visits every node in traversal order. `leaveNode` is only called for the nodes that `isLeft` accepts.
-  const walk = (enterNode, leaveNode, isLeft) => {
-    const open = [];
-    for (let id = 0; id < count; id++) {
-      while (open.length > 0 && last[open.at(-1)] < id) leaveNode(open.pop());
-      enterNode(id);
-      if (visitedTwice?.has(id)) {
-        leaveNode(id);
-        enterNode(id);
-      }
-      if (isLeft(id)) open.push(id);
-    }
-    while (open.length > 0) leaveNode(open.pop());
-  };
-  if (codePathCalls === null) return walk(enter, leave, id => exitCalls(id) !== undefined);
-  traverseWithCodePaths(walk, enter, leave);
+  return emitAt;
 }
 
 // ───────────── a file ─────────────
@@ -907,14 +781,9 @@ function reset() {
   native.endFile();
   text = "";
   sourceCode = new SourceCode();
-  tree = null;
   nodes = [];
-  descendants = matches = null;
-  enterByType = [];
-  exitByType = [];
-  bySelector = new Map();
-  codePathCalls = null;
-  hasListeners = hasExitListeners = isTraversing = isWithoutListened = false;
+  groupByKey = new Map();
+  groups = [];
   currentRule = currentNode = null;
   resetScopes();
 }
@@ -964,7 +833,7 @@ function lint() {
     addListeners(entry, listeners);
   }
   try {
-    if (hasListeners) traverse();
+    if (groups.length > 0) traverse();
   } finally {
     runAfterHooks();
   }

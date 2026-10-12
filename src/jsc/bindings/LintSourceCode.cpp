@@ -203,8 +203,8 @@ JSValue scopeOf(JSGlobalObject* globalObject, LintHost* host, JSValue currentNod
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintSourceCodeState& state = host->sourceCode;
-    if (currentNode.isObject()) [[likely]] {
-        JSValue cached = state.scopeCache->get(asObject(currentNode));
+    if (currentNode.isCell()) [[likely]] {
+        JSValue cached = state.scopeCache->get(currentNode.asCell());
         if (!cached.isUndefined())
             return cached;
     }
@@ -237,11 +237,11 @@ JSValue scopeOf(JSGlobalObject* globalObject, LintHost* host, JSValue currentNod
         RETURN_IF_EXCEPTION(scope, {});
     }
     // `cache.set(currentNode, found)`
-    if (!currentNode.isObject()) {
-        throwTypeError(globalObject, scope, "Attempted to set a non-object key in a WeakMap"_s);
+    if (!canBeHeldWeakly(currentNode)) {
+        throwTypeError(globalObject, scope, "WeakMap keys must be objects or non-registered symbols"_s);
         return {};
     }
-    state.scopeCache->set(vm, asObject(currentNode), found);
+    state.scopeCache->set(vm, currentNode.asCell(), found);
     return found;
 }
 
@@ -1394,7 +1394,7 @@ void LintSourceCodeState::finishCreation(VM& vm, JSGlobalObject* globalObject, L
 
 void LintSourceCodeState::setTree(VM& vm, LintHost* host, JSArrayBuffer* buffer, JSArray* nodesOfFile, std::span<const uint32_t> startsOfNodes, std::span<const uint32_t> endsOfNodes, std::span<const uint32_t> parentsOfNodes)
 {
-    treeBuffer.set(vm, host, buffer);
+    treeBuffer.setMayBeNull(vm, host, buffer);
     nodes.set(vm, host, nodesOfFile);
     starts = startsOfNodes;
     ends = endsOfNodes;

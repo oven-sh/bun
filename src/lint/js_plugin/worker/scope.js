@@ -4,7 +4,7 @@
 // (src/jsc/bindings/LintScopes.cpp) builds all the objects of a file in one call. What is here are the classes of `eslint-scope` and
 // of `@typescript-eslint/scope-manager` with their public methods, and which property goes where.
 
-// `{ manager, variables, words }` of the file. `null`: nobody has asked for the scopes yet.
+// What is known about the scopes of the file. `null`: nobody has asked for them yet.
 let scopeData = null;
 
 function resetScopes() {
@@ -13,13 +13,7 @@ function resetScopes() {
 
 // The indices of the variables for which rules have set `eslintUsed`.
 function usedVariables() {
-  const used = [];
-  if (scopeData === null) return used;
-  const { variables, words, declaredCount } = scopeData;
-  for (let index = 0; index < declaredCount; index++) {
-    if (variables[index].eslintUsed && !(words[8 * index + 2] & 4)) used.push(index);
-  }
-  return used;
+  return native.usedVariables() ?? [];
 }
 
 const namesIn = text => text.split(/\s+/u);
@@ -345,7 +339,7 @@ const typescriptLayout = (() => {
   });
 
   // The flags of a reference, which the real one has in private fields, are in the message.
-  const flagsOf = reference => scopeData.references[5 * (reference.$id - 1) + 1];
+  const flagsOf = reference => scopeData.referenceFlags[reference.$id - 1];
   class Reference {
     get isTypeReference() {
       return (flagsOf(this) & 4) !== 0;
@@ -439,7 +433,7 @@ function libVariable(name) {
     const flags = fileSettings.libs[name];
     variable = {
       __proto__: typescriptLayout.ImplicitLibVariable.prototype,
-      $id: scopeData.variables.length + scopeData.libVariables.size + 1,
+      $id: scopeData.variableCount + scopeData.libVariables.size + 1,
       defs: [],
       eslintUsed: false,
       identifiers: [],
@@ -476,46 +470,27 @@ function addLibVariables() {
 function scopeManager() {
   if (scopeData !== null) return scopeData.manager;
   program();
-  ask(SCOPES);
-  const buffer = buffers[SCOPES];
-  const [scopeCount, declaredCount, variableCount, definitionCount, referenceCount] = new Uint32Array(buffer, 0, 5);
-  const layout = tree.dialect === 1 ? eslintScopeLayout : typescriptLayout;
+  const buffer = readsInPlace ? undefined : (ask(SCOPES), buffers[SCOPES]);
+  const layout = fileDialect === 1 ? eslintScopeLayout : typescriptLayout;
   const names =
     globalNames.get(fileSettings) ?? globalNames.set(fileSettings, Object.keys(fileSettings.globals)).get(fileSettings);
-  const [listed, scopes, variables, nodeToScope, declaredVariables] = native.scopes(
-    layout.forNative,
-    buffer,
-    nodes,
-    names,
-    scopeStrings,
-    text,
-  );
-  const words = new Uint32Array(buffer, 44 + 36 * scopeCount, 8 * variableCount);
+  const made = native.scopes(layout.forNative, buffer, nodes, names, scopeStrings, text, fileDialect === 0);
+  const [listed, scopes, variables, nodeToScope, declaredVariables, , , referenceFlags, explicitGlobals] = made;
   scopeData = {
     manager: new layout.ScopeManager(listed, nodeToScope, declaredVariables),
-    variables,
-    words,
-    declaredCount,
-    references: new Uint32Array(
-      buffer,
-      44 + 36 * scopeCount + 32 * variableCount + 28 * definitionCount,
-      5 * referenceCount,
-    ),
+    variableCount: variables.length,
+    referenceFlags,
     libVariables: new Map(),
     mentionedGlobals: scopes[0].variables,
-    hasAllLibVariables: tree.dialect === 1,
+    hasAllLibVariables: fileDialect === 1,
   };
   native.setScopeManager(scopeData.manager);
   // The comments are tokens, which are made here.
-  const lists = new Uint32Array(buffer);
   const commentAt = start => sourceCode.getTokenByRangeStart(start, { includeComments: true });
-  for (const variable of scopes[0].variables) {
-    if (!variable.eslintExplicitGlobal) continue;
-    const index = variables.indexOf(variable);
-    const at = listsStart(lists) + words[8 * index + 7];
-    variable.eslintExplicitGlobalComments = Array.from(lists.subarray(at + 1, at + 1 + lists[at]), commentAt);
+  for (let i = 0; i < explicitGlobals.length; i += 2) {
+    explicitGlobals[i].eslintExplicitGlobalComments = explicitGlobals[i + 1].map(commentAt);
   }
-  if (tree.dialect === 0) {
+  if (fileDialect === 0) {
     Object.defineProperty(scopes[0], "variables", {
       get() {
         addLibVariables();
@@ -533,8 +508,3 @@ function scopeManager() {
 
 // By the settings of a file: the names of the configured globals.
 const globalNames = new WeakMap();
-
-// Where the lists start in the words of the message.
-function listsStart(words) {
-  return 11 + 9 * words[0] + 8 * words[2] + 7 * words[3] + 5 * words[4] + words[5];
-}

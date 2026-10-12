@@ -19,6 +19,7 @@
 //! All offsets that the program sees are in UTF-16 code units, without the byte order mark.
 
 mod ast;
+mod calls;
 mod directives;
 mod engine;
 mod eslint;

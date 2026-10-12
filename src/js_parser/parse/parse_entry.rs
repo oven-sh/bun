@@ -1219,6 +1219,10 @@ impl<'a> Parser<'a> {
         // that we're processing and expect to be able to access top-level variables.
         // The bundler and the REPL hoist top-level declarations only: for them the "var" declarations also leave the try.
         p.will_wrap_module_in_try_catch_for_using = p.should_lower_using_declarations(stmts);
+        // `exports.x = v` becomes a `var` that the linker turns back, and only as a top-level statement.
+        if p.will_wrap_module_in_try_catch_for_using {
+            p.deoptimize_commonjs_named_exports();
+        }
 
         // Bind symbols in a second pass over the AST. I started off doing this in a
         // single pass, but it turns out it's pretty much impossible to do this

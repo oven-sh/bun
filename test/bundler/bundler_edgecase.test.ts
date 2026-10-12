@@ -2852,6 +2852,41 @@ describe("bundler", () => {
     },
   });
 
+  // `exports.x = v` next to a lowered top-level `using` stays an assignment to
+  // the exports object.
+  const loweredTopLevelUsingCommonJS = /* js */ `
+    using handle = { val: 42, [Symbol.dispose]() {} };
+    exports.value = handle.val;
+    exports.read = function () { return exports.value + 1; };
+  `;
+  itBundled("edgecase/LoweredTopLevelUsingCommonJSExports", {
+    target: "node",
+    files: {
+      "/entry.js": /* js */ `
+        const viaRequire = require("./lib.cjs");
+        const viaImport = await import("./lib.cjs");
+        console.log(JSON.stringify([viaRequire.value, viaRequire.read(), viaImport.value, viaImport.default.read()]));
+      `,
+      "/lib.cjs": loweredTopLevelUsingCommonJS,
+    },
+    run: {
+      stdout: "[42,43,42,43]",
+    },
+  });
+  itBundled("edgecase/LoweredTopLevelUsingCommonJSExportsStaticImport", {
+    target: "node",
+    files: {
+      "/entry.js": /* js */ `
+        import { value, read } from "./lib.cjs";
+        console.log(JSON.stringify([value, read()]));
+      `,
+      "/lib.cjs": loweredTopLevelUsingCommonJS,
+    },
+    run: {
+      stdout: "[42,43]",
+    },
+  });
+
   itBundled("edgecase/NoOutWithTwoFiles", {
     files: {
       "/entry.ts": `

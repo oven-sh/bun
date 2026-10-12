@@ -146,20 +146,40 @@ impl Rule {
         })
     }
 
-    /// Prereleases included, as yarn matches them.
     fn matches(&self, version: semver::Version, version_buf: &[u8]) -> bool {
-        self.range.is_empty()
-            || semver_range(&self.range).is_some_and(|range| {
-                range.satisfies_including_prerelease(version, &self.range, version_buf)
-            })
+        range_matches(&self.range, version, version_buf)
     }
+}
+
+/// Matches prereleases too, like yarn. An empty range matches every version.
+fn range_matches(range: &[u8], version: semver::Version, version_buf: &[u8]) -> bool {
+    range.is_empty()
+        || semver_range(range)
+            .is_some_and(|group| group.satisfies_including_prerelease(version, range, version_buf))
+}
+
+/// Whether a rule keyed `key` applies to `name` at `version`.
+pub(crate) fn key_matches(
+    key: &[u8],
+    name: &[u8],
+    version: semver::Version,
+    version_buf: &[u8],
+) -> bool {
+    parse_package_segment(key).is_ok_and(|selector| {
+        selector.name == name && range_matches(selector.range, version, version_buf)
+    })
+}
+
+/// Why an install would ignore this rule, if it would.
+pub(crate) fn rule_problem(key: &[u8], value: &Expr) -> Option<&'static str> {
+    Rule::parse(key, value, &bun_alloc::Arena::new()).err()
 }
 
 fn semver_range(range: &[u8]) -> Option<semver::query::Group> {
     semver::query::parse_including_prerelease(range, SlicedString::init(range, range)).ok()
 }
 
-pub(crate) fn is_supported_specifier(literal: &[u8]) -> bool {
+fn is_supported_specifier(literal: &[u8]) -> bool {
     let trimmed = dependency::trim_literal(literal);
     let tag = VersionTag::infer(trimmed);
     match tag {

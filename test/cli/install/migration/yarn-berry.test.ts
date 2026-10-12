@@ -2429,21 +2429,21 @@ catalogs:
     expect(again.exitCode).toBe(0);
   });
 
-  // Every rule is copied to package.json, where one such range has the whole rule ignored: the next
-  // frozen install fails and a plain one drops what the rule added.
+  // Every rule is copied to package.json. An install ignores a whole rule over one unsupported range,
+  // so the next frozen install would fail and a plain one would drop the rule's other edges.
   test.concurrent.each([
-    ["in a rule that applies", `  no-deps@*:\n    dependencies:\n      shared: "workspace:*"\n`, "no-deps@*"],
+    ["matching rule", `  no-deps@*:\n    dependencies:\n      shared: "workspace:*"\n`, "no-deps@*"],
     [
-      "in a rule that matches no locked version",
+      "rule that matches no locked version",
       `  no-deps@^9:\n    dependencies:\n      shared: "workspace:*"\n`,
       "no-deps@^9",
     ],
     [
-      "for a name that an earlier rule has added",
+      "name already added by an earlier rule",
       `  no-deps@*:\n    dependencies:\n      shared: "^1.0.0"\n  no-deps@^1:\n    dependencies:\n      shared: "workspace:*"\n    peerDependencies:\n      what-bin: "*"\n`,
       "no-deps@^1",
     ],
-  ])("not migrated: a range that bun's packageExtensions do not take, %s", async (_, rules, key) => {
+  ])("not migrated: unsupported range in packageExtensions (%s)", async (_, rules, key) => {
     const { packageDir: dir } = await testRegistry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -2468,14 +2468,55 @@ catalogs:
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain(
-      `error: packageExtensions "${key}" in .yarnrc.yml adds "shared@workspace:*"; bun's packageExtensions take a version, a tag, a git repository or a tarball URL`,
+      `error: packageExtensions "${key}" in .yarnrc.yml: expected a version, a tag, a git repository or a tarball URL for every dependency`,
     );
     expect(existsSync(join(dir, "bun.lock"))).toBe(false);
     expect((await Bun.file(join(dir, "package.json")).json()).packageExtensions).toBeUndefined();
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("npm: before the range a packageExtension adds", async () => {
+  // The migration and the next install have to agree on which versions a rule matches.
+  test.concurrent.each([
+    ["1.x", "1.0.0-future.1", true],
+    ["1.0.x", "1.0.0-future.1", true],
+    ["^1", "1.0.0-future.1", true],
+    ["1.0.0 - 1.1.0", "1.0.0-future.1", true],
+    // node-semver does not lower these two bounds, even with includePrerelease
+    ["^1.0.0", "1.0.0-future.1", false],
+    ["~1", "1.0.0-future.1", false],
+  ])("packageExtensions key %s on a locked %s matches like yarn", async (range, version, applies) => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "berry-ext-key", dependencies: { "prereleases-1": version } }),
+        ".yarnrc.yml": `packageExtensions:\n  "prereleases-1@${range}":\n    dependencies:\n      a-dep: "^1.0.1"\n`,
+        "yarn.lock": yarnLock({
+          "a-dep@npm:^1.0.1": [`version: 1.0.3`, `resolution: "a-dep@npm:1.0.3"`],
+          "berry-ext-key@workspace:.": [
+            `resolution: "berry-ext-key@workspace:."`,
+            `dependencies:`,
+            `  prereleases-1: "npm:${version}"`,
+          ],
+          [`prereleases-1@npm:${version}`]: [`version: ${version}`, `resolution: "prereleases-1@npm:${version}"`],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).not.toContain("error:");
+    const bunLock = await bunLockOf(dir);
+    expect(lockedVersions(bunLock)).toEqual(
+      applies ? ["a-dep@1.0.3", `prereleases-1@${version}`] : [`prereleases-1@${version}`],
+    );
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
+    const again = await run(dir, "install");
+    expect(again.stderr).not.toContain("warn:");
+    expect(await bunLockOf(dir)).toBe(bunLock);
+    expect(again.exitCode).toBe(0);
+  });
+
+  test.concurrent("strips npm: from a range added by packageExtensions", async () => {
     const { packageDir: dir } = await testRegistry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -2497,7 +2538,7 @@ catalogs:
     expect(stderr).not.toContain("error:");
     const bunLock = await bunLockOf(dir);
     expect(lockedVersions(bunLock)).toEqual(["a-dep@1.0.3", "no-deps@1.0.0"]);
-    // in package.json, `npm:^1.0.1` is an alias of a package called `^1.0.1`
+    // package.json would parse `npm:^1.0.1` as an alias for a package named `^1.0.1`
     expect((await Bun.file(join(dir, "package.json")).json()).packageExtensions).toEqual({
       "no-deps@npm:^1.0.0": { dependencies: { "a-dep": "^1.0.1" } },
     });

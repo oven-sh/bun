@@ -13,7 +13,7 @@ use crate::dependency::{self, Behavior, Dependency, DependencyExt as _, VersionT
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, WorkspaceMap};
-use crate::lockfile_real::package_extensions::{Kind as ExtensionKind, is_supported_specifier};
+use crate::lockfile_real::package_extensions::{self, Kind as ExtensionKind};
 use crate::lockfile_real::reachable;
 use crate::migration::{
     as_str, get_str, parse_manifest_bin, props, push_workspace_dependency, record_workspace, sbuf,
@@ -286,7 +286,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
     if let (Some(home), false) = (home, read_home) {
         read_yarnrc_file(log, &mut out, home, rc_name, false)?;
     }
-    // Every rule is copied to package.json: bun has to take each range, and read it as bun.lock has it.
+    // Every rule is copied to package.json, so the next install has to parse it the same way.
     let YarnRc {
         extensions,
         catalogs,
@@ -309,17 +309,19 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
                 };
                 range.clone_from(in_catalog);
             }
-            // there, `npm:^1` is an alias of a package called `^1`
+            // package.json would parse `npm:^1` as an alias for a package named `^1`
             *range = Box::from(strip_npm_protocol(range));
-            if !is_supported_specifier(range) {
-                bail!(
-                    log,
-                    "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\"; bun's packageExtensions take a version, a tag, a git repository or a tarball URL",
-                    shown(&extension.key),
-                    shown(name),
-                    shown(range),
-                );
-            }
+        }
+    }
+    for (key, rule) in props(&extensions_object(&out.extensions)) {
+        let key = as_str(key).unwrap_or(b"");
+        if let Some(problem) = package_extensions::rule_problem(key, rule) {
+            bail!(
+                log,
+                "packageExtensions \"{}\" in .yarnrc.yml: {}",
+                shown(key),
+                problem
+            );
         }
     }
     Ok(out)
@@ -974,15 +976,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             resolution,
             ..Default::default()
         };
-        let extended = extensions_of(
-            this,
-            log,
-            &yarnrc,
-            &descriptor_to_entry,
-            data,
-            name,
-            &entry_expr,
-        )?;
+        let extended = extensions_of(&yarnrc, &descriptor_to_entry, data, name, &entry_expr);
         let added =
             append_entry_dependencies(this, log, &mut pkg, data, name, &entry_expr, &extended)?;
         if let Some(bin) = entry_expr.get(b"bin") {
@@ -1782,49 +1776,25 @@ fn append_entry_dependencies(
 
 /// Of every `name@range` that holds the entry's version, prereleases included, as in yarn.
 fn extensions_of<'a>(
-    this: &mut Lockfile,
-    log: &mut bun_ast::Log,
     yarnrc: &'a YarnRc,
     descriptor_to_entry: &StringArrayHashMap<usize>,
     source: &[u8],
     name: &[u8],
     entry: &Expr,
-) -> Result<Extended<'a>, Error> {
+) -> Extended<'a> {
     let mut extended = Extended::default();
     let Some(version) = entry.get(b"version").and_then(|v| scalar_text(source, &v)) else {
-        return Ok(extended);
+        return extended;
     };
-    // `None`: one of the two is not what it should be.
-    let holds = |this: &mut Lockfile, log: &mut bun_ast::Log, range: &[u8]| {
-        let version = sbuf!(this).append(version)?;
-        let version = semver::Version::parse(version.sliced(string_bytes!(this)));
-        let range_str = sbuf!(this).append(range)?;
-        let sliced = range_str.sliced(string_bytes!(this));
-        let parsed = Dependency::parse(
-            String::default(),
-            string_hash(name),
-            sliced.slice,
-            &sliced,
-            Some(&mut *log),
-            None,
-        );
-        Ok::<_, Error>(match &parsed {
-            Some(parsed) if version.valid && parsed.tag == VersionTag::Npm => {
-                Some(parsed.npm().version.satisfies_including_prerelease(
-                    version.version.min(),
-                    string_bytes!(this),
-                    string_bytes!(this),
-                ))
-            }
-            _ => None,
-        })
-    };
+    let parsed = semver::Version::parse(semver::SlicedString::init(version, version));
+    if !parsed.valid {
+        return extended;
+    }
+    let matches =
+        |key: &[u8]| package_extensions::key_matches(key, name, parsed.version.min(), version);
     // Yarn registers its own list before those of `.yarnrc.yml`, and the first to add a name wins.
     for &(key, dependencies, optional_peers) in builtin_extensions::BUILTIN {
-        let Some((_, range)) = split_locator(key.as_bytes()).filter(|(n, _)| *n == name) else {
-            continue;
-        };
-        if holds(this, log, range)? != Some(true) {
+        if !matches(key.as_bytes()) {
             continue;
         }
         for &(dep_name, dep_range) in dependencies {
@@ -1843,20 +1813,8 @@ fn extensions_of<'a>(
             .extend(optional_peers.iter().map(|name| name.as_bytes()));
     }
     for extension in &yarnrc.extensions {
-        let Some((_, range)) = split_locator(&extension.key).filter(|(n, _)| *n == name) else {
+        if !matches(&extension.key) {
             continue;
-        };
-        match holds(this, log, range)? {
-            Some(true) => {}
-            Some(false) => continue,
-            None => {
-                bail!(
-                    log,
-                    "packageExtensions \"{}\" in .yarnrc.yml cannot be matched against \"{}\"",
-                    shown(&extension.key),
-                    shown(name),
-                );
-            }
         }
         for (from, to, before) in [
             (
@@ -1881,7 +1839,7 @@ fn extensions_of<'a>(
             .optional_peers
             .extend(extension.optional_peers.iter().map(|name| &**name));
     }
-    Ok(extended)
+    extended
 }
 
 /// From a package.json, with the same groups and duplicate handling as `Package::parse`.

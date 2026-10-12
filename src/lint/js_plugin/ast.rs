@@ -17,6 +17,7 @@ use crate::ast::File;
 use crate::estree::{Dialect, Nodes, Object, Sink, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
+use bun_collections::ByteSet;
 use bun_core::strings::Utf16OffsetTable;
 
 /// What the number in a word is.
@@ -491,12 +492,12 @@ pub(super) fn write<'a>(
     file: &'a File<'a>,
     offsets: &Utf16OffsetTable,
     selectors: &[Option<&Selector>],
-    listened: Option<&[bool; 256]>,
+    listened: Option<&ByteSet>,
     out: &mut Vec<u8>,
 ) -> Numbered<'a> {
     let writer = walk(file, offsets, selectors);
     let tree = &writer.tree;
-    let is_listened = |listened: &[bool; 256]| tree.types.iter().any(|&it| listened[it as usize]);
+    let is_listened = |listened: &ByteSet| tree.types.iter().any(|&it| listened.has(it));
     if listened.is_some_and(|it| !is_listened(it)) && writer.matches.iter().all(Vec::is_empty) {
         wire::words(out, &[0; HEADER]);
         return writer.nodes;

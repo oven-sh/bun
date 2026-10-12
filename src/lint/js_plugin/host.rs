@@ -12,6 +12,7 @@ use crate::options::Json;
 use crate::rule::Kind;
 use crate::selector::Selector;
 use crate::span::Span;
+use bun_collections::ByteSet;
 use bun_core::printer::json_stringify;
 use bun_core::strings::Utf16OffsetTable;
 use bun_threading::Guarded;
@@ -570,10 +571,10 @@ impl<'e> Host<'e> {
                 let selectors: Vec<Option<&Selector>> =
                     selectors.iter().map(Option::as_deref).collect();
                 let types = types.and_then(Json::as_array).map(|types| {
-                    let mut listened = [false; 256];
+                    let mut listened = ByteSet::init_empty();
                     for it in types.iter().filter_map(|it| number(Some(it))) {
-                        if let Some(it) = listened.get_mut(it as usize) {
-                            *it = true;
+                        if let Ok(it) = u8::try_from(it) {
+                            listened.set(it as usize);
                         }
                     }
                     listened

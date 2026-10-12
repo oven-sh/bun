@@ -11,6 +11,7 @@
 use super::Parser;
 use super::ast::{Id, Kind, Tree};
 use super::parse;
+use bun_collections::ByteSet;
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
 
@@ -30,15 +31,7 @@ struct Reader {
 }
 
 /// The bytes that do not always count, or next to which another does not.
-const IS_SPECIAL: [bool; 256] = {
-    let mut is_special = [false; 256];
-    let (bytes, mut at) = (b"eE\\\xC2\xC4\xE1\xE2\xE3\xEF", 0);
-    while at < bytes.len() {
-        is_special[bytes[at] as usize] = true;
-        at += 1;
-    }
-    is_special
-};
+const SPECIAL: ByteSet = ByteSet::of(b"eE\\\xC2\xC4\xE1\xE2\xE3\xEF");
 
 /// `/^[+-]?0+(?!\d)/.test(text)`
 fn is_zero(text: &[u8]) -> bool {
@@ -66,13 +59,13 @@ impl Reader {
     fn count(&mut self, text: &[u8]) {
         for (at, &byte) in text.iter().enumerate() {
             self.add(byte);
-            if IS_SPECIAL[usize::from(byte)] {
+            if SPECIAL.has(byte) {
                 self.look_around(text, at);
             }
         }
     }
 
-    /// Takes back what does not count because of the byte at `at`, which is one of `IS_SPECIAL`.
+    /// Takes back what does not count because of the byte at `at`, which is one of `SPECIAL`.
     fn look_around(&mut self, text: &[u8], at: usize) {
         let (before, rest) = text.split_at_checked(at).unwrap_or_default();
         let previous = before.last().copied().unwrap_or(0);

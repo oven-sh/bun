@@ -776,8 +776,7 @@ impl ValuesParser<'_> {
         let mut ind = 0;
         loop {
             let word = &self.text()[word_start..word_start + word_len];
-            static AT: ByteSet = ByteSet::new(b"@");
-            let index = AT.find(word, ind + 1).unwrap_or(word_len);
+            let index = text::index_of_from(word, b"@", ind + 1).unwrap_or(word_len);
             let value = &word[ind..index];
             let (start, end) = (word_start + ind, word_start + index);
             let loc = Source {

@@ -1290,11 +1290,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             if named_registries.is_none() {
                                 named_registries = Some(read_named_registries(log)?);
                             }
-                            match named_registries
+                            named_registry = named_registries
                                 .as_ref()
                                 .expect("set above")
                                 .get(registry_name)
-                            {
+                                .map(|url| lockfile::bun_lock::registry_without_auth(url));
+                            match &named_registry {
                                 Some(url)
                                     if !(lockfile::bun_lock::url_is_under_registry(
                                         url,
@@ -1304,17 +1305,16 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                         url,
                                     )) =>
                                 {
-                                    named_registry = lockfile::bun_lock::registry_without_auth(url);
                                     if !warned_registries.get_or_put(registry_name)?.found_existing
                                         && !silent
                                     {
                                         bun_core::warn!(
                                             "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
                                             bstr::BStr::new(registry_name),
-                                            bstr::BStr::new(&named_registry)
+                                            bstr::BStr::new(url)
                                         );
                                     }
-                                    &named_registry
+                                    &**url
                                 }
                                 Some(_) => scope_registry,
                                 None => {

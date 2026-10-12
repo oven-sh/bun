@@ -485,6 +485,7 @@ pub(crate) fn warn_unlocked_dependencies(
                     && !dep.behavior.is_peer()
                     && !dep.behavior.is_optional()
                     && !dep.behavior.is_workspace()
+                    && dep.version.tag != crate::dependency::VersionTag::Workspace
                     && lockfile.workspace_paths.get(&dep.name_hash).is_none()
             })
             .map(|(dep, _)| dep)

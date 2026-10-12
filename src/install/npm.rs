@@ -371,16 +371,19 @@ pub mod registry {
             // written in the configuration. One that comes from an environment
             // variable is only known here; left in the URL, the credentials are
             // sent with no request and are written to bun.lock and to messages.
-            if registry.token.is_empty()
-                && registry.username.is_empty()
-                && registry.password.is_empty()
-                && !url.password.is_empty()
-            {
-                if url.username.is_empty() {
-                    registry.token = Box::from(url.password);
-                } else {
-                    registry.username = Box::from(url.username);
-                    registry.password = Box::from(url.password);
+            // Credentials that are set beside the URL win; the URL loses its own
+            // either way.
+            if !url.password.is_empty() {
+                if registry.token.is_empty()
+                    && registry.username.is_empty()
+                    && registry.password.is_empty()
+                {
+                    if url.username.is_empty() {
+                        registry.token = Box::from(url.password);
+                    } else {
+                        registry.username = Box::from(url.username);
+                        registry.password = Box::from(url.password);
+                    }
                 }
                 needs_normalize = true;
             }

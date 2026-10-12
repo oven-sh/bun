@@ -2175,8 +2175,8 @@ fn append_entry_dependencies(
 
 /// What `packageExtensions` add to this entry: the `dependencies` and optional
 /// peers of every `name@range` whose range holds the entry's version,
-/// prereleases included, as yarn matches them. The extensions of `.yarnrc.yml`
-/// come first and the first one to add a name wins, as in yarn.
+/// prereleases included, as yarn matches them. Yarn registers its own list
+/// before the extensions of `.yarnrc.yml`, and the first one to add a name wins.
 ///
 /// Yarn's own list changes from release to release and yarn.lock does not say
 /// which release wrote it, so a dependency from that list is added only when
@@ -2288,14 +2288,6 @@ fn extensions_for<'a>(
         }
         Ok(())
     };
-    for extension in &yarnrc.extensions {
-        apply(
-            &extension.key,
-            true,
-            &mut extension.dependencies.iter().map(|(n, r)| (&**n, &**r)),
-            &mut extension.optional_peers.iter().map(|n| &**n),
-        )?;
-    }
     for (extension_key, dependencies, optional_peers) in builtin_extensions::BUILTIN {
         apply(
             extension_key.as_bytes(),
@@ -2304,6 +2296,14 @@ fn extensions_for<'a>(
                 .iter()
                 .map(|(n, r)| (n.as_bytes(), r.as_bytes())),
             &mut optional_peers.iter().map(|n| n.as_bytes()),
+        )?;
+    }
+    for extension in &yarnrc.extensions {
+        apply(
+            &extension.key,
+            true,
+            &mut extension.dependencies.iter().map(|(n, r)| (&**n, &**r)),
+            &mut extension.optional_peers.iter().map(|n| &**n),
         )?;
     }
     Ok(extended)

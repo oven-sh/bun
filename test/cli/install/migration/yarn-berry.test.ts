@@ -1874,13 +1874,13 @@ catalogs:
   });
 
   test.concurrent("the packageExtensions yarn ships, and optional peers from packageExtensions", async () => {
-    const project = (lockExtra: Record<string, string[]>) => ({
+    const project = (lockExtra: Record<string, string[]>, rcExtra = "") => ({
       "package.json": JSON.stringify({
         name: "berry-builtin",
         dependencies: { "@babel/parser": "^7.0.0", "peer-deps-fixed": "^1.0.0" },
       }),
       // peer-deps-fixed has the peer no-deps@^1.0.0; with this yarn does not ask for it
-      ".yarnrc.yml": `packageExtensions:\n  peer-deps-fixed@*:\n    peerDependenciesMeta:\n      no-deps:\n        optional: true\n`,
+      ".yarnrc.yml": `packageExtensions:\n  peer-deps-fixed@*:\n    peerDependenciesMeta:\n      no-deps:\n        optional: true\n${rcExtra}`,
       "yarn.lock": yarnLock({
         "@babel/parser@npm:^7.0.0": [`version: 7.23.0`, `resolution: "@babel/parser@npm:7.23.0"`],
         "berry-builtin@workspace:.": [
@@ -1903,7 +1903,11 @@ catalogs:
     // yarn.lock, the edge to it is not
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },
-      files: project({ "@babel/types@npm:^7.8.3": [`version: 7.8.3`, `resolution: "@babel/types@npm:7.8.3"`] }),
+      // yarn registers its own list first, so the same name from .yarnrc.yml (another range) adds nothing
+      files: project(
+        { "@babel/types@npm:^7.8.3": [`version: 7.8.3`, `resolution: "@babel/types@npm:7.8.3"`] },
+        `  "@babel/parser@*":\n    dependencies:\n      "@babel/types": ^7.9.0\n`,
+      ),
     });
     const { stderr, exitCode } = await run(dir, "install");
     expect(stderr).toContain("migrated lockfile from yarn.lock");

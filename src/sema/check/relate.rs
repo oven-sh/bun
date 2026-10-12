@@ -11,6 +11,7 @@ use super::infer::{Inference, PRIORITY_ALWAYS_STRICT, PRIORITY_NO_CONSTRAINTS};
 use super::related::Place;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::*;
+use crate::util::SharedSort;
 use crate::util::{FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::Hasher;
@@ -5948,7 +5949,7 @@ impl<'p, 's> Checker<'p, 's> {
                 PropSource::Type(_) => (true, atoms.bytes(tp.name)),
                 _ => (false, &[][..]),
             };
-            in_order.sort_by(|a, b| place(a).cmp(&place(b)));
+            in_order.shared_sort_by(|a, b| place(a).cmp(&place(b)));
         }
         for (i, tp) in tm.shape().props.iter().enumerate() {
             let tp = if REPORT {
@@ -6113,7 +6114,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDeclaringClass`
     pub(super) fn declaring_class(&self, prop: &Prop) -> Option<Sym> {
-        match prop.source {
+        match *Self::value_declaration(prop)? {
             PropSource::Symbol(sym) => self.declaring_class_of_symbol(sym),
             _ => None,
         }

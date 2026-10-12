@@ -378,7 +378,7 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
 }
 
 /// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry whose bytes differ from disk.
-pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
+pub fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
     if manager.edited_package_jsons.is_empty()
         || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
     {

@@ -382,6 +382,7 @@ These differences are intentional:
 - **No Svelte.** With `svelte` in the configuration, `.svelte` files are left as they are, and the run ends with an error that counts them. With `--allow-unsupported` it is a warning. A `svelte` code block in Markdown stays as it is.
 - **Errors and warnings are in the words of Bun**, with `[error]` or `[warn]` before each line. What else is printed about a run is what oxfmt prints, on the same stream.
 - **A TOML file that is not valid is left as it is**, with a warning. oxfmt rewrites the rest of the file.
+- **A file that is not UTF-8 is formatted**, and the bytes that are not UTF-8 stay as they are. oxfmt does not read such a file, and exits with 2.
 - **A file is checked before it is written**, as in [Differences from Prettier](#differences-from-prettier).
 
 ## CLI usage

@@ -13,7 +13,8 @@
 //! ```
 //!
 //! Specifiers are resolved as `bun check` resolves them, with the `tsconfig.json` that is closest to the file: `paths`, `./a.js`
-//! for `./a.ts`, `exports` and `imports` of `package.json`, symbolic links. Directories are listed once.
+//! for `./a.ts`, `exports` and `imports` of `package.json`, symbolic links. Directories are listed once. For oxlint they are
+//! resolved as Node.js resolves them, after `paths`: [`AsRequire::as_import`].
 
 #![forbid(unsafe_code)]
 
@@ -34,9 +35,7 @@ use bun_sema::config::{
 };
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
-use bun_sema::resolve::{
-    AsRequire, Host, Resolver, ScriptKind, ancestors, is_relative, join, typescript_path,
-};
+use bun_sema::resolve::{AsRequire, Host, Resolver, ScriptKind, ancestors, join, typescript_path};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{Disk, from_native};
@@ -593,6 +592,7 @@ impl<'h> Graph<'h> {
             paths: &paths,
             through_paths: false,
             as_import: false,
+            base_url: None,
         };
         // No configuration of TypeScript has a say.
         let plain = self.resolver_of(b"", cwd);
@@ -624,6 +624,7 @@ impl<'h> Graph<'h> {
             paths: &[],
             through_paths: true,
             as_import: false,
+            base_url: None,
         };
         let from_base_url = || {
             let base_url = base_url
@@ -777,47 +778,30 @@ impl<'h> Graph<'h> {
         let ProjectResolver {
             resolver, base_url, ..
         } = self.resolver_of(config, directory_of(from));
-        let as_node = self.flavor().resolves_as_node();
-        let code = || {
+        let base_url = base_url
+            .as_ref()
+            .filter(|_| !specifier.starts_with(b".") && !specifier.starts_with(b"/"));
+        // What TypeScript finds are the types. oxlint reads the code.
+        if self.flavor().resolves_as_node() {
             let how = AsRequire {
                 extensions: &EXTENSIONS,
                 module_directories: &[b"node_modules"],
                 paths: &[],
                 through_paths: true,
                 as_import: true,
+                base_url: base_url.map(Vec::as_slice),
             };
             let code = self.real(resolver.resolve_as_require(specifier, from, &how)?.0);
             let is_external = is_in_package(&code);
-            Some((Cow::Owned(code), is_external))
-        };
-        // A directory whose `package.json` names an entry.
-        if as_node && specifier.starts_with(b".") && is_relative(specifier) {
-            return code();
+            return Some((Cow::Owned(code), is_external));
         }
-        let from_base_url = || {
-            let base_url = base_url
-                .as_ref()
-                .filter(|_| !specifier.starts_with(b".") && !specifier.starts_with(b"/"))?;
-            resolver.resolve_module_name(&join(base_url, specifier), from, mode)
-        };
         let found = resolver
             .resolve_module_name(specifier, from, mode)
-            .or_else(from_base_url);
-        // What TypeScript finds of a package are its types, in it or in `@types`. oxlint reads its code.
-        if as_node
-            && found.as_ref().is_none_or(|it| is_in_package(it.file_name))
-            && !matches!(specifier, [] | [b'.' | b'/' | b'#', ..])
-        {
-            return code();
-        }
-        let found = found?;
-        let path = match as_node {
-            true => {
-                Cow::Owned(self.real(self.as_node_finds(specifier, found.file_name)?.into_owned()))
-            }
-            false => Cow::Borrowed(found.file_name),
-        };
-        Some((path, found.is_external_library_import))
+            .or_else(|| resolver.resolve_module_name(&join(base_url?, specifier), from, mode))?;
+        Some((
+            Cow::Borrowed(found.file_name),
+            found.is_external_library_import,
+        ))
     }
 
     /// `path` with symbolic links followed.
@@ -829,39 +813,6 @@ impl<'h> Graph<'h> {
                 self.known().real_paths.insert_ref(path, real).clone()
             }
         }
-    }
-
-    /// `found`: what TypeScript finds for `specifier`. Which of the files with that name and another extension does oxlint find?
-    fn as_node_finds(&self, specifier: &[u8], found: &'h [u8]) -> Option<Cow<'h, [u8]>> {
-        let Some(extension) = EXTENSIONS.iter().find(|it| found.ends_with(it)) else {
-            return Some(Cow::Borrowed(found));
-        };
-        let stem = &found[..found.len() - extension.len()];
-        let is_declaration = stem.ends_with(b".d") && extension.ends_with(b"ts");
-        if is_declaration && specifier.ends_with(&found[stem.len() - 2..]) {
-            return Some(Cow::Borrowed(found));
-        }
-        let stem = if is_declaration {
-            &stem[..stem.len() - 2]
-        } else {
-            stem
-        };
-        let written = EXTENSIONS.iter().find(|it| specifier.ends_with(it));
-        let tried: &[&[u8]] = match written.copied() {
-            Some(b".js") => &[b".js", b".ts"],
-            Some(b".mjs") => &[b".mjs", b".mts"],
-            Some(b".cjs") => &[b".cjs", b".cts"],
-            Some(_) => written.map_or(&[], std::slice::from_ref),
-            None => &EXTENSIONS,
-        };
-        let disk = self.store.disk();
-        tried.iter().find_map(|it| {
-            if !is_declaration && it == extension {
-                return Some(Cow::Borrowed(found));
-            }
-            let path = [stem, it].concat();
-            disk.is_file(&path).then_some(Cow::Owned(path))
-        })
     }
 
     fn make_record(

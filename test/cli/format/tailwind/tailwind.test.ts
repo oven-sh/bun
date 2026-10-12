@@ -76,6 +76,8 @@ describe.concurrent("sortTailwindcss", () => {
   const input = '<a className="p-4 flex m-2" />;\n';
   const [sorted, reversed] = ['<a className="m-2 flex p-4" />;\n', '<a className="p-4 flex m-2" />;\n'];
 
+  const unknown = "sortTailwindcss: The order of some classes cannot be found.";
+
   const listed = (root: string) => readdirSync(root, { recursive: true, encoding: "utf8" }).sort();
 
   test("nothing is written into the project, not even while Tailwind is asked", async () => {
@@ -192,6 +194,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     const files = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "a.jsx": `${input}a  ;\n`, "b.js": "b  ;\n" };
     const result = await format(files, ["a.jsx", "b.js"]);
     expect(result.stderr).toContain("[error] sortTailwindcss: It needs the package tailwindcss");
+    expect(result.stderr).toContain(`[error] a.jsx: ${unknown} It is left as it is.\n`);
     expect(result.files).toEqual([`${input}a  ;\n`, "b;\n"]);
     expect(result.exitCode).toBe(2);
     // The first directory in the order of the names, not the one whose file has come first.
@@ -202,6 +205,74 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(allowed.stderr).toContain("[warn] sortTailwindcss: It needs the package tailwindcss");
     expect(allowed.files).toEqual([`${input}a;\n`, "b;\n"]);
     expect(allowed.exitCode).toBe(0);
+  });
+
+  // oxfmt 0.72 does not read such a file. The order is the one that it has for the same text in UTF-8.
+  test("a file that is not UTF-8 is formatted as without the option: its bytes stay", async () => {
+    const files = {
+      "latin1.jsx": `<a className="p-4 content-['caf\xE9'] flex m-2"   />;\n`,
+      "two.jsx": `<a className="p-4 content-['caf\xE8'] flex content-['caf\xE9'] m-2"   />;\n`,
+      "lone.html": `<a class="p-4 content-['\x80'] flex m-2"   >x</a>\n`,
+      "cut.css": "a {\n  @apply p-4 content-['\xE2\x82'] flex   m-2;\n}\n",
+      "nul.jsx": `<a className="p-4 content-['\0'] flex m-2"   />;\n`,
+      "outside.jsx": `// caf\xE9\n<a className="p-4 flex m-2" title="caf\xE9"   />;\n`,
+    };
+    const expected = {
+      "latin1.jsx": `<a className="content-['caf\xE9'] m-2 flex p-4" />;\n`,
+      "two.jsx": `<a className="content-['caf\xE8'] content-['caf\xE9'] m-2 flex p-4" />;\n`,
+      "lone.html": `<a class="content-['\x80'] m-2 flex p-4">x</a>\n`,
+      "cut.css": "a {\n  @apply content-['\xE2\x82'] m-2 flex p-4;\n}\n",
+      "nul.jsx": `<a className="content-['\0'] m-2 flex p-4" />;\n`,
+      "outside.jsx": `// caf\xE9\n<a className="m-2 flex p-4" title="caf\xE9" />;\n`,
+    };
+    using dir = tempDir("bun-format-tailwind", {
+      ...version4,
+      ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+      ...Object.fromEntries(Object.entries(files).map(([name, text]) => [name, Buffer.from(text, "latin1")])),
+    });
+    expect(await formatIn(String(dir), [])).toMatchObject({ stderr: "", exitCode: 0 });
+    const read = (name: string) => readFileSync(join(String(dir), name), "latin1");
+    expect(Object.fromEntries(Object.keys(files).map(name => [name, read(name)]))).toEqual(expected);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "format", "--stdin-filepath", "a.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: Buffer.from(files["latin1.jsx"], "latin1"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: Buffer.from(stdout).toString("latin1"), stderr }).toEqual({
+      stdout: expected["latin1.jsx"],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a file with a class that Tailwind says nothing about is named, and left as it is", async () => {
+    const entry = "node_modules/tailwindcss/index.js";
+    using dir = tempDir("bun-format-tailwind", {
+      ...version4,
+      [entry]: version4[entry].replace("classes.map(", 'classes.filter(name => name !== "odd").map('),
+      ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+      "a.jsx": input,
+      "b.jsx": '<a className="p-4 odd flex" />;\nb  ;\n',
+      "c.jsx": '<a className="p-4 flex odd" />;\n',
+    });
+    const result = await formatIn(String(dir), ["a.jsx", "b.jsx", "c.jsx"]);
+    expect(result.stderr.split("\n").filter(line => line.startsWith("[error]"))).toEqual([
+      `[error] b.jsx: ${unknown} It is left as it is.`,
+      `[error] c.jsx: ${unknown} It is left as it is.`,
+    ]);
+    expect(result.files).toEqual([
+      sorted,
+      '<a className="p-4 odd flex" />;\nb  ;\n',
+      '<a className="p-4 flex odd" />;\n',
+    ]);
+    expect(result.exitCode).toBe(2);
+    const piped = await formatIn(String(dir), [], ["--stdin-filepath", "d.jsx"], '<a className="p-4 odd flex" />;\n');
+    expect(piped).toMatchObject({ stdout: "", stderr: `[error] d.jsx: ${unknown}\n`, exitCode: 2 });
   });
 
   // An editor in a repository whose root has no packages.

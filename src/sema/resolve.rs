@@ -1298,10 +1298,13 @@ pub struct AsRequire<'a> {
     /// `compilerOptions.paths` are asked before any of these, and `exports` of a package counts: as
     /// eslint-import-resolver-typescript has it.
     pub through_paths: bool,
-    /// As oxc-resolver under oxlint: the condition `import` counts and `types` does not, `a.ts` is found for `a.js`, the
-    /// entry of a package is its `module` or its `main`, or its `index` where these lead to nothing, and whatever
-    /// `exports` is, nothing else is asked.
+    /// As oxc-resolver under oxlint: the condition `import` counts and `types` does not, `a.ts` is found for `a.js`, `a/`
+    /// is a directory, the entry of a package is its `module` or its `main`, or its `index` where these lead to nothing.
+    /// Whatever `exports` is, nothing else is asked, in that package or in one further up. `imports` and the name of
+    /// the package that the file is in count.
     pub as_import: bool,
+    /// `baseUrl`, absolute: where oxc-resolver looks after `paths`, before any package.
+    pub base_url: Option<&'a [u8]>,
 }
 
 /// `ForEachAncestorDirectory`: `dir`, then each of its ancestor directories up to the root.
@@ -2813,6 +2816,24 @@ impl<'h> Resolver<'h> {
                 {
                     return Some((found, None));
                 }
+                if let Some(base_url) = how.base_url
+                    && let Some(found) = self.file_or_directory(&join(base_url, spec), look)
+                {
+                    return Some((found, None));
+                }
+                if how.as_import {
+                    let own = match spec.starts_with(b"#") {
+                        true => self.package_imports(spec, from_dir, look),
+                        false => Found::No,
+                    };
+                    let own = match own {
+                        Found::No => self.self_name(spec, from_dir, look),
+                        found => found,
+                    };
+                    if !matches!(own, Found::No) {
+                        return Some((own.file()?, None));
+                    }
+                }
                 // `nodeModulesPaths` of `resolve`
                 let names = how.module_directories.iter();
                 let upwards = ancestors(from_dir)
@@ -3697,7 +3718,12 @@ impl<'h> Resolver<'h> {
             };
             let index = || self.file(&inside(candidate, b"index"), look);
             if look.as_import {
-                return named(b"module").or_else(|| named(b"main")).or_else(index);
+                // One that cannot be parsed ends the search.
+                look.outcome.is_blocked.set(json == Some(&Json::Null));
+                return match look.outcome.is_blocked.get() {
+                    true => None,
+                    false => named(b"module").or_else(|| named(b"main")).or_else(index),
+                };
             }
             let main = json
                 .and_then(|it| it.get(b"main"))
@@ -3894,7 +3920,10 @@ impl<'h> Resolver<'h> {
         if let Some(exports) = exports
             && (look.as_import || !is_falsy(exports))
         {
-            return self.exports(&package_dir, exports, &combine_paths(b".", rest), look);
+            return match self.exports(&package_dir, exports, &combine_paths(b".", rest), look) {
+                Found::No if look.as_import => Found::Blocked,
+                found => found,
+            };
         }
         let load = |candidate: &[u8], has_extension_from_config: bool| -> Option<Vec<u8>> {
             let look = Look {
@@ -4247,7 +4276,8 @@ impl<'h> Resolver<'h> {
     ) -> Found {
         let options = self.options;
         let is_case_sensitive = self.host.is_case_sensitive();
-        if options.out_dir.is_empty() && options.declaration_dir.is_empty()
+        if look.as_import
+            || options.out_dir.is_empty() && options.declaration_dir.is_empty()
             || strings::contains(path, b"/node_modules/")
             || options.has_config_file
                 && !contains_path(package_dir, &options.base_dir, is_case_sensitive)

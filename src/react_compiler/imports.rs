@@ -6,13 +6,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use crate::collections::{IndexMap, IndexSet};
+use crate::collections::{IndexMap, IndexSet, sort_slice_by};
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::{
     ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
 };
+use bun_core::strings::locale_compare;
 
 use crate::hir::environment::OutputMode;
 use crate::options::ReactCompilerOptions;
@@ -243,16 +244,16 @@ pub(crate) fn add_imports_to_program(
 
     let mut new_stmts: Vec<Stmt> = Vec::new();
     let mut sorted_modules: Vec<_> = context.imports.iter().collect();
-    sorted_modules.sort_unstable_by(|(a, _), (b, _)| {
-        a.bytes()
-            .map(|c| c.to_ascii_lowercase())
-            .cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
+    sort_slice_by(&mut sorted_modules, |(a, _), (b, _)| {
+        locale_compare(a.as_bytes(), b.as_bytes())
     });
 
     for (module_name, imports_map) in sorted_modules {
         let sorted_imports = {
             let mut sorted: Vec<_> = imports_map.values().collect();
-            sorted.sort_unstable_by_key(|s| s.imported);
+            sort_slice_by(&mut sorted, |a, b| {
+                locale_compare(a.imported.as_bytes(), b.imported.as_bytes())
+            });
             sorted
         };
 

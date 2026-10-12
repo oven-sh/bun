@@ -8,6 +8,7 @@ use super::files::Kind;
 use crate::evaluate::evaluate_input;
 use crate::run::Environment;
 use crate::{fs, paths};
+use bun_core::printer::json_stringify_alloc;
 use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::tailwind::{Names, Orders, Rank, Tailwind};
@@ -15,6 +16,7 @@ use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -101,13 +103,24 @@ pub(crate) fn version_in(package: &Json) -> Option<[u64; 3]> {
         .then_some([version.major, version.minor, version.patch])
 }
 
-/// The classes in files for which the same Tailwind is asked.
+/// The classes in files for which the same Tailwind is asked, each as [`key_of`] has it.
 #[derive(Default)]
 struct Group {
     /// The ranks are among all of them.
     known: FxHashMap<Vec<u8>, Rank>,
     /// Asked for, and not known.
     missing: Vec<Vec<u8>>,
+}
+
+/// `class` as the script reads it, and names it in its answer: the question is JSON, where what is not UTF-8 is U+FFFD.
+fn key_of(class: &[u8]) -> Cow<'_, [u8]> {
+    if strings::is_valid_utf8(class) {
+        return Cow::Borrowed(class);
+    }
+    match bun_lint::json::parse(&json_stringify_alloc(class)) {
+        Some(Json::String(key)) => Cow::Owned(key),
+        _ => Cow::Borrowed(class),
+    }
 }
 
 #[derive(Default)]
@@ -163,11 +176,12 @@ impl Orders for OfGroup {
         let group = known.groups.get_mut(which)?;
         let (mut ranks, mut is_known) = (Vec::new(), true);
         for class in strings::split(classes, b" ") {
-            match group.known.get(class) {
+            let key = key_of(class);
+            match group.known.get(&key[..]) {
                 _ if class.is_empty() => ranks.push(None),
                 Some(&rank) => ranks.push(rank),
                 None => {
-                    group.missing.push(class.to_vec());
+                    group.missing.push(key.into_owned());
                     is_known = false;
                 }
             }

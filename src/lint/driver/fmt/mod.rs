@@ -75,6 +75,12 @@ fn message_of(error: &[u8]) -> &[u8] {
         .unwrap_or(error)
 }
 
+/// Tailwind has been asked, and the order of the classes in the file that is shown as `shown` is still not known.
+fn has_classes_without_order(shown: &[u8]) -> Vec<u8> {
+    let what = b": sortTailwindcss: The order of some classes cannot be found.";
+    [shown, what].concat()
+}
+
 /// Prettier's message for a parser that it does not have.
 fn cannot_resolve_parser(parser: &[u8]) -> Vec<u8> {
     [b"Couldn't resolve parser \"", parser, b"\"."].concat()
@@ -1067,6 +1073,9 @@ impl Run<'_> {
                 Err(error) => return self.fail(&error),
             }
             formatted = format_text(&options);
+            if (options.options.tailwind.as_deref()).is_some_and(Tailwind::has_missed) {
+                return self.fail(&has_classes_without_order(name));
+            }
         }
         match formatted {
             Err(failure @ Failure::Unread(_)) => {
@@ -1385,9 +1394,8 @@ impl Run<'_> {
                 }
                 Some(Done::PutAside) => {
                     failed += 1;
-                    classes_are_unknown.get_or_insert_with(|| {
-                        b"sortTailwindcss: The order of some classes cannot be found.".to_vec()
-                    });
+                    let text = has_classes_without_order(&shown);
+                    self.error(&[&text[..], b" It is left as it is."].concat());
                 }
                 Some(Done::Different(took)) => {
                     different += 1;

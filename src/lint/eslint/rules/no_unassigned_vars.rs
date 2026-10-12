@@ -21,6 +21,12 @@ fn is_declared(decl: VarDecl<'_>) -> bool {
             }))
 }
 
+/// What oxlint says nothing about: what is declared in the head of a loop, or anywhere in a namespace.
+fn oxlint_passes_over(decl: VarDecl<'_>) -> bool {
+    let is_module = |it: Node| matches!(it, Node::Stmt(stmt) if stmt.tag() == StmtTag::Module);
+    matches!(decl.parent().parent(), Node::Stmt(stmt) if stmt.is_loop()) || Node::VarDecl(decl).ancestors().any(is_module)
+}
+
 impl Rule for NoUnassignedVars {
     const META: Meta = Meta::eslint("no-unassigned-vars", Kind::Problem).recommended();
     const ON: On = On::new().var_decls();
@@ -46,8 +52,14 @@ impl Rule for NoUnassignedVars {
             return;
         };
         if !symbol.has_writes() && symbol.has_reads() {
+            let is_oxlint = cx.language().is_oxlint;
+            // For oxc the `a` of the type `typeof a` is not read.
+            let is_read = |it: Reference| it.is_read() && !it.expr().is_some_and(Expr::is_in_type_query);
+            if is_oxlint && (oxlint_passes_over(decl) || !symbol.references().any(is_read)) {
+                return;
+            }
             // oxlint points at the name, without its type.
-            let place = if cx.language().is_oxlint { decl.pat().span() } else { decl.span() };
+            let place = if is_oxlint { decl.pat().span() } else { decl.span() };
             cx.report(place, UNASSIGNED).data("name", name);
         }
     }

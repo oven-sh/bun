@@ -1631,9 +1631,10 @@ pub(crate) mod command {
         command: &[u8],
         knows: fn(&[u8]) -> bool,
     ) -> Vec<&'static bun_core::ZStr> {
-        let is_of_bun = |arg: &[u8]| {
-            let name = strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
-            matches!(name, b"--config" | b"--cwd" | b"--help" | b"--silent")
+        let is_of_bun = |arg: &[u8]| match strings::split_once_char(arg, b'=') {
+            // `bun -c=bunfig.toml lint`. Without a value it's `--check` of `bun format`.
+            Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
+            None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
         };
         let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
         let mut args: Vec<_> = before

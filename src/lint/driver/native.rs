@@ -18,14 +18,14 @@ use bun_lint::rule::{Meta, Plugin};
 pub(crate) struct Mistake {
     /// The text printed after `error: `.
     pub(crate) message: Vec<u8>,
-    /// Byte offset in bunfig.toml. `None` if the setting came from `--rule`.
+    /// Byte offset in the bunfig. `None` if the setting came from `--rule`.
     at: Option<usize>,
 }
 
 impl Mistake {
-    /// Formats the error like Bun's other errors, with a code frame from `cwd`'s bunfig.toml.
-    pub(crate) fn print(&self, cwd: &[u8], colors: bool) -> Vec<u8> {
-        let text = fs::read(&paths::join(cwd, b"bunfig.toml")).unwrap_or_default();
+    /// Formats the error like Bun's other errors, with a code frame from `bunfig` ([`Options::bunfig`]).
+    pub(crate) fn print(&self, cwd: &[u8], bunfig: &[u8], colors: bool) -> Vec<u8> {
+        let text = fs::read(&paths::resolve(cwd, bunfig)).unwrap_or_default();
         let text = strings::without_utf8_bom(&text);
         let location = self.at.and_then(|at| {
             let before = text.get(..at)?;
@@ -33,7 +33,7 @@ impl Mistake {
             let line = text.get(start..)?;
             let end = strings::index_of_char_usize(line, b'\n').unwrap_or(line.len());
             Some(bun_ast::Location {
-                file: b"bunfig.toml".to_vec().into(),
+                file: bunfig.to_vec().into(),
                 line: strings::count_char(before, b'\n') as i32 + 1,
                 column: (at - start) as i32 + 1,
                 line_text: Some(line.get(..end)?.to_vec().into()),

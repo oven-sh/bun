@@ -55,16 +55,26 @@ pub struct Suggested {
 pub struct Failure {
     /// The index of the rule that threw, among those that were run.
     pub rule: Option<u32>,
-    /// The line of the node that was being visited.
-    pub line: Option<u32>,
+    pub at: ThrownAt,
     pub message: Vec<u8>,
+}
+
+/// Where a rule was when it threw.
+#[derive(Copy, Clone, Debug)]
+pub enum ThrownAt {
+    /// In its `create`.
+    Create,
+    /// In a listener, at a node on this line.
+    Line(u32),
+    /// At a node whose line can't be read, in a listener for code paths, or not in a rule at all.
+    Unknown,
 }
 
 impl From<Vec<u8>> for Failure {
     fn from(message: Vec<u8>) -> Failure {
         Failure {
             rule: None,
-            line: None,
+            at: ThrownAt::Unknown,
             message,
         }
     }
@@ -678,7 +688,11 @@ impl<'e> Host<'e> {
                 result::FAILED => {
                     return Err(Failure {
                         rule: number(parts.first()),
-                        line: number(parts.get(2)),
+                        at: match (parts.get(2), number(parts.get(2))) {
+                            (Some(Json::String(_)), _) => ThrownAt::Create,
+                            (_, Some(line)) => ThrownAt::Line(line),
+                            _ => ThrownAt::Unknown,
+                        },
                         message: parts
                             .get(1)
                             .and_then(Json::as_str)

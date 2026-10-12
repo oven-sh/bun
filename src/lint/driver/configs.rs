@@ -1267,7 +1267,8 @@ impl<'l> Loader<'l> {
         self.check_flags(Flavor::BuiltIn, None)?;
         if let Err(mistake) = native::check_rules(self.linter, self.options) {
             let colors = self.environment.stderr.colors;
-            let _ = self.mistake.set(mistake.print(self.cwd(), colors));
+            let printed = mistake.print(self.cwd(), &self.options.bunfig, colors);
+            let _ = self.mistake.set(printed);
             return Err(Fatal(mistake.message));
         }
         // The repository first, so that a file gets the same answer from every directory in it, even from a `test` folder that
@@ -1643,8 +1644,8 @@ impl<'l> Loader<'l> {
         let rule = self.options.rule.iter().position(|it| is_about(&it.0));
         let mut of_overrides = self.options.overrides.iter().flat_map(|it| &it.rules);
         let place = match (rule, file) {
-            (Some(at), _) if at < self.options.rules_of_bunfig.len() => b"bunfig.toml".to_vec(),
-            (None, _) if of_overrides.any(|it| is_about(&it.0)) => b"bunfig.toml".to_vec(),
+            (Some(at), _) if at < self.options.rules_of_bunfig.len() => self.options.bunfig.clone(),
+            (None, _) if of_overrides.any(|it| is_about(&it.0)) => self.options.bunfig.clone(),
             (Some(_), _) => b"--rule".to_vec(),
             (None, Some(file)) => paths::relative(self.cwd(), file),
             (None, None) => return why.to_vec(),

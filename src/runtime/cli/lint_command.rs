@@ -346,7 +346,10 @@ impl LintCommand {
             Global::exit(0);
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
-            let defaults = defaults_of_bunfig(ctx, Tag::LintCommand, b"lint", bunfig::lint);
+            let mut defaults = defaults_of_bunfig(ctx, Tag::LintCommand, b"lint", bunfig::lint);
+            if let (Some(defaults), Some(path)) = (&mut defaults, bunfig_before(b"lint")) {
+                defaults.bunfig = path.to_vec();
+            }
             match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
                 None => bun_lint_driver::run(&options, environment),
                 Some(Ok(options)) => bun_lint_driver::run(&options, environment),

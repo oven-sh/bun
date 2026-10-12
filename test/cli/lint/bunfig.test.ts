@@ -452,6 +452,23 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     expect(result.exitCode).toBe(2);
   });
 
+  test.each(["--config=", "-c="])(
+    "a mistake in the rules of bun %sother.toml lint is shown in that file",
+    async flag => {
+      const files = {
+        "a.js": "foo;\n",
+        "bunfig.toml": `# Not read.\n[lint.rules]\n"no-var" = "error"\n`,
+        "config/other.toml": `[lint.rules]\n"no-vra" = "error"\n`,
+      };
+      const result = await bun(files, [flag + "config/other.toml", "lint", "a.js"]);
+      expect(result.stderr).toContain(`2 | "no-vra" = "error"\n`);
+      expect(result.stderr).toMatch(
+        /error: Unknown rule "no-vra"\n  Did you mean "no-var"\?\n\s+at config\/other\.toml:2:1\n$/,
+      );
+      expect(result.exitCode).toBe(2);
+    },
+  );
+
   // These flags describe a single run, not the project.
   test.each([
     ["fix = true", "--fix"],

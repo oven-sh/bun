@@ -28,48 +28,6 @@ fn is_keyword(modifier: &Modifier, flag: Flags) -> bool {
     modifier.kind == ModifierKind::Keyword(flag)
 }
 
-/// The first of the errors that TypeScript's parser logs for the checker to report and that OXC has too, for the same code. Each
-/// was tried. It takes `let a: unique number` (1005), `A<T,>` (1009) and `import.source("a")` (18061).
-fn error_of_grammar<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let of_grammar = file.hir.diagnostics.iter().filter(|it| {
-        it.kind == DiagnosticKind::Grammar
-            && matches!(
-                it.code,
-                1013 | 1047
-                    | 1051
-                    | 1092
-                    | 1096
-                    | 1097
-                    | 1098
-                    | 1113
-                    | 1172
-                    | 1174
-                    | 1183
-                    | 1235
-                    | 1326
-                    | 5085
-                    | 5086
-                    | 5087
-                    | 7061
-                    | 8020
-                    | 17012
-            )
-            && !file.is_in_jsdoc(it.start)
-    });
-    let first = of_grammar.min_by_key(|it| it.start)?;
-    let mut message = Vec::new();
-    match bun_sema::messages::message(first.code) {
-        Some((_, text)) => bun_sema::messages::format(&mut message, text, &first.args),
-        None => message.extend_from_slice(b"Unexpected token"),
-    }
-    Some(SyntaxError {
-        at: first.start,
-        end: first.end,
-        message,
-        ..SyntaxError::default()
-    })
-}
-
 /// Each `await` outside an async function and each `yield` outside a generator. The parser notes them for OXC, whose parser
 /// reports them.
 fn misplaced_suspensions<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
@@ -410,7 +368,6 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         all.extend(class_without_name(file));
     }
     all.extend(misplaced_suspensions(file));
-    all.extend(error_of_grammar(file));
     all.extend(espree::errors_of_oxc(file));
     all.extend(targets::errors(file));
     all.extend(names::redeclarations(file));

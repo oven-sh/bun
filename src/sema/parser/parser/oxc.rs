@@ -233,6 +233,24 @@ fn verify(modifiers: &[Modifier], allowed: Flags, report: &mut dyn FnMut((Flags,
     }
 }
 
+const DECORATOR_ELSEWHERE: &str = "Decorators are not valid here.";
+
+fn decorator(modifier: &Modifier) -> Option<ExprId> {
+    match modifier.kind {
+        ModifierKind::Decorator(expression) => Some(expression),
+        ModifierKind::Keyword(_) => None,
+    }
+}
+
+/// The spans of the decorators among `modifiers`.
+fn decorators(f: &FileBuilder, modifiers: Span<ModifierId>) -> Vec<(u32, u32)> {
+    let written = f.modifiers.get(modifiers.range()).unwrap_or_default();
+    let spans = written
+        .iter()
+        .filter_map(|it| Some((it.pos, outer_span(f, decorator(it)?)?.1)));
+    spans.collect()
+}
+
 fn keywords(modifiers: &[Modifier]) -> Flags {
     modifiers
         .iter()
@@ -248,7 +266,8 @@ fn implementation_in_ambient_context(open_brace: u32) -> Diagnostic {
 }
 
 /// The parameters of `func`, one after the other as oxc's parser reads them. False: it has given up.
-fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, is_ambient: bool) -> bool {
+fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, place: Place) -> bool {
+    let is_ambient = place.is_ambient;
     let FileBuilder {
         params,
         pats,
@@ -256,6 +275,7 @@ fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, is_ambient: bool) ->
         modifiers_of_params,
         types,
         exprs,
+        parens,
         diagnostics: errors,
         ..
     } = f;
@@ -281,6 +301,17 @@ fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, is_ambient: bool) ->
             let found = about_modifier(1090, it, rest, Help::Allowed(allowed));
             errors.push(noticed_at(found, after_modifiers));
         });
+        if !place.is_class_member {
+            for (it, e) in written.iter().filter_map(|it| Some((it, decorator(it)?))) {
+                let Some(inner) = exprs.get(e.idx()) else {
+                    continue;
+                };
+                let around = parens.iter().filter(|it| it.0 == e);
+                let end = around.fold(inner.end, |end, it| end.max(it.2));
+                let found = error(0, (it.pos, end), DECORATOR_ELSEWHERE, "");
+                errors.push(noticed_at(found, param.loc.end));
+            }
+        }
         let is_optional = param.flags.contains(Flags::OPTIONAL);
         let whole = (param.pos, param.loc.end);
         let is_property = keywords(written).intersects(PARAMETER_PROPERTY);
@@ -303,7 +334,8 @@ fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, is_ambient: bool) ->
             }
             if param.default.is_some() && param.ty.is_none() {
                 let message = "A rest parameter cannot have an initializer.";
-                errors.push(error(0, (name.pos, param.loc.end), message, ""));
+                let found = error(0, (name.pos, param.loc.end), message, "");
+                errors.push(noticed_at(found, param.loc.end));
             } else if let (Some(ty), Some(_)) =
                 (types.get(param.ty.idx()), exprs.get(param.default.idx()))
             {
@@ -317,12 +349,8 @@ fn parameters(f: &mut FileBuilder, src: &[u8], func: &Func, is_ambient: bool) ->
                     "Expected `,` or `)` but found `=`",
                 );
                 let open = (func.anchor, func.anchor + 1);
-                errors.push(with_labels(
-                    found,
-                    "`,` or `)` expected",
-                    open,
-                    "Opened here",
-                ));
+                let found = with_labels(found, "`,` or `)` expected", open, "Opened here");
+                errors.push(noticed_at(found, equals as u32));
                 return false;
             }
             if index + 1 < list.len() {
@@ -418,6 +446,8 @@ pub(super) struct Place {
     pub(super) is_ambient: bool,
     /// `ctx::TYPE`
     pub(super) is_in_type: bool,
+    /// `ctx::CLASS_MEMBER`
+    pub(super) is_class_member: bool,
 }
 
 /// At the end of the function `id`. `open_brace`: that of its body.
@@ -430,7 +460,7 @@ pub(super) fn function(f: &mut FileBuilder, src: &[u8], id: FnId, open_brace: u3
     let Place {
         now, is_ambient, ..
     } = place;
-    if !parameters(f, src, &func, is_ambient) {
+    if !parameters(f, src, &func, place) {
         return;
     }
     let has_body = !matches!(func.body, FnBody::None);
@@ -555,7 +585,13 @@ fn outer_span(f: &FileBuilder, e: ExprId) -> Option<(u32, u32)> {
 #[cold]
 #[inline(never)]
 pub(super) fn static_block(f: &mut FileBuilder, modifiers: Span<ModifierId>) {
+    let misplaced = decorators(f, modifiers);
     let (written, errors) = (&f.modifiers, &mut f.diagnostics);
+    errors.extend(
+        misplaced
+            .iter()
+            .map(|&at| error(0, at, DECORATOR_ELSEWHERE, "")),
+    );
     let written = written.get(modifiers.range()).unwrap_or_default();
     let after = written.last().map_or(0, |it| it.pos + 1);
     verify(written, Flags::empty(), &mut |(modifier, pos)| {
@@ -569,7 +605,13 @@ pub(super) fn static_block(f: &mut FileBuilder, modifiers: Span<ModifierId>) {
 #[cold]
 #[inline(never)]
 pub(super) fn index_signature(f: &mut FileBuilder, modifiers: Span<ModifierId>, allowed: Flags) {
+    let misplaced = decorators(f, modifiers);
     let (written, errors) = (&f.modifiers, &mut f.diagnostics);
+    errors.extend(
+        misplaced
+            .iter()
+            .map(|&at| error(0, at, DECORATOR_ELSEWHERE, "")),
+    );
     let written = written.get(modifiers.range()).unwrap_or_default();
     let after = written.last().map_or(0, |it| it.pos + 1);
     verify(written, allowed, &mut |it| {
@@ -588,6 +630,10 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
     let has_body = func.is_some_and(|it| !matches!(it.body, FnBody::None));
     let open_brace = f.body_starts.last().map_or(0, |it| it.1);
     let initializer = outer_span(f, member.init);
+    let on_overload = match func {
+        Some(func) if matches!(func.body, FnBody::None) => decorators(f, member.modifiers),
+        _ => Vec::new(),
+    };
     let return_type = func.and_then(|it| f.types.get(it.ret.idx())).copied();
     let type_params = func.map_or(Span::EMPTY, |it| it.type_params);
     let type_params = (
@@ -796,6 +842,11 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
         }
         _ => {}
     }
+    for &at in &on_overload {
+        let message = "A decorator can only decorate a method implementation, not an overload.";
+        let found = error(1249, at, message, "Move this after all the overloads");
+        errors.push(noticed_at(found, now));
+    }
     // The pass that builds the scopes.
     if matches!(kind, MemberKind::Getter | MemberKind::Setter)
         && !has_body
@@ -967,7 +1018,8 @@ pub(super) fn variable(f: &mut FileBuilder, src: &[u8], it: &VarDecl) {
         && is_ambient
         && (it.kind != VarKind::Const || it.ty.is_some())
     {
-        errors.push(error(1039, initializer, AMBIENT_INITIALIZER, ""));
+        let found = error(1039, initializer, AMBIENT_INITIALIZER, "");
+        errors.push(noticed_at(found, initializer.1));
     }
     if it.flags.contains(Flags::DEFINITE) {
         let at = skip_trivia(src, name.end as usize) as u32;
@@ -983,10 +1035,17 @@ pub(super) fn variable(f: &mut FileBuilder, src: &[u8], it: &VarDecl) {
 /// The modifiers of the declaration `statement`, which has more than `export` and `default`.
 #[cold]
 #[inline(never)]
-pub(super) fn declaration(f: &mut FileBuilder, statement: StmtId, now: u32) {
+pub(super) fn declaration(f: &mut FileBuilder, src: &[u8], statement: StmtId, now: u32) {
     let Some(statement) = f.stmts.get(statement.idx()) else {
         return;
     };
+    let written = f
+        .modifiers
+        .get(statement.modifiers.range())
+        .unwrap_or_default();
+    if let Some(found) = misplaced_decorator(f, src, statement, written) {
+        return f.diagnostics.push(found);
+    }
     let allowed = match statement.kind {
         StmtKind::Fn(_) => Flags::AMBIENT | Flags::ASYNC,
         StmtKind::Class(_) => Flags::AMBIENT | Flags::ABSTRACT,
@@ -1023,6 +1082,110 @@ pub(super) fn declaration(f: &mut FileBuilder, statement: StmtId, now: u32) {
         };
         errors.push(noticed_at(found, now));
     });
+}
+
+/// What is wrong with the decorators among the modifiers `written` of `statement`.
+fn misplaced_decorator(
+    f: &FileBuilder,
+    src: &[u8],
+    statement: &Stmt,
+    written: &[Modifier],
+) -> Option<Diagnostic> {
+    let end_of = |it: &Modifier| match it.kind {
+        ModifierKind::Decorator(e) => outer_span(f, e).map(|it| it.1),
+        ModifierKind::Keyword(_) => None,
+    };
+    let leading = written.iter().map_while(end_of).last()?;
+    if !matches!(statement.kind, StmtKind::Class(_)) {
+        // oxc's parser expects `class`, `export` or a modifier of a class.
+        let at = skip_trivia(src, leading as usize);
+        return Some(fatal(
+            (at as u32, token_end(src, at, false) as u32),
+            "Unexpected token",
+        ));
+    }
+    let after_export = written.iter().skip_while(|it| end_of(it).is_some());
+    let (again, end) = after_export
+        .filter_map(|it| Some((it, end_of(it)?)))
+        .next()?;
+    let message = "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.";
+    Some(error(0, (again.pos, end), message, ""))
+}
+
+/// A declaration that only TypeScript has, or one after `declare`, as the body of an `if`, a loop, a `with` or a label.
+#[cold]
+#[inline(never)]
+pub(super) fn declaration_as_body(f: &mut FileBuilder, statement: StmtId) {
+    let Some(it) = f.stmts.get(statement.idx()) else {
+        return;
+    };
+    let written = f.modifiers.get(it.modifiers.range()).unwrap_or_default();
+    let is_declared = keywords(written).contains(Flags::AMBIENT);
+    let is_var = |list: Span<VarDeclId>| {
+        let first = f.var_decls.get(list.start as usize);
+        first.is_some_and(|it| it.kind == VarKind::Var)
+    };
+    // Every parser of JavaScript has something to say about the others.
+    let is_one = match it.kind {
+        StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Module(_) => true,
+        StmtKind::Enum(_) => !keywords(written).contains(Flags::CONST) || is_declared,
+        StmtKind::Var(list) => is_declared && is_var(list),
+        StmtKind::Fn(_) => is_declared,
+        _ => false,
+    };
+    if is_one {
+        let message = "Declaration cannot appear in a single-statement context";
+        let help = "Wrap this declaration in a block statement";
+        let found = error(0, (it.start, it.loc.end), message, help);
+        f.diagnostics.push(noticed_at(found, it.loc.end));
+    }
+}
+
+/// `import type a = b.c`, from its start to its end.
+#[cold]
+#[inline(never)]
+pub(super) fn type_only_import_alias(errors: &mut Errors, statement: (u32, u32)) {
+    let message = "An import alias cannot use 'import type'";
+    errors.push(noticed_at(error(1392, statement, message, ""), statement.1));
+}
+
+/// `import type a, { b } from "c"`: `name` is the `a`.
+#[cold]
+#[inline(never)]
+pub(super) fn type_only_import_of_both(errors: &mut Errors, src: &[u8], name: u32) {
+    let message =
+        "A type-only import can specify a default import or named bindings, but not both.";
+    let end = token_end(src, name as usize, false) as u32;
+    errors.push(error(1363, (name, end), message, ""));
+}
+
+/// Whose `type` is there twice.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum Specifier {
+    Import,
+    Export,
+}
+
+/// The `type` at `at` of `import type { type a }` or `export type { type a }`.
+#[cold]
+#[inline(never)]
+pub(super) fn type_modifier_twice(errors: &mut Errors, at: u32, of: Specifier) {
+    let (code, message) = match of {
+        Specifier::Import => (
+            2206,
+            "The 'type' modifier cannot be used on a named import when 'import type' is used on its import statement.",
+        ),
+        Specifier::Export => (
+            2207,
+            "The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement.",
+        ),
+    };
+    errors.push(error(
+        code,
+        (at, at + 4),
+        message,
+        "Remove this 'type' modifier",
+    ));
 }
 
 /// The statements `list` of a declaration file: only declarations can be there.
@@ -1065,7 +1228,8 @@ pub(super) fn statements_in_ambient_context(f: &mut FileBuilder, list: IdList<St
         );
         if is_statement && !is_prologue {
             let message = "Statements are not allowed in ambient contexts.";
-            errors.push(error(1036, (it.start, it.loc.end), message, ""));
+            let found = error(1036, (it.start, it.loc.end), message, "");
+            errors.push(noticed_at(found, it.loc.end));
         }
     }
 }
@@ -1144,6 +1308,7 @@ const IMPORT_IN_NAMESPACE: (u32, &str) = (
 pub(super) fn enum_member_name(errors: &mut Errors, src: &[u8], name: (u32, u32)) {
     let key = key_span(src, name);
     let (code, message) = match src.get(key.0 as usize) {
+        Some(b'#') => (0, "Unexpected token"),
         Some(b'0'..=b'9' | b'.') => (2452, "An enum member cannot have a numeric name."),
         Some(b'"' | b'\'') if token_end(src, key.0 as usize, false) as u32 == key.1 => return,
         Some(b'`')
@@ -1220,6 +1385,100 @@ pub(super) fn index_signature_without_type(errors: &mut Errors, brackets: (u32, 
     errors.push(error(1021, brackets, message, ""));
 }
 
+/// The one parameter of an index signature whose `[` is at `bracket`.
+#[cold]
+#[inline(never)]
+pub(super) fn index_signature_parameter(
+    f: &mut FileBuilder,
+    src: &[u8],
+    param: ParamId,
+    bracket: u32,
+) {
+    let (Some(param), errors) = (f.params.get(param.idx()), &mut f.diagnostics) else {
+        return;
+    };
+    let Some(name) = f.pats.get(param.pat.idx()) else {
+        return;
+    };
+    if param.flags.contains(Flags::REST) {
+        return errors.push(fatal((param.pos, param.pos + 3), "Unexpected token"));
+    }
+    if param.pos != name.pos {
+        return errors.push(fatal((name.pos, name.end), "Unexpected token"));
+    }
+    let Some(ty) = f.types.get(param.ty.idx()) else {
+        return;
+    };
+    if param.default.is_some() {
+        let equals = skip_trivia(src, ty.end as usize) as u32;
+        let found = fatal((equals, equals + 1), "Expected `,` or `]` but found `=`");
+        let open = (bracket, bracket + 1);
+        let found = with_labels(found, "`,` or `]` expected", open, "Opened here");
+        return errors.push(noticed_at(found, equals));
+    }
+    // In parentheses oxc takes every type.
+    if src.get(skip_trivia_back(src, ty.pos as usize).wrapping_sub(1)) == Some(&b'(') {
+        return;
+    }
+    errors.push(match ty.kind {
+        TypeNodeKind::Keyword(
+            Keyword::String | Keyword::Number | Keyword::Symbol | Keyword::Any | Keyword::Intrinsic,
+        ) => return,
+        TypeNodeKind::Keyword(_) => {
+            let message = "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.";
+            error(1268, (param.pos, param.loc.end), message, "")
+        }
+        TypeNodeKind::StringLit(_)
+        | TypeNodeKind::NumberLit(_)
+        | TypeNodeKind::BigIntLit { .. }
+        | TypeNodeKind::BoolLit(_) => {
+            let message = "An index signature parameter type cannot be a literal type or generic type. Consider using a mapped object type instead.";
+            error(1337, (ty.pos, ty.end), message, "")
+        }
+        _ => return,
+    });
+}
+
+/// The argument of `import(..)` in a type, which is no string.
+#[cold]
+#[inline(never)]
+pub(super) fn argument_of_import_type(errors: &mut Errors, at: (u32, u32)) {
+    errors.push(error(1141, at, "String literal expected.", ""));
+}
+
+/// An element of the `extends` clause of an interface that is no name.
+#[cold]
+#[inline(never)]
+pub(super) fn interface_extends_expression(errors: &mut Errors, at: (u32, u32)) {
+    let message =
+        "An interface can only extend an identifier/qualified-name with optional type arguments.";
+    errors.push(error(2499, at, message, ""));
+}
+
+/// What declares a type.
+#[derive(Copy, Clone)]
+pub(super) enum TypeName {
+    Class,
+    Interface,
+    Enum,
+    TypeAlias,
+    TypeParameter,
+}
+
+/// The name of a type at `at`, which is the name of a type that TypeScript has itself: `interface string {}`.
+fn reserved_type_name(errors: &mut Errors, src: &[u8], at: (u32, u32), what: TypeName) {
+    let (code, what) = match what {
+        TypeName::Class => (2414, "Class"),
+        TypeName::Interface => (2427, "Interface"),
+        TypeName::Enum => (2431, "Enum"),
+        TypeName::TypeAlias => (2457, "Type alias"),
+        TypeName::TypeParameter => (2368, "Type parameter"),
+    };
+    let name = src.get(at.0 as usize..at.1 as usize).unwrap_or_default();
+    let message = [what.as_bytes(), b" name cannot be '", name, b"'"].concat();
+    errors.push(error_with_text(code, at, &message, ""));
+}
+
 /// `readonly` at `at`, before a type that is neither `T[]` nor `[T]`.
 #[cold]
 #[inline(never)]
@@ -1266,7 +1525,21 @@ pub(super) fn tuple_elements(errors: &mut Errors, elements: &[TupleElem]) {
     }
 }
 
-/// A heritage clause of a class in the wrong place: `extends` after `implements` (1173), or a second `implements` (1175).
+/// A second class in the `extends` clause of a class.
+#[cold]
+#[inline(never)]
+pub(super) fn second_base_class(errors: &mut Errors, at: (u32, u32)) {
+    let help = "Remove the extra base class or use interfaces for multiple inheritance";
+    errors.push(error(
+        1174,
+        at,
+        "Classes can only extend a single class.",
+        help,
+    ));
+}
+
+/// A heritage clause in the wrong place: a second `extends` (1172), `extends` after `implements` (1173), or a second `implements`
+/// (1175).
 /// `implements`: the first such keyword. `keyword`: that of the clause.
 #[cold]
 #[inline(never)]
@@ -1277,6 +1550,7 @@ pub(super) fn misplaced_clause(
     keyword: (u32, u32),
 ) {
     let found = match code {
+        1172 => error(1172, keyword, "'extends' clause already seen", ""),
         1173 => with_labels(
             error(
                 1173,
@@ -1350,6 +1624,8 @@ impl Oddities {
             || member.flags.contains(Flags::DEFINITE)
             || is_ambient && (has_body || member.init.is_some())
             || written.intersects(ACCESSIBILITY) && matches!(member.key, PropKey::Private(_))
+            // It may have a decorator.
+            || lacks_body && !member.modifiers.is_empty()
             || match member.kind {
                 MemberKind::Constructor => {
                     func.is_some_and(|it| !it.type_params.is_empty() || it.ret.is_some())
@@ -1383,6 +1659,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             now: self.prev_end(),
             is_ambient: context & super::ctx::AMBIENT != 0,
             is_in_type: context & super::ctx::TYPE != 0,
+            is_class_member: context & super::ctx::CLASS_MEMBER != 0,
         }
     }
 
@@ -1399,6 +1676,30 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && (self.odd_parameters != odd_parameters
                 || this.is_some()
                 || is_odd_function(signature, body, self.context))
+    }
+
+    /// At the name of a type that is a word of TypeScript.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn check_type_name_like_oxc(&mut self, what: TypeName) {
+        use crate::token::T;
+        let is_reserved = matches!(
+            self.token(),
+            T::Any
+                | T::Unknown
+                | T::Never
+                | T::NumberKeyword
+                | T::BigIntKeyword
+                | T::Boolean
+                | T::StringKeyword
+                | T::Symbol
+                | T::Object
+                | T::Undefined
+        );
+        if is_reserved {
+            let at = (self.lx.start, self.lx.end);
+            reserved_type_name(&mut self.f.diagnostics, self.lx.src, at, what);
+        }
     }
 
     /// After the function `id`. `open_brace`: that of its body.

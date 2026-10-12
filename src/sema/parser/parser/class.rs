@@ -190,7 +190,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if !is_extends && !has_implements {
                 first_implements = keyword;
             }
-            if matches!(misplaced, 1173 | 1175) && self.reports_like_oxc() {
+            if misplaced != 0 && self.reports_like_oxc() {
                 let errors = &mut self.f.diagnostics;
                 oxc::misplaced_clause(errors, misplaced, first_implements, keyword);
             }
@@ -219,6 +219,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                             p.type_arguments_in_no_list();
                         }
                         other_extends.push(extended);
+                        if index > 0 && p.reports_like_oxc() {
+                            let at = (first_token.0, p.prev_end());
+                            oxc::second_base_class(&mut p.f.diagnostics, at);
+                        }
                         if index == 1 && !heritage.has_error {
                             match p.is_ecmascript {
                                 true => p.report(),
@@ -312,6 +316,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // `parseNameOfClassDeclarationOrExpression`
         let (mut name, mut name_pos) = (Atom::NONE, unnamed_at);
         if self.is_binding_identifier() && !self.is_implements_clause() {
+            if self.token() != T::Identifier && self.reports_like_oxc() {
+                self.check_type_name_like_oxc(oxc::TypeName::Class);
+            }
             (name, name_pos) = (self.lx.atom, self.pos());
             self.note_identifier(name, name_pos);
             self.next_after_name();
@@ -521,7 +528,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 .find(is_keyword)
                 .map_or_else(|| self.pos(), |it| it.pos);
             let modifiers = self.take_modifiers(first_modifier);
-            if flags.intersects(!(Flags::READONLY | Flags::STATIC)) && self.reports_like_oxc() {
+            if !modifiers.is_empty() && self.reports_like_oxc() {
                 oxc::index_signature(&mut self.f, modifiers, Flags::READONLY | Flags::STATIC);
             }
             let mut member = self.index_signature(start, flags, modifiers);
@@ -659,6 +666,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 FnKind::Method | FnKind::Constructor => 1144,
                 _ => 1005,
             };
+            self.context |= ctx::CLASS_MEMBER;
             member.func =
                 self.function_rest_or(code, fn_kind, fn_flags, (name, name_pos), start.pos);
         } else {

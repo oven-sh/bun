@@ -2,7 +2,7 @@
 
 use super::declared::Declares;
 use super::stmt::Start;
-use super::{ListKind, Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -564,6 +564,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let declaration = ImportId(self.f.imports.len() as u32);
         let has_clause = identifier.is_some() || matches!(self.token(), T::Asterisk | T::OpenBrace);
         if has_clause && (identifier.is_none() || self.eat(T::Comma)) {
+            if type_only && identifier.is_some() && self.reports_like_oxc() {
+                oxc::type_only_import_of_both(&mut self.f.diagnostics, self.lx.src, default_pos);
+            }
             if self.token() == T::Asterisk {
                 // `parseNamespaceImport`
                 namespace_start = self.pos();
@@ -587,6 +590,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     }
                     if specifier.is_type_only {
                         self.js_error((specifier.start, specifier.end), 8006, b"import...type");
+                        if type_only && self.reports_like_oxc() {
+                            let (errors, at) = (&mut self.f.diagnostics, specifier.start);
+                            oxc::type_modifier_twice(errors, at, oxc::Specifier::Import);
+                        }
                     }
                     self.s.import_specs.push(ImportSpec {
                         start: specifier.start,
@@ -720,6 +727,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ImportEqualsTarget::Entity(entity)
         };
         self.semicolon();
+        if type_only && matches!(target, ImportEqualsTarget::Entity(_)) && self.reports_like_oxc() {
+            let statement = (start.pos, self.prev_end());
+            oxc::type_only_import_alias(&mut self.f.diagnostics, statement);
+        }
         self.note_identifier(name, name_pos);
         self.declare(name, Declares::Import);
         let declaration = self.f.add_import_equals(ImportEquals {
@@ -845,6 +856,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             if specifier.is_type_only {
                 self.js_error((specifier.start, specifier.end), 8006, b"export...type");
+                if type_only && self.reports_like_oxc() {
+                    let (errors, at) = (&mut self.f.diagnostics, specifier.start);
+                    oxc::type_modifier_twice(errors, at, oxc::Specifier::Export);
+                }
             }
             self.s.export_specs.push(ExportSpec {
                 start: specifier.start,

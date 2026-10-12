@@ -38,6 +38,18 @@ const plugin = `
       "own-class": { create: () => ({ Identifier() { throw new AllowanceError("no file"); } }) },
       "two-lines": { create: () => ({ Identifier() { throw new Error("line one\\nline two"); } }) },
       "not-an-error": { create: () => ({ Identifier() { throw "just a string"; } }) },
+      ...Object.fromEntries(
+        Object.entries({
+          error: () => new Error("real error"),
+          "type-error": () => new TypeError("real type error"),
+          "empty-message": () => new Error(""),
+          string: () => "just a string",
+          number: () => 5,
+          symbol: () => Symbol("s"),
+          undefined: () => undefined,
+          null: () => null,
+        }).map(([name, value]) => ["create-throws-" + name, { create() { throw value(); } }]),
+      ),
       fine: { create: context => ({ DebuggerStatement: node => context.report({ node, message: "fine saw a debugger" }) }) },
     },
   };
@@ -130,6 +142,24 @@ describe.concurrent("with an oxlint config", () => {
     });
   });
 
+  // import/no-cycle makes `bun lint` look at these files a second time, when it knows all of them.
+  const cycle = (other: string) =>
+    `import { it as other } from "./${other}";\nexport const it = (\n  <b c={other}>\n    <e />\n  </b>\n);\n`;
+  const cycles = (...names: string[]) => names.map(it => `${it} warning import(no-cycle): Dependency cycle detected`);
+
+  test("the error of a JavaScript rule stays when a rule about several files is on too", async () => {
+    const config = oxlintrc(
+      { "import/no-cycle": "warn", "mini/in-listener": "warn" },
+      { plugins: ["import"], jsPlugins: ["./plugin.mjs"] },
+    );
+    const project = { "plugin.mjs": plugin, "a.jsx": cycle("b.jsx"), "b.jsx": cycle("a.jsx"), ...config };
+    const result = await lint(project, ["-f", "json", "a.jsx", "b.jsx"]);
+    expect(diagnostics(result)).toEqual(
+      [...["a.jsx", "b.jsx"].map(it => failed(it, missing)), ...cycles("a.jsx", "b.jsx")].sort(),
+    );
+    expect(result.exitCode).toBe(1);
+  });
+
   // eslint-plugin-react's rule calls `" ".repeat(-1)` for every element here, and V8 throws this for it. oxlint doesn't have the
   // rule itself, so it can only run it as a JavaScript plugin's rule, like `mini/range-error` above.
   describe("a native rule that throws", () => {
@@ -157,6 +187,18 @@ describe.concurrent("with an oxlint config", () => {
     ])("with %j", async (flags, hasWarnings) => {
       const result = await lint(project("warn"), ["-f", "json", ...flags, "a.jsx"]);
       expect(diagnostics(result)).toEqual([failed("a.jsx", rangeError), ...(hasWarnings ? debuggers("a.jsx") : [])]);
+      expect(result.exitCode).toBe(1);
+    });
+
+    test("the error stays when a rule about several files is on too", async () => {
+      const config = oxlintrc(
+        { "import/no-cycle": "warn", "react/jsx-indent": ["warn", -1] },
+        { plugins: ["import", "react"] },
+      );
+      const result = await lint({ "a.jsx": cycle("b.jsx"), "b.jsx": cycle("a.jsx"), ...config }, ["-f", "json"]);
+      expect(diagnostics(result)).toEqual(
+        [...["a.jsx", "b.jsx"].map(it => failed(it, rangeError)), ...cycles("a.jsx", "b.jsx")].sort(),
+      );
       expect(result.exitCode).toBe(1);
     });
 
@@ -190,12 +232,30 @@ describe.concurrent("with an ESLint config", () => {
     `,
   });
 
-  // What ESLint 10.12 prints after "Oops! Something went wrong!" and before the stack.
-  test.each(["warn", "error"])("a JavaScript rule set to %s that throws ends the run", async severity => {
+  // All of this is what ESLint 10.12 prints after "Oops! Something went wrong!" and before the stack.
+  test.each(["warn", "error"])("a JavaScript rule set to %s that throws in a listener ends the run", async severity => {
     const { stdout, stderr, exitCode } = await lint({ ...files, ...config("in-listener", severity) }, names);
     expect(stderr).toContain(
       `rror: allowance file 'allow.json' is missing\nOccurred while linting <dir>/a.js:1\nRule: "mini/in-listener"\n`,
     );
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+  });
+
+  const loading = (name: string) => `Error while loading rule 'mini/create-throws-${name}': `;
+  test.each([
+    ["error", loading("error") + "real error"],
+    ["type-error", loading("type-error") + "real type error"],
+    ["empty-message", loading("empty-message")],
+    // ESLint changes the message of what it has caught, and these have none to change.
+    ["string", "Cannot create property 'message' on string 'just a string'"],
+    ["number", "Cannot create property 'message' on number '5'"],
+    ["symbol", "Cannot create property 'message' on symbol 'Symbol(s)'"],
+    ["undefined", "Cannot read properties of undefined (reading 'message')"],
+    ["null", "Cannot read properties of null (reading 'message')"],
+  ])("a JavaScript rule that throws in create() ends the run: %s", async (name, said) => {
+    const { stdout, stderr, exitCode } = await lint({ ...files, ...config(`create-throws-${name}`, "warn") }, names);
+    expect(stderr).toContain(`rror: ${said}\nOccurred while linting <dir>/a.js\n`);
+    expect(stderr).not.toContain("Rule:");
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
   });
 });

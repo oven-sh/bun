@@ -3486,7 +3486,8 @@ export default {
         ["listener", "proxy", "from a proxy"],
         ["listener", "revoked", "Proxy has already been revoked. No more operations are allowed to be performed on it"],
         ["listener", "toString", "from toString"],
-        ["create", "bare", "No default value"],
+        // As in ESLint 10.12, which puts the rule into `message`.
+        ["create", "bare", "Error while loading rule 'own/rule': undefined"],
         ["path", "noLoc", "real error"],
         ["fix", "getter", "2"],
         ["filter", "bare", "No default value"],

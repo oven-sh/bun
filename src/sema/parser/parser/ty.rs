@@ -1177,6 +1177,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let at = (start, self.prev_end());
             self.flag(DiagnosticKind::Checker, not_entity_name, at, &[]);
         }
+        if is_optional_chain && not_entity_name == 2499 && self.reports_like_oxc() {
+            let at = (start, self.prev_end());
+            oxc::interface_extends_expression(&mut self.f.diagnostics, at);
+        }
         let mut args = IdList::EMPTY;
         if self.token() == T::LessThan {
             args = self.type_arguments_checked_if(is_checked);
@@ -1296,6 +1300,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.flag(DiagnosticKind::Grammar, 1172, (keyword.0, 0), &[]);
                 }
             }
+            if is_extends && has_extends && self.reports_like_oxc() {
+                oxc::misplaced_clause(&mut self.f.diagnostics, 1172, keyword, keyword);
+            }
             has_extends |= is_extends;
             if !is_extends && self.reports_like_oxc() {
                 oxc::interface_implements(&mut self.f.diagnostics, keyword);
@@ -1306,6 +1313,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let (count, comma) = self.heritage_elements(|p, _| {
                 let first_token = (p.lx.start, p.lx.end);
                 let ty = p.heritage_type(is_first_extends, 2499);
+                let is_name = |it: &TypeNode| !matches!(it.kind, TypeNodeKind::Heritage { .. });
+                if is_extends
+                    && p.reports_like_oxc()
+                    && !p.f.types.get(ty.idx()).is_some_and(is_name)
+                {
+                    let at = (first_token.0, p.prev_end());
+                    oxc::interface_extends_expression(&mut p.f.diagnostics, at);
+                }
                 p.s.ids.push(ty.0);
                 element_error = element_error.or_else(|| p.import_with_type_arguments(first_token));
             });
@@ -1443,7 +1458,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         // `checkImportType` does not look at the list.
         let args = match argument.is_none() {
-            true => self.type_arguments_of_type_reference(false),
+            true => self.type_arguments_of_type_reference(self.reports_like_oxc()),
             false => {
                 (spec, mode) = (Atom::NONE, ResolutionMode::None);
                 self.argument_in_place_of_type_arguments(argument)
@@ -1485,6 +1500,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let at = (start, self.prev_end());
         self.flag(DiagnosticKind::Checker, 1141, at, &[]);
+        if self.reports_like_oxc() {
+            oxc::argument_of_import_type(&mut self.f.diagnostics, at);
+        }
         argument
     }
 
@@ -1988,6 +2006,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.context = saved;
         self.type_member_semicolon();
         self.check_index_signature_parameters(params, comma, (start.pos, self.prev_end()));
+        if params.len == 1 && self.reports_like_oxc() {
+            oxc::index_signature_parameter(&mut self.f, self.lx.src, params.at(0), bracket);
+        }
         let func = self.f.add_fn(Func {
             kind: FnKind::IndexSignature,
             flags,
@@ -2216,6 +2237,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         flags: Flags,
     ) -> StmtId {
         self.next();
+        if self.token() != T::Identifier && self.reports_like_oxc() {
+            self.check_type_name_like_oxc(oxc::TypeName::Interface);
+        }
         let (name, name_pos) = self.identifier();
         self.declare(name, Declares::Interface);
         let saved = self.enter_context(ctx::TYPE, 0);
@@ -2250,6 +2274,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // After `declare type` a line break is possible, and an error.
         if self.newline_before() {
             self.error_and_go_on(1142, self.range_of_token(), &[]);
+        }
+        if self.token() != T::Identifier && self.reports_like_oxc() {
+            self.check_type_name_like_oxc(oxc::TypeName::TypeAlias);
         }
         let (name, name_pos) = self.identifier();
         self.declare(name, Declares::Alias);

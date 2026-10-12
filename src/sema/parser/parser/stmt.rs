@@ -202,7 +202,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             Some(StmtKind::Var(_) | StmtKind::Fn(_) | StmtKind::Class(_)) => {
                 self.f.rare_syntax |= rare::DECLARATION_AS_BODY;
+                if self.reports_like_oxc() {
+                    oxc::declaration_as_body(&mut self.f, statement);
+                }
             }
+            Some(
+                StmtKind::Interface(_)
+                | StmtKind::TypeAlias(_)
+                | StmtKind::Enum(_)
+                | StmtKind::Module(_),
+            ) if self.reports_like_oxc() => oxc::declaration_as_body(&mut self.f, statement),
             _ => {}
         }
         statement
@@ -515,6 +524,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn declaration(&mut self) -> StmtId {
         let start = self.start();
         let base = self.s.modifiers.len();
+        let is_decorated = self.token() == T::At;
         // acorn stops here, whatever is wrong further on.
         if GENERAL && self.lx.is_script && matches!(self.token(), T::Import | T::Export) {
             self.error_at_token(1128, &[]);
@@ -560,9 +570,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let statement = self.declaration_worker(start, base, flags);
         self.context = saved;
-        if flags.intersects(!(Flags::EXPORT | Flags::DEFAULT)) && self.reports_like_oxc() {
+        if (is_decorated || flags.intersects(!(Flags::EXPORT | Flags::DEFAULT)))
+            && self.reports_like_oxc()
+        {
             let now = self.prev_end();
-            oxc::declaration(&mut self.f, statement, now);
+            oxc::declaration(&mut self.f, self.lx.src, statement, now);
         }
         if self.options.is_javascript {
             self.check_js_statement(statement);
@@ -853,6 +865,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseEnumDeclaration`
     fn enum_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         self.next();
+        if self.token() != T::Identifier && self.reports_like_oxc() {
+            self.check_type_name_like_oxc(oxc::TypeName::Enum);
+        }
         let (name, name_pos) = match self.is_identifier() {
             true => self.identifier(),
             false => self.missing_name(),
@@ -877,7 +892,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let member = self.start();
             // The checker reports a number, a computed name and so on.
             let bigint = (self.token() == T::BigInt).then(|| self.lx.text());
-            let is_odd = matches!(self.token(), T::OpenBracket | T::Number | T::BigInt);
+            let is_odd = matches!(
+                self.token(),
+                T::OpenBracket | T::Number | T::BigInt | T::PrivateIdentifier
+            );
             let (mut key, mut name_kind, _) = self.property_name();
             if is_odd && self.reports_like_oxc() {
                 let name = (member.pos, self.prev_end());

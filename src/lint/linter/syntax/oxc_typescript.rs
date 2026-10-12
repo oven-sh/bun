@@ -8,13 +8,13 @@
 //! Every condition, text and label was measured on oxlint 1.87.
 
 use super::{Stage, SyntaxError};
-use crate::ast::{File, Handle, Node, Stmt, TypeNode, TypeParam};
+use crate::ast::{Expr, File, Handle, Node, Stmt, TypeNode, TypeParam};
 use crate::span::Span;
-use crate::tokens::token_len;
-use bun_sema::bind::Parent;
+use crate::tokens::{skip_trivia, token_len};
+use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::hir::{
-    self, Diagnostic, DiagnosticKind, Flags, FnKind, JSDocTypeKind, ModifierKind, ModuleName,
-    StmtKind, TypeNodeKind, rare,
+    self, Diagnostic, DiagnosticKind, ExprKind, Flags, FnKind, JSDocTypeKind, ModifierKind,
+    ModuleName, StmtKind, TypeNodeKind, rare,
 };
 use std::borrow::Cow;
 
@@ -31,12 +31,12 @@ fn text_of(it: &Diagnostic, index: usize) -> Cow<'static, str> {
 }
 
 /// An error that the parser has written down for oxc.
-fn of_parser(it: &Diagnostic) -> Option<SyntaxError> {
+fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
     let stage = match it.kind {
         DiagnosticKind::Oxc => Stage::Parser,
         DiagnosticKind::OxcFatal => Stage::Fatal,
         DiagnosticKind::OxcSemantic => Stage::Semantic,
-        DiagnosticKind::Grammar => return of_grammar(it),
+        DiagnosticKind::Grammar => return of_grammar(file, it),
         _ => return None,
     };
     let message = it.args.first().map_or_else(Vec::new, |it| it.to_vec());
@@ -54,34 +54,152 @@ fn of_parser(it: &Diagnostic) -> Option<SyntaxError> {
     Some(error)
 }
 
-/// An error that TypeScript's parser notes for the checker, where oxc's parser reports the same code.
-fn of_grammar(it: &Diagnostic) -> Option<SyntaxError> {
-    let (code, message, help) = match it.code {
-        1019 => (
-            1019,
-            "An index signature parameter cannot have a question mark.",
-            "",
-        ),
-        1025 => (
-            0,
-            "Index signature declarations may not have a trailing comma.",
-            "Remove the trailing comma here",
-        ),
-        1099 => (1099, "Type argument list cannot be empty.", ""),
-        _ => return None,
+/// From the `[` before `inside` to the `]` that closes it.
+fn brackets_around<'a>(file: &'a File<'a>, inside: u32) -> Span {
+    let text = file.text();
+    let open = file.end_of_token_before(inside).saturating_sub(1);
+    let (mut at, mut depth) = (inside, 1u32);
+    while depth > 0 && (at as usize) < text.len() {
+        match text[at as usize] {
+            b'[' | b'(' | b'{' => depth += 1,
+            b']' | b')' | b'}' => depth -= 1,
+            _ => {}
+        }
+        let after = at + token_len(&text[at as usize..]).max(1) as u32;
+        at = match depth {
+            0 => after,
+            _ => skip_trivia(text, after),
+        };
+    }
+    Span::new(open, at)
+}
+
+/// An error that TypeScript's parser notes for the checker, if oxc's parser has one for the same code. Each was tried. oxc
+/// takes `let a: unique number` (1005), `A<T,>` (1009), `import.source("a")` (18061) and `Array<?>` (8020).
+fn of_grammar<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
+    if file.is_in_jsdoc(it.start) {
+        return None;
+    }
+    let (hir, text) = (&file.hir, file.text());
+    let token_at = |at: u32| {
+        let rest = text.get(at as usize..).unwrap_or_default();
+        Span::new(at, at + token_len(rest) as u32)
     };
-    // 0: the token there, which is one character.
+    // 0: the token there.
     let span = match it.end {
-        0 => Span::new(it.start, it.start + 1),
+        0 => token_at(it.start),
         _ => span_of(it),
     };
-    let error = SyntaxError::of_oxc(span, message.as_bytes().to_vec());
-    Some(
-        error
-            .code(code)
-            .help(Cow::Borrowed(help))
-            .stage(Stage::Parser),
-    )
+    let unexpected = |at: u32| error(0, token_at(at), "Unexpected token", Stage::Fatal);
+    let is_typescript = !file.is_javascript();
+    let comma = Cow::Borrowed("Remove the trailing comma here");
+    Some(match it.code {
+        1013 => {
+            let message = "A rest parameter or binding pattern may not have a trailing comma.";
+            error(0, span, message, Stage::Parser).help(comma)
+        }
+        1025 if is_typescript => {
+            let message = "Index signature declarations may not have a trailing comma.";
+            error(0, span, message, Stage::Parser).help(comma)
+        }
+        // `[]`
+        1096 if it.end != 0 => match text.get(it.start as usize) {
+            Some(b'[') => unexpected(skip_trivia(text, it.start + 1)),
+            _ => unexpected(it.start),
+        },
+        1096 => {
+            let message = "An index signature must have exactly one parameter.";
+            error(
+                1096,
+                brackets_around(file, it.start),
+                message,
+                Stage::Parser,
+            )
+        }
+        // In the head of a class it has no length. oxc's parser goes on to the `{`, and takes it for an object after `extends`.
+        1097 if it.end == Diagnostic::NO_LENGTH => unexpected(skip_trivia(text, it.start)),
+        1097 => {
+            let keyword = Span::new(it.start.saturating_sub(7), it.start);
+            error(
+                1097,
+                keyword,
+                "'extends' list cannot be empty.",
+                Stage::Parser,
+            )
+        }
+        // One for a `switch`, about its first two.
+        1113 => {
+            let index = hir.cases.iter().position(|case| case.pos == it.start)?;
+            let cases = hir.stmts.iter().find_map(|it| match it.kind {
+                StmtKind::Switch { cases, .. } if cases.range().contains(&index) => Some(cases),
+                _ => None,
+            })?;
+            let cases = hir.cases.get(cases.range())?;
+            let mut defaults = cases.iter().filter(|it| it.test.is_none());
+            let (first, second) = (defaults.next()?, defaults.next()?);
+            if second.pos != it.start {
+                return None;
+            }
+            let message =
+                "A 'default' clause cannot appear more than once in a 'switch' statement.";
+            error(
+                1113,
+                Span::new(first.pos, first.end),
+                message,
+                Stage::Parser,
+            )
+            .says(Cow::Borrowed("First 'default' clause is here."))
+            .and(
+                Span::new(second.pos, second.end),
+                Cow::Borrowed("Another 'default' clause cannot appear here."),
+            )
+        }
+        // The body of an accessor in a type.
+        1183 => {
+            let message =
+                "Expected a semicolon or an implicit semicolon after a statement, but found none";
+            let at = Span::empty(file.end_of_token_before(it.start));
+            error(0, at, message, Stage::Fatal)
+                .help(Cow::Borrowed("Try inserting a semicolon here"))
+        }
+        8020 => match text.get(it.start as usize) {
+            Some(b'*') => unexpected(it.start),
+            // `A.<B>`
+            Some(b'.') => unexpected(it.start + 1),
+            _ => return None,
+        },
+        // `import.a`. Who looks at `new.target` has `new.a`.
+        17012 => {
+            let dot = file.end_of_token_before(it.start);
+            let keyword = file.end_of_token_before(dot.checked_sub(1)?);
+            if !text.get(..keyword as usize)?.ends_with(b"import") {
+                return None;
+            }
+            let message = "The only valid property accesses on import are `import.meta`, `import.source()`, and `import.defer()`";
+            error(0, Span::new(keyword - 6, span.end), message, Stage::Fatal)
+        }
+        1019 | 1098 | 1099 | 5085 | 5086 | 5087 if is_typescript => {
+            let mut message = Vec::new();
+            bun_sema::messages::format(
+                &mut message,
+                bun_sema::messages::message(it.code)?.1,
+                &it.args,
+            );
+            SyntaxError::of_oxc(span, message)
+                .code(it.code as u16)
+                .stage(Stage::Parser)
+        }
+        1047 | 1051 | 1092 | 1235 | 1326 | 7061 => {
+            let mut message = Vec::new();
+            bun_sema::messages::format(
+                &mut message,
+                bun_sema::messages::message(it.code)?.1,
+                &it.args,
+            );
+            SyntaxError::of_oxc(span, message).stage(Stage::Parser)
+        }
+        _ => return None,
+    })
 }
 
 fn error(code: u16, at: Span, message: &str, stage: Stage) -> SyntaxError {
@@ -276,14 +394,49 @@ fn type_predicates<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
     }
 }
 
-pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
-    if file.is_javascript() {
-        return Vec::new();
+/// `<T>a` and `<T>() => a` in a `.mts` or `.cts` file, where they could be JSX.
+fn reserved_in_mts_and_cts<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
+    let hir = &file.hir;
+    for (i, raw) in hir.exprs.iter().enumerate() {
+        let is_cast = matches!(raw.kind, ExprKind::As { .. } | ExprKind::AsConst(_));
+        if !is_cast || file.expr_in_tree(i).is_none() {
+            continue;
+        }
+        let cast = Expr::from_raw(file, i as u32);
+        if cast.is_angle_bracket_assertion() {
+            let message = "This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.";
+            all.push(error(7059, cast.span(), message, Stage::Parser).noticed_at(cast.span().end));
+        }
     }
+    for (i, raw) in hir.fns.iter().enumerate() {
+        let is_in_tree = (file.bound.fns.get(i)).is_some_and(|it| it.owner != FnOwner::None);
+        if raw.kind != FnKind::Arrow || raw.type_params.len != 1 || !is_in_tree {
+            continue;
+        }
+        let Some(only) = hir.type_params.get(raw.type_params.start as usize) else {
+            continue;
+        };
+        let after = skip_trivia(file.text(), only.end) as usize;
+        if only.constraint.is_none() && file.text().get(after) != Some(&b',') {
+            let name = file.text().get(only.pos as usize..).unwrap_or_default();
+            let name = Span::new(only.pos, only.pos + token_len(name) as u32);
+            let message = "This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma or explicit constraint.";
+            all.push(error(7060, name, message, Stage::Parser));
+        }
+    }
+}
+
+pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let mut all: Vec<SyntaxError> = (file.hir.diagnostics.iter())
-        .filter_map(of_parser)
+        .filter_map(|it| of_parser(file, it))
         .collect();
+    if file.is_javascript() {
+        return all;
+    }
     modules(file, &mut all);
+    if matches!(file.path(), [.., b'.', b'm' | b'c', b't', b's']) {
+        reserved_in_mts_and_cts(file, &mut all);
+    }
     if file.has_rare_syntax(rare::TYPE_PARAMETER_MODIFIER) {
         type_parameters(file, &mut all);
     }

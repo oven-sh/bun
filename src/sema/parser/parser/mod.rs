@@ -52,6 +52,8 @@ pub(crate) mod ctx {
     pub(crate) const NO_RECORD: u32 = 1 << 9;
     /// The node is in the `extends` clause of a conditional type.
     pub(crate) const CONDITIONAL_EXTENDS: u32 = 1 << 10;
+    /// The node is in the signature of a method, an accessor or the constructor of a class.
+    pub(crate) const CLASS_MEMBER: u32 = 1 << 11;
 }
 
 macro_rules! stacks {

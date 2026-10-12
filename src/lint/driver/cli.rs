@@ -442,6 +442,8 @@ pub struct Options {
     pub rule: Vec<(Vec<u8>, Json)>,
     /// bunfig.toml locations for the first entries of `rule`, which came from `[lint.rules]`.
     pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
+    /// The bunfig that was read, as written: `bunfig.toml`, or the path from `bun --config=<path> lint`.
+    pub bunfig: Vec<u8>,
     /// `[[lint.overrides]]` from bunfig.toml. There's no flag for it.
     pub overrides: Vec<Override>,
     /// Only set if there are `overrides`. The command line's options on their own, because its rules and globals apply
@@ -556,6 +558,7 @@ impl Default for Options {
             plugin: Vec::new(),
             rule: Vec::new(),
             rules_of_bunfig: Vec::new(),
+            bunfig: b"bunfig.toml".to_vec(),
             overrides: Vec::new(),
             of_command_line: None,
             fix: false,

@@ -70,6 +70,17 @@ function saidByOxlint(error) {
   return "Unknown error";
 }
 
+// ESLint's `createRuleListeners` catches what `create` throws and puts the rule into its message: the other side does that where
+// the line is "create". `ex.message = ..` throws itself if `ex` is no object, and these are V8's words for it.
+function thrownInCreate(error) {
+  if (error === undefined || error === null)
+    return [null, `Cannot read properties of ${error} (reading 'message')`, null];
+  if (typeof error !== "object" && typeof error !== "function") {
+    return [null, `Cannot create property 'message' on ${typeof error} '${String(error)}'`, null];
+  }
+  return [currentRule.position, messageOf(error, it => `${it.message}`), "create"];
+}
+
 const LOAD = 1;
 const LINT = 2;
 const LOAD_SETTINGS = 3;
@@ -589,6 +600,8 @@ let groups = [];
 // The rule whose code is running, for the message of what it throws.
 let currentRule = null;
 let currentNode = null;
+// `currentRule.rule.create()` is being called.
+let isCreating = false;
 
 function addListeners(entry, listeners) {
   for (const key of Object.keys(listeners)) {
@@ -835,6 +848,7 @@ function reset() {
   groupByKey = new Map();
   groups = [];
   currentRule = currentNode = null;
+  isCreating = false;
   // Some are left if another rule's `create` or `before` threw. They aren't for the next file.
   afterHooks = [];
   resetScopes();
@@ -876,10 +890,12 @@ function lint() {
     // under one of them.
     // ESLint only knows `create`. A rule without it, which ESLint refuses, runs as in oxlint.
     const { create, createOnce } = entry.rule;
+    isCreating = true;
     const listeners =
       typeof createOnce === "function" && (fileSettings.freezes || typeof create !== "function")
         ? listenersOfOnce(entry)
         : entry.rule.create(fileContext.extend(entry.own));
+    isCreating = false;
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
     }
@@ -1002,8 +1018,10 @@ function respond(kind) {
     try {
       line = Number(currentNode.loc.start.line);
     } catch {}
-    const said = fileSettings?.freezes ? saidByOxlint(error) : messageOf(error);
-    return FAILED + JSON.stringify([currentRule?.position ?? null, said, line]);
+    if (fileSettings?.freezes)
+      return FAILED + JSON.stringify([currentRule?.position ?? null, saidByOxlint(error), line]);
+    if (isCreating) return FAILED + JSON.stringify(thrownInCreate(error));
+    return FAILED + JSON.stringify([currentRule?.position ?? null, messageOf(error), line]);
   } finally {
     reset();
   }

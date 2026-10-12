@@ -696,7 +696,7 @@ impl<S: RuleSet> Linter<S> {
         if let Some(again) = options.again {
             running.retain(|it| it.entry.meta.needs_modules);
             let is_of_another_rule = |it: &&LintMessage| {
-                it.message_id.is_some()
+                (it.message_id.is_some() || is_thrown_error(it))
                     && !matches!(&it.rule_id, Some(RuleId::Known(meta)) if meta.needs_modules)
             };
             let previous = (again.previous.messages.iter()).chain(&again.previous.suppressed);
@@ -817,13 +817,19 @@ impl<S: RuleSet> Linter<S> {
             let id = ran(thrown.rule as usize).map_or_else(Vec::new, |it| it.id().to_vec());
             let error = ThrownError {
                 said: &said,
-                line: thrown.at.map(|at| file.line_of(at)),
+                at: match thrown.at {
+                    Some(at) => js_plugin::ThrownAt::Line(file.line_of(at)),
+                    None => js_plugin::ThrownAt::Unknown,
+                },
                 rule: thrown.at.map(|_| &id[..]),
             };
             match error.outcome(file.path(), config) {
                 Ok(problem) => {
                     diagnostics.retain(|it| it.rule != thrown.rule);
-                    problems.push(problem);
+                    // oxlint stops at the first error, so a file has one at most.
+                    if !problems.iter().any(is_thrown_error) {
+                        problems.push(problem);
+                    }
                 }
                 Err(thrown) => {
                     return LintResult {
@@ -1144,18 +1150,22 @@ fn js_failure(
 ) -> Result<LintMessage, Vec<u8>> {
     let error = ThrownError {
         said: &failure.message,
-        line: failure.line,
+        at: failure.at,
         rule: rule.map(|it| &it.configured.rule.id[..]),
     };
     error.outcome(path, config)
+}
+
+/// Whether `problem` is what [`ThrownError::outcome`] makes for oxlint. Every other fatal problem is at a place in the file.
+fn is_thrown_error(problem: &LintMessage) -> bool {
+    problem.is_fatal && problem.line == 0
 }
 
 /// An error that a rule has thrown, whether the rule is JavaScript or calls [`Cx::throw`](crate::context::Cx::throw).
 struct ThrownError<'e> {
     /// The error as the tool prints it, without the stack.
     said: &'e [u8],
-    /// The line of the node that was being visited, if there was one and its line could be read.
-    line: Option<u32>,
+    at: js_plugin::ThrownAt,
     /// ESLint's `ruleId`
     rule: Option<&'e [u8]>,
 }
@@ -1166,7 +1176,16 @@ impl ThrownError<'_> {
     fn outcome(&self, path: &[u8], config: &ResolvedConfig) -> Result<LintMessage, Vec<u8>> {
         if !config.prefers_typescript_rules {
             let occurred: &[u8] = b"\nOccurred while linting ";
-            let line = (self.line).map_or_else(String::new, |line| format!(":{line}"));
+            let line = match self.at {
+                // ESLint's `createRuleListeners` names the rule in the message, and then there's no line for it.
+                js_plugin::ThrownAt::Create => {
+                    let (loading, rule): (&[u8], _) = (b"Error while loading rule '", self.rule);
+                    let rule = rule.unwrap_or_default();
+                    return Err([loading, rule, b"': ", self.said, occurred, path].concat());
+                }
+                js_plugin::ThrownAt::Line(line) => format!(":{line}"),
+                js_plugin::ThrownAt::Unknown => String::new(),
+            };
             let named = (self.rule).map(|rule| [b"\nRule: \"", rule, b"\""].concat());
             let named = named.unwrap_or_default();
             return Err([self.said, occurred, path, line.as_bytes(), &named].concat());

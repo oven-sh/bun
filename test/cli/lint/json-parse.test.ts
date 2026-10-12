@@ -56,10 +56,12 @@ async function readAsPackageJson(texts: string[]) {
 
 // Deep enough that anything that recurses once per level overflows an 8 MB stack.
 const depth = 100_000;
+// `String.prototype.repeat` is very slow in debug builds of JavaScriptCore.
+const repeat = (unit: string, count: number) => Buffer.alloc(count * unit.length, unit).toString();
 const nested = {
-  arrays: "[".repeat(depth) + "]".repeat(depth),
-  objects: '{"a":'.repeat(depth) + "1" + "}".repeat(depth),
-  both: '[{"a":'.repeat(depth / 2) + "1" + "}]".repeat(depth / 2),
+  arrays: repeat("[", depth) + repeat("]", depth),
+  objects: repeat('{"a":', depth) + "1" + repeat("}", depth),
+  both: repeat('[{"a":', depth / 2) + "1" + repeat("}]", depth / 2),
 };
 
 describe.concurrent("JSON files that rules read", () => {
@@ -158,6 +160,11 @@ describe.concurrent("JSON files that rules read", () => {
     expect(said).toEqual([[unlisted], [unlisted]]);
   });
 
+  test("an object with 100,000 names is read as fast as any other text of that size", async () => {
+    const names = Array.from({ length: 100_000 }, (_, i) => `"package-${i}":"1"`);
+    expect(await readAsPackageJson([`{"dependencies":{${names.join(",")},"listed":"1"}}`])).toEqual([[unlisted]]);
+  });
+
   test("the last value of a repeated name counts", async () => {
     const others = Array.from({ length: 40 }, (_, i) => `"name-${i}":${i}`).join(",");
     const first = `"dependencies":{"unlisted":"1"}`;
@@ -187,15 +194,15 @@ describe.concurrent("JSON files that rules read", () => {
 
   test("errors in deeply nested text have V8's messages and positions", async () => {
     const texts: [text: string, message: string][] = [
-      ["[".repeat(depth), "Unexpected end of JSON input"],
-      ['{"a":'.repeat(depth), "Unexpected end of JSON input"],
+      [repeat("[", depth), "Unexpected end of JSON input"],
+      [repeat('{"a":', depth), "Unexpected end of JSON input"],
       [
         nested.arrays + "]",
         `Unexpected non-whitespace character after JSON at position ${2 * depth} (line 1 column ${2 * depth + 1})`,
       ],
-      ["[".repeat(depth) + "}", `Unexpected token '}', ..."[[[[[[[[[[}" is not valid JSON`],
+      [repeat("[", depth) + "}", `Unexpected token '}', ..."[[[[[[[[[[}" is not valid JSON`],
       [
-        "[\n".repeat(depth) + "1 2",
+        repeat("[\n", depth) + "1 2",
         `Expected ',' or ']' after array element in JSON at position ${2 * depth + 2} (line ${depth + 1} column 3)`,
       ],
     ];
@@ -268,13 +275,13 @@ describe.concurrent("/* eslint rule: .. */ comments", () => {
   });
 
   test("a schema that refers to itself runs out of stack like Ajv does", async () => {
-    expect(await messages(`mini/recursive: [2, ${"[".repeat(depth)}1${"]".repeat(depth)}]`)).toEqual([
+    expect(await messages(`mini/recursive: [2, ${repeat("[", depth)}1${repeat("]", depth)}]`)).toEqual([
       `mini/recursive: Inline configuration for rule "mini/recursive" is invalid:\n\tMaximum call stack size exceeded\n`,
     ]);
   });
 
   test("errors in deeply nested text have V8's messages and positions", async () => {
-    const texts = ["[".repeat(depth), nested.arrays + "]", '{"a":'.repeat(depth)];
+    const texts = [repeat("[", depth), nested.arrays + "]", repeat('{"a":', depth)];
     const failed = `null: Failed to parse JSON from '"eqeqeq": [2, `;
     expect(await Promise.all(texts.map(it => messages(`eqeqeq: [2, ${it}]`)))).toEqual([
       [

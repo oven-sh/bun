@@ -1612,10 +1612,11 @@ fn run_one(
 
     // `CompileFiles`: the default options of a test, unless it overrides them.
     let defaults = |compiler: &mut Vec<(Vec<u8>, Json)>| {
-        if !compiler.iter().any(|o| o.0 == b"skipDefaultLibCheck") {
-            compiler.push((b"skipDefaultLibCheck".to_vec(), Json::Bool(true)));
+        for name in [&b"skipDefaultLibCheck"[..], b"noErrorTruncation"] {
+            if !compiler.iter().any(|o| o.0 == name) {
+                compiler.push((name.to_vec(), Json::Bool(true)));
+            }
         }
-        compiler.push((b"noErrorTruncation".to_vec(), Json::Bool(true)));
     };
     if let Some(unit) = &config_unit {
         host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());

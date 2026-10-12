@@ -2895,6 +2895,235 @@ describe.concurrent("an .oxlintrc.json", () => {
     ).toEqual([116, 116, 117, 117, 116, 96]);
   });
 
+  // Each config is accepted or rejected as oxlint 1.87 does it. It takes out the comments, has serde_json read the rest, and
+  // fills its structs from that: `null` is only good for an `Option`, and a list of nothing is as good as an empty struct.
+  test("an .oxlintrc.json is read as strictly as oxlint reads it, and no more strictly", async () => {
+    const rejected = [
+      '{"rules":null}',
+      '{"categories":null}',
+      '{"settings":null}',
+      '{"options":null}',
+      '{"env":null}',
+      '{"globals":null}',
+      '{"overrides":null}',
+      '{"extends":null}',
+      '{"ignorePatterns":null}',
+      '{"overrides":[{"files":["*.js"],"rules":null}]}',
+      '{"overrides":[{"files":null}]}',
+      '{"globals":{"a":null}}',
+      '{"settings":[1]}',
+      '{"settings":[{},{},{},{},{},{},{},{}]}',
+      '{"options":[1]}',
+      "{'rules':{}}",
+      '{"rules":{"no-debugger":\'error\'}}',
+      '\ufeff{"rules":{"no-debugger":"error"}}',
+      '{"rules":{"max-lines":["error",{"max":0x10}]}}',
+      '{"rules":{"max-lines":["error",{"max":1.}]}}',
+      '{"rules":{"max-lines":["error",{"max":.5}]}}',
+      '{"rules":{"max-lines":["error",{"max":01}]}}',
+      '{"rules":{"no-debugger":"err\\x6fr"}}',
+      '{"$schema":"\\ud800"}',
+      '\u00a0{"rules":{"no-debugger":"error"}}',
+      '\u000b{"rules":{"no-debugger":"error"}}',
+    ];
+    const accepted = [
+      '{"plugins":null}',
+      '{"jsPlugins":null}',
+      '{"$schema":null}',
+      '{"overrides":[{"files":["*.js"],"env":null}]}',
+      '{"overrides":[{"files":["*.js"],"globals":null}]}',
+      '{"overrides":[{"files":["*.js"],"plugins":null}]}',
+      '{"settings":[]}',
+      '{"settings":[{},{}]}',
+      '{"options":[]}',
+      '{"options":[null]}',
+      '{"options":{"typeAware":null}}',
+      '#!x\n{"rules":{"no-debugger":"error"}}',
+      '{"rules":{"no-debugger":"error"}} # c',
+      '{"rules":{"no-debugger":"error"}} // c',
+      '// c\n{"rules":{"no-debugger":"error"}}',
+      '{"rules":{"no-debugger":"error"},}',
+      '{"rules":{"no-debugger":"err\\u006fr"}}',
+      '{"$schema":"\\/"}',
+    ];
+    const run = async (config: string) => {
+      const { problems, exitCode } = await lint({ ".oxlintrc.json": config, "a.js": "debugger;\n" });
+      return [config, problems.length === 0 && exitCode === 1 ? "rejected" : problems.join()];
+    };
+    expect(await Promise.all([...rejected, ...accepted].map(run))).toEqual([
+      ...rejected.map(config => [config, "rejected"]),
+      ...accepted.map(config => [config, "a.js:1:1 no-debugger"]),
+    ]);
+  });
+
+  // Each row is what oxlint 1.87 reports. As for `JSON.parse`, the last of two values with one key counts.
+  test("of two entries with one key in an .oxlintrc.json the last counts", async () => {
+    const rows: [config: string, found: string[]][] = [
+      [
+        '{"rules":{"no-debugger":"error"},"rules":{"no-debugger":"off"}}',
+        ["2:5 no-unused-vars warning", "3:1 no-unused-expressions warning", "3:4 no-unused-expressions warning"],
+      ],
+      [
+        '{"rules":{"no-debugger":"off"},"rules":{"no-debugger":"error"}}',
+        [
+          "1:1 no-debugger error",
+          "2:5 no-unused-vars warning",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-unused-expressions warning",
+        ],
+      ],
+      [
+        '{"rules":{"no-debugger":"error","no-debugger":"off"}}',
+        ["2:5 no-unused-vars warning", "3:1 no-unused-expressions warning", "3:4 no-unused-expressions warning"],
+      ],
+      [
+        '{"rules":{"no-debugger":"off","no-debugger":"error"}}',
+        [
+          "1:1 no-debugger error",
+          "2:5 no-unused-vars warning",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-unused-expressions warning",
+        ],
+      ],
+      [
+        '{"rules":{"no-debugger":"error"},"rules":{"no-var":"error"}}',
+        [
+          "1:1 no-debugger warning",
+          "2:1 no-var error",
+          "2:5 no-unused-vars warning",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-unused-expressions warning",
+        ],
+      ],
+      [
+        '{"categories":{"correctness":"off"},"categories":{"correctness":"error"}}',
+        [
+          "1:1 no-debugger error",
+          "2:5 no-unused-vars error",
+          "3:1 no-unused-expressions error",
+          "3:4 no-unused-expressions error",
+        ],
+      ],
+      ['{"categories":{"correctness":"error","correctness":"off"}}', []],
+      [
+        '{"plugins":["unicorn"],"plugins":[],"rules":{"unicorn/no-null":"error"}}',
+        [
+          "1:1 no-debugger warning",
+          "2:5 no-unused-vars warning",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-unused-expressions warning",
+        ],
+      ],
+      [
+        '{"plugins":[],"plugins":["unicorn"],"rules":{"unicorn/no-null":"error"}}',
+        [
+          "1:1 no-debugger warning",
+          "2:5 no-unused-vars warning",
+          "2:9 no-null error",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-unused-expressions warning",
+        ],
+      ],
+      [
+        '{"overrides":[{"files":["*.js"],"rules":{"no-debugger":"off"}}],"overrides":[]}',
+        [
+          "1:1 no-debugger warning",
+          "2:5 no-unused-vars warning",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-unused-expressions warning",
+        ],
+      ],
+      [
+        '{"overrides":[],"overrides":[{"files":["*.js"],"rules":{"no-debugger":"off"}}]}',
+        ["2:5 no-unused-vars warning", "3:1 no-unused-expressions warning", "3:4 no-unused-expressions warning"],
+      ],
+      [
+        '{"overrides":[{"files":["*.ts"],"files":["*.js"],"rules":{"no-debugger":"off"}}]}',
+        ["2:5 no-unused-vars warning", "3:1 no-unused-expressions warning", "3:4 no-unused-expressions warning"],
+      ],
+      [
+        '{"globals":{"a":"off","a":"readonly"},"rules":{"no-undef":"error"}}',
+        [
+          "1:1 no-debugger warning",
+          "2:5 no-unused-vars warning",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-undef error",
+          "3:4 no-unused-expressions warning",
+          "4:1 no-undef error",
+          "4:17 no-undef error",
+        ],
+      ],
+      [
+        '{"globals":{"a":"readonly"},"globals":{},"rules":{"no-undef":"error"}}',
+        [
+          "1:1 no-debugger warning",
+          "2:5 no-unused-vars warning",
+          "3:1 no-undef error",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-undef error",
+          "3:4 no-unused-expressions warning",
+          "4:1 no-undef error",
+          "4:17 no-undef error",
+        ],
+      ],
+      [
+        '{"env":{"browser":true,"browser":false},"rules":{"no-undef":"error"}}',
+        [
+          "1:1 no-debugger warning",
+          "2:5 no-unused-vars warning",
+          "3:1 no-undef error",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-undef error",
+          "3:4 no-unused-expressions warning",
+          "4:1 no-undef error",
+          "4:17 no-undef error",
+        ],
+      ],
+      [
+        '{"rules":{"no-console":["error",{"allow":["log"],"allow":["warn"]}]}}',
+        [
+          "1:1 no-debugger warning",
+          "2:5 no-unused-vars warning",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-unused-expressions warning",
+          "4:1 no-console error",
+        ],
+      ],
+      [
+        '{"rules":{"eslint/no-debugger":"off","no-debugger":"error"}}',
+        [
+          "1:1 no-debugger error",
+          "2:5 no-unused-vars warning",
+          "3:1 no-unused-expressions warning",
+          "3:4 no-unused-expressions warning",
+        ],
+      ],
+      [
+        '{"rules":{"no-debugger":"error","eslint/no-debugger":"off"}}',
+        ["2:5 no-unused-vars warning", "3:1 no-unused-expressions warning", "3:4 no-unused-expressions warning"],
+      ],
+    ];
+    const text = "debugger;\nvar v = null;\na; window;\nconsole.log(1); console.warn(2);\n";
+    const nested = rows.flatMap(([config], i) => [
+      [`d${i}/.oxlintrc.json`, config],
+      [`d${i}/a.js`, text],
+    ]);
+    const { raw } = await lint({ ".oxlintrc.json": "{}", ...Object.fromEntries(nested) });
+    type Message = { ruleId: string; line: number; column: number; severity: number };
+    const results: { filePath: string; messages: Message[] }[] = JSON.parse(raw).results;
+    const found = Object.fromEntries(
+      results.map(({ filePath, messages }) => [
+        filePath.split(/[\\/]/).at(-2),
+        messages
+          .map(
+            it => `${it.line}:${it.column} ${it.ruleId.split("/").at(-1)} ${["off", "warning", "error"][it.severity]}`,
+          )
+          .sort(),
+      ]),
+    );
+    expect(found).toEqual(Object.fromEntries(rows.map(([, expected], i) => [`d${i}`, [...expected].sort()])));
+  });
+
   test("a comment that disables a rule which does not run on the file is unused, as for oxlint", async () => {
     const { problems } = await lint(
       {
@@ -5047,6 +5276,40 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
     // From a script in such a file oxlint removes what is unused.
     const fixed = await lint(all, ["--report-unused-disable-directives", "--fix-dry-run", "b.vue"]);
     expect(JSON.parse(fixed.raw).results[0].output).toBe(`<script>\n${text.replace(", no-debugger", "")}</script>\n`);
+  });
+
+  // What oxlint 1.87 reports: each of these comments, whole. Its jsdoc rules only look at `/**` comments, so in a file without one
+  // none of them was skipped, and a comment that silences nothing here silences nothing there.
+  test("without a /** comment, comments are unused as for oxlint although rules of jsdoc are on", async () => {
+    const text = [
+      "// oxlint-disable-next-line jsdoc/require-param",
+      "a;",
+      "// eslint-disable-next-line vue/no-dupe-keys, no-debugger",
+      "a;",
+      "// oxlint-disable-next-line",
+      "a;",
+      "// oxlint-disable-next-line foo/no-debugger, no-dupe-keys",
+      "a;",
+      "/* oxlint-disable vue/max-props */",
+      "",
+    ].join("\n");
+    const on = { ...quiet, plugins: ["jsdoc", "vue"], rules: { ...quiet.rules, "jsdoc/require-param": "warn" } };
+    const all = { "a.js": text, "b.vue": `<script>\n${text}</script>\n`, ".oxlintrc.json": JSON.stringify(on) };
+    const { problems } = await lint(all, ["--report-unused-disable-directives", "."]);
+    expect(problems).toEqual([1, 3, 5, 7, 9].flatMap(line => [`a.js:${line}:1 -`, `b.vue:${line + 1}:1 -`]).sort());
+    // oxlint reports the same with these. Here nobody knows what their rules would have reported, and a comment that is called
+    // unused is one that --fix-suggestions removes. So only a name that none of their rules has is reported.
+    const withBlock = { ...all, "a.js": `/** A function. */\n${text}`, "b.vue": "" };
+    const withVue = {
+      ...all,
+      "b.vue": "",
+      ".oxlintrc.json": JSON.stringify({ ...on, rules: { "vue/max-props": "warn" } }),
+    };
+    const [block, vue] = await Promise.all(
+      [withBlock, withVue].map(files => lint(files, ["--report-unused-disable-directives", "a.js"])),
+    );
+    expect(block.problems).toEqual(["a.js:4:47 -", "a.js:8:29 -"]);
+    expect(vue.problems).toEqual(["a.js:3:47 -", "a.js:7:29 -"]);
   });
 
   test("--rules does not list them", async () => {

@@ -224,7 +224,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseFunctionBlock`, at the `{`: the body, and the position of the `{`.
     pub(crate) fn function_block(&mut self, context: u32) -> (FnBody, u32) {
         let open = self.pos();
-        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR;
+        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR | ctx::CLASS_MEMBER;
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
         // Only a block whose `{` is put up with has none.
@@ -287,6 +287,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             // The checker reports the others, which are in the list.
             let flags = flags & (Flags::IN | Flags::OUT | Flags::CONST);
             let (name, pos, start) = if self.is_identifier() {
+                if self.token() != T::Identifier && self.reports_like_oxc() {
+                    self.check_type_name_like_oxc(oxc::TypeName::TypeParameter);
+                }
                 let (name, pos) = (self.lx.atom, self.pos());
                 self.note_identifier(name, pos);
                 self.next_after_name();

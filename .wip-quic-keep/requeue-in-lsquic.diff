@@ -1,0 +1,243 @@
+diff --git a/src/liblsquic/lsquic_full_conn_ietf.c b/src/liblsquic/lsquic_full_conn_ietf.c
+index f54e1a5..df99950 100644
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -406,6 +406,16 @@ static const struct prio_iter_if ext_prio_iter_if = {
+ };
+ 
+ 
++/* proto(requeue): one handed-back DATAGRAM frame. */
++struct dg_unsent
++{
++    struct dg_unsent   *du_next;
++    uint64_t            du_id;
++    unsigned short      du_len;
++    unsigned char       du_data[0];
++};
++
++
+ struct ietf_full_conn
+ {
+     struct lsquic_conn          ifc_conn;
+@@ -536,6 +546,10 @@ struct ietf_full_conn
+      * below are one byte each so that this field adds nothing to the size
+      * of the struct. */
+     uint64_t                    ifc_dg_id;
++    /* proto(requeue): DATAGRAM frames that the send controller took out of
++     * a packet before the send, in id order.  write_datagram frames them
++     * again before it asks on_dg_write for a new one. */
++    struct dg_unsent           *ifc_dg_unsent;
+     unsigned char               ifc_ping_us_override_set;
+     /* bun: the DATAGRAM frame currently being delivered arrived in a 0-RTT
+      * packet (valid only during the on_datagram callback). */
+@@ -2987,7 +3001,7 @@ ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
+                 lsquic_engine_add_conn_to_tickable(conn->ifc_enpub,
+                                                              &conn->ifc_conn);
+         }
+-        else
++        else if (!conn->ifc_dg_unsent)  /* proto(requeue) */
+             conn->ifc_mflags &= ~MF_WANT_DATAGRAM_WRITE;
+         LSQ_DEBUG("turn %s \"want datagram write\" flag",
+                                                     is_want ? "on" : "off");
+@@ -3249,6 +3263,14 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
+         lsquic_malo_put(dce);
+     }
+     lsquic_send_ctl_cleanup(&conn->ifc_send_ctl);
++    {   /* proto(requeue) */
++        struct dg_unsent *du;
++        while ((du = conn->ifc_dg_unsent))
++        {
++            conn->ifc_dg_unsent = du->du_next;
++            free(du);
++        }
++    }
+     for (i = 0; i < N_PNS; ++i)
+         lsquic_rechist_cleanup(&conn->ifc_rechist[i]);
+     lsquic_malo_destroy(conn->ifc_pub.packet_out_malo);
+@@ -8480,15 +8502,66 @@ ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
+ }
+ 
+ 
++/* proto(requeue): the send controller is about to drop a scheduled packet or
++ * to chop its regenerated frames, and the packet holds this DATAGRAM frame.
++ * on_dg_write took the payload out of the application's queue, so the packet
++ * holds the only copy: keep it, in id order, for write_datagram.
++ */
++void
++lsquic_ietf_full_conn_dg_unsent (struct lsquic_conn *lconn, uint64_t dgram_id,
++                                        const void *data, size_t data_sz)
++{
++    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
++    struct dg_unsent *du, **pp;
++
++    du = malloc(sizeof(*du) + data_sz);
++    if (!du)
++    {
++        LSQ_WARN("cannot keep unsent DATAGRAM frame %"PRIu64": malloc failed",
++                                                                    dgram_id);
++        return;
++    }
++    du->du_id = dgram_id;
++    du->du_len = data_sz;
++    memcpy(du->du_data, data, data_sz);
++    for (pp = &conn->ifc_dg_unsent; *pp && (*pp)->du_id <= dgram_id;
++                                                        pp = &(*pp)->du_next)
++        ;
++    du->du_next = *pp;
++    *pp = du;
++    conn->ifc_mflags |= MF_WANT_DATAGRAM_WRITE;
++    LSQ_DEBUG("handed back unsent DATAGRAM frame %"PRIu64" (%zu bytes)",
++                                                        dgram_id, data_sz);
++}
++
++
++/* proto(requeue): gen_datagram_frame callback that writes the first
++ * handed-back frame. */
++static ssize_t
++dg_unsent_write (struct lsquic_conn *lconn, void *buf, size_t sz)
++{
++    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
++    const struct dg_unsent *const du = conn->ifc_dg_unsent;
++
++    if (du->du_len > sz)
++        return -1;
++    memcpy(buf, du->du_data, du->du_len);
++    conn->ifc_dg_id = du->du_id;
++    return du->du_len;
++}
++
++
+ /* Return true if datagram was written, false otherwise */
+ static int
+ write_datagram (struct ietf_full_conn *conn)
+ {
+     struct lsquic_packet_out *packet_out;
++    struct dg_unsent *const du = conn->ifc_dg_unsent;   /* proto(requeue) */
+     size_t need;
+     int w;
+ 
+-    need = conn->ifc_conn.cn_pf->pf_datagram_frame_size(conn->ifc_min_dg_sz);
++    need = conn->ifc_conn.cn_pf->pf_datagram_frame_size(
++                                    du ? du->du_len : conn->ifc_min_dg_sz);
+     packet_out = get_writeable_packet(conn, need);
+     if (!packet_out)
+         return 0;
+@@ -8503,6 +8576,12 @@ write_datagram (struct ietf_full_conn *conn)
+     _Static_assert(sizeof(uintptr_t) >= sizeof(conn->ifc_dg_id),
+                                 "a frame record holds a whole datagram id");
+     conn->ifc_dg_id = 0;
++    if (du)     /* proto(requeue) */
++        w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
++                packet_out->po_data + packet_out->po_data_sz,
++                lsquic_packet_out_avail(packet_out), du->du_len, du->du_len,
++                dg_unsent_write, &conn->ifc_conn);
++    else
+     w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
+             packet_out->po_data + packet_out->po_data_sz,
+             lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
+@@ -8519,6 +8598,13 @@ write_datagram (struct ietf_full_conn *conn)
+         ABORT_ERROR("adding DATAGRAME frame to packet failed: %d", errno);
+         return 0;
+     }
++    if (du)     /* proto(requeue) */
++    {
++        LSQ_DEBUG("framed handed-back DATAGRAM frame %"PRIu64" again, in "
++            "packet #%"PRIu64, du->du_id, packet_out->po_packno);
++        conn->ifc_dg_unsent = du->du_next;
++        free(du);
++    }
+     packet_out->po_regen_sz += w;
+     packet_out->po_frame_types |= QUIC_FTBIT_DATAGRAM;
+     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+diff --git a/src/liblsquic/lsquic_send_ctl.c b/src/liblsquic/lsquic_send_ctl.c
+index de7e6a5..1b31973 100644
+--- a/src/liblsquic/lsquic_send_ctl.c
++++ b/src/liblsquic/lsquic_send_ctl.c
+@@ -1189,6 +1189,51 @@ send_ctl_report_datagrams (struct lsquic_send_ctl *ctl,
+ }
+ 
+ 
++/* proto(requeue): defined in lsquic_full_conn_ietf.c */
++void
++lsquic_ietf_full_conn_dg_unsent (struct lsquic_conn *, uint64_t dgram_id,
++                                        const void *data, size_t data_sz);
++
++
++/* proto(requeue): the packet is about to be dropped from the scheduled queue
++ * or to lose its regenerated frames before it is sent.  on_dg_write took the
++ * payload of each DATAGRAM frame out of the application's queue, so the
++ * packet holds the only copy.  Give each one back to the connection, which
++ * frames it again.  Returns the number of frames handed back.
++ */
++static unsigned
++send_ctl_hand_back_datagrams (struct lsquic_send_ctl *ctl,
++                                        struct lsquic_packet_out *packet_out)
++{
++    struct lsquic_conn *const lconn = ctl->sc_conn_pub->lconn;
++    struct packet_out_frec_iter pofi;
++    struct frame_rec *frec;
++    const void *data;
++    size_t data_sz;
++    unsigned n;
++
++    if (!(packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM)
++            || !(lconn->cn_flags & LSCONN_IETF))
++        return 0;
++
++    n = 0;
++    for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
++                                                frec = lsquic_pofi_next(&pofi))
++        if (QUIC_FRAME_DATAGRAM == frec->fe_frame_type
++            && lconn->cn_pf->pf_parse_datagram_frame(
++                    packet_out->po_data + frec->fe_off, frec->fe_len,
++                    &data, &data_sz) > 0)
++        {
++            lsquic_ietf_full_conn_dg_unsent(lconn, frec->fe_u.data,
++                                                            data, data_sz);
++            ++n;
++        }
++    LSQ_DEBUG("handed back %u DATAGRAM frame%s of packet #%"PRIu64, n,
++        n == 1 ? "" : "s", packet_out->po_packno);
++    return n;
++}
++
++
+ static struct lsquic_packet_out *
+ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
+             lsquic_packet_out_t *packet_out, struct lsquic_packet_out **next)
+@@ -2318,10 +2363,15 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
+ 
+     if (packet_out->po_flags & PO_REPACKNO)
+     {
+-        /* bun: a scheduled packet that gets a new number loses its DATAGRAM
+-         * frames: it is dropped below, or update_for_resending chops them
+-         * out with the other regenerated frames. */
+-        send_ctl_report_datagrams(ctl, packet_out, LSQ_DG_UNSENT);
++        /* proto(requeue): a scheduled packet that gets a new number loses
++         * its DATAGRAM frames: it is dropped below, or update_for_resending
++         * chops them out with the other regenerated frames.  Hand them back
++         * first.  This runs while the engine sends, where
++         * lsquic_engine_add_conn_to_tickable() does nothing, so ask for a
++         * tick through the advisory queue, as the pacer does. */
++        if (send_ctl_hand_back_datagrams(ctl, packet_out))
++            lsquic_engine_add_conn_to_attq(ctl->sc_enpub,
++                ctl->sc_conn_pub->lconn, lsquic_time_now(), AEW_PACER);
+         if (packet_out->po_regen_sz < packet_out->po_data_sz
+             && packet_out->po_frame_types != QUIC_FTBIT_PADDING)
+         {
+@@ -2905,10 +2955,11 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
+             send_ctl_sched_remove(ctl, packet_out);
+             LSQ_DEBUG("Dropping packet #%"PRIu64" from scheduled queue",
+                 packet_out->po_packno);
+-            /* bun: a delayed packet that holds nothing but regenerated
+-             * frames is not sent later, and a DATAGRAM frame counts as
+-             * one (write_datagram adds it to po_regen_sz). */
+-            send_ctl_report_datagrams(ctl, packet_out, LSQ_DG_UNSENT);
++            /* proto(requeue): a delayed packet that holds nothing but
++             * regenerated frames is not sent later, and a DATAGRAM frame
++             * counts as one (write_datagram adds it to po_regen_sz).  Hand
++             * it back first. */
++            (void) send_ctl_hand_back_datagrams(ctl, packet_out);
+             send_ctl_destroy_chain(ctl, packet_out, NULL);
+             send_ctl_destroy_packet(ctl, packet_out);
+             ++dropped;

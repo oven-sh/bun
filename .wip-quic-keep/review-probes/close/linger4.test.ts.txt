@@ -1,0 +1,55 @@
+// Scratch probe (review only, not a repo test): a graceful close() that is
+// applied in the tick in which the RETX alarm rings, while a DATAGRAM packet
+// waits in lsquic's scheduled queue and two lost control packets (RESET_STREAM
+// of destroyed streams) are resent in front of it. No stream is left, so bun
+// applies the close at once.
+import { expect, test } from "bun:test";
+import { CHUNK, kindOf, setup } from "/tmp/cg/harness";
+
+test("close() in the tick where the RETX alarm rings, a DATAGRAM packet waiting", async () => {
+  await using net = await setup({ idle: 40 });
+  const { relay, client } = net;
+  const s1 = await net.stream();
+
+  s1.write(CHUNK);
+
+  await net.warmUp();
+  await net.sleep(Math.max(0, 9500 - net.now()));
+
+  relay.mark("outage");
+  relay.decide = () => "drop";
+  const inOutage = net.send(); // 25
+  s1.stream.destroy(); // one control packet
+  await net.tick();
+  expect(await net.status(inOutage)).toBe("lost"); // the first RTO
+  relay.mark("rto1");
+  net.send(); // 26: framed, waits behind the limit
+  await net.tick();
+  relay.mark("staged");
+  const wait = Number(process.env.WAIT ?? 0);
+  if (wait) await net.sleep(wait);
+
+  // A busy JS turn: the RETX alarm becomes overdue, and no timer runs.
+  const spin = Number(process.env.SPIN ?? 700);
+  const t0 = performance.now();
+  while (performance.now() - t0 < spin) {}
+  relay.mark("close");
+  const t = performance.now();
+  let closedAfter = -1;
+  const closed = client.close();
+  Promise.resolve(closed).then(
+    () => (closedAfter = Math.round(performance.now() - t)),
+    () => (closedAfter = Math.round(performance.now() - t)),
+  );
+  const deadline = performance.now() + 60000;
+  while (closedAfter < 0 && performance.now() < deadline) await net.sleep(5);
+  console.log(
+    "RESULT " +
+      JSON.stringify({
+        closedAfterMs: closedAfter,
+        serverGot: net.received().filter(id => id > 24),
+        statuses: Object.fromEntries(Object.entries(net.statuses()).filter(([id]) => +id > 24)),
+        trace: relay.trace.slice(relay.trace.findIndex(e => e.startsWith("[outage"))).join(" "),
+      }),
+  );
+}, 180000);

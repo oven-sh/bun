@@ -1,0 +1,70 @@
+// Scratch scenario for call A (lsquic_send_ctl_next_packet_to_send, the
+// sc_next_limit == 0 return): a spurious retransmission timeout, then a late
+// ACK for the packets of before the timeout.
+import { expect, test } from "bun:test";
+import { CHUNK, kindOf, setup } from "./harness";
+
+test("A: a late ACK clears the RETX alarm while a DATAGRAM packet waits behind the RTO limit", async () => {
+  await using net = await setup({ idle: 40 });
+  const { relay } = net;
+  const s = await net.stream();
+  await net.warmUp();
+  // The client issues a NEW_CONNECTION_ID per second for its first seconds,
+  // and probes the path MTU. Wait until it is quiet.
+  await net.sleep(Math.max(0, 9500 - net.now()));
+
+  // A delay spike: the path holds every packet.
+  relay.mark("spike");
+  relay.decide = () => "hold";
+  s.write(CHUNK); // stream data: a packet of its own
+  const inSpike = net.send(); // datagram 25: the next packet, DATAGRAM only
+  expect(await net.status(inSpike)).toBe("lost"); // the retransmission timeout
+  await net.tick();
+  relay.mark("after-rto");
+  // The timeout resent the stream data: one of the two packets it allows.
+  net.send(); // 26 is the other one
+  await net.tick();
+  net.send(); // 27 is framed, and waits behind sc_next_limit == 0
+  await net.tick();
+  relay.mark("staged");
+
+  // The spike ends: the two packets of before the timeout arrive late, what
+  // the client sent after them is lost. From here the path is healthy.
+  const held = relay.held.c.splice(0);
+  const original = held.find(p => kindOf(p).startsWith("C"))!;
+  const datagram25 = held.find(p => kindOf(p) === "L")!;
+  expect(held.indexOf(original)).toBeLessThan(held.indexOf(datagram25));
+  relay.decide = () => "pass";
+  for (const p of relay.held.s.splice(0)) relay.forward(p, "s");
+  relay.forward(original, "c");
+  relay.forward(datagram25, "c");
+  relay.mark("late-two-delivered");
+
+  const t = performance.now();
+  const arrived = await net.serverUntil(() => net.received().includes(27), Number(process.env.WAIT1 ?? 15000));
+  console.log("TRACE " + relay.trace.slice(relay.trace.findIndex(e => e.startsWith("[spike"))).join(" "));
+  console.log(
+    "RESULT " +
+      JSON.stringify({
+        datagram27Arrived: arrived,
+        waitedMs: Math.round(performance.now() - t),
+        serverDatagrams: net.received().filter(id => id > 24),
+        serverStreamBytes: net.streamBytes(),
+        statuses: Object.fromEntries(Object.entries(net.statuses()).filter(([id]) => +id > 24)),
+        clientClosed: net.clientClosed() ?? null,
+      }),
+  );
+  // A later datagram and later stream data, on the healthy path.
+  net.send(); // 28
+  s.write(CHUNK);
+  const later = await net.serverUntil(() => net.received().includes(28) && net.streamBytes() >= 2 * CHUNK, Number(process.env.WAIT2 ?? 8000));
+  console.log(
+    "LATER " +
+      JSON.stringify({
+        datagram28AndStreamDataArrived: later,
+        serverDatagrams: net.received().filter(id => id > 24),
+        serverStreamBytes: net.streamBytes(),
+        clientClosed: net.clientClosed() ?? null,
+      }),
+  );
+}, 120000);

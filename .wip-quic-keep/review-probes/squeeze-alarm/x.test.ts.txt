@@ -1,0 +1,120 @@
+// Scratch scenarios for the probe "decide the two squeeze-site alarm calls" (not part of the repo).
+//
+// Both scenarios put two DATAGRAM-only packets in lsquic's scheduled queue while sc_next_limit is 0.
+// bun caps a datagram at 1150 bytes and never sets lsquic's minimum datagram size, so write_datagram()
+// tries the last scheduled packet first and one tick normally frames DATAGRAM frames into one packet only.
+// A pair of datagrams of 1150 and 289 bytes fills a packet of the probed path MTU (1472) to within one
+// byte, and then the next pair starts a packet of its own.
+//
+// MODE=x2 CC=cubic: the two packets (2 x 1471 bytes) are all that waits when the next RTO rings. They fill
+//   the window of 2920 bytes that a cubic timeout leaves, so no lost packet is rescheduled in front:
+//   the call at lsquic_send_ctl.c:3001 is the only one that sets the RETX alarm.
+// MODE=sb: the two packets and a packet of new stream data wait when the next RTO rings: the call at
+//   lsquic_send_ctl.c:2983 (the scan arm) is the only one that sets the RETX alarm.
+// Env: MODE, CC (cubic|bbr|unset), WAIT (ms to wait for the RTO after the one that releases the two
+// packets), WAIT2 (ms to wait for recovery after the outage), HOLD, IDLE (s), FILL, PAIRS, STREAM_NEW.
+import { expect, test } from "bun:test";
+import { kindOf, setup } from "./harness";
+
+const MODE = process.env.MODE ?? "x2";
+const CC = process.env.CC;
+const WAIT = Number(process.env.WAIT ?? 20000);
+const STREAM_NEW = Number(process.env.STREAM_NEW ?? 500);
+// The second datagram of a pair: with the 1150-byte one it fills a packet of the path MTU (1472 after the
+// MTU probe) to within one byte, for a packet number of one or of two bytes.
+const FILL = Number(process.env.FILL ?? 289);
+const PAIRS = Number(process.env.PAIRS ?? 2);
+
+test(
+  MODE,
+  async () => {
+    await using net = await setup({ idle: Number(process.env.IDLE ?? 60), clientOptions: CC ? { cc: CC } : {} });
+    const { relay, client } = net;
+    const s = await net.stream();
+    await net.warmUp();
+    // The client issues a NEW_CONNECTION_ID per second for its first seconds, and probes the path MTU.
+    await net.sleep(Math.max(0, 9500 - net.now()));
+    console.log("MAXDG " + client.maxDatagramSize);
+
+    relay.mark("outage");
+    relay.decide = () => "drop";
+    // Two packets of stream data, each a packet of its own: every RTO resends both, and they use up the
+    // two packets that an RTO allows before any JS runs.
+    s.write(64);
+    await net.tick();
+    s.write(64);
+    await net.tick();
+    const marker = net.send(1);
+    const batch: number[] = [];
+    let staged = false;
+    const stagedAt = Promise.withResolvers<void>();
+    net.hooks.inStatus = (id, status) => {
+      if (id !== marker || status !== "lost" || staged) return;
+      staged = true;
+      relay.mark("rto1-dispatch");
+      // Inside the session's dispatch of this status: one lsquic tick frames all of these.
+      for (let i = 0; i < PAIRS; i++) {
+        batch.push(net.send(1150));
+        batch.push(net.send(FILL));
+      }
+      if (MODE === "sb") s.write(STREAM_NEW);
+      stagedAt.resolve();
+    };
+    await stagedAt.promise;
+    await net.tick();
+    relay.mark("staged");
+
+    // The RTO after this one lets two packets leave. The one after that declares them lost: that is the
+    // signal that a retransmission alarm was set while the rest waited.
+    const firstFour = batch.slice(0, 4);
+    const t = performance.now();
+    const deadline = t + WAIT;
+    while (performance.now() < deadline && !firstFour.every(id => net.statuses()[id])) await net.sleep(50);
+    const declared = firstFour.every(id => net.statuses()[id]);
+    const waitedMs = Math.round(performance.now() - t);
+    // HOLD=1: the outage lasts for the whole of WAIT on every build, so that the builds are compared alike.
+    if (process.env.HOLD) while (performance.now() < deadline) await net.sleep(50);
+    relay.mark(declared ? "declared" : "gave-up");
+    const newStreamPacketSeen = relay.trace.some(e => /^c:C5\d\d/.test(e));
+    console.log("TRACE " + relay.trace.slice(relay.trace.findIndex(e => e.startsWith("[outage"))).join(" "));
+    console.log(
+      "RESULT " +
+        JSON.stringify({
+          mode: MODE,
+          cc: CC ?? "default",
+          batch,
+          statusesOfFirstFourArrived: declared,
+          waitedMs,
+          statuses: Object.fromEntries(batch.map(id => [id, net.statuses()[id] ?? null])),
+          newStreamPacketSeenAtRelay: newStreamPacketSeen,
+          clientClosed: net.clientClosed() ?? null,
+        }),
+    );
+
+    // The outage ends. Does the rest get through?
+    relay.decide = () => "pass";
+    relay.mark("outage-over");
+    const wantStream = 128 + (MODE === "sb" ? STREAM_NEW : 0);
+    const rest = batch.slice(4);
+    const { datagramsSent, datagramsAcknowledged, datagramsLost } = client.stats;
+    console.log("STATS " + JSON.stringify({ sent: String(datagramsSent), acked: String(datagramsAcknowledged), lost: String(datagramsLost) }));
+    const recovered = await net.serverUntil(
+      () => net.streamBytes() >= wantStream && rest.every(id => net.received().includes(id & 0xff)),
+      Number(process.env.WAIT2 ?? 15000),
+    );
+    console.log(
+      "AFTER " +
+        JSON.stringify({
+          recovered,
+          serverStreamBytes: net.streamBytes(),
+          wantStream,
+          serverDatagramsOfBatch: batch.filter(id => net.received().includes(id & 0xff)),
+          statuses: Object.fromEntries(batch.map(id => [id, net.statuses()[id] ?? null])),
+          clientClosed: net.clientClosed() ?? null,
+        }),
+    );
+    console.log("TRACE2 " + relay.trace.slice(relay.trace.findIndex(e => e.startsWith("[outage-over"))).join(" "));
+    expect(typeof recovered).toBe("boolean");
+  },
+  180000,
+);

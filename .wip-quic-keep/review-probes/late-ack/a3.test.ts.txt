@@ -1,0 +1,38 @@
+// Variant of the late-ACK scenario with no datagram waiting: after the late
+// ACK the client writes stream data only. Shows what the alarm rule does not
+// cover (the head packet carries no DATAGRAM frame).
+import { expect, test } from "bun:test";
+import { CHUNK, kindOf, setup } from "./harness";
+
+test("A3: late ACK, then stream data only", async () => {
+  await using net = await setup({ idle: 40 });
+  const { relay } = net;
+  const s = await net.stream();
+  await net.warmUp();
+  await net.sleep(Math.max(0, 9500 - net.now()));
+
+  relay.mark("spike");
+  relay.decide = () => "hold";
+  s.write(CHUNK);
+  const inSpike = net.send(); // 25
+  expect(await net.status(inSpike)).toBe("lost");
+  await net.tick();
+  net.send(); // 26: the second packet that the timeout allows
+  await net.tick();
+  const held = relay.held.c.splice(0);
+  const original = held.find(p => kindOf(p).startsWith("C"))!;
+  const datagram25 = held.find(p => kindOf(p) === "L")!;
+  relay.decide = () => "pass";
+  for (const p of relay.held.s.splice(0)) relay.forward(p, "s");
+  relay.forward(original, "c");
+  relay.forward(datagram25, "c");
+  relay.mark("late-two-delivered");
+  await net.serverUntil(() => net.received().includes(25), 3000);
+  await net.sleep(200);
+  s.write(CHUNK); // new stream data on a healthy path
+  relay.mark("stream-write");
+  const t = performance.now();
+  const arrived = await net.serverUntil(() => net.streamBytes() >= 2 * CHUNK, 8000);
+  console.log("TRACE " + relay.trace.slice(relay.trace.findIndex(e => e.startsWith("[spike"))).join(" "));
+  console.log("RESULT " + JSON.stringify({ newStreamDataArrivedWithin8s: arrived, waitedMs: Math.round(performance.now() - t), serverStreamBytes: net.streamBytes() }));
+}, 120000);

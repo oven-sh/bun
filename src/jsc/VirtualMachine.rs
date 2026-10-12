@@ -2333,6 +2333,40 @@ impl VirtualMachine {
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }
 
+    /// Ends this thread's VM, which is not the main thread's: its exit handlers,
+    /// [`teardown`](Self::teardown), and the storage `init` put on the global heap.
+    /// Returns its exit code.
+    ///
+    /// # Safety
+    /// `this` is this thread's VM, made without a caller's `log`; this thread holds
+    /// its API lock and abandons it; nothing else can reach the VM.
+    pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
+        // SAFETY: fn contract (statement-scoped exclusive access: the handlers run script).
+        let exit_code = unsafe {
+            (*this).is_shutting_down = true;
+            (*this).on_exit();
+            (*this).exit_handler.exit_code
+        };
+        // SAFETY: fn contract.
+        unsafe { Self::teardown(this, Teardown::Worker) };
+        // SAFETY: sole owner; nothing past this point dereferences the VM.
+        unsafe {
+            let console = core::mem::replace(&mut (*this).console, core::ptr::null_mut());
+            if !console.is_null() {
+                bun_core::heap::destroy(console);
+            }
+            if let Some(log) = (*this).log.take() {
+                bun_core::heap::destroy(log.as_ptr());
+            }
+            VMHolder::set_vm(None);
+            // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
+            // `init`, NOT `Box::new` — dealloc the raw storage directly so
+            // field `Drop`s do not re-run on already-`deinit`'d state.
+            std::alloc::dealloc(this.cast::<u8>(), core::alloc::Layout::new::<Self>());
+        }
+        exit_code
+    }
+
     /// Checkpoint + close the sqlite connections *this* VM opened, while it is
     /// alive and no user script will touch them again. Never another VM's: a
     /// worker still running when the main thread exits without joining it owns
@@ -3606,7 +3640,9 @@ pub fn process_fetch_log(
 
     let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
         take(match msg.metadata {
-            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
+            bun_ast::Metadata::Build | bun_ast::Metadata::TypeScript { .. } => {
+                BuildMessage::create(global_this, msg)
+            }
             bun_ast::Metadata::Resolve(_) => {
                 ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
             }
@@ -3940,6 +3976,7 @@ pub struct ResolveFunctionResult {
     // which outlives every `ResolveFunctionResult`.
     pub path: &'static [u8],
     pub(crate) query_string: &'static [u8],
+    is_external: bool,
 }
 
 /// Per-thread `BufferPrinter` used when printing transpiled module source.
@@ -4132,7 +4169,9 @@ impl VirtualMachine {
     }
 
     /// `--disallow-code-generation-from-strings`, as a `bun_core::CodeGenerationFromStrings`.
-    /// The process's, so it takes no `VirtualMachine`.
+    /// The process's, so it takes no `VirtualMachine`. C++ does not ask a build that has the
+    /// level as a constant (CodeGenerationFromStrings.h).
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
     #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
     pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
         bun_core::code_generation_from_strings() as u8
@@ -4183,6 +4222,13 @@ impl VirtualMachine {
             return v;
         }
         self.transpiler.env_mut().get_tls_reject_unauthorized()
+    }
+
+    /// The TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`, `None` when never assigned.
+    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
+        self.rare_data
+            .as_deref()
+            .and_then(RareData::tls_default_ciphers)
     }
 
     /// Registers a spawned subprocess with the auto-killer.
@@ -4504,11 +4550,13 @@ impl VirtualMachine {
 
     /// Adds the main entry point to the file watcher when watch mode is enabled.
     pub fn add_main_to_watcher_if_needed(&mut self) {
-        if !self.is_watcher_enabled() {
-            return;
-        }
-        let main = self.main();
-        if main.is_empty() {
+        self.add_to_watcher_if_needed(self.main());
+    }
+
+    /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
+    /// enabled.
+    pub fn add_to_watcher_if_needed(&self, path: &[u8]) {
+        if !self.is_watcher_enabled() || path.is_empty() {
             return;
         }
         let watcher = self.bun_watcher_ptr();
@@ -4520,8 +4568,34 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(main) };
+            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
         }
+    }
+
+    /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is
+    /// enabled.
+    pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {
+        struct Shared {
+            watcher: *mut crate::hot_reloader::ImportWatcher,
+            _ticket: crate::Ticket,
+        }
+        // SAFETY: it carries a `Ticket` for the VM that has the watcher. The pointee is made to be
+        // shared with other threads (see `bun_watcher_ptr`).
+        unsafe impl Send for Shared {}
+        if !self.is_watcher_enabled() {
+            return None;
+        }
+        // One of these threads at a time has the `&mut`.
+        let shared = bun_threading::Guarded::new(Shared {
+            watcher: self.bun_watcher_ptr(),
+            _ticket: self.ticket(),
+        });
+        Some(move |path: &[u8]| {
+            let shared = shared.lock();
+            let watcher = shared.watcher;
+            // SAFETY: as in `add_to_watcher_if_needed`.
+            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
+        })
     }
 
     /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
@@ -5035,6 +5109,7 @@ impl VirtualMachine {
         source: &[u8],
         is_esm: bool,
         is_a_file_path: bool,
+        global_cache: bun_resolver::GlobalCache,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -5124,7 +5199,6 @@ impl VirtualMachine {
             } else {
                 bun_ast::ImportKind::Require
             };
-            let global_cache = self.transpiler.resolver.opts.global_cache;
             match self.transpiler.resolver.resolve_and_auto_install(
                 source_to_use,
                 normalized_specifier,
@@ -5204,6 +5278,7 @@ impl VirtualMachine {
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        ret.is_external = result.flags.is_external();
 
         Ok(())
     }
@@ -5226,12 +5301,32 @@ impl VirtualMachine {
                     if let Some(name) = global.resolve_virtual_module(&answer, source) {
                         return Ok(Ok(name));
                     }
+                    // A bare name may be a package's in the registry. It is the plugin's own, and not
+                    // installed, if `onResolve` answers about it as well.
+                    let answer_utf8 = answer.to_utf8();
+                    let is_bare = bun_resolver::is_package_path(&answer_utf8)
+                        && ModuleLoader::plugin_namespace_and_path(&answer_utf8)
+                            .is_some_and(|(namespace, _)| namespace.is_empty());
+                    drop(answer_utf8);
+                    let is_own = is_bare
+                        && (answer.eql(specifier)
+                            || match run_on_resolve(global, &answer, source)? {
+                                None => false,
+                                Some(Ok(_)) => true,
+                                Some(Err(error)) => return Ok(Err(error)),
+                            });
+                    let global_cache = if is_own {
+                        bun_resolver::GlobalCache::disable
+                    } else {
+                        global.bun_vm().transpiler.resolver.opts.global_cache
+                    };
                     let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
                         global,
                         &answer,
                         source,
                         query_string,
                         mode,
+                        global_cache,
                     )?;
                     // Not on disk, for an `onLoad` to serve.
                     if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
@@ -5247,6 +5342,7 @@ impl VirtualMachine {
             source,
             query_string,
             mode,
+            global.bun_vm().transpiler.resolver.opts.global_cache,
         )
     }
 
@@ -5256,6 +5352,7 @@ impl VirtualMachine {
         source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
+        global_cache: bun_resolver::GlobalCache,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
@@ -5402,9 +5499,11 @@ impl VirtualMachine {
             normalize_source(source_utf8.slice()),
             mode.is_esm(),
             IS_A_FILE_PATH,
+            global_cache,
         );
         if resolve_result.is_ok()
             && mode.is_esm()
+            && !result.is_external
             && jsc_vm.transpiler.resolver.node_module_error.is_none()
             && bun_paths::is_absolute(result.path)
             // Inline entries do not infer their module kind from a package scope.
@@ -5417,7 +5516,7 @@ impl VirtualMachine {
             jsc_vm.transpiler.resolver.node_module_error = jsc_vm
                 .transpiler
                 .resolver
-                .node_package_scope_error(result.path);
+                .node_package_scope_error(result.path, true);
         }
         if let Some(error) = jsc_vm.transpiler.resolver.node_module_error.take() {
             if resolve_result.is_err() || error.is_fatal() {

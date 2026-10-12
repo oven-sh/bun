@@ -179,6 +179,8 @@ The callback receives the _path_ to the matching module and can return a _new pa
 
 At runtime, the callback runs once for each `import` or `require()` as it executes. A _new path_ without a `namespace` is resolved from the importing module like any other import, without running `onResolve()` callbacks on it: it can be relative, leave out its extension, or name a package. If nothing is found there, the _new path_ is used as it is when an [`onLoad()`](#onload) callback matches it, so it does not have to exist on disk.
 
+A bare name such as `"my-virtual.js"` could also be a package in the registry, so `onResolve()` callbacks run on it once more. If one of them returns a path, the name is the plugin's own and is never [auto-installed](/runtime/auto-install).
+
 For example, redirecting all imports to `images/` to `./public/images/`:
 
 ```ts index.ts icon="/icons/typescript.svg"

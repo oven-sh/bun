@@ -49,7 +49,10 @@ Bundlers solve several problems:
 - **Framework features.** Frameworks rely on bundler plugins & code transformations to implement common patterns like file-system routing, client-server code co-location (think `getServerSideProps` or Remix loaders), and server components.
 - **Full-stack Applications.** Bun's bundler can handle both server and client code in a single command, enabling optimized production builds and single-file executables. With build-time HTML imports, you can bundle your entire application — frontend assets and backend server — into a single deployable unit.
 
-<Note>The Bun bundler is not intended to replace `tsc` for typechecking or generating type declarations.</Note>
+<Note>
+  `bun build` checks types only when you pass [`--check`](/runtime/check#check-before-you-run-build-or-test), or `check:
+  true` to `Bun.build`. It does not generate type declarations. Use `tsc` to produce `.d.ts` files.
+</Note>
 
 ## Basic example
 
@@ -1284,6 +1287,27 @@ Removes function calls from a bundle. For example, `--drop=console` removes all 
   </Tab>
 </Tabs>
 
+### check
+
+Type checks the entry points, and everything they import, before Bun writes any output. A type error fails the build like any other build error. See [`bun check`](/runtime/check#bun-build).
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      check: true,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --check
+    ```
+  </Tab>
+</Tabs>
+
 ### features
 
 Enable compile-time feature flags for dead code elimination: conditionally include or exclude code paths at bundle time using `import { feature } from "bun:bundle"`.
@@ -1921,6 +1945,15 @@ interface BuildConfig {
    * @default true
    */
   throw?: boolean;
+
+  /**
+   * Type check the entry points and everything they import before writing any output.
+   * A type error fails the build like any other build error.
+   * Equivalent to `--check` in the CLI.
+   *
+   * @default false
+   */
+  check?: boolean;
 
   /**
    * Custom tsconfig.json file path to use for path resolution.

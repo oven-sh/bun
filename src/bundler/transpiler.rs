@@ -613,7 +613,7 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = root_dir.tsconfig_json() {
+                if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
@@ -674,8 +674,8 @@ impl<'a> Transpiler<'a> {
                     _ => return Ok(()),
                 };
 
-                if let Some(tsconfig) = dir_info.tsconfig_json() {
-                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
+                if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
+                    merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
 
                 // Copy the listing's basenames out under `entries_mutex`,
@@ -1053,6 +1053,7 @@ fn resolver_bundle_options_subset(
         preserve_symlinks: src.preserve_symlinks,
         rewrite_jest_for_tests: src.rewrite_jest_for_tests,
         tsconfig_override: src.tsconfig_override.clone(),
+        tsconfig_override_json: None,
         production: src.production,
         force_node_env: src.force_node_env,
         // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in
@@ -3037,11 +3038,7 @@ impl<'a> Transpiler<'a> {
             }
         };
 
-        // The `ParserOptions.logger` `NonNull<Log>` borrow is
-        // dropped when `sheet`/`opts` go out of scope at the end of
-        // this arm, before any other `log_mut()` reborrow above.
-        let mut opts = bun_css::ParserOptions::default(None);
-        opts.logger = Some(core::ptr::NonNull::new(self.log).unwrap());
+        let mut opts = bun_css::ParserOptions::default(Some(self.log_mut()));
         const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
         let enable_css_modules = file_path_text.len() > CSS_MODULE_SUFFIX.len()
             && strings::eql_comptime(
@@ -3057,7 +3054,7 @@ impl<'a> Transpiler<'a> {
         // the CSS AST it backs is dropped before this fn returns
         // (only `result.code: Vec<u8>` escapes, which is
         // global-heap). `'static` matches the crate-wide erasure
-        // on `StyleSheet`/`ParserOptions` (see the css_parser.rs
+        // on `StyleSheet` (see the css_parser.rs
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 

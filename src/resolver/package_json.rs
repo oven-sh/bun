@@ -508,7 +508,9 @@ impl PackageJSON {
         ) {
             Ok(e) => e,
             Err(err) => {
-                if let crate::Error::Sys(errno) = err {
+                if r.validate_package_config
+                    && let crate::Error::Sys(errno) = err
+                {
                     if !matches!(
                         errno,
                         bun_errno::SystemErrno::ENOENT

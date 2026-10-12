@@ -421,6 +421,60 @@ describe.concurrent("Node 24 package configuration validation", () => {
     );
   });
 
+  it.each(["exports", "imports", "both"])("materializes both maps for ESM .js scope lookup (%s)", async field => {
+    const expected = { name: "SyntaxError", message: `Unexpected token ']', "[tru]" is not valid JSON` };
+    await run(
+      {
+        "pkg/package.json": JSON.stringify(
+          field === "both" ? { exports: "[tru]", imports: '{"x":tru}' } : { [field]: "[tru]" },
+        ),
+        "pkg/value.js": "module.exports = 42;",
+        "pkg/value.cjs": "module.exports = 42;",
+        "pkg/value.mjs": "export default 42;",
+      },
+      `import assert from 'node:assert/strict';
+       import {createRequire} from 'node:module';
+       const require = createRequire(import.meta.url);
+       const expected = ${JSON.stringify(expected)};
+       assert.equal(require('./pkg/value.js'), 42);
+       assert.throws(() => import.meta.resolve('./pkg/value.js'), expected);
+       await assert.rejects(import('./pkg/value.js'), expected);
+       assert.equal((await import('./pkg/value.cjs')).default, 42);
+       assert.equal((await import('./pkg/value.mjs')).default, 42);
+       console.log('ok');`,
+    );
+  });
+
+  it.each(["exports", "imports"])(
+    "materializes only parent exports for relative CommonJS requests (%s)",
+    async field => {
+      const expected = { name: "SyntaxError", message: `Unexpected token ']', "[tru]" is not valid JSON` };
+      for (const name of [undefined, "pkg"]) {
+        await run(
+          {
+            "pkg/package.json": JSON.stringify({ name, [field]: "[tru]" }),
+            "pkg/value.cjs": "module.exports = 42;",
+            "pkg/entry.cjs":
+              "exports.read = () => require('./value.cjs'); exports.resolve = () => require.resolve('./value.cjs');",
+          },
+          `import assert from 'node:assert/strict';
+         import {createRequire} from 'node:module';
+         import {join} from 'node:path';
+         const entry = createRequire(import.meta.url)('./pkg/entry.cjs');
+         if (${JSON.stringify(field)} === 'exports') {
+           const expected = ${JSON.stringify(expected)};
+           assert.throws(() => entry.read(), expected);
+           assert.throws(() => entry.resolve(), expected);
+         } else {
+           assert.equal(entry.read(), 42);
+           assert.equal(entry.resolve(), join(process.cwd(),'pkg/value.cjs'));
+         }
+         console.log('ok');`,
+        );
+      }
+    },
+  );
+
   it.each([
     "",
     " \n",
@@ -715,6 +769,31 @@ describe.concurrent("Node 24 package configuration validation", () => {
     expect(result.success).toBe(true);
   });
 
+  // POSIX mode bits do not deny reads to root and do not model Windows ACLs.
+  it.skipIf(isWindows || process.getuid?.() === 0)(
+    "preserves bundler diagnostics for unreadable package metadata",
+    async () => {
+      await run(
+        {
+          "entry.js": "import value from 'pkg'; console.log(value);",
+          "node_modules/pkg/package.json": "{}",
+          "node_modules/pkg/index.js": "export default 42;",
+        },
+        `import assert from 'node:assert/strict';
+       import {chmodSync} from 'node:fs';
+       import {join} from 'node:path';
+       const manifest = join(process.cwd(),'node_modules/pkg/package.json');
+       chmodSync(manifest,0);
+       try {
+         const result = await Bun.build({entrypoints:['./entry.js'],target:'bun',throw:false});
+         assert.equal(result.success,false);
+         assert(result.logs.some(log => /Cannot read file.*EACCES/.test(log.message)));
+       } finally { chmodSync(manifest,0o600); }
+       console.log('ok');`,
+      );
+    },
+  );
+
   it("keeps escaped package fields in the bundler's metadata view", async () => {
     using dir = tempDir("package-config-bundler-fields", {
       "package.json": "{}",
@@ -770,6 +849,39 @@ describe.concurrent("Node 24 package configuration validation", () => {
          assert.throws(() => createRequire(import.meta.url)(name),expected);
        } finally { chmodSync(protectedPath,0o700); }
        console.log('ok');`,
+      );
+    },
+  );
+
+  // A missing target isolates metadata lookup from file enumeration in an execute-only directory.
+  it.skipIf(isWindows || process.getuid?.() === 0).each(["exports", "imports"])(
+    "materializes only parent exports without directory enumeration (%s)",
+    async field => {
+      const expected = { name: "SyntaxError", message: `Unexpected token ']', "[tru]" is not valid JSON` };
+      await run(
+        {
+          "scope/package.json": JSON.stringify({ [field]: "[tru]" }),
+          "scope/entry.cjs": "",
+        },
+        `import assert from 'node:assert/strict';
+         import {chmodSync} from 'node:fs';
+         import {createRequire} from 'node:module';
+         import {join} from 'node:path';
+         const directory = join(process.cwd(),'scope');
+         const require = createRequire(join(directory,'entry.cjs'));
+         chmodSync(directory,0o111);
+         try {
+           if (${JSON.stringify(field)} === 'exports') {
+             const expected = ${JSON.stringify(expected)};
+             assert.throws(() => require('./missing.cjs'),expected);
+             assert.throws(() => require.resolve('./missing.cjs'),expected);
+           } else {
+             const expected = {code:'MODULE_NOT_FOUND'};
+             assert.throws(() => require('./missing.cjs'),expected);
+             assert.throws(() => require.resolve('./missing.cjs'),expected);
+           }
+         } finally { chmodSync(directory,0o700); }
+         console.log('ok');`,
       );
     },
   );

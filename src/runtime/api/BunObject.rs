@@ -1025,9 +1025,15 @@ fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         )));
     }
 
+    // mimalloc's scavenger sweeps this thread's heaps while it sleeps, as it does across the event loop's poll.
+    // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
+    let handed_off = unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
     std::thread::sleep(core::time::Duration::from_millis(
         u64::try_from(milliseconds).expect("int cast"),
     ));
+    if handed_off {
+        bun_alloc::mimalloc::mi_on_thread_idle_end();
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1314,7 +1320,7 @@ pub(crate) fn bun_validate_import_meta_package_config(
         } else {
             bun_sys::realpath(&path_z, &mut realpath_buffer).unwrap_or_else(|_| path.slice())
         };
-        if let Some(error) = resolver.node_package_scope_error(selected_path) {
+        if let Some(error) = resolver.node_package_scope_error(selected_path, true) {
             let error = jsc::ResolveMessage::from_node_module_error(global, &error, true, b"", b"");
             return Err(global.throw_value(error));
         }

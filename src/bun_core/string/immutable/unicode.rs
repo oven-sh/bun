@@ -1180,6 +1180,15 @@ pub fn wtf8_sequence(code_point: u32) -> [u8; 4] {
     }
 }
 
+/// Append `cp` to `buf` as 1 to 4 bytes of WTF-8. Lone-surrogate code points pass through as the
+/// three bytes that they would have in UTF-8.
+#[inline]
+pub fn push_codepoint_wtf8(buf: &mut Vec<u8>, cp: u32) {
+    let mut bytes = [0u8; 4];
+    let len = crate::strings_impl::encode_wtf8_rune(&mut bytes, cp);
+    buf.extend_from_slice(&bytes[..len]);
+}
+
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
 /// Invalid codepoints are replaced with `zero` parameter
 /// This is a clone of esbuild's decodeWTF8Rune

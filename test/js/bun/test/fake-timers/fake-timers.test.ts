@@ -521,7 +521,7 @@ describe("runtime timeouts are not fake timers", () => {
       stdio: "ignore",
       timeout: 50,
       killSignal: "SIGKILL",
-    });
+    }) as { signal: NodeJS.Signals | null; error?: NodeJS.ErrnoException };
     expect({ signal: result.signal, code: result.error?.code }).toEqual({ signal: "SIGKILL", code: "ETIMEDOUT" });
   });
 
@@ -945,7 +945,7 @@ describe("useFakeTimers with options", () => {
   });
 
   test.each(["modern", "legacy"] as const)("useFakeTimers(%j) accepts legacy Jest string argument", implementation => {
-    expect(() => vi.useFakeTimers(implementation)).not.toThrow();
+    expect(() => vi.useFakeTimers(implementation as any)).not.toThrow();
     expect(vi.isFakeTimers()).toBe(true);
     vi.useRealTimers();
     expect(vi.isFakeTimers()).toBe(false);

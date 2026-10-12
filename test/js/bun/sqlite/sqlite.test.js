@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, 
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
+import vm from "vm";
 
 const tmpbase = tmpdir() + path.sep;
 
@@ -1038,6 +1039,327 @@ it("db.transaction()", () => {
   expect(db.inTransaction).toBe(false);
   expect(db.query("SELECT * FROM cats").all().length).toBe(3);
   expect(db.inTransaction).toBe(false);
+});
+
+describe("db.transaction() with a callback that is not synchronous", () => {
+  const promiseMessage =
+    "db.transaction() callback must be synchronous, but it returned a promise. Remove async/await from the callback, or move the awaited work outside the transaction.";
+  const variants = ["default", "deferred", "immediate", "exclusive"];
+  const call = (tx, variant, ...args) => (variant === "default" ? tx(...args) : tx[variant](...args));
+  const thrownBy = fn => {
+    try {
+      fn();
+    } catch (e) {
+      return { type: e.constructor.name, message: e.message };
+    }
+    return "did not throw";
+  };
+  const openAccounts = () => {
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)");
+    db.run("INSERT INTO accounts VALUES (1, 100), (2, 0)");
+    return db;
+  };
+  const balances = db => db.query("SELECT balance FROM accounts ORDER BY id").values().flat();
+  const debit = (db, amount) => db.run("UPDATE accounts SET balance = balance - ? WHERE id = 1", [amount]);
+  const credit = (db, amount) => db.run("UPDATE accounts SET balance = balance + ? WHERE id = 2", [amount]);
+
+  // The callback runs every statement and then returns one of these.
+  const promiseResults = {
+    "a resolved promise": () => Promise.resolve("done"),
+    "a pending promise": () => new Promise(() => {}),
+    "a rejected promise": () => {
+      const rejected = Promise.reject(new Error("a rejection that this test handles"));
+      rejected.catch(() => {});
+      return rejected;
+    },
+    "a promise from another realm": () => vm.runInNewContext("Promise.resolve('done')"),
+    "a thenable that is not a promise": () => ({ then() {} }),
+    "a function with a callable `then`": () => Object.assign(() => {}, { then() {} }),
+  };
+
+  it.each(Object.keys(promiseResults))("rolls back and throws when the callback returns %s", kind => {
+    const db = openAccounts();
+    const transfer = db.transaction(amount => {
+      debit(db, amount);
+      credit(db, amount);
+      return promiseResults[kind]();
+    });
+    const refusal = { type: "TypeError", message: promiseMessage };
+
+    for (const variant of variants) {
+      expect({ variant, thrown: thrownBy(() => call(transfer, variant, 40)) }).toEqual({ variant, thrown: refusal });
+      expect({ variant, inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
+        variant,
+        inTransaction: false,
+        balances: [100, 0],
+      });
+    }
+
+    // Nested: only the savepoint of the refused call is undone. The outer transaction commits its own statement.
+    const outer = db.transaction(() => {
+      debit(db, 1);
+      expect(thrownBy(() => transfer(40))).toEqual(refusal);
+      expect(db.inTransaction).toBe(true);
+    });
+    outer();
+    expect({ inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
+      inTransaction: false,
+      balances: [99, 0],
+    });
+
+    // The same holds inside a transaction that the caller began by hand.
+    db.run("BEGIN");
+    expect(thrownBy(() => transfer(40))).toEqual(refusal);
+    expect({ inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
+      inTransaction: true,
+      balances: [99, 0],
+    });
+    db.run("ROLLBACK");
+  });
+
+  // Nothing marks these callbacks as async functions, so only their result shows that they are asynchronous.
+  const hiddenAsyncFunctions = {
+    "a bound async function from node:vm": () =>
+      vm.runInNewContext("(async (run, amount) => { run(amount); }).bind(null)"),
+    "an async function whose prototype was replaced": () =>
+      Object.setPrototypeOf(async (run, amount) => {
+        run(amount);
+      }, Function.prototype),
+  };
+
+  it.each(Object.keys(hiddenAsyncFunctions))("rolls back and throws when the callback is %s", kind => {
+    const db = openAccounts();
+    const transfer = db.transaction(hiddenAsyncFunctions[kind]());
+    for (const variant of variants) {
+      expect({ variant, thrown: thrownBy(() => call(transfer, variant, amount => debit(db, amount), 40)) }).toEqual({
+        variant,
+        thrown: { type: "TypeError", message: promiseMessage },
+      });
+      expect({ variant, inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
+        variant,
+        inTransaction: false,
+        balances: [100, 0],
+      });
+    }
+  });
+
+  it("reads `then` of an object result once, never calls it, and leaves every other result alone", async () => {
+    const db = openAccounts();
+    let reads = 0;
+    let calls = 0;
+    const transfer = db.transaction(amount => {
+      debit(db, amount);
+      return {
+        get then() {
+          reads++;
+          return () => {
+            calls++;
+          };
+        },
+      };
+    });
+    expect(thrownBy(() => transfer(40))).toEqual({ type: "TypeError", message: promiseMessage });
+    expect({ reads, calls, balances: balances(db) }).toEqual({ reads: 1, calls: 0, balances: [100, 0] });
+
+    const debitAndReturn = db.transaction((amount, result) => {
+      debit(db, amount);
+      return result;
+    });
+    const notThenable = { then: "not a function" };
+    const plainFunction = () => {};
+    const results = [notThenable, plainFunction, undefined, null, 0, 40, "text", true, false, 1n];
+    expect(results.map(result => debitAndReturn(1, result))).toEqual(results);
+    expect(debitAndReturn(1, notThenable)).toBe(notThenable);
+    expect(balances(db)).toEqual([89, 0]);
+
+    // Generator functions are not refused. The call returns the iterator, and the body runs at iteration, outside
+    // the transaction, so nothing rolls back its statement when it throws.
+    const generatorFunctions = {
+      Generator: function* (amount, seen) {
+        seen.push(db.inTransaction);
+        debit(db, amount);
+        yield;
+        throw new Error("after the debit");
+      },
+      AsyncGenerator: async function* (amount, seen) {
+        seen.push(db.inTransaction);
+        debit(db, amount);
+        yield;
+        throw new Error("after the debit");
+      },
+    };
+    for (const [tag, generatorFunction] of Object.entries(generatorFunctions)) {
+      for (const variant of variants) {
+        const before = balances(db)[0];
+        const seen = [];
+        const iterator = call(db.transaction(generatorFunction), variant, 1, seen);
+        expect({ tag: Object.prototype.toString.call(iterator), seen, debited: before - balances(db)[0] }).toEqual({
+          tag: `[object ${tag}]`,
+          seen: [],
+          debited: 0,
+        });
+        await iterator.next();
+        let thrown;
+        try {
+          await iterator.next();
+        } catch (e) {
+          thrown = e.message;
+        }
+        expect({
+          tag,
+          variant,
+          seen,
+          thrown,
+          inTransaction: db.inTransaction,
+          debited: before - balances(db)[0],
+        }).toEqual({
+          tag,
+          variant,
+          seen: [false],
+          thrown: "after the debit",
+          inTransaction: false,
+          debited: 1,
+        });
+      }
+    }
+  });
+
+  it("rolls back and rethrows when the `then` getter of the result throws", () => {
+    const db = openAccounts();
+    const getterError = new Error("the then getter threw");
+    let reads = 0;
+    const transfer = db.transaction(amount => {
+      debit(db, amount);
+      credit(db, amount);
+      return {
+        get then() {
+          reads++;
+          throw getterError;
+        },
+      };
+    });
+    const rethrown = fn => {
+      try {
+        fn();
+      } catch (e) {
+        return e === getterError;
+      }
+      return "did not throw";
+    };
+    for (const variant of variants) {
+      expect({ variant, rethrown: rethrown(() => call(transfer, variant, 40)) }).toEqual({ variant, rethrown: true });
+      expect({ variant, inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
+        variant,
+        inTransaction: false,
+        balances: [100, 0],
+      });
+    }
+    expect(reads).toBe(4);
+
+    // Nested: only the savepoint of that call is undone.
+    const outer = db.transaction(() => {
+      debit(db, 1);
+      expect(rethrown(() => transfer(40))).toBe(true);
+      expect(db.inTransaction).toBe(true);
+    });
+    outer();
+    expect({ inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
+      inTransaction: false,
+      balances: [99, 0],
+    });
+  });
+
+  it("does not read `then` of a native promise or of a primitive result", () => {
+    const db = openAccounts();
+    let reads = 0;
+    const promise = Promise.resolve();
+    Object.defineProperty(promise, "then", {
+      get() {
+        reads++;
+      },
+    });
+    const debitAndReturn = db.transaction((amount, result) => {
+      debit(db, amount);
+      return result;
+    });
+    expect(thrownBy(() => debitAndReturn(40, promise))).toEqual({ type: "TypeError", message: promiseMessage });
+    expect({ reads, balances: balances(db) }).toEqual({ reads: 0, balances: [100, 0] });
+
+    // A number is committed and returned even when Number.prototype has a callable `then`.
+    Object.defineProperty(Number.prototype, "then", {
+      configurable: true,
+      get() {
+        reads++;
+        return () => {};
+      },
+    });
+    try {
+      expect(debitAndReturn(40, 7)).toBe(7);
+    } finally {
+      delete Number.prototype.then;
+    }
+    expect({ reads, balances: balances(db) }).toEqual({ reads: 0, balances: [60, 0] });
+  });
+
+  it("cannot stop asynchronous work that the callback already started", async () => {
+    const db = openAccounts();
+    let work;
+    const transfer = db.transaction(amount => {
+      work = (async () => {
+        debit(db, amount);
+        await Promise.resolve();
+        credit(db, amount);
+      })();
+      return work;
+    });
+    expect(thrownBy(() => transfer(40))).toEqual({ type: "TypeError", message: promiseMessage });
+    expect(balances(db)).toEqual([100, 0]);
+
+    // The rollback undid the debit. The rest of the work runs later, outside any transaction, and commits alone.
+    await work;
+    expect(balances(db)).toEqual([100, 40]);
+
+    // With a BEGIN that the caller holds across the await, the later statement joins that transaction.
+    db.run("UPDATE accounts SET balance = 0 WHERE id = 2");
+    db.run("BEGIN");
+    expect(thrownBy(() => transfer(40))).toEqual({ type: "TypeError", message: promiseMessage });
+    await work;
+    expect({ inTransaction: db.inTransaction, balances: balances(db) }).toEqual({
+      inTransaction: true,
+      balances: [100, 40],
+    });
+    db.run("ROLLBACK");
+    expect(balances(db)).toEqual([100, 0]);
+  });
+
+  it.concurrent("does not hide the rejection of the promise that it refused", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { Database } from "bun:sqlite";
+          const db = new Database(":memory:");
+          const tx = db.transaction(() => Promise.reject(new Error("boom from the callback")));
+          try {
+            tx();
+          } catch (e) {
+            console.log("caught", e.constructor.name);
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, rejectionPrinted: stderr.includes("boom from the callback") }).toEqual({
+      stdout: "caught TypeError\n",
+      rejectionPrinted: true,
+    });
+    expect(exitCode).toBe(1);
+  });
 });
 
 // this bug was fixed by ensuring FinalObject has no more than 64 properties

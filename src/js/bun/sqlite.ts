@@ -670,6 +670,12 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     try {
       before.run();
       const result = fn.$apply(this, args);
+      // WiseLibs/better-sqlite3#1364, but a primitive result and a native promise are decided without a read of `then`.
+      if ($isObject(result) && ($isPromise(result) || typeof result.then === "function")) {
+        throw new TypeError(
+          "db.transaction() callback must be synchronous, but it returned a promise. Remove async/await from the callback, or move the awaited work outside the transaction.",
+        );
+      }
       after.run();
       return result;
     } catch (ex) {

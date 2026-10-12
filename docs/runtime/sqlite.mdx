@@ -579,6 +579,17 @@ console.log(`Inserted ${count} cats`);
 The driver automatically [begins](https://www.sqlite.org/lang_transaction.html) a transaction when you call `insertCats` and commits it when the wrapped function returns. If an exception is thrown, the driver rolls back the transaction. The exception propagates as usual; the driver does not catch it.
 
 <Note>
+**The wrapped function must be synchronous.** The driver commits when the wrapped function returns, so the function must finish all of its work before it returns.
+
+If the wrapped function returns a promise or another thenable, the driver rolls back the transaction and the call throws a `TypeError`. The rollback does not stop work that the function already started. A statement that runs after the first `await` runs after the rollback, so the rollback does not undo it. If no transaction is open on the connection at that time, the statement commits on its own. If one is open, for example a `BEGIN` that you hold across the `await`, the statement joins that transaction.
+
+A generator function does not run its body during the call. Its statements run when you iterate the result, outside the transaction.
+
+To use `await`, do the awaited work first, then pass its results to a synchronous transaction function. To keep a transaction open across an `await`, run `BEGIN`, `COMMIT`, and `ROLLBACK` yourself. SQLite has one transaction per connection. During the `await`, a statement that other code runs on that connection joins the transaction, and a second `BEGIN` throws `cannot start a transaction within a transaction`. Run such transactions one at a time, and keep `BEGIN` outside the `try` whose handler runs `ROLLBACK`. [`sql.begin()`](/runtime/sql#transactions) of `Bun.SQL` has the same limit, and it opens its own connection: statements of a `bun:sqlite` `Database` take no part in it.
+
+</Note>
+
+<Note>
 **Nested transactions** — You can call transaction functions from inside other transaction functions. When you do, the inner transaction becomes a [savepoint](https://www.sqlite.org/lang_savepoint.html).
 
 <Accordion title="View nested transaction example">

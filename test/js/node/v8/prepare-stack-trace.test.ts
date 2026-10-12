@@ -23,13 +23,23 @@ const expected = {
   "not callable": ["default", "default", "default", "default", "default"],
   "assign, then restore the first value": ["ONE", true, "default"],
   "assign the first value back": "default",
-  "inherited from Function.prototype": "INHERITED",
+  "inherited from Function.prototype": ["INHERITED", "REPLACED"],
   "inherited from a new prototype": "INHERITED",
   "a formatter that deletes itself": ["ONCE", "default"],
   "a formatter that installs another": ["FIRST", "SECOND"],
   "a getter that reads another stack": ["GETTER", "default"],
   "a getter that throws": "getter threw",
   "other properties first": ["default", "ONE"],
+};
+
+// The formatter remembers where the property is on the constructor's Structure. These leave that
+// Structure in dictionary mode, collected, or with its address in use again.
+const expectedWithRememberedLocation = {
+  "seventy delete and assign cycles": ["CYCLE 69", "default", "ASSIGNED", "GETTER", "DEFINED", "default"],
+  "collections between writes that move the property":
+    "default, default, ASSIGNED 2, GETTER 3, ASSIGNED 4, ASSIGNED 4, default, default, ASSIGNED 8, GETTER 9, ASSIGNED 10, ASSIGNED 10, default, default, ASSIGNED 14, GETTER 15, ASSIGNED 16, ASSIGNED 16",
+  "a seeded walk of writes, prototype changes and collections":
+    "default x2, C0 x3, default x2, P1, G2 x6, C4 x2, D5 x2, C6 x4, C7, A8 x4, G10 x6, C11 x3, G12 x2, P3 x3, G14 x11, D18, G19 x3, G21 x4",
 };
 
 async function run(...cmd: string[]) {
@@ -48,16 +58,19 @@ async function runFixture(...args: string[]) {
 }
 
 describe("Error.prepareStackTrace is read from the Error constructor when a stack is formatted", () => {
-  test.concurrent.each(Object.entries(expected))("%s", async (scenario, result) => {
-    expect(await runFixture("main", scenario)).toEqual({ result, exitCode: 0 });
+  test.concurrent.each(Object.entries({ ...expected, ...expectedWithRememberedLocation }))(
+    "%s",
+    async (scenario, result) => {
+      expect(await runFixture("main", scenario)).toEqual({ result, exitCode: 0 });
+    },
+  );
+
+  test.concurrent("each write form in a fresh ShadowRealm", async () => {
+    expect(await runFixture("ShadowRealm", ...Object.keys(expected))).toEqual({ result: expected, exitCode: 0 });
   });
 
-  test.concurrent("every scenario in a fresh ShadowRealm", async () => {
-    expect(await runFixture("ShadowRealm", "all")).toEqual({ result: expected, exitCode: 0 });
-  });
-
-  test.concurrent("every scenario in a fresh node:vm context", async () => {
-    expect(await runFixture("node:vm", "all")).toEqual({
+  test.concurrent("each write form in a fresh node:vm context", async () => {
+    expect(await runFixture("node:vm", ...Object.keys(expected))).toEqual({
       result: {
         ...expected,
         // The Error of a node:vm context starts without the property, so these two find nothing to change.

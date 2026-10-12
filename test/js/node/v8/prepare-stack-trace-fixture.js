@@ -127,7 +127,9 @@ const scenarios = {
   "inherited from Function.prototype"() {
     delete Error.prepareStackTrace;
     Function.prototype.prepareStackTrace = tag("INHERITED");
-    return read();
+    const inherited = read();
+    Function.prototype.prepareStackTrace = tag("REPLACED");
+    return [inherited, read()];
   },
   "inherited from a new prototype"() {
     delete Error.prepareStackTrace;
@@ -173,6 +175,108 @@ const scenarios = {
       return thrown.message;
     }
   },
+  "seventy delete and assign cycles"() {
+    // By now the Structure of the Error constructor is a dictionary, which changes in place.
+    for (let i = 0; i < 70; i++) {
+      delete Error.prepareStackTrace;
+      Error.prepareStackTrace = tag("CYCLE " + i);
+    }
+    const results = [read()];
+    delete Error.prepareStackTrace;
+    results.push(read());
+    Error.prepareStackTrace = tag("ASSIGNED");
+    results.push(read());
+    Object.defineProperty(Error, "prepareStackTrace", { configurable: true, get: () => tag("GETTER") });
+    results.push(read());
+    Object.defineProperty(Error, "prepareStackTrace", { configurable: true, writable: true, value: tag("DEFINED") });
+    results.push(read());
+    Error.prepareStackTrace = original;
+    results.push(read());
+    return results;
+  },
+  "collections between writes that move the property"() {
+    const collect = typeof Bun === "object" ? () => Bun.gc(true) : () => {};
+    const results = [];
+    for (let i = 0; i < 18; i++) {
+      switch (i % 6) {
+        case 0:
+          delete Error.prepareStackTrace;
+          break;
+        case 1:
+          // Takes the offset that the delete made free.
+          Error.decoy = tag("DECOY");
+          break;
+        case 2:
+          Error.prepareStackTrace = tag("ASSIGNED " + i);
+          break;
+        case 3:
+          Object.defineProperty(Error, "prepareStackTrace", { configurable: true, get: () => tag("GETTER " + i) });
+          break;
+        case 4:
+          delete Error.decoy;
+          delete Error.prepareStackTrace;
+          Error.prepareStackTrace = tag("ASSIGNED " + i);
+          break;
+        case 5:
+          // The Structures the constructor had before are garbage after this.
+          Object.setPrototypeOf(Error, { round: i });
+          collect();
+          break;
+      }
+      results.push(read());
+    }
+    return results.join(", ");
+  },
+  // Random walks found a build whose remembered Structure the collector could free: this seed
+  // made that build call the wrong formatter within 20 steps.
+  "a seeded walk of writes, prototype changes and collections"() {
+    let seed = 12;
+    const random = n => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 8) % n;
+    const collect = typeof Bun === "object" ? () => Bun.gc(true) : () => {};
+    let k = 0;
+    const writes = [
+      () => (Error.prepareStackTrace = tag("A" + k++)),
+      () => delete Error.prepareStackTrace,
+      () =>
+        Object.defineProperty(Error, "prepareStackTrace", {
+          configurable: true,
+          get: (
+            f => () =>
+              f
+          )(tag("G" + k++)),
+          set() {},
+        }),
+      () =>
+        Object.defineProperty(Error, "prepareStackTrace", {
+          configurable: true,
+          writable: true,
+          value: tag("D" + k++),
+        }),
+      () => (Error.prepareStackTrace = original),
+      () => (Error["unrelated" + random(90)] = k),
+      () => delete Error["unrelated" + random(90)],
+      () => collect(),
+      () => (Function.prototype.prepareStackTrace = tag("F" + k++)),
+      () => delete Function.prototype.prepareStackTrace,
+      () => {
+        for (let i = 0; i < 70; i++) {
+          delete Error.prepareStackTrace;
+          Error.prepareStackTrace = tag("C" + k);
+        }
+        k++;
+      },
+      () => Object.setPrototypeOf(Error, random(2) ? Function.prototype : { prepareStackTrace: tag("P" + k++) }),
+    ];
+    // The formatter after each step, with a count where it stays the same.
+    const runs = [];
+    for (let i = 0; i < 60; i++) {
+      writes[random(writes.length)]();
+      const result = show(new Error("boom").stack);
+      if (runs.at(-1)?.[0] === result) runs.at(-1)[1]++;
+      else runs.push([result, 1]);
+    }
+    return runs.map(([result, steps]) => (steps > 1 ? result + " x" + steps : result)).join(", ");
+  },
   "other properties first"() {
     Error.unrelated = 1;
     Error.stackTraceLimit = 5;
@@ -208,9 +312,8 @@ if (!isMainThread) {
   if (realm === "main") {
     console.log((0, eval)(program(names[0])));
   } else {
-    // Each scenario in a fresh realm of this kind; "all" is every scenario.
-    const each = names[0] === "all" ? Object.keys(scenarios) : names;
-    Promise.all(each.map(async name => [name, await inRealm[realm](name)])).then(results =>
+    // Each scenario in a fresh realm of this kind.
+    Promise.all(names.map(async name => [name, await inRealm[realm](name)])).then(results =>
       console.log(JSON.stringify(Object.fromEntries(results))),
     );
   }

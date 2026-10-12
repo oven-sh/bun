@@ -555,6 +555,35 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
+// Finds Error.prepareStackTrace by name on the realm's Error constructor. Returns an empty value
+// for a property that was never written. In a Bun realm it remembers where a data property is, so
+// that the next stack formatted while the constructor has the same Structure skips the lookup.
+static NEVER_INLINE JSValue lookUpPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSObject* errorConstructor)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).prepareStackTracePublicName();
+    Structure* structure = errorConstructor->structure();
+
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, propertyName, attributes);
+    if (offset == invalidOffset || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor))) {
+        // Inherited or an accessor: an ordinary Get, as V8 does. A getter that reads a stack gets the default formatting.
+        globalObject->isInsideErrorPrepareStackTraceCallback = true;
+        auto leaveCallback = WTF::makeScopeExit([&] {
+            globalObject->isInsideErrorPrepareStackTraceCallback = false;
+        });
+        RELEASE_AND_RETURN(scope, errorConstructor->getIfPropertyExists(lexicalGlobalObject, propertyName));
+    }
+
+    bool neverWritten = attributes & PropertyAttribute::CustomValue;
+    // A dictionary Structure changes in place, so it cannot stand for a location.
+    if (globalObject == lexicalGlobalObject && !structure->isDictionary()) {
+        globalObject->m_errorConstructorStructureForPrepareStackTrace.set(vm, globalObject, structure);
+        globalObject->m_errorPrepareStackTraceOffset = neverWritten ? invalidOffset : offset;
+    }
+    return neverWritten ? JSValue() : errorConstructor->getDirect(offset);
+}
+
 // The realm's Error constructor is the only place Error.prepareStackTrace is stored. Returns the
 // function to call, or nullptr for the default formatting: the property was never written, holds
 // the default function, or holds a value that is not callable. A getter on the property can throw.
@@ -562,23 +591,17 @@ static JSObject* userPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObj
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* errorConstructor = lexicalGlobalObject->errorConstructor();
-    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).prepareStackTracePublicName();
 
     JSValue value;
-    unsigned attributes = 0;
-    PropertyOffset offset = errorConstructor->structure()->get(vm, propertyName, attributes);
-    if (offset == invalidOffset || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor))) {
-        // Inherited or an accessor: an ordinary Get, as V8 does. A getter that reads a stack gets the default formatting.
-        globalObject->isInsideErrorPrepareStackTraceCallback = true;
-        auto leaveCallback = WTF::makeScopeExit([&] {
-            globalObject->isInsideErrorPrepareStackTraceCallback = false;
-        });
-        value = errorConstructor->getIfPropertyExists(lexicalGlobalObject, propertyName);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    } else if (attributes & PropertyAttribute::CustomValue) {
-        return nullptr;
-    } else {
+    // A Structure belongs to one realm, so only this realm's Error constructor can match.
+    if (errorConstructor->structure() == globalObject->m_errorConstructorStructureForPrepareStackTrace.get()) [[likely]] {
+        PropertyOffset offset = globalObject->m_errorPrepareStackTraceOffset;
+        if (offset == invalidOffset)
+            return nullptr;
         value = errorConstructor->getDirect(offset);
+    } else {
+        value = lookUpPrepareStackTrace(vm, globalObject, lexicalGlobalObject, errorConstructor);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     if (!value || !value.isCallable())

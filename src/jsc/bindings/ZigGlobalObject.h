@@ -445,6 +445,9 @@ public:
 
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
+    // The offset of Error.prepareStackTrace in m_errorConstructorStructureForPrepareStackTrace, or
+    // invalidOffset for the property that was never written.
+    JSC::PropertyOffset m_errorPrepareStackTraceOffset = JSC::invalidOffset;
 
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
@@ -517,6 +520,11 @@ public:
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \
     V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \
+                                                                                                             \
+    /* The Structure the Error constructor had when Error.prepareStackTrace was last found by name. */       \
+    /* While the constructor keeps it, the property is at m_errorPrepareStackTraceOffset. This is */         \
+    /* a location only: the formatter is always read from the property. */                                   \
+    V(public, WriteBarrier<JSC::Structure>, m_errorConstructorStructureForPrepareStackTrace)                 \
                                                                                                              \
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
     V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \

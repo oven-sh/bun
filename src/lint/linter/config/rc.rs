@@ -1189,8 +1189,20 @@ impl Config {
             PLUGIN_NAMES.contains(&plugin)
                 && !(rc.plugins.iter()).any(|it| plugin_of_oxlint(it) == plugin)
         };
+        // What a file turns off that it extends is off, unless an override turns it on.
+        let is_on = |id: &[u8]| {
+            let settings = |are_of_overrides: bool| {
+                let objects = rc.reader.objects.iter();
+                let objects = objects.filter(move |it| it.files.is_some() == are_of_overrides);
+                objects.flat_map(|it| &it.rules).filter(|it| *it.id == *id)
+            };
+            settings(false)
+                .last()
+                .is_some_and(|it| it.severity != Severity::Off)
+                || settings(true).any(|it| it.severity != Severity::Off)
+        };
         let mut unknown_rules = std::mem::take(&mut rc.reader.unknown_rules);
-        unknown_rules.retain(|id| !is_off(id));
+        unknown_rules.retain(|id| !is_off(id) && is_on(id));
         rc.reader.unknown_rules = unknown_rules;
         let mut by_kind_of_file = rc.rules_by_kind_of_file();
         rc.reader.objects.append(&mut by_kind_of_file);

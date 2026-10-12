@@ -2448,7 +2448,7 @@ describe.concurrent("an .oxlintrc.json", () => {
 
   test("the rules that a category turns on and that do not exist here are named, in a warning", async () => {
     const config = {
-      plugins: ["unicorn", "oxc", "react", "jsx-a11y", "vue", "jest"],
+      plugins: ["unicorn", "oxc", "react", "jsx-a11y", "jest"],
       categories: { correctness: "warn" },
     };
     const named = (stderr: string) =>
@@ -3773,9 +3773,26 @@ describe.concurrent("the deprecated rules about layout", () => {
     expect(notes(shown.stderr)).toEqual([note(3, "indent, quotes, semi")]);
   });
 
-  test.each(["--quiet", "--silent", "--format=json"])("no note with %s", async flag => {
+  // It is on stderr, so what reads a report does not see it.
+  test.each(["--quiet", "--format=json", "--format=unix", "--format=github", "--format=agent"])(
+    "the note is there with %s",
+    async flag => {
+      const files = { "a.js": untidy };
+      const without = { "eslint.config.mjs": flavors[0][1]({ "no-debugger": "error" }) };
+      const [noted, plain] = await Promise.all([
+        lint({ ...files, "eslint.config.mjs": flavors[0][1](rules) }, [...forPeople, flag]),
+        lint({ ...files, ...without }, [...forPeople, flag]),
+      ]);
+      expect(notes(noted.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+      // But for `usedDeprecatedRules`.
+      const report = (stdout: string) => stdout.replace(/"usedDeprecatedRules":\[.*?\]\}\]/g, "");
+      expect(report(noted.stdout)).toBe(report(plain.stdout));
+    },
+  );
+
+  test("only --silent hides it", async () => {
     const files = { "eslint.config.mjs": flavors[0][1](rules), "a.js": untidy };
-    expect(notes((await lint(files, [...forPeople, flag])).stderr)).toEqual([]);
+    expect((await lint(files, [...forPeople, "--silent"])).stderr).toBe("");
   });
 
   test.each(flavors)("%s: a comment that disables one is neither wrong nor unused, and stays", async (name, config) => {
@@ -3946,7 +3963,8 @@ describe.concurrent("the deprecated rules about layout", () => {
   });
 });
 
-// oxlint has them built in. A configuration that is written for it can name them.
+// oxlint has them built in. A configuration that is written for it can name them, and fails like any other that asks for a rule which
+// is not built in as soon as one of their rules would run.
 describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is built in", () => {
   const files = {
     "a.js": "/** @param {string} b */\nfunction f(a) { debugger }\nf();\n",
@@ -3955,71 +3973,99 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
   const found = ["a.js:2:17 no-debugger", "b.vue:2:1 no-debugger"];
   const clean = { "a.js": "export {};\n", "b.vue": "<script>\nexport {};\n</script>\n" };
   const quiet = { categories: { correctness: "off" }, rules: { "no-debugger": "warn" } };
-  const notes = (stderr: string) => stderr.split("\n").filter(it => it.startsWith("note: "));
-  const both = "note: the rules of the plugins jsdoc and vue are not built in, and did not run";
-  const vue = "note: the rules of the plugin vue are not built in, and did not run";
-  /** What is reported, the exit code, and the notes in a format for people. */
+  const named = (plugin: string, ...rules: string[]) =>
+    `${rules.length} rule${rules.length > 1 ? "s" : ""} of the plugin "${plugin}" did not run: ${rules.join(", ")}. None is built in: turn them off, or take them out of the configuration`;
+  const ofCategories = (plugin: string) =>
+    `The rules of the plugin "${plugin}" that the categories turn on did not run. None is built in: take it out of "plugins"`;
+  const silent = { problems: found, exitCode: 0, said: [] };
+  /** What is reported, the exit code, and what is said about what cannot be done. */
   async function run(config: object, flags: string[] = [], more: Record<string, string> = {}) {
     const all = { ...files, ...more, ".oxlintrc.json": JSON.stringify(config) };
-    const [{ problems, exitCode }, shown] = await Promise.all([
-      lint(all, [...flags, "."]),
-      lint(all, [...flags, "-f", "pretty", "."]),
-    ]);
-    return { problems, exitCode, notes: notes(shown.stderr) };
+    const { problems, stderr, exitCode } = await lint(all, [...flags, "."]);
+    const lines = stderr.split("\n");
+    const said = lines.slice(lines.findIndex(it => it.includes("cannot be done yet")) + 1 || lines.length, -1);
+    return { problems, exitCode, said: said.map(it => it.trim()) };
   }
 
-  test("their rules do not run, nothing looks at the options, and that is one note and no error", async () => {
-    const rules = { ...quiet.rules, "jsdoc/require-param": "error", "vue/no-dupe-keys": ["error", { nothing: 1 }] };
+  test("a rule of theirs that is on: the rest is linted, and the run fails", async () => {
+    const rules = {
+      ...quiet.rules,
+      "jsdoc/require-param": "error",
+      // Nothing looks at the options.
+      "vue/no-dupe-keys": ["warn", { nothing: 1 }],
+      "vue/max-props": "deny",
+    };
     expect(await run({ ...quiet, plugins: ["jsdoc", "vue"], rules })).toEqual({
       problems: found,
-      exitCode: 0,
-      notes: [both],
+      exitCode: 2,
+      said: [named("jsdoc", "jsdoc/require-param"), named("vue", "vue/no-dupe-keys", "vue/max-props")],
     });
+    const allowed = await lint(
+      { ...files, ".oxlintrc.json": JSON.stringify({ ...quiet, plugins: ["jsdoc", "vue"], rules }) },
+      ["--allow-unsupported", "."],
+    );
+    expect(allowed.stderr).toContain(`warn: ${named("jsdoc", "jsdoc/require-param")}`);
+    expect(allowed.exitCode).toBe(0);
   });
 
   test("a rule that is off, or of a plugin that is not on, says nothing", async () => {
-    const silent = { problems: found, exitCode: 0, notes: [] };
     const on = { ...quiet.rules, "jsdoc/require-param": "error", "vue/no-dupe-keys": "error" };
     const off = { ...quiet.rules, "jsdoc/require-param": "off", "vue/no-dupe-keys": "allow" };
     expect(await run({ ...quiet, plugins: ["jsdoc", "vue"], rules: off })).toEqual(silent);
     // As in oxlint, where it does not run either.
     expect(await run({ ...quiet, rules: on })).toEqual(silent);
-    expect(await run({ ...quiet, extends: ["./base.json"], plugins: ["jsdoc", "vue"], rules: off }, [], {
-      "base.json": JSON.stringify({ plugins: ["jsdoc", "vue"], rules: on }),
-    })).toEqual(silent);
+    const base = { "base.json": JSON.stringify({ plugins: ["jsdoc", "vue"], rules: on }) };
+    expect(await run({ ...quiet, extends: ["./base.json"], plugins: ["jsdoc", "vue"], rules: off }, [], base)).toEqual(
+      silent,
+    );
   });
 
-  test("in overrides, for the files that they are for", async () => {
-    const override = (pattern: string) => ({ files: [pattern], plugins: ["vue"], rules: { "vue/no-dupe-keys": "error" } });
-    expect((await run({ ...quiet, overrides: [override("*.vue")] })).notes).toEqual([vue]);
-    expect((await run({ ...quiet, overrides: [override("*.svelte")] })).notes).toEqual([]);
+  test("the plugins alone say nothing", async () => {
+    expect(await run({ ...quiet, plugins: ["jsdoc", "vue"] })).toEqual(silent);
+  });
+
+  test("in overrides", async () => {
+    const overrides = [{ files: ["*.vue"], plugins: ["vue"], rules: { "vue/no-dupe-keys": "error" } }];
+    expect(await run({ ...quiet, overrides })).toEqual({
+      problems: found,
+      exitCode: 2,
+      said: [named("vue", "vue/no-dupe-keys")],
+    });
   });
 
   test.each([
-    [["--vue-plugin", "-D", "vue/no-dupe-keys"], [vue]],
-    [["--vue-plugin", "-W", "vue/no-dupe-keys"], [vue]],
+    [["--vue-plugin", "-D", "vue/no-dupe-keys"], [named("vue", "vue/no-dupe-keys")]],
+    [["--vue-plugin", "-W", "vue/no-dupe-keys"], [named("vue", "vue/no-dupe-keys")]],
     [["--vue-plugin", "-D", "vue/no-dupe-keys", "-A", "vue/no-dupe-keys"], []],
-    [["--vue-plugin", "--jsdoc-plugin", "-D", "correctness"], [both]],
+    [["--vue-plugin", "--jsdoc-plugin", "-D", "correctness"], [ofCategories("jsdoc"), ofCategories("vue")]],
     [["--vue-plugin"], []],
     [["-D", "vue/no-dupe-keys"], []],
   ])("%j", async (flags, expected) => {
-    const { exitCode, notes } = await run({ ...quiet, rules: {} }, flags, clean);
-    expect({ exitCode, notes }).toEqual({ exitCode: 0, notes: expected });
+    const { exitCode, said } = await run({ ...quiet, rules: {} }, flags, clean);
+    expect({ exitCode, said }).toEqual({ exitCode: expected.length > 0 ? 2 : 0, said: expected });
   });
 
   test("a category that oxlint has rules of the plugin in", async () => {
     const config = (categories: object) => ({ categories: { correctness: "off", ...categories }, plugins: ["vue"] });
-    expect((await run(config({ correctness: "error" }), [], clean)).notes).toEqual([vue]);
-    expect((await run({ plugins: ["vue"] }, [], clean)).notes).toEqual([vue]);
-    expect((await run(config({ restriction: "warn" }), [], clean)).notes).toEqual([vue]);
+    const fails = { problems: [], exitCode: 2, said: [ofCategories("vue")] };
+    const passes = { problems: [], exitCode: 0, said: [] };
+    expect(await run(config({ correctness: "error" }), [], clean)).toEqual(fails);
+    expect(await run({ plugins: ["vue"] }, [], clean)).toEqual(fails);
+    expect(await run(config({ restriction: "warn" }), [], clean)).toEqual(fails);
     // It has none that are about speed.
-    expect((await run(config({ perf: "error" }), [], clean)).notes).toEqual([]);
-    expect((await run(config({}), [], clean)).notes).toEqual([]);
+    expect(await run(config({ perf: "error" }), [], clean)).toEqual(passes);
+    expect(await run(config({}), [], clean)).toEqual(passes);
+    // For the files of an override that are linted.
+    const override = (pattern: string) => ({ overrides: [{ files: [pattern], plugins: ["vue"] }] });
+    expect(await run({ plugins: ["unicorn"], ...override("*.vue") }, [], clean)).toEqual(fails);
+    expect(await run({ plugins: ["unicorn"], ...override("*.svelte") }, [], clean)).toEqual(passes);
+    // oxlint 1.87 runs none of them there: the override names all the plugins of the file.
+    expect(await run({ plugins: [], ...override("*.vue") }, [], clean)).toEqual(passes);
   });
 
   test("settings for them are taken", async () => {
     const settings = { jsdoc: { ignorePrivate: true, nothing: 1 }, vue: { nothing: 1 } };
-    expect(await run({ ...quiet, settings })).toEqual({ problems: found, exitCode: 0, notes: [] });
+    expect(await run({ ...quiet, settings })).toEqual(silent);
   });
 
   test("any other plugin that oxlint does not know is still refused", async () => {

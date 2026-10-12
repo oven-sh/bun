@@ -1120,7 +1120,7 @@ These differences are intentional:
 
 - **No configuration file is not an error.** ESLint stops. `bun lint` uses [defaults](#without-a-configuration-file).
 - **The rules are those of ESLint 10.12, typescript-eslint 8.71, eslint-plugin-react-hooks 7.1, eslint-plugin-import 2.32, eslint-plugin-n 18.4, and eslint-plugin-react 7.37**, whichever versions you have installed. If a plugin is installed in an older version, a note after the report says so.
-- **The deprecated formatting rules do not run.** `semi`, `quotes`, `indent`, and the 71 other rules about layout that ESLint has deprecated are not built in, nor is `react/jsx-space-before-closing`. [`bun format`](/runtime/format) does their work. A configuration or a comment that names one is not an error, `--print-config` prints it, and a note after the report says which did not run. The rules of `@stylistic/eslint-plugin` run like those of any other plugin.
+- **The deprecated formatting rules do not run.** `semi`, `quotes`, `indent`, and the 71 other rules about layout that ESLint has deprecated are not built in, nor is `react/jsx-space-before-closing`. [`bun format`](/runtime/format) does their work. A configuration or a comment that names one is not an error, `--print-config` prints it, and a note on stderr says which did not run. The rules of `@stylistic/eslint-plugin` run like those of any other plugin.
 - **Custom formatters do not load.** The rules, the processors, the parsers and the [languages](#other-languages) of plugins run.
 - **`--inspect-config` and `--mcp` are errors:** `bun lint does not support --inspect-config.`
 - **`--init` is oxlint's.** It writes an `.oxlintrc.json`. In a project with a configuration file of ESLint it is an error.
@@ -1147,7 +1147,7 @@ These differences are intentional:
 
 - **The rules are those of oxlint 1.87**, whichever version you had installed. A project on an older version sees what it would see after the upgrade.
 - **No language server.** `--lsp` is an error: `bun lint does not support --lsp.`
-- **The rules of `jsdoc` and `vue` are not built in.** A configuration can name the two plugins, their rules, and their `settings`. The rules do not run, and a note after the report says so. The `<script>` blocks of `.vue` files are linted with all other rules.
+- **The rules of `jsdoc` and `vue` are not built in.** A configuration can name the two plugins and their `settings`, and turn their rules off. If one of their rules is on, or a category would turn one on, the run [fails with exit code `2`](#what-cannot-be-linted) like for any other rule that is not built in: turn the rules off, or take the plugin out of `plugins`. The `<script>` blocks of `.vue` files are linted with all other rules.
 - **A rule that is not built in does not stop the run.** oxlint refuses the configuration. `bun lint` runs the other rules, and then [fails with exit code `2`](#what-cannot-be-linted). A configuration that is written for a newer oxlint still runs.
 - **The default format is `pretty`**, which looks like `bun check`. Every other format prints what oxlint prints.
 - **Files and problems are sorted.** oxlint prints a file when a thread is done with it.

@@ -25,7 +25,7 @@ use bun_lint::linter::{
     oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
-use bun_lint::rule::minor_of;
+use bun_lint::rule::{Plugin, minor_of};
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
@@ -1078,12 +1078,19 @@ impl<'l> Loader<'l> {
                 1 => b" rule of ",
                 _ => b" rules of ",
             };
+            let has_no_rules = Plugin::of_oxlint_prefix(plugin).is_some_and(Plugin::has_no_rules);
             self.cannot_do(&[
                 &count,
                 noun,
                 &of,
                 b" did not run: ",
                 &rules.join(&b", "[..]),
+                match has_no_rules {
+                    true => {
+                        b". None is built in: turn them off, or take them out of the configuration"
+                    }
+                    false => &b""[..],
+                },
             ]);
         }
     }

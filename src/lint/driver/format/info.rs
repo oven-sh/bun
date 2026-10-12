@@ -15,7 +15,8 @@ pub(super) struct Position {
     pub(super) column: usize,
 }
 
-/// The positions of a problem without a place are 0. oxlint has no message for it either, and calls it a warning.
+/// The positions of a problem without a place are 0. oxlint prints no message for it either, and calls it a warning: here it
+/// keeps its message and its severity.
 pub(super) struct Info<'s> {
     pub(super) start: Position,
     /// After the last byte.

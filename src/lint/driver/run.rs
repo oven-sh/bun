@@ -1132,6 +1132,22 @@ impl Run<'_> {
                 b". The package \"eslint\" lints with that parser, if it is installed",
             ]);
         }
+        let mut seen: Vec<&Arc<_>> = Vec::new();
+        let results = linted.iter().flat_map(|it| &it.results);
+        let configs = results.filter_map(|it| it.linted.as_ref());
+        for config in configs.map(|it| &it.config) {
+            if !seen.iter().any(|it| Arc::ptr_eq(it, config)) {
+                seen.push(config);
+                not_built_in.add(config);
+            }
+        }
+        for plugin in not_built_in.plugins() {
+            loader.cannot_do(&[
+                b"The rules of the plugin \"",
+                plugin.as_bytes(),
+                b"\" that the categories turn on did not run. None is built in: take it out of \"plugins\"",
+            ]);
+        }
         let mut unsupported = std::mem::take(&mut *loader.unsupported.lock());
         if options.allow_unsupported {
             for line in unsupported.drain(..) {
@@ -1153,15 +1169,6 @@ impl Run<'_> {
             }
             return self.out;
         }
-        let mut seen: Vec<&Arc<_>> = Vec::new();
-        let configs = results.iter().filter_map(|it| it.linted.as_ref());
-        for config in configs.map(|it| &it.config) {
-            if !seen.iter().any(|it| Arc::ptr_eq(it, config)) {
-                seen.push(config);
-                not_built_in.add(config);
-            }
-        }
-        not_built_in.notes().for_each(|it| loader.advise(it));
 
         // The rules that are about several files look at those that they have something to say about.
         let started = Instant::now();
@@ -1368,6 +1375,14 @@ impl Run<'_> {
                 );
             }
         }
+        if let Some(note) = not_built_in.note().filter(|_| !options.silent) {
+            pretty!(
+                &mut self.out.stderr,
+                environment.stderr.colors,
+                "<blue>note<r><d>:<r> {}\n",
+                note
+            );
+        }
         if options.timing {
             self.write_timing(&timing, &phases, &pool, &js_plugins.loading());
         }
@@ -1530,13 +1545,12 @@ impl Run<'_> {
     }
 }
 
-/// What the configurations of the files that were linted, and their comments, turn on and what is left out here on purpose. It did
-/// not run, which is a note.
+/// What the configurations of the files that were linted, and their comments, turn on and what is left out here on purpose.
 #[derive(Default)]
 struct NotBuiltIn {
     /// [`formatting_rule`]
     about_layout: Vec<&'static str>,
-    /// [`Plugin::has_no_rules`]
+    /// [`ResolvedConfig::plugins_without_rules`]
     plugins: Vec<&'static str>,
 }
 
@@ -1556,12 +1570,18 @@ impl NotBuiltIn {
         self.plugins.extend(plugins.map(|it| it.prefix()));
     }
 
-    fn notes(mut self) -> impl Iterator<Item = Vec<u8>> {
-        for names in [&mut self.about_layout, &mut self.plugins] {
-            names.sort_unstable();
-            names.dedup();
-        }
-        let about_layout = match &self.about_layout[..] {
+    /// Nothing does the work of their rules: the run fails.
+    fn plugins(&mut self) -> &[&'static str] {
+        self.plugins.sort_unstable();
+        self.plugins.dedup();
+        &self.plugins
+    }
+
+    /// `bun format` does the work of the rules about layout: that they did not run is a note.
+    fn note(mut self) -> Option<String> {
+        self.about_layout.sort_unstable();
+        self.about_layout.dedup();
+        match &self.about_layout[..] {
             [] => None,
             [one] => Some(format!(
                 "1 formatting rule that is deprecated did not run, bun format does its work: {one}"
@@ -1572,21 +1592,7 @@ impl NotBuiltIn {
                 all[..all.len().min(3)].join(", "),
                 if all.len() > 3 { ", .." } else { "" },
             )),
-        };
-        let plugins = match &self.plugins[..] {
-            [] => None,
-            [one] => Some(format!(
-                "the rules of the plugin {one} are not built in, and did not run"
-            )),
-            all => Some(format!(
-                "the rules of the plugins {} are not built in, and did not run",
-                all.join(" and "),
-            )),
-        };
-        [about_layout, plugins]
-            .into_iter()
-            .flatten()
-            .map(String::into_bytes)
+        }
     }
 }
 

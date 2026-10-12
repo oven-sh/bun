@@ -1217,12 +1217,6 @@ impl Config {
                 });
                 continue;
             }
-            if let Some(plugin) = setting.written_for.filter(|it| it.has_no_rules()) {
-                if setting.severity != Severity::Off {
-                    config.skip_rules_of(plugin);
-                }
-                continue;
-            }
             // What `jsPlugins` names hides a plugin of the same name that is implemented here.
             let js = find_js_rule(&js_plugins, &setting.id);
             let prefix = super::registry::parse_rule_id(&setting.id).0;

@@ -235,7 +235,7 @@ pub struct ResolvedConfig {
     pub js_rules: Vec<ConfiguredJsRule>,
     /// Those about layout, which are left to `bun format`, also the ones that are off.
     pub formatting_rules: Vec<FormattingRule>,
-    /// The plugins [none of whose rules is here](Plugin::has_no_rules), of which oxlint would run one.
+    /// The plugins [none of whose rules is here](Plugin::has_no_rules), of which `categories` of oxlint turn rules on.
     pub plugins_without_rules: Vec<Plugin>,
     /// What the rules of JavaScript plugins see of `language`. It is there if `js_plugins` is not empty.
     pub js_settings: Option<Arc<js_plugin::FileSettings>>,
@@ -408,7 +408,7 @@ impl ResolvedConfig {
             .or_else(|| registry.get(Plugin::Eslint, name))
     }
 
-    /// A rule of `plugin`, which [has none here](Plugin::has_no_rules), is on.
+    /// `categories` turn on rules of `plugin`, which [has none here](Plugin::has_no_rules).
     pub(crate) fn skip_rules_of(&mut self, plugin: Plugin) {
         if !self.plugins_without_rules.contains(&plugin) {
             self.plugins_without_rules.push(plugin);

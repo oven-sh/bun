@@ -452,7 +452,6 @@ impl Reader<'_> {
                     setting.plugin = Box::default();
                 }
                 None if is_about_layout => {}
-                None if setting.written_for.is_some_and(Plugin::has_no_rules) => {}
                 None => {
                     let is_new = !self.unknown_rules.iter().any(|it| **it == *id);
                     if setting.severity != Severity::Off && is_new {

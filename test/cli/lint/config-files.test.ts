@@ -5126,6 +5126,7 @@ describe.skipIf(isWindows || process.getuid?.() === 0).concurrent("a file that c
     expect(placeless.map(it => [it.message.split(" ").slice(0, 4).join(" "), it.filename])).toEqual([
       ["Failed to open file", undefined],
       ["There are suppressions that", ""],
+      ["There are new violations", ""],
     ]);
   });
 

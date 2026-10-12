@@ -1951,6 +1951,7 @@ fn plan_isolated(
             }
             plan.checked += 1;
             if contains(&names, &name) {
+                plan_store_entry_leftovers(&store, &name, plan);
                 continue;
             }
             plan.remove(store_idx, &name, kind);
@@ -2008,6 +2009,38 @@ fn plan_isolated(
             plan,
         );
         plan.folders[folder_idx].direct = Some(direct);
+    }
+}
+
+fn has_leftovers(dir: &Dir) -> bool {
+    read_entries_and_leftovers(dir, true)
+        .iter()
+        .any(|(name, kind)| match name.first() {
+            Some(b'.') => true,
+            Some(b'@') if *kind == EntryKind::Directory => dir.open_at(name).is_ok_and(|scope| {
+                read_entries_and_leftovers(&scope, true)
+                    .iter()
+                    .any(|(inner, _)| inner.first() == Some(&b'.'))
+            }),
+            _ => false,
+        })
+}
+
+/// Removes staging paths that a killed install left next to the package of a store entry we keep.
+fn plan_store_entry_leftovers(store: &Dir, entry: &[u8], plan: &mut Plan) {
+    if !plan.leftovers {
+        return;
+    }
+    let node_modules = join(entry, b"node_modules");
+    // `scan_folder` keeps every folder open until the plan runs, so only scan entries that need it.
+    if !(store.open_at(&node_modules)).is_ok_and(|dir| has_leftovers(&dir)) {
+        return;
+    }
+    // A second handle, because the first one has been read to the end.
+    if let Ok(dir) = store.open_at(&node_modules) {
+        let checked = plan.checked;
+        scan_folder(dir, &join(STORE_DIR, &node_modules), false, &|_| true, plan);
+        plan.checked = checked;
     }
 }
 

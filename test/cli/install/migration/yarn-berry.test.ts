@@ -2371,7 +2371,10 @@ catalogs:
     });
     const bunLock = await bunLockOf(dir);
     expect(bunLock).toContain(`"patchedDependencies": {\n    "no-deps@1.0.1": ".yarn/patches/p.patch",\n  },`);
-    expect(bunLock).toContain(`"overrides": {\n    "a-dep@>=1.0.1": {\n      ".": "1.0.3",\n    },\n  },`);
+    // both keys are read back, so neither warns and both rules survive a later re-resolve
+    expect(stderr).not.toContain("warn:");
+    expect(bunLock).toContain(`    "a-dep@>=1.0.1": {\n      ".": "1.0.3",\n    },\n`);
+    expect(bunLock).toContain(`    "pkg-alias@npm:no-deps@^1.0.0": {\n      ".": "npm:no-deps@1.0.1",\n    },\n`);
     expect(lockedVersions(bunLock)).toEqual([
       "a-dep@1.0.3",
       "a@workspace:packages/a",
@@ -2387,6 +2390,56 @@ catalogs:
       expect(await Bun.file(join(dir, "node_modules", alias, "patched-too.txt")).text()).toBe("hello world\n");
     }
     await expectFrozenInstall(dir);
+  });
+
+  test.concurrent("a resolution keyed on catalog: is kept as an override", async () => {
+    const patch = await Bun.file(
+      join(import.meta.dir, "yarn-berry", "patch", ".yarn", "patches", "no-deps-npm-1.0.1-aa11bb22cc.patch"),
+    ).text();
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-catalog-rule",
+          workspaces: ["packages/*"],
+          resolutions: { "no-deps@catalog:": "patch:no-deps@npm:1.0.1#~/.yarn/patches/p.patch" },
+        }),
+        "packages/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "catalog:" },
+        }),
+        ".yarnrc.yml": `catalog:\n  no-deps: ^1.0.0\n`,
+        ".yarn/patches/p.patch": patch,
+        "yarn.lock": yarnLock({
+          "a@workspace:packages/a": [`resolution: "a@workspace:packages/a"`, `dependencies:`, `  no-deps: "catalog:"`],
+          "berry-catalog-rule@workspace:.": [`resolution: "berry-catalog-rule@workspace:."`],
+          "no-deps@npm:1.0.1": [`version: 1.0.1`, `resolution: "no-deps@npm:1.0.1"`],
+          "no-deps@patch:no-deps@npm:1.0.1#~/.yarn/patches/p.patch": [
+            `version: 1.0.1`,
+            `resolution: "no-deps@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch::version=1.0.1&hash=abc123"`,
+          ],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).not.toContain("warn:");
+    expect(stderr).not.toContain("error:");
+    const bunLock = await bunLockOf(dir);
+    expect(bunLock).toContain(`    "no-deps@catalog:": {\n      ".": "1.0.1",\n    },\n`);
+    expect(bunLock).toContain(`"patchedDependencies": {\n    "no-deps@1.0.1": ".yarn/patches/p.patch",\n  },`);
+    expect(lockedVersions(bunLock)).toEqual(["a@workspace:packages/a", "no-deps@1.0.1"]);
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
+
+    // the catalog allows 1.1.0, and the rule is what keeps 1.0.1 when the lockfile is gone
+    await rm(join(dir, "bun.lock"));
+    await rm(join(dir, "yarn.lock"));
+    const fresh = await run(dir, "install");
+    expect(fresh.stderr).not.toContain("warn:");
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["a@workspace:packages/a", "no-deps@1.0.1"]);
+    expect(fresh.exitCode).toBe(0);
   });
 
   test.concurrent("catalog: in the dependencies a packageExtension adds", async () => {

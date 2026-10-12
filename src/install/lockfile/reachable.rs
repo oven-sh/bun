@@ -155,8 +155,8 @@ pub fn packages_from(
     Walk::new(lockfile, resolutions, follow_workspace_edges, options).reach(roots)
 }
 
-// What an install without `left_out` still needs: optional edges to those are not followed.
-pub(crate) fn packages_without(
+// `roots`, plus every package a non-optional edge leads to. Skips optional edges to `left_out`.
+pub(crate) fn required_without(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
     roots: &[PackageID],
@@ -165,7 +165,22 @@ pub(crate) fn packages_without(
 ) -> DynamicBitSet {
     let mut walk = Walk::new(lockfile, resolutions, true, options);
     walk.left_out = Some(left_out);
-    walk.reach(roots)
+    let reached = walk.reach(roots);
+    let mut required = walk.empty_seen();
+    for &root in roots {
+        mark(&mut required, root);
+    }
+    let mut parents = reached.iterator::<true, true>();
+    while let Some(parent) = parents.next() {
+        for (target, behavior) in walk.edges(parent as PackageID) {
+            if !behavior.contains(Behavior::OPTIONAL)
+                && reached.is_set_allow_out_of_bound(target as usize, false)
+            {
+                required.set(target as usize);
+            }
+        }
+    }
+    required
 }
 
 // Out-of-range ids (invalid_package_id) are treated as already seen.
@@ -299,19 +314,22 @@ impl<'a> Walk<'a> {
         worklist.push(target);
     }
 
+    // The edges of `parent` that the walk follows.
+    fn edges(&self, parent: PackageID) -> impl Iterator<Item = (PackageID, Behavior)> {
+        let slice = self.dep_slices[parent as usize];
+        let siblings = slice.get(self.deps);
+        (slice.begin() as usize..slice.end() as usize).filter_map(move |dep_id| {
+            let dep = &self.deps[dep_id];
+            let followed = self.follow_all
+                || (self.follows(dep.behavior) && !self.options.omits_optional_peer(dep, siblings));
+            followed.then(|| (self.resolutions[dep_id], dep.behavior))
+        })
+    }
+
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
         while let Some(parent) = worklist.pop() {
-            let slice = self.dep_slices[parent as usize];
-            let siblings = slice.get(self.deps);
-            for dep_id in slice.begin() as usize..slice.end() as usize {
-                let dep = &self.deps[dep_id];
-                let behavior = dep.behavior;
-                if !(self.follow_all
-                    || (self.follows(behavior) && !self.options.omits_optional_peer(dep, siblings)))
-                {
-                    continue;
-                }
-                self.admit(self.resolutions[dep_id], behavior, seen, worklist);
+            for (target, behavior) in self.edges(parent) {
+                self.admit(target, behavior, seen, worklist);
             }
         }
     }

@@ -61,7 +61,29 @@ impl ScopedOverride {
 
     #[inline]
     pub(crate) fn has_target_range(&self) -> bool {
-        self.target_range.tag == VersionTag::Npm
+        self.target_range.tag != VersionTag::Uninitialized
+    }
+}
+
+#[inline]
+fn is_npm_alias(version: &dependency::Version) -> bool {
+    version.tag == VersionTag::Npm && version.npm().is_alias
+}
+
+/// Whether a rule keyed `name@<range>` selects a dependency declared as `declared`.
+fn range_selects(range: &dependency::Version, declared: &dependency::Version, buf: &[u8]) -> bool {
+    match (range.tag, declared.tag) {
+        (VersionTag::Npm, VersionTag::Npm) => {
+            let (range, declared) = (range.npm(), declared.npm());
+            // An alias key selects aliases of the same package. A plain key never selects an alias.
+            range.is_alias == declared.is_alias
+                && (!range.is_alias || range.name.eql(declared.name, buf, buf))
+                && range.version.intersects(buf, &declared.version, buf)
+        }
+        (VersionTag::Catalog, VersionTag::Catalog) => {
+            range.catalog().eql(*declared.catalog(), buf, buf)
+        }
+        _ => false,
     }
 }
 
@@ -184,16 +206,26 @@ impl OverrideMap {
         dependency_id: DependencyID,
         name_hash: PackageNameHash,
     ) -> Option<OverrideRule<'_>> {
+        let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
+        self.lookup_declared(lockfile, dependency_id, name_hash, declared)
+    }
+
+    /// `declared` is the version being resolved. `enqueue_pinned` resolves another one than the row's.
+    pub(crate) fn lookup_declared(
+        &self,
+        lockfile: &Lockfile,
+        dependency_id: DependencyID,
+        name_hash: PackageNameHash,
+        declared: &dependency::Version,
+    ) -> Option<OverrideRule<'_>> {
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
-        if self.scoped.is_empty() {
-            return self.get_flat(name_hash);
-        }
-        if self.scoped_names.contains(&name_hash) {
-            if let Some(rule) = self.scoped_rule_for(lockfile, dependency_id, name_hash) {
+        if !self.scoped.is_empty() && self.scoped_names.contains(&name_hash) {
+            if let Some(rule) = self.scoped_rule_for(lockfile, dependency_id, name_hash, declared) {
                 return Some(OverrideRule::Scoped(rule));
             }
         }
-        self.get_flat(name_hash)
+        // Only a key that spells out the alias (`name@npm:other@^1`) overrides an `npm:` alias.
+        self.get_flat(name_hash).filter(|_| !is_npm_alias(declared))
     }
 
     #[inline]
@@ -209,14 +241,16 @@ impl OverrideMap {
         lockfile: &Lockfile,
         dependency_id: DependencyID,
         name_hash: PackageNameHash,
+        declared: &dependency::Version,
     ) -> Option<&'s ScopedOverride> {
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
         let mut owner: Option<Option<(PackageNameHash, Option<SemverVersion>)>> = None;
         let mut best: Option<(&'s ScopedOverride, u8)> = None;
 
         for rule in &self.scoped {
-            if rule.dep.name_hash != name_hash {
+            if rule.dep.name_hash != name_hash
+                || (!rule.has_target_range() && is_npm_alias(declared))
+            {
                 continue;
             }
             let mut tier: u8 = 0;
@@ -250,13 +284,7 @@ impl OverrideMap {
                 if best.is_some_and(|(_, best_tier)| best_tier > tier + 1) {
                     continue;
                 }
-                if declared.tag != VersionTag::Npm
-                    || !rule.target_range.npm().version.intersects(
-                        buf,
-                        &declared.npm().version,
-                        buf,
-                    )
-                {
+                if !range_selects(&rule.target_range, declared, buf) {
                     continue;
                 }
                 tier += 1;
@@ -572,7 +600,8 @@ impl OverrideMap {
     ) -> Result<bool, Error> {
         let name_hash = SemverBuilder::string_hash(target.name);
         let name = buf.append_with_hash(target.name, name_hash)?;
-        let Some(target_range) = lockfile_range(name, name_hash, target.range, buf, log)? else {
+        let Some(target_range) = lockfile_range(name, name_hash, target.range, true, buf, log)?
+        else {
             return Ok(false);
         };
 
@@ -581,8 +610,14 @@ impl OverrideMap {
             Some(selector) => {
                 let parent_name_hash = SemverBuilder::string_hash(selector.name);
                 let parent_name = buf.append_with_hash(selector.name, parent_name_hash)?;
-                let Some(version) =
-                    lockfile_range(parent_name, parent_name_hash, selector.range, buf, log)?
+                let Some(version) = lockfile_range(
+                    parent_name,
+                    parent_name_hash,
+                    selector.range,
+                    false,
+                    buf,
+                    log,
+                )?
                 else {
                     return Ok(false);
                 };
@@ -595,7 +630,7 @@ impl OverrideMap {
             }
         };
 
-        let is_flat = parent.is_none() && target_range.tag != VersionTag::Npm;
+        let is_flat = parent.is_none() && target_range.tag == VersionTag::Uninitialized;
         let value = buf.append(value)?;
         let sliced = value.sliced(buf.bytes.as_slice());
         let Some(version) = dependency::parse(name, name_hash, sliced.slice, &sliced, log, None)
@@ -949,7 +984,8 @@ impl OverrideMap {
         else {
             return Ok(());
         };
-        let Some(target_range) = parse_range(ctx, key_loc, dep.name, dep.name_hash, target.range)
+        let Some(target_range) =
+            parse_range(ctx, key_loc, dep.name, dep.name_hash, target.range, true)
         else {
             return Ok(());
         };
@@ -970,10 +1006,20 @@ impl OverrideMap {
     }
 }
 
+/// A parent is selected by its installed version. A target is selected by how it is declared.
+fn is_selector_range(version: &dependency::Version, is_target: bool) -> bool {
+    match version.tag {
+        VersionTag::Npm => is_target || !version.npm().is_alias,
+        VersionTag::Catalog => is_target,
+        _ => false,
+    }
+}
+
 fn lockfile_range(
     name: SemverString,
     name_hash: PackageNameHash,
     range: &[u8],
+    is_target: bool,
     buf: &mut bun_semver::string::Buf<'_>,
     log: &mut bun_ast::Log,
 ) -> Result<Option<dependency::Version>, Error> {
@@ -991,7 +1037,7 @@ fn lockfile_range(
             log,
             None::<&mut PackageManager>,
         ) {
-            Some(version) if version.tag == VersionTag::Npm => Some(version),
+            Some(version) if is_selector_range(&version, is_target) => Some(version),
             _ => None,
         },
     )
@@ -1010,7 +1056,7 @@ fn clone_range(
         dep.name,
         Some(dep.name_hash),
         sliced.slice,
-        VersionTag::Npm,
+        range.tag,
         &sliced,
         None,
         None,
@@ -1073,7 +1119,7 @@ fn parse_parent(
 ) -> Option<Dependency> {
     let name_hash = SemverBuilder::string_hash(selector.name);
     let name = ctx.builder.append::<SemverString>(selector.name);
-    let version = parse_range(ctx, key_loc, name, name_hash, selector.range)?;
+    let version = parse_range(ctx, key_loc, name, name_hash, selector.range, false)?;
     Some(Dependency {
         name,
         name_hash,
@@ -1088,6 +1134,7 @@ fn parse_range(
     name: SemverString,
     name_hash: PackageNameHash,
     range: &[u8],
+    is_target: bool,
 ) -> Option<dependency::Version> {
     if range.is_empty() {
         return Some(dependency::Version::default());
@@ -1102,7 +1149,7 @@ fn parse_range(
         &mut *ctx.log,
         None::<&mut PackageManager>,
     ) {
-        Some(version) if version.tag == VersionTag::Npm => Some(version),
+        Some(version) if is_selector_range(&version, is_target) => Some(version),
         _ => {
             ctx.log.add_warning_fmt(
                 Some(ctx.source),

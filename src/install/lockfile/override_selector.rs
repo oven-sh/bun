@@ -37,7 +37,12 @@ pub(crate) fn parse_package_segment(segment: &[u8]) -> Result<PackageSelector<'_
     if is_bare_scope(name) {
         return Err(SelectorError::InvalidName);
     }
-    let range = strings::without_prefix(range.unwrap_or(b""), b"npm:");
+    let range = range.unwrap_or(b"");
+    // `npm:^1` is the range `^1`. `npm:other@^1` is an alias and keeps its prefix.
+    let range = match range.strip_prefix(b"npm:") {
+        Some(rest) if Dependency::split_name_and_maybe_version(rest).1.is_none() => rest,
+        _ => range,
+    };
     if range.is_empty() && segment.len() > name.len() {
         return Err(SelectorError::EmptyRange);
     }

@@ -279,20 +279,29 @@ describe.concurrent("auto-install reads a package.json dependency version from t
     expect(exitCode).toBe(0);
   });
 
-  // A value with an escape is not a slice of the source, so it has no offset
-  // into it. An import of it asks for the name as written, like an import that
-  // no package.json lists.
-  test("value with a JSON escape", async () => {
+  // A string with a JSON escape is decoded outside the source, so offsets into the source can't
+  // point at it. These dependencies used to be dropped, and the import fell back to `latest`.
+  test.each([
+    ["version", String.raw`"my-alias":"npm:is-number@\u0031.0.0"`],
+    ["name", String.raw`"my-\u0061lias":"npm:is-number@1.0.0"`],
+    ["name and version", String.raw`"my\u002dalias":"npm:is-number\u00401.0.0"`],
+  ])("JSON escape in a dependency %s", async (_, dependency) => {
     using registry = fixtureRegistry();
-    using dir = tempDir("autoinstall-escaped-value", {
-      "package.json": String.raw`{"name":"app","dependencies":{"my-alias":"npm:is-number@\u0031.0.0"}}`,
-      "index.js": `try {\n  require("my-alias");\n} catch (e) {\n  console.log(e.code);\n}\n`,
+    using dir = tempDir("autoinstall-escaped", {
+      // left-pad has no escape, but shares the buffer with the one that does
+      "package.json": `{"name":"app","dependencies":{"left-pad":"npm:no-deps@1.0.1",${dependency}}}`,
+      "index.js": `for (const id of ["my-alias", "left-pad"]) {\n  const { name, version } = require(id);\n  console.log(name + "@" + version);\n}\n`,
       "bunfig.toml": registry.bunfig,
     });
 
     const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
-    expect(stdout).toBe("MODULE_NOT_FOUND\n");
-    expect([...new Set(registry.requests)]).toEqual(["/my-alias"]);
+    expect(stdout).toBe("is-number@1.0.0\nno-deps@1.0.1\n");
+    expect(registry.requests.toSorted()).toEqual([
+      "/is-number",
+      "/is-number/-/is-number-1.0.0.tgz",
+      "/no-deps",
+      "/no-deps/-/no-deps-1.0.1.tgz",
+    ]);
     expect(exitCode).toBe(0);
   });
 

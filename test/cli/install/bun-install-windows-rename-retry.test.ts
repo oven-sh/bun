@@ -12,11 +12,15 @@
 // install must outlast a 2s hold, and with BUN_INSTALL_WINDOWS_RENAME_RETRY_MS=0
 // it must fail immediately and name the variable (which also proves the held
 // handle is what blocks the rename).
+//
+// The isolated linker retries one more rename: it moves an installed
+// project-local package aside before it links it again. If that rename fails it
+// links in place, so the install succeeds either way.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const PKG = "av-test-pkg";
@@ -142,9 +146,9 @@ function spawnBlocker(watchDir: string, subdirFilter: string, holdMs: number) {
   };
 }
 
-async function runInstall(cwd: string, env: Record<string, string | undefined>) {
+async function runInstall(cwd: string, env: Record<string, string | undefined>, args: string[] = []) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", ...args],
     cwd,
     env: { ...bunEnv, ...env },
     stdout: "pipe",
@@ -275,5 +279,35 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
       }
     }
     expect(held, "the fixture never held the staging directory").toBe(true);
+  });
+
+  // The held file is not one of the package's: it is gone if the old directory was moved aside
+  // and deleted, and still there if the package was linked in place.
+  test.each([
+    { mode: "default budget outlasts a 2s hold", budget: undefined, holdMs: HOLD_MS },
+    { mode: `${ENV}=0 links in place`, budget: "0", holdMs: 15_000 },
+  ])("reinstalled project-local store entry: $mode", async ({ budget, holdMs }) => {
+    await using server = serveRegistry();
+    using s = scaffold("rename-retry-local-store", registryBunfig(server.port) + `linker = "isolated"\n`, {});
+    const installed = join(s.project, "node_modules", ".bun", `${PKG}@1.0.0`, "node_modules", PKG);
+
+    expect(await runInstall(s.project, s.env)).toMatchObject({ exitCode: 0 });
+    mkdirSync(join(installed, "held"));
+    writeFileSync(join(installed, "held", "file.txt"), "");
+
+    // The file is there already, so the fixture holds it before the install starts.
+    const blocker = spawnBlocker(installed, "held", holdMs);
+    await blocker.held;
+
+    const result = await runInstall(s.project, { ...s.env, [ENV]: budget }, ["--force"]);
+    expect(await blocker.finish()).toContain("HELD");
+
+    expect(result).toMatchObject({ exitCode: 0 });
+    expect({
+      packageJson: existsSync(join(installed, "package.json")),
+      binExe: existsSync(join(installed, "bin.exe")),
+      files: readdirSync(join(installed, "files")).length,
+      heldFile: existsSync(join(installed, "held", "file.txt")),
+    }).toEqual({ packageJson: true, binExe: true, files: 300, heldFile: budget !== undefined });
   });
 });

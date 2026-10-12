@@ -965,14 +965,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
         }
 
-        // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
-        // if it's a workspaceOnly dependency
-        if !dependency.behavior.is_workspace()
-            && (dependency.version.tag != dependency::version::Tag::Npm
-                || !dependency.version.npm().is_alias)
-        {
+        // A workspaceOnly dependency is never overridden. `lookup` decides which rules reach an alias.
+        if !dependency.behavior.is_workspace() {
+            let is_alias = dependency.version.tag == dependency::version::Tag::Npm
+                && dependency.version.npm().is_alias;
+            // Rules for an alias are keyed by the alias, not by the package it points at.
+            let rule_name_hash = if is_alias {
+                dependency.name_hash
+            } else {
+                name_hash
+            };
             let overridden = (this.lockfile.overrides)
-                .get(&this.lockfile, id, name_hash)
+                .lookup_declared(&this.lockfile, id, rule_name_hash, &dependency.version)
+                .map(|rule| rule.version().clone())
                 .filter(|_| !links_workspace_member(this, id, dependency, name_hash));
             if let Some(new) = &overridden {
                 bun_output::scoped_log!(
@@ -1766,7 +1771,7 @@ pub(crate) fn create_extract_task_for_streaming(
                 extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
                     network: &mut *network_task,
                     tarball: ExtractTarball {
-                        skip_verify: !this.options.do_.contains(Do::VERIFY_INTEGRITY),
+                        skip_verify: this.skips_verify(tarball.resolution.tag),
                         ..*tarball
                     },
                 }),
@@ -3016,17 +3021,22 @@ impl PackageManager {
     #[cold]
     pub(crate) fn report_offline_misses(
         &self,
-        misses: &[PackageID],
+        misses: &crate::package_install::OfflineMisses,
         roots: &[PackageID],
         isolated: bool,
     ) -> Result<u32, bun_alloc::AllocError> {
-        if misses.is_empty() {
+        if misses.missing.is_empty() {
             return Ok(0);
         }
         let lockfile = &*self.lockfile;
         let mut missing = bun_collections::DynamicBitSet::init_empty(lockfile.packages.len())?;
-        for &package_id in misses {
+        for &package_id in &misses.missing {
             missing.set(package_id as usize);
+        }
+        // A package with an installed copy is not left out: that copy needs its dependencies.
+        let mut left_out = missing.clone()?;
+        for &package_id in &misses.in_place {
+            left_out.unset(package_id as usize);
         }
         // A peer needs the copy the linker serves it; what it is served elsewhere counts as needed.
         let mut resolutions = lockfile.buffers.resolutions.clone();
@@ -3049,17 +3059,17 @@ impl PackageManager {
                 roots.push(package_id);
             }
         }
-        let needed = reachable::packages_without(
+        let required = reachable::required_without(
             lockfile,
             &resolutions,
             &roots,
             reachable::Options::install(self),
-            &missing,
+            &left_out,
         );
         let mut reported = 0;
-        for &package_id in misses {
+        for &package_id in &misses.missing {
             // once per package
-            if !missing.is_set(package_id as usize) || !needed.is_set(package_id as usize) {
+            if !missing.is_set(package_id as usize) || !required.is_set(package_id as usize) {
                 continue;
             }
             missing.unset(package_id as usize);

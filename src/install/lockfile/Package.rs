@@ -1099,6 +1099,13 @@ impl Diff {
                 if is_explicit_update_target
                     || (from_dep.version.tag == dependency::version::Tag::Tarball
                         && pm.repins_tarball(from_dep, from_buf!(), named_update_here))
+                    || Self::locked_version_is_out_of_range(
+                        from_lockfile,
+                        from_resolutions[i],
+                        to_lockfile,
+                        to_deps!(),
+                        cur_to_i,
+                    )
                 {
                     summary.update += 1;
                     continue;
@@ -1486,6 +1493,41 @@ impl Diff {
             && (npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
     }
 
+    /// A one-sided merge can leave a pin that the unchanged range rules out. Only flags clear cases.
+    fn locked_version_is_out_of_range(
+        from_lockfile: &Lockfile,
+        locked: PackageID,
+        to_lockfile: &Lockfile,
+        to_deps: &[Dependency],
+        to_i: usize,
+    ) -> bool {
+        let to_dep = &to_deps[to_i];
+        let packages = &from_lockfile.packages;
+        let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+        let declared = to_lockfile.catalogs.resolve_range(to_buf, to_dep);
+        let (Some(resolution), Some(npm)) = (
+            packages.items_resolution().get(locked as usize),
+            declared.try_npm(),
+        ) else {
+            return false;
+        };
+        let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+        resolution.tag == ResolutionTag::Npm
+            // bun.lock binds rows by name, so an optional row that never resolved can point anywhere.
+            && !to_dep.behavior.is_peer()
+            && !to_dep.behavior.is_optional()
+            // `*` can pin the prerelease that `latest` points at, which no range "satisfies".
+            && !resolution.npm().version.tag.has_pre()
+            && (npm.name).eql(packages.items_name()[locked as usize], to_buf, from_buf)
+            && !to_lockfile.overrides.has_rule_for_name(to_dep.name_hash)
+            && !(npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
+            // A name in two groups gets one version, which only has to fit one of the ranges.
+            && (to_deps.iter())
+                .filter(|other| other.name_hash == to_dep.name_hash)
+                .count()
+                == 1
+    }
+
     /// `to` is about to replace `from_id`; its rows keep what `generate` lets a root row keep.
     pub(crate) fn keep_resolutions(pm: &mut PackageManager, from_id: PackageID, to: &Package) {
         if pm.to_update || from_id >= pm.lockfile.loaded_package_count {
@@ -1503,7 +1545,14 @@ impl Diff {
                     && from_dep.behavior == to_dep.behavior
                     && (lockfile.packages.items_resolution().get(locked as usize))
                         .is_some_and(|resolution| resolution.tag != ResolutionTag::Folder)
-                    && (Dependency::eql(to_dep, from_dep, buf, buf)
+                    && ((Dependency::eql(to_dep, from_dep, buf, buf)
+                        && !Self::locked_version_is_out_of_range(
+                            lockfile,
+                            locked,
+                            lockfile,
+                            to.dependencies.get(&lockfile.buffers.dependencies),
+                            to_i - to.dependencies.begin() as usize,
+                        ))
                         || Self::locked_version_satisfies(lockfile, locked, to_dep, buf)))
                 .then_some(locked)
             });

@@ -588,11 +588,12 @@ describe.concurrent.each(
       ),
     );
     const root = String(dir);
+    const extraEnv: Record<string, string> = {};
     async function run(project: string, ...args: string[]) {
       await using proc = spawn({
         cmd: [bunExe(), ...args],
         cwd: join(root, project),
-        env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache"), ...extraEnv },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -613,6 +614,8 @@ describe.concurrent.each(
       server,
       served,
       requests,
+      /** Added to the environment of every `run`. */
+      env: extraEnv,
       run,
       ok,
       put: async (project: string, tgz: Tarball) =>
@@ -950,6 +953,132 @@ describe.concurrent.each(
     // Next to `pkg`, wherever the linker put that.
     const siblings = dirname(await realpath(join(box.root, "app", "node_modules", "pkg")));
     expect(await file(join(siblings, "dep", "index.js")).text()).toBe('module.exports = "dep";\n');
+  });
+
+  // `--no-verify` skips the hash check of a download (a `file:` tarball is always checked).
+  // Unverified bytes never get a cache entry named after the hash in bun.lock: their entry
+  // is named after the URL and that hash together, and only `--no-verify` installs look there.
+  describe.skipIf(kind === "file:").each([
+    ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+    ["streamed", { BUN_INSTALL_STREAMING_MIN_SIZE: "1" }],
+  ] as const)("--no-verify (%s)", (extractor, extractorEnv) => {
+    function noVerifySandbox(name: string, projects: Record<string, Record<string, string>>) {
+      const box = sandbox(`${name}-${extractor}`, projects);
+      Object.assign(box.env, extractorEnv);
+      return box;
+    }
+
+    /** `app` pins `real`, the URL holds `forged`, and `bun install --no-verify` ran with an empty cache. */
+    async function unverified(name: string) {
+      const real = await tarball("real");
+      const forged = await tarball("forged");
+      const box = noVerifySandbox(name, { app: {}, other: {} });
+      await box.put("app", real);
+      await box.ok("app", "install");
+      const lockfile = await box.lockfile("app");
+      expect(lockfile).toContain(real.integrity);
+      await rm(join(box.root, "cache"), { recursive: true });
+
+      await box.put("app", forged);
+      await box.reinstall("app", "--no-verify");
+      expect(await box.installed("app")).toBe('module.exports = "forged";\n');
+      return { box, real, forged, lockfile };
+    }
+
+    it("another project that pins the same hash never gets the unverified bytes", async () => {
+      const { box, real, lockfile } = await unverified("no-verify-other-project");
+      using _ = box;
+      const other = join(box.root, "other");
+
+      // The same URL, which still holds the wrong bytes.
+      await writeFile(join(other, "bun.lock"), lockfile);
+      const { stderr, exitCode } = await box.run("other", "install");
+      expect(stderr).toContain("Integrity check failed for tarball: pkg");
+      expect(await file(join(other, "node_modules", "pkg", "index.js")).exists()).toBe(false);
+      expect(exitCode).toBe(1);
+
+      // Another URL, which holds the right bytes.
+      const mirror = `${box.server.url}mirror.tgz`;
+      box.served.set("/mirror.tgz", real.file);
+      await writeFile(join(other, "package.json"), JSON.stringify({ name: "app", dependencies: { pkg: mirror } }));
+      await writeFile(join(other, "bun.lock"), lockfile.replaceAll(box.spec, mirror));
+      await box.ok("other", "install");
+      expect(await box.state("other")).toEqual(stateOf("real", real));
+      expect(await box.cacheEntries()).toEqual([expect.stringMatching(/^@T@[0-9a-f]{16}@@@1$/), real.cacheEntry]);
+    });
+
+    it("a second --no-verify install is a cache hit", async () => {
+      const { box } = await unverified("no-verify-cache-hit");
+      using _ = box;
+      const requests = box.requests.length;
+
+      await box.reinstall("app", "--no-verify");
+      expect(await box.installed("app")).toBe('module.exports = "forged";\n');
+      expect(box.requests.length).toBe(requests);
+    });
+
+    it("leaves bun.lock unchanged, and .bun-tag does not claim the hash that was not checked", async () => {
+      const { box, real, lockfile } = await unverified("no-verify-lockfile");
+      using _ = box;
+
+      expect(await box.lockfile("app")).toBe(lockfile);
+      expect(await box.state("app")).toEqual({
+        installed: 'module.exports = "forged";\n',
+        tag: "",
+        locked: real.integrity,
+      });
+    });
+
+    // The isolated linker goes by the name of the folder in node_modules/.bun, not by .bun-tag.
+    it.skipIf(linker === "isolated")("a later install without the flag replaces the unverified copy", async () => {
+      const { box, real } = await unverified("no-verify-then-verify");
+      using _ = box;
+
+      await box.put("app", real);
+      await box.ok("app", "install");
+      expect(await box.state("app")).toEqual(stateOf("real", real));
+    });
+
+    it("without a lockfile, downloads once and records the hash of what it installed", async () => {
+      const v1 = await tarball("v1");
+      using box = noVerifySandbox("no-verify-no-lockfile", { app: {} });
+
+      await box.put("app", v1);
+      await box.ok("app", "install", "--no-verify");
+      expect(await box.state("app")).toEqual(stateOf("v1", v1));
+      expect(box.requests).toEqual(["/pkg.tgz"]);
+    });
+
+    it("downloads once and records the hash when the lockfile does not record one", async () => {
+      const v1 = await tarball("v1");
+      using box = noVerifySandbox("no-verify-unpinned", { app: {} });
+      await writeFile(
+        join(box.root, "app", "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: { "": { name: "app", dependencies: { pkg: box.spec } } },
+          packages: { pkg: [`pkg@${box.resolution}`, {}] },
+        }),
+      );
+
+      await box.put("app", v1);
+      await box.ok("app", "install", "--no-verify");
+      expect(await box.state("app")).toEqual(stateOf("v1", v1));
+      expect(box.requests).toEqual(["/pkg.tgz"]);
+    });
+
+    it("bun update --no-verify installs the new bytes of the URL and records their hash", async () => {
+      const v1 = await tarball("v1");
+      const v2 = await tarball("v2");
+      using box = noVerifySandbox("no-verify-update", { app: {} });
+
+      await box.put("app", v1);
+      await box.ok("app", "install", "--no-verify");
+      await box.put("app", v2);
+      await box.ok("app", "update", "--no-verify");
+      expect(await box.state("app")).toEqual(stateOf("v2", v2));
+    });
   });
 });
 

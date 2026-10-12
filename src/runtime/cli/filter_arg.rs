@@ -239,7 +239,7 @@ pub(crate) fn select_packages(
             let names: Vec<&[u8]> = discovered.iter().map(|p| &p.json.name[..]).collect();
             WorkspaceGraph::from_dependency_names(&names, |i| {
                 let deps = &discovered[i].json.dependencies;
-                let buf = deps.source_buf;
+                let buf: &[u8] = &deps.source_buf;
                 deps.map.keys().iter().map(move |k| k.slice(buf))
             })
         });

@@ -1130,6 +1130,86 @@ describe.concurrent("version-scoped targets", () => {
     expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
     expect(await lock(dir)).not.toContain('"lockfileVersion": 3');
   });
+
+  // Yarn matches a `name@range` key against the range as declared, so `catalog:` and `npm:` aliases are valid keys.
+  describe.each(["overrides", "resolutions"] as const)("%s", field => {
+    test("a catalog: key only overrides dependencies declared with that catalog", async () => {
+      const dir = await project({
+        workspaces: ["packages/*"],
+        catalog: { "no-deps": "^1.0.0" },
+        dependencies: { "no-deps": "catalog:", "one-range-dep": "1.0.0" },
+        [field]: { "no-deps@catalog:": "2.0.0" },
+      });
+      await installOk(dir);
+      // one-range-dep declares a plain ^1.0.0
+      await expectVersionsSeenBy(dir, "no-deps", { ".": "2.0.0", "one-range-dep": "1.1.0" });
+      expect(overridesSection(await lock(dir))).toBe(
+        `"overrides": {\n  "no-deps@catalog:": {\n    ".": "2.0.0",\n  },\n},`,
+      );
+      await installNoChanges(dir);
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+
+    test("a catalog: key does not match another catalog group", async () => {
+      const dir = await project({
+        workspaces: ["packages/*"],
+        catalog: { "no-deps": "^1.0.0" },
+        catalogs: { old: { "no-deps": "^1.0.0" } },
+        dependencies: { "no-deps": "catalog:" },
+        [field]: { "no-deps@catalog:old": "1.0.0" },
+      });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, ".", "no-deps")).toBe("1.1.0");
+    });
+
+    test("an alias key overrides that alias", async () => {
+      const dir = await project({
+        dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+        [field]: { "my-alias@npm:no-deps@^1.0.0": "npm:no-deps@1.0.0" },
+      });
+      await installOk(dir);
+      expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.0.0");
+      expect(overridesSection(await lock(dir))).toBe(
+        `"overrides": {\n  "my-alias@npm:no-deps@^1.0.0": {\n    ".": "npm:no-deps@1.0.0",\n  },\n},`,
+      );
+      await installNoChanges(dir);
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+
+    test.each([
+      ["another package", "my-alias@npm:a-dep@^1.0.0"],
+      ["a range that does not intersect", "my-alias@npm:no-deps@^2.0.0"],
+      ["no alias in the key", "my-alias@^1.0.0"],
+      ["no range at all", "my-alias"],
+    ])("an alias is left alone by a key with %s", async (_, key) => {
+      const dir = await project({
+        dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+        [field]: { [key]: "npm:no-deps@1.0.0" },
+      });
+      await installOk(dir);
+      expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.1.0");
+    });
+
+    test("an alias key leaves a plain dependency of that name alone", async () => {
+      const dir = await project({
+        dependencies: { "no-deps": "^1.0.0" },
+        [field]: { "no-deps@npm:no-deps@^1.0.0": "1.0.0" },
+      });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, ".", "no-deps")).toBe("1.1.0");
+    });
+  });
+
+  test("an alias is not a valid range for a parent", async () => {
+    const dir = await project({
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "one-range-dep@npm:one-range-dep@1": { "no-deps": "1.0.0" } },
+    });
+    const { err, exitCode } = await install(dir);
+    expect(diagnostics(err)).toEqual(['warn: Invalid version range "npm:one-range-dep@1" for "one-range-dep"']);
+    expect(exitCode).toBe(0);
+    expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
+  });
 });
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker => {

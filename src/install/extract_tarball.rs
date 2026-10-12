@@ -31,6 +31,7 @@ pub struct ExtractTarball {
     /// story as `cache_dir`).
     pub(crate) temp_dir: Fd,
     pub(crate) dependency_id: DependencyID,
+    /// `PackageManager::skips_verify`, which the cache lookup goes by as well.
     pub(crate) skip_verify: bool, // = false
     pub(crate) in_trusted_dependencies: bool,
     pub(crate) integrity: Integrity, // = Integrity::default()
@@ -520,6 +521,12 @@ impl ExtractTarball {
                     )
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                    // `.bun-tag` does not claim a hash that `--no-verify` left unchecked.
+                    let tag = if self.skip_verify && self.integrity.tag.is_supported() {
+                        Integrity::default()
+                    } else {
+                        *integrity
+                    };
                     // Says which bytes a copy in node_modules is of: `PackageInstall::verify`.
                     let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
                         &mut bufs.json_path_buf.0,
@@ -534,7 +541,7 @@ impl ExtractTarball {
                             | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
                         0o664,
                     )
-                    .and_then(|f| f.write_all(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN])))
+                    .and_then(|f| f.write_all(tag.sri(&mut [0; Integrity::MAX_SRI_LEN])))
                     .is_err()
                     {
                         let _ = sys::unlinkat(self.temp_dir, tag_path);
@@ -542,6 +549,7 @@ impl ExtractTarball {
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
                         integrity,
+                        self.skip_verify,
                         self.resolution.tag,
                         self.url.slice(),
                         None,

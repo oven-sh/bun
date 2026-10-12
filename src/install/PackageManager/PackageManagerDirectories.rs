@@ -785,25 +785,31 @@ pub fn cached_npm_package_folder_print_basename<'a>(
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     integrity: &Integrity,
+    skips_verify: bool,
     tag: ResolutionTag,
     url: &[u8],
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
-    if let Some(algorithm) = integrity.tag.name() {
-        let digest = integrity.slice();
-        w.put(algorithm.as_bytes());
-        w.put_byte(b'-');
-        w.put_hex_bytes(&digest[..digest.len().min(16)]);
-    } else {
-        // A row that has none and gets none (`pins_tarballs`).
-        let mut hasher = bun_wyhash::Wyhash11::init(0);
-        if tag == ResolutionTag::LocalTarball {
-            hasher.update(FileSystem::instance().top_level_dir());
+    match integrity.tag.name() {
+        // Unverified bytes never get a cache entry named after the lockfile's hash.
+        Some(algorithm) if !skips_verify => {
+            let digest = integrity.slice();
+            w.put(algorithm.as_bytes());
+            w.put_byte(b'-');
+            w.put_hex_bytes(&digest[..digest.len().min(16)]);
         }
-        hasher.update(url);
-        w.put_u64_hex16::<true>(hasher.final_());
+        // `--no-verify`, or a row that has no integrity and gets none (`pins_tarballs`).
+        _ => {
+            let mut hasher = bun_wyhash::Wyhash11::init(0);
+            if tag == ResolutionTag::LocalTarball {
+                hasher.update(FileSystem::instance().top_level_dir());
+            }
+            hasher.update(url);
+            hasher.update(integrity.slice());
+            w.put_u64_hex16::<true>(hasher.final_());
+        }
     }
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
@@ -827,6 +833,7 @@ pub fn cached_tarball_folder_name(
     cached_tarball_folder_name_print(
         cached_package_folder_name_buf(),
         integrity,
+        this.skips_verify(resolution.tag),
         resolution.tag,
         this.lockfile.str(url),
         patch_hash,
@@ -837,6 +844,12 @@ impl PackageManager {
     /// Whether what this run reads from a `file:` path or URL can become the integrity in bun.lock.
     pub(crate) fn pins_tarballs(&self) -> bool {
         self.options.do_.save_lockfile() && self.options.offline != options::OfflineMode::Offline
+    }
+
+    /// `--no-verify` skips the hash check of a download, never of a `file:` tarball.
+    pub(crate) fn skips_verify(&self, tag: ResolutionTag) -> bool {
+        tag != ResolutionTag::LocalTarball
+            && !self.options.do_.contains(options::Do::VERIFY_INTEGRITY)
     }
 
     /// `named_here`: the names on the command line are about the package.json `dependency` is in.

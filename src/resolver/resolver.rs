@@ -2954,7 +2954,7 @@ impl<'a> Resolver<'a> {
                         } else if esm_ref.version.is_empty() {
                             // If you don't specify a version, default to the one chosen in your package.json
                             dependencies_list = package_json.dependencies.map.values();
-                            string_buf = package_json.dependencies.source_buf;
+                            string_buf = &package_json.dependencies.source_buf;
                         }
 
                         for (dependency_id, dependency) in dependencies_list.iter().enumerate() {

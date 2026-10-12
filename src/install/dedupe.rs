@@ -678,15 +678,13 @@ pub(crate) fn effective_npm_range(
         .filter(|version| version.tag == DependencyVersionTag::Npm)
 }
 
-/// As the resolver: `workspace:` and `npm:` alias edges are never overridden.
+/// Like the resolver, never overrides a `workspace:` edge.
 pub(crate) fn applied_override<'a>(
     lockfile: &'a Lockfile,
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<OverrideRule<'a>> {
-    if dep.behavior.is_workspace()
-        || (dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
-    {
+    if dep.behavior.is_workspace() {
         return None;
     }
     lockfile.overrides.lookup(lockfile, dep_id, dep.name_hash)

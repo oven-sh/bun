@@ -241,6 +241,45 @@ describe.concurrent("--frozen-lockfile fails when", () => {
     expect(after.exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/43795: taking one side of a package.json conflict reverts a bump but leaves
+  // the lockfile's resolution ahead of it (or behind it). The range in bun.lock and in package.json agree.
+  test.each([
+    ["the root", "package.json", "root"],
+    ["a workspace", "packages/member/package.json", "member"],
+  ] as const)("bun.lock pins a version that the range in %s rules out", async (_, manifest, owner) => {
+    const own = { "no-deps": "1.0.0" };
+    const { packageDir, lock } = await installed(
+      { name: "root", version: "1.0.0", workspaces: ["packages/*"], ...(owner === "root" && { dependencies: own }) },
+      { name: "member", version: "1.0.0", ...(owner === "member" && { dependencies: own }) },
+    );
+    // package.json and the copy of its range in bun.lock say 2.0.0, `packages` still resolves 1.0.0
+    const json = await file(join(packageDir, manifest)).json();
+    await write(join(packageDir, manifest), JSON.stringify({ ...json, dependencies: { "no-deps": "2.0.0" } }));
+    const stale = lock.replace('"no-deps": "1.0.0",', '"no-deps": "2.0.0",');
+    expect(stale).not.toBe(lock);
+    expect(stale).toContain('"no-deps@1.0.0"');
+    await write(join(packageDir, "bun.lock"), stale);
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    for (const args of [["install", "--frozen-lockfile"], ["ci"]]) {
+      const frozen = await bun(packageDir, ...args);
+      expect(frozen.stderr).toContain(frozenError);
+      expect(await lockText(packageDir)).toBe(stale);
+      expect(frozen.exitCode).toBe(1);
+    }
+
+    // the advice in the error has to work
+    const plain = await bun(packageDir, "install");
+    expect(plain.stderr).toContain("Saved lockfile");
+    expect(await lockText(packageDir)).toContain('"no-deps@2.0.0"');
+    expect(await lockText(packageDir)).not.toContain('"no-deps@1.0.0"');
+    expect(plain.exitCode).toBe(0);
+
+    const after = await bun(packageDir, "install", "--frozen-lockfile");
+    expect(after.stderr).not.toContain("error:");
+    expect(after.exitCode).toBe(0);
+  });
+
   test("and says what changed, also as bun install --production", async () => {
     const unpatched = without(root, "patchedDependencies");
     const { packageDir, lock } = await installed(unpatched);
@@ -434,6 +473,37 @@ describe.concurrent("--frozen-lockfile still passes after an edit of", () => {
 });
 
 describe.concurrent("--frozen-lockfile still passes on", () => {
+  // A pin outside its range is legitimate in these cases.
+  test.each([
+    ["an override", { dependencies: { "no-deps": "^1.0.0" }, overrides: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],
+    ["a prerelease that latest points at", { dependencies: { "prereleases-1": "*" } }, "prereleases-1@1.0.0-future."],
+    ["a peer", { peerDependencies: { "no-deps": "^1.0.0" }, dependencies: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],
+    // It never resolved. bun.lock binds rows by name, so it reads back as the root's no-deps.
+    [
+      "an optional dependency that no version satisfies",
+      { workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },
+      "no-deps@1.0.0",
+      { optionalDependencies: { "no-deps": "^9.0.0" } },
+    ],
+  ] as const)("a version outside the declared range because of %s", async (_, json, pinned, memberJson = {}) => {
+    const { packageDir, lock } = await installed(
+      { name: "root", version: "1.0.0", ...json },
+      { name: "member", version: "1.0.0", ...memberJson },
+    );
+    expect(lock).toContain(`"${pinned}`);
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+    expect(frozen.stderr).not.toContain("error:");
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(frozen.exitCode).toBe(0);
+
+    const plain = await bun(packageDir, "install");
+    expect(plain.stderr).not.toContain("Saved lockfile");
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(plain.exitCode).toBe(0);
+  });
+
   // bun.lock records one trustedDependencies list for all workspaces, so a checkout with a workspace left out (a Docker
   // context, `turbo prune`) declares fewer names than bun.lock lists.
   test("a pruned checkout without the workspace that declared a trustedDependencies name", async () => {

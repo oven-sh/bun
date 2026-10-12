@@ -879,7 +879,7 @@ pub(crate) fn run_scripts_with_filter(
             // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
             let combined = ZStr::from_buf(interned, combined_len);
 
-            let dep_source_buf = package.json.dependencies.source_buf;
+            let dep_source_buf: &[u8] = &package.json.dependencies.source_buf;
             let deps: Vec<Box<[u8]>> = package
                 .json
                 .dependencies

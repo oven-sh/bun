@@ -6,13 +6,14 @@
 // date by every later `bun install`. The rename must also cope with the final
 // path being occupied already, which the hoisted linker does to itself.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, githubTarball, isLinux, isMusl, isWindows, tempDir } from "harness";
 import {
   existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -201,7 +202,10 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
 int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
   static int (*real_renameat)(int, const char *, int, const char *);
   if (!real_renameat) real_renameat = dlsym(RTLD_NEXT, "renameat");
-  if (getenv("STAGING_TEST_NOTHING_MOVES_ASIDE") && strncmp(newpath, ".old-", 5) == 0) {
+  const char *slash = strrchr(newpath, '/');
+  const char *name = slash ? slash + 1 : newpath;
+  if (getenv("STAGING_TEST_NOTHING_MOVES_ASIDE") &&
+      (strncmp(name, ".old-", 5) == 0 || strncmp(name, ".bun-tmp-", 9) == 0)) {
     errno = EXDEV;
     return -1;
   }
@@ -1389,4 +1393,105 @@ describe("hoisted linker: packages linked by the thread pool", () => {
     expect(readdirSync(deepest).sort()).toEqual(["held-1", "held-2"]);
     expect(exitCode).toBe(0);
   });
+});
+
+// A failed lifecycle script ends the install. bun deletes the package so that the next install
+// links it and runs its scripts again. Here the delete fails at the first .js file it reaches.
+describe.skipIf(!shimDir)("after a failed script, a package that cannot be fully deleted", () => {
+  const commit = "1234567890abcdef1234567890abcdef12345678";
+  const scripts = { postinstall: `echo ran >> "$RUNS" && test -z "$FAIL"` };
+  const packed: Record<string, string> = {
+    "package.json": JSON.stringify({ name: "scripted", version: "1.0.0", scripts }),
+    ...Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`f${i}.js`, `module.exports = ${i};\n`])),
+  };
+  const patch = `diff --git a/f0.js b/f0.js
+--- a/f0.js
++++ b/f0.js
+@@ -1 +1 @@
+-module.exports = 0;
++module.exports = "patched";
+`;
+  const sources = {
+    tarball: (registry: string) => ({ dependencies: { scripted: `${registry}scripted-1.0.0.tgz` } }),
+    github: () => ({ dependencies: { scripted: `owner/scripted#${commit}` } }),
+    patched: () => ({
+      dependencies: { scripted: "1.0.0" },
+      patchedDependencies: { "scripted@1.0.0": "scripted.patch" },
+    }),
+  };
+  const cases = (["hoisted", "isolated"] as const).flatMap(linker =>
+    (["tarball", "github", "patched"] as const).flatMap(source =>
+      [true, false].map(movesAside => ({
+        linker,
+        source,
+        movesAside,
+        how: movesAside ? "renamed first" : "the rename fails",
+      })),
+    ),
+  );
+
+  test.concurrent.each(cases)(
+    "$linker, $source, $how: the next install links it and runs the script again",
+    async ({ linker, source, movesAside }) => {
+      const tgz = await new Bun.Archive(
+        Object.fromEntries(Object.entries(packed).map(([path, contents]) => [`package/${path}`, contents])),
+        { compress: "gzip" },
+      ).bytes();
+      const repository = await githubTarball(`owner-scripted-${commit.slice(0, 7)}`, packed);
+      using registry = serveRegistry({ scripted: { tgz, scripts } });
+      using github = Bun.serve({ port: 0, fetch: () => new Response(repository) });
+      using dir = tempDir(`failed-script-${linker}-${source}`, {
+        "package.json": JSON.stringify({
+          name: "app",
+          trustedDependencies: ["scripted"],
+          ...sources[source](registry.url.href),
+        }),
+        "scripted.patch": patch,
+        "bunfig.toml": ({ root }) =>
+          Bun.TOML.stringify({ install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker } }),
+      });
+      const root = String(dir);
+      const nodeModules = join(root, "node_modules");
+      const env = { GITHUB_API_URL: github.url.origin, RUNS: join(root, "runs") };
+      const movedAside = () => readdirSync(nodeModules).filter(name => name.startsWith(".old-"));
+
+      // Leaves bun.lock and a warm cache.
+      const warm = await install(root, ["--ignore-scripts"], { ...installEnv, ...env });
+      expect(warm.stderr).not.toContain("error");
+      expect(warm.exitCode).toBe(0);
+      rmSync(nodeModules, { recursive: true });
+
+      const failing = await install(root, [], {
+        ...shimEnv({ syscall: "unlinkat", after: 0 }, false),
+        ...env,
+        FAIL: "1",
+        STAGING_TEST_NOTHING_MOVES_ASIDE: movesAside ? undefined : "1",
+      });
+      expect(failing.stderr).toContain('postinstall script from "scripted" exited with 1');
+      expect(failing.exitCode).toBe(1);
+      rmSync(env.RUNS);
+
+      const repaired = await install(root, [], { ...installEnv, ...env });
+      expect(repaired.stderr).not.toContain("error");
+      const installed = realpathSync(join(nodeModules, "scripted"));
+      expect({
+        runs: existsSync(env.RUNS) ? readFileSync(env.RUNS, "utf8") : "",
+        missing: Object.keys(packed).filter(name => !existsSync(join(installed, name))),
+        f0: readFileSync(join(installed, "f0.js"), "utf8"),
+      }).toEqual({
+        runs: "ran\n",
+        missing: [],
+        f0: source === "patched" ? 'module.exports = "patched";\n' : packed["f0.js"],
+      });
+      expect(repaired.exitCode).toBe(0);
+
+      // The isolated linker's next install deletes what was left. The hoisted linker's stays until `bun prune`.
+      if (linker === "isolated") expect(readdirSync(join(installed, ".."))).toEqual(["scripted"]);
+      expect(movedAside()).toHaveLength(linker === "hoisted" && movesAside ? 1 : 0);
+      const prune = await bun(root, ["prune"], { ...installEnv, ...env });
+      expect(prune.stderr).not.toContain("error");
+      expect(movedAside()).toEqual([]);
+      expect(prune.exitCode).toBe(0);
+    },
+  );
 });

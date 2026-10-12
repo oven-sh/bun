@@ -17,7 +17,7 @@ use crate::bin_real;
 use crate::cache_publish::{RenameError, RenameRetry};
 use crate::lockfile::package;
 use crate::package_install::{
-    Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
+    BUN_TAG, Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
     rename_staging_into_place,
 };
 use crate::package_manager_real::Command;
@@ -663,16 +663,33 @@ impl<'a> Installer<'a> {
                 .remove_planted_links_in(entry_id, Self::store_path_len())
                 .is_ok()
         {
-            let mut path = AutoAbsPath::init_top_level_dir();
-            self.append_store_path(&mut path, entry_id);
-            // First what the next install looks for: a folder that cannot be deleted whole must not count.
-            let package_len = path.len();
-            let _ = path.append(b"package.json");
-            let _ = sys::unlink(path.slice_z());
-            path.set_length(package_len);
-            let _ = Fd::cwd().delete_tree(path.slice());
+            if tag == ResolutionTag::Folder {
+                // Nothing cleans up a staging path next to a folder, so delete it in place.
+                self.delete_local_store_package_in_place(entry_id);
+            } else {
+                let staging = self.staging_lock.get_or_init(StagingLock::acquire).mode;
+                // No wait: on Windows a script that is still running keeps its package open.
+                self.clear_local_store_package(entry_id, staging, false);
+            }
         }
         is_store_copy
+    }
+
+    /// Deletes the `installed_marker` file first, because `delete_tree` can stop midway.
+    fn delete_local_store_package_in_place(&self, entry_id: StoreEntryId) {
+        let mut path = AutoAbsPath::init_top_level_dir();
+        self.append_store_path(&mut path, entry_id);
+        let package_len = path.len();
+        if is_link(path.slice_z()) == Some(false)
+            && let Ok(patch_info) = self.package_patch_info(self.store.ids(entry_id).pkg_id)
+        {
+            let mut hash_buf = install::BuntagHashBuf::default();
+            let tag = self.resolution(entry_id).tag;
+            let _ = path.append(installed_marker(tag, &patch_info, &mut hash_buf));
+            let _ = sys::unlink(path.slice_z());
+            path.set_length(package_len);
+        }
+        let _ = Fd::cwd().delete_tree(path.slice());
     }
 
     /// Of `<project>/node_modules/.bun`, which `install_isolated_packages` looked at.
@@ -1593,7 +1610,7 @@ impl<'a> Installer<'a> {
                 if is_stale_link == Some(false) {
                     self.remove_planted_links_in(entry_id, local.len())
                         .map_err(TaskError::LinkPackage)?;
-                    link_in_place |= !self.clear_local_store_package(entry_id, staging);
+                    link_in_place |= !self.clear_local_store_package(entry_id, staging, true);
                 }
             }
 
@@ -2286,7 +2303,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Frees the final path, and the staging path of a dead install's rest. False: link in place.
-    fn clear_local_store_package(&self, entry_id: StoreEntryId, mode: Staging) -> bool {
+    fn clear_local_store_package(&self, entry_id: StoreEntryId, mode: Staging, wait: bool) -> bool {
         let mut final_ = AutoPath::init_top_level_dir();
         self.append_store_path(&mut final_, entry_id);
         let mut staging = AutoPath::init_top_level_dir();
@@ -2299,13 +2316,20 @@ impl<'a> Installer<'a> {
                 .is_err_and(|refused| refused.err.get_errno() != sys::Errno::ENOENT)
         };
         let mut retry = RenameRetry::new();
-        let mut moved = retry.rename(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z());
+        let mut rename = |from: &ZStr, to: &ZStr| {
+            if wait {
+                retry.rename(Fd::cwd(), from, Fd::cwd(), to)
+            } else {
+                sys::renameat(Fd::cwd(), from, Fd::cwd(), to).map_err(RenameError::from)
+            }
+        };
+        let mut moved = rename(final_.slice_z(), staging.slice_z());
         if is_refused(&moved) {
             let _ = Fd::cwd().delete_tree(staging.slice());
-            moved = retry.rename(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z());
+            moved = rename(final_.slice_z(), staging.slice_z());
         }
         if is_refused(&moved) {
-            let _ = Fd::cwd().delete_tree(final_.slice());
+            self.delete_local_store_package_in_place(entry_id);
             return false;
         }
         Fd::cwd().delete_tree(staging.slice()).is_ok()
@@ -2562,6 +2586,23 @@ fn append_dependency_link_name(
         // same name as the entry itself: nest one node_modules deeper to avoid the collision
         let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
         let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+    }
+}
+
+/// The next install skips a project-local package that has this file. A discard deletes it first.
+pub(crate) fn installed_marker<'b>(
+    tag: ResolutionTag,
+    patch_info: &PatchInfo,
+    hash_buf: &'b mut install::BuntagHashBuf,
+) -> &'b [u8] {
+    match patch_info {
+        // A folder is never patched.
+        PatchInfo::Patch(patch) if tag.can_enqueue_install_task() => {
+            install::buntaghashbuf_make(hash_buf, patch.contents_hash)
+        }
+        // A git repository needs no package.json.
+        _ if tag.is_git() => BUN_TAG,
+        _ => b"package.json",
     }
 }
 

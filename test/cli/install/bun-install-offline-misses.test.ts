@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { rm, writeFile } from "fs/promises";
+import { realpath, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -61,6 +61,13 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
     "dup": { "1.0.0": { dependencies: { leaf: "1.0.0" } }, "2.0.0": {} },
     "optional-dup-a": { "1.0.0": { optionalDependencies: { dup: "1.0.0" } } },
     "optional-dup-b": { "1.0.0": { optionalDependencies: { dup: "1.0.0" } } },
+    "dup-peer": { "1.0.0": { dependencies: { plain: "1.0.0" }, peerDependencies: { leaf: "*" } } },
+    "optional-dup-peer-a": {
+      "1.0.0": { dependencies: { leaf: "1.0.0" }, optionalDependencies: { "dup-peer": "1.0.0" } },
+    },
+    "optional-dup-peer-b": {
+      "1.0.0": { dependencies: { leaf: "2.0.0" }, optionalDependencies: { "dup-peer": "1.0.0" } },
+    },
     "scanner": { "1.0.0": { main: "index.js" } },
     "scanner-with-native": { "1.0.0": { main: "index.js", optionalDependencies: { native: "1.0.0" } } },
     "leaf": { "1.0.0": {}, "2.0.0": {} },
@@ -158,7 +165,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       evict?: (cacheEntry: string) => boolean;
       offlineArgs?: string[];
       keepNodeModules?: boolean;
-      /** Folders below node_modules to remove before the --offline install. */
+      /** Folders below node_modules to remove before the --offline install. A link stands for its target. */
       removeFolders?: string[];
       /** The `install.security.scanner` of bunfig.toml, for the --offline install only. */
       scanner?: string;
@@ -186,7 +193,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
     }
     if (!project.keepNodeModules) await rm(join(cwd, "node_modules"), { recursive: true, force: true });
     for (const folder of project.removeFolders ?? []) {
-      await rm(join(cwd, "node_modules", folder), { recursive: true });
+      await rm(await realpath(join(cwd, "node_modules", folder)), { recursive: true });
     }
     if (project.scanner) {
       await writeFile(
@@ -389,17 +396,55 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(r.code).toBe(1);
     });
 
-    // The hoisted linker nests dup@1.0.0 twice, because the root holds dup@2.0.0. One folder stays in place.
-    // TODO: a miss is recorded by package, so dup@1.0.0 counts as missing and leaf as not needed.
+    // The hoisted linker nests dup@1.0.0 twice, because the root holds dup@2.0.0. Only one copy stays installed.
     if (linker === "hoisted") {
-      it.todo("still reports what a package requires if one of its folders is in place", async () => {
+      const manifest = { dependencies: { dup: "2.0.0", "optional-dup-a": "1.0.0", "optional-dup-b": "1.0.0" } };
+
+      it("still reports a missing dependency of an optional package that has one installed copy", async () => {
         const r = await installOfflineAfterOnline(linker, {
-          manifest: { dependencies: { dup: "2.0.0", "optional-dup-a": "1.0.0", "optional-dup-b": "1.0.0" } },
+          manifest,
           evict: () => true,
           keepNodeModules: true,
           removeFolders: ["optional-dup-b/node_modules/dup", "leaf"],
         });
-        expect(r.err).toContain('error: --offline: "leaf" is not in the cache');
+        expect(Array.from(r.err.matchAll(/--offline: "(.+)" is not in the cache/g), match => match[1])).toEqual([
+          "leaf",
+        ]);
+        expect(r.requests).toEqual([]);
+        expect(r.code).toBe(1);
+      });
+
+      it("skips a missing copy of an optional package that has another installed copy", async () => {
+        const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+          manifest,
+          evict: () => true,
+          keepNodeModules: true,
+          removeFolders: ["optional-dup-b/node_modules/dup"],
+          versionsOf: ["optional-dup-a/node_modules/dup"],
+        });
+        expect(err).not.toContain("error:");
+        expect(result).toEqual({
+          installed: ["dup", "leaf", "optional-dup-a", "optional-dup-b"],
+          requests: [],
+          lockfileChanged: false,
+          versions: { "optional-dup-a/node_modules/dup": "1.0.0" },
+        });
+        expect(code).toBe(0);
+      });
+    }
+
+    // The isolated linker keeps one store entry of dup-peer@1.0.0 per version of leaf. Only one stays installed.
+    if (linker === "isolated") {
+      it("still reports a missing dependency of an optional package that has one installed store entry", async () => {
+        const r = await installOfflineAfterOnline(linker, {
+          manifest: { dependencies: { "optional-dup-peer-a": "1.0.0", "optional-dup-peer-b": "1.0.0" } },
+          evict: () => true,
+          keepNodeModules: true,
+          removeFolders: [".bun/optional-dup-peer-b@1.0.0/node_modules/dup-peer", ".bun/plain@1.0.0"],
+        });
+        expect(Array.from(r.err.matchAll(/--offline: "(.+)" is not in the cache/g), match => match[1])).toEqual([
+          "plain",
+        ]);
         expect(r.requests).toEqual([]);
         expect(r.code).toBe(1);
       });

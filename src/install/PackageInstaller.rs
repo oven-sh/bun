@@ -468,11 +468,22 @@ pub(crate) fn remove_placed_package(
     let Ok(node_modules) = Dir::open(path.slice()) else {
         return;
     };
-    // First what `verify` reads: a folder that cannot be deleted whole must not count as installed.
-    if let Some(package) = crate::prune::descend(&node_modules, alias) {
-        let _ = package.delete_file_z(bun_core::zstr!("package.json"));
+    // Rename first: a delete can stop midway, and a half-deleted package must not pass `verify`.
+    let moved = package_install::move_aside(
+        &node_modules,
+        &bun_core::ZBox::from_bytes(alias),
+        bun_core::fast_random(),
+    );
+    if let Some(old) = moved {
+        let _ = node_modules.delete_tree(old.as_bytes());
+    } else {
+        // If the rename fails, delete the files `verify` reads first.
+        if let Some(package) = crate::prune::descend(&node_modules, alias) {
+            let _ = package.delete_tree(b"package.json");
+            let _ = package.delete_tree(package_install::BUN_TAG);
+        }
+        let _ = node_modules.delete_tree(alias);
     }
-    let _ = node_modules.delete_tree(alias);
     crate::prune::prune_bins(&node_modules);
 }
 
@@ -1821,6 +1832,7 @@ impl<'a> PackageInstaller<'a> {
             || !installer.verify(
                 resolution,
                 &self.metas[package_id as usize].integrity,
+                self.manager().skips_verify(resolution.tag),
                 &self.root_node_modules_folder,
             );
         self.summary.skipped += (!needs_install) as u32;
@@ -2173,6 +2185,12 @@ impl<'a> PackageInstaller<'a> {
                 install_result,
             );
         } else {
+            if self.manager().options.offline
+                == crate::package_manager_real::options::OfflineMode::Offline
+            {
+                self.summary.offline_misses.in_place.push(package_id);
+            }
+
             if self.bins[package_id as usize].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries

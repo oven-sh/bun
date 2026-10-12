@@ -1007,6 +1007,36 @@ test.concurrent("hoisted: what a killed install left in its staging directories 
   }).toEqual({ left: false, scope: false, cache: true });
 });
 
+test.concurrent("isolated: removes staging leftovers inside a store entry it keeps", async () => {
+  const dir = await setupWithLinker("isolated", {
+    name: "foo",
+    dependencies: { "no-deps": "1.0.0", "@types/no-deps": "1.0.0" },
+  });
+  const entries = storeEntries(dir);
+  const store = join(dir, "node_modules", ".bun");
+  const left = plant(dir, "node_modules/.bun/no-deps@1.0.0/node_modules/.bun-tmp-0123456789abcdef");
+  const leftInScope = plant(
+    dir,
+    "node_modules/.bun/@types+no-deps@1.0.0/node_modules/@types/.bun-tmp-fedcba9876543210",
+  );
+
+  const dry = await prune(dir, "--dry-run");
+  expect(dry.stderr).toBe("");
+  expect(dry.exitCode).toBe(0);
+  expect([left, leftInScope].map(path => existsSync(path))).toEqual([true, true]);
+
+  const { stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect([left, leftInScope].map(path => existsSync(path))).toEqual([false, false]);
+  // the packages next to them stay
+  expect(storeEntries(dir)).toStrictEqual(entries);
+  expect(existsSync(join(store, "no-deps@1.0.0", "node_modules", "no-deps", "package.json"))).toBeTrue();
+  expect(
+    existsSync(join(store, "@types+no-deps@1.0.0", "node_modules", "@types", "no-deps", "package.json")),
+  ).toBeTrue();
+});
+
 // The links into node_modules/.bun say how the tree was installed; a contradicting --linker does not make
 // the hoisted planner report the store as checked without looking at it.
 test.concurrent("--linker hoisted on an isolated install prunes it as isolated", async () => {

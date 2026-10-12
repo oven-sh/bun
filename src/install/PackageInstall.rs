@@ -65,8 +65,22 @@ pub struct Summary {
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
 
-    /// `--offline`: not in the cache, one per folder. `report_offline_misses` judges them.
-    pub(crate) offline_misses: Vec<PackageID>,
+    pub(crate) offline_misses: OfflineMisses,
+}
+
+/// `--offline` only, one entry per folder. `report_offline_misses` judges them.
+#[derive(Default)]
+pub(crate) struct OfflineMisses {
+    /// Neither installed nor in the cache.
+    pub(crate) missing: Vec<PackageID>,
+    /// Already installed.
+    pub(crate) in_place: Vec<PackageID>,
+}
+
+impl OfflineMisses {
+    pub(crate) fn push(&mut self, package_id: PackageID) {
+        self.missing.push(package_id);
+    }
 }
 
 #[repr(u8)]
@@ -888,6 +902,9 @@ impl LinkBatch {
 
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
+/// Holds the commit of a git package or the integrity of a tarball. Both linkers look for it.
+pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
+
 impl<'a> PackageInstall<'a> {
     fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: &Dir) -> bool {
         // hash from the .patch file, to be checked against bun tag
@@ -922,11 +939,16 @@ impl<'a> PackageInstall<'a> {
 
     // 1. verify that .bun-tag exists (was it installed from bun?)
     // 2. check .bun-tag against what bun.lock records: the commit, or a tarball's integrity
-    fn verify_bun_tag(&mut self, expected: &[u8], root_node_modules_dir: &Dir) -> bool {
+    fn verify_bun_tag(
+        &mut self,
+        expected: &[u8],
+        accepts_unverified: bool,
+        root_node_modules_dir: &Dir,
+    ) -> bool {
         let mut spill = Vec::new();
         let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
             &mut spill,
-            &[self.destination_dir_subpath.as_bytes(), b".bun-tag"],
+            &[self.destination_dir_subpath.as_bytes(), BUN_TAG],
         );
 
         let Ok(bun_tag_file) = self
@@ -935,13 +957,16 @@ impl<'a> PackageInstall<'a> {
         else {
             return false;
         };
+        // A copy installed with `--no-verify` has an empty tag.
         strings::eql_long(expected, &bun_tag_file.bytes, true)
+            || (accepts_unverified && bun_tag_file.bytes.is_empty())
     }
 
     pub(crate) fn verify(
         &mut self,
         resolution: &Resolution,
         integrity: &Integrity,
+        skips_verify: bool,
         root_node_modules_dir: &Dir,
     ) -> bool {
         let verified = match resolution.tag {
@@ -952,11 +977,13 @@ impl<'a> PackageInstall<'a> {
                         .repository()
                         .resolved
                         .slice(&lockfile.buffers.string_bytes),
+                    false,
                     root_node_modules_dir,
                 )
             }
             resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball => self.verify_bun_tag(
                 integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]),
+                skips_verify,
                 root_node_modules_dir,
             ),
             resolution::Tag::Root => self.verify_directory_exists(root_node_modules_dir),
@@ -1813,7 +1840,11 @@ impl PackageFiles<'_> {
 pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
 
 /// Renames `subpath`, if it is there, to a name in `destination_dir` made of `random`. On any thread.
-fn move_aside(destination_dir: &Dir, subpath: &ZStr, random: u64) -> Option<bun_core::ZBox> {
+pub(crate) fn move_aside(
+    destination_dir: &Dir,
+    subpath: &ZStr,
+    random: u64,
+) -> Option<bun_core::ZBox> {
     let old = bun_core::ZBox::from_vec(
         format!(
             "{MOVED_ASIDE_PREFIX}{}",

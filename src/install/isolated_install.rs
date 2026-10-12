@@ -1613,6 +1613,7 @@ pub(crate) fn install_isolated_packages(
             // them the same as lockfile-trusted packages for eligibility.
             let trusted_from_update = manager.find_trusted_dependencies_from_update_requests();
 
+            let no_verify = manager.skips_verify(ResolutionTag::Npm);
             // The integrity too: the store path `name@version` is not unique across registries.
             let hash_entry = |seed: u64, id: store::entry::Id| {
                 let mut h = Wyhash::init(seed);
@@ -1620,6 +1621,10 @@ pub(crate) fn install_isolated_packages(
                 write!(WyhashWriter { hasher: &mut h }, "{path}").expect("unreachable");
                 let pkg_id = store.ids(id).pkg_id as usize;
                 h.update(bun_core::bytes_of(&pkg_metas[pkg_id].integrity));
+                // Verified installs never share an entry whose bytes were not checked.
+                if no_verify {
+                    h.update(b"no-verify");
+                }
                 h
             };
 
@@ -2221,18 +2226,10 @@ pub(crate) fn install_isolated_packages(
                             let local_entry_len = store_path.len();
                             store_path.append(b"node_modules").assume_ok();
                             store_path.append(pkg_name.slice(string_buf)).assume_ok();
-                            match &patch_info {
-                                PatchInfo::Patch(patch) => {
-                                    let mut hash_buf: install::BuntagHashBuf = Default::default();
-                                    let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
-                                    store_path.append(&*hash).assume_ok();
-                                }
-                                // if it's from npm, it should always have a package.json.
-                                _ if pkg_res.tag == ResolutionTag::Npm => {
-                                    store_path.append(b"package.json").assume_ok();
-                                }
-                                _ => {}
-                            }
+                            let mut hash_buf: install::BuntagHashBuf = Default::default();
+                            store_path
+                                .append(installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf))
+                                .assume_ok();
                             // `exists` follows the link of an entry that left the global store.
                             !sys::exists_z(store_path.slice_z()) || {
                                 store_path.set_length(local_entry_len);
@@ -2241,6 +2238,11 @@ pub(crate) fn install_isolated_packages(
                         };
 
                     if !needs_install {
+                        if installer.manager().options.offline
+                            == crate::package_manager_real::options::OfflineMode::Offline
+                        {
+                            installer.summary.offline_misses.in_place.push(pkg_id);
+                        }
                         if uses_global_store {
                             // Warm hit: the global virtual store already holds
                             // this entry's files, dep symlinks, and bin links.

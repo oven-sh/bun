@@ -838,31 +838,27 @@ impl TransformTask {
     fn then(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
         // The job drops this `TransformTask` (running its `Drop`: transpiler
         // deref etc.) right after `then` returns.
-        if self.log.has_any() || self.err.is_some() {
-            let error_value: JsResult<JSValue> = 'brk: {
-                if let Some(err) = &self.err {
-                    if !self.log.has_any() {
-                        break 'brk bun_jsc::BuildMessage::create(
-                            global,
-                            bun_ast::Msg {
-                                data: bun_ast::Data {
-                                    text: err.name().as_bytes().to_vec().into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
+        let log_error = self
+            .log
+            .errors_to_js(global, format_args!("Transform failed"))
+            .transpose();
+        let error_value: JsResult<JSValue> = match (log_error, &self.err) {
+            (Some(value), _) => value,
+            (None, Some(err)) => bun_jsc::BuildMessage::create(
+                global,
+                bun_ast::Msg {
+                    data: bun_ast::Data {
+                        text: err.name().as_bytes().to_vec().into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ),
+            (None, None) => return self.finish(promise, global),
+        };
 
-                break 'brk self.log.to_js(global, format_args!("Transform failed"));
-            };
-
-            promise.reject_with_async_stack(global, error_value)?;
-            return Ok(());
-        }
-
-        self.finish(promise, global)
+        promise.reject_with_async_stack(global, error_value)?;
+        Ok(())
     }
 
     fn finish(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
@@ -1309,16 +1305,12 @@ impl JSTranspiler {
 
         let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
         let log_ref = self.transpiler.get().log_mut();
+        if let Some(value) = log_ref.errors_to_js(global, format_args!("Parse error"))? {
+            return Err(global.throw_value(value));
+        }
         let Some(mut parse_result) = parse_result else {
-            if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
-            }
             return Err(global.throw(format_args!("Failed to parse")));
         };
-
-        if (log_ref.warnings + log_ref.errors) > 0 {
-            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
-        }
 
         let exports_label = EncodedSlice::latin1(b"exports");
         let imports_label = EncodedSlice::latin1(b"imports");
@@ -1494,16 +1486,12 @@ impl JSTranspiler {
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
         let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
         let log_ref = self.transpiler.get().log_mut();
+        if let Some(value) = log_ref.errors_to_js(global, format_args!("Parse error"))? {
+            return Err(global.throw_value(value));
+        }
         let Some(parse_result) = parse_result else {
-            if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
-            }
             return Err(global.throw(format_args!("Failed to parse code")));
         };
-
-        if (log_ref.warnings + log_ref.errors) > 0 {
-            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
-        }
 
         let mut buffer_writer = self.buffer_writer.replace(None).unwrap_or_else(|| {
             let mut writer = JSPrinter::BufferWriter::init();
@@ -1703,18 +1691,11 @@ impl JSTranspiler {
         // (including the error paths). Compute the result, then reset
         // unconditionally before returning.
         let result = (|| -> JsResult<JSValue> {
-            if let Err(err) = scan_result {
-                if (log.warnings + log.errors) > 0 {
-                    return Err(global
-                        .throw_value(log.to_js(global, format_args!("Failed to scan imports"))?));
-                }
-                return Err(global.throw_error(err, "Failed to scan imports"));
+            if let Some(value) = log.errors_to_js(global, format_args!("Failed to scan imports"))? {
+                return Err(global.throw_value(value));
             }
-
-            if (log.warnings + log.errors) > 0 {
-                return Err(
-                    global.throw_value(log.to_js(global, format_args!("Failed to scan imports"))?)
-                );
+            if let Err(err) = scan_result {
+                return Err(global.throw_error(err, "Failed to scan imports"));
             }
 
             named_imports_to_js(

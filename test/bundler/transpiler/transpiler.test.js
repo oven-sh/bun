@@ -2534,6 +2534,178 @@ export default <>hi</>
     ).toThrow();
   });
 
+  describe("a warning is not a failure", () => {
+    const methods = ["transformSync", "transform", "scan", "scanImports"];
+    const optionsAt = (level, options) => (level === "default" ? options : { ...options, logLevel: level });
+    const messagesOf = e => (e instanceof AggregateError ? e.errors : [e]).map(m => [m.level, m.message]);
+    const thrownBy = async fn => {
+      try {
+        await fn();
+      } catch (e) {
+        return e;
+      }
+      throw new Error("expected a throw");
+    };
+
+    const nothing = { exports: [], imports: [] };
+    const defaultExport = { exports: ["default"], imports: [] };
+    // The scan pass lists these two for every source that has JSX.
+    const jsxRuntime = [
+      { kind: "require-call", path: "react/jsx-dev-runtime" },
+      { kind: "require-call", path: "react" },
+    ];
+
+    // [name, loader, source, warning, transform() output, scan() result, scanImports() result]
+    const parserWarnings = [
+      [
+        "legacy HTML comment",
+        "js",
+        "x = 1\n--> legacy html comment\ny = 2\n",
+        'Treating "-->" as the start of a legacy HTML single-line comment',
+        "x = 1;\ny = 2;\n",
+        nothing,
+        [],
+      ],
+      [
+        "JSX key after a spread",
+        "jsx",
+        'export default <div {...obj} key="k" />;\n',
+        '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.',
+        'export default createElement_mvmpqhxp("div", {\n  ...obj,\n  key: "k"\n});\n',
+        defaultExport,
+        jsxRuntime,
+      ],
+      [
+        "JSX key without a value",
+        "jsx",
+        "export default <div key />;\n",
+        '"key" prop ignored. Must be a string, number or symbol.',
+        'export default jsxDEV_7x81h0kn("div", {}, undefined, false, undefined, this);\n',
+        defaultExport,
+        jsxRuntime,
+      ],
+      // The visit pass logs the six warnings below. scanImports() has no visit
+      // pass: it returned [] for these sources before, too.
+      [
+        "write to a getter-only private name",
+        "js",
+        "class Foo { get #x() { this.#x = 1 } }",
+        'Writing to getter-only property "#x" will throw',
+        "class Foo {\n  get #x() {\n    this.#x = 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "update of a getter-only private name",
+        "js",
+        "class Foo { get #x() { this.#x += 1 } }",
+        'Writing to getter-only property "#x" will throw',
+        "class Foo {\n  get #x() {\n    this.#x += 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "read of a setter-only private name",
+        "js",
+        "class Foo { set #x(x) { this.#x } }",
+        'Reading from setter-only property "#x" will throw',
+        "class Foo {\n  set #x(x) {\n    this.#x;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "update of a setter-only private name",
+        "js",
+        "class Foo { set #x(x) { this.#x += 1 } }",
+        'Reading from setter-only property "#x" will throw',
+        "class Foo {\n  set #x(x) {\n    this.#x += 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "write to a private method",
+        "js",
+        "class Foo { #x() { this.#x = 1 } }",
+        'Writing to read-only method "#x" will throw',
+        "class Foo {\n  #x() {\n    this.#x = 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+      [
+        "update of a private method",
+        "js",
+        "class Foo { #x() { this.#x += 1 } }",
+        'Writing to read-only method "#x" will throw',
+        "class Foo {\n  #x() {\n    this.#x += 1;\n  }\n}\n",
+        nothing,
+        [],
+      ],
+    ];
+
+    describe.each(parserWarnings)("%s", (_, loader, code, warning, output, scanned, imports) => {
+      it.each(["default", "warn", "error"])("every method returns its result at logLevel %s", async level => {
+        // `autoImportJSX: false` is the default. It is here so that the two
+        // JSX rows keep their output if that default changes.
+        const t = new Bun.Transpiler(optionsAt(level, { loader, autoImportJSX: false }));
+        expect(t.transformSync(code)).toBe(output);
+        expect(await t.transform(code)).toBe(output);
+        expect(t.scan(code)).toEqual(scanned);
+        expect(t.scanImports(code)).toEqual(imports);
+      });
+
+      // Proves that the source above does log this warning.
+      it("the warning is thrown beside an error", async () => {
+        const t = new Bun.Transpiler({ loader });
+        const e = await thrownBy(() => t.transformSync(code + "\nconst c = 1;\nc = 2;\n"));
+        expect(messagesOf(e)).toEqual([
+          ["warn", warning],
+          ["error", 'This assignment will throw because "c" is a constant'],
+        ]);
+      });
+    });
+
+    it("scan and scanImports return the imports of a source that has a warning", () => {
+      const t = new Bun.Transpiler({ loader: "js" });
+      const code = 'import { a } from "a";\nx = 1\n--> legacy html comment\ny = 2\n';
+      expect(t.scan(code)).toEqual({ imports: [{ kind: "import-statement", path: "a" }], exports: [] });
+      expect(t.scanImports(code)).toEqual([{ kind: "import-statement", path: "a" }]);
+    });
+
+    it("a warning from the JSON loader does not throw", async () => {
+      const t = new Bun.Transpiler({ loader: "js" });
+      const json = '{"a":1,"a":2}';
+      const output = "var a = 2;\n\nexport {\n  a\n};\nexport default { a, a: 2 };\n";
+      expect(t.transformSync(json, "json")).toBe(output);
+      expect(await t.transform(json, "json")).toBe(output);
+      expect(t.scan(json, "json")).toEqual(nothing);
+      // Proves that the duplicate key does log a warning.
+      expect(messagesOf(await thrownBy(() => t.transformSync('{"a":1,"a":2,}', "json")))).toEqual([
+        ["warn", 'Duplicate key "a" in object literal'],
+        ["error", "JSON does not support trailing commas"],
+      ]);
+    });
+
+    it("transform() rejects with the error name when a failure logs nothing", async () => {
+      const t = new Bun.Transpiler({ loader: "js" });
+      expect(messagesOf(await thrownBy(() => t.transform("a{}", "css")))).toEqual([["error", "ParseError"]]);
+    });
+
+    describe("an error beside a warning", () => {
+      const code = "x = 1\n--> legacy html comment\ny = 2\nbad??!?!?!";
+      const warning = ["warn", 'Treating "-->" as the start of a legacy HTML single-line comment'];
+      const error = ["error", "Unexpected ?"];
+
+      describe.each(methods)("%s", fn => {
+        it.each(["default", "warn"])("throws both at logLevel %s", async level => {
+          const t = new Bun.Transpiler(optionsAt(level, { loader: "js" }));
+          const e = await thrownBy(() => t[fn](code));
+          expect(e).toBeInstanceOf(AggregateError);
+          expect(messagesOf(e)).toEqual([warning, error]);
+        });
+      });
+    });
+  });
+
   it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {
     // `JSPropertyIterator` skips empty-name properties, but `names`/`values` were being
     // indexed by the property position instead of a dense counter, leaving garbage in the
@@ -3963,15 +4135,6 @@ class Foo {
     expectParseError("class Foo { static { continue } }", 'Cannot use "continue" here');
     expectParseError("x: { class Foo { static { break x } } }", 'There is no containing label named "x"');
     expectParseError("x: { class Foo { static { continue x } } }", 'There is no containing label named "x"');
-
-    expectParseError("class Foo { get #x() { this.#x = 1 } }", 'Writing to getter-only property "#x" will throw');
-    expectParseError("class Foo { get #x() { this.#x += 1 } }", 'Writing to getter-only property "#x" will throw');
-    expectParseError("class Foo { set #x(x) { this.#x } }", 'Reading from setter-only property "#x" will throw');
-    expectParseError("class Foo { set #x(x) { this.#x += 1 } }", 'Reading from setter-only property "#x" will throw');
-
-    // Writing to method warnings
-    expectParseError("class Foo { #x() { this.#x = 1 } }", 'Writing to read-only method "#x" will throw');
-    expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
   it("class bodies keep `this` and the class name as written", () => {

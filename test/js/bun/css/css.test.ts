@@ -8035,9 +8035,12 @@ describe("css tests", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout.trim()).toBe(".x{color:red;color:oklch(50% .1 40)}");
-      expect(exitCode).toBe(0);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: ".x{color:red;color:oklch(50% .1 40)}",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

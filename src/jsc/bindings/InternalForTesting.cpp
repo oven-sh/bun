@@ -1,4 +1,6 @@
 #include "root.h"
+#include "BunString.h"
+#include <wtf/text/ExternalStringImpl.h>
 
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/JSCJSValue.h"
@@ -23,6 +25,25 @@ extern "C" void BunString__makeThreadShareable(BunString* str);
 namespace Bun {
 
 using namespace JSC;
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_crossThreadCopyBytes, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto string = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    // Keep the backing string alive while exercising an unrelated external-storage owner.
+    WTF::String input = string;
+    if (callFrame->argument(1).toBoolean(globalObject) && string.length()) {
+        if (string.is8Bit())
+            input = WTF::ExternalStringImpl::create(string.span8(), nullptr, [](void*, void*, unsigned) {});
+        else
+            input = WTF::ExternalStringImpl::create(string.span16(), nullptr, [](void*, void*, unsigned) {});
+    }
+    auto shared = toCrossThreadShareable(input);
+    size_t bytes = shared.impl() == input.impl() ? 0 : input.length() * (input.is8Bit() ? 1ULL : 2ULL);
+    return JSValue::encode(jsNumber(bytes));
+}
 
 // Exercises WebCore::lowercaseHeaderName — the Highway-SIMD-backed header-name
 // lowercasing used by the Headers iterator — directly from JS so a test can

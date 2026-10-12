@@ -710,10 +710,10 @@ test.concurrent.each([
 
 // Starts a worker script that never loads node:cluster. Prints { primary: events } once the worker has both
 // disconnected and exited, so that a row does not depend on the order of those two events.
-const scriptWorkerPrimary = ({ exec = "worker.js", execArgv = "[]" } = {}) => `
+const scriptWorkerPrimary = ({ exec = "worker.js", execArgv = "[]", silent = false } = {}) => `
 const cluster = require("node:cluster");
 const path = require("node:path");
-cluster.setupPrimary({ exec: path.join(__dirname, ${JSON.stringify(exec)}), execArgv: ${execArgv} });
+cluster.setupPrimary({ exec: path.join(__dirname, ${JSON.stringify(exec)}), execArgv: ${execArgv}, silent: ${silent} });
 const events = [];
 const worker = cluster.fork();
 worker.on("online", () => events.push("online, state " + worker.state));
@@ -959,6 +959,102 @@ child.exited.then(code => process.send("child: " + JSON.stringify(messages) + ",
     },
     expected: {
       primary: ["online, state online", 'child: ["from the child"], exit 0', "exit 0 null"],
+    },
+  },
+  {
+    name: "a send() that the primary queues behind the disconnect request still gets its callback",
+    files: {
+      "main.js": `
+const cluster = require("node:cluster");
+const N = 50;
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  let callbacks = 0;
+  worker.once("online", () => {
+    worker.disconnect();
+    // 64 KiB each, so most of them are still queued when the worker closes the channel.
+    const payload = Buffer.alloc(64 * 1024, "z").toString();
+    for (let i = 0; i < N; i++) worker.send({ i, payload }, () => callbacks++);
+  });
+  let pending = 2;
+  let exit;
+  const done = () => {
+    if (--pending === 0) console.log(JSON.stringify({ primary: { callbacks, exit } }));
+  };
+  worker.once("disconnect", done);
+  worker.once("exit", (code, signal) => {
+    exit = { code, signal };
+    done();
+  });
+}`,
+    },
+    expected: {
+      primary: { callbacks: 50, exit: { code: 0, signal: null } },
+    },
+  },
+  {
+    name: "a worker that runs under bun test is set up, and its net server listens",
+    files: {
+      // silent: the report that bun test prints must not reach the stdout this fixture is parsed from.
+      "main.js": `${scriptWorkerPrimary({ exec: "worker.test.js", execArgv: `["test"]`, silent: true })}
+worker.process.stdout.resume();
+worker.process.stderr.pipe(process.stderr);
+worker.once("message", message => {
+  events.push(message);
+  worker.disconnect();
+});`,
+      "worker.test.js": `
+const { test } = require("bun:test");
+test("listen", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const server = require("node:net").createServer();
+  server.once("error", reject);
+  server.listen(0, () => server.close(resolve));
+  await promise;
+  process.send("listened, NODE_UNIQUE_ID " + process.env.NODE_UNIQUE_ID);
+});`,
+    },
+    expected: {
+      primary: ["online, state online", "listened, NODE_UNIQUE_ID undefined", "exit 0 null"],
+    },
+  },
+  {
+    name: "a process that sets NODE_UNIQUE_ID at run time can listen with exclusive after a listen through the cluster",
+    files: {
+      "main.js": `
+process.env.NODE_UNIQUE_ID = "7";
+const cluster = require("node:cluster");
+const events = [];
+const print = () => console.log(JSON.stringify({ primary: { worker: cluster.worker, events } }));
+process.on("uncaughtException", error => {
+  events.push("uncaught " + error.constructor.name);
+  print();
+});
+const server = require("node:net").createServer();
+// Asks a primary that does not exist, and leaves a 'listening' listener that expects a worker.
+server.listen(0);
+server.listen({ port: 0, exclusive: true }, () => {
+  events.push("listening");
+  server.close(print);
+});`,
+    },
+    expected: {
+      primary: { worker: null, events: ["listening"] },
+    },
+  },
+  {
+    name: "a process with NODE_UNIQUE_ID and no script (-e) is not set up as a worker",
+    files: {
+      "main.js": `
+const { stdout } = require("node:child_process").spawnSync(
+  process.execPath,
+  ["-e", 'const cluster = require("node:cluster"); console.log(JSON.stringify({ primary: [cluster.isWorker, cluster.worker, process.env.NODE_UNIQUE_ID] }))'],
+  { env: { ...process.env, NODE_UNIQUE_ID: "5" }, stdio: ["ignore", "pipe", "inherit"] },
+);
+process.stdout.write(stdout);`,
+    },
+    expected: {
+      primary: [true, null, "5"],
     },
   },
 ])(

@@ -2171,7 +2171,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = self.members(ty) else {
             return ty;
         };
-        if members.shape().call.is_empty() && members.shape().construct.is_empty() {
+        if !members.has_signatures() {
             return ty;
         }
         // Also returns whether the result is `sigs` (`core.Same`).
@@ -2197,8 +2197,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             (out, is_same)
         };
-        let (call, is_same_call) = actual(self, &members.shape().call);
-        let (construct, is_same_construct) = actual(self, &members.shape().construct);
+        let (call, is_same_call) = actual(self, members.call_signatures());
+        let (construct, is_same_construct) = actual(self, members.construct_signatures());
         own.0 = true;
         own.1 |= !call.is_empty() || !construct.is_empty();
         if is_same_call && is_same_construct {
@@ -2211,7 +2211,7 @@ impl<'p, 's> Checker<'p, 's> {
             props.push(prop);
         }
         let arena = self.arena;
-        let index = members.shape().index.iter().map(|i| IndexInfo {
+        let index = members.index_infos().iter().map(|i| IndexInfo {
             value: self.instantiate(i.value, members.mapper),
             ..*i
         });
@@ -2866,7 +2866,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let members = self.members(ty)?;
-        let shape = members.shape();
+        let shape = members.whole_shape();
         let construct = kind == SignatureKind::Construct;
         let (own, other) = if construct {
             (&shape.construct, &shape.call)

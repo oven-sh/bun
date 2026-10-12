@@ -368,7 +368,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             }
         ) {
-            for info in &members.shape().index {
+            for info in self.structured(members).index_infos() {
                 if self.is_key_type_included(info.key, include) {
                     // `stringOrNumberType`, one type
                     keys.push(if info.key == TypeId::STRING {
@@ -832,7 +832,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.members(ty).is_some_and(|m| {
             m.shape().props.is_empty()
                 && matches!(
-                    m.shape().index[..],
+                    m.index_infos()[..],
                     [IndexInfo {
                         key: TypeId::STRING,
                         ..
@@ -1053,7 +1053,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if access_expression.is_some() {
                         let is_readonly =
                             self.members_for_index_infos(object).is_some_and(|members| {
-                                let infos = &members.shape().index;
+                                let infos = members.index_infos();
                                 infos
                                     .iter()
                                     .any(|info| info.key == TypeId::NUMBER && info.readonly)
@@ -1250,10 +1250,9 @@ impl<'p, 's> Checker<'p, 's> {
             let infos = self.union_index_infos(parts);
             return Some(infos.iter().find(|info| info.key == key_type)?.value);
         }
-        let members = self.members(ty)?;
+        let members = self.structured_members(ty)?;
         let info = members
-            .shape()
-            .index
+            .index_infos()
             .iter()
             .find(|info| info.key == key_type)?;
         Some(self.instantiate(info.value, members.mapper))
@@ -1265,7 +1264,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut all = Vec::with_capacity(parts.len());
         for &part in parts {
             let apparent = self.apparent_type(part);
-            let Some(members) = self.members(apparent) else {
+            let Some(members) = self.structured_members(apparent) else {
                 return SmallVec::new();
             };
             all.push(members);
@@ -1274,11 +1273,11 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(first) = all.first() else {
             return infos;
         };
-        'infos: for info in &first.shape().index {
+        'infos: for info in first.index_infos() {
             let mut values = Vec::with_capacity(all.len());
             let mut readonly = false;
             for members in &all {
-                let Some(same) = members.shape().index.iter().find(|i| i.key == info.key) else {
+                let Some(same) = members.index_infos().iter().find(|i| i.key == info.key) else {
                     continue 'infos;
                 };
                 values.push(self.instantiate(same.value, members.mapper));
@@ -2563,7 +2562,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // A property common to all members is declared by name in the first member that has no
             // index signature to cover names.
-            if members.shape().index.is_empty() {
+            if self.structured(members).index_infos().is_empty() {
                 break;
             }
         }
@@ -2620,7 +2619,9 @@ impl<'p, 's> Checker<'p, 's> {
             // has absorbed the names.
             Some(Modifiers::Object(owner, m)) if over_keyof => {
                 let renames = self.mapped_decl(file, node).name_ty.is_some();
-                let mut keys = Vec::with_capacity(m.shape().props.len() + m.shape().index.len());
+                let mut keys = Vec::with_capacity(
+                    m.shape().props.len() + self.structured(m).index_infos().len(),
+                );
                 for prop in &m.shape().props {
                     let is_public = !prop
                         .flags
@@ -2638,7 +2639,7 @@ impl<'p, 's> Checker<'p, 's> {
                         None => {}
                     }
                 }
-                keys.extend(m.shape().index.iter().map(|i| i.key));
+                keys.extend(self.structured(m).index_infos().iter().map(|i| i.key));
                 List::Own(keys)
             }
             // A type that can be anything is iterated as if every string were a property name.
@@ -3000,6 +3001,7 @@ impl<'p, 's> Checker<'p, 's> {
                                     }
                                 };
                                 members.is_some_and(|m| {
+                                    let m = self.structured(m);
                                     self.applicable_index_info(&m, name_ty)
                                         .is_some_and(|info| info.readonly)
                                 })

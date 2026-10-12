@@ -388,7 +388,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             return &[];
         };
         let mut infos: SmallVec<[IndexInfoData; 2]> = SmallVec::new();
-        for info in &members.shape().index {
+        for info in members.index_infos() {
             let value = self.c.instantiate(info.value, members.mapper);
             infos.push(self.index_info(IndexInfo { value, ..*info }));
         }

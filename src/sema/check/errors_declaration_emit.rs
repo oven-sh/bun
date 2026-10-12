@@ -4569,7 +4569,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let Some(members) = self.c.members(holder) else {
                 continue;
             };
-            let (infos, mapper) = (&members.shape().index, members.mapper);
+            let (infos, mapper) = (self.c.structured(members).index_infos(), members.mapper);
             for &info in infos {
                 if info.declaration.is_some() {
                     continue;

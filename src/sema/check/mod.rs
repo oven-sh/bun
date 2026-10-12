@@ -356,6 +356,8 @@ pub struct Program<'s> {
     union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered, &'s Session>,
     /// `UnionOrIntersectionType.resolvedProperties` of a union: `union_as_object`.
     union_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
+    /// An object type with the signatures and the index signatures of an intersection:
+    /// `structured_members`.
     intersection_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
     /// `get_literal_type_from_properties` without index flags. Instantiations under several
     /// mappers arrive at one object type.
@@ -881,6 +883,9 @@ enum Query {
     /// signature (`Return`) and the instantiation of its result.
     ReturnOfSignature(SigId),
     Shape(TypeId),
+    /// `getPropertiesOfUnionOrIntersectionType` of an intersection, whose `Shape` is
+    /// `resolveIntersectionTypeMembers`: see `structured_members`.
+    Properties(TypeId),
     Bases(Sym),
     /// `TypeSystemPropertyNameResolvedBaseConstructorType`
     BaseConstructor(Sym),
@@ -956,6 +961,7 @@ impl Query {
             Query::BaseConstructor(sym) => (sym.file, 13),
             Query::ReturnOfSignature(_)
             | Query::Shape(_)
+            | Query::Properties(_)
             | Query::Constraint(_)
             | Query::InferredConstraint(_)
             | Query::MappedProp(..)
@@ -2206,7 +2212,8 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         // `resolveIntersectionTypeMembers` has none either, and calls `setStructuredTypeMembers` at its end.
-        if matches!(q, Query::Shape(ty) if matches!(self.data(ty), TypeData::Intersection(_)))
+        // Nor has `getPropertiesOfUnionOrIntersectionType`, which sets `resolvedProperties` at its end.
+        if matches!(q, Query::Shape(ty) | Query::Properties(ty) if matches!(self.data(ty), TypeData::Intersection(_)))
             && self.ends_at_reduction_in_progress(i)
         {
             return false;

@@ -152,6 +152,57 @@ impl<'p> Members<'p> {
     pub fn shape(&self) -> &'p Shape<'p> {
         &self.resolved.shape
     }
+
+    /// Not for the `members` of an intersection, nor are the next two: see `structured`.
+    #[inline]
+    pub fn index_infos(&self) -> &'p [IndexInfo] {
+        debug_assert!(self.shape().properties_of.is_none());
+        &self.shape().index
+    }
+
+    #[inline]
+    pub fn call_signatures(&self) -> &'p [SigId] {
+        debug_assert!(self.shape().properties_of.is_none());
+        &self.shape().call
+    }
+
+    #[inline]
+    pub fn construct_signatures(&self) -> &'p [SigId] {
+        debug_assert!(self.shape().properties_of.is_none());
+        &self.shape().construct
+    }
+
+    /// Whether there is a call or a construct signature. The `members` of an intersection say that too.
+    #[inline]
+    pub fn has_signatures(&self) -> bool {
+        !(self.shape().call.is_empty() && self.shape().construct.is_empty())
+    }
+
+    /// See `has_signatures`.
+    #[inline]
+    pub fn has_signatures_of_kind(&self, construct: bool) -> bool {
+        match construct {
+            true => !self.shape().construct.is_empty(),
+            false => !self.shape().call.is_empty(),
+        }
+    }
+
+    /// The shape, for all the members of a type that is not an intersection.
+    #[inline]
+    pub fn whole_shape(&self) -> &'p Shape<'p> {
+        debug_assert!(self.shape().properties_of.is_none());
+        self.shape()
+    }
+
+    /// The first call signature and the first construct signature. See `has_signatures`.
+    #[inline]
+    fn first_signatures(&self) -> [Option<SigId>; 2] {
+        let shape = self.shape();
+        [
+            shape.call.first().copied(),
+            shape.construct.first().copied(),
+        ]
+    }
 }
 
 pub(super) const RECENT_MEMBERS: usize = 512;
@@ -666,6 +717,37 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn keep_shape(&mut self, key: TypeId, mut shape: Shape<'s>, stored: Stored) -> Built<'p> {
+        shape.props.shrink_to_fit();
+        shape.call.shrink_to_fit();
+        shape.construct.shrink_to_fit();
+        shape.index.shrink_to_fit();
+        let resolved = Resolved::new(shape);
+        let (kept, resolved) = (self.p.shapes).insert_ref(&self.task, key, resolved, stored);
+        Built {
+            resolved,
+            kept: Some(kept),
+        }
+    }
+
+    /// What `cache_shape_provisionally` has kept for `q`.
+    fn provisionally_cached_shape(&mut self, q: Query) -> Option<Built<'p>> {
+        let raw = self.provisional(q)?;
+        // SAFETY: a pointer returned by `provisional_shape`. `check_file` clears `provisional` before it calls `release_provisional_shapes`.
+        let resolved = unsafe { &*(raw as usize as *const Resolved) };
+        Some(Built {
+            resolved,
+            kept: None,
+        })
+    }
+
+    fn cache_shape_provisionally(&mut self, q: Query, shape: Shape<'s>, open: Open) -> Built<'p> {
+        let built = self.provisional_shape(shape);
+        let raw = std::ptr::from_ref(built.resolved) as usize as u64;
+        self.cache_provisionally(q, raw, open);
+        built
+    }
+
     /// No value returned by `members` may be live.
     pub(super) fn release_provisional_shapes(&mut self) {
         debug_assert!(self.stack.is_empty());
@@ -771,13 +853,8 @@ impl<'p, 's> Checker<'p, 's> {
             let shape = meanwhile(self);
             return self.provisional_shape(shape);
         }
-        if let Some(raw) = self.provisional(Query::Shape(key)) {
-            // SAFETY: a pointer returned by `provisional_shape`. `check_file` clears `provisional` before it calls `release_provisional_shapes`.
-            let resolved = unsafe { &*(raw as usize as *const Resolved) };
-            return Built {
-                resolved,
-                kept: None,
-            };
+        if let Some(built) = self.provisionally_cached_shape(Query::Shape(key)) {
+            return built;
         }
         if !self.enter(Query::Shape(key)) {
             // `enter` also fails for lack of stack space.
@@ -791,7 +868,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.provisional_shape(shape);
         }
         let in_place = self.members_in_place_hits;
-        let mut shape = build(self);
+        let shape = build(self);
         // `getReducedType` is listing the properties of this intersection, and sets
         // `resolvedProperties` when it has them all. What is listed in the meantime, of members
         // that are in place, lasts until then.
@@ -799,23 +876,9 @@ impl<'p, 's> Checker<'p, 's> {
             self.members_in_place_hits != in_place && self.never_in_progress.contains(&key);
         match self.leave(Query::Shape(key)) {
             Ok(_) if is_listed_again => self.provisional_shape(shape),
-            Ok(stored) => {
-                shape.props.shrink_to_fit();
-                shape.call.shrink_to_fit();
-                shape.construct.shrink_to_fit();
-                shape.index.shrink_to_fit();
-                let resolved = Resolved::new(shape);
-                let (kept, resolved) =
-                    (self.p.shapes).insert_ref(&self.task, key, resolved, stored);
-                Built {
-                    resolved,
-                    kept: Some(kept),
-                }
-            }
+            Ok(stored) => self.keep_shape(key, shape, stored),
             Err(open) => {
-                let built = self.provisional_shape(shape);
-                let raw = std::ptr::from_ref(built.resolved) as usize as u64;
-                self.cache_provisionally(Query::Shape(key), raw, open);
+                let built = self.cache_shape_provisionally(Query::Shape(key), shape, open);
                 if let TypeData::Ref { target, .. } = *self.data(key)
                     && let Some(at) = (self.base_types_so_far.iter()).rposition(|it| it.0 == target)
                 {
@@ -938,7 +1001,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The members of an object type or an intersection of them. `None` for anything else.
+    /// The members of an object type. For an intersection of them: its properties, and no more of
+    /// its signatures than says whether it has any. The rest is in `structured_members`.
+    /// `None` for anything else.
     #[inline]
     pub fn members(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let recent = self.recent_members[ty.0 as usize % RECENT_MEMBERS];
@@ -1266,10 +1331,7 @@ impl<'p, 's> Checker<'p, 's> {
                     },
                 ))
             }
-            TypeData::Synth(shape) => {
-                let resolved = self.shape_memo(ty, |_| (**shape).clone_in(self.arena));
-                Some((resolved, MapperId::IDENTITY))
-            }
+            TypeData::Synth(_) => Some((self.shape_of_synth(ty), MapperId::IDENTITY)),
             TypeData::ReverseMapped { source, mapped, of } => {
                 let (source, mapped, of) = (*source, *mapped, *of);
                 let resolved =
@@ -1277,10 +1339,11 @@ impl<'p, 's> Checker<'p, 's> {
                 Some((resolved, MapperId::IDENTITY))
             }
             TypeData::Tuple { .. } => self.tuple_members(ty, ty),
-            TypeData::Intersection(parts) => {
-                let resolved = self.shape_memo(ty, |c| c.build_intersection_shape(ty, parts, true));
-                Some((resolved, MapperId::IDENTITY))
-            }
+            // Its properties. See `structured_members`.
+            TypeData::Intersection(parts) => Some((
+                self.properties_of_intersection(ty, parts),
+                MapperId::IDENTITY,
+            )),
             _ => None,
         }
     }
@@ -2393,15 +2456,22 @@ impl<'p, 's> Checker<'p, 's> {
             }
             b.add_new(prop);
         }
-        for &sig in &members.shape().call {
+        let members = match self.data(base) {
+            TypeData::Intersection(_) => match self.structured_members(base) {
+                Some(members) => members,
+                None => return,
+            },
+            _ => members,
+        };
+        for &sig in members.call_signatures() {
             let sig = self.instantiate_sig(sig, mapper);
             b.shape.call.push(sig);
         }
-        for &sig in &members.shape().construct {
+        for &sig in members.construct_signatures() {
             let sig = self.instantiate_sig(sig, mapper);
             b.shape.construct.push(sig);
         }
-        for info in &members.shape().index {
+        for info in members.index_infos() {
             if b.shape.index.iter().any(|i| i.key == info.key) {
                 continue;
             }
@@ -3783,7 +3853,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // `getUnionIndexInfos`: `{ default }` has no index signature, so the result of
                     // spreading with it has none.
                     if !with_default {
-                        for info in &members.shape().index {
+                        for info in self.structured(members).index_infos() {
                             let value = self.instantiate(info.value, members.mapper);
                             b.shape.index.push(IndexInfo { value, ..*info });
                         }
@@ -4182,84 +4252,198 @@ impl<'p, 's> Checker<'p, 's> {
         (constructors, is_mixin)
     }
 
-    /// Where to read the properties of `ty`: `getPropertyOfType` and `getPropertiesOfType` do not
-    /// resolve the members of an intersection, which compares the signatures of its constituents.
-    pub(super) fn object_with_properties_of(&mut self, ty: TypeId) -> TypeId {
+    /// `resolveStructuredTypeMembers`, for the signatures and the index signatures of `ty`.
+    ///
+    /// For an intersection they are not among `members`, which has its properties:
+    /// `getPropertyOfType` and `getPropertiesOfType` go from constituent to constituent, and only
+    /// `resolveIntersectionTypeMembers` compares the signatures of the constituents, which resolves
+    /// the types in them. So does a union keep them apart (`signatures`, `union_as_object`).
+    pub(super) fn structured_members(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let TypeData::Intersection(parts) = self.data(ty) else {
-            return ty;
+            // The members of a substitution type are those of an intersection.
+            let members = self.members(ty)?;
+            return Some(self.structured(members));
         };
-        if self.p.shapes.handle(&self.task, &ty).is_some() {
-            return ty;
-        }
+        // They are kept as the members of an object type: the shape with the key `ty` has the
+        // properties, which are many more.
         if let Some(known) = self.p.intersection_objects.get(&self.task, &ty) {
-            return known;
+            return self.members(known);
         }
-        // Without two signatures there is nothing to compare.
-        let (mut call, mut construct) = (0, 0);
-        for &part in parts {
-            let part = self.apparent_type(part);
-            if self.is_union(part) {
-                (call, construct) = (2, 2);
-                break;
+        let q = Query::Shape(ty);
+        let built = if let Some(built) = self.provisionally_cached_shape(q) {
+            built
+        } else if !self.enter(q) {
+            self.provisional_shape(Shape::new_in(self.arena))
+        } else {
+            let shape = self.resolve_intersection_type_members(ty, parts);
+            match self.leave(q) {
+                Ok(stored) => {
+                    let object = self.synth(shape);
+                    let kept = &self.p.intersection_objects;
+                    let object = kept.insert(&self.task, ty, object, stored);
+                    return self.members(object);
+                }
+                Err(open) => self.cache_shape_provisionally(q, shape, open),
             }
-            if let Some(members) = self.members(part) {
-                call += members.shape().call.len();
-                construct += members.shape().construct.len();
-            }
+        };
+        Some(Members {
+            resolved: built.resolved,
+            mapper: MapperId::IDENTITY,
+        })
+    }
+
+    /// The properties of the intersection `ty`.
+    fn properties_of_intersection(&mut self, ty: TypeId, parts: &[TypeId]) -> Built<'p> {
+        if let Some(kept) = self.p.shapes.handle(&self.task, &ty) {
+            return Built {
+                resolved: self.p.shapes.at(&self.task, kept),
+                kept: Some(kept),
+            };
         }
-        if call < 2 && construct < 2 {
-            return ty;
+        let q = Query::Properties(ty);
+        if let Some(built) = self.provisionally_cached_shape(q) {
+            return built;
         }
-        let scope = self.begin_scope();
-        let shape = self.build_intersection_shape(ty, parts, false);
-        let object = self.synth(shape);
-        match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.intersection_objects).insert(&self.task, ty, object, stored),
-            Err(_) => object,
+        // The members of a constituent can depend on the properties of the whole.
+        if !self.enter(q) {
+            return self.provisional_shape(Shape {
+                properties_of: Some(ty),
+                ..Shape::new_in(self.arena)
+            });
+        }
+        let counters = self.non_cacheable_mark();
+        let shape = self.build_intersection_shape(ty, parts);
+        // A constituent whose members are in place does not have all of them yet.
+        let is_in_place = self.non_cacheable_mark() != counters;
+        match self.leave(q) {
+            Ok(_) if is_in_place => self.provisional_shape(shape),
+            Ok(stored) => self.keep_shape(ty, shape, stored),
+            Err(open) => self.cache_shape_provisionally(q, shape, open),
         }
     }
 
-    /// `createUnionOrIntersectionProperty` for each name and, if `resolves`,
-    /// `resolveIntersectionTypeMembers`.
-    fn build_intersection_shape(
+    fn shape_of_synth(&mut self, object: TypeId) -> Built<'p> {
+        let TypeData::Synth(shape) = self.data(object) else {
+            unreachable!()
+        };
+        self.shape_memo(object, |_| (**shape).clone_in(self.arena))
+    }
+
+    /// `structured_members` of the type that `members` are the members of.
+    #[inline]
+    pub fn structured(&mut self, members: Members<'p>) -> Members<'p> {
+        match members.shape().properties_of {
+            Some(intersection) => self.structured_members(intersection).unwrap_or(members),
+            None => members,
+        }
+    }
+
+    /// The members of the constituent `written` of the intersection `whole`, and the union that
+    /// they are the common members of.
+    fn members_of_constituent(
         &mut self,
         whole: TypeId,
-        parts: &[TypeId],
-        resolves: bool,
-    ) -> Shape<'s> {
+        written: TypeId,
+    ) -> (TypeId, Option<TypeId>, Option<Members<'p>>) {
+        let part = self.apparent_type(written);
+        // `getPropertiesOfType`, `getIndexInfosOfType`, `getSignaturesOfType`: for a union, the
+        // members common to all its constituents.
+        let union = self.is_union(part).then_some(part);
+        let part = union.map_or(part, |union| self.union_as_object(union));
+        // `getTypeWithThisArgument`: `this` in a member of a constituent is the whole
+        // intersection, unless the constituent specifies its own, as the apparent type of a
+        // type variable does.
+        let members = if self.is_deferred(written) {
+            self.members_of_apparent_type(written, part)
+        } else {
+            self.members_with_this(part, whole)
+        };
+        (part, union, members)
+    }
+
+    /// `resolveIntersectionTypeMembers`
+    fn resolve_intersection_type_members(&mut self, whole: TypeId, parts: &[TypeId]) -> Shape<'s> {
+        let mut shape = Shape::new_in(self.arena);
+        let (constructors, is_mixin) = self.find_mixins(parts);
+        let has_mixins = is_mixin.contains(&true);
+        for (at, &written) in parts.iter().enumerate() {
+            let (_, union, Some(members)) = self.members_of_constituent(whole, written) else {
+                continue;
+            };
+            // The apparent type of a type variable can be an intersection.
+            let members = self.structured(members);
+            let (call, construct) = match union {
+                Some(union) => (self.signatures(union, false), self.signatures(union, true)),
+                None => (
+                    List::Kept(members.call_signatures()),
+                    List::Kept(members.construct_signatures()),
+                ),
+            };
+            // A signature identical to an existing one is not added.
+            for &sig in call.iter() {
+                let sig = self.instantiate_sig(sig, members.mapper);
+                if !shape
+                    .call
+                    .iter()
+                    .any(|&s| self.signatures_identical(s, sig))
+                {
+                    shape.call.push(sig);
+                }
+            }
+            // A mixin constructor contributes no construct signature: its return type is part of
+            // the return types of the other members' signatures.
+            if !is_mixin[at] {
+                for &sig in construct.iter() {
+                    let mut sig = self.instantiate_sig(sig, members.mapper);
+                    if has_mixins {
+                        // `includeMixinType`
+                        let mut mixed = Vec::with_capacity(parts.len());
+                        for other in 0..parts.len() {
+                            if other == at {
+                                mixed.push(self.sig_return(sig));
+                            } else if is_mixin[other] {
+                                mixed.push(self.sig_return(constructors[other][0]));
+                            }
+                        }
+                        let ret = self.intersection(&mixed);
+                        sig = self.types().intern_sig(SigData::WithReturn { sig, ret });
+                    }
+                    if !shape
+                        .construct
+                        .iter()
+                        .any(|&s| self.signatures_identical(s, sig))
+                    {
+                        shape.construct.push(sig);
+                    }
+                }
+            }
+            // `appendIndexInfo`
+            for info in members.index_infos() {
+                let value = self.instantiate(info.value, members.mapper);
+                match shape.index.iter_mut().find(|i| i.key == info.key) {
+                    Some(existing) => {
+                        let value = self.intersection(&[existing.value, value]);
+                        let readonly = existing.readonly && info.readonly;
+                        *existing = IndexInfo::new(info.key, value, readonly);
+                    }
+                    None => shape.index.push(IndexInfo { value, ..*info }),
+                }
+            }
+        }
+        shape
+    }
+
+    /// `getPropertiesOfUnionOrIntersectionType`: `createUnionOrIntersectionProperty` for each name.
+    /// See `structured_members`.
+    fn build_intersection_shape(&mut self, whole: TypeId, parts: &[TypeId]) -> Shape<'s> {
         let mut b = Builder::new_in(self.arena);
         // The type of a property is resolved lazily: with `this` bound to the whole intersection,
         // it can depend on other properties of the whole. For each name that several members have:
         // the properties, the one in `b` first.
         let mut lists: Vec<Vec<Prop<'s>, &'s Arena>> = Vec::new();
-        let (constructors, is_mixin) = match resolves {
-            true => self.find_mixins(parts),
-            false => Default::default(),
-        };
-        let has_mixins = is_mixin.contains(&true);
-        for (at, &written) in parts.iter().enumerate() {
-            let part = self.apparent_type(written);
-            // `getPropertiesOfType`, `getIndexInfosOfType`, `getSignaturesOfType`: for a union, the
-            // members common to all its constituents.
-            let union = self.is_union(part).then_some(part);
-            let part = union.map_or(part, |union| self.union_as_object(union));
-            // `getTypeWithThisArgument`: `this` in a member of a constituent is the whole
-            // intersection, unless the constituent specifies its own, as the apparent type of a
-            // type variable does.
-            let members = if self.is_deferred(written) {
-                self.members_of_apparent_type(written, part)
-            } else {
-                self.members_with_this(part, whole)
-            };
-            let Some(members) = members else {
+        for &written in parts {
+            let (part, union, Some(members)) = self.members_of_constituent(whole, written) else {
                 continue;
-            };
-            let (call, construct) = match union {
-                Some(union) => (self.signatures(union, false), self.signatures(union, true)),
-                None => (
-                    List::Kept(&members.shape().call[..]),
-                    List::Kept(&members.shape().construct[..]),
-                ),
             };
             b.reserve(members.shape().props.len());
             let is_module = matches!(
@@ -4296,72 +4480,24 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             // Whether it has signatures says which global types it has properties of.
-            if !resolves {
-                for (all, of_part) in [
-                    (&mut b.shape.call, call.first()),
-                    (&mut b.shape.construct, construct.first()),
-                ] {
-                    if all.is_empty()
-                        && let Some(&sig) = of_part
-                    {
-                        all.push(self.instantiate_sig(sig, members.mapper));
-                    }
+            let [call, construct] = match union {
+                Some(union) => {
+                    [false, true].map(|kind| self.signatures(union, kind).first().copied())
                 }
-                continue;
-            }
-            // A signature identical to an existing one is not added.
-            for &sig in call.iter() {
-                let sig = self.instantiate_sig(sig, members.mapper);
-                if !b
-                    .shape
-                    .call
-                    .iter()
-                    .any(|&s| self.signatures_identical(s, sig))
+                None => members.first_signatures(),
+            };
+            for (all, of_part) in [
+                (&mut b.shape.call, call),
+                (&mut b.shape.construct, construct),
+            ] {
+                if all.is_empty()
+                    && let Some(sig) = of_part
                 {
-                    b.shape.call.push(sig);
-                }
-            }
-            // A mixin constructor contributes no construct signature: its return type is part of
-            // the return types of the other members' signatures.
-            if !is_mixin[at] {
-                for &sig in construct.iter() {
-                    let mut sig = self.instantiate_sig(sig, members.mapper);
-                    if has_mixins {
-                        // `includeMixinType`
-                        let mut mixed = Vec::with_capacity(parts.len());
-                        for other in 0..parts.len() {
-                            if other == at {
-                                mixed.push(self.sig_return(sig));
-                            } else if is_mixin[other] {
-                                mixed.push(self.sig_return(constructors[other][0]));
-                            }
-                        }
-                        let ret = self.intersection(&mixed);
-                        sig = self.types().intern_sig(SigData::WithReturn { sig, ret });
-                    }
-                    if !b
-                        .shape
-                        .construct
-                        .iter()
-                        .any(|&s| self.signatures_identical(s, sig))
-                    {
-                        b.shape.construct.push(sig);
-                    }
-                }
-            }
-            // `appendIndexInfo`
-            for info in &members.shape().index {
-                let value = self.instantiate(info.value, members.mapper);
-                match b.shape.index.iter_mut().find(|i| i.key == info.key) {
-                    Some(existing) => {
-                        let value = self.intersection(&[existing.value, value]);
-                        let readonly = existing.readonly && info.readonly;
-                        *existing = IndexInfo::new(info.key, value, readonly);
-                    }
-                    None => b.shape.index.push(IndexInfo { value, ..*info }),
+                    all.push(self.instantiate_sig(sig, members.mapper));
                 }
             }
         }
+        b.shape.properties_of = Some(whole);
         for (prop, list) in b.shape.props.iter_mut().zip(lists) {
             if list.len() > 1 {
                 let every = |flag: PropFlags| list.iter().all(|p| p.flags.contains(flag));
@@ -4464,7 +4600,7 @@ impl<'p, 's> Checker<'p, 's> {
                     name_type: self.name_type_of_copy(owner, prop),
                 });
             }
-            for info in &members.shape().index {
+            for info in self.structured(members).index_infos() {
                 let value = self.instantiate(info.value, members.mapper);
                 shape.index.push(IndexInfo { value, ..*info });
             }
@@ -4841,7 +4977,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.get_named_members(&mut b.shape.props, |_| true, &[]);
         // `getIndexInfoWithReadonly`
         if left == TypeId::EMPTY_OBJECT {
-            for info in &r.shape().index {
+            for info in self.structured(r).index_infos() {
                 let value = self.instantiate(info.value, r.mapper);
                 b.shape.index.push(IndexInfo {
                     value,
@@ -4849,7 +4985,7 @@ impl<'p, 's> Checker<'p, 's> {
                     ..*info
                 });
             }
-        } else if !l.shape().index.is_empty() {
+        } else if !self.structured(l).index_infos().is_empty() {
             for info in self.union_index_infos(&[left, right]) {
                 b.shape.index.push(IndexInfo { readonly, ..info });
             }
@@ -7079,12 +7215,7 @@ impl<'p, 's> Checker<'p, 's> {
             return (!prop.flags.contains(PropFlags::READ_PARTIAL))
                 .then_some((prop, MapperId::IDENTITY));
         }
-        let object = self.object_with_properties_of(apparent);
-        let members = if object == apparent {
-            self.members_of_apparent_type(ty, apparent)?
-        } else {
-            self.members(object)?
-        };
+        let members = self.members_of_apparent_type(ty, apparent)?;
         if self.is_type_only_member(apparent, name) {
             return None;
         }
@@ -7138,6 +7269,28 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `CheckFlagsHasNonUniformType` and `CheckFlagsHasLiteralType` of the property that
+    /// `createUnionOrIntersectionProperty` makes of `props`. That of a union has them among its
+    /// flags. That of an intersection has not: its type is resolved lazily.
+    fn non_uniform_and_literal(&mut self, props: &[Prop<'_>]) -> PropFlags {
+        let mut flags = PropFlags::empty();
+        let first_type = self.type_of_prop(&props[0], MapperId::IDENTITY);
+        for prop in props {
+            let t = self.type_of_prop(prop, MapperId::IDENTITY);
+            if t != first_type {
+                flags |= PropFlags::HAS_NON_UNIFORM_TYPE;
+            }
+            // `isLiteralType`, `isPatternLiteralType`
+            if self.is_boolean(t)
+                || !t.is_never() && self.every_type(t, |c, m| c.is_unit(m))
+                || self.is_pattern_literal(t)
+            {
+                flags |= PropFlags::HAS_LITERAL_TYPE;
+            }
+        }
+        flags
+    }
+
     /// `createUnionOrIntersectionProperty`, where `isUnion`. `build_intersection_shape` has the other half.
     fn create_union_property(
         &mut self,
@@ -7159,7 +7312,12 @@ impl<'p, 's> Checker<'p, 's> {
             (PropFlags::empty(), false, containing_type);
         for &current in self.parts(containing_type) {
             let t = self.apparent_type(current);
-            if self.is_error_type(t) || t.is_never() {
+            // An intersection with a member whose apparent type is `never`, such as a conditional
+            // type with that constraint, has the apparent type `never`.
+            if self.is_error_type(t)
+                || t.is_never()
+                || self.is_apparent_type_of_intersection_never(t)
+            {
                 continue;
             }
             let holder = self.apparent_type_or_type_variable(current, t);
@@ -7236,22 +7394,17 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         if prop_set.len() == 1 && !is_partial {
-            return prop_set.pop();
-        }
-        let first_type = self.type_of_prop(&prop_set[0], MapperId::IDENTITY);
-        for prop in &prop_set {
-            let t = self.type_of_prop(prop, MapperId::IDENTITY);
-            if t != first_type {
-                flags |= PropFlags::HAS_NON_UNIFORM_TYPE;
-            }
-            // `isLiteralType`, `isPatternLiteralType`
-            if self.is_boolean(t)
-                || !t.is_never() && self.every_type(t, |c, m| c.is_unit(m))
-                || self.is_pattern_literal(t)
+            // The property of the only member that has one is that of the union. That of an
+            // intersection gets its two flags here: see `non_uniform_and_literal`.
+            let mut single = prop_set.pop()?;
+            if let PropSource::Intersected(of, props) = &single.source
+                && self.is_intersection(*of)
             {
-                flags |= PropFlags::HAS_LITERAL_TYPE;
+                single.flags |= self.non_uniform_and_literal(props);
             }
+            return Some(single);
         }
+        flags |= self.non_uniform_and_literal(&prop_set);
         // `links.nameType`
         if self.is_numeric_name(name)
             && self
@@ -7324,7 +7477,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn members_for_index_infos(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let ty = self.reduced_apparent_type(ty);
         let TypeData::Union(parts) = self.data(ty) else {
-            return self.members(ty);
+            return self.structured_members(ty);
         };
         let index = self.union_index_infos(parts);
         let whole = self.synth(Shape {
@@ -7337,10 +7490,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getApplicableIndexInfoForName`
     pub(super) fn applicable_index_info_for_name(
         &mut self,
-        members: &Members,
+        members: &Members<'p>,
         name: Atom,
     ) -> Option<IndexInfo> {
-        if members.shape().index.is_empty() {
+        let members = &self.structured(*members);
+        if members.index_infos().is_empty() {
             return None;
         }
         let key_type = if self.atoms().is_symbol_name(name) {
@@ -7353,8 +7507,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `findIndexInfo`, with the value type instantiated for `members`: the index signature with
     /// that very key type. `string` is applicable to `string & {}`, and is not it.
-    pub fn find_index_info(&mut self, members: &Members, key_type: TypeId) -> Option<IndexInfo> {
-        let mut infos = members.shape().index.iter();
+    pub fn find_index_info(
+        &mut self,
+        members: &Members<'p>,
+        key_type: TypeId,
+    ) -> Option<IndexInfo> {
+        let members = &self.structured(*members);
+        let mut infos = members.index_infos().iter();
         let found = *infos.find(|info| info.key == key_type)?;
         Some(IndexInfo {
             value: self.instantiate(found.value, members.mapper),
@@ -7365,13 +7524,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// `findApplicableIndexInfo`, with the value type instantiated for `members`.
     pub fn applicable_index_info(
         &mut self,
-        members: &Members,
+        members: &Members<'p>,
         key_type: TypeId,
     ) -> Option<IndexInfo> {
+        let members = &self.structured(*members);
         // The string index signature applies only where no other does.
         let mut string_index_info = None;
         let mut applicable: SmallVec<[&IndexInfo; 4]> = SmallVec::new();
-        for info in &members.shape().index {
+        for info in members.index_infos() {
             if info.key == TypeId::STRING {
                 string_index_info = Some(info);
             } else if self.is_applicable_index_type(key_type, info.key) {
@@ -7495,13 +7655,13 @@ impl<'p, 's> Checker<'p, 's> {
                 resolved.resolved.shape.call.to_vec_in(self.arena)
             };
         }
-        let Some(members) = self.members(ty) else {
+        let Some(members) = self.structured_members(ty) else {
             return Vec::new_in(self.arena);
         };
         let sigs = if construct {
-            &members.shape().construct
+            members.construct_signatures()
         } else {
-            &members.shape().call
+            members.call_signatures()
         };
         let mut instantiated = Vec::with_capacity_in(sigs.len(), self.arena);
         instantiated.extend(

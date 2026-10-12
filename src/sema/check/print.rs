@@ -3895,7 +3895,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             self.approximate_length += 2;
             return Node::simple(b"{}");
         };
-        let (shape, mapper) = (members.shape(), members.mapper);
+        let (shape, mapper) = (members.whole_shape(), members.mapper);
         let mut call = Vec::with_capacity(shape.call.len());
         for &signature in &shape.call {
             call.push(self.c.instantiate_sig(signature, mapper));

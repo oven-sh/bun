@@ -1015,7 +1015,24 @@ function globSync(pattern: string | string[], options?: GlobOptions) {
   return new Glob(pattern, options).globSync();
 }
 
-export default { glob, globSync, Glob };
+// Keep the last matcher per platform: POSIX backslashes are literal characters.
+const patternCache: ({ pattern: string; matcher: Minimatch } | undefined)[] = [undefined, undefined];
+function matchGlobPattern(path: string, pattern: string, windows: boolean) {
+  validateString(path, "path");
+  validateString(pattern, "pattern");
+  const index = windows ? 1 : 0;
+  let cached = patternCache[index];
+  if (cached?.pattern !== pattern) {
+    cached = patternCache[index] = {
+      // Minimatch normalizes its own pattern, so retain the caller's cache key.
+      pattern,
+      matcher: createMatcher(pattern, { platform: windows ? "win32" : "posix" }),
+    };
+  }
+  return cached.matcher.match(path);
+}
+
+export default { glob, globSync, Glob, matchGlobPattern };
 
 interface MinimatchOptions {
   __proto__?: null;

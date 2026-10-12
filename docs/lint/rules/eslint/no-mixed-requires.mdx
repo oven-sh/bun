@@ -41,9 +41,9 @@ const retries = 3;
 | Option | Default | What it does |
 | --- | --- | --- |
 | `grouping` | `false` | Also report a declaration that mixes kinds of modules: Node.js built-ins (`"fs"`), packages (`"lodash"`), files (`"./config"`) and computed names (`require(name)`). |
-| `allowCall` | `false` | Count a module that is called right away, `require("debug")("app")`, as a `require` and not as another variable. |
+| `allowCall` | `false` | Count a module that's called right away, like `require("debug")("app")`, as a `require` and not as an ordinary variable. |
 
-A plain `true` or `false` in place of the object sets `grouping`.
+A plain `true` or `false` instead of the object sets `grouping`.
 
 {/* bad {"options": [{"grouping": true}]} */}
 ```js
@@ -59,7 +59,7 @@ const fs = require("fs"),
 const config = require("./config");
 ```
 
-Built-ins are only known by their bare names. `"node:fs"` counts as a package:
+Built-ins are only recognized by their bare names. `"node:fs"` counts as a package:
 
 {/* bad {"options": [{"grouping": true}]} */}
 ```js

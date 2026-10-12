@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-If the types say `user` is always an object, `if (user)`, `user?.name` and `user ?? fallback` test for something that cannot happen. Either the check is dead code, or the type is wrong and hides a real case.
+If the types say `user` is always an object, `if (user)`, `user?.name` and `user ?? fallback` test for something that can't happen. Either the check is dead code, or the type is wrong and hides a real case.
 
 The rule checks `if`, loops, `? :`, `&&`, `||`, `??`, `?.`, `switch` cases, comparisons with `null` and `undefined`, comparisons of two literal types, and the callbacks of array methods such as `filter`. Values of type `any` or `unknown` and type parameters without a constraint are never reported.
 
@@ -65,7 +65,7 @@ function label(user: User | undefined) {
 }
 ```
 
-An element read from an array by index is not reported, because the index can be out of range even though the type does not say so:
+An element read from an array by index isn't reported, because the index can be out of range even though the type doesn't say so:
 
 {/* good */}
 ```ts
@@ -83,13 +83,13 @@ function firstId(items: { id: number }[]) {
 | --- | --- | --- |
 | `allowConstantLoopConditions` | `"never"` | Which constant loop conditions are allowed. See below. |
 | `checkTypePredicates` | `false` | Also report a call to a type guard or an assertion function if the argument already has that type. |
-| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Without `strictNullChecks` in `tsconfig.json`, the rule cannot tell what can be `null`, and it reports that once for each file. Set this to `true` to turn that report off. |
+| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Without `strictNullChecks` in `tsconfig.json`, the rule can't tell what can be `null`, and it reports that once for each file. Set this to `true` to turn that report off. |
 
 `allowConstantLoopConditions` takes one of these:
 
 | Value | What it does |
 | --- | --- |
-| `"never"` or `false` | Report every constant loop condition, `while (true)` too. |
+| `"never"` or `false` | Report every constant loop condition, including `while (true)`. |
 | `"always"` or `true` | Allow any loop condition of type `true`. |
 | `"only-allowed-literals"` | Allow only `true`, `false`, `0` and `1` written in the condition itself. |
 

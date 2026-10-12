@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-`...` in an object copies the own enumerable properties of a value, and many values have none or the wrong ones. TypeScript accepts all of these:
+`...` in an object copies a value's own enumerable properties, and many values have none or the wrong ones. TypeScript accepts all of these:
 
 | Spread | What you get |
 | --- | --- |
@@ -20,7 +20,7 @@ deprecated: false
 | Another iterable in an object | Its own properties, not the values it yields. |
 | An array in an object | The indexes as keys: `{ "0": .., "1": .. }`. |
 | A function without properties in an object | An empty object. You probably meant to call it. |
-| A class instance in an object | The fields, without the methods and getters of the class. |
+| A class instance in an object | The fields, without the class's methods and getters. |
 | A class in an object | Only its static properties. |
 | A string in an array or a call | Code points, which splits an emoji made of several of them. |
 
@@ -90,7 +90,7 @@ function letters(name: string) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allow` | `[]` | Types that you may spread. Each is a name, or an object that also says where the type comes from: `{ "from": "file", "name": .. }`, `{ "from": "lib", "name": .. }` or `{ "from": "package", "name": .., "package": .. }`. |
+| `allow` | `[]` | Types you can spread. Each is a name, or an object that also says where the type comes from: `{ "from": "file", "name": .. }`, `{ "from": "lib", "name": .. }` or `{ "from": "package", "name": .., "package": .. }`. |
 
 Not reported with `allow: ["Cart"]`:
 

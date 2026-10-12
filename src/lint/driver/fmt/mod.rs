@@ -1815,7 +1815,7 @@ impl Run<'_> {
             Ok(ignored) => ignored,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
-        // `--doctor` has it among its notes.
+        // `--doctor` already lists it with its own notes.
         let is_said = options.log_level >= LogLevel::Warn && !options.doctor;
         let colors = self.colors();
         let mut out = match &options.stdin_filepath {

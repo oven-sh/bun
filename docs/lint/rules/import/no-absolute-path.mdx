@@ -14,7 +14,7 @@ deprecated: false
 
 An absolute path such as `/home/ana/app/src/config.js` only exists on the machine where it was written. The import breaks for everyone else who clones the project, in CI, and in production.
 
-`--fix` rewrites the path to one that is relative to the importing file.
+`--fix` rewrites the path to one that's relative to the importing file.
 
 ## Examples
 
@@ -44,7 +44,7 @@ const logger = require("../lib/logger.js");
 | `esmodule` | `true` | Check `import`, `export ... from` and `import()`. |
 | `commonjs` | `true` | Check `require()`. |
 | `amd` | `false` | Check the dependency lists of AMD `define()` and `require()` calls. |
-| `ignore` | `[]` | Regular expressions. A path that matches one of them is not checked. |
+| `ignore` | `[]` | Regular expressions. A path that matches one of them isn't checked. |
 
 {/* good {"options": [{"commonjs": false}]} */}
 ```js

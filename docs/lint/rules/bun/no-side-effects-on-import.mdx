@@ -14,7 +14,7 @@ deprecated: false
 
 A file that does something at its top level does it for everyone who imports it. A test that imports one helper from the file also starts the server, and a bundler has to keep the file even if nothing from it is used. Export a function instead, and let the importer decide when to call it.
 
-The rule reports a statement that is not inside a function if it calls something, uses `new`, `import()`, or a tagged template, or assigns to, deletes, or increments a property.
+The rule reports a statement that isn't inside a function if it calls something, uses `new`, `import()`, or a tagged template, or assigns to, deletes, or increments a property.
 
 ## Examples
 
@@ -43,7 +43,7 @@ export function start() {
 }
 ```
 
-Declarations are not checked, so a module can still build its constants. `require()` and assigning to `module.exports` or `exports` are allowed too:
+Declarations aren't checked, so a module can still build its constants. `require()` and assigning to `module.exports` or `exports` are allowed too:
 
 {/* good */}
 ```js
@@ -55,7 +55,7 @@ module.exports = { cache };
 exports.size = 100;
 ```
 
-A call in the value that is assigned is still reported:
+A call in the assigned value is still reported:
 
 {/* bad */}
 ```js
@@ -66,9 +66,9 @@ module.exports = createApp();
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allow` | `after`, `afterAll`, `afterEach`, `before`, `beforeAll`, `beforeEach`, `describe`, `expect`, `it`, `jest`, `mock`, `suite`, `test`, `vi` | What may be called at the top level. It replaces the default list. |
+| `allow` | `after`, `afterAll`, `afterEach`, `before`, `beforeAll`, `beforeEach`, `describe`, `expect`, `it`, `jest`, `mock`, `suite`, `test`, `vi` | Names that can be called at the top level. It replaces the default list. |
 
-The default list is what declares tests, hooks, and mocks, so test files pass:
+The default list covers the functions that declare tests, hooks, and mocks, so test files pass:
 
 {/* good */}
 ```js
@@ -81,7 +81,7 @@ test.each([1, 2])("is positive", value => {
 });
 ```
 
-A plain name such as `"test"` allows everything that starts with it: `test()`, `test.each()()`. A name with a dot such as `"customElements.define"` allows only that call:
+A plain name such as `"test"` allows everything that starts with it, like `test()` and `test.each()()`. A name with a dot such as `"customElements.define"` only allows that call:
 
 {/* good {"options": [{"allow": ["customElements.define"]}]} */}
 ```js

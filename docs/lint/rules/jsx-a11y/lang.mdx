@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A screen reader picks its voice and pronunciation from the `lang` of the page. If the value is not a language, such as a typo or a country name, it falls back to the user's default and may mispronounce the text.
+A screen reader picks its voice and pronunciation from the page's `lang`. If the value isn't a language, such as a typo or a country name, it falls back to the user's default and might mispronounce the text.
 
-The value must be a registered BCP 47 tag such as `en`, `en-US` or `zh-Hans`. An `<html>` without `lang` is reported too. A value that is only known at run time, such as `lang={locale}`, is not checked.
+The value must be a registered BCP 47 tag such as `en`, `en-US` or `zh-Hans`. An `<html>` without `lang` is reported too. A value that's only known at runtime, such as `lang={locale}`, isn't checked.
 
 ## Examples
 

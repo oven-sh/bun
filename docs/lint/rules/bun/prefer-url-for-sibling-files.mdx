@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Bundlers such as Vite and webpack recognize `new URL("./file", import.meta.url)`. They copy the file to the output and point the URL at the copy. A path that is joined onto `import.meta.dirname` or `__dirname` is only a string to them, so after bundling it names a file that is not there.
+Bundlers such as Vite and webpack recognize `new URL("./file", import.meta.url)`. They copy the file to the output and point the URL at the copy. A path that's joined onto `import.meta.dirname` or `__dirname` is only a string to them, so after bundling it points to a file that isn't there.
 
-The rule reports `join()` and `resolve()` from `node:path`, `+` and template literals, if the first part is the directory of the module and the rest is string literals. The directory can be `__dirname`, `import.meta.dirname`, `import.meta.dir`, `dirname(fileURLToPath(import.meta.url))`, or a `const` that holds one of them.
+The rule reports `join()` and `resolve()` from `node:path`, `+` and template literals, if the first part is the module's directory and the rest is string literals. The directory can be `__dirname`, `import.meta.dirname`, `import.meta.dir`, `dirname(fileURLToPath(import.meta.url))`, or a `const` that holds one of them.
 
 ## Examples
 
@@ -51,7 +51,7 @@ Not reported:
 const schema = await Bun.file(new URL("./schema.sql", import.meta.url)).text();
 ```
 
-A path with a part that is only known at run time, or one that ends in `.`, `..` or `/`, is not reported:
+A path with a part that's only known at run time, or one that ends in `.`, `..` or `/`, isn't reported:
 
 {/* good */}
 ```js
@@ -61,7 +61,7 @@ export const translations = language => join(import.meta.dirname, "locales", `${
 export const root = join(import.meta.dirname, "..");
 ```
 
-CommonJS files are not checked, because they have no `import.meta.url`:
+CommonJS files aren't checked, because they have no `import.meta.url`:
 
 {/* good {"filename": "load.cjs"} */}
 ```js
@@ -72,4 +72,4 @@ module.exports = join(__dirname, "schema.sql");
 
 ## When not to use it
 
-Your code is never bundled, or your bundler does not follow `new URL(.., import.meta.url)`.
+Your code is never bundled, or your bundler doesn't follow `new URL(.., import.meta.url)`.

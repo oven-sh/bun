@@ -2021,6 +2021,126 @@ describe("Glob.match", () => {
     expect(new Glob("foo/**").match("foo/\u0041\u030A")).toBeTrue(); // "A" with ring
     expect(new Glob("foo/**").match("foo/\u00C5")).toBeTrue(); // "Å" single character
   });
+
+  test.each([
+    ["@(a|b).js", "a.js", true],
+    ["@(a|b).js", "b.js", true],
+    ["@(a|b).js", "c.js", false],
+    ["@(a|b).js", "ab.js", false],
+    ["?(a).js", ".js", true],
+    ["?(a).js", "a.js", true],
+    ["?(a).js", "aa.js", false],
+    ["*(a|b).js", ".js", true],
+    ["*(a|b).js", "abba.js", true],
+    ["*(a|b).js", "abc.js", false],
+    ["+(a|b).js", ".js", false],
+    ["+(a|b).js", "ab.js", true],
+    ["!(a|b).js", "c.js", true],
+    ["!(a|b).js", "a.js", false],
+    ["!(a|b).js", "ab.js", true],
+    ["!(*.test).ts", "a.ts", true],
+    ["!(*.test).ts", "a.test.ts", false],
+    ["*.!(test).ts", "a.spec.ts", true],
+    ["*.!(test).ts", "a.test.ts", false],
+    // A group doesn't cross a path separator unless an alternative has one.
+    ["!(a)", "b/c", false],
+    ["@(a/b|c)/d", "a/b/d", true],
+    ["@(a/b|c)/d", "c/d", true],
+    ["@(a/b|c)/d", "a/d", false],
+    ["src/@(a|b)/**/*.ts", "src/a/x/y.ts", true],
+    ["src/@(a|b)/**/*.ts", "src/c/x/y.ts", false],
+    ["**/*.@(js|ts)", "a/b/c.ts", true],
+    ["**/*.@(js|ts)", "a/b/c.css", false],
+    // Groups nest, and they mix with braces and other wildcards.
+    ["@(a|+(b|c))d", "bcbd", true],
+    ["@(a|+(b|c))d", "abd", false],
+    ["@(*.js|{a,b}.ts)", "x.js", true],
+    ["@(*.js|{a,b}.ts)", "b.ts", true],
+    ["@(*.js|{a,b}.ts)", "c.ts", false],
+    ["{@(a|b),c}.js", "b.js", true],
+    ["+([0-9]).txt", "123.txt", true],
+    ["+([0-9]).txt", "12a.txt", false],
+    // `!(` at the start of the pattern is a group, not a negation.
+    ["!(a)", "b", true],
+    ["!(a)", "a", false],
+    ["!!(a)", "a", true],
+    ["!!(a)", "b", false],
+  ])("extglob: %s with %s is %p", (pattern, path, expected) => {
+    expect(new Glob(pattern).match(path)).toBe(expected);
+  });
+
+  test.each([
+    // Next.js route groups
+    ["app/(marketing)/**", "app/(marketing)/page.tsx", true],
+    ["app/(marketing)/**", "app/marketing/page.tsx", false],
+    ["app/(a|b)/*.tsx", "app/(a|b)/page.tsx", true],
+    ["app/(a|b)/*.tsx", "app/a/page.tsx", false],
+    ["app/@modal/(.)photo/**", "app/@modal/(.)photo/page.tsx", true],
+    ["a(b)", "a(b)", true],
+    ["a(b)", "ab", false],
+    ["(a)(b)", "(a)(b)", true],
+    ["\\@(a)", "@(a)", true],
+    ["\\@(a)", "a", false],
+    ["@\\(a)", "@(a)", true],
+    ["@(a", "@(a", true],
+    ["@(a", "a", false],
+    ["a)", "a)", true],
+    ["a|b", "a|b", true],
+  ])("parentheses without a prefix are literal: %s with %s is %p", (pattern, path, expected) => {
+    expect(new Glob(pattern).match(path)).toBe(expected);
+  });
+
+  test.each([
+    ["{1..3}.txt", ["1.txt", "2.txt", "3.txt"], ["0.txt", "4.txt", "01.txt", "1..3.txt", "-.txt", ".txt"]],
+    ["{3..1}.txt", ["1.txt", "2.txt", "3.txt"], ["0.txt", "4.txt"]],
+    ["{8..12}", ["8", "9", "10", "11", "12"], ["7", "13", "1", "08"]],
+    ["{01..10}", ["01", "05", "10"], ["1", "5", "00", "11", "010"]],
+    ["{-2..2}", ["-2", "-1", "0", "1", "2"], ["-3", "3", "-0", "-"]],
+    ["{1..9..2}", ["1", "3", "5", "7", "9"], ["2", "4", "0", "11"]],
+    ["{9..1..4}", ["9", "5", "1"], ["7", "3"]],
+    ["{a..e}", ["a", "c", "e"], ["f", "A", "ab", ""]],
+    ["{a..g..3}", ["a", "d", "g"], ["b", "c"]],
+    ["v{1..2}/**/*.js", ["v1/a.js", "v2/a/b.js"], ["v3/a.js", "v/a.js"]],
+    ["{{1..2},x}", ["1", "2", "x"], ["3", "1..2"]],
+    // Not sequences
+    ["{1..3,x}", ["1..3", "x"], ["1", "2"]],
+    ["{1..a}", ["1..a"], ["1", "a"]],
+    ["{1..}", ["1.."], ["1"]],
+    ["{1\\..3}", ["1..3"], ["2"]],
+  ])("brace sequence %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    expect(matches.filter(path => !glob.match(path))).toEqual([]);
+    expect(others.filter(path => glob.match(path))).toEqual([]);
+  });
+
+  test("groups nest to any depth", () => {
+    const depth = 200;
+    expect(new Glob("{".repeat(depth) + "a,b" + "}".repeat(depth)).match("b")).toBeTrue();
+    expect(new Glob("{".repeat(depth) + "a,b" + "}".repeat(depth)).match("c")).toBeFalse();
+    expect(new Glob("@(".repeat(depth) + "a|b" + ")".repeat(depth)).match("b")).toBeTrue();
+    expect(new Glob("+(".repeat(depth) + "a|b" + ")".repeat(depth)).match("abab")).toBeTrue();
+    expect(new Glob("+(".repeat(depth) + "a|b" + ")".repeat(depth)).match("abc")).toBeFalse();
+  });
+
+  test("many repeated groups match in polynomial time", () => {
+    const path = "a".repeat(200);
+    expect(new Glob("*(a|aa)".repeat(20) + "b").match(path)).toBeFalse();
+    expect(new Glob("*(*(*(a|aa)))b").match(path)).toBeFalse();
+    expect(new Glob("{a,aa}".repeat(100) + "b").match(path)).toBeFalse();
+    expect(new Glob("+(a|aa)".repeat(20)).match(path)).toBeTrue();
+  });
+
+  test.each([
+    ["{a,b", "{a,b", true],
+    ["{a,b", "a", false],
+    ["a{", "a{", true],
+    ["[a", "[a", true],
+    ["[a", "a", false],
+    ["*[", "x[", true],
+    ["{[a}", "[a", true],
+  ])("an unclosed group or class is literal: %s with %s is %p", (pattern, path, expected) => {
+    expect(new Glob(pattern).match(path)).toBe(expected);
+  });
 });
 
 function returnError(cb: () => any): Error | undefined {

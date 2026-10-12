@@ -14,7 +14,7 @@ deprecated: false
 
 `"dark" as "dark"` and `let theme: "dark" = "dark"` write the same literal twice, and you need to change both every time. `as const` gives you the same narrow type and takes it from the value.
 
-The rule checks every `as` assertion, and the type annotations on variables and class fields. It only reports a type that is the same literal as the value.
+The rule checks every `as` assertion, and the type annotations on variables and class fields. It only reports a type that's the same literal as the value.
 
 `--fix` rewrites `"dark" as "dark"` to `"dark" as const`. A type annotation is reported but not fixed.
 

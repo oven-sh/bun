@@ -594,6 +594,58 @@ export function A({ list, on }: { list: any[]; on: Object }) {
   });
 });
 
+describe.concurrent("React Compiler rules", () => {
+  const suggesting = ["exhaustive-effect-dependencies", "memo-dependencies", "syntax"].map(it => `react-hooks/${it}`);
+
+  test("--rules only lists the ones that offer suggestions as fixable", async () => {
+    const { stdout } = await lint({}, ["--rules", "-f", "json"]);
+    const rules = (JSON.parse(stdout) as { id: string; fix: string }[]).filter(it => it.id.startsWith("react-hooks/"));
+    expect(rules.length).toBe(29);
+    const handWritten = ["react-hooks/exhaustive-deps", "react-hooks/rules-of-hooks"];
+    const labels = Map.groupBy(
+      rules.filter(it => !handWritten.includes(it.id)),
+      it => it.fix,
+    );
+    expect([...labels.keys()].sort()).toEqual(["fixable_suggestion", "none"]);
+    expect(labels.get("fixable_suggestion")!.map(it => it.id)).toEqual(suggesting);
+  });
+
+  test("the ones listed as fixable attach a suggestion and no fix", async () => {
+    const files = {
+      "effect.tsx": `import { useEffect } from "react";
+export function Room({ roomId }) {
+  useEffect(() => {
+    connect(roomId);
+  }, []);
+}
+`,
+      "memo.tsx": `import { useMemo } from "react";
+export function Results({ items, query }) {
+  const visible = useMemo(() => items.filter(item => item.name.includes(query)), [items]);
+  return <List items={visible} />;
+}
+`,
+      "syntax.tsx": "export function Total({ items }) {\n  delete items;\n  return <i />;\n}\n",
+    };
+    const { stdout } = await lint({ ...files, ...bunfig(Object.fromEntries(suggesting.map(id => [id, "error"]))) }, [
+      "-f",
+      "json",
+    ]);
+    type Message = { ruleId: string; fix?: unknown; suggestions?: { desc: string }[] };
+    const results: { filePath: string; messages: Message[] }[] = JSON.parse(stdout);
+    const found = results.flatMap(file =>
+      file.messages
+        .filter(it => suggesting.includes(it.ruleId))
+        .map(it => [basename(file.filePath), it.ruleId, it.fix === undefined, it.suggestions?.map(it => it.desc)]),
+    );
+    expect(found).toEqual([
+      ["effect.tsx", "react-hooks/exhaustive-effect-dependencies", true, ["Update dependencies"]],
+      ["memo.tsx", "react-hooks/memo-dependencies", true, ["Update dependencies"]],
+      ["syntax.tsx", "react-hooks/syntax", true, ["Remove this line"]],
+    ]);
+  });
+});
+
 describe.concurrent("rule options", () => {
   // These rules are ported from oxlint, so they take oxlint's options.
   const cases: [id: string, options: unknown[], code: string, lines: number[], withoutOptions: number[]][] = [

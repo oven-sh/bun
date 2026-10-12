@@ -14,7 +14,7 @@ deprecated: false
 
 Some built-ins work with and without `new`, some throw without it, and some do something else. `Array(3)` is the same as `new Array(3)`, `Map()` throws a `TypeError`, and `Date()` returns a string, not a `Date`. This rule requires `new` for built-in classes such as `Array`, `Object`, `Date`, `Error`, `RegExp`, `Promise`, `Map`, `Set` and the typed arrays.
 
-The primitive wrappers are the other way around. `new Boolean(false)` is an object, so it is truthy, and `typeof new String("a")` is `"object"`. `new Symbol()` and `new BigInt(1)` throw. Call these without `new`.
+The primitive wrappers are the other way around. `new Boolean(false)` is an object, so it's truthy, and `typeof new String("a")` is `"object"`. `new Symbol()` and `new BigInt(1)` throw. Call these without `new`.
 
 ## Examples
 
@@ -50,14 +50,14 @@ const enabled = Boolean(input.checked);
 const total = Number(input.value);
 ```
 
-`Object(value) === value` is a common test for "is this an object", so it is allowed:
+`Object(value) === value` is a common test for "is this an object", so it's allowed:
 
 {/* good */}
 ```js
 const isObject = value => Object(value) === value;
 ```
 
-A name that your file declares or imports is not the built-in and is not checked:
+A name that your file declares or imports isn't the built-in, so it isn't checked:
 
 {/* good */}
 ```js

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A function written inside a component is a new function on every render. Passed as a prop, it is never equal to the value from the last render, so a child wrapped in `React.memo` renders again even though the function does the same thing.
+A function written inside a component is a new function on every render. When you pass it as a prop, it's never equal to the value from the last render, so a child wrapped in `React.memo` renders again even though the function does the same thing.
 
-The rule reports arrow functions, function expressions, `.bind()` calls, `Function()` and `new Function()`. A function at the top level of a module is not reported, because it is created once.
+The rule reports arrow functions, function expressions, `.bind()` calls, `Function()` and `new Function()`. A function at the top level of a module isn't reported, because it's created once.
 
 ## Examples
 
@@ -45,7 +45,7 @@ function Editor({ onSave }) {
 }
 ```
 
-A function declared inside the component is as new as one written in the prop. The report is on the declaration:
+A function declared inside the component has the same problem as one written in the prop. The report is on the declaration:
 
 {/* bad {"count": 2} */}
 ```jsx
@@ -71,7 +71,7 @@ function Editor() {
 }
 ```
 
-If the function uses props or state, keep it with `useCallback`:
+If the function uses props or state, cache it with `useCallback`:
 
 {/* good */}
 ```jsx
@@ -102,9 +102,9 @@ class Editor extends React.Component {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `nativeAllowList` | `[]` | Props to skip on elements with a lowercase name, such as `<button>`. A list of prop names (case does not matter), or `"all"` for every prop. |
+| `nativeAllowList` | `[]` | Props to skip on elements with a lowercase name, such as `<button>`. A list of prop names (case doesn't matter), or `"all"` for every prop. |
 
-A DOM element does not compare its props to skip a render, so a new function costs nothing there. With `{ "nativeAllowList": "all" }`, this is allowed:
+A DOM element doesn't compare its props to skip a render, so a new function costs nothing there. With `{ "nativeAllowList": "all" }`, this is allowed:
 
 {/* good {"options": [{"nativeAllowList": "all"}]} */}
 ```jsx

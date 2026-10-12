@@ -1,5 +1,5 @@
-// What `bun format` has built in besides the options of Prettier, from `[format]` in bunfig.toml and from the flags of the same
-// names: `sortImports`, `sortTailwindcss`, `sortPackageJson`, `jsdoc`, `insertFinalNewline`, `overrides`. And TOML, which needs neither.
+// Tests for the `[format]` keys that go beyond Prettier's options, and their flags: `sortImports`, `sortTailwindcss`,
+// `sortPackageJson`, `jsdoc`, `insertFinalNewline` and `overrides`. Also covers TOML, which needs no key.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -8,7 +8,7 @@ import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
 
-/** Runs `bun format` with `args` in a directory that has `files`. `files` of the result: what has become of them. */
+/** Runs `bun format` with `args` in a temp directory containing `files`, and reads the files back. */
 async function format(files: Record<string, string>, args: string[] = ["."]) {
   using dir = tempDir("bun-format-bunfig", files);
   await using proc = spawn({
@@ -25,7 +25,7 @@ async function format(files: Record<string, string>, args: string[] = ["."]) {
 
 const bunfig = (text: string) => ({ "bunfig.toml": `[format]\n${text}\n` });
 
-/** 90 columns: Prettier breaks it, oxfmt does not. */
+/** 90 columns wide, so Prettier (80) wraps it and oxfmt (100) doesn't. */
 const wide = `const value = someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree, four);\n`;
 const broken = `const value = someFunction(
   argumentNumberOne,
@@ -69,15 +69,15 @@ import { a, z } from "./sibling";
 import css from "./a.css";
 `;
 
-  test("true: built-in modules, packages, aliases, relative paths, styles, with an empty line between", async () => {
+  test("groups built-ins, packages, aliases, relative paths and styles, separated by blank lines", async () => {
     const result = await format({ ...bunfig("sortImports = true"), "a.ts": imports + wide });
     expect(result.stderr).toBe("");
-    // Everything else is as without the key.
+    // The rest of the file still gets Prettier's defaults.
     expect(result.files["a.ts"]).toBe(sorted + broken);
     expect(result.exitCode).toBe(0);
   });
 
-  test("it is off unless it is set", async () => {
+  test("is off by default", async () => {
     const [plain, off] = await Promise.all([
       format({ "a.ts": imports }),
       format({ ...bunfig("sortImports = false"), "a.ts": imports }),
@@ -86,7 +86,7 @@ import css from "./a.css";
     expect(off.files["a.ts"]).toBe(imports);
   });
 
-  test("--sort-imports and --no-sort-imports", async () => {
+  test("--sort-imports turns it on and --no-sort-imports turns it off", async () => {
     const [on, off] = await Promise.all([
       format({ "a.ts": imports }, ["--sort-imports", "."]),
       format({ ...bunfig("sortImports = true"), "a.ts": imports }, ["--no-sort-imports", "."]),
@@ -118,14 +118,14 @@ import x from "../parent";
 import index from ".";
 `;
 
-  test("a table has the options", async () => {
+  test("takes options from a table", async () => {
     const result = await format({ "bunfig.toml": table, "a.ts": imports });
     expect(result.stderr).toBe("");
     expect(result.files["a.ts"]).toBe(byTable);
     expect(result.exitCode).toBe(0);
   });
 
-  test("the options are those of sortImports in an .oxfmtrc.json", async () => {
+  test("takes the same options as sortImports in .oxfmtrc.json", async () => {
     const options = {
       groups: [
         "ui",
@@ -143,18 +143,18 @@ import index from ".";
     expect(result.files["a.ts"]).toBe(byTable);
   });
 
-  test("the flag turns on what the table says", async () => {
+  test("--sort-imports keeps the options from the table", async () => {
     const result = await format({ "bunfig.toml": table, "a.ts": imports }, ["--sort-imports", "."]);
     expect(result.files["a.ts"]).toBe(byTable);
   });
 
-  test("the scripts of a Vue file", async () => {
+  test("sorts imports in Vue scripts", async () => {
     const vue = `<script setup>\nimport b from "./b";\nimport a from "a";\n</script>\n`;
     const result = await format({ ...bunfig("sortImports = true"), "a.vue": vue });
     expect(result.files["a.vue"]).toBe(`<script setup>\nimport a from "a";\n\nimport b from "./b";\n</script>\n`);
   });
 
-  test("it is laid over a .prettierrc, as the flag is", async () => {
+  test("also applies on top of a .prettierrc", async () => {
     const result = await format({
       ...bunfig("sortImports = true"),
       ".prettierrc": `{ "semi": false }`,
@@ -184,7 +184,7 @@ import index from ".";
       "sortImports = { partitionByNewline = true }",
       "`partitionByNewline: true` and `newlinesBetween: true` cannot be used together",
     ],
-  ])("%s is refused: %s", async (line, message) => {
+  ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "a.ts": imports });
     expect(result.stderr).toContain(message);
     expect(result.stderr).toContain("bunfig.toml:2:");
@@ -194,7 +194,7 @@ import index from ".";
 });
 
 describe.concurrent("sortTailwindcss", () => {
-  /** Tailwind CSS 4, as far as it is asked. A style sheet with `reversed` in it turns the order around. */
+  /** Minimal stand-in for Tailwind CSS 4. A stylesheet containing `reversed` flips the class order. */
   const tailwind = {
     "node_modules/tailwindcss/package.json": JSON.stringify({
       name: "tailwindcss",
@@ -212,7 +212,7 @@ exports.__unstable__loadDesignSystem = async css => {
   const input = `<a className="p-4 flex m-2" />;\n`;
   const sorted = `<a className="m-2 flex p-4" />;\n`;
 
-  test("true, in every language that has classes", async () => {
+  test("sorts classes in JSX, HTML, Vue and CSS", async () => {
     const result = await format({
       ...tailwind,
       ...bunfig("sortTailwindcss = true"),
@@ -229,14 +229,14 @@ exports.__unstable__loadDesignSystem = async css => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("it is off unless it is set, and the package is not asked for", async () => {
+  test("is off by default and doesn't need tailwindcss installed", async () => {
     const result = await format({ "a.jsx": input });
     expect(result.stderr).toBe("");
     expect(result.files["a.jsx"]).toBe(input);
     expect(result.exitCode).toBe(0);
   });
 
-  test("--sort-tailwindcss and --no-sort-tailwindcss", async () => {
+  test("--sort-tailwindcss turns it on and --no-sort-tailwindcss turns it off", async () => {
     const [on, off] = await Promise.all([
       format({ ...tailwind, "a.jsx": input }, ["--sort-tailwindcss", "."]),
       format({ ...tailwind, ...bunfig("sortTailwindcss = true"), "a.jsx": input }, ["--no-sort-tailwindcss", "."]),
@@ -245,7 +245,7 @@ exports.__unstable__loadDesignSystem = async css => {
     expect(off.files["a.jsx"]).toBe(input);
   });
 
-  test("a table has the options, and its paths are from the working directory", async () => {
+  test("takes options from a table and resolves paths from the working directory", async () => {
     const result = await format({
       ...tailwind,
       "bunfig.toml": `[format.sortTailwindcss]
@@ -264,7 +264,7 @@ preserveDuplicates = true
     expect(result.exitCode).toBe(0);
   });
 
-  test("the functions that projects put classes together with are known, unless the table names others", async () => {
+  test("sorts classes in clsx, cn, cva and similar calls by default, unless `functions` is set", async () => {
     const calls = ["clsx", "cn", "cva", "cx", "classNames", "classnames", "twMerge", "twJoin", "tv", "other"];
     const code = (classes: (name: string) => string) => calls.map(name => `${name}("${classes(name)}");\n`).join("");
     const [byDefault, named, oxfmt] = await Promise.all([
@@ -274,22 +274,22 @@ preserveDuplicates = true
     ]);
     expect(byDefault.files["a.js"]).toBe(code(name => (name === "other" ? "p-4 m-2" : "m-2 p-4")));
     expect(named.files["a.js"]).toBe(code(name => (name === "other" ? "m-2 p-4" : "p-4 m-2")));
-    // oxfmt knows none.
+    // oxfmt's default list is empty.
     expect(oxfmt.files["a.js"]).toBe(code(() => "p-4 m-2"));
   });
 
-  test("it is laid over a .prettierrc, as the flag is", async () => {
+  test("also applies on top of a .prettierrc", async () => {
     const files = { ...tailwind, ".prettierrc": `{ "jsxSingleQuote": true }`, "a.jsx": input };
     const result = await format({ ...files, ...bunfig("sortTailwindcss = true") });
     expect(result.stderr).toBe("");
     expect(result.files["a.jsx"]).toBe(sorted.replaceAll('"', "'"));
   });
 
-  test("without the package", async () => {
+  test("fails when tailwindcss isn't installed", async () => {
     const result = await format({ ...bunfig("sortTailwindcss = true"), "a.jsx": input, "b.js": "b  ;\n" });
     expect(result.stderr).toContain("the tailwindcss package was not found");
     expect(result.files["a.jsx"]).toBe(input);
-    // A file without classes needs none.
+    // Files without classes don't need the package.
     expect(result.files["b.js"]).toBe("b;\n");
     expect(result.exitCode).toBe(2);
   });
@@ -304,7 +304,7 @@ preserveDuplicates = true
     ["sortTailwindcss = { attributes = [true] }", "expected string but received boolean"],
     ["sortTailwindcss = { stylesheet = 1 }", "expected string but received number"],
     ["sortTailwindcss = { preserveWhitespace = 1 }", "expected boolean but received number"],
-  ])("%s is refused: %s", async (line, message) => {
+  ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...tailwind, ...bunfig(line), "a.jsx": input });
     expect(result.stderr).toContain(message);
     expect(result.files["a.jsx"]).toBe(input);
@@ -318,7 +318,7 @@ describe.concurrent("sortPackageJson", () => {
   const sorted = json({ name: "x", version: "1.0.0", scripts: { test: "a", build: "b" } });
   const withScripts = json({ name: "x", version: "1.0.0", scripts: { build: "b", test: "a" } });
 
-  test("the key, the flags and the table", async () => {
+  test("works as a key, a flag and a table", async () => {
     const [off, key, flag, under, table] = await Promise.all([
       format({ "package.json": input }),
       format({ ...bunfig("sortPackageJson = true"), "package.json": input, "other.json": input }),
@@ -337,7 +337,7 @@ describe.concurrent("sortPackageJson", () => {
     expect(table.files["package.json"]).toBe(withScripts);
   });
 
-  test("in a .prettierrc it is an option that Prettier does not know", async () => {
+  test("is still an unknown option in a .prettierrc", async () => {
     const result = await format({ ".prettierrc": `{ "sortPackageJson": true }`, "package.json": input });
     expect(result.stderr).toContain("Ignored unknown option { sortPackageJson: true }.");
     expect(result.files["package.json"]).toBe(input);
@@ -350,7 +350,7 @@ describe.concurrent("sortPackageJson", () => {
       `Unknown key "sortScript" in [format.sortPackageJson]\n  Did you mean "sortScripts"?`,
     ],
     [`sortPackageJson = { sortScripts = "all" }`, "expected boolean but received string"],
-  ])("%s is refused: %s", async (line, message) => {
+  ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "package.json": input });
     expect(result.stderr).toContain(message);
     expect(result.exitCode).toBe(2);
@@ -376,7 +376,7 @@ export function add(a, b) {}
 export function add(a, b) {}
 `;
 
-  test("the key, the flags and the table", async () => {
+  test("works as a key, a flag and a table", async () => {
     const options = "jsdoc = { capitalizeDescriptions = false, descriptionWithDot = true }";
     const [off, key, flag, under, table, over] = await Promise.all([
       format({ "a.js": input }),
@@ -407,7 +407,7 @@ export function add(a, b) {}
     ["jsdoc = { capitalize = true }", `Unknown key "capitalize" in [format.jsdoc]\n`],
     ["jsdoc = { descriptionTag = 1 }", "expected boolean but received number"],
     [`jsdoc = { commentLineStrategy = "one" }`, "Invalid jsdoc.commentLineStrategy value: one."],
-  ])("%s is refused: %s", async (line, message) => {
+  ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "a.js": input });
     expect(result.stderr).toContain(message);
     expect(result.files["a.js"]).toBe(input);
@@ -416,7 +416,7 @@ export function add(a, b) {}
 });
 
 describe.concurrent("insertFinalNewline", () => {
-  test("the key and the flags", async () => {
+  test("works as a key and a flag", async () => {
     const files = { "a.js": "a  ;\n", "a.css": "a {\n}\n", "a.md": "a\n" };
     const [plain, key, flag, under] = await Promise.all([
       format(files),
@@ -430,13 +430,13 @@ describe.concurrent("insertFinalNewline", () => {
     expect(under.files).toMatchObject(plain.files);
   });
 
-  test("in a .prettierrc it is an option that Prettier does not know", async () => {
+  test("is still an unknown option in a .prettierrc", async () => {
     const result = await format({ ".prettierrc": `{ "insertFinalNewline": false }`, "a.js": "a  ;\n" });
     expect(result.stderr).toContain("Ignored unknown option { insertFinalNewline: false }.");
     expect(result.files["a.js"]).toBe("a;\n");
   });
 
-  test("a value that is no boolean is refused", async () => {
+  test("rejects a non-boolean value", async () => {
     const result = await format({ ...bunfig(`insertFinalNewline = "no"`), "a.js": "a  ;\n" });
     expect(result.stderr).toContain("expected boolean but received string");
     expect(result.exitCode).toBe(2);
@@ -447,20 +447,20 @@ describe.concurrent("TOML", () => {
   const input = `a   = 1\n[b]\nc = [ "d",'e' ]\n`;
   const formatted = `a = 1\n[b]\nc = ["d", 'e']\n`;
 
-  test("is formatted like any other language, bunfig.toml too", async () => {
+  test("is formatted by default, including bunfig.toml", async () => {
     const result = await format({ ...bunfig("semi   = false"), "a.toml": input, "a.js": "a  ;\n" });
     expect(result.stderr).toBe("");
     expect(result.files).toEqual({ "bunfig.toml": "[format]\nsemi = false\n", "a.toml": formatted, "a.js": "a\n" });
     expect(result.exitCode).toBe(0);
   });
 
-  test("a file that is named", async () => {
+  test("is formatted when the file is passed by name", async () => {
     const result = await format({ "a.toml": input }, ["a.toml"]);
     expect(result.files["a.toml"]).toBe(formatted);
     expect(result.exitCode).toBe(0);
   });
 
-  test("not where a configuration of Prettier counts, which has no TOML", async () => {
+  test("is skipped under a Prettier config, because Prettier doesn't format TOML", async () => {
     const [all, named, below] = await Promise.all([
       format({ ".prettierrc": "{}", "a.toml": input, "a.js": "a  ;\n" }),
       format({ ".prettierrc": "{}", "a.toml": input }, ["a.toml"]),
@@ -473,20 +473,20 @@ describe.concurrent("TOML", () => {
     expect(below.files).toMatchObject({ "sub/a.toml": input, "a.toml": formatted });
   });
 
-  test("the lines are as wide as everywhere", async () => {
+  test("wraps at printWidth", async () => {
     const items = Array(9).fill(`"aaaaaaaa"`);
     const result = await format({ "a.toml": `a = [${items.join(", ")}]\n` });
     expect(result.files["a.toml"]).toBe(`a = [\n${items.map(it => `  ${it},\n`).join("")}]\n`);
   });
 
-  test("what is not TOML is an error", async () => {
+  test("reports a syntax error for invalid TOML", async () => {
     const result = await format({ "a.toml": "a = \n", "b.toml": input });
     expect(result.stderr).toContain("a.toml: SyntaxError:");
     expect(result.files).toEqual({ "a.toml": "a = \n", "b.toml": formatted });
     expect(result.exitCode).toBe(2);
   });
 
-  test("there is no key and no flag for it", async () => {
+  test("has no `toml` key and no --toml flag", async () => {
     const [key, flag] = await Promise.all([
       format({ ...bunfig("toml = true"), "a.toml": input }),
       format({ "a.toml": input }, ["--toml", "."]),
@@ -514,7 +514,7 @@ excludeFiles = ["src/skip.*"]
 options = { singleQuote = true, semi = true }
 `;
 
-  test("options for the files that match, over those for all files", async () => {
+  test("apply to matching files and win over the top-level keys", async () => {
     const result = await format({ "bunfig.toml": table, ...files });
     expect(result.stderr).toBe("");
     expect(result.files).toMatchObject({
@@ -526,7 +526,7 @@ options = { singleQuote = true, semi = true }
     expect(result.exitCode).toBe(0);
   });
 
-  test("a later one wins, and a flag is for every file", async () => {
+  test("later overrides win, and command-line flags win over all of them", async () => {
     const more = `${table}
 [[format.overrides]]
 files = ["src/**"]
@@ -541,7 +541,7 @@ options = { singleQuote = false, useTabs = true }
     expect(flag.files["src/c.test.js"]).toBe(`{\n  a('b')\n}\n`);
   });
 
-  test("they are laid over a .prettierrc, as the other keys are", async () => {
+  test("also apply on top of a .prettierrc", async () => {
     const result = await format({
       "bunfig.toml": table,
       ".prettierrc": `{ "singleQuote": false, "semi": true }`,
@@ -550,7 +550,7 @@ options = { singleQuote = false, useTabs = true }
     expect(result.files).toMatchObject({ "a.js": `a("b")\n`, "a.test.js": `a('b');\n` });
   });
 
-  test("parser", async () => {
+  test("can set `parser`", async () => {
     const result = await format({
       "bunfig.toml": `[[format.overrides]]\nfiles = ["*.rc", ".babelrc"]\noptions = { parser = "json5" }\n`,
       "a.rc": `{"a":1}\n`,
@@ -560,7 +560,7 @@ options = { singleQuote = false, useTabs = true }
     expect(result.files).toMatchObject({ "a.rc": `{ a: 1 }\n`, "a.other": `{"a":1}\n` });
   });
 
-  test("what is built in besides, for some files", async () => {
+  test("can turn on sortImports and insertFinalNewline for some files", async () => {
     const imports = `import b from "./b";\nimport a from "a";\n`;
     const bunfig = `[[format.overrides]]
 files = "src/**"
@@ -576,7 +576,7 @@ insertFinalNewline = false
     expect(result.stderr).toBe("");
     expect(result.files).toMatchObject({ "a.js": imports, "src/a.js": `import a from "a";\nimport b from "./b";` });
     expect(off.files["src/a.js"]).toBe(imports.trimEnd());
-    // The flag turns it on everywhere, and leaves the options where there are some.
+    // The flag turns sorting on everywhere but keeps the override's options.
     expect(on.files).toMatchObject({
       "a.js": `import a from "a";\n\nimport b from "./b";\n`,
       "src/a.js": `import a from "a";\nimport b from "./b";`,
@@ -604,7 +604,7 @@ insertFinalNewline = false
       `Unknown key "check" in [format.overrides.options]\n`,
     ],
     [`overides = []`, `Unknown key "overides" in [format]\n  Did you mean "overrides"?`],
-  ])("%s is refused: %s", async (line, message) => {
+  ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "a.js": "a  ;\n" });
     expect(result.stderr).toContain(message);
     expect(result.files["a.js"]).toBe("a  ;\n");
@@ -612,18 +612,18 @@ insertFinalNewline = false
   });
 });
 
-describe.concurrent("an .oxfmtrc.json beside a configuration of Prettier", () => {
+describe.concurrent(".oxfmtrc.json next to a Prettier config", () => {
   const note = (ignored: string) => `note: Using .oxfmtrc.json. ${ignored} is ignored. Use --config to pick it.\n`;
   const both = { ".oxfmtrc.json": "{}\n", ".prettierrc": "{}\n", "a.js": wide, "sub/b.js": wide };
 
-  test("oxfmt's is used, and that is said once", async () => {
+  test("uses .oxfmtrc.json and prints one note", async () => {
     const result = await format(both);
     expect(result.stderr).toBe(note(".prettierrc"));
     expect(result.files).toMatchObject({ "a.js": wide, "sub/b.js": wide });
     expect(result.exitCode).toBe(0);
   });
 
-  test("--config picks one, and nothing is said", async () => {
+  test("--config picks either file and silences the note", async () => {
     const [prettier, oxfmt] = await Promise.all([
       format(both, ["--config", ".prettierrc", "a.js"]),
       format(both, ["--config", ".oxfmtrc.json", "a.js"]),
@@ -634,7 +634,7 @@ describe.concurrent("an .oxfmtrc.json beside a configuration of Prettier", () =>
     expect(oxfmt.files["a.js"]).toBe(wide);
   });
 
-  test("a package.json counts if it has the key", async () => {
+  test("counts package.json only if it has a `prettier` key", async () => {
     const [has, lacks] = await Promise.all([
       format({ ".oxfmtrc.json": "{}\n", "package.json": `{\n  "prettier": {}\n}\n`, "a.js": wide }),
       format({ ".oxfmtrc.json": "{}\n", "package.json": `{\n  "name": "a"\n}\n`, "a.js": wide }),
@@ -643,14 +643,14 @@ describe.concurrent("an .oxfmtrc.json beside a configuration of Prettier", () =>
     expect(lacks.stderr).toBe("");
   });
 
-  test("a program is not run to find out", async () => {
+  test("doesn't run the ignored prettier.config.js", async () => {
     const files = { ".oxfmtrc.json": "{}\n", "prettier.config.js": `throw new Error("It runs.");\n`, "a.ts": wide };
     const result = await format(files, ["a.ts"]);
     expect(result.stderr).toBe(note("prettier.config.js"));
     expect(result.exitCode).toBe(0);
   });
 
-  test("one alone is nothing to talk about, and --log-level=error wants no notes", async () => {
+  test("prints no note with only one config file, or with --log-level=error", async () => {
     const { ".prettierrc": _, ...oxfmt } = both;
     const { ".oxfmtrc.json": __, ...prettier } = both;
     const results = await Promise.all([format(oxfmt), format(prettier), format(both, ["--log-level=error", "."])]);

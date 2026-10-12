@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A function remembers the variables around it, not the values they had when it was created. If a loop creates functions that use a variable shared by all iterations, every one of them sees the last value by the time it is called.
+A function remembers the variables around it, not the values they had when it was created. If a loop creates functions that use a variable shared by all iterations, every one of them sees the last value by the time it's called.
 
-A function is only reported if it uses a variable from outside itself that is assigned in the loop, after the loop, or in another function. A `const` and a `let` declared inside the loop are always safe.
+A function is only reported if it uses a variable from outside itself that's assigned in the loop, after the loop, or in another function. A `const` and a `let` declared inside the loop are always safe.
 
 ## Examples
 
@@ -38,7 +38,7 @@ while (page < pages.length) {
 }
 ```
 
-Not reported. Each iteration gets an `i` and a `page` of its own:
+Not reported. Each iteration gets its own `i` and `page`:
 
 {/* good */}
 ```js

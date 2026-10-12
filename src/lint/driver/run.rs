@@ -140,8 +140,8 @@ fn is_agent_for_oxlint() -> bool {
             || has(b"TERM_PROGRAM", b"kiro"))
 }
 
-/// What is said about `error`, which is what is wrong with the configuration of a file that has `loaded`. What stands in for
-/// oxlint says it on standard output, in its words.
+/// Error text for `error`, an invalid config found while resolving a file that uses `loaded`. With an oxlint config the
+/// message goes to stdout and has to match oxlint's, so it isn't changed.
 fn invalid_config(loader: &Loader, loaded: &Loaded, error: &[u8]) -> Vec<u8> {
     match loaded.flavor {
         Flavor::Eslint | Flavor::EslintRc => loader.name_place(loaded.file.as_deref(), error),

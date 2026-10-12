@@ -14,7 +14,7 @@ deprecated: false
 
 fast-check draws every input of a property from one seed. When a property fails, it prints the seed so you can run the same inputs again, and it shrinks the inputs to the smallest ones that still fail.
 
-A value from `Math.random()` or `fc.sample()` inside the function you pass to `fc.property()` or `fc.asyncProperty()` does not come from that seed. It is different on every run, so the failure cannot be replayed or shrunk. Make the value a parameter of the property instead.
+A value from `Math.random()` or `fc.sample()` inside the function you pass to `fc.property()` or `fc.asyncProperty()` doesn't come from that seed. It's different on every run, so the failure can't be replayed or shrunk. Make the value a parameter of the property instead.
 
 ## Examples
 

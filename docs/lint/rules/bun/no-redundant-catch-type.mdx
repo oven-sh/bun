@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-With `strict` or `useUnknownInCatchVariables` in `tsconfig.json`, the variable of a `catch` clause is already `unknown`. Writing `: unknown` adds nothing.
+With `strict` or `useUnknownInCatchVariables` in `tsconfig.json`, a `catch` clause's variable is already `unknown`. Writing `: unknown` adds nothing.
 
 `--fix` removes the annotation.
 
@@ -42,4 +42,4 @@ try {
 
 ## When not to use it
 
-The rule does not read your `tsconfig.json`. Without `strict` or `useUnknownInCatchVariables`, the variable is `any`, and `: unknown` is what makes it safe. Leave the rule off in such a project.
+The rule doesn't read your `tsconfig.json`. Without `strict` or `useUnknownInCatchVariables`, the variable is `any`, and `: unknown` is what makes it safe. Leave the rule off in a project like that.

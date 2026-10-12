@@ -14,6 +14,8 @@ deprecated: true
 
 `require()` loads a module synchronously. Inside a function, that work happens in the middle of the first call instead of at startup, and a missing module only throws when that call is made. The file's dependencies also aren't listed in one place anymore.
 
+ESLint has deprecated this rule. Use `n/global-require` instead.
+
 ## Examples
 
 Reported:

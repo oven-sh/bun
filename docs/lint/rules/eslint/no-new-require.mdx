@@ -12,7 +12,7 @@ typeAware: false
 deprecated: true
 ---
 
-In `new require("./server")`, the `new` applies to `require` and not to what it returns. You do not get an instance of the exported class. To create one in a single expression, put the `require` call in parentheses, or use two statements.
+In `new require("./server")`, the `new` applies to `require`, not to what it returns, so you don't get an instance of the exported class. To create one in a single expression, put the `require` call in parentheses, or use two statements.
 
 ESLint has deprecated this rule. Use `n/no-new-require` instead.
 

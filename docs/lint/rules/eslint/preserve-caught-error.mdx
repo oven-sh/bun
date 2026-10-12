@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-When a `catch` block throws a new error, the one it caught is gone, with its message and its stack trace. The log says "Could not load the config" but not why. Pass the caught error as `cause` and both are kept.
+When a `catch` block throws a new error, the one it caught is gone, along with its message and stack trace. The log says "Could not load the config" but not why. Pass the caught error as `cause` to keep both.
 
-The rule checks `throw new Error()` in a `catch` block, and the other built-in classes such as `TypeError` and `AggregateError`. A `throw` in a function inside the block is not checked.
+The rule checks `throw new Error()` in a `catch` block, and the other built-in classes such as `TypeError` and `AggregateError`. A `throw` in a function inside the block isn't checked.
 
 The report comes with a suggestion that adds `{ cause: error }`.
 
@@ -33,7 +33,7 @@ try {
 }
 ```
 
-The `cause` has to be the caught error itself, not a part of it:
+The `cause` must be the caught error itself, not a part of it:
 
 {/* bad */}
 ```js
@@ -89,7 +89,7 @@ try {
 }
 ```
 
-An entry of `errorClassNames` is the name of a class that takes `{ cause }` as its second argument, like `Error`:
+Each `errorClassNames` entry is the name of a class that takes `{ cause }` as its second argument, like `Error`:
 
 {/* bad {"options": [{"errorClassNames": ["ConfigError"]}]} */}
 ```js
@@ -100,7 +100,7 @@ try {
 }
 ```
 
-If `{ cause }` is another argument, the entry is an object that says which one, counting from 1:
+If `{ cause }` is a different argument, make the entry an object that says which one, counting from 1:
 
 {/* bad {"options": [{"errorClassNames": [{"name": "HttpError", "argumentPosition": 3}]}]} */}
 ```js

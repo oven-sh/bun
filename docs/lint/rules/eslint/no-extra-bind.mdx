@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`.bind(user)` sets what `this` is inside a function. On a function that never reads `this` it changes nothing, and on an arrow function it has no effect, because an arrow function takes `this` from where it is written. The call is usually left from a time when the function did use `this`.
+`.bind(user)` sets `this` inside a function. If the function never reads `this`, that changes nothing. On an arrow function it has no effect either, because an arrow function takes `this` from where it's written. The call is usually left over from when the function did use `this`.
 
-Only a function written right before the `.bind()` is checked, and only a call with one argument.
+The rule only checks a function written right before the `.bind()`, and only a call with one argument.
 
 `--fix` removes the `.bind()` call if its argument is a name, a literal or `this`. It leaves `.bind(getUser())` alone, because removing it would also remove the call to `getUser()`.
 
@@ -55,7 +55,7 @@ const greet = function () {
 const save = user.save.bind(user);
 ```
 
-More arguments fill in parameters, which is useful without `this`:
+Extra arguments fill in parameters, which is useful even without `this`:
 
 {/* good */}
 ```js

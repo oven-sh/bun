@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Each `aria-*` attribute accepts one kind of value. A screen reader ignores a value it does not know, so `aria-expanded="yes"` is the same as no `aria-expanded` at all, and nothing tells you.
+Each `aria-*` attribute accepts one kind of value. A screen reader ignores a value it doesn't know, so `aria-expanded="yes"` is the same as no `aria-expanded` at all, and nothing tells you.
 
-Only values written in place are checked: strings, numbers, `true`, `false` and templates. A variable or a call is not.
+The rule only checks values written in place: strings, numbers, `true`, `false` and templates. It skips variables and calls.
 
 | Value | Attributes |
 | --- | --- |

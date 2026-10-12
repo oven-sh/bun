@@ -14,7 +14,7 @@ deprecated: false
 
 A default export without a name gives you nothing to search for, and every file that imports it makes up its own name. Stack traces show it as `default` or `<anonymous>`.
 
-The rule looks at functions and classes, in `export default` and in `module.exports =`. Other values, such as objects and numbers, are not reported.
+The rule looks at functions and classes, in `export default` and in `module.exports =`. Other values, such as objects and numbers, aren't reported.
 
 ## Examples
 
@@ -48,7 +48,7 @@ export default function fullName(user) {
 }
 ```
 
-An arrow function has no name of its own. Give it one with a variable:
+An arrow function doesn't have a name. Give it one with a variable:
 
 {/* good */}
 ```js

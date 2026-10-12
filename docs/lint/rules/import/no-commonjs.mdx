@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-In a project that uses ES modules, a `require()` or `module.exports` written out of habit mixes two module systems. Bundlers cannot tree-shake what is loaded with `require()`, and the other `import/*` rules cannot check names that are exported through `module.exports`.
+In a project that uses ES modules, a `require()` or `module.exports` written out of habit mixes two module systems. Bundlers can't tree-shake anything that's loaded with `require()`, and the other `import/*` rules can't check names that are exported through `module.exports`.
 
-A `require()` is reported if it has one string as its argument and is not inside a function. By default it is also allowed inside an `if`, a `try`, a `? :` or an `&&`, `||` or `??`, because an `import` declaration cannot be conditional.
+A `require()` is reported if it has one string as its argument and isn't inside a function. By default it's also allowed inside an `if`, a `try`, a `? :` or an `&&`, `||` or `??`, because an `import` declaration can't be conditional.
 
 ## Examples
 
@@ -58,9 +58,9 @@ export function loadMarkdown() {
 | --- | --- | --- |
 | `allowRequire` | `false` | Allow every `require()`. `module.exports` and `exports.*` are still reported. |
 | `allowConditionalRequire` | `true` | `false` also reports a `require()` inside an `if`, a `try`, a `? :` or a logical expression. |
-| `allowPrimitiveModules` | `false` | Allow `module.exports = value` if the value is not an object literal. |
+| `allowPrimitiveModules` | `false` | Allow `module.exports = value` if the value isn't an object literal. |
 
-The string `"allow-primitive-modules"` in place of the object means `{ "allowPrimitiveModules": true }`.
+The string `"allow-primitive-modules"` instead of the object means `{ "allowPrimitiveModules": true }`.
 
 {/* good {"options": [{"allowRequire": true}]} */}
 ```js
@@ -95,4 +95,4 @@ module.exports = { run };
 
 ## When not to use it
 
-Leave it off in a project that is written in CommonJS, and for config files that a tool loads with `require()`.
+Leave it off in a project that's written in CommonJS, and for config files that a tool loads with `require()`.

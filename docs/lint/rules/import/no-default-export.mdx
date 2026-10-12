@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A default export has no name of its own, so every file that imports it picks one. The same component ends up as `Button` here and `Btn` there, a search for its name misses some of its uses, and renaming it does not rename the imports. A named export has one name everywhere.
+A default export doesn't have a name, so every file that imports it makes one up. The same component ends up as `Button` here and `Btn` there, a search for its name misses some of its uses, and renaming it doesn't rename the imports. A named export has one name everywhere.
 
 `export { name as default }` is reported too.
 
@@ -45,4 +45,4 @@ export function formatPrice(cents) {
 
 ## When not to use it
 
-Some tools look for a default export: pages and layouts of a framework, config files, stories. Turn the rule off for those files.
+Some tools need a default export, like framework pages and layouts, config files and stories. Turn the rule off for those files.

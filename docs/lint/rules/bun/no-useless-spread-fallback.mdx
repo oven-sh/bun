@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Spreading `false`, `null` or `undefined` into an object does nothing. So the `{}` in `...(condition ? { a } : {})` is not needed, and `...(condition && { a })` does the same with less to read.
+Spreading `false`, `null` or `undefined` into an object does nothing. So the `{}` in `...(condition ? { a } : {})` isn't needed, and `...(condition && { a })` does the same thing with less code.
 
 The rule checks spreads in object literals and in JSX attributes.
 
@@ -61,7 +61,7 @@ const query = { page, ...(!showAll && { limit: 20 }) };
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreConditionsThatCall` | `[]` | Names of functions. A conditional is not reported if its condition calls one of them. |
+| `ignoreConditionsThatCall` | `[]` | Names of functions. A conditional isn't reported if its condition calls one of them. |
 
 Use it for a function that a build tool only understands as the condition of `? :`, such as a feature flag:
 

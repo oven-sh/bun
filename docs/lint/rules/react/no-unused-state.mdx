@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A state field that is set but never read still makes the component render again each time it changes, and it makes the component look as if it depended on that value.
+A state field that's set but never read still makes the component render again each time it changes, and it makes the component look like it depends on that value.
 
 The rule collects the fields from `state = { .. }`, `this.state = { .. }` in the constructor, `getInitialState`, and `this.setState({ .. })`. It reports a field that nothing in the component reads.
 
@@ -58,7 +58,7 @@ class Counter extends React.Component {
 }
 ```
 
-If the whole state is spread, passed to a function, or read with a computed key, the rule cannot tell which fields are used and reports nothing for that component:
+If the whole state is spread, passed to a function, or read with a computed key, the rule can't tell which fields are used and reports nothing for that component:
 
 {/* good */}
 ```jsx

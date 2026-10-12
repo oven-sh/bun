@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A component must not change its props: they belong to the parent, and React does not render again when they are assigned to. If every prop in the type is `readonly`, TypeScript rejects `props.name = "..."` when you compile.
+A component must not change its props. They belong to the parent, and React doesn't render again when you assign to them. If every prop in the type is `readonly`, TypeScript rejects `props.name = "..."` when you compile.
 
 `--fix` adds `readonly` in front of the prop.
 
@@ -46,7 +46,7 @@ function Profile(props: Props) {
 }
 ```
 
-`Readonly<Props>` is not reported either:
+`Readonly<Props>` isn't reported either:
 
 {/* good */}
 ```tsx

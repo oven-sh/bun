@@ -436,11 +436,11 @@ pub struct Options {
     pub globals: Vec<(Vec<u8>, Json)>,
     pub parser: Option<Vec<u8>>,
     pub parser_options: Vec<(Vec<u8>, Json)>,
-    /// `[lint.settings]` of bunfig.toml: ESLint's and oxlint's `settings`. No flag sets them.
+    /// `[lint.settings]` from bunfig.toml. Same as `settings` in an ESLint or oxlint config. There's no flag for it.
     pub settings: Vec<(Vec<u8>, Json)>,
     pub plugin: Vec<Vec<u8>>,
     pub rule: Vec<(Vec<u8>, Json)>,
-    /// For the first of them, which are in `[lint.rules]` of bunfig.toml: where.
+    /// bunfig.toml locations for the first entries of `rule`, which came from `[lint.rules]`.
     pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
     /// `[[lint.overrides]]` of bunfig.toml. No flag sets them.
     pub overrides: Vec<Override>,

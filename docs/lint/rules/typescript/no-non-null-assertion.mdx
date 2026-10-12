@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`value!` tells TypeScript that `value` is not `null` or `undefined`. Nothing checks that when the code runs. If you are wrong, or the code around it changes, `value!.name` throws a `TypeError`, which is the error that strict null checks are there to prevent.
+`value!` tells TypeScript that `value` isn't `null` or `undefined`. Nothing checks that when the code runs. If you're wrong, or the code around it changes, `value!.name` throws a `TypeError`, which is the error strict null checks are meant to prevent.
 
 Check the value, or use `?.` or `??`, which do their work at runtime.
 
@@ -47,4 +47,4 @@ function greet(id: string) {
 
 ## When not to use it
 
-Sometimes you know more than the type checker, for example right after `map.has(key)`. If your code has many such places and you trust them, this rule is noise.
+Sometimes you know more than the type checker, for example right after `map.has(key)`. If your code has many places like that and you trust them, this rule is noise.

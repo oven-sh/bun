@@ -14,7 +14,7 @@ deprecated: false
 
 In a long object literal, sorted keys are quick to find, and two people who add a key put it in the same place.
 
-Each key is compared with the one before it. A spread such as `...defaults` starts the comparison over, because moving a key across a spread can change the result. Destructuring patterns are not checked.
+Each key is compared with the one before it. A spread such as `...defaults` starts the comparison over, because moving a key across a spread can change the result. Destructuring patterns aren't checked.
 
 ## Examples
 
@@ -62,7 +62,7 @@ The first option is the direction: `"asc"` (default) or `"desc"`. The second is 
 | `caseSensitive` | `true` | Capital letters sort before lowercase letters. With `false`, case is ignored. |
 | `natural` | `false` | Compare numbers in keys by value, so `item2` comes before `item10`. |
 | `minKeys` | `2` | Only check objects with at least this many properties. |
-| `allowLineSeparatedGroups` | `false` | A blank line between properties starts a new group that is sorted on its own. |
+| `allowLineSeparatedGroups` | `false` | A blank line between properties starts a new group that's sorted separately. |
 | `ignoreComputedKeys` | `false` | Skip computed keys such as `[id]`. A computed key then starts the comparison over, like a spread. |
 
 By default `item10` sorts before `item2`, character by character, so this is reported:
@@ -72,7 +72,7 @@ By default `item10` sorts before `item2`, character by character, so this is rep
 const prices = { item2: 5, item10: 9 };
 ```
 
-With `natural` it is not:
+With `natural` it isn't:
 
 {/* good {"options": ["asc", {"natural": true}]} */}
 ```js

@@ -1,14 +1,15 @@
-//! A pattern that many paths are matched with: [`crate::match`], behind what tells most paths apart without it.
+//! A compiled pattern for matching many paths. Cheap prefilters reject most paths before [`crate::match`] runs.
 
-use crate::matcher::{self, Shape, Token};
+use crate::matcher::{self, Dots, Shape, Token};
 use bun_core::strings;
+use std::borrow::Cow;
 use std::ops::Range;
 
-/// A path that many patterns are matched with. Separated by `/`.
+/// A path that is matched against many patterns. It uses `/` as its separator.
 #[derive(Copy, Clone)]
 pub struct Candidate<'p> {
     path: &'p [u8],
-    /// Where the last name starts. A `/` at the end of the path belongs to it.
+    /// Index where the last segment starts. A trailing `/` belongs to that segment.
     name_at: usize,
 }
 
@@ -21,54 +22,54 @@ impl<'p> Candidate<'p> {
         }
     }
 
-    /// The same for `path`: this one, which is empty or ends with a `/`, then a name, and a `/` or not.
+    /// Builds the candidate for an entry of this directory. `path` is this path (empty or ending in `/`) plus one segment.
     pub fn entry<'e>(&self, path: &'e [u8]) -> Candidate<'e> {
         let name_at = self.path.len();
         debug_assert_eq!(name_at, Candidate::new(path).name_at);
         Candidate { path, name_at }
     }
 
-    /// The path as it is.
+    /// The whole path.
     pub fn path(&self) -> &'p [u8] {
         self.path
     }
 
-    /// Its last name.
+    /// The last segment.
     pub fn name(&self) -> &'p [u8] {
         &self.path[self.name_at..]
     }
 
-    /// Without the `/` at its end, if it has one.
+    /// The same path without its trailing `/`, if it has one.
     pub fn without_slash(&self) -> Option<Candidate<'p>> {
         let path = self.path.strip_suffix(b"/")?;
         Some(Candidate { path, ..*self })
     }
 }
 
-/// A pattern that has been read. `Send + Sync`.
+/// A compiled pattern. `Send + Sync`.
 pub struct Pattern {
     pattern: Box<[u8]>,
-    has_extglob: bool,
-    /// [`matcher::match_without_dot`]
-    hides_dots: bool,
-    /// An odd number of `!` at its start.
+    /// Shapes of the whole pattern and of the part after a leading `**/`.
+    shapes: Box<[Shape; 2]>,
+    dots: Dots,
+    /// The pattern starts with an odd number of `!`.
     is_negated: bool,
-    /// What matches starts with one of these, up to a `/` or to its end. Empty: it is not known.
+    /// Every match starts with one of these, followed by `/` or the end of the path. Empty if unknown.
     heads: Box<[Box<[u8]>]>,
-    /// What matches starts with this much of the pattern, and ends with this much of it.
+    /// Every match starts with this many bytes of the pattern and ends with this many.
     start_len: u32,
     tail_len: u32,
-    /// This of the pattern is somewhere in what matches.
+    /// Every match contains this range of the pattern.
     inner: Range<u32>,
-    /// `**/name`: only the last name of a path counts.
+    /// The pattern is `**/name`, so only the last segment of a path matters.
     is_for_name: bool,
-    /// The names at the start, each of which takes one name of a path.
+    /// The leading segments that each match exactly one path segment.
     names: Box<[Range<u32>]>,
-    /// `names` are all of it.
+    /// `names` covers the whole pattern.
     is_names_only: bool,
 }
 
-/// `[jt]`, `[a-z]`: letters and digits, so no `/`.
+/// Returns true for a class of letters and digits like `[jt]` or `[a-z]`, which can't match `/`.
 fn is_plain_class(class: &[u8]) -> bool {
     let inside = &class[1..class.len() - 1];
     let is_bound = |at: usize| inside.get(at).is_some_and(u8::is_ascii_alphanumeric);
@@ -77,7 +78,7 @@ fn is_plain_class(class: &[u8]) -> bool {
     })
 }
 
-/// Whether what `part` of `pattern` matches is in one name. `is_in_group`: a group in it is not looked into.
+/// Returns true if `part` of `pattern` can only match within one path segment. With `is_in_group`, a nested group counts as unknown.
 fn stays_in_a_name(pattern: &[u8], part: Range<usize>, shape: &Shape, is_in_group: bool) -> bool {
     let mut at = part.start;
     while at < part.end {
@@ -86,7 +87,7 @@ fn stays_in_a_name(pattern: &[u8], part: Range<usize>, shape: &Shape, is_in_grou
             Token::Literal => pattern[at] != b'/',
             Token::Star | Token::Any => true,
             Token::Class => is_plain_class(&pattern[at..end]),
-            // A `,` or a `|` is a character there, which changes nothing.
+            // `,` and `|` show up as literals here, which doesn't change the answer.
             Token::Group { first } if !is_in_group => {
                 stays_in_a_name(pattern, first..end - 1, shape, true)
             }
@@ -101,42 +102,15 @@ fn stays_in_a_name(pattern: &[u8], part: Range<usize>, shape: &Shape, is_in_grou
 }
 
 impl Pattern {
-    /// `match(pattern, path)`.
+    /// Compiles `pattern` for `match(pattern, path)`.
     pub fn new(pattern: &[u8]) -> Pattern {
-        Pattern::read(pattern, false)
-    }
-
-    /// `match_with::<true>(pattern, path)`.
-    pub fn with_extglob(pattern: &[u8]) -> Pattern {
-        Pattern::read(pattern, true)
-    }
-
-    /// `GlobSet::new` of oxc for one element: `./` is dropped, a pattern without `/` is for a name in any directory.
-    pub fn of_oxc_glob_set(written: &[u8]) -> Pattern {
-        match written.strip_prefix(b"./") {
-            Some(rest) => Pattern::new(rest),
-            None if strings::contains_char(written, b'/') => Pattern::new(written),
-            None => Pattern::new(&[b"**/", written].concat()),
-        }
-    }
-
-    /// `match_without_dot(pattern, path)`: `dot: false` of minimatch and of picomatch.
-    pub fn without_dot(pattern: &[u8]) -> Pattern {
-        Pattern {
-            hides_dots: true,
-            // A `**` does not get to every name.
-            is_for_name: false,
-            ..Pattern::read(pattern, true)
-        }
-    }
-
-    fn read(pattern: &[u8], has_extglob: bool) -> Pattern {
-        // Without a group it is the same.
-        let has_extglob = has_extglob && strings::index_of_any(pattern, b"{(").is_some();
         let mut read = Pattern {
             pattern: pattern.into(),
-            has_extglob,
-            hides_dots: false,
+            shapes: Box::new([
+                Shape::of(pattern),
+                Shape::of(pattern.strip_prefix(b"**/").unwrap_or_default()),
+            ]),
+            dots: Dots::Match,
             is_negated: false,
             heads: Box::default(),
             start_len: 0,
@@ -146,17 +120,17 @@ impl Pattern {
             names: Box::default(),
             is_names_only: false,
         };
-        let bangs = matcher::negations(pattern, has_extglob);
+        let bangs = matcher::negations(pattern);
         if bangs > 0 {
             read.is_negated = bangs % 2 == 1;
             return read;
         }
-        let shape = Shape::of(pattern, has_extglob);
-        // The runs of characters without magic, and where the names start that are outside of all groups.
+        let shape = Shape::of(pattern);
+        // Runs of literal bytes, and the start of each segment that is outside of all groups.
         let mut runs: Vec<Range<usize>> = Vec::new();
         let mut starts = vec![0];
         let mut first_group = None;
-        let (mut at, mut is_in_run, mut is_known) = (0, false, true);
+        let (mut at, mut is_in_run) = (0, false);
         while at < pattern.len() {
             let (token, mut end) = matcher::token_at(pattern, at, &shape);
             match token {
@@ -169,22 +143,23 @@ impl Pattern {
                         starts.push(end);
                     }
                 }
-                // The `/` behind it can be nothing.
+                // The `/` after `**` can match nothing.
                 Token::Globstar if pattern.get(end) == Some(&b'/') => {
                     end += 1;
                     starts.push(end);
                 }
-                Token::Group { first } if first_group.is_none() => {
-                    first_group = Some((at, first, end));
+                Token::Group { first } => {
+                    first_group.get_or_insert((at, first, end));
+                    // So can the `/` after `{**,a}`.
+                    if pattern.get(end) == Some(&b'/') {
+                        end += 1;
+                        starts.push(end);
+                    }
                 }
-                Token::Unknown => is_known = false,
                 _ => {}
             }
             is_in_run = token == Token::Literal;
             at = end;
-        }
-        if !is_known {
-            return read;
         }
         if is_in_run && let Some(run) = runs.last() {
             read.tail_len = run.len() as u32;
@@ -211,16 +186,38 @@ impl Pattern {
         read
     }
 
-    #[inline]
-    fn asks(&self, pattern: &[u8], path: &[u8]) -> matcher::MatchResult {
-        match (self.has_extglob, self.hides_dots) {
-            (_, true) => matcher::match_without_dot(pattern, path),
-            (true, false) => matcher::match_with::<true>(pattern, path),
-            (false, false) => matcher::match_on::<false>(pattern, path),
+    pub fn with_dots(pattern: &[u8], dots: Dots) -> Pattern {
+        Pattern {
+            dots,
+            ..Pattern::new(pattern)
         }
     }
 
-    /// `path` is separated by `/`.
+    /// One element of oxc's `GlobSet::new`. A leading `./` is dropped, and a pattern without `/` matches in any directory.
+    pub fn of_oxc_glob_set(written: &[u8]) -> Pattern {
+        let written = of_fast_glob(written);
+        match written.strip_prefix(b"./") {
+            Some(rest) => Pattern::new(rest),
+            None if strings::contains_char(&written, b'/') => Pattern::new(&written),
+            None => Pattern::new(&[b"**/", &written[..]].concat()),
+        }
+    }
+
+    #[inline]
+    fn asks(&self, pattern: &[u8], path: &[u8]) -> matcher::MatchResult {
+        let of_part;
+        let shape = match self.pattern.len() - pattern.len() {
+            0 => &self.shapes[0],
+            3 if self.is_for_name => &self.shapes[1],
+            _ => {
+                of_part = Shape::of(pattern);
+                &of_part
+            }
+        };
+        matcher::match_prepared::<false>(pattern, shape, path, self.dots)
+    }
+
+    /// `path` uses `/` as its separator.
     pub fn matches(&self, path: &[u8]) -> bool {
         match self.is_for_name {
             true => self.matches_candidate(&Candidate::new(path)),
@@ -231,7 +228,7 @@ impl Pattern {
     #[inline]
     pub fn matches_candidate(&self, candidate: &Candidate<'_>) -> bool {
         let path = candidate.path;
-        // Most tails are a few bytes, which are compared without a call.
+        // Most tails are a few bytes. Compare them inline.
         let tail = self.pattern.iter().rev().take(self.tail_len as usize);
         let ends_with_tail = path.len() >= self.tail_len as usize
             && path.iter().rev().zip(tail).all(|(a, b)| a == b);
@@ -247,14 +244,19 @@ impl Pattern {
             return false;
         }
         match path.last() {
+            // `**` can't cross some dot segments. Ask the full pattern if the directory has one.
             Some(last) if self.is_for_name && *last != b'/' => {
-                (self.asks(&self.pattern[3..], &path[candidate.name_at..])).matches()
+                let (before, name) = path.split_at(candidate.name_at);
+                self.asks(&self.pattern[3..], name).matches()
+                    && (self.dots == Dots::Match
+                        || !matcher::has_closed_segment::<false>(before, self.dots)
+                        || self.asks(&self.pattern, path).matches())
             }
             _ => self.asks(&self.pattern, path).matches(),
         }
     }
 
-    /// Whether something in `directory` can match. Never `false` if something can.
+    /// Returns false only if nothing inside `directory` can match.
     pub fn may_match_inside(&self, directory: &[u8]) -> bool {
         if self.is_negated || directory.is_empty() {
             return true;
@@ -271,17 +273,40 @@ impl Pattern {
                 None => return !self.is_names_only,
             }
         }
-        // What is in it has one name more.
+        // Anything inside has at least one more segment.
         !self.is_names_only || names.next().is_some()
     }
 
-    /// What a path that matches starts with, up to a `/` or to its end: one of these. `None`: the pattern does not say.
+    /// Every match starts with one of these, followed by `/` or the end of the path. `None` if unknown.
     pub fn heads(&self) -> Option<Vec<&[u8]>> {
         (!self.heads.is_empty()).then(|| self.heads.iter().map(|it| &it[..]).collect())
     }
 }
 
-/// [`Pattern::heads`]. `runs`: the characters without magic. `group`: where the first group starts, its first alternative, where it ends.
+/// Converts a pattern for the `fast-glob` crate, which oxlint and oxfmt use. It has no `@(a|b)` groups and no `{1..3}` sequences.
+pub fn of_fast_glob(written: &[u8]) -> Cow<'_, [u8]> {
+    if strings::index_of_char_usize(written, b'(').is_none() && !strings::contains(written, b"..") {
+        return Cow::Borrowed(written);
+    }
+    let mut pattern = Vec::with_capacity(written.len() + 2);
+    let mut at = 0;
+    while let Some(&byte) = written.get(at) {
+        let len = match byte {
+            b'\\' => 2,
+            b'[' => matcher::class_end(written, at).map_or(1, |end| end - at),
+            _ => 1,
+        };
+        // An escaped `.` still matches `.`, and `{1\..3}` no longer parses as a sequence.
+        if byte == b'(' || byte == b'.' && written.get(at + 1) == Some(&b'.') {
+            pattern.push(b'\\');
+        }
+        pattern.extend_from_slice(&written[at..(at + len).min(written.len())]);
+        at += len;
+    }
+    Cow::Owned(pattern)
+}
+
+/// Computes [`Pattern::heads`]. `runs` are the literal runs. `group` is the first group's start, first alternative and end.
 fn heads(
     pattern: &[u8],
     runs: &[Range<usize>],
@@ -294,7 +319,7 @@ fn heads(
             .map_or(at..at, Range::clone)
     };
     let start = run_from(0);
-    // All of a name, and so up to the last `/`, unless the pattern ends there.
+    // A head is made of whole segments, so cut at the last `/` unless the pattern ends here.
     let whole_names = |text: Vec<u8>, is_all: bool| match is_all {
         true => text,
         false => text[..strings::last_index_of_char(&text, b'/').unwrap_or(0)].to_vec(),
@@ -335,20 +360,20 @@ fn heads(
 pub enum UnclosedKind {
     Class,
     Braces,
-    /// A `\` as the last byte.
+    /// A trailing `\`.
     Escape,
 }
 
-/// What starts at byte `at` is not closed.
+/// The construct that starts at byte `at` isn't closed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Unclosed {
     pub kind: UnclosedKind,
     pub at: usize,
 }
 
-/// `validate` of the crate `fast-glob` 1.1.1, with which oxlint and oxfmt refuse a pattern.
+/// Port of `validate` from the `fast-glob` crate 1.1.1. oxlint and oxfmt reject a pattern that fails it.
 pub fn unclosed(pattern: &[u8]) -> Option<Unclosed> {
-    // How many groups are open, and where the outermost of them starts.
+    // Number of open groups, and the start of the outermost one.
     let (mut depth, mut outermost) = (0_usize, 0);
     let mut at = 0;
     while let Some(&byte) = pattern.get(at) {
@@ -361,7 +386,7 @@ pub fn unclosed(pattern: &[u8]) -> Option<Unclosed> {
             b'[' => {
                 let mut end = at + 1;
                 end += usize::from(matches!(pattern.get(end), Some(b'!' | b'^')));
-                // Here it is a character of the class.
+                // A `]` here is a member of the class.
                 end += usize::from(pattern.get(end) == Some(&b']'));
                 loop {
                     match pattern.get(end) {

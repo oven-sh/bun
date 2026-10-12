@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`i++` and `++i` change the variable the same way but evaluate to different values: the old one and the new one. That is easy to get wrong inside a larger expression such as `queue[--position]`. `i += 1` as its own statement leaves nothing to mix up.
+`i++` and `++i` change the variable the same way but evaluate to different values: the old one and the new one. That's easy to get wrong inside a larger expression such as `queue[--position]`. `i += 1` as its own statement leaves nothing to mix up.
 
 ## Examples
 
@@ -52,7 +52,7 @@ for (let i = 0, j = items.length - 1; i < j; i++, j--) {
 }
 ```
 
-In the body of the loop they are still reported:
+In the loop body they're still reported:
 
 {/* bad {"options": [{"allowForLoopAfterthoughts": true}]} */}
 ```js

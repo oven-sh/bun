@@ -22,29 +22,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+use bun_collections::HashMap;
 use bun_collections::smallvec::SmallVec;
-use bun_collections::{BoundedArray, HashMap};
 use bun_core::{StackCheck, strings};
-
-/// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
-/// that is created for handling braces
-/// One such stack buffer is created recursively for each pair of braces
-/// therefore this value should be tuned to use a sane amount of memory even at the highest allowed brace depth
-/// and for arbitrarily many non-nested braces (i.e. `{a,b}{c,d}`) while reducing the number of allocations.
-#[derive(Copy, Clone)]
-struct Brace {
-    open_brace_idx: u32,
-    branch_idx: u32,
-    /// Index of the matching `}`, or `glob.len()` if the group is unterminated.
-    close_brace_idx: u32,
-}
-type BraceStack = BoundedArray<Brace, 10>;
-
-/// Upper bound on brace-branch alternatives explored per `match` call. Sequential
-/// brace groups multiply (`{a,b}{c,d}` = 4 alternatives), so without a cap an
-/// adversarial pattern of ten sequential 10-way groups would explore 10^10
-/// alternatives. Patterns that exceed this budget fail to match.
-const BRACE_BRANCH_BUDGET: u32 = 10_000;
 
 /// Result of [`match`](r#match). Two independent bits: whether the path matched
 /// (after applying any leading `!` negation), and whether the pattern was negated.
@@ -82,7 +62,8 @@ struct State {
     wildcard: Wildcard,
     globstar: Wildcard,
 
-    brace_depth: u8,
+    /// A wildcard was evaluated next to a `.` in the path, so `match_as` has to check for `.` and `..` segments.
+    is_beside_dot: bool,
 }
 
 impl State {
@@ -90,7 +71,6 @@ impl State {
     fn backtrack(&mut self) {
         self.path_index = self.wildcard.path_index;
         self.glob_index = self.wildcard.glob_index;
-        self.brace_depth = self.wildcard.brace_depth;
     }
 
     #[inline(always)]
@@ -121,7 +101,6 @@ struct Wildcard {
     // Using u32 rather than usize for these results in 10% faster performance.
     glob_index: u32,
     path_index: u32,
-    brace_depth: u8,
 }
 
 /// This function checks returns a boolean value if the pathname `path` matches
@@ -145,93 +124,97 @@ struct Wildcard {
 /// "{a,b}"
 ///     Match one of the patterns contained in the braces.
 ///     Any of the wildcards listed above can be used in the sub patterns.
-///     Braces may be nested up to 10 levels deep.
+/// "{1..3}", "{a..e}", "{1..9..2}", "{01..10}"
+///     Matches any number or letter in the range. A third value is the step.
+///     If either bound has a leading zero, every number is zero-padded to the
+///     width of the longer bound.
+/// "?(a|b)"
+///     Matches zero or one of the patterns.
+/// "*(a|b)"
+///     Matches zero or more of the patterns.
+/// "+(a|b)"
+///     Matches one or more of the patterns.
+/// "@(a|b)"
+///     Matches exactly one of the patterns.
+/// "!(a|b)"
+///     Matches anything within a path segment except the patterns.
 /// "!"
-///     Negates the result when at the start of the pattern.
+///     Negates the result when at the start of the pattern, unless a "(" follows.
 ///     Multiple "!" characters negate the pattern multiple times.
 /// "\"
 ///     Used to escape any of the special characters above.
-// TODO: consider just taking arena and resetting to initial state,
-// all usages of this function pass in Arena.arena()
+///
+/// Parentheses without a "?*+@!" prefix are literal, and so is an unclosed "[",
+/// "{" or "(".
+///
+/// Groups can nest to any depth. The matcher caches the result for each
+/// (pattern position, path position) pair at group boundaries, so a pattern with
+/// `k` groups takes `O(k * glob.len() * path.len()^2)` time.
 pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     match_on::<{ cfg!(windows) }>(glob, path)
 }
 
-/// [`match`](r#match) for a path of the system that is named, whichever system this is. `WINDOWS`: `\` separates the segments of
-/// `path` too. Without it only `/` does: for what is no path of a file, and for a path that has been written with `/`.
+/// [`match`](r#match) with an explicit platform. With `WINDOWS`, `\` in `path` is also a separator.
+/// Use `match_on::<false>` for text that isn't a file path and for paths already normalized to `/`.
 pub fn match_on<const WINDOWS: bool>(glob: &[u8], path: &[u8]) -> MatchResult {
-    match_as::<false, WINDOWS>(glob, path, false)
+    match_as::<WINDOWS>(glob, None, path, Dots::Match)
 }
 
-/// [`match`](r#match), and with `EXTGLOB` these too:
-///
-/// "?(a|b)"
-///     Matches one of the patterns between the parentheses, or nothing.
-/// "*(a|b)"
-///     Matches any number of them, one after the other.
-/// "+(a|b)"
-///     Matches one or more of them.
-/// "@(a|b)"
-///     Matches one of them.
-/// "!(a|b)"
-///     Matches zero or more characters, except for path separators, unless one
-///     of the patterns and what follows the group match from the same place.
-///     At the start of the pattern it is this, and does not negate the result.
-/// "{1..3}", "{a..e}", "{1..9..2}", "{01..10}"
-///     Matches one of the numbers, or of the letters, from the first to the
-///     second, or every second of them. If one of the two numbers is written
-///     with a zero in front, all are as long as the longer of the two.
-/// "{a}"
-///     Braces around one pattern are characters, as for a shell.
-///
-/// Any syntax can be used between the parentheses. Groups, braces among them,
-/// can be nested to any depth and there can be any number of them.
-///
-/// Where an alternative starts and where a group has ended, the rest of the
-/// pattern is matched once for a position in the path. With `k` of `(`, `|`,
-/// `)`, `{`, `,`, `}` that takes `O(k * glob.len() * path.len()^2)` time.
-///
-/// Only `/` separates the segments of `path`, on every system.
-pub fn match_with<const EXTGLOB: bool>(glob: &[u8], path: &[u8]) -> MatchResult {
-    match_as::<EXTGLOB, false>(glob, path, false)
+/// How wildcards treat path segments that start with `.`.
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
+pub enum Dots {
+    /// Like any other segment.
+    #[default]
+    Match,
+    /// Wildcards don't match the segments `.` and `..`. This is `dot: true` in minimatch and picomatch.
+    SkipTraversal,
+    /// Wildcards also don't match a `.` at the start of a segment. This is `dot: false` in minimatch and picomatch.
+    Hide,
 }
 
-/// [`match_with`] with `EXTGLOB`, where only a `.` in the pattern matches the `.`
-/// that a name of the path starts with: not "*", "?", "[.]", "**" or "!(a)".
-pub fn match_without_dot(glob: &[u8], path: &[u8]) -> MatchResult {
-    match_as::<true, false>(glob, path, true)
-}
-
-fn match_as<const EXTGLOB: bool, const WINDOWS: bool>(
+/// [`match_on`] for a pattern that is matched against many paths. `shape` must be `Shape::of(glob)`.
+pub fn match_prepared<const WINDOWS: bool>(
     glob: &[u8],
+    shape: &Shape,
     path: &[u8],
-    hides_dots: bool,
+    dots: Dots,
 ) -> MatchResult {
+    match_as::<WINDOWS>(glob, Some(shape), path, dots)
+}
+
+#[inline(always)]
+fn match_as<const WINDOWS: bool>(
+    glob: &[u8],
+    shape: Option<&Shape>,
+    path: &[u8],
+    dots: Dots,
+) -> MatchResult {
+    let glob_start = negations(glob) as u32;
+    let negated = glob_start % 2 == 1;
     let mut state = State {
-        glob_index: negations(glob, EXTGLOB) as u32,
+        glob_index: glob_start,
         ..State::default()
     };
-    let negated = state.glob_index % 2 == 1;
-
-    let mut brace_stack = BraceStack::default();
-    let mut brace_budget = BRACE_BRANCH_BUDGET;
-    let mut groups = Groups {
-        hides_dots,
-        ..Groups::default()
-    };
+    let mut groups = Groups::new(shape);
     // glob_start must point past the consumed `!` prefix so that a pattern-initial
     // `**` is still recognized as being at the start of a path segment.
-    let glob_start = state.glob_index;
-    let matched = glob_match_impl::<EXTGLOB, WINDOWS>(
+    let mut matched = glob_match_impl::<WINDOWS, false, false>(
         &mut state,
         glob,
         glob_start,
         path,
-        &mut brace_stack,
-        &mut brace_budget,
         &mut groups,
         Inside::NO_GROUP,
-    ) && !groups.is_too_deep;
+    );
+    // The fast loop ignores the rules for dot segments. Rerun with them only if the path has such a segment.
+    if dots != Dots::Match
+        && (matched && (state.is_beside_dot || groups.is_beside_dot) || groups.has_negation)
+        && has_closed_segment::<WINDOWS>(path, dots)
+    {
+        matched = match_strictly::<WINDOWS>(glob, shape, glob_start, path, dots);
+    } else {
+        matched &= !groups.is_too_deep;
+    }
 
     MatchResult {
         matches: matched != negated,
@@ -239,68 +222,167 @@ fn match_as<const EXTGLOB: bool, const WINDOWS: bool>(
     }
 }
 
+#[inline(never)]
+fn match_strictly<const WINDOWS: bool>(
+    glob: &[u8],
+    shape: Option<&Shape>,
+    glob_start: u32,
+    path: &[u8],
+    dots: Dots,
+) -> bool {
+    let mut groups = Groups {
+        is_strict: true,
+        dots,
+        ..Groups::new(shape)
+    };
+    let at = (glob_start, glob_start);
+    enter::<WINDOWS>(glob, at, path, 0, Inside::NO_GROUP, &mut groups) && !groups.is_too_deep
+}
+
+/// Returns true if `path` has a `.` at `index` or right before it.
+#[inline(always)]
+fn is_beside_dot(path: &[u8], index: u32) -> bool {
+    let index = index as usize;
+    path.get(index) == Some(&b'.') || index > 0 && path[index - 1] == b'.'
+}
+
+/// Returns true if `path` has a `.` or `..` segment or, with [`Dots::Hide`], a segment that starts with `.`.
+#[inline(never)]
+pub(crate) fn has_closed_segment<const WINDOWS: bool>(path: &[u8], dots: Dots) -> bool {
+    let mut from = 0;
+    while let Some(dot) = strings::index_of_char_pos(path, b'.', from) {
+        if is_closed_segment_at::<WINDOWS>(path, dot as u32, dots) {
+            return true;
+        }
+        from = dot + 1;
+    }
+    false
+}
+
+/// Returns true if no wildcard may match at `index`. That's the case inside or right after a `.` or `..` segment and,
+/// with [`Dots::Hide`], at the start of a segment that starts with `.`.
+fn is_closed_segment_at<const WINDOWS: bool>(path: &[u8], index: u32, dots: Dots) -> bool {
+    let index = index as usize;
+    let is_start = |at: usize| at == 0 || is_separator::<WINDOWS>(path[at - 1]);
+    if dots == Dots::Hide && path.get(index) == Some(&b'.') && is_start(index) {
+        return true;
+    }
+    let dots_before = path[..index]
+        .iter()
+        .rev()
+        .take(2)
+        .take_while(|it| **it == b'.');
+    let start = index - dots_before.count();
+    let dots = path[start..]
+        .iter()
+        .take(3)
+        .take_while(|it| **it == b'.')
+        .count();
+    is_start(start)
+        && matches!(dots, 1 | 2)
+        && path
+            .get(start + dots)
+            .is_none_or(|it| is_separator::<WINDOWS>(*it))
+}
+
+/// Bytes that are always literal in a pattern.
+static IS_PLAIN: [bool; 256] = {
+    let mut table = [false; 256];
+    let mut byte = 0;
+    while byte < 128 {
+        table[byte] = !matches!(
+            byte as u8,
+            b'*' | b'?' | b'[' | b'{' | b'\\' | b'/' | b'!' | b'+' | b'@'
+        );
+        byte += 1;
+    }
+    table
+};
+
 // `glob_start` is the index where the glob pattern starts
 #[inline(always)]
-// PERF: `inline(always)` on a fn that recurses through match_brace_branch — profile if hot.
-fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
+// PERF: `inline(always)` on a fn that recurses through enter — profile if hot.
+// `STRICT` applies the rules for dot segments (see `match_as`). `IN_GROUP` means `inside` has a group.
+fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool>(
     state: &mut State,
     glob: &[u8],
     glob_start: u32,
     path: &[u8],
-    brace_stack: &mut BraceStack,
-    brace_budget: &mut u32,
-    groups: &mut Groups,
+    groups: &mut Groups<'_>,
     inside: Inside<'_>,
 ) -> bool {
     let entered_at = state.path_index;
-    let hides_dots = EXTGLOB && groups.hides_dots;
+    let dots = groups.dots;
     'main_loop: while (state.glob_index as usize) < glob.len()
         || (state.path_index as usize) < path.len()
     {
         if (state.glob_index as usize) < glob.len() {
             'fallthrough: {
                 let ch = glob[state.glob_index as usize];
-                if EXTGLOB {
+                if IN_GROUP
+                    && state.glob_index == inside.end
+                    && let Some(group) = inside.group
+                {
                     let is_idle = inside.is_idle && state.path_index == entered_at;
-                    if state.glob_index == inside.end
-                        && let Some(group) = inside.group
-                    {
-                        if group.leave(glob, path, state.path_index, is_idle, groups) {
-                            return true;
-                        }
-                        break 'fallthrough;
+                    if group.leave::<WINDOWS>(glob, path, state.path_index, is_idle, groups) {
+                        return true;
                     }
-                    if let Some(group) = Group::at(glob, state.glob_index, inside, groups) {
-                        if group.matches(glob, path, state.path_index, is_idle, groups) {
-                            return true;
-                        }
-                        break 'fallthrough;
+                    break 'fallthrough;
+                }
+                if IS_PLAIN[ch as usize] {
+                    if path.get(state.path_index as usize) == Some(&ch) {
+                        state.glob_index += 1;
+                        state.path_index += 1;
+                        continue 'main_loop;
                     }
-                    // A `**` can still be nothing.
-                    if matches!(ch, b'*' | b'?' | b'[')
-                        && hides_dots
-                        && is_hidden_name_at(path, state.path_index)
-                        && !glob[state.glob_index as usize..].starts_with(b"**")
-                    {
-                        break 'fallthrough;
-                    }
+                    break 'fallthrough;
+                }
+                // `**` can still match nothing, so it's handled below.
+                if STRICT
+                    && matches!(ch, b'*' | b'?' | b'[')
+                    && is_closed_segment_at::<WINDOWS>(path, state.path_index, dots)
+                    && !glob[state.glob_index as usize..].starts_with(b"**")
+                    && glob.get(state.glob_index as usize + 1) != Some(&b'(')
+                {
+                    break 'fallthrough;
                 }
                 'to_else: {
                     match ch {
+                        b'*' | b'?' | b'+' | b'@' | b'!' | b'{'
+                            if (ch == b'{'
+                                || glob.get(state.glob_index as usize + 1) == Some(&b'('))
+                                && let Some(matched) = Group::try_at::<WINDOWS>(
+                                    glob,
+                                    state.glob_index,
+                                    path,
+                                    state.path_index,
+                                    Inside {
+                                        is_idle: inside.is_idle && state.path_index == entered_at,
+                                        ..inside
+                                    },
+                                    groups,
+                                ) =>
+                        {
+                            if matched {
+                                return true;
+                            }
+                            break 'fallthrough;
+                        }
                         b'*' => {
-                            // `**(a)` is `*` and `*(a)`.
+                            state.is_beside_dot |= is_beside_dot(path, state.path_index);
+                            // `**(a)` is `*` followed by `*(a)`.
                             let is_globstar = (state.glob_index as usize) + 1 < glob.len()
                                 && glob[state.glob_index as usize + 1] == b'*'
-                                && !(EXTGLOB
-                                    && glob.get(state.glob_index as usize + 2) == Some(&b'('));
+                                && glob.get(state.glob_index as usize + 2) != Some(&b'(');
                             if is_globstar {
                                 skip_globstars(glob, &mut state.glob_index);
                             }
-                            let is_hidden = hides_dots && is_hidden_name_at(path, state.path_index);
+                            let is_closed = STRICT
+                                && is_closed_segment_at::<WINDOWS>(path, state.path_index, dots);
                             let before = state.wildcard;
 
-                            // `{**,a}/b`
-                            if EXTGLOB
+                            // `{**,a}/b`: the `/` that makes this a globstar comes after the group.
+                            if IN_GROUP
                                 && is_globstar
                                 && is_name_start(glob, glob_start, state.glob_index)
                                 && let (slash, outer) = inside.outside(state.glob_index + 2)
@@ -316,11 +398,11 @@ fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
                                     };
                                     let next = (slash + 1, slash + 1);
                                     if once((next.0, at, inside.is_idle), groups, |groups| {
-                                        enter(glob, next, path, at, inside, groups)
+                                        enter::<WINDOWS>(glob, next, path, at, inside, groups)
                                     }) {
                                         return true;
                                     }
-                                    if hides_dots && is_hidden_name_at(path, at) {
+                                    if STRICT && is_closed_segment_at::<WINDOWS>(path, at, dots) {
                                         break 'fallthrough;
                                     }
                                     let rest = path.get(at as usize..).unwrap_or_default();
@@ -331,6 +413,33 @@ fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
                                 }
                             }
 
+                            // Skip ahead to the next place in this segment where the literal after the `*` occurs.
+                            if !is_globstar
+                                && let Some(&wanted) = glob.get(state.glob_index as usize + 1)
+                                && IS_PLAIN[wanted as usize]
+                                && !(IN_GROUP && state.glob_index + 1 == inside.end)
+                            {
+                                while let Some(&found) = path.get(state.path_index as usize)
+                                    && found != wanted
+                                    && !is_separator::<WINDOWS>(found)
+                                {
+                                    state.path_index += 1;
+                                }
+                            } else if !is_globstar
+                                && matches!(
+                                    glob.get(state.glob_index as usize + 1),
+                                    Some(b'{' | b'@' | b'+')
+                                )
+                            {
+                                state.path_index = Group::skip_to_start::<WINDOWS>(
+                                    glob,
+                                    state.glob_index + 1,
+                                    path,
+                                    state.path_index,
+                                    groups,
+                                );
+                            }
+
                             state.wildcard.glob_index = state.glob_index;
                             state.wildcard.path_index = state.path_index
                                 + if (state.path_index as usize) < path.len() {
@@ -338,15 +447,14 @@ fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
                                 } else {
                                     1
                                 };
-                            state.wildcard.brace_depth = state.brace_depth;
 
                             let mut in_globstar = false;
                             if is_globstar {
                                 state.glob_index += 2;
 
-                                // `{a,b/**}`
+                                // `{a,b/**}`: the pattern ends right after the group.
                                 let is_end_invalid = (state.glob_index as usize) < glob.len()
-                                    && !(EXTGLOB
+                                    && !(IN_GROUP
                                         && inside.outside(state.glob_index).0 as usize
                                             == glob.len());
 
@@ -371,10 +479,37 @@ fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
                                         state.glob_index += 1;
                                     }
 
+                                    // A trailing `**` matches the rest of the path.
+                                    if !STRICT
+                                        && !is_end_invalid
+                                        && state.glob_index as usize == glob.len()
+                                    {
+                                        state.is_beside_dot = true;
+                                        return true;
+                                    }
+
                                     // skip to separator
                                     state.skip_to_separator::<WINDOWS>(path, is_end_invalid);
                                     in_globstar = true;
-                                    if is_hidden {
+
+                                    // Skip segments that don't start with the literal after `**/`.
+                                    if !STRICT
+                                        && let Some(&wanted) = glob.get(state.glob_index as usize)
+                                        && IS_PLAIN[wanted as usize]
+                                        && !(IN_GROUP && state.glob_index == inside.end)
+                                    {
+                                        while let Some(&found) = path.get(state.path_index as usize)
+                                            && found != wanted
+                                            && state.wildcard.path_index as usize <= path.len()
+                                        {
+                                            state.is_beside_dot |= found == b'.';
+                                            state.path_index = state.wildcard.path_index;
+                                            state.wildcard.path_index += 1;
+                                            state
+                                                .skip_to_separator::<WINDOWS>(path, is_end_invalid);
+                                        }
+                                    }
+                                    if is_closed {
                                         state.wildcard.path_index = 0;
                                         state.globstar = state.wildcard;
                                     }
@@ -383,7 +518,7 @@ fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
                                 state.glob_index += 1;
                             }
 
-                            if is_hidden && !in_globstar {
+                            if is_closed && !in_globstar {
                                 state.wildcard = before;
                                 break 'fallthrough;
                             }
@@ -398,6 +533,7 @@ fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
                             continue 'main_loop;
                         }
                         b'?' => {
+                            state.is_beside_dot |= is_beside_dot(path, state.path_index);
                             if (state.path_index as usize) < path.len() {
                                 if !is_separator::<WINDOWS>(path[state.path_index as usize]) {
                                     state.glob_index += 1;
@@ -410,109 +546,24 @@ fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
                                 break 'to_else;
                             }
                         }
-                        b'[' => {
+                        b'[' if state.glob_index < groups.no_class_from => {
+                            state.is_beside_dot |= is_beside_dot(path, state.path_index);
                             if (state.path_index as usize) < path.len() {
-                                state.glob_index += 1;
-
-                                let mut negated = false;
-                                if (state.glob_index as usize) < glob.len()
-                                    && (glob[state.glob_index as usize] == b'^'
-                                        || glob[state.glob_index as usize] == b'!')
-                                {
-                                    negated = true;
-                                    state.glob_index += 1;
-                                }
-
-                                let mut first = true;
-                                let mut is_match = false;
-
                                 // source unicode char to match against the target + its byte length in `path`
                                 let (c, len) = decode_rune_at(path, state.path_index as usize);
-
-                                while (state.glob_index as usize) < glob.len()
-                                    && (first || glob[state.glob_index as usize] != b']')
-                                {
-                                    // Get low ( ͡° ͜ʖ ͡°), and unescape it
-                                    let mut low: u32 = glob[state.glob_index as usize] as u32;
-                                    let mut low_len: u8 = 1;
-                                    if !get_unicode(
-                                        &mut low,
-                                        &mut low_len,
-                                        glob,
-                                        &mut state.glob_index,
-                                    ) {
-                                        return false; // Invalid pattern!
+                                match match_class(glob, state.glob_index, c) {
+                                    Some((true, end)) => {
+                                        state.glob_index = end;
+                                        state.path_index += u32::from(len);
+                                        continue 'main_loop;
                                     }
-
-                                    // skip past the target char
-                                    state.glob_index += u32::from(low_len);
-
-                                    let high = if (state.glob_index as usize) + 1 < glob.len()
-                                        && glob[state.glob_index as usize] == b'-'
-                                        && glob[state.glob_index as usize + 1] != b']'
-                                    {
-                                        'blk: {
-                                            state.glob_index += 1;
-
-                                            let mut high: u32 =
-                                                glob[state.glob_index as usize] as u32;
-                                            let mut high_len: u8 = 1;
-                                            if !get_unicode(
-                                                &mut high,
-                                                &mut high_len,
-                                                glob,
-                                                &mut state.glob_index,
-                                            ) {
-                                                return false; // Invalid pattern!
-                                            }
-
-                                            state.glob_index += u32::from(high_len);
-                                            break 'blk high;
-                                        }
-                                    } else {
-                                        low
-                                    };
-
-                                    if low <= c && c <= high {
-                                        is_match = true;
+                                    Some((false, _)) => break 'fallthrough,
+                                    // An unclosed `[` is literal.
+                                    None => {
+                                        groups.no_class_from = state.glob_index;
+                                        continue 'main_loop;
                                     }
-
-                                    first = false;
                                 }
-
-                                if state.glob_index as usize >= glob.len() {
-                                    return false; // Invalid pattern!
-                                }
-
-                                state.glob_index += 1;
-                                if is_match != negated {
-                                    state.path_index += u32::from(len);
-                                    continue 'main_loop;
-                                }
-                                break 'fallthrough;
-                            } else {
-                                break 'to_else;
-                            }
-                        }
-                        b'{' if !EXTGLOB => {
-                            for brace in brace_stack.as_slice() {
-                                if brace.open_brace_idx == state.glob_index {
-                                    state.glob_index = brace.branch_idx;
-                                    state.brace_depth += 1;
-                                    continue 'main_loop;
-                                }
-                            }
-                            return match_brace::<WINDOWS>(
-                                state,
-                                glob,
-                                path,
-                                brace_stack,
-                                brace_budget,
-                            );
-                        }
-                        b',' | b'}' if !EXTGLOB => {
-                            if state.brace_depth > 0 && skip_branch(state, glob, brace_stack) {
-                                continue 'main_loop;
                             } else {
                                 break 'to_else;
                             }
@@ -522,9 +573,7 @@ fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
                 }
                 if (state.path_index as usize) < path.len() {
                     let mut cc: u8 = ch;
-                    if !unescape(&mut cc, glob, &mut state.glob_index) {
-                        return false; // Invalid pattern!
-                    }
+                    unescape(&mut cc, glob, &mut state.glob_index);
                     let cc_len = strings::wtf8_byte_sequence_length(cc);
 
                     let is_match = if cc == b'/' {
@@ -565,210 +614,94 @@ fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
     true
 }
 
-fn match_brace<const WINDOWS: bool>(
-    state: &mut State,
-    glob: &[u8],
-    path: &[u8],
-    brace_stack: &mut BraceStack,
-    brace_budget: &mut u32,
-) -> bool {
-    let mut brace_depth: i32 = 0;
-    let mut in_brackets = false;
-
-    let open_brace_index = state.glob_index;
-    let close_brace_index = find_brace_end(glob, open_brace_index);
-
-    let mut branch_index: u32 = 0;
-
-    while (state.glob_index as usize) < glob.len() {
-        match glob[state.glob_index as usize] {
-            b'{' => {
-                if !in_brackets {
-                    brace_depth += 1;
-                    if brace_depth == 1 {
-                        branch_index = state.glob_index + 1;
-                    }
-                }
-            }
-            b'}' => {
-                if !in_brackets {
-                    brace_depth -= 1;
-                    if brace_depth == 0 {
-                        if match_brace_branch::<WINDOWS>(
-                            state,
-                            glob,
-                            path,
-                            open_brace_index,
-                            branch_index,
-                            close_brace_index,
-                            brace_stack,
-                            brace_budget,
-                        ) {
-                            return true;
-                        }
-                        break;
-                    }
-                }
-            }
-            b',' => {
-                // A comma inside a `[...]` character class is a class member,
-                // not a branch separator — same `!in_brackets` guard as the
-                // `{`/`}` arms above.
-                if brace_depth == 1 && !in_brackets {
-                    if match_brace_branch::<WINDOWS>(
-                        state,
-                        glob,
-                        path,
-                        open_brace_index,
-                        branch_index,
-                        close_brace_index,
-                        brace_stack,
-                        brace_budget,
-                    ) {
-                        return true;
-                    }
-                    branch_index = state.glob_index + 1;
-                }
-            }
-            b'[' => {
-                if !in_brackets {
-                    in_brackets = true;
-                }
-            }
-            b']' => in_brackets = false,
-            b'\\' => state.glob_index += 1,
-            _ => {}
-        }
-        state.glob_index += 1;
-    }
-
-    false
-}
-
-fn match_brace_branch<const WINDOWS: bool>(
-    state: &mut State,
-    glob: &[u8],
-    path: &[u8],
-    open_brace_index: u32,
-    branch_index: u32,
-    close_brace_index: u32,
-    brace_stack: &mut BraceStack,
-    brace_budget: &mut u32,
-) -> bool {
-    if *brace_budget == 0 {
-        return false;
-    }
-    *brace_budget -= 1;
-
-    // exceeded brace depth
-    let Ok(()) = brace_stack.push(Brace {
-        open_brace_idx: open_brace_index,
-        branch_idx: branch_index,
-        close_brace_idx: close_brace_index,
-    }) else {
-        return false;
-    };
-
-    // Clone state
-    let mut branch_state = *state;
-    branch_state.glob_index = branch_index;
-    branch_state.brace_depth = u8::try_from(brace_stack.len()).expect("int cast");
-
-    let matched = glob_match_impl::<false, WINDOWS>(
-        &mut branch_state,
-        glob,
-        branch_index,
-        path,
-        brace_stack,
-        brace_budget,
-        &mut Groups::default(),
-        Inside::NO_GROUP,
-    );
-
-    let _ = brace_stack.pop();
-
-    matched
-}
-
-/// Jumps `glob_index` past the `}` of the innermost stacked group that encloses
-/// it; returns `false` if none does (the `,`/`}` is then a literal).
-///
-/// `brace_stack[brace_depth - 1]` is not that group: the stack also holds
-/// already-exited sequential groups, so look up by range. Reverse iteration
-/// visits inner→outer, so the first enclosing frame is the innermost.
-fn skip_branch(state: &mut State, glob: &[u8], brace_stack: &BraceStack) -> bool {
-    let gi = state.glob_index;
-    for frame in brace_stack.as_slice().iter().rev() {
-        if frame.open_brace_idx < gi && gi <= frame.close_brace_idx {
-            let close = frame.close_brace_idx;
-            if (close as usize) < glob.len() {
-                debug_assert_eq!(glob[close as usize], b'}');
-                state.glob_index = close + 1;
-                state.brace_depth -= 1;
-            } else {
-                state.glob_index = close;
-            }
-            return true;
-        }
-    }
-    false
-}
-
-/// Index of the `}` matching the `{` at `open_idx`, or `glob.len()` if unterminated.
-fn find_brace_end(glob: &[u8], open_idx: u32) -> u32 {
-    let mut i = open_idx as usize;
-    debug_assert!(i < glob.len() && glob[i] == b'{');
-    let mut depth: u32 = 0;
-    let mut in_brackets = false;
-    while i < glob.len() {
-        match glob[i] {
-            b'{' if !in_brackets => depth += 1,
-            b'}' if !in_brackets => {
-                depth -= 1;
-                if depth == 0 {
-                    return i as u32;
-                }
-            }
-            b'[' if !in_brackets => in_brackets = true,
-            b']' => in_brackets = false,
-            b'\\' => i += 1,
-            _ => {}
-        }
-        i += 1;
-    }
-    glob.len() as u32
-}
-
-/// How many `!` at the start of `glob` negate the result.
+/// Matches `c` against the class that starts at `open`. Returns the result and the index after the `]`,
+/// or `None` if the class isn't closed.
 #[inline(always)]
-pub(crate) fn negations(glob: &[u8], has_extglob: bool) -> usize {
-    let bangs = glob.iter().take_while(|it| **it == b'!').count();
-    // `!(a)`
-    bangs - usize::from(has_extglob && bangs > 0 && glob.get(bangs) == Some(&b'('))
+fn match_class(glob: &[u8], open: u32, c: u32) -> Option<(bool, u32)> {
+    let mut glob_index = open + 1;
+
+    let mut negated = false;
+    if (glob_index as usize) < glob.len()
+        && (glob[glob_index as usize] == b'^' || glob[glob_index as usize] == b'!')
+    {
+        negated = true;
+        glob_index += 1;
+    }
+
+    let mut first = true;
+    let mut is_match = false;
+
+    while (glob_index as usize) < glob.len() && (first || glob[glob_index as usize] != b']') {
+        // Get low ( ͡° ͜ʖ ͡°), and unescape it
+        let mut low: u32 = glob[glob_index as usize] as u32;
+        let mut low_len: u8 = 1;
+        if !get_unicode(&mut low, &mut low_len, glob, &mut glob_index) {
+            return None;
+        }
+
+        // skip past the target char
+        glob_index += u32::from(low_len);
+
+        let high = if (glob_index as usize) + 1 < glob.len()
+            && glob[glob_index as usize] == b'-'
+            && glob[glob_index as usize + 1] != b']'
+        {
+            glob_index += 1;
+
+            let mut high: u32 = glob[glob_index as usize] as u32;
+            let mut high_len: u8 = 1;
+            if !get_unicode(&mut high, &mut high_len, glob, &mut glob_index) {
+                return None;
+            }
+
+            glob_index += u32::from(high_len);
+            high
+        } else {
+            low
+        };
+
+        if low <= c && c <= high {
+            is_match = true;
+        }
+
+        first = false;
+    }
+
+    if glob_index as usize >= glob.len() {
+        return None;
+    }
+
+    Some((is_match != negated, glob_index + 1))
 }
 
-/// A piece of a pattern.
+/// Counts the leading `!`s that negate the result.
+#[inline(always)]
+pub(crate) fn negations(glob: &[u8]) -> usize {
+    let bangs = glob.iter().take_while(|it| **it == b'!').count();
+    // The `!` of `!(a)` starts a group.
+    bangs - usize::from(bangs > 0 && glob.get(bangs) == Some(&b'('))
+}
+
+/// One token of a pattern.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Token {
-    /// One byte, which stands for itself.
+    /// A literal byte.
     Literal,
-    /// `\` and what it escapes.
+    /// `\` and the escaped byte.
     Escape,
     /// `?`
     Any,
     /// `*`
     Star,
-    /// `**`, wherever it is.
+    /// `**`, even where it isn't a whole segment.
     Globstar,
     /// `[ab]`
     Class,
-    /// `{a,b}`, `@(a|b)`. `first`: where its first alternative starts.
+    /// `{a,b}` or `@(a|b)`. `first` is the index where its first alternative starts.
     Group { first: usize },
-    /// What is not closed, to the end of the pattern.
-    Unknown,
 }
 
-/// The piece of `glob` that starts at `at`, and where it ends. `shape`: of `glob`.
+/// Returns the token that starts at `at` and the index after it. `shape` must be `Shape::of(glob)`.
 pub(crate) fn token_at(glob: &[u8], at: usize, shape: &Shape) -> (Token, usize) {
     let next = glob.get(at + 1).copied();
     let group = |first: usize| {
@@ -784,25 +717,20 @@ pub(crate) fn token_at(glob: &[u8], at: usize, shape: &Shape) -> (Token, usize) 
         _ => {}
     }
     match glob[at] {
-        b'\\' => (Token::Escape, glob.len().min(at + 2)),
+        b'\\' if at + 1 < glob.len() => (Token::Escape, at + 2),
         b'?' => (Token::Any, at + 1),
-        b'*' if next == Some(b'*') && !(shape.1 && glob.get(at + 2) == Some(&b'(')) => {
-            (Token::Globstar, at + 2)
-        }
+        b'*' if next == Some(b'*') && glob.get(at + 2) != Some(&b'(') => (Token::Globstar, at + 2),
         b'*' => (Token::Star, at + 1),
         b'[' => match class_end(glob, at) {
             Some(end) => (Token::Class, end),
-            None => (Token::Unknown, glob.len()),
+            None => (Token::Literal, at + 1),
         },
-        b'{' => group(at + 1).unwrap_or(match shape.1 {
-            true => (Token::Literal, at + 1),
-            false => (Token::Unknown, glob.len()),
-        }),
+        b'{' => group(at + 1).unwrap_or((Token::Literal, at + 1)),
         _ => (Token::Literal, at + 1),
     }
 }
 
-/// Where the class that starts at `open` ends.
+/// Returns the index after the `]` of the class that starts at `open`, or `None` if it isn't closed.
 pub fn class_end(glob: &[u8], open: usize) -> Option<usize> {
     let mut at = open + 1;
     at += usize::from(matches!(glob.get(at), Some(b'^' | b'!')));
@@ -823,25 +751,25 @@ pub fn class_end(glob: &[u8], open: usize) -> Option<usize> {
     Some(at + 1)
 }
 
-/// `{a,b}`, `{1..3}` or `@(a|b)`, with `EXTGLOB`.
+/// `{a,b}`, `{1..3}` or `@(a|b)`.
 struct Group<'g> {
-    /// `{`, `.` for `{1..3}`, or what is before the `(`.
+    /// `{`, `.` for a sequence like `{1..3}`, or the character before the `(`.
     kind: u8,
-    /// Where in [`Shape`] its first alternative is.
+    /// Index of its first alternative in [`Shape`].
     first: u32,
-    /// Where the `}` or the `)` is.
+    /// Index of the closing `}` or `)`.
     close: u32,
-    /// Where it is itself.
+    /// The group that contains this one.
     outer: Inside<'g>,
 }
 
-/// Where in the groups a part of the pattern is matched.
+/// The group context of the part of the pattern being matched.
 #[derive(Copy, Clone)]
 struct Inside<'g> {
     group: Option<&'g Group<'g>>,
-    /// Where the alternative of `group` ends.
+    /// Index where the current alternative of `group` ends.
     end: u32,
-    /// Nothing of the path has been taken since a group was repeated. It is not repeated again then.
+    /// Nothing was consumed since a group last repeated. Repeating it again would loop forever.
     is_idle: bool,
 }
 
@@ -852,7 +780,7 @@ impl<'g> Inside<'g> {
         is_idle: false,
     };
 
-    /// From `index`: behind all the groups of which an alternative ends there, and where that is.
+    /// Leaves every group whose current alternative ends at `index`. Returns the index after them and the outer context.
     fn outside(mut self, mut index: u32) -> (u32, Inside<'g>) {
         while index == self.end
             && let Some(group) = self.group
@@ -864,45 +792,72 @@ impl<'g> Inside<'g> {
     }
 }
 
-/// What one match with `EXTGLOB` keeps.
-#[derive(Default)]
-struct Groups {
+/// Per-match state for groups.
+struct Groups<'s> {
+    /// The pattern's shape, either passed in by the caller or computed at the first group.
+    prepared: Option<&'s Shape>,
     shape: Option<Shape>,
     stack: Option<StackCheck>,
-    /// How often `once` has been asked.
+    /// Number of calls to `once`.
     asked: u32,
-    /// What `once` has answered, by what it was asked.
+    /// Cached results of `once`.
     known: Option<HashMap<u64, bool>>,
-    /// The stack has run out: nothing matches.
+    /// Ran out of stack. The match fails.
     is_too_deep: bool,
-    /// [`match_without_dot`]
-    hides_dots: bool,
+    /// No `[` at or after this index is closed.
+    no_class_from: u32,
+    /// [`State::is_beside_dot`] of the finished nested runs.
+    is_beside_dot: bool,
+    /// A `!(a)` group was evaluated. A failed fast match doesn't imply a failed strict match then.
+    has_negation: bool,
+    /// Apply the rules for dot segments. See `match_as`.
+    is_strict: bool,
+    dots: Dots,
 }
 
-/// Whether a name of `path` starts at `index`, with a `.`.
-#[inline(always)]
-fn is_hidden_name_at(path: &[u8], index: u32) -> bool {
-    let index = index as usize;
-    path.get(index) == Some(&b'.') && (index == 0 || is_separator::<false>(path[index - 1]))
-}
-
-/// Whether a name of `glob`, or the part of it that starts at `glob_start`, starts at `index`.
+/// Returns true if a path segment of the pattern starts at `index`. `glob_start` is where the current part of the pattern starts.
 #[inline(always)]
 fn is_name_start(glob: &[u8], glob_start: u32, index: u32) -> bool {
     index <= glob_start || glob[index as usize - 1] == b'/'
 }
 
-impl Groups {
-    /// Most patterns are through before anything is asked twice.
-    const REMEMBERS_AFTER: u32 = 32;
+impl<'s> Groups<'s> {
+    #[inline(always)]
+    fn new(prepared: Option<&'s Shape>) -> Groups<'s> {
+        Groups {
+            prepared,
+            shape: None,
+            stack: None,
+            asked: 0,
+            known: None,
+            is_too_deep: false,
+            no_class_from: u32::MAX,
+            is_beside_dot: false,
+            has_negation: false,
+            is_strict: false,
+            dots: Dots::Match,
+        }
+    }
+
+    fn shape(&mut self, glob: &[u8]) -> &Shape {
+        match self.prepared {
+            Some(shape) => shape,
+            None => self.shape.get_or_insert_with(|| Shape::of(glob)),
+        }
+    }
 }
 
-/// What `ask` answers, which is asked once for a place in the pattern, a place in the path and `is_idle`.
+impl Groups<'_> {
+    /// Most matches finish long before caching pays off.
+    const REMEMBERS_AFTER: u32 = 256;
+}
+
+/// Runs `ask` at most once per (pattern index, path index, `is_idle`) and caches the result.
 #[inline(always)]
 fn once(
     (glob_index, path_index, is_idle): (u32, u32, bool),
-    groups: &mut Groups,
-    ask: impl FnOnce(&mut Groups) -> bool,
+    groups: &mut Groups<'_>,
+    ask: impl FnOnce(&mut Groups<'_>) -> bool,
 ) -> bool {
     let key = u64::from(glob_index) << 33 | u64::from(path_index) << 1 | u64::from(is_idle);
     groups.asked = groups.asked.saturating_add(1);
@@ -917,15 +872,15 @@ fn once(
     answer
 }
 
-/// Whether the pattern from `glob_index` matches the path from `path_index`.
+/// Matches the pattern from `glob_index` against the path from `path_index`.
 #[inline(never)]
-fn enter(
+fn enter<const WINDOWS: bool>(
     glob: &[u8],
     (glob_index, glob_start): (u32, u32),
     path: &[u8],
     path_index: u32,
     inside: Inside<'_>,
-    groups: &mut Groups,
+    groups: &mut Groups<'_>,
 ) -> bool {
     if groups.is_too_deep
         || !(groups.stack.get_or_insert_with(StackCheck::init)).is_safe_to_recurse()
@@ -938,22 +893,77 @@ fn enter(
         path_index,
         ..State::default()
     };
-    glob_match_impl::<true, false>(
-        &mut state,
-        glob,
-        glob_start,
-        path,
-        &mut BraceStack::default(),
-        &mut 0,
-        groups,
-        inside,
-    )
+    let state = &mut state;
+    let matched = match (groups.is_strict, inside.group.is_some()) {
+        (false, false) => {
+            glob_match_impl::<WINDOWS, false, false>(state, glob, glob_start, path, groups, inside)
+        }
+        (false, true) => {
+            glob_match_impl::<WINDOWS, false, true>(state, glob, glob_start, path, groups, inside)
+        }
+        (true, _) => {
+            glob_match_impl::<WINDOWS, true, true>(state, glob, glob_start, path, groups, inside)
+        }
+    };
+    groups.is_beside_dot |= state.is_beside_dot;
+    matched
 }
 
 impl<'g> Group<'g> {
-    /// The group that starts at `index`.
-    #[inline(always)]
-    fn at(glob: &[u8], index: u32, outer: Inside<'g>, groups: &mut Groups) -> Option<Group<'g>> {
+    /// Matches the group that starts at `index` and the rest of the pattern. Returns `None` if no group starts there.
+    #[cold]
+    #[inline(never)]
+    fn try_at<const WINDOWS: bool>(
+        glob: &[u8],
+        index: u32,
+        path: &[u8],
+        path_index: u32,
+        outer: Inside<'g>,
+        groups: &mut Groups<'_>,
+    ) -> Option<bool> {
+        let group = Group::at(glob, index, outer, groups)?;
+        Some(group.matches::<WINDOWS>(glob, path, path_index, outer.is_idle, groups))
+    }
+
+    /// Returns the first index at or after `path_index` where an alternative of the group at `index` could start,
+    /// or the end of the segment.
+    #[inline(never)]
+    fn skip_to_start<const WINDOWS: bool>(
+        glob: &[u8],
+        index: u32,
+        path: &[u8],
+        mut path_index: u32,
+        groups: &mut Groups<'_>,
+    ) -> u32 {
+        let Some(group) = Group::at(glob, index, Inside::NO_GROUP, groups) else {
+            return path_index;
+        };
+        if !matches!(group.kind, b'{' | b'@' | b'+') {
+            return path_index;
+        }
+        let shape = groups.shape(glob);
+        while let Some(&found) = path.get(path_index as usize)
+            && !is_separator::<WINDOWS>(found)
+        {
+            let mut next = group.first as usize;
+            while let Some(it) = shape.0.get(next) {
+                if it.may_start_at(glob, path, path_index) {
+                    return path_index;
+                }
+                next = it.next as usize;
+            }
+            path_index += u32::from(rune_len_at(path, path_index as usize));
+        }
+        path_index
+    }
+
+    /// Returns the group that starts at `index`.
+    fn at(
+        glob: &[u8],
+        index: u32,
+        outer: Inside<'g>,
+        groups: &mut Groups<'_>,
+    ) -> Option<Group<'g>> {
         let (kind, start) = match glob[index as usize] {
             b'{' => (b'{', index + 1),
             kind @ (b'?' | b'*' | b'+' | b'@' | b'!')
@@ -963,7 +973,7 @@ impl<'g> Group<'g> {
             }
             _ => return None,
         };
-        let shape = groups.shape.get_or_insert_with(|| Shape::of(glob, true));
+        let shape = groups.shape(glob);
         let first = shape.group_at(start)?;
         let it = shape.0[first as usize];
         Some(Group {
@@ -978,49 +988,44 @@ impl<'g> Group<'g> {
         })
     }
 
-    /// Whether what follows the group matches.
-    fn rest(
+    /// Matches the rest of the pattern after the group.
+    fn rest<const WINDOWS: bool>(
         &self,
         glob: &[u8],
         path: &[u8],
         path_index: u32,
         is_idle: bool,
-        groups: &mut Groups,
+        groups: &mut Groups<'_>,
     ) -> bool {
         let inside = Inside {
             is_idle,
             ..self.outer
         };
-        // A `**` there is not at the start of a path segment.
+        // `**` right after a group isn't at the start of a segment.
         let at = (self.close + 1, self.close);
         once((at.0, path_index, is_idle), groups, |groups| {
-            enter(glob, at, path, path_index, inside, groups)
+            enter::<WINDOWS>(glob, at, path, path_index, inside, groups)
         })
     }
 
-    /// Whether one of the alternatives matches, with what follows it.
-    fn alternatives(
+    /// Tries each alternative, followed by the rest of the pattern.
+    fn alternatives<const WINDOWS: bool>(
         &self,
         glob: &[u8],
         path: &[u8],
         path_index: u32,
         is_idle: bool,
-        groups: &mut Groups,
+        groups: &mut Groups<'_>,
     ) -> bool {
-        let shape = groups.shape.as_ref();
-        let start = shape
-            .and_then(|it| it.0.get(self.first as usize))
-            .map_or(0, |it| it.start);
+        let start = groups.shape(glob).0[self.first as usize].start;
         once((start, path_index, is_idle), groups, |groups| {
             let mut next = self.first as usize;
             let mut has_tried_nothing = false;
-            while let Some(&it) = groups.shape.as_ref().and_then(|shape| shape.0.get(next)) {
+            while let Some(&it) = groups.shape(glob).0.get(next) {
                 next = it.next as usize;
-                // Most start with a character that the path does not go on with. All that are empty are one.
-                let first = glob[it.start as usize];
+                // Try an empty alternative only once.
                 let is_empty = it.start == it.end;
-                if (first.is_ascii_alphanumeric() || first == b'.')
-                    && path.get(path_index as usize) != Some(&first)
+                if !it.may_start_at(glob, path, path_index)
                     || is_empty && std::mem::replace(&mut has_tried_nothing, true)
                 {
                     continue;
@@ -1030,7 +1035,7 @@ impl<'g> Group<'g> {
                     end: it.end,
                     is_idle,
                 };
-                if enter(glob, (it.start, it.start), path, path_index, inside, groups) {
+                if enter::<WINDOWS>(glob, (it.start, it.start), path, path_index, inside, groups) {
                     return true;
                 }
             }
@@ -1038,59 +1043,64 @@ impl<'g> Group<'g> {
         })
     }
 
-    /// At its start.
+    /// Matches the group from its start.
     #[inline(never)]
-    fn matches(
+    fn matches<const WINDOWS: bool>(
         &self,
         glob: &[u8],
         path: &[u8],
         path_index: u32,
         is_idle: bool,
-        groups: &mut Groups,
+        groups: &mut Groups<'_>,
     ) -> bool {
         if self.kind == b'.' {
-            return self.sequence(glob, path, path_index, is_idle, groups);
+            return self.sequence::<WINDOWS>(glob, path, path_index, is_idle, groups);
         }
-        if matches!(self.kind, b'?' | b'*') && self.rest(glob, path, path_index, is_idle, groups) {
+        if matches!(self.kind, b'?' | b'*')
+            && self.rest::<WINDOWS>(glob, path, path_index, is_idle, groups)
+        {
             return true;
         }
-        let is_one = self.alternatives(glob, path, path_index, is_idle, groups);
-        if self.kind != b'!' || is_one || groups.hides_dots && is_hidden_name_at(path, path_index) {
-            return self.kind != b'!' && is_one;
+        let is_one = self.alternatives::<WINDOWS>(glob, path, path_index, is_idle, groups);
+        if self.kind != b'!' {
+            return is_one;
+        }
+        groups.has_negation = true;
+        if is_one
+            || groups.is_strict && is_closed_segment_at::<WINDOWS>(path, path_index, groups.dots)
+        {
+            return false;
         }
         let mut end = path_index;
         loop {
-            if self.rest(glob, path, end, is_idle && end == path_index, groups) {
+            if self.rest::<WINDOWS>(glob, path, end, is_idle && end == path_index, groups) {
                 return true;
             }
-            if end as usize >= path.len() || is_separator::<false>(path[end as usize]) {
+            if end as usize >= path.len() || is_separator::<WINDOWS>(path[end as usize]) {
                 return false;
             }
             end += u32::from(rune_len_at(path, end as usize));
         }
     }
 
-    /// `{1..3}`, at its start.
-    fn sequence(
+    /// Matches a sequence like `{1..3}` from its start.
+    fn sequence<const WINDOWS: bool>(
         &self,
         glob: &[u8],
         path: &[u8],
         path_index: u32,
         is_idle: bool,
-        groups: &mut Groups,
+        groups: &mut Groups<'_>,
     ) -> bool {
-        let shape = groups.shape.as_ref();
-        let Some(sequence) = shape
-            .and_then(|it| it.0.get(self.first as usize))
-            .and_then(|it| Sequence::read(&glob[it.start as usize..it.end as usize]))
-        else {
+        let it = groups.shape(glob).0[self.first as usize];
+        let Some(sequence) = Sequence::read(&glob[it.start as usize..it.end as usize]) else {
             return false;
         };
         let rest = &path[path_index as usize..];
-        if sequence.has_nothing() && self.rest(glob, path, path_index, is_idle, groups) {
+        if sequence.has_nothing() && self.rest::<WINDOWS>(glob, path, path_index, is_idle, groups) {
             return true;
         }
-        // The longest first: `12` of `{1..20}` before `1`.
+        // Longest first, so `{1..20}` tries `12` before `1`.
         let longest = match sequence.of {
             SequenceOf::Letters => rest.len().min(1),
             SequenceOf::Numbers { .. } => {
@@ -1103,45 +1113,63 @@ impl<'g> Group<'g> {
         };
         (1..=longest).rev().any(|len| {
             sequence.has(&rest[..len])
-                && self.rest(glob, path, path_index + len as u32, false, groups)
+                && self.rest::<WINDOWS>(glob, path, path_index + len as u32, false, groups)
         })
     }
 
-    /// At the end of an alternative.
+    /// Continues after an alternative has matched.
     #[inline(never)]
-    fn leave(
+    fn leave<const WINDOWS: bool>(
         &self,
         glob: &[u8],
         path: &[u8],
         path_index: u32,
         is_idle: bool,
-        groups: &mut Groups,
+        groups: &mut Groups<'_>,
     ) -> bool {
-        self.rest(glob, path, path_index, is_idle, groups)
+        self.rest::<WINDOWS>(glob, path, path_index, is_idle, groups)
             || matches!(self.kind, b'*' | b'+')
                 && !is_idle
-                && self.alternatives(glob, path, path_index, true, groups)
+                && self.alternatives::<WINDOWS>(glob, path, path_index, true, groups)
     }
 }
 
-/// An alternative of a group.
+/// One alternative of a group.
 #[derive(Copy, Clone)]
 struct Alternative {
     start: u32,
-    /// Where the `,`, the `|`, the `}` or the `)` behind it is.
+    /// Index of the `,`, `|`, `}` or `)` after it.
     end: u32,
-    /// Where in [`Shape`] the next one of the group is. Behind the end: it is the last.
+    /// Index in [`Shape`] of the group's next alternative. Out of range for the last one.
     next: u32,
-    /// Of the first of a group: where the `}` or the `)` is. 0: the group is not closed, so it is none.
+    /// On a group's first alternative, the index of the closing `}` or `)`. 0 means the group is unclosed and therefore literal.
     close: u32,
 }
 
 impl Alternative {
-    /// For `next`: it is `1..3` of `{1..3}`.
+    /// Cheap check on the first character. Most alternatives start with a literal that the path doesn't continue with.
+    #[inline(always)]
+    fn may_start_at(&self, glob: &[u8], path: &[u8], path_index: u32) -> bool {
+        let first = glob[self.start as usize];
+        if self.start == self.end {
+            return true;
+        }
+        match path.get(path_index as usize) {
+            Some(found) if first.is_ascii_alphanumeric() || first == b'.' => *found == first,
+            Some(_) if first == b'[' => {
+                let c = decode_rune_at(path, path_index as usize).0;
+                !matches!(match_class(glob, self.start, c), Some((false, _)))
+            }
+            Some(_) => true,
+            None => !(first.is_ascii_alphanumeric() || first == b'.'),
+        }
+    }
+
+    /// Value of `next` that marks the inside of a sequence like `{1..3}`.
     const IS_SEQUENCE: u32 = u32::MAX - 1;
 }
 
-/// `1..3`, `01..10`, `9..1..2`, `a..e`: what bash makes of it between braces, one after the other.
+/// The inside of a brace sequence as in bash: `1..3`, `01..10`, `9..1..2`, `a..e`.
 struct Sequence {
     from: i64,
     to: i64,
@@ -1152,10 +1180,15 @@ struct Sequence {
 
 enum SequenceOf {
     Letters,
-    /// `width`: how long each is at least, with zeros in front, if one of the two ends is written with a zero in front. Else 0.
+    /// `width` is the zero-padded length if either bound has a leading zero, otherwise 0.
     Numbers {
         width: usize,
     },
+}
+
+/// Whether `written` is the inside of a sequence like `{1..3}`.
+pub fn is_sequence(written: &[u8]) -> bool {
+    Sequence::read(written).is_some()
 }
 
 impl Sequence {
@@ -1207,12 +1240,12 @@ impl Sequence {
             && i128::from(value).abs_diff(i128::from(self.from)) % self.step as u128 == 0
     }
 
-    /// In place of a `\\` there is nothing.
+    /// bash expands the `\` in a range like `{A..z}` to nothing.
     fn has_nothing(&self) -> bool {
         matches!(self.of, SequenceOf::Letters) && self.has_value(i64::from(b'\\'))
     }
 
-    /// Whether `text`, a letter or a number, is one of them, written as it is written then.
+    /// Returns true if `text` is spelled exactly like one of the sequence's values.
     fn has(&self, text: &[u8]) -> bool {
         let SequenceOf::Numbers { width } = self.of else {
             return text[0] != b'\\' && self.has_value(i64::from(text[0]));
@@ -1237,18 +1270,19 @@ impl Sequence {
     }
 }
 
-/// The alternatives of all groups of a pattern, by where they start, and whether `@(a|b)` is a group.
-pub(crate) struct Shape(SmallVec<[Alternative; 8]>, bool);
+/// The alternatives of every group in a pattern, sorted by start index.
+pub struct Shape(SmallVec<[Alternative; 8]>);
 
 impl Shape {
-    /// In one pass over `glob`.
-    pub(crate) fn of(glob: &[u8], has_extglob: bool) -> Shape {
+    /// Finds all groups in one pass over `glob`.
+    pub fn of(glob: &[u8]) -> Shape {
         let mut found: SmallVec<[Alternative; 8]> = SmallVec::new();
-        // The groups that are open: whether each is of braces, and where in `found` its first alternative is and its last so far.
+        // Open groups: is it a brace group, and the indexes in `found` of its first and latest alternative.
         let mut open: SmallVec<[(bool, u32, u32); 8]> = SmallVec::new();
-        // How many of them are of parentheses, of braces.
+        // Number of open parenthesis groups and open brace groups.
         let mut count = [0_usize; 2];
-        let mut in_brackets = false;
+        // No `[` at or after this index is closed.
+        let mut no_class_from = usize::MAX;
         let mut escaped = usize::MAX;
         let mut i = 0;
         while i < glob.len() {
@@ -1264,13 +1298,13 @@ impl Shape {
                     i += 1;
                     escaped = i;
                 }
-                b']' => in_brackets = false,
-                _ if in_brackets => {}
-                b'[' => in_brackets = true,
+                b'[' if i < no_class_from => match class_end(glob, i) {
+                    Some(end) => i = end - 1,
+                    None => no_class_from = i,
+                },
                 b'{' | b'('
                     if ch == b'{'
-                        || has_extglob
-                            && i > 0
+                        || i > 0
                             && escaped != i - 1
                             && matches!(glob[i - 1], b'?' | b'*' | b'+' | b'@' | b'!') =>
                 {
@@ -1287,7 +1321,7 @@ impl Shape {
                     }
                 }
                 b'}' | b')' if count[usize::from(ch == b'}')] > 0 => {
-                    // What is open in it and of the other kind is not closed.
+                    // Groups of the other kind that are still open inside it stay unclosed.
                     while let Some((is_brace, first, last)) = open.pop() {
                         count[usize::from(is_brace)] -= 1;
                         if is_brace != (ch == b'}') {
@@ -1295,13 +1329,12 @@ impl Shape {
                         }
                         found[last as usize].end = i as u32;
                         let it = &mut found[first as usize];
-                        // With `EXTGLOB`, as for bash: braces around one thing are characters, unless that is `1..3`.
-                        let is_one = has_extglob && is_brace && first == last;
-                        if is_one && Sequence::read(&glob[it.start as usize..i]).is_some() {
+                        it.close = i as u32;
+                        if is_brace
+                            && first == last
+                            && Sequence::read(&glob[it.start as usize..i]).is_some()
+                        {
                             it.next = Alternative::IS_SEQUENCE;
-                        }
-                        if !is_one || it.next == Alternative::IS_SEQUENCE {
-                            it.close = i as u32;
                         }
                         break;
                     }
@@ -1310,16 +1343,16 @@ impl Shape {
             }
             i += 1;
         }
-        Shape(found, has_extglob)
+        Shape(found)
     }
 
-    /// Whether the group whose first alternative starts at `start` is `{1..3}`.
+    /// Returns true if the group whose first alternative starts at `start` is a sequence like `{1..3}`.
     pub(crate) fn is_sequence_at(&self, start: usize) -> bool {
         let first = self.group_at(start as u32);
         first.is_some_and(|it| self.0[it as usize].next == Alternative::IS_SEQUENCE)
     }
 
-    /// Where the first alternative is of the group whose first alternative starts at `start`.
+    /// Returns the index in `self` of the group whose first alternative starts at `start`.
     #[inline]
     fn group_at(&self, start: u32) -> Option<u32> {
         let at = self.0.binary_search_by_key(&start, |it| it.start).ok()?;
@@ -1327,19 +1360,17 @@ impl Shape {
     }
 }
 
-/// Whether `c` separates the segments of a path.
+/// Returns true if `c` is a path separator.
 #[inline(always)]
 fn is_separator<const WINDOWS: bool>(c: u8) -> bool {
     c == b'/' || WINDOWS && c == b'\\'
 }
 
 #[inline(always)]
-fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
-    if *c == b'\\' {
+fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) {
+    // A trailing `\` is literal.
+    if *c == b'\\' && *glob_index as usize + 1 < glob.len() {
         *glob_index += 1;
-        if *glob_index as usize >= glob.len() {
-            return false; // Invalid pattern!
-        }
 
         *c = match glob[*glob_index as usize] {
             b'a' => b'\x61',
@@ -1350,8 +1381,6 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
             cc => cc,
         };
     }
-
-    true
 }
 
 /// Byte length of the codepoint at `bytes[idx]`; see [`decode_rune_at`].

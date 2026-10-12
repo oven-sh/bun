@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-When an inner scope declares a name that an outer scope already has, the outer one cannot be reached from there. A reader who saw the outer declaration first takes the inner uses for it, and a line moved from one scope to the other silently means another variable.
+When an inner scope declares a name that an outer scope already has, you can't reach the outer one from there. A reader who saw the outer declaration first mistakes the inner uses for it, and a line moved from one scope to the other silently refers to a different variable.
 
-This is `no-shadow` with the same options. Only the default of `hoist` differs: `"functions-and-types"` here, `"functions"` there. Turn on only one of the two, or each name is reported twice.
+This is `no-shadow` with the same options. Only the `hoist` default differs. It's `"functions-and-types"` here and `"functions"` there. Turn on only one of the two, or each name is reported twice.
 
 ## Examples
 
@@ -65,7 +65,7 @@ enum Priority {
 | `allow` | `[]` | Names that may hide an outer declaration. |
 | `builtinGlobals` | `false` | Also report a name that hides a global, such as `Array`. |
 | `hoist` | `"functions-and-types"` | When to report a name that comes before the outer declaration it hides. See below. |
-| `ignoreOnInitialization` | `false` | Allow it in a callback that is part of the initializer of the outer variable. |
+| `ignoreOnInitialization` | `false` | Allow it in a callback that's part of the outer variable's initializer. |
 | `ignoreTypeValueShadow` | `true` | Allow a value to have the name of an outer type, and a type the name of an outer value. |
 | `ignoreFunctionTypeParameterNameValueShadow` | `true` | Allow a parameter in a function type or signature to have the name of an outer variable. |
 
@@ -102,7 +102,7 @@ function listen() {
 const port = 8080;
 ```
 
-It is reported with `hoist: "all"`:
+It's reported with `hoist: "all"`:
 
 {/* bad {"options": [{"hoist": "all"}]} */}
 ```ts
@@ -127,7 +127,7 @@ const user = users.find(user => user.active);
 
 ### `ignoreTypeValueShadow`
 
-A type and a value with one name do not get in each other's way, so this is allowed by default:
+A type and a value with the same name don't get in each other's way, so this is allowed by default:
 
 {/* good */}
 ```ts
@@ -141,7 +141,7 @@ function start() {
 
 ### `ignoreFunctionTypeParameterNameValueShadow`
 
-The parameter of a function type is only a label. Set the option to `false` to report it:
+A function type's parameter is only a label. Set the option to `false` to report it:
 
 {/* bad {"options": [{"ignoreFunctionTypeParameterNameValueShadow": false}]} */}
 ```ts

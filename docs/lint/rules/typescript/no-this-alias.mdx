@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`const self = this` is a way to reach the outer `this` from a `function` callback, which has a `this` of its own. An arrow function does not, so inside it `this` is still the outer one. With an arrow function you do not need the extra variable, and nobody can mix up `self` and `this`.
+`const self = this` is a way to reach the outer `this` from a `function` callback, which has its own `this`. An arrow function doesn't, so inside it `this` is still the outer one. With an arrow function you don't need the extra variable, and nobody can mix up `self` and `this`.
 
 This rule is on by default in TypeScript files.
 

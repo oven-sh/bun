@@ -401,7 +401,8 @@ impl IgnoreRules {
         self.has_exceptions |= read.is_negated;
         self.rules.push(Rule {
             // `may_keep_inside` asks those with `!`.
-            pattern: (!is_found_by_key || read.is_negated).then(|| Pattern::new(&read.pattern)),
+            pattern: (!is_found_by_key || read.is_negated)
+                .then(|| Pattern::new(&bun_glob::pattern::of_fast_glob(&read.pattern))),
             of_package: of_package.map(|it| (it.into(), OnceLock::new())),
             is_only_of_package: false,
             is_negated: read.is_negated,

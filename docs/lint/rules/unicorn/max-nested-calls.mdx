@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Nested calls run from the inside out, so you read `save(normalize(parse(read(file))))` backwards, counting parentheses on the way. Past a few levels, a variable with a good name for a step in the middle is easier to follow.
+Nested calls run from the inside out, so you read `save(normalize(parse(read(file))))` backwards, counting parentheses on the way. Past a few levels, the code is easier to follow if you put a step in the middle into a well-named variable.
 
-A call counts as nested when it is in an argument of another call or of a `new` expression. By default up to 3 levels are allowed, and each call that is deeper is reported.
+A call counts as nested when it's in an argument of another call or of a `new` expression. By default up to 3 levels are allowed, and each deeper call is reported.
 
 ## Examples
 
@@ -33,7 +33,7 @@ const config = parse(read(file));
 save(normalize(config));
 ```
 
-A chain of methods is not nesting:
+A method chain isn't nesting:
 
 {/* good */}
 ```js
@@ -51,7 +51,7 @@ schedule(retry(withTimeout(() => save(normalize(config)))));
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `max` | `3` | The deepest nesting that is allowed. |
+| `max` | `3` | The deepest nesting that's allowed. |
 
 {/* bad {"options": [{"max": 2}]} */}
 ```js

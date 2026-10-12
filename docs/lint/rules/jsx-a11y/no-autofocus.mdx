@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`autoFocus` moves the focus as soon as the element renders. A screen reader starts reading at that element, so the user misses everything before it. On a phone the keyboard opens and the page scrolls on its own.
+`autoFocus` moves focus as soon as the element renders. A screen reader starts reading at that element, so the user misses everything before it. On a phone, the keyboard opens and the page scrolls by itself.
 
-`autoFocus={false}` is not reported. Neither is `autoFocus` inside a `<dialog>`, an element with `role="dialog"`, or an element with a `popover` attribute, because opening one of those is supposed to move the focus.
+`autoFocus={false}` isn't reported. Neither is `autoFocus` inside a `<dialog>`, an element with `role="dialog"`, or an element with a `popover` attribute, because opening one of those is supposed to move focus.
 
 `--fix-suggestions` removes the attribute.
 

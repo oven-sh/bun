@@ -50,7 +50,7 @@ function isPinned(pinned?: boolean, mode?: boolean | string) {
 | --- | --- | --- |
 | `allowComparingNullableBooleansToTrue` | `true` | Allow `value === true` where `value` can also be `null` or `undefined`. |
 | `allowComparingNullableBooleansToFalse` | `true` | Allow `value === false` where `value` can also be `null` or `undefined`. |
-| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Without `strictNullChecks` in `tsconfig.json`, the rule cannot tell what can be `null`, and it reports that once for each file. Set this to `true` to turn that report off. |
+| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Without `strictNullChecks` in `tsconfig.json`, the rule can't tell what can be `null`, and it reports that once for each file. Set this to `true` to turn that report off. |
 
 With `allowComparingNullableBooleansToTrue` off, write `if (isPinned)` instead:
 

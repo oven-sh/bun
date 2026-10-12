@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The second argument of `then(a, b)` only handles a rejection from before the `then()`. If `a` itself throws, `b` is not called. A `catch()` after the `then()` handles both.
+The second argument of `then(a, b)` only handles a rejection from before the `then()`. If `a` itself throws, `b` isn't called. A `catch()` after the `then()` handles both.
 
-The rule only reports a `then()` call with two arguments that is a statement of its own. One that is returned, awaited, assigned, or followed by more of the chain is not reported.
+The rule only reports a `then()` call with two arguments when it's a statement by itself. One that's returned, awaited, assigned, or followed by more of the chain isn't reported.
 
 ## Examples
 

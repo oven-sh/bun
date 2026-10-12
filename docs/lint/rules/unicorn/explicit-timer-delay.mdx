@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`setTimeout(callback)` runs the callback as soon as it can, as if the delay were `0`. A reader cannot tell whether that is on purpose or the delay was forgotten. For `setInterval()` a forgotten delay means a callback that runs over and over without a pause. Writing `0` shows that you meant it.
+`setTimeout(callback)` runs the callback as soon as it can, as if the delay were `0`. The reader can't tell whether that's on purpose or you forgot the delay. For `setInterval()` a forgotten delay means a callback that runs over and over without a pause. Writing `0` shows that you meant it.
 
 The rule also checks the timers on `window`, `globalThis`, `self` and `global`.
 

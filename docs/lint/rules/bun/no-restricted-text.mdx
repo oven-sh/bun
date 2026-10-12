@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Some mistakes are in the words, not in the code: an `http://` URL, an old product name, three dots where the design asks for an ellipsis. This rule reports text that matches a regular expression you give it, with your own message.
+Some mistakes are in the words, not in the code, like an `http://` URL, an old product name, or three dots where the design asks for an ellipsis. This rule reports text that matches a regular expression you give it, with your own message.
 
-The rule does nothing until you list `patterns`. Every match is reported on its own.
+The rule does nothing until you list `patterns`. Each match gets its own report.
 
 ## Examples
 
@@ -52,7 +52,7 @@ const api = "https://api.example.com";
 | `message` | The matched text and the pattern | What the report says. |
 | `in` | All five | Where to look: `"strings"`, `"templates"`, `"jsxText"`, `"comments"`, `"regularExpressions"`. |
 
-The pattern sees the text as it is written in the file, so an escape such as `\n` in a string is a backslash and an `n`. A pattern that is not a valid regular expression is an error in the config.
+The pattern sees the text as it's written in the file, so an escape such as `\n` in a string is a backslash and an `n`. A pattern that isn't a valid regular expression is a config error.
 
 Text between JSX tags:
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: true
 ---
 
-Some teams want object shapes written as `interface` and other types written out where they are used. This rule bans `type` aliases, and its options allow the kinds you still need.
+Some teams want object shapes written as `interface` and other types written out where they're used. This rule bans `type` aliases, and its options allow the kinds you still need.
 
-With no options, every `type` declaration is reported. In a union or an intersection, each member is reported on its own.
+With no options, every `type` declaration is reported. In a union or an intersection, each member is reported separately.
 
 typescript-eslint has deprecated this rule.
 
@@ -48,7 +48,7 @@ interface OnSave {
 
 ## Options
 
-Each option allows one kind of alias. It is `"never"` (default) or `"always"`.
+Each option allows one kind of alias. It's `"never"` (default) or `"always"`.
 
 | Option | What it allows |
 | --- | --- |
@@ -63,14 +63,14 @@ Each option allows one kind of alias. It is `"never"` (default) or `"always"`.
 
 The first four also take `"in-unions"`, `"in-intersections"` and `"in-unions-and-intersections"`. These allow that kind only as a member of a union, of an intersection, or of either.
 
-A common setup allows unions of names and literals, which an `interface` cannot express:
+A common setup allows unions of names and literals, which an `interface` can't express:
 
 {/* good {"options": [{"allowAliases": "in-unions"}]} */}
 ```ts
 type Status = "draft" | "published" | "archived";
 ```
 
-An alias that is not a union is still reported:
+An alias that isn't a union is still reported:
 
 {/* bad {"options": [{"allowAliases": "in-unions"}]} */}
 ```ts
@@ -79,4 +79,4 @@ type Status = "draft";
 
 ## When not to use it
 
-Most TypeScript code uses aliases for unions, tuples, mapped types and conditional types, which cannot be written any other way. If you only want `interface` instead of `type` for object shapes, use `@typescript-eslint/consistent-type-definitions`.
+Most TypeScript code uses aliases for unions, tuples, mapped types and conditional types, which you can't write any other way. If you only want `interface` instead of `type` for object shapes, use `@typescript-eslint/consistent-type-definitions`.

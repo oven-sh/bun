@@ -14,7 +14,7 @@ deprecated: false
 
 `total += await fetchPrice(id)` reads `total` first, then waits. If two calls run at the same time, both start from the same `total`, and one of the additions is lost.
 
-The rule looks at async functions and generators. It reports an assignment to a variable or a property that was read before an `await` or a `yield` and not read again after it. A local variable that no other function uses is not reported, because nothing else can change it during the wait.
+The rule checks async functions and generators. It reports an assignment to a variable or a property that was read before an `await` or a `yield` and not read again after it. A local variable that no other function uses isn't reported, because nothing else can change it during the wait.
 
 ## Examples
 
@@ -76,7 +76,7 @@ async function loadUser(session) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowProperties` | `false` | Do not report assignments to properties. Variables are still checked. |
+| `allowProperties` | `false` | Don't report assignments to properties. Variables are still checked. |
 
 {/* good {"options": [{"allowProperties": true}]} */}
 ```js
@@ -89,4 +89,4 @@ async function loadUser(session) {
 
 ## When not to use it
 
-The rule cannot tell whether two calls ever overlap, so it also reports code where nothing else touches the value. If most reports are about properties of request or context objects, set `allowProperties` to `true`.
+The rule can't tell whether two calls ever overlap, so it also reports code where nothing else touches the value. If most reports are about properties of request or context objects, set `allowProperties` to `true`.

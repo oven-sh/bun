@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`NaN` is not equal to anything, not even to itself. `value === NaN` is always `false`, `value !== NaN` is always `true`, and `<`, `>`, `<=` and `>=` with `NaN` are always `false`.
+`NaN` isn't equal to anything, not even itself. `value === NaN` is always `false`, `value !== NaN` is always `true`, and `<`, `>`, `<=` and `>=` with `NaN` are always `false`.
 
 The rule reports comparisons with `NaN` and `Number.NaN`. It also reports `switch (NaN)` and `case NaN:`, which can never match.
 

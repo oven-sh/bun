@@ -12,12 +12,12 @@ typeAware: false
 deprecated: false
 ---
 
-A screen reader cannot describe a picture. It reads the `alt` text. Without one it reads the file name or says nothing.
+A screen reader can't describe a picture, so it reads the `alt` text. Without one, it reads the file name or says nothing.
 
 - `img`, `area` and `input type="image"` need `alt`, `aria-label` or `aria-labelledby`.
-- `object` needs `aria-label`, `aria-labelledby`, `title` or content between its tags. `alt` does not count there.
+- `object` needs `aria-label`, `aria-labelledby`, `title` or content between its tags. `alt` doesn't count there.
 
-For an image that is only decoration, write `alt=""`. `role="presentation"` without `alt` is reported.
+For an image that's only decoration, write `alt=""`. `role="presentation"` without `alt` is reported.
 
 ## Examples
 
@@ -41,7 +41,7 @@ const search = <input type="image" src="/search.png" alt="Search" />;
 const report = <object data="/report.pdf">Annual report</object>;
 ```
 
-An `alt` without a value, or with `undefined` or `null`, does not count:
+An `alt` without a value, or with `undefined` or `null`, doesn't count:
 
 {/* bad {"count": 2} */}
 ```jsx

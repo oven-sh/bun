@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A generator that never yields produces no values: a `for...of` loop over it ends at once. Either the `yield` is missing or the `*` is a mistake.
+A generator that never yields produces no values, so a `for...of` loop over it ends right away. Either the `yield` is missing or the `*` is a mistake.
 
-A generator with an empty body is not reported. A `yield` in a nested generator does not count for the outer one.
+A generator with an empty body isn't reported. A `yield` in a nested generator doesn't count for the outer one.
 
 This rule is on by default.
 

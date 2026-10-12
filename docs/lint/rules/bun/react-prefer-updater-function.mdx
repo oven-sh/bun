@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The `items` of `const [items, setItems] = useState([])` is the state as of the last render. If `setItems([...items, item])` runs after an `await`, in a timer, or twice before the next render, `items` is out of date and the other update is lost. A function gets the current state: `setItems(previous => [...previous, item])`.
+The `items` in `const [items, setItems] = useState([])` is the state as of the last render. If `setItems([...items, item])` runs after an `await`, in a timer, or twice before the next render, `items` is out of date and the other update is lost. A function gets the current state: `setItems(previous => [...previous, item])`.
 
-The rule reports a setter that is called with an array or object literal that spreads its own state.
+The rule reports a setter that's called with an array or object literal that spreads its own state.
 
 ## Examples
 
@@ -63,7 +63,7 @@ function Cart() {
 }
 ```
 
-If neither name comes from a `useState()` in the file, for example because both are props, the names decide. `setRows` is taken for the setter of `rows`:
+If neither name comes from a `useState()` in the file, for example because both are props, the rule goes by the names. `setRows` is treated as the setter for `rows`:
 
 {/* bad */}
 ```jsx

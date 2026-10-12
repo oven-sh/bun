@@ -47,6 +47,8 @@ pub(super) mod ask {
     /// Not a question. Given JSON, `[modules, bytes, milliseconds]`: what has been loaded since the last time, if that is
     /// measured.
     pub(crate) const LOADED: u32 = 10;
+    /// The code paths, their segments and the events. Only after [`AST`]. See `code_path/estree.rs` for the layout.
+    pub(crate) const CODE_PATHS: u32 = 11;
 }
 
 pub(super) fn words(out: &mut Vec<u8>, words: &[u32]) {

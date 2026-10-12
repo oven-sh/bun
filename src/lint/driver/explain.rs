@@ -102,14 +102,15 @@ pub(crate) fn write_rules_as_json(out: &mut Vec<u8>, registry: &Registry) {
     let (descriptions, defaults) = (descriptions(), Defaults::new(registry));
     let rules = listed(registry).into_iter().map(|(scope, meta)| {
         let category = bun_lint::linter::oxlint_category(meta.plugin, meta.name);
-        let fix: &[u8] = match (meta.fixable != Fixable::No, meta.has_suggestions) {
+        let names = registry.names_of(meta);
+        let native = in_native_mode(registry, meta, &names.id);
+        let fixes = native.fixable != Fixable::No && !native.never_fixes;
+        let fix: &[u8] = match (fixes, native.has_suggestions && !native.never_suggests) {
             (true, true) => b"fixable_safe_fix_or_suggestion",
             (true, false) => b"fixable_fix",
             (false, true) => b"fixable_suggestion",
             (false, false) => b"none",
         };
-        let names = registry.names_of(meta);
-        let native = in_native_mode(registry, meta, &names.id);
         let modes = [
             (names.modes.native, &b"native"[..]),
             (names.modes.eslint, b"eslint"),

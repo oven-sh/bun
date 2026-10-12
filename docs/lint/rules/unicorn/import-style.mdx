@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Most modules can be imported in several ways. If one file writes `path.join()` and the next writes `join()`, the same function has two names in your project, and a search finds only half of its uses. This rule lets you choose the import styles for a module and reports the others.
+You can import most modules in several ways. If one file writes `path.join()` and the next writes `join()`, the same function has two names in your project, and a search finds only half of its uses. This rule lets you choose the import styles for a module and reports the others.
 
 There are four styles:
 
@@ -84,7 +84,7 @@ import React from "react";
 import { useState } from "react";
 ```
 
-What you set for `path`, `util` or `chalk` is added to the defaults. This allows a default import of `node:util` and still allows named imports. Add `"named": false` to forbid those.
+Anything you set for `path`, `util` or `chalk` is added to the defaults. This allows a default import of `node:util` and still allows named imports. Add `"named": false` to forbid those.
 
 {/* good {"options": [{"styles": {"node:util": {"default": true}}}]} */}
 ```js

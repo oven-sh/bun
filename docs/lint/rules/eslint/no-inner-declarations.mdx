@@ -14,7 +14,7 @@ deprecated: false
 
 Outside strict mode, a function declared inside an `if` or a loop is also visible after the block, but it only has a value once the block has run. Whether a call works depends on which branch was taken.
 
-In strict mode the function belongs to its block, like a `let`, so by default it is not reported there. Modules and class bodies are always strict. That leaves CommonJS files and scripts without `"use strict"`.
+In strict mode the function belongs to its block, like a `let`, so by default it isn't reported there. Modules and class bodies are always strict. That leaves CommonJS files and scripts without `"use strict"`.
 
 ## Examples
 
@@ -72,7 +72,7 @@ The first option says what to look at:
 | `"functions"` (default) | Report `function` declarations in nested blocks. |
 | `"both"` | Also report `var` declarations in nested blocks. |
 
-A `var` belongs to the whole function, whatever block it is written in:
+A `var` belongs to the whole function, no matter which block it's written in:
 
 {/* bad {"options": ["both"]} */}
 ```js
@@ -94,7 +94,7 @@ The second option is an object:
 | Option | Default | What it does |
 | --- | --- | --- |
 | `blockScopedFunctions` | `"allow"` | With `"disallow"`, report functions in nested blocks in strict mode too. |
-| `namespaces` | `"disallow"` | Only with an oxlint config, which reports declarations directly inside a TypeScript `namespace`. `"allow"` turns that off. |
+| `namespaces` | `"disallow"` | Only applies with an oxlint config, which reports declarations directly inside a TypeScript `namespace`. `"allow"` turns that off. |
 
 {/* bad {"options": ["functions", {"blockScopedFunctions": "disallow"}]} */}
 ```js

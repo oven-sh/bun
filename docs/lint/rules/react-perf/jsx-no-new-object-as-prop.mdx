@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`{}` written inside a component makes a new object on every render. Passed as a prop, it is never equal to the value from the last render, so a child wrapped in `React.memo` renders again even though the contents are the same.
+`{}` written inside a component makes a new object on every render. When you pass it as a prop, it's never equal to the value from the last render, so a child wrapped in `React.memo` renders again even though the contents are the same.
 
-The rule reports object literals, `Object()`, `new Object()`, `Object.assign()` and `Object.create()`. An object at the top level of a module is not reported, because it is created once.
+The rule reports object literals, `Object()`, `new Object()`, `Object.assign()` and `Object.create()`. An object at the top level of a module isn't reported, because it's created once.
 
 ## Examples
 
@@ -43,7 +43,7 @@ function Profile({ user }) {
 }
 ```
 
-A variable declared inside the component is as new as an object written in the prop, and so is the default of a destructured prop. The report is on the declaration:
+A variable declared inside the component has the same problem as an object written in the prop, and so does a destructured prop's default. The report is on the declaration:
 
 {/* bad {"count": 2} */}
 ```jsx
@@ -65,7 +65,7 @@ function Profile({ user }) {
 }
 ```
 
-If the object depends on props or state, keep it with `useMemo`:
+If the object depends on props or state, cache it with `useMemo`:
 
 {/* good */}
 ```jsx
@@ -81,9 +81,9 @@ function Profile({ user, size }) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `nativeAllowList` | `[]` | Props to skip on elements with a lowercase name, such as `<div>`. A list of prop names (case does not matter), or `"all"` for every prop. |
+| `nativeAllowList` | `[]` | Props to skip on elements with a lowercase name, such as `<div>`. A list of prop names (case doesn't matter), or `"all"` for every prop. |
 
-A DOM element does not compare its props to skip a render, so `style={{ .. }}` costs nothing there. With `{ "nativeAllowList": ["style"] }`, this is allowed:
+A DOM element doesn't compare its props to skip a render, so `style={{ .. }}` costs nothing there. With `{ "nativeAllowList": ["style"] }`, this is allowed:
 
 {/* good {"options": [{"nativeAllowList": ["style"]}]} */}
 ```jsx
@@ -92,7 +92,7 @@ function Banner() {
 }
 ```
 
-Other props of the element are still checked, and so is `style` on a component:
+The element's other props are still checked, and so is `style` on a component:
 
 {/* bad {"options": [{"nativeAllowList": ["style"]}], "count": 2} */}
 ```jsx

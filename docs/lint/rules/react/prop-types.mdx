@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A prop that a component reads but does not declare is invisible to whoever uses the component: nothing says that it exists, what type it has, or that it was misspelled.
+A prop that a component reads but doesn't declare is invisible to anyone who uses the component. Nothing says that it exists, what type it has, or that it was misspelled.
 
-A prop counts as declared if it is in the component's `propTypes` or in the TypeScript type of its props.
+A prop counts as declared if it's in the component's `propTypes` or in the TypeScript type of its props.
 
 ## Examples
 
@@ -64,9 +64,9 @@ function Greeting({ name }: Props) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignore` | `[]` | Names of props that are never reported. |
+| `ignore` | `[]` | Prop names that are never reported. |
 | `customValidators` | `[]` | Names of objects with your own validators, such as `Validators` in `Validators.shape()`. A prop declared with one of them accepts any nested property. |
-| `skipUndeclared` | `false` | Skip components that declare no props at all. |
+| `skipUndeclared` | `false` | Skip components that don't declare any props. |
 
 Not reported with `ignore: ["children"]`:
 
@@ -77,7 +77,7 @@ function Card({ children }) {
 }
 ```
 
-With `skipUndeclared`, the first component is skipped. The second one declares its props, so it is still checked:
+With `skipUndeclared`, the first component is skipped. The second one declares its props, so it's still checked:
 
 {/* bad {"options": [{"skipUndeclared": true}], "count": 1} */}
 ```jsx
@@ -94,7 +94,7 @@ Profile.propTypes = {
 };
 ```
 
-Properties of a prop are checked against `shape()`. Here `user.name` is not in the shape:
+The rule checks a prop's properties against `shape()`. Here `user.name` isn't in the shape:
 
 {/* bad */}
 ```jsx
@@ -122,4 +122,4 @@ Profile.propTypes = {
 
 ## When not to use it
 
-React 19 ignores `propTypes`. In a TypeScript project the compiler already rejects a prop that is not in the type, so this rule adds little there.
+React 19 ignores `propTypes`. In a TypeScript project the compiler already rejects a prop that isn't in the type, so this rule adds little there.

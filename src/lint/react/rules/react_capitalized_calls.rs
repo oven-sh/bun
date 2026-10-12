@@ -45,11 +45,18 @@ impl<const RULE: usize> CompilerRule<RULE> {
 
 impl<const RULE: usize> Rule for CompilerRule<RULE> {
     const META: Meta = {
-        let (name, _, kind, is_recommended) = RULES[RULE % RULES.len()];
+        let (name, category, kind, is_recommended) = RULES[RULE % RULES.len()];
+        // The plugin marks every compiler rule as fixable with suggestions. None of them fix, and only these three suggest.
+        let suggests = matches!(
+            category,
+            ErrorCategory::MemoDependencies | ErrorCategory::EffectExhaustiveDependencies | ErrorCategory::Syntax
+        );
         let of_plugin = Meta::plugin(Plugin::ReactHooks, name, Kind::Problem)
             .fixable(Fixable::Code)
             .has_suggestions()
+            .never_fixes()
             .reports_on_creation();
+        let of_plugin = if suggests { of_plugin } else { of_plugin.never_suggests() };
         match (Self::FLAVOR, is_recommended) {
             (Flavor::Oxlint, _) => Meta::oxlint(Plugin::React, name, kind),
             (Flavor::Eslint, true) => of_plugin.recommended(),

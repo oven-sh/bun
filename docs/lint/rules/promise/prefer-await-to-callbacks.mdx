@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-With callbacks, every step has to check `err` by hand and pass it on. A forgotten check drops the error, and `try`/`catch` around the call does not catch anything that happens later. With `await`, errors are thrown and the steps read from top to bottom.
+With callbacks, every step has to check `err` by hand and pass it on. A forgotten check drops the error, and `try`/`catch` around the call doesn't catch anything that happens later. With `await`, errors are thrown and the steps read from top to bottom.
 
 The rule goes by names. It reports:
 
-- a call of a function named `callback` or `cb`
+- a call to a function named `callback` or `cb`
 - a function with a last parameter named `callback` or `cb`
 - a function passed as the last argument, if its first parameter is named `err` or `error`
 

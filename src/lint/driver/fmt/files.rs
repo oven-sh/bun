@@ -8,6 +8,7 @@ use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
 use bun_collections::index_sort;
 use bun_core::strings;
+use bun_lint::glob::Picomatch;
 use bun_lint::linter::config::glob_refusal;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
@@ -80,7 +81,7 @@ pub(crate) enum Kind {
     Mdx,
     GraphQl,
     Handlebars,
-    /// For oxfmt, and where no configuration of Prettier counts.
+    /// Only with an oxfmt config or in native mode. Prettier doesn't format TOML.
     Toml,
     /// HTML, Vue, Angular templates, Lightning Web Components, MJML.
     Html(bun_format::html::Parser),
@@ -192,7 +193,7 @@ fn is_javascript_by_another_name(name: &[u8], extension: &[u8]) -> bool {
         || name.ends_with(b".end.frag")
 }
 
-/// What is TOML for oxfmt.
+/// Returns true for the file names oxfmt treats as TOML.
 pub(crate) fn is_toml(path: &[u8]) -> bool {
     let name = paths::basename(path);
     name.strip_suffix(b".toml").is_some_and(|it| !it.is_empty())
@@ -692,7 +693,7 @@ pub(crate) fn expand(
             None => match pattern.strip_prefix(b"!") {
                 Some(negative) => ignored.negative.push(glob_of_prettier(
                     negative.strip_prefix(b"./").unwrap_or(negative),
-                    false,
+                    Picomatch::FastGlob,
                 )),
                 None => entries.push((Entry::Pattern, pattern, &written[..])),
             },
@@ -740,7 +741,7 @@ pub(crate) fn expand(
             Entry::Pattern => {
                 // `removeLeadingDotSegment` of `fast-glob`
                 let pattern = input.strip_prefix(b"./").unwrap_or(&input);
-                let glob = glob_of_prettier(pattern, false);
+                let glob = glob_of_prettier(pattern, Picomatch::FastGlob);
                 let parent = bun_glob::scan::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);
                 if parent != b"." {

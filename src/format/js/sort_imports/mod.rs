@@ -28,7 +28,7 @@ enum How {
     Trivago(trivago::Options),
     Ianvs(ianvs::Options),
     Oxfmt(oxfmt::Options),
-    /// `sortImports` of `[format]` in bunfig.toml: oxfmt's, and `native.rs`.
+    /// `sortImports` from bunfig.toml or `--sort-imports`. Runs oxfmt's sorter plus `native.rs`.
     Native(oxfmt::Options),
     Organize(organize::Options),
 }
@@ -47,8 +47,8 @@ impl SortImports {
         matches!(self.how, How::Oxfmt(_) | How::Native(_))
     }
 
-    /// Whether `after`, which is what [`sorted_text`] has made of `before`, still imports what that does. Of a plugin
-    /// of Prettier nothing is known.
+    /// Checks that `after`, the parsed output of [`sorted_text`], still imports what `before` does. Always true for the
+    /// Prettier plugins, which may remove imports on purpose.
     pub fn keeps_imports<'a, 'b>(&self, before: &'a File<'a>, after: &'b File<'b>) -> bool {
         !matches!(self.how, How::Native(_)) || native::keeps_imports(before, after)
     }

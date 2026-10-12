@@ -16,6 +16,8 @@ A project often has modules that some code shouldn't load, like a package that's
 
 The rule does nothing until you give it names. It only looks at `require()` with a fixed string. For `import`, use `no-restricted-imports`.
 
+ESLint has deprecated this rule. Its replacement, `n/no-restricted-require` from `eslint-plugin-n`, isn't built into `bun lint`.
+
 ## Examples
 
 ```toml bunfig.toml

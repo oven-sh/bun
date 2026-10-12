@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-React does not track refs. Changing `ref.current` does not cause a render, so output that depends on it goes stale. And because React can render a component more than once or throw a render away, a write during render can happen too often or for a render that never reaches the screen.
+React doesn't track refs. Changing `ref.current` doesn't cause a render, so output that depends on it goes stale. And because React can render a component more than once or throw a render away, a write during render can happen too often or for a render that never reaches the screen.
 
 Read and write `ref.current` in event handlers and effects. For a value that the output depends on, use state.
 

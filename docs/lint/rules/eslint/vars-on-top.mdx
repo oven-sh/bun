@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `var` belongs to the whole function, wherever it is written. Inside an `if` or a loop it looks local to that block, but it exists, as `undefined`, from the first line of the function. Writing every `var` at the top shows the scope the variable really has.
+A `var` belongs to the whole function, no matter where it's written. Inside an `if` or a loop it looks local to that block, but it exists, as `undefined`, from the first line of the function. Writing every `var` at the top shows the scope the variable really has.
 
-A `var` is at the top if only other variable declarations come before it. Directives such as `"use strict"` and `import` declarations may come first. A `var` in a block, or in the head of a `for` loop, is always reported. `let` and `const` are not checked.
+A `var` is at the top if only other variable declarations come before it. Directives such as `"use strict"` and `import` declarations may come first. A `var` in a block, or in a `for` loop's head, is always reported. `let` and `const` aren't checked.
 
 ## Examples
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A Zod schema at the top level of a module is built as soon as the module is imported, even if nothing is ever validated with it. With hundreds of schemas, that makes every start slower.
+A Zod schema at the top level of a module is built as soon as the module is imported, even if you never validate anything with it. With hundreds of schemas, that makes every start slower.
 
-The rule reports a chain of calls that starts with `z`, where `z` is imported or global, if it runs while the module loads. That includes static class fields and functions that are called where they are written. A schema inside another schema is not reported again.
+The rule reports a chain of calls that starts with `z`, where `z` is imported or global, if it runs while the module loads. That includes static class fields and functions that are called where they're written. A schema inside another schema isn't reported again.
 
 ## Examples
 
@@ -46,7 +46,7 @@ export function userSchema() {
 }
 ```
 
-`z.lazy()` builds nothing until it is used, so it is allowed:
+`z.lazy()` doesn't build anything until it's used, so it's allowed:
 
 {/* good */}
 ```ts
@@ -59,9 +59,9 @@ export const Comment = z.lazy(() => z.object({ text: z.string() }));
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `roots` | `["z"]` | The names that a schema starts with, such as the `z` of `z.object()`. |
-| `methods` | `[]` | Methods that build a schema, whatever they are called on, such as `extend`. |
-| `factorySuffix` | none | Also report calls to functions with a name that ends in this string. |
+| `roots` | `["z"]` | The names that a schema starts with, such as the `z` in `z.object()`. |
+| `methods` | `[]` | Methods that build a schema, no matter what they're called on, such as `extend`. |
+| `factorySuffix` | none | Also report calls to functions whose name ends in this string. |
 | `lazyWrapper` | none | The name of your helper that builds a schema on first use. The message then shows how to call it. |
 
 {/* bad {"options": [{"roots": ["v"]}]} */}
@@ -85,7 +85,7 @@ import { createUserSchema } from "./user";
 export const User = createUserSchema();
 ```
 
-`lazyWrapper` does not change what is reported. A schema in a function that you pass to a helper is allowed with or without it:
+`lazyWrapper` doesn't change what's reported. A schema in a function that you pass to a helper is allowed with or without it:
 
 {/* good {"options": [{"lazyWrapper": "once"}]} */}
 ```ts
@@ -97,4 +97,4 @@ export const user = once(() => z.object({ name: z.string() }));
 
 ## When not to use it
 
-In a small program, or a server that starts once and runs for days, the time to build the schemas does not matter.
+In a small program, or a server that starts once and runs for days, the time to build the schemas doesn't matter.

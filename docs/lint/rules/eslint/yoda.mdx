@@ -73,14 +73,14 @@ if (value < 0 || 100 < value) {
 }
 ```
 
-Without parentheses around the test it is still reported:
+Without parentheses around the test it's still reported:
 
 {/* bad {"options": ["never", {"exceptRange": true}]} */}
 ```js
 const isPercent = 0 <= value && value <= 100;
 ```
 
-With `onlyEquality`, this is not reported:
+With `onlyEquality`, this isn't reported:
 
 {/* good {"options": ["never", {"onlyEquality": true}]} */}
 ```js

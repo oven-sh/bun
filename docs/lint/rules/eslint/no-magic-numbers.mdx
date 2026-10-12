@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A bare number in the middle of an expression does not say what it stands for. If the same number is used in several places, you have to find and change each one. A named constant explains the number and keeps it in one place.
+A bare number in the middle of an expression doesn't tell you what it stands for. If the same number is used in several places, you have to find and change each one. A named constant explains the number and keeps it in one place.
 
 Not reported: the number a variable is declared with, the values in an object literal, a number assigned to a property, the second argument of `parseInt()`, and numbers in JSX. Everything else is reported, including `0` and `1`.
 
@@ -57,11 +57,11 @@ const grid = <Grid columns={3} />;
 | --- | --- | --- |
 | `ignore` | `[]` | Numbers that are never reported. Write a `bigint` as a string: `"100n"`. |
 | `ignoreArrayIndexes` | `false` | Allow a number as an index: `items[0]`. |
-| `ignoreDefaultValues` | `false` | Allow a number as a default value of a parameter or in destructuring. |
+| `ignoreDefaultValues` | `false` | Allow a number as a default value for a parameter or in destructuring. |
 | `ignoreClassFieldInitialValues` | `false` | Allow a number as the initial value of a class field. |
-| `enforceConst` | `false` | Report a variable that is declared with a number and is not a `const`. |
+| `enforceConst` | `false` | Report a variable that's declared with a number and isn't a `const`. |
 | `detectObjects` | `false` | Also report numbers in object literals and numbers assigned to a property. |
-| `ignoreEnums` | `false` | TypeScript: allow numbers in the members of an `enum`. |
+| `ignoreEnums` | `false` | TypeScript: allow numbers in `enum` members. |
 | `ignoreNumericLiteralTypes` | `false` | TypeScript: allow numbers in a type alias such as `type Dice = 1 \| 2`. |
 | `ignoreReadonlyClassProperties` | `false` | TypeScript: allow numbers in `readonly` class properties. |
 | `ignoreTypeIndexes` | `false` | TypeScript: allow a number as the index of a type: `Row[0]`. |
@@ -99,7 +99,7 @@ const server = { port: 8080 };
 server.timeout = 5000;
 ```
 
-The same for TypeScript. Each of these lines is reported by default:
+The same goes for TypeScript. Each of these lines is reported by default:
 
 {/* bad {"count": 5} */}
 ```ts
@@ -119,4 +119,4 @@ type First = Row[0];
 
 ## When not to use it
 
-Code that is full of numbers with an obvious meaning, such as math, geometry or test data, gets a report on nearly every line.
+Code that's full of numbers with an obvious meaning, such as math, geometry or test data, gets a report on nearly every line.

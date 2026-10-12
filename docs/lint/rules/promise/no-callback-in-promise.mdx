@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-If a callback throws while it runs inside `then()` or `catch()`, the error does not reach the caller. The promise turns it into a rejection. In the example below, if `callback` throws in the `then()`, the `catch()` calls it a second time with that error.
+If a callback throws while it runs inside `then()` or `catch()`, the error doesn't reach the caller. The promise turns it into a rejection. In the example below, if `callback` throws in the `then()`, the `catch()` calls it a second time with that error.
 
-A callback is a function named `callback`, `cb`, `done` or `next`. Inside a function given to `then()` or `catch()`, the rule reports calling one and passing one as the first argument of another call. It also reports `.then(callback)` and `.catch(callback)`.
+A callback is a function named `callback`, `cb`, `done` or `next`. Inside a function passed to `then()` or `catch()`, the rule reports calling one, and passing one as the first argument to another call. It also reports `.then(callback)` and `.catch(callback)`.
 
-A callback scheduled with `setImmediate`, `setTimeout`, `requestAnimationFrame` or `nextTick` runs after the promise handler has returned, so it is not reported.
+A callback scheduled with `setImmediate`, `setTimeout`, `requestAnimationFrame` or `nextTick` runs after the promise handler has returned, so it isn't reported.
 
 ## Examples
 
@@ -51,7 +51,7 @@ function getUser(id, callback) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `exceptions` | `[]` | Names from the list above that are not callbacks in your code. |
+| `exceptions` | `[]` | Names from the list above that aren't callbacks in your code. |
 | `timeoutsErr` | `false` | Also report callbacks scheduled with `setImmediate`, `setTimeout`, `requestAnimationFrame` or `nextTick`. |
 
 {/* good {"options": [{"exceptions": ["next"]}]} */}

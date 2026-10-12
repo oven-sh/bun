@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A component defined inside another component is a new function on every render of the parent. React compares components by identity, so it sees a different component each time: it removes the old DOM nodes, builds new ones, and throws away the state of everything below. Inputs lose focus and their text, and effects run again.
+A component defined inside another component is a new function every time the parent renders. React compares components by identity, so it sees a different component each time. It removes the old DOM nodes, builds new ones, and throws away the state of everything below. Inputs lose focus and their text, and effects run again.
 
 Move the inner component to the top level of the file and pass it what it needs as props.
 
@@ -65,7 +65,7 @@ function UserList({ users }) {
 }
 ```
 
-A function passed as `children`, or in a prop with a name that starts with `render`, counts as a render prop. The receiver calls it as a plain function, so nothing is remounted:
+A function passed as `children`, or in a prop whose name starts with `render`, counts as a render prop. The receiver calls it as a plain function, so nothing is remounted:
 
 {/* good */}
 ```jsx
@@ -78,8 +78,8 @@ function Page() {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowAsProps` | `false` | Allow a component that is created in a prop. |
-| `propNamePattern` | `"render*"` | A glob for the names of props that are render props. |
+| `allowAsProps` | `false` | Allow a component that's created in a prop. |
+| `propNamePattern` | `"render*"` | A glob that matches the names of render props. |
 | `customValidators` | `[]` | Accepted, but has no effect. |
 
 {/* good {"options": [{"allowAsProps": true}]} */}

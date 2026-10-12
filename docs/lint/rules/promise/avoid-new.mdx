@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-With `new Promise()` you settle the promise by hand. A path that calls neither `resolve` nor `reject` leaves a promise that never settles, and whoever awaits it waits forever. An `async` function, or an API that already returns a promise, settles it for you.
+With `new Promise()`, you settle the promise by hand. A path that doesn't call `resolve` or `reject` leaves a promise that never settles, and anything that awaits it waits forever. An `async` function, or an API that already returns a promise, settles it for you.
 
-Only the global `Promise` counts. `Promise.resolve()`, `Promise.all()` and the other static methods are not reported.
+Only the global `Promise` counts. `Promise.resolve()`, `Promise.all()` and the other static methods aren't reported.
 
 ## Examples
 

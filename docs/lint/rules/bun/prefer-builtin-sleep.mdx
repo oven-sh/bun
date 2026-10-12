@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`new Promise(resolve => setTimeout(resolve, ms))` takes a moment to read, and all it does is wait. `Bun.sleep(ms)` does the same and says so. `setTimeout(ms)` from `node:timers/promises` does too.
+`new Promise(resolve => setTimeout(resolve, ms))` takes a moment to read, and all it does is wait. `Bun.sleep(ms)` does the same thing and says so. `setTimeout(ms)` from `node:timers/promises` does too.
 
 `--fix-suggestions` replaces the promise with `Bun.sleep(ms)`.
 
@@ -48,7 +48,7 @@ import { setTimeout } from "node:timers/promises";
 await setTimeout(500);
 ```
 
-A promise that does more than wait is not reported. This one resolves with a value:
+A promise that does more than wait isn't reported. This one resolves with a value:
 
 {/* good */}
 ```js
@@ -57,4 +57,4 @@ const answer = await new Promise(resolve => setTimeout(() => resolve("timed out"
 
 ## When not to use it
 
-`Bun.sleep()` only exists in Bun, and `node:timers/promises` does not exist in browsers. Turn the rule off for code that also runs in a browser.
+`Bun.sleep()` only exists in Bun, and `node:timers/promises` doesn't exist in browsers. Turn the rule off for code that also runs in a browser.

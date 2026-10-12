@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`import { formatDate } from "./dates"` fails when the module loads if `./dates` has no export with that name. The usual causes are a typo, a rename that missed a file, or braces around what is really the default export.
+`import { formatDate } from "./dates"` fails when the module loads if `./dates` has no export with that name. The usual causes are a typo, a rename that missed a file, or braces around something that's really the default export.
 
-The rule reads the imported file and follows its `export * from` lines. It also checks `export { name } from`. It reports nothing if the file cannot be found, or if it has no `import` or `export` at all, as in a CommonJS module. Type-only imports are not checked.
+The rule reads the imported file and follows its `export * from` lines. It also checks `export { name } from`. It doesn't report anything if the file can't be found, or if it has no `import` or `export` at all, like a CommonJS module. Type-only imports aren't checked.
 
-JavaScript and TypeScript files are read, JSX included. With an ESLint config only `.js`, `.mjs` and `.cjs` files are, unless `settings["import/extensions"]` lists others.
+It reads JavaScript and TypeScript files, including JSX. With an ESLint config it only reads `.js`, `.mjs` and `.cjs` files, unless `settings["import/extensions"]` lists others.
 
 ## Examples
 
@@ -79,4 +79,4 @@ const { parseDate } = require("./dates.js");
 
 ## When not to use it
 
-TypeScript already reports an import of a name that is not exported. In a type-checked project, this rule finds nothing new.
+TypeScript already reports an import of a name that isn't exported. In a type-checked project, this rule doesn't find anything new.

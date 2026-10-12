@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A property that has a setter and no getter can be written but never read: `user.name = "Ada"` works, and `user.name` is `undefined`. Most of the time the getter was forgotten.
+A property with a setter and no getter can be written but never read. `user.name = "Ada"` works, but `user.name` is `undefined`. Most of the time, someone forgot the getter.
 
-The rule looks at object literals, classes, and the descriptors passed to `Object.defineProperty()`, `Object.defineProperties()`, `Object.create()` and `Reflect.defineProperty()`. A getter without a setter is a read-only property, so it is allowed by default.
+The rule looks at object literals, classes, and the descriptors passed to `Object.defineProperty()`, `Object.defineProperties()`, `Object.create()` and `Reflect.defineProperty()`. A getter without a setter is a read-only property, so it's allowed by default.
 
 ## Examples
 

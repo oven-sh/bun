@@ -14,9 +14,9 @@ deprecated: false
 
 The code that calls a callback ignores what it returns. Nobody awaits a promise started inside one, so a rejection goes unhandled, and the code now reports errors in two different ways.
 
-A function counts as a callback if its first parameter is named `err` or `error`. Inside one, the rule reports calls of `then()`, `catch()`, `finally()` and of static methods such as `Promise.all()`.
+A function counts as a callback if its first parameter is named `err` or `error`. Inside one, the rule reports calls to `then()`, `catch()`, `finally()` and static methods such as `Promise.all()`.
 
-A call that is the value of a `return` statement is not reported. A function passed to `then()` or `catch()` does not count as a callback, whatever its first parameter is called.
+A call that's the value of a `return` statement isn't reported. A function passed to `then()` or `catch()` doesn't count as a callback, no matter what its first parameter is called.
 
 ## Examples
 
@@ -49,7 +49,7 @@ upload(draft).catch(err => retry(draft).then(notify));
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `exemptDeclarations` | `false` | Do not treat function declarations as callbacks, only function expressions and arrow functions. |
+| `exemptDeclarations` | `false` | Don't treat function declarations as callbacks, only function expressions and arrow functions. |
 
 {/* bad */}
 ```js

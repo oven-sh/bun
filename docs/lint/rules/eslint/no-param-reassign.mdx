@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-After `price = price * 1.2`, the name `price` no longer holds what the caller passed, and a reader further down the function has to notice that. In a function that is not in strict mode, the assignment also changes `arguments[0]`.
+After `price = price * 1.2`, the name `price` no longer holds what the caller passed, and anyone reading further down the function has to notice that. In a function that isn't in strict mode, the assignment also changes `arguments[0]`.
 
 Use a new variable for the new value.
 
@@ -43,8 +43,8 @@ function total(price, count) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `props` | `false` | Also report a change to a property of a parameter: an assignment, `++`, `--`, `delete`, or use as the variable of a `for...in` or `for...of` loop. |
-| `ignorePropertyModificationsFor` | `[]` | With `props`: names of parameters that may have their properties changed. |
+| `props` | `false` | Also report a change to a parameter's property: an assignment, `++`, `--`, `delete`, or use as the variable of a `for...in` or `for...of` loop. |
+| `ignorePropertyModificationsFor` | `[]` | With `props`: names of parameters whose properties can be changed. |
 | `ignorePropertyModificationsForRegex` | `[]` | With `props`: the same, as regular expressions. |
 
 By default, changing a property is allowed:
@@ -56,7 +56,7 @@ function activate(user) {
 }
 ```
 
-With `{ props: true }`, it is reported, because the caller's object changes:
+With `{ props: true }`, it's reported, because the caller's object changes:
 
 {/* bad {"options": [{"props": true}], "count": 2} */}
 ```js

@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A mistake in a regular expression literal is a syntax error, so you see it at once. A pattern passed to `RegExp` as a string is only checked when that line runs, and then it throws a `SyntaxError`. This rule checks the string ahead of time.
+A mistake in a regular expression literal is a syntax error, so you see it right away. A pattern passed to `RegExp` as a string is only checked when that line runs, and then it throws a `SyntaxError`. This rule checks the string ahead of time.
 
 Only string literals are checked. If the pattern or the flags come from a variable, that part is skipped.
 
@@ -43,7 +43,7 @@ const search = new RegExp(pattern, flags);
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowConstructorFlags` | `[]` | Extra flags to accept, one letter each, for a runtime that knows flags the standard does not have. Case matters. |
+| `allowConstructorFlags` | `[]` | Extra flags to accept, one letter each, for a runtime that supports flags the standard doesn't have. Case matters. |
 
 {/* good {"options": [{"allowConstructorFlags": ["x"]}]} */}
 ```js

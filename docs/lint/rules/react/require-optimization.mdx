@@ -14,7 +14,7 @@ deprecated: false
 
 A class component renders again each time its parent renders, even if its props and state are the same. `shouldComponentUpdate` lets it skip those renders. `React.PureComponent` does the comparison for you.
 
-Function components are not checked. A `createReactClass` component also passes if `PureRenderMixin` is in its `mixins`.
+The rule doesn't check function components. A `createReactClass` component also passes if `PureRenderMixin` is in its `mixins`.
 
 ## Examples
 
@@ -53,7 +53,7 @@ class Cell extends React.Component {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowDecorators` | `[]` | Names of decorators that add `shouldComponentUpdate`. A class with one of them is not reported. |
+| `allowDecorators` | `[]` | Names of decorators that add `shouldComponentUpdate`. A class with one of them isn't reported. |
 
 Not reported with `allowDecorators: ["pureRender"]`:
 

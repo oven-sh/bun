@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-Some members of a union or an intersection do not do what they look like they do. `"draft" | string` is `string`: the editor no longer suggests `"draft"`, and a typo in it is accepted. `User | any` is `any`, so nothing about it is checked.
+Some members of a union or an intersection don't do what they look like they do. `"draft" | string` is `string`, so the editor no longer suggests `"draft"`, and a typo in it is accepted. `User | any` is `any`, so nothing about it is checked.
 
 | Written | What TypeScript makes of it |
 | --- | --- |
@@ -25,7 +25,7 @@ Some members of a union or an intersection do not do what they look like they do
 
 `T | never` is allowed as the return type of a function.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag it's on by default in TypeScript files.
 
 ## Examples
 
@@ -68,7 +68,7 @@ type Id = number;
 type Key = Id | 0;
 ```
 
-A type that cannot be resolved acts as `any`, so it is reported too. Here `./missing` does not exist:
+A type that can't be resolved acts as `any`, so it's reported too. Here `./missing` doesn't exist:
 
 {/* bad */}
 ```ts

@@ -384,19 +384,19 @@ description: "Every rule built into bun lint"
 | --- | --- | --- | --- | --- |
 | [`react-hooks/capitalized-calls`](/lint/rules/react/capitalized-calls) | Disallow calling a function with a capitalized name from a component or a hook |  |  |  |
 | [`react-hooks/component-hook-factories`](/lint/rules/react/component-hook-factories) | Deprecated: reports nothing, and is kept so that older configs still load |  |  |  |
-| [`react-hooks/config`](/lint/rules/react/config) | Report an invalid configuration of the React Compiler |  | yes |  |
+| [`react-hooks/config`](/lint/rules/react/config) | Report an invalid configuration of the React Compiler |  |  |  |
 | [`react-hooks/error-boundaries`](/lint/rules/react/error-boundaries) | Disallow JSX inside a `try` block, where `catch` cannot see rendering errors |  |  |  |
 | [`react-hooks/exhaustive-deps`](/lint/rules/react/exhaustive-deps) | Require the dependency array of a hook to list every value its callback reads | warn | yes |  |
-| [`react-hooks/exhaustive-effect-dependencies`](/lint/rules/react/exhaustive-effect-dependencies) | Require the dependency array of an effect to match what the effect reads |  |  |  |
-| [`react-hooks/fbt`](/lint/rules/react/fbt) | Reserved for problems with `fbt` translations in the React Compiler: reports nothing |  | yes |  |
-| [`react-hooks/gating`](/lint/rules/react/gating) | Validate the directive that puts a compiled component behind a feature flag |  | yes |  |
+| [`react-hooks/exhaustive-effect-dependencies`](/lint/rules/react/exhaustive-effect-dependencies) | Require the dependency array of an effect to match what the effect reads |  | suggestion |  |
+| [`react-hooks/fbt`](/lint/rules/react/fbt) | Reserved for problems with `fbt` translations in the React Compiler: reports nothing |  |  |  |
+| [`react-hooks/gating`](/lint/rules/react/gating) | Validate the directive that puts a compiled component behind a feature flag |  |  |  |
 | [`react-hooks/globals`](/lint/rules/react/globals) | Disallow reassigning variables declared outside a component or hook during render |  |  |  |
 | [`react-hooks/hooks`](/lint/rules/react/hooks) | Require hooks to be called at the top level of a component or hook, never conditionally |  |  |  |
 | [`react-hooks/immutability`](/lint/rules/react/immutability) | Disallow modifying props, state, and other values that React expects to stay unchanged |  |  |  |
 | [`react-hooks/incompatible-library`](/lint/rules/react/incompatible-library) | Report calls to library APIs that the React Compiler cannot memoize safely |  |  |  |
 | [`react-hooks/invariant`](/lint/rules/react/invariant) | Report code that makes the React Compiler fail one of its internal checks |  |  |  |
-| [`react-hooks/memo-dependencies`](/lint/rules/react/memo-dependencies) | Require the dependency list of `useMemo` and `useCallback` to match what the callback reads |  |  |  |
-| [`react-hooks/memoized-effect-dependencies`](/lint/rules/react/memoized-effect-dependencies) | Require the dependencies of an effect to be memoized |  | yes |  |
+| [`react-hooks/memo-dependencies`](/lint/rules/react/memo-dependencies) | Require the dependency list of `useMemo` and `useCallback` to match what the callback reads |  | suggestion |  |
+| [`react-hooks/memoized-effect-dependencies`](/lint/rules/react/memoized-effect-dependencies) | Require the dependencies of an effect to be memoized |  |  |  |
 | [`react-hooks/no-deriving-state-in-effects`](/lint/rules/react/no-deriving-state-in-effects) | Disallow effects that only compute state from props or other state |  |  |  |
 | [`react-hooks/preserve-manual-memoization`](/lint/rules/react/preserve-manual-memoization) | Disallow `useMemo` and `useCallback` calls that React Compiler cannot keep memoized |  |  |  |
 | [`react-hooks/purity`](/lint/rules/react/purity) | Disallow calls such as `Math.random()` and `Date.now()` while a component renders |  |  |  |
@@ -406,7 +406,7 @@ description: "Every rule built into bun lint"
 | [`react-hooks/set-state-in-effect`](/lint/rules/react/set-state-in-effect) | Disallow calling a state setter directly in the body of an effect |  |  |  |
 | [`react-hooks/set-state-in-render`](/lint/rules/react/set-state-in-render) | Disallow calling a state setter unconditionally while a component renders |  |  |  |
 | [`react-hooks/static-components`](/lint/rules/react/static-components) | Disallow components that are created while another component renders |  |  |  |
-| [`react-hooks/syntax`](/lint/rules/react/syntax) | Disallow invalid JavaScript in components and hooks, such as assigning to a `const` |  |  |  |
+| [`react-hooks/syntax`](/lint/rules/react/syntax) | Disallow invalid JavaScript in components and hooks, such as assigning to a `const` |  | suggestion |  |
 | [`react-hooks/todo`](/lint/rules/react/todo) | Report valid syntax that the React Compiler does not support yet |  |  |  |
 | [`react-hooks/unsupported-syntax`](/lint/rules/react/unsupported-syntax) | Disallow syntax that the React Compiler cannot compile, such as `eval()` |  |  |  |
 | [`react-hooks/use-memo`](/lint/rules/react/use-memo) | Require `useMemo()` callbacks to take no parameters, be synchronous, and not reassign outer variables |  |  |  |

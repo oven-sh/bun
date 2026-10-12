@@ -16,7 +16,7 @@ A character class such as `[ab]` matches one code point from the list. Many thin
 
 The rule checks regular expression literals and the patterns given to `RegExp(...)` and `new RegExp(...)`.
 
-`--fix-suggestions` adds the `u` flag where that is all that is missing and the pattern stays valid with it.
+`--fix-suggestions` adds the `u` flag when that's all that's missing and the pattern stays valid with it.
 
 This rule is on by default.
 
@@ -55,7 +55,7 @@ const isFlag = /^(?:🇯🇵|🇩🇪)$/u;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowEscape` | `false` | Do not report code points that are written as escapes, such as `\u0301`. The escape shows that you meant a separate code point. |
+| `allowEscape` | `false` | Don't report code points that are written as escapes, such as `\u0301`. The escape shows that you meant a separate code point. |
 
 {/* bad */}
 ```js

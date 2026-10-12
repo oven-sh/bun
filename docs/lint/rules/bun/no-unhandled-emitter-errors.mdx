@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When an event emitter emits `error` and nobody listens for it, the error is thrown instead. A `try` around the call does not catch it, because it happens later. So `spawn("gti")` with a typo, or `createReadStream()` on a file that is gone, ends the whole process.
+When an event emitter emits `error` and nobody listens for it, the error is thrown instead. A `try` around the call doesn't catch it, because it happens later. So `spawn("gti")` with a typo, or `createReadStream()` on a file that's gone, ends the whole process.
 
 The rule looks at what these functions return:
 
@@ -38,7 +38,7 @@ child.stdout.on("data", show);
 child.on("exit", done);
 ```
 
-`pipe()` does not pass errors on, so the source still needs a listener:
+`pipe()` doesn't pass errors on, so the source still needs a listener:
 
 {/* bad */}
 ```js
@@ -66,7 +66,7 @@ import { createReadStream } from "node:fs";
 createReadStream(file).on("error", fail).pipe(response);
 ```
 
-An emitter that is returned, exported or passed to another function is not reported, because the listener may be added there. `pipeline()` handles the errors of its streams:
+An emitter that's returned, exported or passed to another function isn't reported, because the listener might be added there. `pipeline()` handles its streams' errors:
 
 {/* good */}
 ```js
@@ -86,7 +86,7 @@ export const log = createReadStream("app.log");
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `factories` | `[]` | More functions that return an emitter, checked in addition to the table above. Each entry is `{ module, names }`: the import specifier and the names of the functions. Without `names`, the default export is the function. |
+| `factories` | `[]` | More functions that return an emitter, checked in addition to the table above. Each entry is `{ module, names }`, with the import specifier and the function names. Without `names`, the default export is the function. |
 
 ```toml bunfig.toml
 [lint.rules]

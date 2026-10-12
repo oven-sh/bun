@@ -219,7 +219,7 @@ impl Globs {
         };
         let mut result = GlobResult::None;
         for (is_negated, pattern) in &self.patterns {
-            if bun_glob::matcher::match_on::<false>(pattern, source).matches() {
+            if bun_glob::matcher::match_on::<false>(&bun_glob::pattern::of_fast_glob(pattern), source).matches() {
                 result = if *is_negated { GlobResult::Whitelist } else { GlobResult::Found };
                 if *is_negated && self.is_each_a_group {
                     break;

@@ -14,9 +14,9 @@ deprecated: false
 
 `import save from "./storage"` asks for the default export of `./storage`. If that file only has named exports, the import fails when the module loads, or a bundler gives you `undefined`. The usual cause is missing braces.
 
-The rule reads the imported file. It reports nothing if the file cannot be found, or if it has no `import` or `export` at all, as in a CommonJS module.
+The rule reads the imported file. It doesn't report anything if the file can't be found, or if it has no `import` or `export` at all, like a CommonJS module.
 
-JavaScript and TypeScript files are read, JSX included. With an ESLint config only `.js`, `.mjs` and `.cjs` files are, unless `settings["import/extensions"]` lists others.
+It reads JavaScript and TypeScript files, including JSX. With an ESLint config it only reads `.js`, `.mjs` and `.cjs` files, unless `settings["import/extensions"]` lists others.
 
 ## Examples
 

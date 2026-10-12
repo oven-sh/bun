@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A prop called `open` could be a flag, a callback, or a label. `isOpen` can only be a flag. This rule checks the names of the props that a component declares as boolean, in `propTypes` or in a TypeScript type.
+A prop called `open` could be a flag, a callback, or a label. `isOpen` can only be a flag. This rule checks the names of the props a component declares as boolean, in `propTypes` or in a TypeScript type.
 
-The rule checks nothing until you give it an options object. An empty one, `{}`, turns on the default pattern.
+The rule doesn't check anything until you give it an options object. An empty one, `{}`, turns on the default pattern.
 
 ## Examples
 
@@ -81,7 +81,7 @@ function Dialog({ shouldAnimate }) {
 Dialog.propTypes = { shouldAnimate: PropTypes.bool };
 ```
 
-With `propTypeNames`, a validator of your own counts as boolean too:
+With `propTypeNames`, your own validator counts as boolean too:
 
 {/* bad {"options": [{"propTypeNames": ["bool", "mutuallyExclusiveTrueProps"]}]} */}
 ```jsx
@@ -91,7 +91,7 @@ function Dialog({ modal }) {
 Dialog.propTypes = { modal: mutuallyExclusiveTrueProps };
 ```
 
-With `validateNested`, the fields of a shape are checked:
+With `validateNested`, a shape's fields are checked:
 
 {/* bad {"options": [{"validateNested": true}]} */}
 ```jsx

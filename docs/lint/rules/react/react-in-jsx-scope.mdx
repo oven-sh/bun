@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-With the classic JSX transform, `<App />` compiles to `React.createElement(App)`. If the file does not import `React`, that line throws `ReferenceError: React is not defined` when it runs.
+With the classic JSX transform, `<App />` compiles to `React.createElement(App)`. If the file doesn't import `React`, that line throws `ReferenceError: React is not defined` when it runs.
 
 If the file has a `@jsx` comment, or your ESLint config sets `settings.react.pragma`, the rule looks for that name instead of `React`.
 
@@ -50,4 +50,4 @@ export function App() {
 
 ## When not to use it
 
-Turn it off if you use the automatic JSX transform (`"jsx": "react-jsx"` in `tsconfig.json`), which is what Bun does by default. That transform imports what it needs by itself, so `React` does not have to be in scope.
+Turn it off if you use the automatic JSX transform (`"jsx": "react-jsx"` in `tsconfig.json`), which is what Bun does by default. That transform imports what it needs by itself, so `React` doesn't need to be in scope.

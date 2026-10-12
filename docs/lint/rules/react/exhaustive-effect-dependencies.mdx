@@ -7,7 +7,7 @@ aliases: ["react_hooks/exhaustive-effect-dependencies","react/exhaustive-effect-
 kind: "problem"
 category: "suspicious"
 default: "off"
-fixable: "no"
+fixable: "suggestion"
 typeAware: false
 deprecated: false
 ---
@@ -15,6 +15,8 @@ deprecated: false
 An effect runs again only when something in its dependency array changes. If the effect reads a value that's missing from the array, it doesn't run when that value changes and keeps working with the old one. If the array lists a value the effect never reads, the effect runs more often than it needs to.
 
 This check comes from the React Compiler, which works out what each effect in a component or hook depends on and compares that with your array.
+
+In `.ts` and `.tsx` files, the report comes with a suggestion that rewrites the array, which your editor can apply.
 
 With an ESLint config the rule reports nothing, because `eslint-plugin-react-hooks` leaves this compiler check switched off. Use `react-hooks/exhaustive-deps` there.
 

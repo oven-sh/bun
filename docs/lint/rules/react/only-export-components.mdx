@@ -14,7 +14,7 @@ deprecated: false
 
 Fast Refresh swaps an edited component into the running page and keeps its state. It can only do that for a file where every export is a component. If the file also exports a function, an object, or a context, each edit reloads the whole page and the state is lost.
 
-Only `.jsx` and `.tsx` files are checked. Files with `.test.`, `.spec.`, `.cy.`, or `.stories.` in their name are skipped. An export counts as a component if its name starts with a capital letter and its value can be one, such as a function, a class that extends `Component`, or a call of `memo`, `forwardRef`, or `lazy`.
+The rule only checks `.jsx` and `.tsx` files. It skips files with `.test.`, `.spec.`, `.cy.`, or `.stories.` in their name. An export counts as a component if its name starts with a capital letter and its value can be one, such as a function, a class that extends `Component`, or a call to `memo`, `forwardRef`, or `lazy`.
 
 ## Examples
 
@@ -31,7 +31,7 @@ export function Price({ cents }) {
 }
 ```
 
-A component without a name, `export *`, a context next to a component, and a component in a file that exports no component are reported too:
+The rule also reports a component without a name, `export *`, a context next to a component, and a component in a file that doesn't export any components:
 
 {/* bad */}
 ```jsx
@@ -89,7 +89,7 @@ export const Total = memo(function Total({ cents }) {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `allowConstantExport` | `false` | Allow exports of strings, numbers, booleans, templates, and expressions like `60 * 1000`. |
-| `allowExportNames` | `[]` | Names that a file may always export, such as `loader` or `meta` in a framework's route files. |
+| `allowExportNames` | `[]` | Names that a file can always export, such as `loader` or `meta` in a framework's route files. |
 | `allowCompoundComponents` | `false` | Treat an object where every property is a component as a component. |
 | `customHOCs` | `[]` | Functions that return a component, in addition to `memo`, `forwardRef`, and `lazy`. |
 | `checkJS` | `false` | Also check `.js` files. With this option, only files that import something from `"react"` are checked. |

@@ -14,7 +14,7 @@ deprecated: false
 
 webpack puts the target of each `import()` in its own file. Without a `webpackChunkName` comment, a production build names that file with a number, such as `472.js`, which tells you nothing in a network tab or a bundle report.
 
-The comment goes inside the parentheses, before the path. It must be a block comment with one space after `/*` and one before `*/`. An import with `webpackMode: "eager"` makes no chunk, so it needs no name, and giving it one is reported too.
+The comment goes inside the parentheses, before the path. It must be a block comment with one space after `/*` and one before `*/`. An import with `webpackMode: "eager"` doesn't make a chunk, so it doesn't need a name, and giving it one is reported too.
 
 ## Examples
 

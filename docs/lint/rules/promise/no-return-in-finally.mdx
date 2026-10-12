@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The chain ignores the value that a `finally()` callback returns. The next step gets the result from before the `finally()`, so the returned value is lost.
+The chain ignores the value a `finally()` callback returns. The next step gets the result from before the `finally()`, so the returned value is lost.
 
-The rule reports a `return` statement at the top level of the callback's body. An arrow function without braces is not reported.
+The rule reports a `return` statement at the top level of the callback's body. An arrow function without braces isn't reported.
 
 ## Examples
 
@@ -43,7 +43,7 @@ loadItems()
 loadItems().finally(() => hideSpinner());
 ```
 
-Returning a promise does have an effect: the chain waits for it. The rule reports that `return` too.
+Returning a promise does have an effect, because the chain waits for it. The rule reports that `return` too.
 
 {/* bad */}
 ```js

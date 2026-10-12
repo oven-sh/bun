@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A capitalized name says "component". If you call a component as a plain function, React does not know it is there. Its hooks run as hooks of the caller, so its state gets mixed up with the caller's as soon as the call becomes conditional. Render it with JSX instead.
+A capitalized name says "component". If you call a component as a plain function, React doesn't know it's there. Its hooks run as the caller's hooks, so its state gets mixed up with the caller's as soon as the call becomes conditional. Render it with JSX instead.
 
 The rule looks inside components and hooks. It reports a call to a capitalized function that comes from outside the component, and a call to a capitalized method such as `ui.Avatar()`. All-caps functions such as `T()` and built-ins such as `Number()`, `String()` and `BigInt()` are allowed.
 
@@ -64,7 +64,7 @@ function Profile({ user }) {
 }
 ```
 
-With an ESLint config, `BigInt()` and `Symbol()` are reported, as `eslint-plugin-react-hooks` reports them.
+With an ESLint config, `BigInt()` and `Symbol()` are reported, like they are in `eslint-plugin-react-hooks`.
 
 ## When not to use it
 

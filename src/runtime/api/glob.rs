@@ -18,6 +18,7 @@ use bun_sys as syscall;
 #[bun_jsc::JsClass]
 pub(crate) struct Glob {
     pattern: Box<[u8]>,
+    shape: bun_glob::matcher::Shape,
     has_pending_activity: AtomicUsize,
 }
 
@@ -559,6 +560,7 @@ impl Glob {
             .into_boxed_slice();
 
         Ok(Box::new(Glob {
+            shape: bun_glob::matcher::Shape::of(&pat_str),
             pattern: pat_str,
             has_pending_activity: AtomicUsize::new(0),
         }))
@@ -678,8 +680,12 @@ impl Glob {
 
         let str = str_arg.to_utf8(global_this)?;
 
-        Ok(JSValue::from(
-            bun_glob::r#match(&self.pattern, str.slice()).matches(),
-        ))
+        let matched = bun_glob::matcher::match_prepared::<{ cfg!(windows) }>(
+            &self.pattern,
+            &self.shape,
+            str.slice(),
+            bun_glob::Dots::Match,
+        );
+        Ok(JSValue::from(matched.matches()))
     }
 }

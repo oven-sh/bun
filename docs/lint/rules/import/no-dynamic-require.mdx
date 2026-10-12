@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A bundler, a type checker and the other `import/*` rules find out what a file depends on by reading the string in `require("...")`. If the argument is a variable or is put together at runtime, they cannot know which file is loaded: the bundle misses it, and a wrong path only fails when the line runs.
+A bundler, a type checker and the other `import/*` rules find out what a file depends on by reading the string in `require("...")`. If the argument is a variable or is built at runtime, they can't know which file is loaded. The bundle misses it, and a wrong path only fails when the line runs.
 
 A template literal without `${}` counts as a string.
 
@@ -52,4 +52,4 @@ const locale = await import("./locales/en.js");
 
 ## When not to use it
 
-A plugin loader has to load what its config names. Disable the rule on that line.
+A plugin loader has to load whatever its config names. Disable the rule on that line.

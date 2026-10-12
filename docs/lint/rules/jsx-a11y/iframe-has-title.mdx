@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A screen reader announces an `iframe` by its `title`. Without one, it reads the URL or says "frame", and the person has to go into the frame to find out whether it is a video, a map or an ad.
+A screen reader announces an `iframe` by its `title`. Without one, it reads the URL or says "frame", and the person has to go into the frame to find out whether it's a video, a map or an ad.
 
-An empty string, `null`, `undefined`, a number, `true` and `false` do not count as a title. Neither does a spread: `<iframe {...props} />` is reported even if `props` has a `title`.
+An empty string, `null`, `undefined`, a number, `true` and `false` don't count as a title. Neither does a spread, so `<iframe {...props} />` is reported even if `props` has a `title`.
 
 ## Examples
 
@@ -36,7 +36,7 @@ const video = <iframe src={videoUrl} title={clip.name} />;
 const widget = <iframe {...frameProps} title={`Preview of ${page.name}`} />;
 ```
 
-A title put together with `+`, or read through `?.`, is also reported. Use a template or a variable:
+A title built with `+`, or read through `?.`, is also reported. Use a template or a variable:
 
 {/* bad {"count": 2} */}
 ```jsx

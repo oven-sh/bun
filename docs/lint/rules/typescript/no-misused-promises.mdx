@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-A promise is an object, so it is always truthy: `if (isAdmin(user))` without `await` always takes the branch. An `async` function passed where a callback should return nothing is never awaited: `forEach` moves on before the work is done, and nothing catches a rejection. A promise spread into an object adds no properties.
+A promise is an object, so it's always truthy, and `if (isAdmin(user))` without `await` always takes the branch. An `async` function passed where a callback should return nothing is never awaited, so `forEach` moves on before the work is done, and nothing catches a rejection. A promise spread into an object adds no properties.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag it's on by default in TypeScript files.
 
 ## Examples
 
@@ -71,7 +71,7 @@ const admins = ["ada", "lin"].filter(async id => await isAdmin(id));
 | `checksVoidReturn` | `true` | Report a function that returns a promise where a function that returns `void` is expected. |
 | `checksSpreads` | `true` | Report `...` in front of a promise. |
 
-`checksVoidReturn` also takes an object that turns off some of the places. Each is `true` by default.
+`checksVoidReturn` also takes an object that turns the check off in some places. Each key is `true` by default.
 
 | Key | Where the function is |
 | --- | --- |
@@ -95,7 +95,7 @@ function cleanUp(ids: string[]) {
 }
 ```
 
-`checksConditionals` also takes `{ "flagUnions": .. }`, for a condition that is only sometimes a promise. With `"none"` (default) it is allowed. With `"all"` it is reported. With `"strict"` it is reported if the union has both the promise and what it resolves to, like `number | Promise<number>`.
+`checksConditionals` also takes `{ "flagUnions": .. }`, for a condition that's only sometimes a promise. With `"none"` (default) it's allowed. With `"all"` it's reported. With `"strict"` it's reported if the union has both the promise and what it resolves to, like `number | Promise<number>`.
 
 Not reported by default:
 

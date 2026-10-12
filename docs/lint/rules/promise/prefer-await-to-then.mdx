@@ -12,13 +12,13 @@ typeAware: false
 deprecated: false
 ---
 
-A chain of `then()` callbacks puts each step in its own function, so steps cannot share variables, and loops, early returns and `try`/`catch` do not work across them. With `await` the same code is ordinary statements.
+A chain of `then()` callbacks puts each step in its own function, so steps can't share variables, and loops, early returns and `try`/`catch` don't work across them. With `await`, the same code is ordinary statements.
 
 Not reported:
 
 - the call that a `return` statement returns, as in `return load().then(parse)`
 - a chain inside an `await` or `yield` expression, unless you set `strict`
-- a `then`, `catch` or `finally` method of something that is clearly not a promise, such as an object literal or `new Parser()`
+- a `then`, `catch` or `finally` method on something that clearly isn't a promise, such as an object literal or `new Parser()`
 
 ## Examples
 

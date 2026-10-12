@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`role="button"` makes a screen reader say "button", but it does not make a `div` behave like one. Without a `tabIndex` the element never gets the focus, so nobody can reach it with the keyboard.
+`role="button"` makes a screen reader say "button", but it doesn't make a `div` behave like one. Without a `tabIndex`, the element never gets focus, so nobody can reach it with the keyboard.
 
-The rule reports an element such as `div` or `span` that has an interactive role, a mouse or keyboard handler, and no `tabIndex`. In an editor it suggests adding `tabIndex={0}`, which puts the element in the Tab order. For roles that a parent widget moves the focus to, such as `tab`, `option` and `menuitem`, it also suggests `tabIndex={-1}`.
+The rule reports an element such as `div` or `span` that has an interactive role, a mouse or keyboard handler, and no `tabIndex`. In an editor, it suggests adding `tabIndex={0}`, which puts the element in the Tab order. For roles that a parent widget moves focus to, such as `tab`, `option` and `menuitem`, it also suggests `tabIndex={-1}`.
 
-Not checked: components, controls such as `button` and `input`, elements with `disabled`, `aria-disabled="true"` or `aria-hidden`, and elements with a meaning of their own such as `li`, `p` and `h1`.
+The rule skips components, controls such as `button` and `input`, elements with `disabled`, `aria-disabled="true"` or `aria-hidden`, and elements that already have their own meaning, such as `li`, `p` and `h1`.
 
 ## Examples
 
@@ -41,7 +41,7 @@ const tab = <span role="tab" tabIndex={-1} onClick={showBilling}>Billing</span>;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `tabbable` | `["button", "checkbox", "link", "searchbox", "spinbutton", "switch", "textbox"]` | Roles that have to be in the Tab order. Your list replaces the default. |
+| `tabbable` | `["button", "checkbox", "link", "searchbox", "spinbutton", "switch", "textbox"]` | Roles that must be in the Tab order. Your list replaces the default. |
 
 The option only changes the message and the suggestions. A role in the list gets "must be tabbable" and only the `tabIndex={0}` suggestion. Any other role gets "must be focusable". The same elements are reported either way, and any `tabIndex` is enough.
 

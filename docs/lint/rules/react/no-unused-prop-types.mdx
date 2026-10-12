@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A prop that is declared but never read misleads whoever uses the component: they pass a value and nothing happens. It is usually left over from a change to the component.
+A prop that's declared but never read misleads anyone who uses the component, because they pass a value and nothing happens. It's usually left over from a change to the component.
 
 The rule compares the props a component declares with the props it reads. It knows `propTypes` and, in TypeScript, the type of the props parameter.
 
@@ -58,7 +58,7 @@ Avatar.propTypes = {
 };
 ```
 
-A component that spreads its props, or the rest of them, is not checked:
+The rule skips a component that spreads its props, or the rest of them:
 
 {/* good */}
 ```jsx
@@ -76,11 +76,11 @@ Avatar.propTypes = {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignore` | `[]` | Names of props that are never reported. |
-| `skipShapeProps` | `true` | Do not look inside `PropTypes.shape()` and `PropTypes.exact()`. |
-| `customValidators` | `[]` | Names of objects that hold your own validators. The rule does not look inside a call such as `MyTypes.shape()`. |
+| `ignore` | `[]` | Prop names that are never reported. |
+| `skipShapeProps` | `true` | Don't look inside `PropTypes.shape()` and `PropTypes.exact()`. |
+| `customValidators` | `[]` | Names of objects that hold your own validators. The rule doesn't look inside a call such as `MyTypes.shape()`. |
 
-With `skipShapeProps` set to `false`, the fields of a shape are checked too. Here `user.email` is reported:
+With `skipShapeProps` set to `false`, the rule checks a shape's fields too. Here `user.email` is reported:
 
 {/* bad {"count": 1, "options": [{"skipShapeProps": false}]} */}
 ```jsx
@@ -96,7 +96,7 @@ Avatar.propTypes = {
 };
 ```
 
-With `MyTypes` in `customValidators`, the fields of `MyTypes.shape()` are left alone:
+With `MyTypes` in `customValidators`, the rule leaves the fields of `MyTypes.shape()` alone:
 
 {/* good {"options": [{"skipShapeProps": false, "customValidators": ["MyTypes"]}]} */}
 ```jsx

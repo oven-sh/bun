@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A function written inside another function is created again every time the outer one runs. It also looks like it depends on something local. If it uses no variable of the function around it, move it out: it is created once, and a reader sees that it stands alone.
+A function written inside another function is created again every time the outer one runs. It also looks like it depends on something local. If it doesn't use any variable from the function around it, move it out. Then it's created once, and the reader can see that it stands alone.
 
 ## Examples
 
@@ -42,7 +42,7 @@ export function totalPrice(items) {
 }
 ```
 
-This one has to stay where it is, because it reads `rate`:
+This one needs to stay where it is, because it reads `rate`:
 
 {/* good */}
 ```js
@@ -55,7 +55,7 @@ export function totalPrice(items, rate) {
 }
 ```
 
-So does an arrow function that uses the `this` of the function around it:
+So does an arrow function that uses `this` from the function around it:
 
 {/* good */}
 ```js
@@ -67,7 +67,7 @@ export class Timer {
 }
 ```
 
-These are not checked at all: a function that is returned or passed straight to a call, a function in the callback of a React hook, and a function declaration directly in an immediately invoked function.
+These aren't checked at all: a function that's returned or passed straight to a call, a function in a React hook's callback, and a function declaration directly in an immediately invoked function.
 
 {/* good */}
 ```js

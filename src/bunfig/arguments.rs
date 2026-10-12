@@ -164,7 +164,7 @@ fn report_bunfig_load_failure(cmd: CommandTag, log: *mut bun_ast::Log, err: crat
     let log = unsafe { &mut *log };
     let is_of_tool = matches!(cmd, CommandTag::LintCommand | CommandTag::FormatCommand);
     if log.has_any() {
-        // These two name files as they name the files that they report about.
+        // `bun lint` and `bun format` print relative paths everywhere else, so do that here too.
         let locations = log.msgs.iter_mut().filter(|_| is_of_tool);
         for location in locations.filter_map(|it| it.data.location.as_mut()) {
             location.file = bun_paths::basename(&location.file[..]).to_vec().into();

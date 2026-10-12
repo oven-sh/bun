@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A promise settles once. Every later call of `resolve` or `reject` is ignored without an error, and the code around it still runs. A second call on the same path usually means a missing `return` or `else`.
+A promise settles once. Every later call to `resolve` or `reject` is ignored without an error, and the code around it still runs. A second call on the same path usually means a missing `return` or `else`.
 
-The rule checks the function given to `new Promise()` and each function inside it, one function at a time.
+The rule checks the function passed to `new Promise()` and each function inside it, one function at a time.
 
 ## Examples
 

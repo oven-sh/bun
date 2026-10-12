@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`user?.name` is `undefined` when `user` is missing. That is what `?.` is for. A `!` after it tells TypeScript the result is never `undefined`, so the type no longer matches what happens at runtime, and the next line that uses the value can throw.
+`user?.name` is `undefined` when `user` is missing. That's what `?.` is for. A `!` after it tells TypeScript the result is never `undefined`, so the type no longer matches what happens at runtime, and the next line that uses the value can throw.
 
-If `user` is always there, you do not need `?.`. If it is not, handle the `undefined`.
+If `user` is always there, you don't need `?.`. If it isn't, handle the `undefined`.
 
 This rule is on by default in TypeScript files.
 
@@ -40,7 +40,7 @@ const name: string = user?.name ?? "guest";
 const city: string | undefined = user?.address?.city;
 ```
 
-A `!` in the middle of the chain is allowed. Here it is only about `address`, and only when there is a `user`:
+A `!` in the middle of the chain is allowed. Here it only applies to `address`, and only when there's a `user`:
 
 {/* good */}
 ```ts

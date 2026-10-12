@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-When two modules import each other, one of them runs before the other has finished. What it imported is not initialized yet, so reading it throws a `ReferenceError` or gives `undefined`. Which of the two breaks depends on which one is loaded first.
+When two modules import each other, one of them runs before the other has finished. Its imports aren't initialized yet, so reading them throws a `ReferenceError` or gives `undefined`. Which module breaks depends on which one is loaded first.
 
-The rule follows the imports of the imported module as far as they go, so it also finds a cycle through several files. `import type` is ignored, because it is gone at runtime.
+The rule follows the imported module's imports as far as they go, so it also finds a cycle through several files. `import type` is ignored, because it's gone at runtime.
 
 ## Examples
 
@@ -36,7 +36,7 @@ export const findUser = id => ({ id });
 export const isCurrent = user => user.id === currentUser.id;
 ```
 
-Not reported, because what both files need is in a third one:
+Not reported, because the code both files need is in a third one:
 
 {/* file "find-user.js" */}
 ```js find-user.js
@@ -62,15 +62,15 @@ export const isCurrent = user => user.id === currentUser.id;
 | Option | Default | What it does |
 | --- | --- | --- |
 | `maxDepth` | `"∞"` | How many imports to follow. With `1`, only a module that imports this file itself is reported. |
-| `ignoreExternal` | `false` | Do not follow imports of packages. |
+| `ignoreExternal` | `false` | Don't follow package imports. |
 | `allowUnsafeDynamicCyclicDependency` | `false` | Allow a cycle that has an `import()` somewhere in it. |
 | `commonjs` | `false` | Also check the `require()` calls in this file. |
 | `amd` | `false` | Also check `define([...])` and `require([...])` in this file. |
 | `esmodule` | `true` | Check `import`, `export ... from` and `import()`. |
-| `ignore` | `[]` | Regular expressions. An import path that matches one is not checked. |
+| `ignore` | `[]` | Regular expressions. An import path that matches one isn't checked. |
 | `disableScc` | `false` | Skip the first pass that groups the modules that can reach each other. It only changes how fast the rule is. |
 
-Here the way back takes two steps. By default the import is reported with `Dependency cycle via ./log:1`, which means that `./session` gets back to this file through its import of `./log` on line 1. With `maxDepth: 1` it is not reported:
+Here the way back takes two steps. By default the import is reported with `Dependency cycle via ./log:1`, which means that `./session` gets back to this file through its import of `./log` on line 1. With `maxDepth: 1` it isn't reported:
 
 {/* file "session.js" */}
 ```js session.js
@@ -96,7 +96,7 @@ import { currentUser } from "./session";
 export const isCurrent = user => user.id === currentUser.id;
 ```
 
-An `import()` inside a function only runs when the function is called, so it rarely causes the problem above. It is still reported by default. With `allowUnsafeDynamicCyclicDependency: true` it is not:
+An `import()` inside a function only runs when the function is called, so it rarely causes the problem above. It's still reported by default. With `allowUnsafeDynamicCyclicDependency: true` it isn't:
 
 {/* file "session.js" */}
 ```js session.js
@@ -117,4 +117,4 @@ export async function isCurrent(user) {
 
 ## When not to use it
 
-A cycle does no harm if the two modules only use each other inside functions that run later. If your project has many cycles like that, the reports are noise.
+A cycle is harmless if the two modules only use each other inside functions that run later. If your project has many cycles like that, the reports are noise.

@@ -254,19 +254,19 @@ pub enum LogLevel {
     Debug,
 }
 
-/// An element of `overrides` in `[format]`.
+/// One entry of `[[format.overrides]]`.
 #[derive(Clone, Debug, Default)]
 pub struct Override {
-    /// Patterns for paths from the working directory. One without a slash is for a name in any directory.
+    /// Globs matched against the path relative to the working directory. A glob without a slash matches the file name.
     pub files: Vec<Vec<u8>>,
     pub excluded: Vec<Vec<u8>>,
-    /// As [`Options::format`].
+    /// Same format as [`Options::format`].
     pub format: Vec<(&'static [u8], Vec<u8>)>,
 }
 
 impl Override {
-    /// Takes out what the flag `name`, which is for every file, replaces. One that only turns something on leaves the
-    /// options for it.
+    /// Drops the options that the command-line flag `name` replaces. A flag that only turns a feature on keeps the
+    /// override's options for it.
     fn give_way_to(&mut self, name: &[u8], value: &[u8]) {
         self.format.retain(|it| {
             let (whole, is_part) = match strings::split_once_char(it.0, b'.') {
@@ -320,10 +320,10 @@ pub struct Options {
     pub as_json: bool,
     pub find_config_path: Option<Vec<u8>>,
     pub log_level: LogLevel,
-    /// The options of Prettier, and what is built in besides, by the names that they have in a
-    /// configuration file, and their values as they are written in JSON, a string without its quotes.
+    /// Prettier's options and Bun's extra features, by their config-file names. Values are JSON text, except that
+    /// strings have no quotes.
     pub format: Vec<(&'static [u8], Vec<u8>)>,
-    /// Only `[format]` has them.
+    /// Only `[format]` can set these.
     pub overrides: Vec<Override>,
     pub plugins: Vec<Vec<u8>>,
     pub color: Option<bool>,
@@ -437,7 +437,7 @@ impl Options {
         let text = value.unwrap_or_default();
         let owned = || Some(text.to_vec());
         if let Some(option) = option_of(name) {
-            // What is on stays as it is: `[format]` may have a table with options for it.
+            // Already on, so keep it. `[format]` may have set a table of options for it.
             let is_on_already = |it: &(&[u8], Vec<u8>)| it.0 == option && it.1 != b"false";
             if value.is_none() && is_on && self.format.iter().any(is_on_already) {
                 return Ok(());

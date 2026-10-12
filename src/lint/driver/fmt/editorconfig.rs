@@ -170,7 +170,7 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
         }
         at += 1;
     }
-    Some(Pattern::new(&glob))
+    Some(Pattern::new(&bun_glob::pattern::of_fast_glob(&glob)))
 }
 
 /// A number of JSON.
@@ -327,7 +327,12 @@ impl File {
                     let known = file.sections.iter().position(|it| it.name == name);
                     at = Some(known.unwrap_or_else(|| {
                         // A section without a name has no pattern.
-                        let glob = || Pattern::with_extglob(&full_glob(directory, name));
+                        let glob = || {
+                            Pattern::with_dots(
+                                &bun_lint::glob::from_minimatch(&full_glob(directory, name)),
+                                bun_glob::Dots::SkipTraversal,
+                            )
+                        };
                         let glob = (!name.is_empty()).then(glob);
                         file.sections.push(Section::new(name, glob));
                         file.sections.len() - 1

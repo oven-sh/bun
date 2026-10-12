@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`var` lets you declare a name a second time without an error. The second declaration is the same variable as the first, so it overwrites a value that other code may still need. It is usually a copy and paste mistake, or two parts of a long function that picked the same name.
+`var` lets you declare a name a second time without an error. The second declaration is the same variable as the first, so it overwrites a value that other code may still need. It's usually a copy and paste mistake, or two parts of a long function that picked the same name.
 
-This is `no-redeclare` for TypeScript. It knows function overloads, and the declarations that TypeScript merges on purpose, such as two interfaces with one name. Use it in place of `no-redeclare`, which reports those.
+This is `no-redeclare` for TypeScript. It knows about function overloads and the declarations TypeScript merges on purpose, such as two interfaces with the same name. Use it in place of `no-redeclare`, which reports those.
 
 ## Examples
 
@@ -44,7 +44,7 @@ function price(items: number[]) {
 }
 ```
 
-Overloads and merged declarations are not reported either:
+Overloads and merged declarations aren't reported either:
 
 {/* good */}
 ```ts
@@ -71,8 +71,8 @@ namespace Logger {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `builtinGlobals` | `true` | Also report a name that is already a global, such as `Object`. This applies to the top level of a script and to `/* global */` comments. The top level of a module is its own scope. |
-| `ignoreDeclarationMerge` | `true` | Allow what TypeScript merges: interfaces with interfaces, namespaces with namespaces, and one class, function or enum with namespaces. A class also merges with interfaces. |
+| `builtinGlobals` | `true` | Also report a name that's already a global, such as `Object`. This applies to the top level of a script and to `/* global */` comments. The top level of a module is its own scope. |
+| `ignoreDeclarationMerge` | `true` | Allow the declarations TypeScript merges: interfaces with interfaces, namespaces with namespaces, and one class, function or enum with namespaces. A class also merges with interfaces. |
 
 Reported by default, and allowed with `builtinGlobals: false`:
 
@@ -102,7 +102,7 @@ interface Options {
 }
 ```
 
-Two enums with one name are always reported:
+Two enums with the same name are always reported:
 
 {/* bad */}
 ```ts

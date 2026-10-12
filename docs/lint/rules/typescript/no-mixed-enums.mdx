@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-Number members and string members of an enum behave differently. A number member gets a reverse mapping, so `Status[0]` is `"Active"`, and `Object.values(Status)` holds the names next to the numbers. A string member gets neither. In an enum with both, code that loops over the members or looks one up by value has to handle two shapes.
+An enum's number members and string members behave differently. A number member gets a reverse mapping, so `Status[0]` is `"Active"`, and `Object.values(Status)` holds the names along with the numbers. A string member gets neither. In an enum with both, code that loops over the members or looks one up by value has to handle two shapes.
 
-The first member decides the kind. The first member of the other kind is reported. An enum that is declared in several parts counts as one.
+The first member decides the kind. The first member of the other kind is reported. An enum that's declared in several parts counts as one.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -45,7 +45,7 @@ enum Priority {
 }
 ```
 
-The second part of this enum does not match the first:
+The second part of this enum doesn't match the first:
 
 {/* bad */}
 ```ts

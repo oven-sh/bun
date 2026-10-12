@@ -7,7 +7,7 @@ pub mod scan;
 
 // `match` is a Rust keyword; re-export with raw identifier.
 pub use crate::glob_walker as walk;
-pub use crate::matcher::{MatchResult, r#match};
+pub use crate::matcher::{Dots, MatchResult, r#match};
 pub use crate::pattern::{Candidate, Pattern};
 pub use walk::GlobWalker;
 
@@ -23,6 +23,13 @@ pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     // Negation only allowed in the beginning of the pattern
     if !potential_pattern.is_empty() && potential_pattern[0] == b'!' {
+        return true;
+    }
+
+    // `?(a)`, `*(a)` and `!(a)` are found by their first character.
+    if bun_core::strings::contains(potential_pattern, b"@(")
+        || bun_core::strings::contains(potential_pattern, b"+(")
+    {
         return true;
     }
 

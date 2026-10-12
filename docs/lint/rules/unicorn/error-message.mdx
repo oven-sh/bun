@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An error without a message shows up in a log as `Error` and a stack trace. Whoever reads it has to open the source to find out what went wrong.
+An error without a message shows up in a log as `Error` and a stack trace. Anyone who reads it needs to open the source to find out what went wrong.
 
 The rule checks `Error`, `TypeError`, `RangeError` and the other built-in errors, called with or without `new`. It reports a missing message, an empty string, and an array or an object where the message goes. The message is the second argument of `AggregateError` and the third of `SuppressedError`.
 
@@ -52,7 +52,7 @@ function parsePort(value) {
 throw new AggregateError(errors, "All mirrors failed");
 ```
 
-A variable is accepted as it is. The rule does not know what it holds.
+A variable is accepted as is, because the rule doesn't know what it holds.
 
 {/* good */}
 ```js

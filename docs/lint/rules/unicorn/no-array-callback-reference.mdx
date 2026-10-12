@@ -55,7 +55,7 @@ const labels = ids.map(String);
 const rows = items.map(table.render.bind(table));
 ```
 
-The rule cannot tell what is an array. It skips calls on a property, such as `store.users.map()`, and on common library names, such as `_`, `lodash`, `$`, `jQuery`, `React`, and `Vue`:
+The rule can't tell what's an array. It skips calls on a property, such as `store.users.map()`, and on common library names, such as `_`, `lodash`, `$`, `jQuery`, `React`, and `Vue`:
 
 {/* good */}
 ```js

@@ -5,6 +5,7 @@ use super::organize::{self, TypeOrder};
 use super::trivago::{self, ByLength, Exclude, Group};
 use super::{How, SortImports};
 use bun_core::strings;
+use bun_lint::glob::{Minimatch, MinimatchOptions};
 use bun_lint::options::Json;
 use bun_lint::regex::Regex;
 use std::sync::Arc;
@@ -209,7 +210,7 @@ impl Settings {
                 .unwrap_or_default()
                 .iter())
             .map(|pattern| Exclude {
-                glob: bun_glob::Pattern::without_dot(pattern),
+                glob: Minimatch::with(pattern, MinimatchOptions::default()),
                 has_slash: strings::contains_char(pattern, b'/'),
             })
             .collect(),
@@ -290,7 +291,7 @@ impl Settings {
 
     /// `None`: imports are left as they are. `Err`: what is wrong, for the user.
     pub fn compile(&self) -> Result<Option<Arc<SortImports>>, Vec<u8>> {
-        // The one that is set last.
+        // The last one set wins.
         let is_about_all = |it: &&(Box<[u8]>, Box<[u8]>)| {
             matches!(&*it.0, b"sortImports" | b"experimentalSortImports" | OF_BUN)
         };

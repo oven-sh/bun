@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `renderItem()` function inside a component does the job of a component, but React does not see it as one. It is created again on every render, it does not show up in React DevTools, and React cannot skip it when its input stays the same. Move it out and make it a component.
+A `renderItem()` function inside a component does the job of a component, but React doesn't see it as one. It's created again on every render, it doesn't show up in React DevTools, and React can't skip it when its input stays the same. Move it out and make it a component.
 
-The rule reports a function if its name is `render` followed by a capital letter, it is defined inside another function, and it is called or passed to a call in the JSX of that function.
+The rule reports a function if its name is `render` followed by a capital letter, it's defined inside another function, and it's called or passed to a call in that function's JSX.
 
 ## Examples
 
@@ -59,7 +59,7 @@ function UserList({ users }) {
 }
 ```
 
-A function that is passed as a prop is not reported:
+A function that's passed as a prop isn't reported:
 
 {/* good */}
 ```jsx

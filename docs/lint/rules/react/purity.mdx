@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-React can render a component more than once for one update, and it can reuse an earlier result. So a component must return the same output for the same props and state. A call that gives a new value each time breaks that: the id, the time, or the random number changes on every render, and the server and the browser disagree during hydration.
+React can render a component more than once for one update, and it can reuse an earlier result. So a component must return the same output for the same props and state. A call that returns a new value each time breaks that. The id, the time, or the random number changes on every render, and the server and the browser disagree during hydration.
 
-The rule reports `Math.random()`, `Date.now()`, and `performance.now()` in the body of a component or a hook. Calls in event handlers and effects are fine, because they do not run during render.
+The rule reports `Math.random()`, `Date.now()`, and `performance.now()` in the body of a component or a hook. Calls in event handlers and effects are fine, because they don't run during render.
 
-With an oxlint config, `new Date()` and `Date()` without arguments are reported too.
+With an oxlint config, the rule also reports `new Date()` and `Date()` without arguments.
 
 ## Examples
 

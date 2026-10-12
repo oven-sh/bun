@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A stray `"` or `'` in JSX text is often a slip: a quote that was meant to end an attribute lands after the `>` of the tag, and it shows up on the page.
+A stray `"` or `'` in JSX text is often a slip. A quote that was meant to end an attribute lands after the tag's `>`, and it shows up on the page.
 
 If you do want the character, write it as an HTML entity, or put the text in a string inside braces. In an editor, the rule suggests the entities to replace it with.
 
@@ -47,9 +47,9 @@ const hint = <p>{"Don't close this window."}</p>;
 
 `>` and `}` in JSX text are syntax errors, so you get a parsing error for them, not a report from this rule.
 
-An item of `forbid` is a single character, or an object with the character and the entities to suggest: `{ "char": "\"", "alternatives": ["&quot;"] }`.
+Each item in `forbid` is a single character, or an object with the character and the entities to suggest: `{ "char": "\"", "alternatives": ["&quot;"] }`.
 
-Here only `"` is forbidden. The two quotes are reported and the apostrophe is not:
+Here only `"` is forbidden. The two quotes are reported and the apostrophe isn't:
 
 {/* bad {"count": 2, "options": [{"forbid": ["\""]}]} */}
 ```jsx

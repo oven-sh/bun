@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`" ".repeat(width - label.length)` works until a label is longer than `width`. Then the count is negative and `repeat()` throws a `RangeError`. Tests with short labels do not catch it.
+`" ".repeat(width - label.length)` works until a label is longer than `width`. Then the count is negative and `repeat()` throws a `RangeError`. Tests with short labels don't catch it.
 
 The rule reports a count that contains a subtraction or a negation, unless `Math.max()` with a literal of zero or more, as in `Math.max(0, n)`, keeps it from going negative.
 
@@ -29,7 +29,7 @@ function pad(label, width) {
 }
 ```
 
-Rounding does not help, and neither does an upper bound:
+Rounding doesn't help, and neither does an upper bound:
 
 {/* bad {"count": 2} */}
 ```js
@@ -46,7 +46,7 @@ function pad(label, width) {
 }
 ```
 
-For padding, use `padEnd()` or `padStart()`. They return a string that is already long enough unchanged:
+For padding, use `padEnd()` or `padStart()`. If the string is already long enough, they return it unchanged:
 
 {/* good */}
 ```js
@@ -55,7 +55,7 @@ function pad(label, width) {
 }
 ```
 
-Only the expression in the call is looked at. A count that is computed earlier is not followed:
+The rule only looks at the expression in the call. It doesn't follow a count that's computed earlier:
 
 {/* good */}
 ```js

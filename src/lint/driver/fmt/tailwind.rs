@@ -226,8 +226,8 @@ impl Known {
     }
 }
 
-/// `functions` where `[format]` or the flag turns the sorting on and names none: what projects call the functions that put
-/// classes together. oxfmt and the plugin know none by themselves.
+/// Default `functions` when `[format]` or the flag turns sorting on. These are the common class-name helpers. oxfmt and the
+/// Prettier plugin default to an empty list.
 const FUNCTIONS: [&[u8]; 9] = [
     b"clsx",
     b"cn",
@@ -241,7 +241,7 @@ const FUNCTIONS: [&[u8]; 9] = [
 ];
 
 /// `sortTailwindcss` for the file at `path`. `value`: the option as JSON, which is not `false`. `of_config`: the directory of
-/// the configuration file of oxfmt that has it. `None`: `[format]` or the flag has it.
+/// the oxfmt config that sets it, or `None` if `[format]` or the flag sets it.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
     environment: &Environment,

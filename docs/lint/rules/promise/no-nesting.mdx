@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `then()` inside a `then()` adds a level of indentation for every step, and a `catch()` on the inner chain does not see errors from the outer one. Return the inner promise and continue the chain one level up.
+A `then()` inside a `then()` adds a level of indentation for every step, and a `catch()` on the inner chain doesn't see errors from the outer one. Return the inner promise and continue the chain one level up.
 
-A nested callback that uses a variable of the outer callback cannot move up, so it is not reported.
+A nested callback that uses a variable from the outer callback can't move up, so it isn't reported.
 
 ## Examples
 

@@ -296,7 +296,7 @@ const FORMAT: Table = Table {
         b"insert-pragma",
         b"experimental-ternaries",
         b"experimental-operator-position",
-        // What is built in besides. The first four are read by hand: see `FEATURES`.
+        // Features beyond Prettier's options. The first four also take a table, see `FEATURES`.
         b"sort-imports",
         b"sort-tailwindcss",
         b"sort-package-json",
@@ -360,13 +360,13 @@ const _: () = assert!(
      bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
 );
 
-/// What an option in the table of a [`Feature`] takes.
+/// Value type of an option in a [`Feature`] table.
 #[derive(Copy, Clone)]
 enum Takes {
     Boolean,
     String,
     Strings,
-    /// Of more than strings. What reads it says what is wrong with it.
+    /// An array with mixed items. The code that consumes it validates the items.
     Array,
 }
 
@@ -386,12 +386,12 @@ impl Takes {
     }
 }
 
-/// What a table is among `Options::format`.
+/// How a feature's table is stored in `Options::format`.
 #[derive(Copy, Clone)]
 enum As {
-    /// One value, as JSON. What is called with it says what is wrong with it.
+    /// As one JSON value. The function validates it.
     Json(fn(&[u8]) -> Result<(), Vec<u8>>),
-    /// Each of its options is a value.
+    /// As one entry per option.
     Parts,
 }
 
@@ -401,13 +401,13 @@ fn check_sort_imports(json: &[u8]) -> Result<(), Vec<u8>> {
     sort.compile().map(|_| ())
 }
 
-/// A key of `[format]` that is `true`, `false`, or a table with options.
+/// A `[format]` key that takes `true`, `false`, or a table of options.
 struct Feature {
     flag: &'static [u8],
-    /// As `Options::format` has it.
+    /// Its name in `Options::format`.
     name: &'static [u8],
     table: As,
-    /// `name`, a dot, and the key.
+    /// Each option is stored as `<name>.<key>`.
     options: &'static [(&'static [u8], Takes)],
 }
 
@@ -468,12 +468,12 @@ const FEATURES: [Feature; 4] = [
 ];
 
 impl Feature {
-    /// The key of the option that is called `name` among [`Feature::options`].
+    /// Strips the `<name>.` prefix from an entry of [`Feature::options`].
     fn key_of(&self, name: &'static [u8]) -> &'static [u8] {
         name.get(self.name.len() + 1..).unwrap_or_default()
     }
 
-    /// Takes in `value`, which `[format]` has for it.
+    /// Applies the `value` that `[format]` has for this feature.
     fn set(&self, value: &Expr, options: &mut crate::fmt::cli::Options) -> Result<(), Refusal> {
         let table = match &value.data {
             Data::EBoolean(it) => {
@@ -545,7 +545,7 @@ pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> 
     Ok(Some(options))
 }
 
-/// Takes in `key = value` of `[format]`, or of the options of one of its `overrides`.
+/// Applies `key = value` from `[format]` or from the `options` of an override.
 fn set_in_format(
     key: &Key,
     value: &Expr,
@@ -571,7 +571,7 @@ fn set_in_format(
     })
 }
 
-/// A pattern, or an array of them.
+/// Parses one glob or an array of globs.
 fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, Refusal> {
     let all: Vec<Vec<u8>> = match json_of(value)? {
         Json::String(one) => vec![one],
@@ -591,10 +591,10 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, Refusal> {
     }
 }
 
-/// `overrides` of `[format]`: shaped as in a `.prettierrc`, with the keys of `[format]` that say how a file is printed.
+/// Parses `[[format.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[format]` keys that affect output.
 fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
     let items = tables_of(value, b"format")?;
-    // `parser` is for some files, never for all.
+    // `parser` only makes sense for some files, so it's allowed here and not at the top level.
     let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
     let options_of = |table: &Expr| {
         let mut options = crate::fmt::cli::Options::default();
@@ -790,7 +790,7 @@ const _: () = assert!(
      bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
 );
 
-/// `off`, `warn` or `error`, or the number for it. `of`: the rule or the category.
+/// Parses `off`, `warn`, `error`, or the matching number. `of` is the rule or category name, for the error message.
 fn severity_of(of: &[u8], value: &Expr) -> Result<Severity, Refusal> {
     let written = json_of(value)?;
     let severity = bun_lint::linter::severity_of(&written);
@@ -800,12 +800,12 @@ fn severity_of(of: &[u8], value: &Expr) -> Result<Severity, Refusal> {
     )
 }
 
-/// Where a value is written in bunfig.toml, and the values in it.
+/// Byte offset of a value in bunfig.toml, and of the values nested in it.
 #[derive(Clone, Debug, Default)]
 pub struct Place {
     pub at: usize,
     pub items: Vec<Place>,
-    /// Each key, where it is written, and its value.
+    /// Each key, the key's offset, and its value.
     pub entries: Vec<(Vec<u8>, usize, Place)>,
 }
 
@@ -831,7 +831,8 @@ impl Place {
         place
     }
 
-    /// Where the value is that `path` leads to, or else the last on the way. `is_about_key`: where its key is.
+    /// Returns the offset of the value at `path`, or of the deepest value that exists along it. With `is_about_key`,
+    /// returns the offset of the last key instead.
     pub(crate) fn find(&self, path: &[Step], is_about_key: bool) -> usize {
         let (mut place, mut at) = (self, self.at);
         for (depth, step) in path.iter().enumerate() {

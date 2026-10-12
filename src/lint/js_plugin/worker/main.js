@@ -45,6 +45,7 @@ const TOKENS = 7;
 const COMMENTS = 8;
 const SCOPES = 9;
 const LOADED = 10;
+const CODE_PATHS = 11;
 
 // By what was asked for: the last answer, which the next one overwrites.
 const buffers = [];
@@ -481,15 +482,17 @@ function describeNewSelectors() {
   newSelectors = [];
 }
 
-const codePathEvents = new Set([
+// In the order of the event kinds in `code_path/estree.rs`.
+const codePathEventNames = [
   "onCodePathStart",
   "onCodePathEnd",
   "onCodePathSegmentStart",
   "onCodePathSegmentEnd",
-  "onCodePathSegmentLoop",
   "onUnreachableCodePathSegmentStart",
   "onUnreachableCodePathSegmentEnd",
-]);
+  "onCodePathSegmentLoop",
+];
+const codePathEvents = new Set(codePathEventNames);
 
 // The listeners of the file. By the number of a type: those for entering and for leaving a node of it.
 let enterByType = [];
@@ -600,6 +603,145 @@ function lastDescendants() {
   return descendants;
 }
 
+// ───────────── code paths ─────────────
+
+// `codePath.origin`, in the order of `Origin` in `code_path/estree.rs`.
+const codePathOrigins = ["program", "function", "class-field-initializer", "class-static-block"];
+// Templates for `native.codePaths`, which builds the objects. Only ESLint's getters and methods live here.
+let codePathShapes;
+{
+  class CodePath {
+    get initialSegment() {
+      return this.internal.initialSegment;
+    }
+
+    get finalSegments() {
+      return this.internal.finalSegments;
+    }
+
+    get returnedSegments() {
+      return this.internal.returnedForkContext;
+    }
+
+    get thrownSegments() {
+      return this.internal.thrownForkContext;
+    }
+
+    traverseSegments(optionsOrCallback, callback) {
+      const hasOptions = typeof optionsOrCallback !== "function";
+      const options = (hasOptions && optionsOrCallback) || {};
+      const resolvedCallback = hasOptions ? callback : optionsOrCallback;
+      const startSegment = options.first || this.internal.initialSegment;
+      const lastSegment = options.last;
+      const visited = new Set();
+      const skipped = new Set();
+      const stack = [[startSegment, 0]];
+      let segment = null;
+      let broken = false;
+      const controller = {
+        skip() {
+          skipped.add(segment);
+        },
+        break() {
+          broken = true;
+        },
+      };
+      const isVisited = prevSegment => visited.has(prevSegment) || segment.isLoopedPrevSegment(prevSegment);
+      const isSkipped = prevSegment => skipped.has(prevSegment) || segment.isLoopedPrevSegment(prevSegment);
+      while (stack.length > 0) {
+        const record = stack.at(-1);
+        segment = record[0];
+        const index = record[1];
+        if (index === 0) {
+          const hasPrev = segment.prevSegments.length > 0;
+          if (visited.has(segment) || (segment !== startSegment && hasPrev && !segment.prevSegments.every(isVisited))) {
+            stack.pop();
+            continue;
+          }
+          visited.add(segment);
+          if (skipped.size > 0 && hasPrev && segment.prevSegments.every(isSkipped)) skipped.add(segment);
+          else {
+            resolvedCallback.call(this, segment, controller);
+            if (segment === lastSegment) controller.skip();
+            if (broken) break;
+          }
+        }
+        const end = segment.nextSegments.length - 1;
+        if (index < end) {
+          record[1] += 1;
+          stack.push([segment.nextSegments[index], 0]);
+        } else if (index === end) {
+          record[0] = segment.nextSegments[index];
+          record[1] = 0;
+        } else stack.pop();
+      }
+    }
+  }
+
+  class CodePathSegment {
+    isLoopedPrevSegment(segment) {
+      return this.internal.loopedPrevSegments.includes(segment);
+    }
+  }
+
+  codePathShapes = [
+    native.shape(CodePath.prototype, ["id", "origin", "upper", "childCodePaths", "internal"], "", 1),
+    native.shape(
+      Object.prototype,
+      ["initialSegment", "finalSegments", "returnedForkContext", "thrownForkContext"],
+      null,
+    ),
+    native.shape(
+      CodePathSegment.prototype,
+      ["id", "nextSegments", "prevSegments", "allNextSegments", "allPrevSegments", "reachable", "internal"],
+      "",
+      1,
+    ),
+    native.shape(Object.prototype, ["used", "loopedPrevSegments"], true),
+  ];
+}
+
+// Walks the tree with `walk` and calls the code path listeners between the node listeners, where ESLint calls them. The
+// analysis is finished before the first listener runs, as in ESLint, so a rule sees the complete graph from the first event on.
+function traverseWithCodePaths(walk, enter, leave) {
+  ask(CODE_PATHS);
+  const buffer = buffers[CODE_PATHS];
+  const [paths, segments] = native.codePaths(codePathShapes, codePathOrigins, buffer);
+  // Four words per event: see `code_path/estree.rs`.
+  const events = new Uint32Array(buffer, 16, 4 * new Uint32Array(buffer, 0, 1)[0]);
+  const callsByKind = codePathEventNames.map(name => codePathCalls.get(name));
+  let at = 0;
+  let step = 0;
+  // Emits the events that come before the next step.
+  const emit = () => {
+    for (; at < events.length && events[at] === step; at += 4) {
+      const kind = events[at + 1] & 7;
+      const calls = callsByKind[kind];
+      if (calls === undefined) continue;
+      const node = nodes[events[at + 1] >>> 3];
+      const first = (kind < 2 ? paths : segments)[events[at + 2]];
+      for (const { entry, listener } of calls) {
+        currentRule = entry;
+        if (kind === 6) listener(first, segments[events[at + 3]], node);
+        else listener(first, node);
+      }
+    }
+    step++;
+  };
+  walk(
+    id => {
+      emit();
+      enter(id);
+    },
+    id => {
+      emit();
+      leave(id);
+    },
+    () => true,
+  );
+  emit();
+}
+
 // ───────────── the traversal ─────────────
 
 let isTraversing = false;
@@ -699,6 +841,7 @@ function traverse() {
     while (open.length > 0) leaveNode(open.pop());
   };
   if (codePathCalls === null) return walk(enter, leave, id => exitCalls(id) !== undefined);
+  if (process.env.BUN_LINT_NATIVE_CODE_PATHS === "1") return traverseWithCodePaths(walk, enter, leave);
   // As in ESLint the whole file is analyzed before the first listener is called: a rule sees the finished graph. A step is
   // the number of a node to enter, the complement of that of one to leave, or an event and its arguments.
   const steps = [];

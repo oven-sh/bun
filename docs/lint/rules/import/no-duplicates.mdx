@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-Two `import` lines for one module make it harder to see what a file takes from it, and they are often left over from a merge. One line says it all.
+Two `import` lines for one module make it harder to see what a file takes from it, and they're often left over from a merge. One line says it all.
 
 The rule compares the files that the paths resolve to, so `./utils` and `./utils.js` count as the same module. Each of the imports is reported.
 
-A namespace import (`import * as`) cannot be merged with named imports, so it may stand next to one. The same goes for `import type` next to an import of values.
+A namespace import (`import * as`) can't be merged with named imports, so it's allowed next to one. The same goes for `import type` next to a value import.
 
 `--fix` merges the imports into the first one.
 
@@ -90,7 +90,7 @@ import { width } from "./logo?inline";
 import { height } from "./logo.js?inline";
 ```
 
-And these two are not:
+And these two aren't:
 
 {/* good {"options": [{"considerQueryString": true}]} */}
 ```js

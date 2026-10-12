@@ -74,7 +74,10 @@ impl Matcher {
     fn new(relative: &[u8]) -> Matcher {
         match relative {
             b"**" => Matcher::Everything,
-            relative => Matcher::Pattern(Pattern::with_extglob(relative)),
+            relative => Matcher::Pattern(Pattern::with_dots(
+                &bun_lint::glob::from_minimatch(relative),
+                bun_glob::Dots::SkipTraversal,
+            )),
         }
     }
 

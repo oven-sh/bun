@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`if (items.length)` relies on `0` being falsy. `if (items.length > 0)` says what is tested. It also keeps a number out of places where you want a boolean: `items.length && render(items)` evaluates to `0` for an empty list, not `false`.
+`if (items.length)` relies on `0` being falsy. `if (items.length > 0)` says what you're testing. It also keeps a number out of places where you want a boolean. `items.length && render(items)` evaluates to `0` for an empty list, not `false`.
 
-The rule also settles on one spelling of each check: `=== 0` for empty and `> 0` for not empty. It reports other ways to write them, such as `< 1`, `>= 1` and `!== 0`.
+The rule also settles on one spelling for each check: `=== 0` for empty and `> 0` for not empty. It reports other ways to write them, such as `< 1`, `>= 1` and `!== 0`.
 
-`--fix` rewrites the check wherever only its truthiness matters. In `const first = items.length && items[0]` the value itself is used, so that is reported but not fixed.
+`--fix` rewrites the check wherever only its truthiness matters. In `const first = items.length && items[0]` the value itself is used, so that's reported but not fixed.
 
 ## Examples
 

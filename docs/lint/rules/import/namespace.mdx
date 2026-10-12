@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-With `import * as api from "./api"`, reading a name that `./api` does not export gives `undefined`, and nothing fails until you call it. Assigning to `api.save` throws, because a namespace object is read-only.
+With `import * as api from "./api"`, reading a name that `./api` doesn't export gives `undefined`, and nothing fails until you call it. Assigning to `api.save` throws, because a namespace object is read-only.
 
-The rule reads the imported file and checks `api.name`, `const { name } = api` and `<api.Name />`. A computed read like `api[key]` cannot be checked, so it is reported as well unless you allow it.
+The rule reads the imported file and checks `api.name`, `const { name } = api` and `<api.Name />`. A computed read like `api[key]` can't be checked, so it's reported too unless you allow it.
 
-JavaScript and TypeScript files are read, JSX included. With an ESLint config only `.js`, `.mjs` and `.cjs` files are, unless `settings["import/extensions"]` lists others.
+It reads JavaScript and TypeScript files, including JSX. With an ESLint config it only reads `.js`, `.mjs` and `.cjs` files, unless `settings["import/extensions"]` lists others.
 
 ## Examples
 
@@ -61,7 +61,7 @@ load("draft");
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowComputed` | `false` | Allow computed reads such as `api[key]`. They are not checked. |
+| `allowComputed` | `false` | Allow computed reads such as `api[key]`. They aren't checked. |
 
 {/* file "api.js" */}
 ```js

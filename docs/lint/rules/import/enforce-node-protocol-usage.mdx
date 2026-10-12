@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`"node:fs"` and `"fs"` load the same module. With the prefix, you see at once that the import is a built-in and not a package from `node_modules`, and no installed package can take its place. Without it, the code also runs on old versions of Node.js. This rule keeps a project on one of the two.
+`"node:fs"` and `"fs"` load the same module. With the prefix, you can see right away that the import is a built-in and not a package from `node_modules`, and no installed package can take its place. Without it, the code also runs on old Node.js versions. This rule keeps a project on one of the two.
 
-It checks `import`, `export { } from`, `import()` and `require()`. There is no default: the config has to say `"always"` or `"never"`.
+It checks `import`, `export { } from`, `import()` and `require()`. There's no default, so your config must say `"always"` or `"never"`.
 
 `--fix` adds or removes the prefix.
 
@@ -51,8 +51,8 @@ const crypto = await import("node:crypto");
 
 | Option | What it does |
 | --- | --- |
-| `"always"` | Report a built-in module that is imported without `node:`. |
-| `"never"` | Report a built-in module that is imported with `node:`. |
+| `"always"` | Report a built-in module that's imported without `node:`. |
+| `"never"` | Report a built-in module that's imported with `node:`. |
 
 {/* bad {"options": ["never"]} */}
 ```js

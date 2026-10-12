@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-AMD is the module format of RequireJS: `define(["dep"], function (dep) { ... })`. Bun, Node.js and browsers do not run it without a loader, and tools cannot follow its dependencies the way they follow `import`. In a project that uses ES modules, an AMD call is a leftover.
+AMD is RequireJS's module format: `define(["dep"], function (dep) { ... })`. Bun, Node.js and browsers don't run it without a loader, and tools can't follow its dependencies the way they follow `import`. In a project that uses ES modules, an AMD call is a leftover.
 
 A call to `define` or `require` is reported if it has exactly two arguments and the first is an array. Only calls at the top level of a module are reported, not calls inside a function or a block. A CommonJS `require("name")` is fine.
 

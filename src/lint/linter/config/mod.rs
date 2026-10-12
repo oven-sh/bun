@@ -92,18 +92,16 @@ use std::sync::Arc;
 
 /// A pattern in `files` or `ignores`.
 struct Pattern {
-    /// Of ESLint: without the `!` at its start.
+    /// For ESLint, the pattern without its leading `!`s.
     matcher: bun_glob::Pattern,
-    /// It starts with `!`.
+    /// The pattern starts with `!`.
     is_negated: bool,
-    /// With an odd number of them: it matches what it would not match without.
+    /// The pattern starts with an odd number of `!`, which inverts the result.
     is_inverted: bool,
-    /// It starts with `#`, so it matches nothing.
+    /// The pattern starts with `#`. minimatch treats it as a comment that matches nothing.
     is_comment: bool,
-    /// A directory has a `/` at its end. Whether the pattern is asked about the path without it: `a` matches `a/`.
-    asks_without_slash: bool,
-    /// Whether it is asked about the path with it: of ESLint only `a/` and `a/**` are. The `*` of `a/*` takes something.
-    asks_with_slash: bool,
+    /// Directory paths end with `/`. minimatch lets `a` match `a/`, so ESLint patterns also try the path without the slash.
+    matches_without_slash: bool,
     /// `*`, `!..`, `../*`, `../**`: it does not make ESLint lint a file that nothing else matches.
     is_universal: bool,
 }
@@ -118,12 +116,14 @@ impl Pattern {
         };
         let bangs = normalized.iter().take_while(|it| **it == b'!').count();
         Pattern {
-            matcher: bun_glob::Pattern::with_extglob(&normalized[bangs..]),
+            matcher: bun_glob::Pattern::with_dots(
+                &crate::glob::from_minimatch(&normalized[bangs..]),
+                bun_glob::Dots::SkipTraversal,
+            ),
             is_negated: bangs > 0,
             is_inverted: bangs % 2 == 1,
             is_comment: normalized.starts_with(b"#"),
-            asks_without_slash: true,
-            asks_with_slash: normalized.ends_with(b"/") || normalized.ends_with(b"**"),
+            matches_without_slash: true,
             is_universal: normalized == b"*"
                 || normalized.starts_with(b"!")
                 || normalized.ends_with(b"/*")
@@ -139,8 +139,7 @@ impl Pattern {
             is_negated: false,
             is_inverted: false,
             is_comment: false,
-            asks_without_slash: false,
-            asks_with_slash: true,
+            matches_without_slash: false,
             is_universal: true,
         }
     }
@@ -149,8 +148,8 @@ impl Pattern {
     fn matches(&self, path: &Candidate, flip_negate: bool) -> bool {
         let hit = match path.without_slash() {
             Some(directory) => {
-                self.asks_without_slash && self.matcher.matches_candidate(&directory)
-                    || self.asks_with_slash && self.matcher.matches_candidate(path)
+                self.matches_without_slash && self.matcher.matches_candidate(&directory)
+                    || self.matcher.matches_candidate(path)
             }
             None => self.matcher.matches_candidate(path),
         };

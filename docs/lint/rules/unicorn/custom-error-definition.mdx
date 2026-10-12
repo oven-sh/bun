@@ -16,10 +16,10 @@ A class that extends `Error` inherits `name`, so without more work `String(new V
 
 The rule looks at every named class that extends `Error` or a class with a name like `TypeError` or `HttpError`. It reports:
 
-- a `name` that is missing, or is anything other than the class name written as a string
-- a constructor that does not call `super()`
+- a `name` that's missing, or is anything other than the class name written as a string
+- a constructor that doesn't call `super()`
 - `this.message = message` instead of `super(message)`
-- a class name that does not end in `Error` or does not start with a capital letter
+- a class name that doesn't end in `Error` or doesn't start with a capital letter
 - `exports.A = class B extends Error`, where the two names differ
 
 ## Examples

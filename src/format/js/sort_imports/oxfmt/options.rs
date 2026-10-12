@@ -135,13 +135,14 @@ pub(crate) struct Options {
     /// not sorted.
     pub(super) regroups_side_effect: bool,
     pub(super) regroups_side_effect_style: bool,
-    /// Nothing moves across an import for its side effects. oxfmt leaves such an import where it is, counted from the top.
+    /// Treat side-effect imports as barriers. oxfmt only keeps them at their index and lets other imports move past them.
     pub(super) stops_at_side_effects: bool,
 }
 
 /// `fast_glob::glob_match`: `bun_glob` is a port of the same `glob-match`.
 fn glob_match(pattern: &[u8], source: &[u8]) -> bool {
-    bun_glob::matcher::match_on::<false>(pattern, source).matches()
+    bun_glob::matcher::match_on::<false>(&bun_glob::pattern::of_fast_glob(pattern), source)
+        .matches()
 }
 
 impl Options {

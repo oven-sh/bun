@@ -5,6 +5,7 @@ use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
 use super::{ast, schema, scopes, tokens};
 use crate::ast::File;
+use crate::code_path;
 use crate::estree::Dialect;
 use crate::fix::Fix;
 use crate::linter::write_json;
@@ -599,8 +600,19 @@ impl<'e> Host<'e> {
             ask::TOKENS => tokens::write(file, &offsets, out),
             ask::COMMENTS => tokens::write_comments(file, &offsets, out),
             ask::SCOPES => {
-                if let Some(nodes) = &nodes {
-                    scopes::write(file, &offsets, nodes, out);
+                if let Some(numbered) = &nodes {
+                    scopes::write(file, &offsets, &numbered.nodes, out);
+                }
+            }
+            ask::CODE_PATHS => {
+                if let Some(numbered) = &nodes {
+                    let tree = code_path::estree::Tree {
+                        nodes: &numbered.nodes,
+                        types: &numbered.types,
+                        parents: &numbered.parents,
+                        twice: &numbered.twice,
+                    };
+                    wire::words(out, &code_path::estree::analyze(file, tree));
                 }
             }
             _ => {}

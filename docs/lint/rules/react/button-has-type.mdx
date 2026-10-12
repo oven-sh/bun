@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `<button>` without a `type` is a submit button. Inside a `<form>`, a click on it submits the form and reloads the page, even if the button was only meant to open a menu.
+A `<button>` without a `type` is a submit button. Inside a `<form>`, clicking it submits the form and reloads the page, even if the button was only meant to open a menu.
 
-The value has to be readable from the code: a string, or a ternary between two strings. `React.createElement("button", ...)` is checked too.
+The rule needs to read the value from the code, so it must be a string or a ternary between two strings. `React.createElement("button", ...)` is checked too.
 
 ## Examples
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-In a string, a backslash followed by digits from `0` to `7` is a character code in base 8: `"\251"` is the copyright sign. Few readers know the form, and a digit typed right after it can change which character you get. Use `\xA9` or `\u{A9}` instead.
+In a string, a backslash followed by digits from `0` to `7` is a character code in base 8. For example, `"\251"` is the copyright sign. Few readers know this form, and a digit typed right after it can change which character you get. Use `\xA9` or `\u{A9}` instead.
 
-`\0` on its own, the null character, is not reported.
+`\0` on its own (the null character) isn't reported.
 
 Octal escapes are a syntax error in modules and in strict mode. `.js` files are linted as modules, so the rule only has something to report in `.cjs` files, or where your config sets `sourceType` to `"commonjs"` or `"script"`.
 

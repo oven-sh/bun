@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Assigning to a global such as `Promise` or `window` replaces it for all the code that runs afterwards, including libraries. More often it is an accident: a `const` or `let` is missing, and the name you picked is already a global of the browser.
+Assigning to a global such as `Promise` or `window` replaces it for all the code that runs afterwards, including libraries. More often it's an accident. A `const` or `let` is missing, and the name you picked is already a browser global.
 
 This rule is on by default.
 
@@ -36,7 +36,7 @@ let status = "ready";
 status = "done";
 ```
 
-A global that is declared as writable can be assigned:
+A global that's declared as writable can be assigned:
 
 {/* good */}
 ```js
@@ -54,7 +54,7 @@ analytics = createAnalytics();
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `exceptions` | `[]` | Names of read-only globals that may be assigned. |
+| `exceptions` | `[]` | Names of read-only globals that can be assigned. |
 
 {/* good {"options": [{"exceptions": ["Promise"]}]} */}
 ```js

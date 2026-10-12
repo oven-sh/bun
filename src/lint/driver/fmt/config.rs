@@ -18,6 +18,7 @@ use bun_collections::index_sort::sort_slice;
 use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
+use bun_lint::glob::Picomatch;
 use bun_lint::json::{self, Notation};
 use bun_lint::linter::config::{glob_refusal, strings_of};
 use bun_lint::linter::write_json;
@@ -97,7 +98,7 @@ const OPTIONS: [&[u8]; 28] = [
     b"vueIndentScriptAndStyle",
 ];
 
-/// Whether Prettier has the option `name`. What else a flag can set is Bun's own.
+/// Returns true for Prettier's own options. Flags can also set Bun's extra features.
 pub(super) fn is_option_of_prettier(name: &[u8]) -> bool {
     OPTIONS.contains(&name)
 }
@@ -119,7 +120,7 @@ const OPTIONS_WITH_STRINGS: [&[u8]; 10] = [
 /// What else there is at the top of a configuration file of Prettier.
 const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath"];
 
-/// `sortImports` of a flag or of `[format]`, as [`SortSettings`] knows it.
+/// What [`SortSettings`] calls `sortImports` when it comes from a flag or `[format]`.
 const SORT_IMPORTS_OF_BUN: &[u8] = b"bun.sortImports";
 
 /// The largest number that is read. It stands for `Infinity` and for `max_line_length = off`.
@@ -191,69 +192,12 @@ pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
     bun_glob::Pattern::of_oxc_glob_set(pattern)
 }
 
-/// What picomatch makes of `1..3` between braces: the class `[1-3]` of a regular expression, of what is written in the order of
-/// `sort()`, or else the characters without the braces. `None`: it is not letters, digits and `-` around `..`.
-fn range_of_picomatch(written: &[u8]) -> Option<Vec<u8>> {
-    let mut ends: Vec<&[u8]> = strings::split(written, b"..").collect();
-    let is_end = |it: &&[u8]| {
-        !it.is_empty() && (it.iter()).all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
-    };
-    if ends.len() < 2 || !ends.iter().all(is_end) {
-        return None;
-    }
-    let as_written = ends.join(&b".."[..]);
-    sort_slice(&mut ends[..]);
-    let class = ends.join(&b'-');
-    // `b-a` is a syntax error.
-    let mut at = 0;
-    while at < class.len() {
-        match class.get(at + 1..at + 3) {
-            Some([b'-', to]) if class[at] > *to => return Some(as_written),
-            Some([b'-', _]) => at += 3,
-            _ => at += 1,
-        }
-    }
-    Some([b"[", &class[..], b"]"].concat())
-}
-
-/// A pattern that Prettier hands to micromatch or to fast-glob, in Bun's syntax: `(a|b)` is `@(a|b)`, and `a/**` matches `a` too.
-/// `is_of_override`: micromatch has it as it is. For fast-glob `{1..3}` is 1, 2 and 3.
-pub(crate) fn glob_of_prettier(pattern: &[u8], is_of_override: bool) -> bun_glob::Pattern {
-    let (written, is_deep) = match pattern.strip_suffix(b"/**") {
-        Some(before) if !before.is_empty() => (before, true),
-        _ => (pattern, false),
-    };
-    let mut glob = Vec::with_capacity(pattern.len() + 4);
-    let mut at = 0;
-    while let Some(&byte) = written.get(at) {
-        let len = match byte {
-            b'\\' => 2,
-            b'[' => strings::index_of_char_pos(written, b']', at + 2).map_or(1, |it| it + 1 - at),
-            _ => 1,
-        };
-        if byte == b'{'
-            && is_of_override
-            && let Some(close) = strings::index_of_any(&written[at + 1..], b"{},")
-            && written[at + 1 + close] == b'}'
-            && let Some(range) = range_of_picomatch(&written[at + 1..at + 1 + close])
-        {
-            glob.extend_from_slice(&range);
-            at += close + 2;
-            continue;
-        }
-        if byte == b'('
-            && !matches!(glob.last(), Some(b'?' | b'*' | b'+' | b'@' | b'!'))
-            && strings::contains_char(&written[at..], b')')
-        {
-            glob.push(b'@');
-        }
-        glob.extend_from_slice(&written[at..(at + len).min(written.len())]);
-        at += len;
-    }
-    if is_deep {
-        glob.extend_from_slice(b"{,/**}");
-    }
-    bun_glob::Pattern::with_extglob(&glob)
+/// Parses a pattern from Prettier's `overrides` or command line.
+pub(crate) fn glob_of_prettier(pattern: &[u8], how: Picomatch) -> bun_glob::Pattern {
+    bun_glob::Pattern::with_dots(
+        &bun_lint::glob::from_picomatch(pattern, how),
+        bun_glob::Dots::SkipTraversal,
+    )
 }
 
 fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
@@ -265,7 +209,7 @@ fn patterns_of<'t>(all: impl Iterator<Item = &'t [u8]>, is_oxfmt: bool) -> Vec<P
         glob: if is_oxfmt {
             glob_of_oxc(text)
         } else {
-            glob_of_prettier(text, true)
+            glob_of_prettier(text, Picomatch::Micromatch)
         },
         text: text.into(),
         has_slash: strings::contains_char(text, b'/'),
@@ -573,7 +517,7 @@ fn is_name_of_oxfmt(name: &[u8]) -> bool {
     strings::contains(name, b"oxfmt")
 }
 
-/// The configuration of Prettier that `NAMES[at]` in `directory` is, as it is shown. It is not run to find out.
+/// Display name of the Prettier config `NAMES[at]` in `directory`, or `None` if it isn't one. Never runs the file.
 fn of_prettier(directory: &[u8], at: usize) -> Option<Vec<u8>> {
     let name = *NAMES.get(at)?;
     if !name.starts_with(b"package.") {
@@ -787,7 +731,7 @@ pub(crate) struct Configs<'c> {
     options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
-    /// `overrides` of `[format]`, whose patterns are from the working directory.
+    /// `[[format.overrides]]`. Globs are relative to the working directory.
     overrides: Vec<Override>,
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
@@ -831,7 +775,7 @@ impl<'c> Configs<'c> {
     ) -> Configs<'c> {
         let (is_like_oxfmt, reads_editorconfig) = (options.is_like_oxfmt, options.editorconfig);
         let named = options.config.clone();
-        // Read as oxfmt reads them: what is excluded is held against the path, whatever `files` looks like.
+        // Use oxfmt's glob rules, where `excludeFiles` always matches against the path.
         let strings = |all: &[Vec<u8>]| patterns_of(all.iter().map(|it| &it[..]), true);
         let overrides = (options.overrides.iter())
             .map(|it| Override {
@@ -870,7 +814,7 @@ impl<'c> Configs<'c> {
                     formatters = Formatters::depended_on(&environment.cwd);
                     let has_oxfmt = formatters.oxfmt || formatters.vite_plus;
                     let has_prettier = formatters.prettier;
-                    // Who has both is on the way to oxfmt.
+                    // Depending on both suggests a migration to oxfmt, so oxfmt wins.
                     if has_oxfmt && has_prettier {
                         configs.note.get_or_init(|| {
                             b"No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like oxfmt. Add a config file to change that.".to_vec()
@@ -1219,7 +1163,7 @@ impl<'c> Configs<'c> {
         }))
     }
 
-    /// oxfmt's configuration file at `used` counts, and not what is shown as `ignored`, which is in the same directory.
+    /// Records that the oxfmt config at `used` won over the Prettier config `ignored` in the same directory.
     fn note_ignored(&self, used: &[u8], ignored: &[u8]) {
         self.note.get_or_init(|| {
             let used = paths::relative(&self.environment.cwd, used);
@@ -1228,9 +1172,9 @@ impl<'c> Configs<'c> {
         });
     }
 
-    /// For the user, once: which of two configuration files in a directory counts.
+    /// One-time note for the user about which of two config files was picked.
     pub(crate) fn note(&self) -> Option<&[u8]> {
-        // What is found before `--config` is looked at does not count.
+        // The lookup also runs before `--config` is applied. Ignore what it found then.
         let is_looked_for = self.named.is_none() && self.options.config_lookup;
         self.note.get().filter(|_| is_looked_for).map(|it| &it[..])
     }
@@ -1434,8 +1378,8 @@ impl<'c> Configs<'c> {
             .unwrap_or(false)
     }
 
-    /// Whether TOML, which Prettier has not, is formatted where `scope` counts: the run stands in for no tool, and no
-    /// configuration file says how Prettier formats there.
+    /// Returns true if TOML gets formatted in `scope`. Prettier doesn't format TOML, so this needs native mode and no
+    /// Prettier config for the directory.
     pub(crate) fn formats_toml(&self, scope: &Scope) -> bool {
         self.is_native() && self.config_of(scope).is_ok_and(|it| it.is_none())
     }
@@ -1511,7 +1455,7 @@ impl<'c> Configs<'c> {
                 from_flags.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
             }
         }
-        // It does more than what a configuration file of oxfmt calls so.
+        // Bun's `sortImports` does more than oxfmt's, so it gets its own name.
         for it in from_flags.iter_mut().filter(|it| it.0 == b"sortImports") {
             it.0 = SORT_IMPORTS_OF_BUN;
         }
@@ -1544,7 +1488,7 @@ impl<'c> Configs<'c> {
         }
         let mut sort_imports: Option<Vec<u8>> = None;
         let mut sort_tailwindcss: Option<Vec<u8>> = None;
-        // What oxfmt has and Prettier has not is known with every configuration if a flag or `[format]` sets it.
+        // oxfmt-only options are also valid under a Prettier config when a flag or `[format]` sets them.
         let is_known = |name: &[u8]| is_oxfmt || from_flags.iter().any(|it| it.0 == name);
         // Prettier knows the options of the plugins that it has loaded.
         let knows_all_options = !is_oxfmt
@@ -1634,7 +1578,7 @@ impl<'c> Configs<'c> {
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
         if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
-            // Only a configuration file of oxfmt has it. The paths in `[format]` are from the working directory.
+            // Paths in an oxfmt config are relative to that file. Paths in `[format]` are relative to the working directory.
             let of_config = (config.filter(|it| it.is_oxfmt)).map(|it| paths::dirname(&it.path));
             let tailwind =
                 tailwind::for_file(&self.classes, self.environment, &value, (of_config, path));

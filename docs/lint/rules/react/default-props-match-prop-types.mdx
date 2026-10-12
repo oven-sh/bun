@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A default for a required prop is a contradiction: either the caller must pass the prop, and the default is dead code, or the prop is optional, and its type is wrong. A default for a prop that is not declared at all is often a typo or a leftover from a rename.
+A default for a required prop is a contradiction. Either the caller must pass the prop and the default is dead code, or the prop is optional and its type is wrong. A default for a prop that isn't declared at all is often a typo or a leftover from a rename.
 
-The prop types can be `propTypes` or a TypeScript type. A component that declares no prop types is not checked.
+The prop types can be `propTypes` or a TypeScript type. A component that doesn't declare prop types isn't checked.
 
 ## Examples
 

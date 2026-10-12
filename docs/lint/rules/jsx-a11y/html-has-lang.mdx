@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A screen reader picks its voice and pronunciation from the `lang` of the page. Without it, it uses the language of the person's system, so a French page is read aloud with English pronunciation.
+A screen reader picks its voice and pronunciation from the page's `lang`. Without one, it falls back to the person's system language, so a French page is read aloud with English pronunciation.
 
-An empty string, `null`, `undefined`, a number, `true` and `false` do not count as a language.
+An empty string, `null`, `undefined`, a number, `true` and `false` don't count as a language.
 
 ## Examples
 

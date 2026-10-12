@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Methods like `map` and `filter` use what the callback returns. If the callback forgets `return`, they get `undefined`: `map` fills the array with `undefined`, and `filter` drops every item. A callback that returns a value on some paths only is reported too.
+Methods like `map` and `filter` use the callback's return value. If the callback forgets `return`, they get `undefined`, so `map` fills the array with `undefined` and `filter` drops every item. A callback that only returns a value on some paths is reported too.
 
 The rule checks a function passed directly to `every`, `filter`, `find`, `findIndex`, `findLast`, `findLastIndex`, `flatMap`, `map`, `reduce`, `reduceRight`, `some`, `sort`, `toSorted`, `Array.from` or `Array.fromAsync`.
 
@@ -52,7 +52,7 @@ const adults = users.filter(user => user.age >= 18);
 | Option | Default | What it does |
 | --- | --- | --- |
 | `allowImplicit` | `false` | Allow `return;` without a value as a way to return `undefined`. |
-| `checkForEach` | `false` | Also check `forEach`, the other way around: report a callback that returns a value, because `forEach` ignores it. |
+| `checkForEach` | `false` | Also check `forEach`, but the other way around. A callback that returns a value is reported, because `forEach` ignores it. |
 | `allowVoid` | `false` | With `checkForEach`, allow a returned value that starts with `void`. |
 
 {/* good {"options": [{"allowImplicit": true}]} */}

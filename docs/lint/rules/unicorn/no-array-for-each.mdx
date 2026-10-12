@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-You cannot leave a `forEach` early: `break` is a syntax error in the callback, and `return` only ends the current call. An `await` in the callback does not make the loop wait either. A `for...of` loop has `break`, `continue`, `return`, and `await`.
+You can't leave a `forEach` early. `break` is a syntax error in the callback, and `return` only ends the current call. An `await` in the callback doesn't make the loop wait either. A `for...of` loop has `break`, `continue`, `return`, and `await`.
 
-The rule cannot tell what is an array. It reports every method call named `forEach`, including on a `Map`, a `Set`, or a `NodeList`. Those work with `for...of` too.
+The rule can't tell what's an array. It reports every method call named `forEach`, including on a `Map`, a `Set`, or a `NodeList`. Those work with `for...of` too.
 
 ## Examples
 
@@ -54,7 +54,7 @@ for (const [index, line] of lines.entries()) {
 }
 ```
 
-`Children.forEach()` and `React.Children.forEach()` are not reported:
+`Children.forEach()` and `React.Children.forEach()` aren't reported:
 
 {/* good */}
 ```js

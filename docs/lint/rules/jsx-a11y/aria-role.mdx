@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A screen reader ignores a `role` it does not know, so an element with `role="datepicker"` is announced as a plain `div`. Abstract roles such as `range`, `widget` and `input` exist only to define other roles in the ARIA specification. Browsers ignore them too.
+A screen reader ignores a `role` it doesn't know, so an element with `role="datepicker"` is announced as a plain `div`. Abstract roles such as `range`, `widget` and `input` exist only to define other roles in the ARIA specification. Browsers ignore them too.
 
-A `role` can hold several roles separated by spaces, and each one has to be valid. A `role` without a value, or with `""`, `null` or `undefined`, is reported. Any other expression is not checked.
+A `role` can hold several roles separated by spaces, and each one must be valid. A `role` without a value, or with `""`, `null` or `undefined`, is reported. Any other expression isn't checked.
 
 ## Examples
 
@@ -43,7 +43,7 @@ const toggle = <div role="switch checkbox" aria-checked={isOn} tabIndex={0} />;
 | Option | Default | What it does |
 | --- | --- | --- |
 | `allowedInvalidRoles` | `[]` | Other values to accept. |
-| `ignoreNonDOM` | `false` | Do not check components, where `role` may be an ordinary prop. |
+| `ignoreNonDOM` | `false` | Don't check components, where `role` might be an ordinary prop. |
 
 {/* good {"options": [{"allowedInvalidRoles": ["text"]}]} */}
 ```jsx

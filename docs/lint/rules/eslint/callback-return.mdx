@@ -16,6 +16,8 @@ Calling a callback doesn't stop the function. If you call `callback(err)` in an 
 
 The rule reports a call to `callback`, `cb` or `next` inside a function, unless the call is returned, is followed by a `return` that ends its block, or is the function's last statement.
 
+ESLint has deprecated this rule. Use `n/callback-return` instead.
+
 ## Examples
 
 Reported:

@@ -2053,6 +2053,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     fn check_special_syntax(pattern: &[u8]) -> bool {
         strings::index_of_any(pattern, Self::SYNTAX_TOKENS).is_some()
+            || strings::contains(pattern, b"@(")
+            || strings::contains(pattern, b"+(")
     }
 
     fn make_component(pattern: &[u8], start_byte: u32, end_byte: u32) -> Option<Component> {
@@ -2121,7 +2123,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                             // We also don't need to look for the `!` token,
                             // because that only applies negation if at the
                             // beginning of the string.
-                            b'[' | b'{' | b'?' | b'*' => break 'out_of_check_wildcard_filepath,
+                            b'[' | b'{' | b'?' | b'*' | b'(' => {
+                                break 'out_of_check_wildcard_filepath;
+                            }
                             _ => {}
                         }
                     }

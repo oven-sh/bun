@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A comment next to code makes the line longer, and it is easy to miss when you scan down the left edge of a file. With this rule, every comment goes on its own line.
+A comment next to code makes the line longer, and it's easy to miss when you scan down the left edge of a file. With this rule, every comment goes on its own line.
 
-Comments that configure the linter, such as `// eslint-disable-line`, are not reported.
+Comments that configure the linter, such as `// eslint-disable-line`, aren't reported.
 
 ## Examples
 
@@ -40,7 +40,7 @@ const timeout = 30;
 connect(retries, timeout); // eslint-disable-line no-undef
 ```
 
-In JSX, a comment in braces is fine if the braces have their lines to themselves:
+In JSX, a comment in braces is fine if nothing else shares a line with the braces:
 
 {/* good */}
 ```jsx
@@ -65,7 +65,7 @@ const page = (
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignorePattern` | none | A regular expression. A comment with text that matches it is not reported. |
+| `ignorePattern` | none | A regular expression. A comment whose text matches it isn't reported. |
 
 {/* good {"options": [{"ignorePattern": "webpackChunkName"}]} */}
 ```js

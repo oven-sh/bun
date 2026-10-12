@@ -226,7 +226,10 @@ impl Scope {
             if !strings::contains_any(last, b".*?") {
                 path.extend_from_slice(b"/**/*");
             }
-            (Pattern::new(&path), path.ends_with(b"*"))
+            (
+                Pattern::new(&bun_glob::pattern::of_fast_glob(&path)),
+                path.ends_with(b"*"),
+            )
         };
         let patterns = |written: &[Vec<u8>]| written.iter().map(pattern).collect::<Vec<_>>();
         let written = &project.written;

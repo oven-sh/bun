@@ -14,9 +14,9 @@ deprecated: false
 
 If two files both export `format` and you re-export both with `export *`, JavaScript silently leaves `format` out, and `import { format }` fails somewhere else. If your own file exports `format` too, yours wins and the other one is hidden.
 
-The rule reads the file behind each `export *` and reports every name that is exported more than once. It also reports an `export *` from a file that has no named exports. That line does nothing, because `export *` never passes on a default export.
+The rule reads the file behind each `export *` and reports every name that's exported more than once. It also reports an `export *` from a file that has no named exports. That line does nothing, because `export *` never passes on a default export.
 
-JavaScript and TypeScript files are read, JSX included. With an ESLint config only `.js`, `.mjs` and `.cjs` files are, unless `settings["import/extensions"]` lists others.
+It reads JavaScript and TypeScript files, including JSX. With an ESLint config it only reads `.js`, `.mjs` and `.cjs` files, unless `settings["import/extensions"]` lists others.
 
 In TypeScript, function overloads are allowed, and so are a type and a value with the same name, and a namespace merged with a function, class or enum.
 

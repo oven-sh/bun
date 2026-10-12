@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`??` gives a fallback for when the left side is `null` or `undefined`. A `!` on that side says it never is. If that is true, the fallback is dead code. If it is not, the `!` is wrong. `??` handles both cases without it, so remove the `!`.
+`??` gives a fallback for when the left side is `null` or `undefined`. A `!` on that side says it never is. If that's true, the fallback is dead code. If it isn't, the `!` is wrong. `??` handles both cases without it, so remove the `!`.
 
 A `!` on the right side is allowed.
 
@@ -40,7 +40,7 @@ const theme = settings.theme ?? "light";
 const user = findUser("42") ?? { name: "guest" };
 ```
 
-Here the `!` is what lets you read `label` before it is assigned, so it is allowed:
+Here the `!` is what lets you read `label` before it's assigned, so it's allowed:
 
 {/* good */}
 ```ts

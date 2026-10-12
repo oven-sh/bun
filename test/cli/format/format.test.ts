@@ -469,7 +469,7 @@ describe.concurrent("bun format", () => {
       try {
         const { stderr, exitCode } = await write(String(dir), ["a.js", "b.js"]);
         expect([read(String(dir), "a.js"), read(String(dir), "b.js")]).toEqual([ugly, formatted]);
-        expect(stderr).toMatch(/\[error\] Unable to write file "a\.js":\r?\n(\[error\] )?(EACCES|EPERM)/);
+        expect(stderr).toMatch(/^error: Unable to write file "a\.js":\r?\n(EACCES|EPERM)/);
         expect(readdirSync(String(dir)).sort()).toEqual(["a.js", "b.js"]);
         expect(exitCode).toBe(2);
       } finally {

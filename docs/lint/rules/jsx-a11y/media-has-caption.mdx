@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-People who are deaf or hard of hearing, or who watch with the sound off, cannot follow a video or a recording without captions.
+People who are deaf or hard of hearing, or who watch with the sound off, can't follow a video or a recording without captions.
 
-An `<audio>` or `<video>` needs a direct child `<track kind="captions">`. A `muted` element has no sound to caption and is not reported.
+An `<audio>` or `<video>` needs a direct child `<track kind="captions">`. A `muted` element has no sound to caption, so it isn't reported.
 
 ## Examples
 
@@ -25,7 +25,7 @@ Reported:
 const player = <video src="/intro.mp4" controls />;
 ```
 
-A track of another kind does not count:
+A track of another kind doesn't count:
 
 {/* bad */}
 ```jsx

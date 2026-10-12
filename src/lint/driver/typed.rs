@@ -18,6 +18,7 @@ use crate::results::{Counts, FileResult};
 use crate::run::Environment;
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::glob::Picomatch;
 use bun_lint::linter::config::strings_of;
 use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
@@ -224,10 +225,14 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
 /// A link to a directory is not followed.
 fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
     let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
-    let pattern = bun_glob::Pattern::without_dot(pattern);
-    let ignored: Vec<bun_glob::Pattern> = (ignored.iter())
-        .map(|it| bun_glob::Pattern::without_dot(it))
-        .collect();
+    let read = |it: &[u8]| {
+        bun_glob::Pattern::with_dots(
+            &bun_lint::glob::from_picomatch(it, Picomatch::Micromatch),
+            bun_glob::Dots::Hide,
+        )
+    };
+    let pattern = read(pattern);
+    let ignored: Vec<bun_glob::Pattern> = ignored.iter().map(|it| read(it)).collect();
     let is_ignored = |relative: &[u8]| ignored.iter().any(|it| it.matches(relative));
     let mut found = Vec::new();
     // From `root`. A loop: directories can be nested to any depth.

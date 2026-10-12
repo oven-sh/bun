@@ -14,7 +14,7 @@ deprecated: false
 
 React calls `componentWillUpdate` right before it renders an update. Calling `this.setState` there starts another update before the current one is done, and the component can end up updating forever.
 
-`UNSAFE_componentWillUpdate` is checked too.
+The rule checks `UNSAFE_componentWillUpdate` too.
 
 ## Examples
 
@@ -64,7 +64,7 @@ class Price extends React.Component {
 }
 ```
 
-With `"disallow-in-func"` it is reported:
+With `"disallow-in-func"` it's reported:
 
 {/* bad {"options": ["disallow-in-func"]} */}
 ```jsx

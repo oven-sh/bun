@@ -384,6 +384,10 @@ pub struct Meta {
     /// The rule stands in for that of a package only for some files: for the others it calls `File::hand_back`, and the
     /// rule of the package is asked.
     pub hands_back: bool,
+    /// Upstream sets `fixable`, but the rule never attaches a fix. `--rules` and the docs don't list it as fixable.
+    pub never_fixes: bool,
+    /// Upstream sets `hasSuggestions`, but the rule never attaches a suggestion.
+    pub never_suggests: bool,
     /// [`Meta::hints`]
     pub has_hints: bool,
     pub reports: When,
@@ -407,6 +411,8 @@ impl Meta {
             needs_modules: false,
             follows_oxlint: false,
             hands_back: false,
+            never_fixes: false,
+            never_suggests: false,
             has_hints: false,
             reports: When::Entering,
             key: hash_const(0, name.as_bytes()) as u32,
@@ -440,6 +446,16 @@ impl Meta {
 
     pub const fn has_suggestions(mut self) -> Meta {
         self.has_suggestions = true;
+        self
+    }
+
+    pub const fn never_fixes(mut self) -> Meta {
+        self.never_fixes = true;
+        self
+    }
+
+    pub const fn never_suggests(mut self) -> Meta {
+        self.never_suggests = true;
         self
     }
 

@@ -12,11 +12,11 @@ typeAware: false
 deprecated: true
 ---
 
-Some modules should not be imported in your project, or not from everywhere: a library you are moving away from, the internals of another package, server code in the browser bundle. You list them, and every `import`, `export .. from` and `import x = require("..")` of one is reported.
+Some modules shouldn't be imported in your project, or not from everywhere, like a library you're moving away from, another package's internals, or server code in the browser bundle. You list them, and the rule reports every `import`, `export .. from` and `import x = require("..")` of one.
 
-The rule reports nothing until you give it options. `require()` is not checked, and `import()` is only checked with an oxlint config.
+The rule does nothing until you give it options. `require()` isn't checked, and `import()` is only checked with an oxlint config.
 
-This rule is deprecated. Use `no-restricted-imports` instead. It has the same options, `allowTypeImports` included.
+This rule is deprecated. Use `no-restricted-imports` instead. It has the same options, including `allowTypeImports`.
 
 ## Examples
 
@@ -45,29 +45,29 @@ const moment = await import("moment");
 
 ## Options
 
-Either a list of `paths` entries, such as `["error", "moment", "lodash"]`, or one object with `paths`, `patterns` or both.
+Pass either a list of `paths` entries, such as `["error", "moment", "lodash"]`, or one object with `paths`, `patterns` or both.
 
-Each entry of `paths` is a module name, or an object:
+Each `paths` entry is a module name or an object:
 
 | Key | What it does |
 | --- | --- |
-| `name` | The module, exactly as it is written in the import. Required. |
+| `name` | The module, exactly as it's written in the import. Required. |
 | `message` | Text added to the report. |
 | `importNames` | Report only these names. Other names from the module are allowed. |
 | `allowImportNames` | Report every name except these. |
 | `allowTypeImports` | `true` allows `import type` and `export type` from the module. Default `false`. |
 
-`patterns` is a list of patterns in the syntax of `.gitignore`, or a list of objects. An object has the keys `message`, `importNames`, `allowImportNames` and `allowTypeImports` from above, and:
+`patterns` is a list of patterns in `.gitignore` syntax, or a list of objects. An object takes the keys `message`, `importNames`, `allowImportNames` and `allowTypeImports` from above, plus these:
 
 | Key | What it does |
 | --- | --- |
-| `group` | A list of patterns in the syntax of `.gitignore`. A pattern that starts with `!` makes an exception. |
-| `regex` | A regular expression, in place of `group`. |
+| `group` | A list of patterns in `.gitignore` syntax. A pattern that starts with `!` makes an exception. |
+| `regex` | A regular expression, instead of `group`. |
 | `caseSensitive` | `true` makes `group` or `regex` case sensitive. Default `false`. |
 | `importNamePattern` | Report only the names that match this regular expression. |
 | `allowImportNamePattern` | Report every name except those that match this regular expression. |
 
-An `import type` is erased when the file is compiled, so it loads nothing. With `{ name: "./server/db", allowTypeImports: true }`, these are allowed:
+An `import type` is erased when the file is compiled, so it doesn't load anything. With `{ name: "./server/db", allowTypeImports: true }`, these are allowed:
 
 {/* good {"options": [{"paths": [{"name": "./server/db", "allowTypeImports": true}]}]} */}
 ```ts
@@ -75,7 +75,7 @@ import type { User } from "./server/db";
 import { type Order } from "./server/db";
 ```
 
-This one also imports a value, so it is reported:
+This one also imports a value, so it's reported:
 
 {/* bad {"options": [{"paths": [{"name": "./server/db", "allowTypeImports": true}]}]} */}
 ```ts

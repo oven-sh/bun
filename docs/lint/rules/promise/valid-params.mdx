@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`Promise` methods do not complain about extra or missing arguments. `Promise.all(a, b)` ignores `b`, and rejects unless `a` is iterable. `promise.catch()` without a handler catches nothing.
+`Promise` methods don't complain about extra or missing arguments. `Promise.all(a, b)` ignores `b`, and rejects unless `a` is iterable. `promise.catch()` without a handler catches nothing.
 
 | Method | Arguments |
 | --- | --- |
@@ -21,7 +21,7 @@ deprecated: false
 | `then` | 1 or 2 |
 | `catch`, `finally` | 1 |
 
-A `then`, `catch` or `finally` method of something that is clearly not a promise, such as an object literal or `new Parser()`, is not reported.
+A `then`, `catch` or `finally` method on something that clearly isn't a promise, such as an object literal or `new Parser()`, isn't reported.
 
 ## Examples
 

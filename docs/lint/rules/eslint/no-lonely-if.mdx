@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An `else` block that holds nothing but an `if` is an `else if` with one more level of indentation. Each further condition moves the code further to the right.
+An `else` block that holds nothing but an `if` is an `else if` with one more level of indentation. Each extra condition pushes the code further to the right.
 
 `--fix` rewrites it to `else if`. It leaves the code alone if the `else` block also has a comment, which would be lost.
 

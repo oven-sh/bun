@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `then()` callback that returns nothing passes `undefined` to the next step of the chain. If the callback started more async work, the chain does not wait for it.
+A `then()` callback that returns nothing passes `undefined` to the next step in the chain. If the callback started more async work, the chain doesn't wait for it.
 
-The rule checks the first argument of `then()` when it is a function with a `{ }` body. Every path through it must end with `return`, `throw`, `process.exit()` or `process.abort()`. A bare `return;` is enough.
+The rule checks the first argument of `then()` when it's a function with a `{ }` body. Every path through it must end with `return`, `throw`, `process.exit()` or `process.abort()`. A bare `return;` is enough.
 
 ## Examples
 
@@ -64,7 +64,7 @@ fetchUser(id)
   .catch(showError);
 ```
 
-If the result is stored or returned, other code can still chain on it, so it is reported:
+If the result is stored or returned, other code can still chain on it, so it's reported:
 
 {/* bad {"options": [{"ignoreLastCallback": true}]} */}
 ```js

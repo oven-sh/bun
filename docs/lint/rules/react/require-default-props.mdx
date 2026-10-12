@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An optional prop that the parent leaves out is `undefined` in the component. With a default for each optional prop, the component never has to handle that case, and the defaults show what happens if a prop is missing.
+An optional prop that the parent leaves out is `undefined` in the component. With a default for each optional prop, the component never needs to handle that case, and the defaults show what happens if a prop is missing.
 
 By default the rule looks for the default in `defaultProps`. React 19 ignores `defaultProps` on function components, so set `functions` to `"defaultArguments"` there.
 
@@ -59,7 +59,7 @@ Greeting.defaultProps = {
 | `forbidDefaultForRequired` | `false` | Also report a default in `defaultProps` for a required prop. |
 | `ignoreFunctionalComponents` | `false` | An older way to write `functions: "ignore"`. |
 
-With `"defaultArguments"`, the defaults belong in the destructured parameter. `defaultProps` on a function component is reported, and so is a default for a required prop.
+With `"defaultArguments"`, the defaults belong in the destructured parameter. The rule then reports `defaultProps` on a function component, and a default for a required prop.
 
 {/* bad {"options": [{"functions": "defaultArguments"}]} */}
 ```tsx

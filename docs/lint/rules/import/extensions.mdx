@@ -59,9 +59,9 @@ The first option sets the style for every extension:
 
 | Option | What it does |
 | --- | --- |
-| `"never"` (default) | Report an extension that the path does not need: `./user.js` where `./user` finds the same file. |
+| `"never"` (default) | Report an extension that the path doesn't need, such as `./user.js` where `./user` finds the same file. |
 | `"always"` | Report a path without an extension. |
-| `"ignorePackages"` | Like `"always"`, but paths into packages such as `"lodash/fp/map"` are not checked. |
+| `"ignorePackages"` | Like `"always"`, but paths into packages such as `"lodash/fp/map"` aren't checked. |
 
 {/* file "user.js" */}
 ```js
@@ -85,15 +85,15 @@ import map from "lodash/fp/map";
 import map from "lodash/fp/map";
 ```
 
-An object after it, or in its place, has exceptions and more settings:
+An object after it, or instead of it, holds exceptions and more settings:
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | an extension, such as `js` or `json` | the first option | `"always"` or `"never"` for files with that extension. |
 | `pattern` | `{}` | The same extension entries, in their own object. Use it if you also set one of the options below, because entries written next to those are ignored. |
-| `ignorePackages` | `false` | Do not require an extension in paths into packages. |
+| `ignorePackages` | `false` | Don't require an extension in paths into packages. |
 | `checkTypeImports` | `false` | Also require extensions in `import type` and `export type`. |
-| `pathGroupOverrides` | `[]` | A list of `{ pattern, action }`. A path that matches the glob `pattern` is skipped if `action` is `"ignore"`. With `"enforce"` it is checked even if it looks like a package. Only read if `pattern`, `ignorePackages` or `checkTypeImports` is set too. |
+| `pathGroupOverrides` | `[]` | A list of `{ pattern, action }`. A path that matches the glob `pattern` is skipped if `action` is `"ignore"`. With `"enforce"` it's checked even if it looks like a package. Only read if `pattern`, `ignorePackages` or `checkTypeImports` is set too. |
 
 {/* good {"options": ["never", {"json": "always"}]} */}
 ```js
@@ -121,7 +121,7 @@ import { routes } from "~/generated/routes";
 import { routes } from "~/generated/routes";
 ```
 
-The rule looks up which file `./user` stands for, the way Bun and TypeScript do, so it knows that it is `./user.ts`:
+The rule looks up which file `./user` stands for, the way Bun and TypeScript do, so it knows that it's `./user.ts`:
 
 {/* file "user.ts" */}
 ```ts
@@ -147,4 +147,4 @@ export function createUser(name: string) {
 import { createUser } from "./user";
 ```
 
-With an ESLint config only `.mjs`, `.js`, `.json` and `.node` are tried, like in Node.js, unless `settings["import/resolver"]` says otherwise.
+With an ESLint config it only tries `.mjs`, `.js`, `.json` and `.node`, like Node.js does, unless `settings["import/resolver"]` says otherwise.

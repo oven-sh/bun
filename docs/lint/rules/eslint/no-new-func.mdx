@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`Function` compiles a string into code at run time, like `eval`. If any part of the string comes from a user, they can run what they like. The code in the string is also invisible to the linter, the type checker and the bundler, and a Content Security Policy without `unsafe-eval` blocks it.
+`Function` compiles a string into code at runtime, like `eval`. If any part of the string comes from a user, they can run whatever they like. The code in the string is also invisible to the linter, the type checker and the bundler, and a Content Security Policy without `unsafe-eval` blocks it.
 
 The rule reports `new Function(..)`, `Function(..)`, `Function.call(..)`, `Function.apply(..)` and `Function.bind(..)`.
 

@@ -136,8 +136,15 @@ pub(super) const STRINGS: &[&str] = &[
     "~",
 ];
 
-/// The nodes of a file, by their numbers.
-pub(super) type Numbered<'a> = Vec<VNode<'a>>;
+/// The numbered nodes of a file. Later requests about the same tree read it.
+pub(super) struct Numbered<'a> {
+    pub(super) nodes: Vec<VNode<'a>>,
+    /// [`NodeType`](crate::estree::NodeType) of each node.
+    pub(super) types: Vec<u8>,
+    pub(super) parents: Vec<u32>,
+    /// See [`Tree::twice`].
+    pub(super) twice: Vec<u32>,
+}
 
 const HEADER: usize = 10;
 /// In the start of a pair of `strings`: it is in `extra`.
@@ -187,7 +194,7 @@ struct Writer<'a, 's> {
     selectors: &'s [Option<&'s Selector>],
     /// The nodes that match each of `selectors`.
     matches: Vec<Vec<u32>>,
-    nodes: Numbered<'a>,
+    nodes: Vec<VNode<'a>>,
     tree: Tree,
     /// The length of [`Tree::extra`] in UTF-16 code units.
     extra_units: u32,
@@ -283,6 +290,15 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
 }
 
 impl<'a> Writer<'a, '_> {
+    fn into_numbered(self) -> Numbered<'a> {
+        Numbered {
+            nodes: self.nodes,
+            types: self.tree.types,
+            parents: self.tree.parents,
+            twice: self.tree.twice,
+        }
+    }
+
     /// Writes `node`, and notes what is in it. Returns its number.
     fn write_node(&mut self, node: VNode<'a>, parent: u32) -> u32 {
         let id = self.tree.types.len() as u32;
@@ -470,7 +486,7 @@ fn walk<'a, 's>(
         offsets,
         selectors,
         matches: vec![Vec::new(); selectors.len()],
-        nodes: Numbered::default(),
+        nodes: Vec::new(),
         tree: Tree::default(),
         extra_units: 0,
         open: Vec::new(),
@@ -500,7 +516,7 @@ pub(super) fn write<'a>(
     let is_listened = |listened: &ByteSet| tree.types.iter().any(|&it| listened.has(it));
     if listened.is_some_and(|it| !is_listened(it)) && writer.matches.iter().all(Vec::is_empty) {
         wire::words(out, &[0; HEADER]);
-        return writer.nodes;
+        return writer.into_numbered();
     }
     let matches: usize = writer.matches.iter().map(|it| it.len() + 1).sum();
     let header: [u32; HEADER] = [
@@ -533,7 +549,7 @@ pub(super) fn write<'a>(
     write_matches(&writer.matches, out);
     out.extend_from_slice(&tree.types);
     out.extend_from_slice(&tree.extra);
-    writer.nodes
+    writer.into_numbered()
 }
 
 /// Appends only what matches `selectors`.

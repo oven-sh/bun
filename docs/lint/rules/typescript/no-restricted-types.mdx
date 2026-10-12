@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-Some types should not be used in your project: a type that is deprecated, one that is easy to confuse with another, or one for which the project has a better name. You list them, and every use as a type is reported.
+Some types shouldn't be used in your project, like a deprecated type, one that's easy to confuse with another, or one the project has a better name for. You list them, and the rule reports every use as a type.
 
-The rule reports nothing until you give it options.
+The rule does nothing until you give it options.
 
-`--fix` replaces a type for which you set `fixWith`.
+`--fix` replaces a type if you set `fixWith` for it.
 
 ## Examples
 
@@ -53,7 +53,7 @@ function greet(user: Account) {
 
 ## Options
 
-`types` is an object. Each key is a type as you write it in code, and spaces do not count. It can be a name (`LegacyUser`, `NodeJS.Timeout`), a name with type arguments (`Array<any>`), a keyword other than `any` (`object`, `null`, `unknown`), or the empty `{}` and `[]`.
+`types` is an object. Each key is a type as you write it in code, and spaces don't matter. It can be a name (`LegacyUser`, `NodeJS.Timeout`), a name with type arguments (`Array<any>`), a keyword other than `any` (`object`, `null`, `unknown`), or the empty `{}` and `[]`.
 
 | Value | What it does |
 | --- | --- |
@@ -61,7 +61,7 @@ function greet(user: Account) {
 | A string | Report the type, with this text after the message. |
 | `{ "message": .., "fixWith": .., "suggest": [..] }` | `message` is the text. `fixWith` is what `--fix` writes in its place. `suggest` lists replacements that an editor offers. All three are optional. |
 
-A name matches whatever its type arguments are. With `{ Record: true }`, both lines are reported:
+A name matches no matter what its type arguments are. With `{ Record: true }`, both lines are reported:
 
 {/* bad {"count": 2, "options": [{"types": {"Record": true}}]} */}
 ```ts

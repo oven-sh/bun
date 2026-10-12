@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-In `const width = height = 100`, only `width` is declared. `height` is a plain assignment: it throws in strict mode if nothing declares it, and creates a global variable otherwise. Where every name is declared, the second assignment is still easy to overlook.
+In `const width = height = 100`, only `width` is declared. `height` is a plain assignment. It throws in strict mode if nothing declares it, and creates a global variable otherwise. Even when every name is declared, the second assignment is easy to overlook.
 
 ## Examples
 

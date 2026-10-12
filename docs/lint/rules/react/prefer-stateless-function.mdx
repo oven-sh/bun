@@ -12,12 +12,12 @@ typeAware: false
 deprecated: false
 ---
 
-A class that has nothing but a `render` method that reads `this.props` does the same as a function that takes `props`, with more code around it.
+A class that has nothing but a `render` method that reads `this.props` does the same thing as a function that takes `props`, with more code around it.
 
-A class that needs to be a class is not reported. That is one that:
+A class that needs to be a class isn't reported. That means a class that:
 
 - reads anything on `this` other than `props` and `context`, such as `this.state`
-- has a method or a field besides `render`, `propTypes`, `defaultProps`, `contextTypes`, and `displayName`
+- has a method or a field other than `render`, `propTypes`, `defaultProps`, `contextTypes`, and `displayName`
 - has a constructor that does more than pass its arguments to `super`
 - has a `ref` attribute in its JSX
 - has a decorator

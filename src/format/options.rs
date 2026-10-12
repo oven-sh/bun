@@ -93,7 +93,7 @@ pub struct FormatOptions {
     pub jsdoc: Option<JsdocOptions>,
     /// oxfmt's `sortTailwindcss`: how the classes of Tailwind CSS are sorted, if they are.
     pub tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
-    /// TOML is formatted though the flavor is Prettier's, which has none. For who finds out what a file is.
+    /// Format TOML even in Prettier's flavor. Only the caller that detects file types reads this.
     pub toml: bool,
 }
 

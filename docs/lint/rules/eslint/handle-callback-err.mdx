@@ -16,6 +16,8 @@ A Node.js-style callback gets the error as its first argument. If the function n
 
 The rule reports a function if its first parameter is named `err` and is never used. Any use counts as handling it.
 
+ESLint has deprecated this rule. Use `n/handle-callback-err` instead.
+
 ## Examples
 
 Reported:

@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A handler that is no longer wired to any element stays in the class and looks as if it still mattered. This rule reports a method or a property of a class component, or of a `createReactClass` component, that is never read through `this` in the same component.
+A handler that's no longer wired to any element stays in the class and looks like it still matters. This rule reports a method or a property of a class component, or of a `createReactClass` component, that's never read through `this` in the same component.
 
 Lifecycle methods such as `render` and `componentDidMount`, `state`, and static members are never reported.
 
@@ -54,4 +54,4 @@ class SearchBox extends React.Component {
 
 ## When not to use it
 
-The rule only looks inside the component. If a parent calls a method through a ref, such as `searchBox.current.focus()`, the method is reported even though it is used.
+The rule only looks inside the component. If a parent calls a method through a ref, such as `searchBox.current.focus()`, the method is reported even though it's used.

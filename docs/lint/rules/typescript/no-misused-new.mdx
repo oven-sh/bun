@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-A class declares its constructor with `constructor`. An interface describes one with `new ()`. Swap them and you get an ordinary method: `new(): Client` in a class is a method named `new`, and `constructor(): void` in an interface is a method named `constructor`.
+A class declares its constructor with `constructor`. An interface describes one with `new ()`. Swap them and you get an ordinary method. `new(): Client` in a class is a method named `new`, and `constructor(): void` in an interface is a method named `constructor`.
 
 An interface with a `new ()` that returns the interface itself is reported too. It says that you call `new` on an instance to get another instance, which is rarely what you mean. The `new ()` belongs in the type of the class.
 
-A method named `new` that has a body, or that returns some other type, is not reported.
+A method named `new` that has a body, or that returns some other type, isn't reported.
 
 This rule is on by default in TypeScript files.
 

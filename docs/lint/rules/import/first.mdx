@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Imports are hoisted: the imported modules load and run before any line of the file that imports them, wherever the `import` is written. An import below other code looks like it runs later, but it does not.
+Imports are hoisted. The imported modules load and run before any line of the file that imports them, no matter where the `import` is written. An import below other code looks like it runs later, but it doesn't.
 
 Directives such as `"use client"` can come before the imports.
 
@@ -51,7 +51,7 @@ startServer();
 | Option | What it does |
 | --- | --- |
 | `"disable-absolute-first"` (default) | Imports can be in any order. |
-| `"absolute-first"` | Also report an import of a package, or any path that does not start with `.`, after a relative import. |
+| `"absolute-first"` | Also report an import of a package, or any path that doesn't start with `.`, after a relative import. |
 
 {/* bad {"options": ["absolute-first"]} */}
 ```js

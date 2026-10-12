@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`"\8"` and `"\9"` are the same as `"8"` and `"9"`. The backslash does nothing, so it is either left over or the author meant a real backslash, `"\\8"`.
+`"\8"` and `"\9"` are the same as `"8"` and `"9"`. The backslash does nothing, so it's either left over or the author meant a real backslash, `"\\8"`.
 
 In strict mode, which includes every ES module, these escapes are a syntax error. The rule matters for scripts and CommonJS files, where they still parse.
 
-The report comes with two suggestions: remove the backslash, which keeps the value of the string, or double it. `--fix-suggestions` applies the first.
+The report comes with two suggestions: remove the backslash, which keeps the string's value, or double it. `--fix-suggestions` applies the first.
 
 This rule is on by default.
 

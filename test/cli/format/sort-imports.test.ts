@@ -1,5 +1,5 @@
-// `sortImports` of `[format]` in bunfig.toml and `--sort-imports`: besides what `sortImports` of oxfmt does, the names in braces
-// are sorted and the imports of one module become one. There are no options for that.
+// Tests for `sortImports` in bunfig.toml's `[format]` and for `--sort-imports`. On top of oxfmt's `sortImports`, they sort the
+// names inside braces and merge imports from the same module. Neither has an option.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -20,7 +20,7 @@ async function run(cwd: string, args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-/** Formats `files`, and once more. What is checked before a file is written is checked: that it still imports the same. */
+/** Formats `files` twice. The formatter's own verify step is on, so a run fails if sorting changes what a file imports. */
 async function format(files: Record<string, string>, args: string[] = []) {
   using dir = tempDir("bun-format-sort-imports", files);
   const first = await run(String(dir), [...args, "."]);
@@ -35,35 +35,35 @@ const bunfig = { "bunfig.toml": "[format]\nsortImports = true\n" };
 
 const cases: [name: string, input: string, output: string][] = [
   [
-    "names: without regard to case, numbers by their value, an inline type does not count",
+    "sorts names case-insensitively, with numbers in natural order, ignoring inline `type`",
     `import { b, a, C, a10, a2, type T, type d, _e, $f } from "x";
 `,
     `import { $f, _e, a, a2, a10, b, C, type d, type T } from "x";
 `,
   ],
   [
-    "an alias is sorted by the name in the other module",
+    "sorts `a as z` by the imported name",
     `import { z as a, b as y, a as z, default as d, c } from "x";
 `,
     `import { a as z, b as y, c, default as d, z as a } from "x";
 `,
   ],
   [
-    "names that are strings",
+    "sorts string names by their contents",
     `import { "b-c" as c, "a-b" as b, a } from "x";
 `,
     `import { a, "a-b" as b, "b-c" as c } from "x";
 `,
   ],
   [
-    "names of import type",
+    "sorts names in `import type`",
     `import type { B, a } from "x";
 `,
     `import type { a, B } from "x";
 `,
   ],
   [
-    "two imports of a module",
+    "merges two imports from the same module",
     `import { b } from "x";
 import { a } from "x";
 `,
@@ -71,7 +71,7 @@ import { a } from "x";
 `,
   ],
   [
-    "three, with others between",
+    "merges three imports with another module between them",
     `import { c } from "x";
 import { y } from "y";
 import { a } from "x";
@@ -82,7 +82,7 @@ import { y } from "y";
 `,
   ],
   [
-    "quotes do not count",
+    "treats 'x' and \"x\" as the same module",
     `import { b } from 'x';
 import { a } from "x";
 `,
@@ -90,7 +90,7 @@ import { a } from "x";
 `,
   ],
   [
-    "a default and names",
+    "merges a default import with named imports",
     `import x from "x";
 import { a } from "x";
 `,
@@ -98,7 +98,7 @@ import { a } from "x";
 `,
   ],
   [
-    "names and a default",
+    "merges named imports with a later default import",
     `import { a } from "x";
 import x from "x";
 `,
@@ -106,7 +106,7 @@ import x from "x";
 `,
   ],
   [
-    "a default with names, and names",
+    "merges names into an import that has a default and names",
     `import x, { b } from "x";
 import { a } from "x";
 `,
@@ -114,7 +114,7 @@ import { a } from "x";
 `,
   ],
   [
-    "two defaults stay two",
+    "keeps two different default imports separate",
     `import x from "x";
 import y from "x";
 import { a } from "x";
@@ -124,7 +124,7 @@ import y from "x";
 `,
   ],
   [
-    "a default and a namespace stay two",
+    "doesn't merge a default import with a namespace import",
     `import x from "x";
 import * as y from "x";
 `,
@@ -133,7 +133,7 @@ import * as y from "x";
 `,
   ],
   [
-    "a namespace and names stay two",
+    "doesn't merge a namespace import with named imports",
     `import * as y from "x";
 import { b, a } from "x";
 import { c } from "x";
@@ -143,7 +143,7 @@ import { a, b, c } from "x";
 `,
   ],
   [
-    "a default with a namespace takes nothing in",
+    "doesn't merge names into `import x, * as y`",
     `import x, * as y from "x";
 import { a } from "x";
 `,
@@ -152,7 +152,7 @@ import { a } from "x";
 `,
   ],
   [
-    "import type stays apart from values",
+    "keeps `import type` separate from value imports",
     `import type { B } from "x";
 import { a } from "x";
 import type { A } from "x";
@@ -163,7 +163,7 @@ import { a, b } from "x";
 `,
   ],
   [
-    "an inline type goes with values",
+    "merges `{ type B }` with value imports",
     `import { type B } from "x";
 import { a } from "x";
 `,
@@ -171,7 +171,7 @@ import { a } from "x";
 `,
   ],
   [
-    "import type with a default takes no names",
+    "doesn't merge `import type X` with `import type { A }`",
     `import type X from "x";
 import type { A } from "x";
 `,
@@ -180,7 +180,7 @@ import type { A } from "x";
 `,
   ],
   [
-    "a name that is there twice",
+    "drops duplicate names",
     `import { a, b, a } from "x";
 import { b } from "x";
 `,
@@ -188,7 +188,7 @@ import { b } from "x";
 `,
   ],
   [
-    "one name under two aliases",
+    "keeps the same name under different aliases",
     `import { a as c } from "x";
 import { a as b, a } from "x";
 `,
@@ -196,7 +196,7 @@ import { a as b, a } from "x";
 `,
   ],
   [
-    "the same attributes",
+    "merges imports with equal import attributes",
     `import { b } from "x" with { type: "json" };
 import { a } from "x" with { "type": 'json' };
 `,
@@ -204,7 +204,7 @@ import { a } from "x" with { "type": 'json' };
 `,
   ],
   [
-    "other attributes",
+    "doesn't merge imports with different import attributes",
     `import b from "x" with { type: "json" };
 import { a } from "x";
 import { c } from "x" with { type: "css" };
@@ -215,7 +215,7 @@ import { c } from "x" with { type: "css" };
 `,
   ],
   [
-    "nothing moves or merges across an import for its side effects",
+    "never moves or merges anything across a side-effect import",
     `import { z } from "z";
 import { b } from "x";
 import "./setup";
@@ -236,7 +236,7 @@ import { d } from "a";
 `,
   ],
   [
-    "two imports for the side effects of one module stay two",
+    "never merges side-effect imports",
     `import "x";
 import "x";
 import { a } from "x";
@@ -247,7 +247,7 @@ import { a } from "x";
 `,
   ],
   [
-    "a comment before an import keeps it, and it takes in the others",
+    "merges other imports into the one that has a comment above it",
     `import { c } from "x";
 // about b
 import { b } from "x";
@@ -258,7 +258,7 @@ import { a, b, c } from "x";
 `,
   ],
   [
-    "two with comments stay two",
+    "doesn't merge two imports that both have a comment above them",
     `// about b
 import { b } from "x";
 // about a
@@ -271,7 +271,7 @@ import { a } from "x";
 `,
   ],
   [
-    "a comment behind an import keeps it",
+    "merges other imports into the one that has a trailing comment",
     `import { b } from "x"; // about b
 import { a } from "x";
 `,
@@ -279,7 +279,7 @@ import { a } from "x";
 `,
   ],
   [
-    "a comment that an empty line separates from the import is nobody's",
+    "ignores a comment separated from the import by a blank line",
     `import { b } from "x";
 
 // about nothing
@@ -292,7 +292,7 @@ import { a } from "x";
 `,
   ],
   [
-    "comments in the braces go with their names",
+    "moves comments inside the braces with their names",
     `import {
   // before c
   c,
@@ -309,7 +309,7 @@ import { a } from "x";
 `,
   ],
   [
-    "comments in the braces of what is merged",
+    "moves comments inside the braces with their names across a merge",
     `import { d, c /* behind c */ } from "x";
 import {
   b, // behind b
@@ -327,7 +327,7 @@ import {
 `,
   ],
   [
-    "a line comment behind the last name",
+    "keeps a line comment after the last name from swallowing the brace",
     `import { b, // behind b
   a // behind a
 } from "x";
@@ -339,7 +339,7 @@ import {
 `,
   ],
   [
-    "a comment before the closing brace stays there",
+    "keeps a comment before the closing brace at the end after a merge",
     `import {
   b,
   a,
@@ -356,7 +356,7 @@ import { c } from "x";
 `,
   ],
   [
-    "comments next to the braces go with the first and the last name, as the formatter has it",
+    "moves comments right outside the braces with the first and last name",
     `import /* why */ { b, a } from "x";
 import { c } from "x";
 import { e, d } /* why */ from "y";
@@ -367,7 +367,7 @@ import { d /* why */, e, f } from "y";
 `,
   ],
   [
-    "a merge that makes the line too long",
+    "wraps a merged import that no longer fits on one line",
     `import { someRatherLongName, anotherRatherLongName } from "some-module";
 import { yetAnotherRatherLongName, theLastName } from "some-module";
 `,
@@ -380,7 +380,7 @@ import { yetAnotherRatherLongName, theLastName } from "some-module";
 `,
   ],
   [
-    "export from is left alone",
+    "leaves `export .. from` alone",
     `export { b, a } from "x";
 export { c } from "x";
 import { e, d } from "x";
@@ -391,7 +391,7 @@ import { d, e } from "x";
 `,
   ],
   [
-    "prettier-ignore",
+    "leaves a prettier-ignore'd import alone and doesn't merge across it",
     `import { b } from "x";
 // prettier-ignore
 import { d,   c } from "x";
@@ -404,7 +404,7 @@ import { a } from "x";
 `,
   ],
   [
-    "not across other statements",
+    "doesn't merge across other statements",
     `import { b } from "x";
 f();
 import { a } from "x";
@@ -415,7 +415,7 @@ import { a } from "x";
 `,
   ],
   [
-    "empty braces alone are left alone, beside a default they are nothing",
+    "leaves `import {}` alone and treats `import x, {}` as `import x`",
     `import {} from "x";
 import { a } from "x";
 import x, {} from "y";
@@ -427,7 +427,7 @@ import x, { b } from "y";
 `,
   ],
   [
-    "on one line",
+    "merges imports that share a line",
     `import { b } from "x"; import { a } from "x"; import y from "y";
 `,
     `import { a, b } from "x";
@@ -435,7 +435,7 @@ import y from "y";
 `,
   ],
   [
-    "after a directive and a comment at the top",
+    "works after a directive and a top-of-file comment",
     `// @ts-check
 "use client";
 import { b } from "x";
@@ -447,7 +447,7 @@ import { a, b } from "x";
 `,
   ],
   [
-    "\\r\\n",
+    "handles CRLF line endings",
     `import { b } from "x";\r
 import {\r
   d, // d\r
@@ -462,7 +462,7 @@ import {\r
 `,
   ],
   [
-    "groups, names and merges together",
+    "groups, sorts names and merges in one pass",
     `import { z } from "./z";
 import fs, { readFileSync } from "node:fs";
 import { b } from "pkg";
@@ -480,7 +480,7 @@ import { y, z } from "./z";
 `,
   ],
   [
-    "comments next to the braces of what is merged go with the first and the last name",
+    "moves comments right outside the braces across a merge",
     `import { c } from "x";
 import /* first */ { b, a } /* last */ from "x";
 `,
@@ -488,7 +488,7 @@ import /* first */ { b, a } /* last */ from "x";
 `,
   ],
   [
-    "two with comments next to their braces",
+    "merges two imports that both have a comment before the brace",
     `import /* one */ { d, c } from "x";
 import /* two */ { b, a } from "x";
 `,
@@ -496,7 +496,7 @@ import /* two */ { b, a } from "x";
 `,
   ],
   [
-    "a comment at the default",
+    "keeps a comment next to a default import in place",
     `import x /* why */ from "x";
 import { a } from "x";
 import /* why */ y from "y";
@@ -507,7 +507,7 @@ import /* why */ y, { b } from "y";
 `,
   ],
   [
-    "a comment at the module",
+    "keeps a comment next to the module specifier in place",
     `import { b } from /* why */ "x";
 import { a } from "x";
 `,
@@ -515,7 +515,7 @@ import { a } from "x";
 `,
   ],
   [
-    "a line comment next to the braces",
+    "moves a line comment before the brace with the first name",
     `import // why
 { b, a } from "x";
 import { c } from "x";
@@ -528,14 +528,197 @@ import { c } from "x";
 } from "x";
 `,
   ],
+  [
+    "keeps a comment before the closing brace",
+    `import {
+  b,
+  a,
+  // keep
+} from "x";
+`,
+    `import {
+  a,
+  b,
+  // keep
+} from "x";
+`,
+  ],
+  [
+    "moves a trailing line comment with its name",
+    `import {
+  b, // about b
+  a,
+} from "x";
+`,
+    `import {
+  a,
+  b, // about b
+} from "x";
+`,
+  ],
+  [
+    "moves a block comment after a name with that name",
+    `import { c /* about c */, b, a } from "x";
+`,
+    `import { a, b, c /* about c */ } from "x";
+`,
+  ],
+  [
+    "moves a comment on its own line with the name below it",
+    `import {
+  c,
+  // about b
+  b,
+  a,
+} from "x";
+`,
+    `import {
+  a,
+  // about b
+  b,
+  c,
+} from "x";
+`,
+  ],
+  [
+    "moves a comment before the first name with that name",
+    `import {
+  // about b
+  b,
+  a,
+} from "x";
+`,
+    `import {
+  a,
+  // about b
+  b,
+} from "x";
+`,
+  ],
+  [
+    "keeps a comment before the closing brace when another import merges in",
+    `import {
+  b,
+  a,
+  // keep
+} from "x";
+import { c } from "x";
+`,
+    `import {
+  a,
+  b,
+  c,
+  // keep
+} from "x";
+`,
+  ],
+  [
+    "keeps a comment before the closing brace of an import that gets merged away",
+    `import { c } from "x";
+import {
+  b,
+  a,
+  // keep
+} from "x";
+`,
+    `import {
+  a,
+  b,
+  c,
+  // keep
+} from "x";
+`,
+  ],
+  [
+    "moves a trailing line comment with its name across a merge",
+    `import { c } from "x";
+import {
+  b, // about b
+  a,
+} from "x";
+`,
+    `import {
+  a,
+  b, // about b
+  c,
+} from "x";
+`,
+  ],
+  [
+    "moves a block comment after a name with that name across a merge",
+    `import { d } from "x";
+import { c /* about c */, b, a } from "x";
+`,
+    `import { a, b, c /* about c */, d } from "x";
+`,
+  ],
+  [
+    "moves a comment on its own line with the name below it across a merge",
+    `import { d } from "x";
+import {
+  c,
+  // about b
+  b,
+  a,
+} from "x";
+`,
+    `import {
+  a,
+  // about b
+  b,
+  c,
+  d,
+} from "x";
+`,
+  ],
+  [
+    "moves a comment before the first name with that name across a merge",
+    `import { c } from "x";
+import {
+  // about b
+  b,
+  a,
+} from "x";
+`,
+    `import {
+  a,
+  // about b
+  b,
+  c,
+} from "x";
+`,
+  ],
+  [
+    "keeps comments from both imports when they merge",
+    `import {
+  // about d
+  d,
+  c, // about c
+} from "x";
+import {
+  b /* about b */,
+  // about a
+  a,
+} from "x";
+`,
+    `import {
+  // about a
+  a,
+  b /* about b */,
+  c, // about c
+  // about d
+  d,
+} from "x";
+`,
+  ],
 ];
 
-describe("sortImports = true", () => {
-  // One run for all of them.
+describe("sortImports", () => {
+  // All cases share one run.
   const name = (index: number) => `${index}.ts`;
   const done = format({ ...bunfig, ...Object.fromEntries(cases.map((it, index) => [name(index), it[1]])) });
 
-  test("nothing is refused", async () => {
+  test("formats every case without errors", async () => {
     const { stderr, exitCode, second } = await done;
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -546,18 +729,21 @@ describe("sortImports = true", () => {
   test.each(cases.map((it, index) => [it[0], index] as const))("%s", async (_, index) => {
     const { files, second } = await done;
     expect(files[name(index)]).toBe(cases[index][2]);
-    // Formatted twice is formatted once.
+    // No comment gets lost or duplicated.
+    const comments = (code: string) => (code.match(/\/\/.*|\/\*.*?\*\//g) ?? []).sort();
+    expect(comments(files[name(index)])).toEqual(comments(cases[index][1]));
+    // A second run changes nothing.
     expect(second.files[name(index)]).toBe(cases[index][2]);
   });
 });
 
-describe.concurrent("who sorts names and merges", () => {
+describe.concurrent("sortImports sources", () => {
   const input = `import { c } from "x";\nimport "./setup";\nimport { b, a } from "x";\nimport { d } from "a";\n`;
   const tidy = `import { c } from "x";\nimport "./setup";\nimport { d } from "a";\nimport { a, b } from "x";\n`;
-  // oxfmt leaves names and duplicates as they are, and an import for its side effects in its place, counted from the top.
+  // oxfmt doesn't sort names or merge, and it keeps a side-effect import at its index while others move around it.
   const asOxfmt = `import { d } from "a";\n\nimport "./setup";\nimport { c } from "x";\nimport { b, a } from "x";\n`;
 
-  test("the key, a table and the flag", async () => {
+  test("the key, the table and the flag all sort names and merge", async () => {
     const [key, table, flag] = await Promise.all([
       format({ ...bunfig, "a.ts": input }),
       format({ "bunfig.toml": "[format.sortImports]\nnewlinesBetween = false\n", "a.ts": input }),
@@ -566,21 +752,21 @@ describe.concurrent("who sorts names and merges", () => {
     expect([key.files["a.ts"], table.files["a.ts"], flag.files["a.ts"]]).toEqual([tidy, tidy, tidy]);
   });
 
-  test("not sortImports of an .oxfmtrc.json, unless the flag is there too", async () => {
+  test("sortImports in .oxfmtrc.json keeps oxfmt's behavior unless --sort-imports is passed", async () => {
     const files = { ".oxfmtrc.json": `{ "sortImports": true }`, "a.ts": input };
     const [oxfmt, flag] = await Promise.all([format(files), format(files, ["--sort-imports"])]);
     expect(oxfmt.files["a.ts"]).toBe(asOxfmt);
     expect(flag.files["a.ts"]).toBe(tidy);
   });
 
-  test("sortSideEffects = true is the way out for who wants them sorted", async () => {
+  test("sortSideEffects = true lets side-effect imports move", async () => {
     const result = await format({ "bunfig.toml": "[format.sortImports]\nsortSideEffects = true\n", "a.ts": input });
     expect(result.files["a.ts"]).toBe(
       `import { d } from "a";\nimport { c } from "x";\nimport { a, b } from "x";\n\nimport "./setup";\n`,
     );
   });
 
-  test("in JavaScript, JSX and the scripts of Vue", async () => {
+  test("works in JavaScript, JSX and Vue scripts", async () => {
     const code = `import { b } from "x";\nimport { a } from "x";\n`;
     const merged = `import { a, b } from "x";\n`;
     const result = await format({
@@ -602,7 +788,7 @@ describe.concurrent("who sorts names and merges", () => {
     expect(result.second.files).toEqual(result.files);
   });
 
-  test("a file with a syntax error is left as it is", async () => {
+  test("skips a file with a syntax error", async () => {
     const code = `import { b, a } from "x";\nimport { from "x";\n`;
     const result = await format({ ...bunfig, "a.ts": code });
     expect(result.files["a.ts"]).toBe(code);

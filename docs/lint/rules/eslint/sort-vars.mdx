@@ -16,7 +16,7 @@ When one `let`, `const` or `var` declares several variables, alphabetical order 
 
 Only names in the same declaration are compared. Destructuring patterns are skipped. Capital letters sort before lowercase letters unless you set `ignoreCase`.
 
-`--fix` sorts the names if every initializer is a literal such as `0` or `"px"`. Other initializers can depend on the order they run in, so the declaration is left as it is.
+`--fix` sorts the names if every initializer is a literal such as `0` or `"px"`. Other initializers can depend on the order they run in, so the declaration is left as is.
 
 ## Examples
 
@@ -41,7 +41,7 @@ let count = 0;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreCase` | `false` | Compare names without regard to case. |
+| `ignoreCase` | `false` | Ignore case when comparing names. |
 
 By default `Button` sorts before `app`, so this is reported:
 
@@ -50,7 +50,7 @@ By default `Button` sorts before `app`, so this is reported:
 let app, Button, config;
 ```
 
-With `ignoreCase` it is not:
+With `ignoreCase` it isn't:
 
 {/* good {"options": [{"ignoreCase": true}]} */}
 ```js

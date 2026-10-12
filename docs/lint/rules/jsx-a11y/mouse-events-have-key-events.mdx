@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Keyboard users never hover, so a tooltip or a preview that only shows on hover does not exist for them. Focus is the keyboard's version of hover: pair `onMouseOver` with `onFocus`, and `onMouseOut` with `onBlur`.
+Keyboard users never hover, so a tooltip or a preview that only shows on hover doesn't exist for them. Focus is the keyboard's version of hover, so pair `onMouseOver` with `onFocus`, and `onMouseOut` with `onBlur`.
 
-Only HTML elements are checked, not components.
+The rule only checks HTML elements, not components.
 
 ## Examples
 
@@ -52,7 +52,7 @@ const help = (
 | `hoverInHandlers` | `["onMouseOver"]` | Handlers that need an `onFocus` next to them. |
 | `hoverOutHandlers` | `["onMouseOut"]` | Handlers that need an `onBlur` next to them. |
 
-Your list replaces the default. `onMouseEnter` is not checked unless you add it:
+Your list replaces the default. `onMouseEnter` isn't checked unless you add it:
 
 {/* good */}
 ```jsx

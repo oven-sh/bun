@@ -3,7 +3,7 @@ use crate::jsx::get_jsx_element_name;
 use crate::react::is_jsx;
 use bun_lint_oxlint::text::glob_match;
 use bun_core::strings;
-use bun_glob::Pattern;
+use bun_lint::glob::Minimatch;
 use bun_lint::context::interpolate_text;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -15,7 +15,7 @@ type Names = Vec<Box<[u8]>>;
 /// A text of the options that can be a pattern.
 struct Glob {
     written: Box<[u8]>,
-    minimatch: Pattern,
+    minimatch: Minimatch,
 }
 
 struct ForbidOption {
@@ -147,7 +147,7 @@ impl ForbidComponentProps {
 
 impl Glob {
     fn new(written: &[u8]) -> Glob {
-        Glob { written: written.into(), minimatch: Pattern::with_extglob(written) }
+        Glob { written: written.into(), minimatch: Minimatch::new(written) }
     }
 
     fn matches(&self, name: &[u8], is_oxlint: bool) -> bool {

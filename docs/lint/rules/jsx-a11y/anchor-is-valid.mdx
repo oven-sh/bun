@@ -12,13 +12,13 @@ typeAware: false
 deprecated: false
 ---
 
-An `a` without an `href` cannot be reached with the Tab key and is not announced as a link. An `a` with `href="#"` or `href="javascript:..."` and an `onClick` is announced as a link but acts like a button: Space does not press it, and "open in new tab" leads nowhere.
+You can't reach an `a` without an `href` with the Tab key, and it isn't announced as a link. An `a` with `href="#"` or `href="javascript:..."` and an `onClick` is announced as a link but acts like a button. Space doesn't press it, and "open in new tab" leads nowhere.
 
 Use `a` with a real address to go somewhere. Use `button` to do something.
 
 - An `href` is missing if it has no value, or is `null` or `undefined`.
-- An `href` is invalid if it is `""` or `"#"`, or starts with `javascript:`.
-- A link with spread props and no `href` is not reported, because the `href` may be in the spread.
+- An `href` is invalid if it's `""` or `"#"`, or starts with `javascript:`.
+- A link with spread props and no `href` isn't reported, because the `href` might be in the spread.
 
 ## Examples
 
@@ -47,7 +47,7 @@ const docs = <a {...linkProps}>Docs</a>;
 | Option | Default | What it does |
 | --- | --- | --- |
 | `components` | `[]` | Components to check like `a`. |
-| `specialLink` | `[]` | Attributes that count as `href`, besides `href`. |
+| `specialLink` | `[]` | Other attributes that count as `href`. |
 | `aspects` | all three | Which checks run: `"noHref"` (no `href`), `"invalidHref"` (an `href` that goes nowhere), `"preferButton"` (an `onClick` with a missing or invalid `href`). |
 
 {/* bad {"options": [{"components": ["Link"], "specialLink": ["to"]}]} */}

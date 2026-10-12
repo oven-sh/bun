@@ -7,14 +7,14 @@ aliases: ["react_hooks/config","react/config"]
 kind: "problem"
 category: null
 default: "off"
-fixable: "yes"
+fixable: "no"
 typeAware: false
 deprecated: false
 ---
 
-The React Compiler can be told what the exports of a module are, for example which of them are hooks. It reports here when that description contradicts itself, such as a hook with a name that does not start with `use`.
+You can tell the React Compiler what a module's exports are, for example which ones are hooks. It reports here when that description contradicts itself, such as a hook with a name that doesn't start with `use`.
 
-`bun lint` runs the compiler's checks with a fixed configuration that is valid, so this rule has nothing to report. It exists because the `recommended` config of `eslint-plugin-react-hooks` turns it on, and an ESLint config that does so has to keep working.
+`bun lint` runs the compiler's checks with a fixed, valid configuration, so this rule has nothing to report. It exists because the `recommended` config in `eslint-plugin-react-hooks` turns it on, and an ESLint config that does that needs to keep working.
 
 {/* never reports */}
 

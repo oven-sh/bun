@@ -12,17 +12,17 @@ typeAware: false
 deprecated: false
 ---
 
-In strict mode, `this` is `undefined` at the top level of a module and in a plain function that is called without an object. Reading a property from it throws a `TypeError`. The usual cause is a callback written with `function` inside a method: it does not get the method's `this`.
+In strict mode, `this` is `undefined` at the top level of a module and in a plain function that's called without an object. Reading a property from it throws a `TypeError`. The usual cause is a callback written with `function` inside a method, which doesn't get the method's `this`.
 
-`this` is fine in methods, constructors, class fields, and arrow functions inside any of them. It is also fine in a function that is given its `this`:
+`this` is fine in methods, constructors, class fields, and arrow functions inside any of them. It's also fine in a function that's given its `this`:
 
 - with `.bind()`, `.call()` or `.apply()`
 - with the last argument of `forEach()` and similar methods
 - by being assigned to a property
 
-If `this` comes from somewhere the rule cannot see, say so with a `@this` tag in the function's doc comment or, in TypeScript, a `this` parameter.
+If `this` comes from somewhere the rule can't see, say so with a `@this` tag in the function's doc comment or, in TypeScript, a `this` parameter.
 
-Code outside strict mode is not reported. There `this` falls back to the global object.
+Code outside strict mode isn't reported. There, `this` falls back to the global object.
 
 ## Examples
 

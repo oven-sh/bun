@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`aria-activedescendant` tells a screen reader which child of a widget is active while the focus stays on the widget itself. That only works if the widget can take the focus. A plain `div` cannot, so the attribute does nothing there until you add a `tabIndex` of `0` or `-1`.
+`aria-activedescendant` tells a screen reader which child of a widget is active while focus stays on the widget itself. That only works if the widget can take focus. A plain `div` can't, so the attribute does nothing there until you add a `tabIndex` of `0` or `-1`.
 
-Elements that take the focus by themselves, such as `input`, `select` and `button`, need no `tabIndex`. Components are not checked.
+Elements that are focusable by default, such as `input`, `select` and `button`, don't need a `tabIndex`. Components aren't checked.
 
 ## Examples
 

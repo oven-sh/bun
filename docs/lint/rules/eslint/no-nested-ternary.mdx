@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-One `a ? b : c` reads at a glance. With a second one inside a branch, you have to work out which `?` goes with which `:` before you know what the value is.
+A single `a ? b : c` is easy to read at a glance. With a second one inside a branch, you have to work out which `?` goes with which `:` before you know what the value is.
 
 ## Examples
 
@@ -43,4 +43,4 @@ const size = sizeOf(width);
 
 ## When not to use it
 
-A chain of `a ? x : b ? y : z` with one condition a line reads like `if` / `else if` to many people. If your team likes that style, leave the rule off.
+A chain of `a ? x : b ? y : z` with one condition per line reads like `if` / `else if` to many people. If your team likes that style, leave the rule off.

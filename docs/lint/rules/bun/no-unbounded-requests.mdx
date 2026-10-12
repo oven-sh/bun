@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-By default axios has no timeout. If the server accepts the connection and never answers, the promise never settles, and whatever awaits it hangs. Set `timeout`, or pass a `signal` that ends the request.
+By default axios has no timeout. If the server accepts the connection and never answers, the promise never settles, and anything that awaits it hangs. Set `timeout`, or pass a `signal` that ends the request.
 
-The rule looks at `axios()`, `axios.request()`, `axios.create()`, and the methods such as `axios.get()` and `axios.post()`. A `timeout` of `0` or `Infinity` is reported too, because it sets no limit.
+The rule looks at `axios()`, `axios.request()`, `axios.create()`, and methods such as `axios.get()` and `axios.post()`. A `timeout` of `0` or `Infinity` is reported too, because it sets no limit.
 
 ## Examples
 
@@ -40,7 +40,7 @@ await axios.post("/users", user, { headers, signal: AbortSignal.timeout(5000) })
 const api = axios.create({ baseURL: "https://api.example.com", timeout: 5000 });
 ```
 
-A file that sets a default timeout is not checked:
+A file that sets a default timeout isn't checked:
 
 {/* good */}
 ```js
@@ -51,7 +51,7 @@ axios.defaults.timeout = 5000;
 const user = await axios.get(`/users/${id}`);
 ```
 
-A config with `cancelToken` passes too. A config that is a variable, or that spreads another object, is not checked, because the rule cannot see what is in it. For an instance, the `axios.create()` call is checked and the requests made with it are not.
+A config with `cancelToken` passes too. A config that's a variable, or that spreads another object, isn't checked, because the rule can't see what's in it. For an instance, the `axios.create()` call is checked and the requests made with it aren't.
 
 {/* good */}
 ```js
@@ -68,7 +68,7 @@ await api.get("/users");
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `clients` | `[]` | More modules that export something you call like `axios`. Each entry is `{ module, names }`: the import specifier and the names of the exports. Without `names`, the default export is the client. |
+| `clients` | `[]` | More modules that export something you call like `axios`. Each entry is `{ module, names }`, with the import specifier and the export names. Without `names`, the default export is the client. |
 
 ```toml bunfig.toml
 [lint.rules]

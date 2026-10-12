@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`expect(value)` checks nothing by itself. The check happens when a matcher such as `.toBe()` is called, so an `expect` with no matcher, or with a matcher that is not called, passes whatever the value is.
+`expect(value)` doesn't check anything by itself. The check happens when you call a matcher such as `.toBe()`, so an `expect` with no matcher, or with a matcher that isn't called, passes no matter what the value is.
 
-`.resolves` and `.rejects` make the matcher return a promise. If the test does not await or return it, the test ends first, and a failed assertion does not fail the test.
+`.resolves` and `.rejects` make the matcher return a promise. If the test doesn't await or return it, the test ends first, and a failed assertion doesn't fail the test.
 
 ## Examples
 
@@ -66,8 +66,8 @@ test("rejects an unknown id", () => {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `alwaysAwait` | `false` | Also report an async assertion that is returned instead of awaited. |
-| `asyncMatchers` | `["toResolve", "toReject"]` | Matchers that return a promise, so they have to be awaited or returned. Your list replaces the default. |
+| `alwaysAwait` | `false` | Also report an async assertion that's returned instead of awaited. |
+| `asyncMatchers` | `["toResolve", "toReject"]` | Matchers that return a promise, so you need to await or return them. Your list replaces the default. |
 | `minArgs` | `1` | The fewest arguments `expect` can take. |
 | `maxArgs` | `1` | The most arguments `expect` can take. |
 

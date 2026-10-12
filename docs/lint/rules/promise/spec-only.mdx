@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Libraries such as Bluebird add methods like `Promise.map` and `Promise.props`. The built-in `Promise` does not have them, so the call throws a `TypeError` wherever the library's `Promise` is not the one in scope.
+Libraries such as Bluebird add methods like `Promise.map` and `Promise.props`. The built-in `Promise` doesn't have them, so the call throws a `TypeError` wherever the library's `Promise` isn't the one in scope.
 
 The rule allows `all`, `allSettled`, `any`, `race`, `reject`, `resolve`, `try` and `withResolvers`. It reports every other property read from `Promise`, called or not. That includes `Promise.prototype`.
 

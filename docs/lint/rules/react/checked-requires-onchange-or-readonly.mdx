@@ -14,7 +14,7 @@ deprecated: false
 
 An `<input>` with `checked` is controlled by React. Without an `onChange` that updates the value, a click does nothing and the box looks broken. React also logs a warning for it.
 
-The rule also reports an `<input>` with both `checked` and `defaultChecked`: the first says React controls the value, the second says it does not. `React.createElement("input", ...)` is checked too.
+The rule also reports an `<input>` with both `checked` and `defaultChecked`. The first says React controls the value, and the second says it doesn't. `React.createElement("input", ...)` is checked too.
 
 ## Examples
 

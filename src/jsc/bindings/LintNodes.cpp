@@ -1,7 +1,9 @@
-// Makes the nodes of a syntax tree for the rules that `bun lint` runs in JavaScript, from the arrays that
-// src/lint/js_plugin/ast.rs writes: one call for a file. The nodes are plain objects with their fields as own data
-// properties in the parser's order, as a parser in JavaScript makes them. See src/lint/js_plugin/worker/ast.js, which
-// does the same where this is not there.
+// Builds the objects that JavaScript lint plugins see from arrays of numbers written in Rust. One call per file.
+// - ESTree nodes, from src/lint/js_plugin/ast.rs. They are plain objects with own data properties in the parser's order.
+// - ESLint's CodePath and CodePathSegment, from src/lint/code_path/estree.rs.
+//
+// Property names are turned into Identifiers once per realm, when `shape` builds a Structure. After that every object is
+// JSFinalObject::create plus putDirectOffset.
 
 #include "root.h"
 
@@ -13,12 +15,14 @@
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectInitializationScope.h>
+#include <array>
 
 namespace Bun {
 using namespace JSC;
 
-// `shape(prototype, keys, type)`: an object that has `keys`, in that order, in its own cell, and `type` as the first.
-// `nodes` makes objects of the same structure.
+// `shape(prototype, keys, first, hidden = 0)` returns a template object with `keys` as inline properties, in that order.
+// `first` is the value of the first key. The last `hidden` keys are what `Object.defineProperty(object, key, { value })`
+// defines. They are not enumerable, writable or configurable. `nodes` and `codePaths` create objects with the template's Structure.
 JSC_DEFINE_HOST_FUNCTION(jsLintShape, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -28,6 +32,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintShape, (JSGlobalObject * globalObject, CallFrame*
     if (!prototype || !keys || !keys->length() || keys->length() > JSFinalObject::maxInlineCapacity)
         return throwVMTypeError(globalObject, scope, "Expected a prototype and keys"_s);
     unsigned count = keys->length();
+    unsigned hidden = callFrame->argument(3).isUInt32() ? std::min(callFrame->argument(3).asUInt32(), count) : 0;
     Structure* structure = JSFinalObject::createStructure(vm, globalObject, prototype, count);
     for (unsigned i = 0; i < count; ++i) {
         JSValue key = keys->getIndex(globalObject, i);
@@ -35,8 +40,11 @@ JSC_DEFINE_HOST_FUNCTION(jsLintShape, (JSGlobalObject * globalObject, CallFrame*
         Identifier name = key.toPropertyKey(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         PropertyOffset offset;
-        structure = Structure::addPropertyTransition(vm, structure, name, 0, offset);
+        unsigned attributes = i < count - hidden ? 0 : PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
+        structure = Structure::addPropertyTransition(vm, structure, name, attributes, offset);
         RELEASE_ASSERT(offset == static_cast<PropertyOffset>(i));
+        if (attributes)
+            structure->setContainsReadOnlyProperties();
     }
     JSFinalObject* object = JSFinalObject::create(vm, structure);
     object->putDirectOffset(vm, 0, callFrame->argument(2));
@@ -341,13 +349,187 @@ JSC_DEFINE_HOST_FUNCTION(jsLintNodes, (JSGlobalObject * globalObject, CallFrame*
     return JSValue::encode(nodes);
 }
 
-// `{ shape, nodes }`, for the program of src/lint/js_plugin/worker.
+namespace {
+
+// The message from `analyze` in src/lint/code_path/estree.rs, which documents the layout.
+struct LintCodePaths {
+    static constexpr size_t headerWords = 4, eventWords = 4, pathWords = 7, segmentWords = 8;
+    static constexpr uint32_t reachable = 1, used = 2;
+
+    uint32_t pathCount, segmentCount;
+    std::span<const uint32_t> paths, segments, lists;
+
+    bool isUsed(uint32_t segment) const { return segment < segmentCount && segments[segment * segmentWords + 2] & used; }
+
+    // Checks a list of segments, or of code paths if `ofPaths`.
+    bool isList(uint32_t at, bool ofPaths) const
+    {
+        if (at >= lists.size() || lists[at] >= lists.size() - at)
+            return false;
+        for (uint32_t item : lists.subspan(at + 1, lists[at])) {
+            if (ofPaths ? item >= pathCount : !isUsed(item))
+                return false;
+        }
+        return true;
+    }
+
+    // Checks every length and index, so that nothing has to be checked while the objects are built.
+    bool read(std::span<const uint8_t> bytes, uint32_t originCount)
+    {
+        if (bytes.size() < headerWords * 4 || reinterpret_cast<uintptr_t>(bytes.data()) % 4)
+            return false;
+        std::span<const uint32_t> words { reinterpret_cast<const uint32_t*>(bytes.data()), bytes.size() / 4 };
+        uint64_t eventCount = words[0], listLength = words[3];
+        pathCount = words[1];
+        segmentCount = words[2];
+        uint64_t pathsAt = headerWords + eventCount * eventWords;
+        uint64_t segmentsAt = pathsAt + uint64_t(pathCount) * pathWords;
+        uint64_t listsAt = segmentsAt + uint64_t(segmentCount) * segmentWords;
+        if (listsAt + listLength > words.size())
+            return false;
+        paths = words.subspan(pathsAt, size_t(pathCount) * pathWords);
+        segments = words.subspan(segmentsAt, size_t(segmentCount) * segmentWords);
+        lists = words.subspan(listsAt, listLength);
+        for (uint32_t i = 0; i < pathCount; ++i) {
+            auto path = paths.subspan(size_t(i) * pathWords, pathWords);
+            if (path[0] >= originCount || path[1] > pathCount || !isUsed(path[2]))
+                return false;
+            if (!isList(path[3], false) || !isList(path[4], false) || !isList(path[5], false) || !isList(path[6], true))
+                return false;
+        }
+        for (uint32_t i = 0; i < segmentCount; ++i) {
+            auto segment = segments.subspan(size_t(i) * segmentWords, segmentWords);
+            if (!(segment[2] & used))
+                continue;
+            if (segment[0] >= pathCount)
+                return false;
+            for (size_t list = 3; list < segmentWords; ++list) {
+                if (!isList(segment[list], false))
+                    return false;
+            }
+        }
+        return true;
+    }
+};
+
+} // namespace
+
+// `codePaths(shapes, origins, buffer)` returns `[codePaths, segments]`, both indexed as in the message in `buffer`.
+// A segment that never became current isn't part of any graph, so its index stays a hole.
+// `shapes` holds four templates from `shape`, for a CodePath, its `internal`, a CodePathSegment and its `internal`.
+// `origins` holds the strings for `codePath.origin`.
+JSC_DEFINE_HOST_FUNCTION(jsLintCodePaths, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto outOfStep = [&] { return throwVMTypeError(globalObject, scope, "The code paths are not as expected"_s); };
+    auto outOfMemory = [&] {
+        throwOutOfMemoryError(globalObject, scope);
+        return EncodedJSValue {};
+    };
+
+    JSArray* shapes = dynamicDowncast<JSArray>(callFrame->argument(0));
+    JSArray* origins = dynamicDowncast<JSArray>(callFrame->argument(1));
+    auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(2));
+    if (!shapes || !origins || !buffer)
+        return outOfStep();
+
+    // How many properties each template has.
+    constexpr std::array<PropertyOffset, 4> sizes { 5, 4, 7, 2 };
+    std::array<Structure*, 4> structures;
+    for (unsigned i = 0; i < sizes.size(); ++i) {
+        JSValue shape = shapes->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* object = dynamicDowncast<JSFinalObject>(shape);
+        if (!object || object->structure()->maxOffset() != sizes[i] - 1)
+            return outOfStep();
+        structures[i] = object->structure();
+    }
+    auto [pathStructure, pathInternalStructure, segmentStructure, segmentInternalStructure] = structures;
+
+    MarkedArgumentBuffer originStrings;
+    for (unsigned i = 0; i < origins->length(); ++i) {
+        JSValue origin = origins->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        originStrings.append(origin);
+    }
+    if (originStrings.hasOverflowed()) [[unlikely]]
+        return outOfMemory();
+
+    LintCodePaths message;
+    if (!message.read(buffer->impl()->span(), originStrings.size()))
+        return outOfStep();
+
+    // Everything below is reachable from `result` as soon as it exists.
+    Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    JSArray* result = JSArray::tryCreate(vm, arrayStructure, 2);
+    if (!result) [[unlikely]]
+        return outOfMemory();
+    JSArray* paths = JSArray::tryCreate(vm, arrayStructure, message.pathCount);
+    if (!paths) [[unlikely]]
+        return outOfMemory();
+    result->setIndexQuickly(vm, 0, paths);
+    JSArray* segments = JSArray::tryCreate(vm, arrayStructure, message.segmentCount);
+    if (!segments) [[unlikely]]
+        return outOfMemory();
+    result->setIndexQuickly(vm, 1, segments);
+
+    // The graphs have cycles, so all cells come first and the links second.
+    for (uint32_t i = 0; i < message.pathCount; ++i)
+        paths->setIndexQuickly(vm, i, JSFinalObject::create(vm, pathStructure));
+    for (uint32_t i = 0; i < message.segmentCount; ++i) {
+        if (message.isUsed(i))
+            segments->setIndexQuickly(vm, i, JSFinalObject::create(vm, segmentStructure));
+    }
+
+    // Puts the list at `at` into a property of `object`. Returns false if there's no memory.
+    auto putList = [&](JSObject* object, PropertyOffset offset, uint32_t at, JSArray* from) {
+        auto items = message.lists.subspan(at + 1, message.lists[at]);
+        JSArray* list = JSArray::tryCreate(vm, arrayStructure, items.size());
+        if (!list) [[unlikely]]
+            return false;
+        for (unsigned i = 0; i < items.size(); ++i)
+            list->setIndexQuickly(vm, i, from->getIndexQuickly(items[i]));
+        object->putDirectOffset(vm, offset, list);
+        return true;
+    };
+
+    for (uint32_t i = 0; i < message.pathCount; ++i) {
+        auto words = message.paths.subspan(size_t(i) * LintCodePaths::pathWords, LintCodePaths::pathWords);
+        JSObject* path = asObject(paths->getIndexQuickly(i));
+        path->putDirectOffset(vm, 0, jsNontrivialString(vm, makeString('s', i + 1)));
+        path->putDirectOffset(vm, 1, originStrings.at(words[0]));
+        path->putDirectOffset(vm, 2, words[1] ? paths->getIndexQuickly(words[1] - 1) : jsNull());
+        JSObject* internal = JSFinalObject::create(vm, pathInternalStructure);
+        path->putDirectOffset(vm, 4, internal);
+        internal->putDirectOffset(vm, 0, segments->getIndexQuickly(words[2]));
+        if (!putList(path, 3, words[6], paths) || !putList(internal, 1, words[3], segments) || !putList(internal, 2, words[4], segments) || !putList(internal, 3, words[5], segments)) [[unlikely]]
+            return outOfMemory();
+    }
+    for (uint32_t i = 0; i < message.segmentCount; ++i) {
+        if (!message.isUsed(i))
+            continue;
+        auto words = message.segments.subspan(size_t(i) * LintCodePaths::segmentWords, LintCodePaths::segmentWords);
+        JSObject* segment = asObject(segments->getIndexQuickly(i));
+        segment->putDirectOffset(vm, 0, jsNontrivialString(vm, makeString('s', words[0] + 1, '_', words[1])));
+        segment->putDirectOffset(vm, 5, jsBoolean(words[2] & LintCodePaths::reachable));
+        JSObject* internal = JSFinalObject::create(vm, segmentInternalStructure);
+        segment->putDirectOffset(vm, 6, internal);
+        internal->putDirectOffset(vm, 0, jsBoolean(true));
+        if (!putList(segment, 1, words[3], segments) || !putList(segment, 2, words[4], segments) || !putList(segment, 3, words[5], segments) || !putList(segment, 4, words[6], segments) || !putList(internal, 1, words[7], segments)) [[unlikely]]
+            return outOfMemory();
+    }
+    return JSValue::encode(result);
+}
+
+// `{ shape, nodes, codePaths }` for the program in src/lint/js_plugin/worker.
 extern "C" EncodedJSValue Bun__Lint__nodeFunctions(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     JSObject* object = constructEmptyObject(globalObject);
-    object->putDirect(vm, Identifier::fromString(vm, "shape"_s), JSFunction::create(vm, globalObject, 3, "shape"_s, jsLintShape, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "shape"_s), JSFunction::create(vm, globalObject, 4, "shape"_s, jsLintShape, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "nodes"_s), JSFunction::create(vm, globalObject, 6, "nodes"_s, jsLintNodes, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "codePaths"_s), JSFunction::create(vm, globalObject, 3, "codePaths"_s, jsLintCodePaths, ImplementationVisibility::Public));
     return JSValue::encode(object);
 }
 

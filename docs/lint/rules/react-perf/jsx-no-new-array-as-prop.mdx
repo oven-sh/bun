@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`[]` written inside a component makes a new array on every render. Passed as a prop, it is never equal to the value from the last render, so a child wrapped in `React.memo` renders again even though the contents are the same.
+`[]` written inside a component makes a new array on every render. When you pass it as a prop, it's never equal to the value from the last render, so a child wrapped in `React.memo` renders again even though the contents are the same.
 
-The rule reports array literals, `Array()`, `new Array()`, and calls to `.concat()`, `.map()` and `.filter()` with one argument. An array at the top level of a module is not reported, because it is created once.
+The rule reports array literals, `Array()`, `new Array()`, and calls to `.concat()`, `.map()` and `.filter()` with one argument. An array at the top level of a module isn't reported, because it's created once.
 
 ## Examples
 
@@ -43,7 +43,7 @@ function Inbox({ messages }) {
 }
 ```
 
-A variable declared inside the component is as new as an array written in the prop, and so is the default of a destructured prop. The report is on the declaration:
+A variable declared inside the component has the same problem as an array written in the prop, and so does a destructured prop's default. The report is on the declaration:
 
 {/* bad {"count": 2} */}
 ```jsx
@@ -69,7 +69,7 @@ function Inbox({ messages }) {
 }
 ```
 
-If the array depends on props or state, keep it with `useMemo`:
+If the array depends on props or state, cache it with `useMemo`:
 
 {/* good */}
 ```jsx
@@ -85,7 +85,7 @@ function Inbox({ messages }) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `nativeAllowList` | `[]` | Props to skip on elements with a lowercase name, such as `<div>`. A list of prop names (case does not matter), or `"all"` for every prop. |
+| `nativeAllowList` | `[]` | Props to skip on elements with a lowercase name, such as `<div>`. A list of prop names (case doesn't matter), or `"all"` for every prop. |
 
 With `{ "nativeAllowList": ["points"] }`, this is allowed:
 

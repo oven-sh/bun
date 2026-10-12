@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A label lets `break` and `continue` jump out of more than one loop at a time. Few people use labels, so a reader has to stop and work out where the jump lands. Moving the loops into a function and using `return` does the same with no label.
+A label lets `break` and `continue` jump out of more than one loop at a time. Few people use labels, so readers have to stop and work out where the jump lands. Moving the loops into a function and using `return` does the same thing without a label.
 
 The labeled statement is reported, and so is each `break` or `continue` that names a label.
 
@@ -78,7 +78,7 @@ command: switch (input.type) {
 }
 ```
 
-A label on anything else, such as a block, is reported whatever the options are:
+A label on anything else, such as a block, is reported no matter what the options are:
 
 {/* bad {"options": [{"allowLoop": true, "allowSwitch": true}], "count": 2} */}
 ```js

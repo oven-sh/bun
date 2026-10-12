@@ -889,7 +889,7 @@ impl<'l> Loader<'l> {
         })
     }
 
-    /// [`native::split_pairs`]
+    /// Calls [`native::split_pairs`] with this run's settings.
     fn split_pairs(&self, objects: Vec<Json>) -> Vec<Json> {
         let has_types = self.options.type_aware == Some(true);
         native::split_pairs(self.linter.registry(), objects, has_types)
@@ -1437,8 +1437,8 @@ impl<'l> Loader<'l> {
         Err(Fatal(self.refused.get_or_init(|| refusal).clone()))
     }
 
-    /// `why`, the words of ESLint about a configuration, below the name of what the mistake is written in. `file`: the
-    /// configuration file.
+    /// Prefixes `why`, ESLint's message about an invalid config, with a line that says where the mistake is. That's `file`
+    /// (the config file), bunfig.toml or `--rule`.
     pub(crate) fn name_place(&self, file: Option<&[u8]>, why: &[u8]) -> Vec<u8> {
         // As ESLint 9 says it, and as ESLint 8 does.
         let is_about = |id: &[u8]| {
@@ -1458,7 +1458,7 @@ impl<'l> Loader<'l> {
         [b"Invalid config in ", &place[..], b"\n", why].concat()
     }
 
-    /// What is wrong with `[lint.rules]` of bunfig.toml or with `--rule`, where no configuration file counts: as it is printed.
+    /// The formatted error for an invalid rule setting in bunfig.toml or `--rule`. Only set when there's no config file.
     pub(crate) fn mistake(&self) -> Option<&[u8]> {
         self.mistake.get().map(Vec::as_slice)
     }

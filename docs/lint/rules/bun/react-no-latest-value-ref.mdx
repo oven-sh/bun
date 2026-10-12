@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A common trick keeps the latest props or state in a ref, so that an effect can read them without listing them as dependencies. Setting `ref.current` while the component renders is not safe. React can render a component more than once, or throw the result away, so the ref can hold a value from a render that never reached the screen.
+A common trick keeps the latest props or state in a ref, so that an effect can read them without listing them as dependencies. Setting `ref.current` while the component renders isn't safe. React can render a component more than once, or throw the result away, so the ref can hold a value from a render that never reached the screen.
 
-An effect that only copies the value into the ref is safe, but it is reported too. A function from `useEffectEvent()` sees the latest values without a ref.
+An effect that only copies the value into the ref is safe, but it's reported too. A function from `useEffectEvent()` sees the latest values without a ref.
 
 ## Examples
 
@@ -62,7 +62,7 @@ function Chat({ room, onMessage }) {
 }
 ```
 
-A ref that is set under a condition, in an event handler, or in an effect that also does something else is not reported:
+A ref that's set under a condition, in an event handler, or in an effect that also does something else isn't reported:
 
 {/* good */}
 ```jsx

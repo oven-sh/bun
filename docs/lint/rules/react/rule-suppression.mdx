@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-React Compiler only optimizes code that follows the rules of React. If a component or a hook has a comment that turns off `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`, the compiler does not trust it and skips the whole function. You lose the optimization without any other sign.
+React Compiler only optimizes code that follows the rules of React. If a component or a hook has a comment that turns off `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`, the compiler doesn't trust it and skips the whole function. You lose the optimization, and nothing else tells you.
 
-An `eslint-disable-next-line` comment counts for the function it is in. An `eslint-disable` comment counts for every component and hook in the file. `oxlint-disable` comments and the names `react/rules-of-hooks` and `react/exhaustive-deps` count too.
+An `eslint-disable-next-line` comment counts for the function it's in. An `eslint-disable` comment counts for every component and hook in the file. `oxlint-disable` comments and the names `react/rules-of-hooks` and `react/exhaustive-deps` count too.
 
-This rule only reports with an oxlint config, as `react/rule-suppression`. With an ESLint config or without a config it reports nothing, the same as in `eslint-plugin-react-hooks`.
+This rule only reports with an oxlint config, as `react/rule-suppression`. With an ESLint config or no config it reports nothing, same as in `eslint-plugin-react-hooks`.
 
 ## Examples
 
@@ -49,7 +49,7 @@ function Title({ text }) {
 }
 ```
 
-Comments about other rules do not matter:
+Comments about other rules don't matter:
 
 {/* good */}
 ```jsx

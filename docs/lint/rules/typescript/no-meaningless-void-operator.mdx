@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-`void` in front of a call says "this returns something, and I ignore it on purpose". If the call returns nothing, or what follows is not a call at all, there is nothing to ignore, and the reader looks for a return value that is not there.
+`void` in front of a call says "this returns something, and I'm ignoring it on purpose". If the call returns nothing, or the thing after `void` isn't a call at all, there's nothing to ignore, and the reader looks for a return value that isn't there.
 
 `void 0`, `void` in front of a promise and `void` in front of an assignment are allowed.
 
-`--fix` removes the `void`. In front of something that is not a call, it only does so when the `void` expression is a whole statement.
+`--fix` removes the `void`. In front of something that isn't a call, it only does that when the `void` expression is a whole statement.
 
 This rule needs type information. Run `bun lint --type-aware`.
 

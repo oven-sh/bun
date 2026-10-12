@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The function given to `new Promise()` gets its two parameters by position, whatever you call them. If you write them in the wrong order, `reject(value)` fulfills the promise and `resolve(error)` rejects it.
+The function you pass to `new Promise()` gets its two parameters by position, no matter what you call them. If you write them in the wrong order, `reject(value)` fulfills the promise and `resolve(error)` rejects it.
 
-The first parameter must be `resolve` or `_resolve`, the second `reject` or `_reject`. You can leave out parameters you do not use.
+The first parameter must be `resolve` or `_resolve`, and the second must be `reject` or `_reject`. You can leave out parameters you don't use.
 
 ## Examples
 

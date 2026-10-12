@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When the first argument of `setTimeout()` or `setInterval()` is a string, browsers compile and run it like `eval()` does. The code runs in the global scope, so it cannot see your local variables, and anything a user typed that ends up in the string gets executed.
+When the first argument of `setTimeout()` or `setInterval()` is a string, browsers compile and run it like `eval()` does. The code runs in the global scope, so it can't see your local variables, and anything a user typed that ends up in the string gets executed.
 
 ## Examples
 
@@ -25,7 +25,7 @@ setInterval("poll('" + url + "')", 5000);
 window.setTimeout(`save(${id})`, 0);
 ```
 
-A constant that holds a string is followed:
+The rule follows a constant that holds a string:
 
 {/* bad */}
 ```js
@@ -42,7 +42,7 @@ setInterval(() => poll(url), 5000);
 window.setTimeout(() => save(id), 0);
 ```
 
-A function of your own with the same name is not reported:
+Your own function with the same name isn't reported:
 
 {/* good */}
 ```js

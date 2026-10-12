@@ -12,11 +12,11 @@ typeAware: false
 deprecated: true
 ---
 
-Nothing stops you from writing `Object = null`. Every piece of code that runs afterwards, including libraries, sees the new value and breaks far from the assignment. Most of the time it is a typo or a missing `const`.
+Nothing stops you from writing `Object = null`. Every piece of code that runs afterwards, including libraries, sees the new value and breaks far from the assignment. Most of the time it's a typo or a missing `const`.
 
-The rule reports every write to a global that is marked as read-only, also with `+=`, `++` or destructuring. A variable of your own with the same name is fine.
+The rule reports every write to a global that's marked as read-only, including writes with `+=`, `++` or destructuring. Your own variable with the same name is fine.
 
-ESLint has deprecated this rule. `no-global-assign` is its current name and does the same.
+ESLint has deprecated this rule. `no-global-assign` is its current name and does the same thing.
 
 ## Examples
 
@@ -43,7 +43,7 @@ const Promise = require("bluebird");
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `exceptions` | `[]` | Names of globals that may be assigned to. |
+| `exceptions` | `[]` | Names of globals that can be assigned to. |
 
 {/* good {"options": [{"exceptions": ["Promise"]}]} */}
 ```js

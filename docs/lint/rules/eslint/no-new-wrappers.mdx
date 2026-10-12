@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-With `new`, these three return an object that wraps the value and not the value itself. `typeof new String("a")` is `"object"`, `new Number(1) === 1` is `false`, and `new Boolean(false)` is truthy, so the `if` below always runs.
+With `new`, these three return an object that wraps the value, not the value itself. `typeof new String("a")` is `"object"`, `new Number(1) === 1` is `false`, and `new Boolean(false)` is truthy, so the `if` below always runs.
 
 Without `new`, the same functions convert a value and return a plain string, number or boolean.
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-An empty line after the imports shows where the list of dependencies ends and the code of the file begins.
+An empty line after the imports shows where the dependency list ends and the file's code begins.
 
-The rule looks at the last `import` of each run of imports, and does the same for top-level `require()` calls. A `require()` inside a function or a block is not checked.
+The rule checks the last `import` in each run of imports, and does the same for top-level `require()` calls. A `require()` inside a function or a block isn't checked.
 
 `--fix` adds the missing empty lines.
 
@@ -62,7 +62,7 @@ function loadPlugin(name) {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `count` | `1` | The minimum number of empty lines. |
-| `exactCount` | `false` | Also report more than `count` empty lines. `--fix` does not remove them. |
+| `exactCount` | `false` | Also report more than `count` empty lines. `--fix` doesn't remove them. |
 | `considerComments` | `false` | Require the empty lines before a comment that follows the imports. By default a comment can come right after them, and only the distance to the next statement counts. |
 
 {/* bad {"options": [{"count": 2}]} */}

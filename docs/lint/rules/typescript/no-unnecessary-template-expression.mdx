@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-A template literal that holds nothing but one string, like `` `${name}` ``, is that string. A literal inside `${}`, like `` `${"px"}` ``, can be written as plain text. In both cases the `${}` makes the reader look for a conversion that does not happen.
+A template literal that holds nothing but one string, like `` `${name}` ``, is that string. A literal inside `${}`, like `` `${"px"}` ``, can be written as plain text. In both cases the `${}` makes the reader look for a conversion that doesn't happen.
 
-The rule reports a template that is only one `${}` with a string in it, and any `${}` that holds a string, number, bigint, boolean, regular expression or template literal, `null`, `undefined`, `NaN` or `Infinity`. Template literal types are checked too. Tagged templates are not.
+The rule reports a template that's only one `${}` with a string in it, and any `${}` that holds a string, number, bigint, boolean, regular expression or template literal, `null`, `undefined`, `NaN` or `Infinity`. Template literal types are checked too. Tagged templates aren't.
 
 `--fix` removes the `${}`.
 

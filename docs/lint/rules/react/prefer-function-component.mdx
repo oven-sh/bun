@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Hooks only work in function components, so a class component cannot share logic with the rest of a codebase that uses hooks. This rule reports every class that extends `Component` or `PureComponent`, and every other class with a method that contains JSX.
+Hooks only work in function components, so a class component can't share logic with the rest of a codebase that uses hooks. This rule reports every class that extends `Component` or `PureComponent`, and every other class with a method that contains JSX.
 
 An error boundary is allowed by default, because React has no way to write one as a function.
 
@@ -55,7 +55,7 @@ class ErrorBoundary extends React.Component {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `allowErrorBoundary` | `true` | Allow a class with `componentDidCatch` or `static getDerivedStateFromError`. |
-| `allowJsxUtilityClass` | `false` | Allow a class that has JSX in its methods but does not extend `Component` or `PureComponent`. |
+| `allowJsxUtilityClass` | `false` | Allow a class that has JSX in its methods but doesn't extend `Component` or `PureComponent`. |
 
 Reported with `allowErrorBoundary: false`:
 

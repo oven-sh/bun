@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-In a TypeScript file, a call to `require()` returns `any`, so you lose checking and completion for everything you take from the module. The call can also sit anywhere in the code, which hides what the file depends on. An `import` is typed and stands at the top level.
+In a TypeScript file, a call to `require()` returns `any`, so you lose checking and completion for everything you take from the module. The call can also sit anywhere in the code, which hides what the file depends on. An `import` is typed and sits at the top level.
 
-`import name = require("..")` is reported too. A `require` that the file declares itself is not.
+`import name = require("..")` is reported too. A `require` that the file declares itself isn't.
 
 This rule is on by default in TypeScript files.
 

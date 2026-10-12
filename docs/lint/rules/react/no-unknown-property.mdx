@@ -12,15 +12,15 @@ typeAware: false
 deprecated: false
 ---
 
-React names DOM attributes in its own way: `className` and not `class`, `htmlFor` and not `for`, `tabIndex` and not `tabindex`, `strokeWidth` and not `stroke-width`. Markup pasted from an HTML or SVG file has the other spelling, and React warns about it in the console when the page runs.
+React has its own names for DOM attributes: `className` instead of `class`, `htmlFor` instead of `for`, `tabIndex` instead of `tabindex`, `strokeWidth` instead of `stroke-width`. Markup pasted from an HTML or SVG file has the other spelling, and React warns about it in the console when the page runs.
 
 The rule checks elements with a lowercase name and reports three things:
 
 - A name that React spells differently.
-- A name that is not a DOM attribute at all.
-- An attribute on an element it does not belong to, such as `checked` on a `<div>`.
+- A name that isn't a DOM attribute at all.
+- An attribute on an element it doesn't belong to, such as `checked` on a `<div>`.
 
-Your own components, custom elements (a hyphen in the name, or an `is` attribute), and `data-*` attributes are not checked.
+The rule doesn't check your own components, custom elements (a hyphen in the name, or an `is` attribute), or `data-*` attributes.
 
 `--fix` renames an attribute when React has another spelling for it.
 
@@ -60,10 +60,10 @@ const player = <video-player autostart="yes" />;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignore` | `[]` | Names of attributes to accept as they are. |
+| `ignore` | `[]` | Attribute names to accept as they are. |
 | `requireDataLowercase` | `false` | Report a `data-*` attribute with an uppercase letter in its name, on any element. |
 
-Use `ignore` for attributes that a library adds, such as the `css` prop of Emotion:
+Use `ignore` for attributes that a library adds, such as Emotion's `css` prop:
 
 {/* good {"options": [{"ignore": ["css"]}]} */}
 ```jsx

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-JSX written inside a component makes a new element object on every render. Passed as a prop, it is never equal to the value from the last render, so a child wrapped in `React.memo` renders again even though nothing changed.
+JSX written inside a component makes a new element object on every render. When you pass it as a prop, it's never equal to the value from the last render, so a child wrapped in `React.memo` renders again even though nothing changed.
 
-JSX at the top level of a module is not reported, because it is created once.
+JSX at the top level of a module isn't reported, because it's created once.
 
 ## Examples
 
@@ -36,7 +36,7 @@ function Toolbar({ dirty }) {
 }
 ```
 
-A variable declared inside the component is as new as JSX written in the prop. The report is on the declaration:
+A variable declared inside the component has the same problem as JSX written in the prop. The report is on the declaration:
 
 {/* bad */}
 ```jsx
@@ -57,7 +57,7 @@ function Toolbar() {
 }
 ```
 
-If the element depends on props or state, keep it with `useMemo`:
+If the element depends on props or state, cache it with `useMemo`:
 
 {/* good */}
 ```jsx
@@ -73,7 +73,7 @@ function Toolbar({ color }) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `nativeAllowList` | `[]` | Props to skip on elements with a lowercase name, such as `<div>`. A list of prop names (case does not matter), or `"all"` for every prop. |
+| `nativeAllowList` | `[]` | Props to skip on elements with a lowercase name, such as `<div>`. A list of prop names (case doesn't matter), or `"all"` for every prop. |
 
 With `{ "nativeAllowList": ["header"] }`, this is allowed:
 

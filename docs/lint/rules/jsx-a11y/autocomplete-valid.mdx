@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Browsers and password managers fill in a field by its `autocomplete` value. With a value they do not know, such as `"mail"`, they guess or do nothing, and people who rely on autofill have to type everything.
+Browsers and password managers use a field's `autocomplete` value to fill it in. With a value they don't know, such as `"mail"`, they guess or do nothing, and people who rely on autofill have to type everything.
 
-Only values written as a string are checked. An address field can have `billing` or `shipping` in front, as in `"shipping postal-code"`.
+The rule only checks values written as a string. An address field can have `billing` or `shipping` in front, as in `"shipping postal-code"`.
 
 ## Examples
 
@@ -55,7 +55,7 @@ const phone = <input autoComplete="phone" />;
 
 ## When not to use it
 
-The rule does not know every value that HTML allows. It reports the parts of a name, such as `given-name` and `family-name`, and the prefixes `home`, `work`, `mobile` and `section-`. If your forms use them, turn the rule off.
+The rule doesn't know every value that HTML allows. It reports the parts of a name, such as `given-name` and `family-name`, and the prefixes `home`, `work`, `mobile` and `section-`. If your forms use them, turn the rule off.
 
 {/* bad {"count": 4} */}
 ```jsx

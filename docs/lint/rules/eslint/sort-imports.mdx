@@ -17,12 +17,12 @@ A sorted list of imports is quick to scan, and two people who add an import put 
 The rule checks three things:
 
 - The names inside `{ ... }` are in alphabetical order.
-- Declarations are grouped by their syntax. By default: imports with no names, then `* as` imports, then imports of several names, then imports of one name.
-- Inside a group, declarations are in alphabetical order of the first name they import. The local name counts, not the module path.
+- Declarations are grouped by syntax. The default order is imports with no names, then `* as` imports, then imports of several names, then imports of one name.
+- Inside a group, declarations are sorted alphabetically by the first name they import. The rule compares the local name, not the module path.
 
 Capital letters sort before lowercase letters unless you set `ignoreCase`.
 
-`--fix` sorts the names inside `{ ... }`, unless there are comments between them. It does not move declarations.
+`--fix` sorts the names inside `{ ... }`, unless there are comments between them. It doesn't move declarations.
 
 ## Examples
 
@@ -64,11 +64,11 @@ import path from "node:path";
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreCase` | `false` | Compare names without regard to case. |
-| `ignoreDeclarationSort` | `false` | Do not check the order of declarations, only the names inside `{ ... }`. |
-| `ignoreMemberSort` | `false` | Do not check the names inside `{ ... }`. |
+| `ignoreCase` | `false` | Ignore case when comparing names. |
+| `ignoreDeclarationSort` | `false` | Don't check the order of declarations, only the names inside `{ ... }`. |
+| `ignoreMemberSort` | `false` | Don't check the names inside `{ ... }`. |
 | `memberSyntaxSortOrder` | `["none", "all", "multiple", "single"]` | The order of the syntax groups. All four names must be present. |
-| `allowSeparatedGroups` | `false` | Start over after a blank line or a line that is not an import, so each block is sorted on its own. |
+| `allowSeparatedGroups` | `false` | Start over after a blank line or a line that isn't an import, so each block is sorted separately. |
 
 `ignoreDeclarationSort` is useful when another tool orders your imports by module path:
 

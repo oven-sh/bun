@@ -6719,7 +6719,7 @@ impl<'p, 's> Checker<'p, 's> {
         allowed_endings: &[Ending],
         base_directory: &[u8],
     ) -> Vec<u8> {
-        for (key, values) in &self.files().options.paths {
+        for (key, values) in self.files().options.paths.iter() {
             for pattern_text in values {
                 let normalized = join(base_directory, pattern_text);
                 let pattern =

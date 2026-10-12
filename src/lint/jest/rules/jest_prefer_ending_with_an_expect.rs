@@ -36,6 +36,7 @@ impl<const RUNNER: u8> Rule for PreferEndingWithAnExpect<RUNNER> {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         jest::run_on_jest_nodes(&ctx, &|node, ctx| self.0.run(node, ctx));
+        jest::calls_of_own_test_blocks(&ctx, &self.0.additional_test_block_functions).for_each(|it| self.0.run(it, &ctx));
     }
 }
 
@@ -48,13 +49,14 @@ impl Config {
         else {
             return;
         };
-        let Some(parsed_jest_fn) = jest::parse_general_jest_fn_call(ctx.file, possible_jest_node) else {
-            return;
-        };
-        // Other functions take a function as the second argument too: `vi.mock(.., factory)`.
-        let is_test_block = parsed_jest_fn.kind == JestFnKind::General(JestGeneralFnKind::Test) || {
+        let is_additional = || {
             let name = jest::get_node_name(call_expr.callee());
             self.additional_test_block_functions.iter().any(|it| it.as_bytes() == name)
+        };
+        // Other functions take a function as the second argument too: `vi.mock(.., factory)`.
+        let is_test_block = match jest::parse_general_jest_fn_call(ctx.file, possible_jest_node) {
+            Some(parsed_jest_fn) => parsed_jest_fn.kind == JestFnKind::General(JestGeneralFnKind::Test) || is_additional(),
+            None => ctx.runner == Runner::Bun && is_additional(),
         };
         if is_test_block && !self.is_valid_last_statement(func, ctx) {
             ctx.report(call_expr.callee(), PREFER_ENDING_WITH_AN_EXPECT);

@@ -11,7 +11,6 @@ Bun ships with a fast, built-in linter. There's nothing to install and nothing t
 - Type-aware rules, without the `typescript` package
 - Auto-fix with `--fix`
 - Works with your existing ESLint or oxlint config
-- Editor support over LSP
 
 ## Run the linter
 
@@ -65,6 +64,10 @@ With no config, `bun lint` turns on the rules that catch real bugs:
 - **Tests**: leftover `test.only`, `expect()` without a matcher, un-awaited `.resolves`, and a few more, in files that import from `bun:test`
 
 Likely bugs are errors. Unused code and style suggestions are warnings.
+
+- A name that starts with `_` may be unused.
+- In `.d.ts` files only the errors run.
+- An `eslint-disable` comment for a rule that is off is left alone.
 
 ## Configure rules
 
@@ -149,16 +152,6 @@ Types come from [`bun check`](/runtime/check), Bun's built-in type checker. It's
 ```toml bunfig.toml icon="settings"
 [lint]
 typeAware = true
-```
-
-## Editors
-
-Install the [Bun extension for VS Code](https://marketplace.visualstudio.com/items?itemName=oven.bun-vscode) to see problems as you type, apply quick fixes, and format on save.
-
-For any other editor, point its LSP client at:
-
-```bash terminal icon="terminal"
-bun lint --lsp
 ```
 
 ## Git hooks

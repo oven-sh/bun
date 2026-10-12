@@ -76,6 +76,7 @@ Plugins that use your installed Prettier: prettier-plugin-svelte
 
 You can remove: prettier-plugin-astro
 Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-svelte (some files go to them)
+Not checked:    other tools' configs, CI files, Git hooks
 `);
     expect(isUntouched).toBe(true);
     expect(exitCode).toBe(0);
@@ -96,10 +97,11 @@ Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-s
       packages: {
         removable: ["prettier-plugin-astro"],
         needed: [
-          { name: "@ianvs/prettier-plugin-sort-imports", reason: "files" },
-          { name: "prettier", reason: "files" },
-          { name: "prettier-plugin-svelte", reason: "files" },
+          { name: "@ianvs/prettier-plugin-sort-imports", reason: "files", by: null },
+          { name: "prettier", reason: "files", by: null },
+          { name: "prettier-plugin-svelte", reason: "files", by: null },
         ],
+        not_checked: ["other tools' configs", "CI files", "Git hooks"],
       },
       notes: [],
     });
@@ -119,6 +121,7 @@ Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-s
 Built-in plugins: @trivago/prettier-plugin-sort-imports
 
 You can remove: @trivago/prettier-plugin-sort-imports, prettier
+Not checked:    other tools' configs, CI files, Git hooks
 `);
     expect(exitCode).toBe(0);
   });
@@ -159,9 +162,10 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
     expect(packages).toEqual({
       removable: [],
       needed: [
-        { name: "prettier", reason: "files" },
-        { name: "prettier-plugin-astro", reason: "files" },
+        { name: "prettier", reason: "files", by: null },
+        { name: "prettier-plugin-astro", reason: "files", by: null },
       ],
+      not_checked: ["other tools' configs", "CI files", "Git hooks"],
     });
     expect(exitCode).toBe(0);
   });
@@ -183,8 +187,68 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
 
 You can remove: prettier
 Still needed:   prettier-config-shared (prettier.config.cjs loads it)
+Not checked:    other tools' configs, CI files, Git hooks
 `);
     expect(exitCode).toBe(0);
+  });
+
+  test("only what is tooling for the formatter by the form of its name can be removed", async () => {
+    const names = [
+      "prettier",
+      "oxfmt",
+      "prettier-plugin-a",
+      "@scope/prettier-plugin-a",
+      "@prettier/plugin-php",
+      "prettier-config-a",
+      "@scope/prettier-config",
+      "@scope/prettier-config-a",
+    ];
+    const others = [
+      "eslint-plugin-prettier",
+      "eslint-config-prettier",
+      "prettier-eslint",
+      "pretty-quick",
+      "prettierx",
+      "vite-plugin-prettier",
+      "@scope/prettier",
+    ];
+    const { stdout, exitCode } = await doctor(
+      { "package.json": dependencies(...names, ...others), ".prettierrc": "{}" },
+      ["-f", "json"],
+    );
+    expect(JSON.parse(stdout).packages).toEqual({
+      removable: names.toSorted(),
+      needed: [],
+      not_checked: ["other tools' configs", "CI files", "Git hooks"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("what a script, lint-staged or a package that stays uses cannot be removed", async () => {
+    const project = (fields: object) => ({
+      "package.json":
+        JSON.stringify({ devDependencies: { prettier: "*", "eslint-plugin-prettier": "*" }, ...fields }, null, 2) +
+        "\n",
+      ".prettierrc": "{}\n",
+    });
+    const peer = {
+      "node_modules/eslint-plugin-prettier/package.json": JSON.stringify({
+        name: "eslint-plugin-prettier",
+        peerDependencies: { prettier: ">=3" },
+      }),
+    };
+    const [script, staged, dependent, free] = await Promise.all([
+      doctor(project({ scripts: { check: "prettier --check ." } })),
+      doctor(project({ "lint-staged": { "*": "prettier --write" } })),
+      doctor({ ...project({}), ...peer }),
+      doctor(project({ scripts: { check: "bun format --check", pretty: "prettierx ." } })),
+    ]);
+    expect(script.stdout).toEndWith(`\nStill needed:   prettier (the "check" script runs it)\n`);
+    expect(staged.stdout).toEndWith(`\nStill needed:   prettier (lint-staged runs it)\n`);
+    expect(dependent.stdout).toEndWith(`\nStill needed:   prettier (eslint-plugin-prettier needs it)\n`);
+    expect(free.stdout).toEndWith(
+      `\nYou can remove: prettier\nNot checked:    other tools' configs, CI files, Git hooks\n`,
+    );
   });
 
   test("with an .oxfmtrc.json", async () => {
@@ -198,6 +262,7 @@ Still needed:   prettier-config-shared (prettier.config.cjs loads it)
     3 files are formatted natively
 
 You can remove: oxfmt
+Not checked:    other tools' configs, CI files, Git hooks
 `);
     expect(isUntouched).toBe(true);
     expect(exitCode).toBe(0);

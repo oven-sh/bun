@@ -14,7 +14,7 @@ deprecated: false
 
 A capitalized name says "component". If you call a component as a plain function, React does not know it is there. Its hooks run as hooks of the caller, so its state gets mixed up with the caller's as soon as the call becomes conditional. Render it with JSX instead.
 
-The rule looks inside components and hooks. It reports a call to a capitalized function that comes from outside the component, and a call to a capitalized method such as `ui.Avatar()`. All-caps functions such as `T()` and most built-ins such as `Number()` and `String()` are allowed.
+The rule looks inside components and hooks. It reports a call to a capitalized function that comes from outside the component, and a call to a capitalized method such as `ui.Avatar()`. All-caps functions such as `T()` and built-ins such as `Number()`, `String()` and `BigInt()` are allowed.
 
 ## Examples
 
@@ -56,15 +56,15 @@ function Profile({ user }) {
 }
 ```
 
-`BigInt()` and `Symbol()` are not among the allowed built-ins:
-
-{/* bad */}
+{/* good */}
 ```jsx
 function Profile({ user }) {
   const id = BigInt(user.id);
   return <section>{String(id)}</section>;
 }
 ```
+
+With an ESLint config, `BigInt()` and `Symbol()` are reported, as `eslint-plugin-react-hooks` reports them.
 
 ## When not to use it
 

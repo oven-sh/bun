@@ -760,6 +760,11 @@ const rules: Record<string, Case[]> = {
     { code: `const A = z.string();`, options: [{ roots: ["v"] }] },
     `const A = userSchema();`,
     `const B = A.extend({ b: 1 });`,
+    // The wrapper has the suffix of the factories.
+    {
+      code: `${zod}const A = lazySchema(() => z.object({ a: userSchema() }));`,
+      options: [{ factorySuffix: "Schema", lazyWrapper: "lazySchema" }],
+    },
   ],
 
   "no-side-effects-on-import": [
@@ -1411,6 +1416,8 @@ const rules: Record<string, Case[]> = {
     `${processes}const child = spawn("a");\nconst other = child;`,
     `${processes}const child = spawn("a");\nthis.child = child;`,
     `${processes}const child = spawn("a");\nexport { child };`,
+    `${processes}export const child = spawn("a");`,
+    `${processes}export let child;\nchild = spawn("a");`,
     `${files}await pipeline(createReadStream("a"), createWriteStream("b"));`,
     `${files}const source = createReadStream("a");\nfinished(source, done);`,
     `${files}const source = createReadStream("a");\nfor await (const piece of source) use(piece);`,
@@ -1717,7 +1724,12 @@ const testRules: Record<string, Case[]> = {
     `test(«" a"», () => {\n  expect(1).toMatchSnapshot();\n});`,
     `test(«a», () => {});`,
     { code: `describe(«add», () => {});`, options: [{ ignoreTypeOfDescribeName: false }] },
+    { code: `test(«"adds"», () => {});`, options: [{ mustMatch: "/^ADDS/" }] },
+    { code: `test(«"Adds"», () => {});`, options: [{ mustNotMatch: "/^adds/i" }] },
+    { code: `it(«"adds"», () => {});\ntest("adds", () => {});`, options: [{ mustMatch: { it: "^should " } }] },
 
+    { code: `test("adds", () => {});`, options: [{ mustMatch: "/^ADDS/i" }] },
+    { code: `it("should add", () => {});`, options: [{ mustMatch: { it: "^should " } }] },
     `test("a", () => {});`,
     `test(() => {});`,
     `test(callback);`,
@@ -1741,6 +1753,17 @@ const testRules: Record<string, Case[]> = {
     `test.skip("a", () => {});`,
     `test.todo("a", () => {});`,
     `test.todoIf(a)("b");`,
+    `own("a", () => {});`,
+    // A wrapper of one's own, a method, a hook.
+    ...[
+      `«own»("a", () => {});`,
+      `«helpers.own»("a", () => {});`,
+      `«beforeAll»(() => {});`,
+      `own("a", () => {\n  expect(1).toBe(1);\n});`,
+      `other("a", () => {});`,
+      `own.skip("a", () => {});`,
+      `own;`,
+    ].map(code => ({ code, options: [{ additionalTestBlockFunctions: ["own", "helpers.own", "beforeAll"] }] })),
   ].map(inBunTest),
 
   "no-done-callback": [
@@ -1764,6 +1787,13 @@ const testRules: Record<string, Case[]> = {
 
   "prefer-ending-with-an-expect": [
     `«test»(() => {\n  expect(1).toBe(1);\n  a();\n});`,
+    `own("a", () => {\n  b();\n});`,
+    ...[
+      `«own»("a", () => {\n  expect(1).toBe(1);\n  b();\n});`,
+      `«beforeAll»(() => {\n  b();\n});`,
+      `own("a", () => {\n  b();\n  expect(1).toBe(1);\n});`,
+      `other("a", () => {\n  b();\n});`,
+    ].map(code => ({ code, options: [{ additionalTestBlockFunctions: ["own", "beforeAll"] }] })),
     `«test»("a", { retry: 1 }, () => {\n  expect(1).toBe(1);\n  a();\n});`,
     `test(() => {\n  a();\n  expect(1).toBe(1);\n});`,
   ].map(inBunTest),
@@ -1796,6 +1826,66 @@ const testRules: Record<string, Case[]> = {
       ),
     }))
     .map(it => (it.code.includes("«") ? it : it.code))
+    .map(inBunTest),
+
+  // A test is counted with its blocks and with the functions that it passes on.
+  "max-expects": [
+    `test("a", () => {\n  expect(1).toBe(1);\n  «expect»(2).toBe(2);\n});`,
+    `test("a", () => {\n  expect(1).toBe(1);\n  for (const b of c) {\n    «expect»(b).toBe(2);\n  }\n});`,
+    `test("a", () => {\n  expect(1).toBe(1);\n  c.forEach(b => {\n    «expect»(b).toBe(2);\n  });\n});`,
+    `test("a", () => {\n  if (b) expect(1).toBe(1);\n  else «expect»(2).toBe(2);\n});`,
+    `function check() {\n  expect(1).toBe(1);\n  «expect»(2).toBe(2);\n}`,
+
+    `test("a", () => {\n  expect(1).toBe(1);\n});\ntest("b", () => {\n  expect(2).toBe(2);\n});`,
+    `describe("a", () => {\n  test("b", () => {\n    expect(1).toBe(1);\n  });\n  test("c", () => {\n    expect(2).toBe(2);\n  });\n});`,
+    `test("a", () => {\n  expect(1).toBe(1);\n  function check() {\n    expect(2).toBe(2);\n  }\n});`,
+    `test("a", () => {\n  expect.assertions(1);\n  expect.hasAssertions();\n  expect(1).toBe(1);\n});`,
+  ]
+    .map(code => ({ code, options: [{ max: 1 }] }))
+    .map(inBunTest),
+
+  "no-conditional-expect": [
+    `test("a", () => {\n  if (b) «expect»(1).toBe(1);\n});`,
+    `test("a", function () {\n  if (b) «expect»(1).toBe(1);\n});`,
+    `test("a", function named() {\n  if (b) «expect»(1).toBe(1);\n});`,
+    `test("a", () => {\n  each(function () {\n    if (b) «expect»(1).toBe(1);\n  });\n});`,
+    // What a test calls or is.
+    `function check() {\n  if (b) «expect»(1).toBe(1);\n}\ntest("a", () => check());`,
+    `function check() {\n  if (b) «expect»(1).toBe(1);\n}\ntest("a", check);`,
+    `const check = () => {\n  if (b) «expect»(1).toBe(1);\n};\ntest("a", () => check());`,
+    `const check = function () {\n  if (b) «expect»(1).toBe(1);\n};\ntest("a", check);`,
+
+    `if (b) {\n  test("a", function () {\n    expect(1).toBe(1);\n  });\n}`,
+    `test("a", () => {\n  if (b) {\n    const check = () => expect(1).toBe(1);\n  }\n});`,
+    `function check() {\n  if (b) expect(1).toBe(1);\n}`,
+    `const check = () => {\n  if (b) expect(1).toBe(1);\n};\ncheck();`,
+    `const checks = {\n  check() {\n    if (b) expect(1).toBe(1);\n  },\n};\ntest("a", () => checks.check());`,
+  ].map(inBunTest),
+
+  // What decides whether a test runs, what it is called and how long it may take is not in the test.
+  "no-conditional-in-test": [
+    `test("a", () => {\n  «if (a) b();»\n});`,
+    `test.skipIf(a)("b", () => {\n  const c = «d || e»;\n});`,
+    `test("a", { timeout: 1000 }, function () {\n  return «b ? c : d»;\n});`,
+    `test(() => {\n  «a ?? b»;\n}, 1000);`,
+
+    `test.skipIf(a || b)("c", () => {});`,
+    `test.if(a && b)("c", () => {});`,
+    `test.todoIf(a ? b : c)("d", () => {});`,
+    `test.each(a ?? b)("c", () => {});`,
+    `test(a || "b", () => {});`,
+    `test("a", () => {}, b ? 1000 : 5000);`,
+    `test("a", { timeout: b ?? 1000 }, () => {});`,
+  ].map(inBunTest),
+
+  "no-large-snapshots": [
+    inTest("expect(a).«toMatchInlineSnapshot»(`\n1\n2\n3\n`);"),
+    inTest("expect(a).«toMatchInlineSnapshot»({ b: expect.any(Number) }, `\n1\n2\n3\n`);"),
+    inTest("expect(a).toMatchInlineSnapshot({\n  b: expect.any(Number),\n  c: expect.any(Number),\n}, `1`);"),
+    inTest("expect(a).toMatchInlineSnapshot(`1`);"),
+    inTest("expect(a).toMatchInlineSnapshot();"),
+  ]
+    .map(code => ({ code, options: [{ inlineMaxSize: 2 }] }))
     .map(inBunTest),
 
   "no-identical-title": [
@@ -1899,6 +1989,13 @@ const testRules: Record<string, Case[]> = {
     },
   ].map(inBunTest),
 
+  "prefer-to-be": [
+    { code: inTest(`expect(a).«toEqual»(1);`), output: inTest(`expect(a).toBe(1);`) },
+    { code: inTest(`expect(a).«toEqual»(-1);`), output: inTest(`expect(a).toBe(-1);`) },
+    inTest(`expect(a).toEqual(0.5);`),
+    inTest(`expect(a).toEqual(-0.5);`),
+  ].map(inBunTest),
+
   "prefer-to-contain": [
     {
       code: inTest(`expect(a.includes(1), "why").«toBe»(true);`),
@@ -1920,11 +2017,53 @@ const testRules: Record<string, Case[]> = {
     },
   ].map(inBunTest),
 
+  "prefer-mock-return-shorthand": [
+    { code: `a.«mockImplementation»(() => 1);`, output: `a.mockReturnValue(1);` },
+    { code: `a.«mockImplementationOnce»(() => ({ b: [c] }));`, output: `a.mockReturnValueOnce({ b: [c] });` },
+    { code: `a.«mockImplementation»(function () {\n  return 1;\n});`, output: `a.mockReturnValue(1);` },
+    // These run each time the mock is called.
+    `a.mockImplementation(() => create());`,
+    `a.mockImplementation(() => new User());`,
+    `a.mockImplementation(() => ({ id: next() }));`,
+    "a.mockImplementation(() => sql`b`);",
+    `a.mockImplementation(() => import("b"));`,
+    // It returns nothing.
+    `a.mockImplementation(function () {\n  b;\n});`,
+  ].map(inBunTest),
+
+  "prefer-spy-on": [
+    ...[
+      { code: `a.b = «jest.fn»();`, suggestions: [`jest.spyOn(a, 'b').mockImplementation();`] },
+      // `spyOn` is not imported.
+      `a.b = «mock»();`,
+      `a.b = other();`,
+      `const a = mock();`,
+      `const a = { b: mock() };`,
+      `function f(mock) {\n  a.b = mock();\n}`,
+    ].map(inBunTest),
+    ...[
+      { code: `a.b = «mock»();`, suggestions: [`spyOn(a, 'b').mockImplementation();`] },
+      { code: `a.b = «mock»(() => 1);`, suggestions: [`spyOn(a, 'b').mockImplementation(() => 1);`] },
+      { code: `a[b] = «mock»(c);`, suggestions: [`spyOn(a, b).mockImplementation(c);`] },
+    ].map(({ code, suggestions }) => {
+      const head = `import { mock, spyOn } from "bun:test";\n`;
+      return { code: head + code, suggestions: suggestions.map(it => head + it) };
+    }),
+    {
+      code: `import { mock as fake, spyOn } from "bun:test";\na.b = «fake»();`,
+      suggestions: [`import { mock as fake, spyOn } from "bun:test";\nspyOn(a, 'b').mockImplementation();`],
+    },
+    `import { test } from "bun:test";\nimport { mock } from "./mock";\na.b = mock();`,
+  ],
+
   "prefer-describe-function-title": [
     {
       code: `import { add } from "./add";\ndescribe(«"add"», () => {});`,
       suggestions: [`import { add } from "./add";\ndescribe(add, () => {});`],
     },
+    // A type is nothing that can be passed.
+    `import type { Add } from "./add";\ndescribe("Add", () => {});`,
+    `import { type Add } from "./add";\ndescribe("Add", () => {});`,
   ].map(inBunTest),
 
   // oxlint applies these, and the fixes above of what is awaited, included and compared. A test that passes can fail afterwards.
@@ -1935,6 +2074,14 @@ const testRules: Record<string, Case[]> = {
   "prefer-strict-boolean-matchers": [
     { code: inTest(`expect(1).«toBeTruthy()»;`), suggestions: [inTest(`expect(1).toBe(true);`)] },
     { code: inTest(`expect(0, "why").«toBeFalsy()»;`), suggestions: [inTest(`expect(0, "why").toBe(false);`)] },
+    // `.not.toBe(true)` passes for everything but `true`.
+    { code: inTest(`expect(a).not.«toBeTruthy()»;`), suggestions: [inTest(`expect(a).toBe(false);`)] },
+    { code: inTest(`expect(a).not.«toBeFalsy()»;`), suggestions: [inTest(`expect(a).toBe(true);`)] },
+    {
+      code: inTest(`await expect(a).resolves.not.«toBeTruthy()»;`),
+      suggestions: [inTest(`await expect(a).resolves.toBe(false);`)],
+    },
+    inTest(`expect(a)["not"].«toBeTruthy()»;`),
   ].map(inBunTest),
 
   "require-hook": [
@@ -2842,6 +2989,24 @@ expect(1).toBe(1);
     expect(unix(andTheRule.stdout)).toEqual(["2 Warning/bun:test(no-focused-tests)"]);
     expect(named.stdout).toContain("Unknown plugin: 'bun:test'.");
     expect(named.exitCode).toBe(1);
+  });
+
+  test("the settings of Vitest are not for it", async () => {
+    const code = `import { describe } from "bun:test";\nimport { add } from "./add";\ndescribe("add", () => {});\ndescribe("", () => {});\n`;
+    const config = {
+      settings: { vitest: { typecheck: true } },
+      rules: { "bun:test/prefer-describe-function-title": 2, "bun:test/valid-title": 2 },
+    };
+    const { stdout } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.test.ts": code }, ["-f", "unix", "."]);
+    expect(unix(stdout)).toEqual(["3 Error/bun:test(prefer-describe-function-title)", "4 Error/bun:test(valid-title)"]);
+  });
+
+  test("valid-title names the pattern as the option has it", async () => {
+    const code = `import { it, test } from "bun:test";\nit("a", () => {});\ntest("b", () => {});\n`;
+    const rules = { "bun:test/valid-title": ["error", { mustMatch: { it: "^should ", test: "/^ADDS /i" } }] };
+    const { stdout } = await lint({ "eslint.config.mjs": flat(rules), "a.test.js": code }, ["-f", "unix", "."]);
+    expect(stdout).toContain(":2:4: it should match ^should  [");
+    expect(stdout).toContain(":3:6: test should match /^ADDS /i [");
   });
 
   test("comments turn a rule off", async () => {

@@ -40,14 +40,6 @@ bun format [flags] [files, directories, or globs]
   Skip files that match this glob. Can be repeated
 </ParamField>
 
-<ParamField path="--ignore-path" type="string" default=".gitignore, .prettierignore">
-  Read ignore patterns from this file. Can be repeated
-</ParamField>
-
-<ParamField path="--with-node-modules" type="boolean">
-  Format files in <code>node_modules</code> too
-</ParamField>
-
 ### Options
 
 <ParamField path="--print-width" type="number" default="80">
@@ -82,11 +74,19 @@ bun format [flags] [files, directories, or globs]
   Sort Tailwind CSS classes
 </ParamField>
 
+<ParamField path="--sort-package-json" type="boolean">
+  Sort the keys of <code>package.json</code>
+</ParamField>
+
+<ParamField path="--jsdoc" type="boolean">
+  Format JSDoc comments
+</ParamField>
+
 <ParamField path="--no-editorconfig" type="boolean">
   Do not read <code>.editorconfig</code>
 </ParamField>
 
-The other keys of [`[format]`](/runtime/bunfig#formatter) are flags too, except `overrides`.
+All of [Prettier's options](https://prettier.io/docs/options) are flags too.
 
 ### Output
 

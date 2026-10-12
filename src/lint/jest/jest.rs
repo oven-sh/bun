@@ -673,7 +673,7 @@ pub(crate) fn for_each_call_named_like<'a>(
 }
 
 /// The calls that are tests by what is written, whatever `it` and `test` refer to: those that are in no other, in the order of
-/// the source.
+/// the source. For `bun:test` the callback of each: `test.skipIf(a || b)(..)` has no condition in the test.
 pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [Span] {
     let find = || {
         let mut tests: Vec<Span> = Vec::new();
@@ -683,7 +683,13 @@ pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [S
                 PossibleJestNode::new(call_expr, runner),
                 &[JestFnKind::General(JestGeneralFnKind::Test)],
             ) {
-                tests.push(call_expr.span());
+                tests.extend(match runner {
+                    Runner::Jest | Runner::Vitest => Some(call_expr.span()),
+                    Runner::Bun => (call_expr.as_call())
+                        .and_then(|it| Arguments::of(it.args(), runner).callback)
+                        .filter(|it| it.tag() == ExprTag::Fn)
+                        .map(|it| it.span()),
+                });
             }
         });
         utils::sort::sort_unstable_by_key(&mut tests, |it| (it.start, std::cmp::Reverse(it.end)));
@@ -1538,6 +1544,24 @@ pub(crate) fn run_on_jest_nodes<'a>(
     run: &dyn Fn(PossibleJestNode<'a>, &Ctx<'a, '_>),
 ) {
     iter_possible_jest_call_node(ctx.file, ctx.runner).for_each(|node| run(node, ctx));
+}
+
+/// For `bun:test`: the calls of the functions `names` that are not among [`iter_possible_jest_call_node`], which are wrappers of
+/// one's own around `test`. oxlint compares `additionalTestBlockFunctions` only with what the runner declares.
+pub(crate) fn calls_of_own_test_blocks<'a>(
+    ctx: &Ctx<'a, '_>,
+    names: &[String],
+) -> impl Iterator<Item = PossibleJestNode<'a>> {
+    let (file, runner) = (ctx.file, ctx.runner);
+    file.exprs_of_kind(ExprTag::Call)
+        .take_while(move |_| runner == Runner::Bun && !names.is_empty())
+        .filter(move |it| {
+            let name = it.callee().map(get_node_name).unwrap_or_default();
+            names.iter().any(|it| it.as_bytes() == name)
+                && !is_in_call_or_member(*it)
+                && possible_jest_node_of(file, runner, *it).is_none()
+        })
+        .map(move |it| PossibleJestNode::new(it, runner))
 }
 
 /// Whether [`iter_possible_jest_call_node`] can have anything, by what the file mentions. It computes nothing.

@@ -16,7 +16,7 @@ deprecated: false
 
 The rule reads the imported file and follows its `export * from` lines. It also checks `export { name } from`. It reports nothing if the file cannot be found, or if it has no `import` or `export` at all, as in a CommonJS module. Type-only imports are not checked.
 
-Only `.js`, `.mjs` and `.cjs` files are read. In an ESLint config, `settings["import/extensions"]` changes that list.
+JavaScript and TypeScript files are read, JSX included. With an ESLint config only `.js`, `.mjs` and `.cjs` files are, unless `settings["import/extensions"]` lists others.
 
 ## Examples
 

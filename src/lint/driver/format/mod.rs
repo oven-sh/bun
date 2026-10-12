@@ -170,6 +170,8 @@ pub(crate) struct Meta<'m> {
     pub(crate) color: bool,
     /// The name of a rule leads to its page: the report goes to a terminal, with colors.
     pub(crate) links: bool,
+    /// The columns of the terminal that the report goes to. 0: it goes elsewhere.
+    pub(crate) width: usize,
     /// `--color`, `--no-color`
     pub(crate) color_option: Option<bool>,
     /// `maxWarnings` and `foundWarnings`, if there are too many.

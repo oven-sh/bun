@@ -283,8 +283,9 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
                 _ => expected_object(),
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
-            b"$changesLinter" | b"$forReact" | b"$ignorePatterns" | b"$jsPlugins" | b"$parser"
-            | b"$processor" | b"$severityByKind" | b"$source" | b"$withoutWarnings" => None,
+            b"$changesLinter" | b"$forReact" | b"$globsOfBun" | b"$ignorePatterns"
+            | b"$jsPlugins" | b"$parser" | b"$processor" | b"$severityByKind" | b"$source"
+            | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
             b"rules" => (value.as_object().unwrap_or_default().iter())
                 .find(|it| it.0 != b"__proto__" && RuleSetting::new(&it.0, &it.1).is_none())
@@ -352,7 +353,10 @@ impl Reader<'_> {
         key: &str,
         items: &[Json],
     ) -> Result<Vec<Pattern>, ConfigError> {
+        // `$globsOfBun`, which an override of bunfig.toml has: it makes no file linted.
+        let are_of_bun = json.get(b"$globsOfBun").is_some();
         let patterns = items.iter().map(|item| match item {
+            Json::String(pattern) if are_of_bun => Ok(Pattern::of_oxlint(pattern)),
             Json::String(pattern) => Ok(Pattern::new(pattern)),
             // Which files it is for cannot be told. To lint fewer files than ESLint and find no problems is worse than not to lint.
             _ => {

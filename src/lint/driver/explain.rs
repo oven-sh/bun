@@ -8,6 +8,7 @@ use crate::print_config::{object, text, write_indented};
 use crate::run::Environment;
 use crate::{configs, native};
 use bstr::BStr;
+use bun_core::fmt::TerminalHyperlink;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::{FileConfig, Registry};
@@ -222,10 +223,11 @@ pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colo
                 .unwrap_or_default();
             // A terminal has no backticks.
             let description = strings::replace_owned(description, b"`", b"");
-            if description.is_empty() {
-                out.extend_from_slice(&id);
-            } else {
-                let _ = write!(out, "{:<width$}", BStr::new(&id));
+            let url = meta.docs_url();
+            let _ = write!(out, "{}", TerminalHyperlink::new(&url, &id, colors));
+            if !description.is_empty() {
+                let padding = width - id.len();
+                let _ = write!(out, "{:padding$}", "");
                 pretty!(out, colors, "  <d>{}<r>", BStr::new(&description));
             }
             out.push(b'\n');

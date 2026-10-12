@@ -80,7 +80,7 @@ pub(crate) enum Kind {
     Mdx,
     GraphQl,
     Handlebars,
-    /// For oxfmt, and with `--toml`.
+    /// For oxfmt, and where no configuration of Prettier counts.
     Toml,
     /// HTML, Vue, Angular templates, Lightning Web Components, MJML.
     Html(bun_format::html::Parser),
@@ -692,6 +692,7 @@ pub(crate) fn expand(
             None => match pattern.strip_prefix(b"!") {
                 Some(negative) => ignored.negative.push(glob_of_prettier(
                     negative.strip_prefix(b"./").unwrap_or(negative),
+                    false,
                 )),
                 None => entries.push((Entry::Pattern, pattern, &written[..])),
             },
@@ -739,7 +740,7 @@ pub(crate) fn expand(
             Entry::Pattern => {
                 // `removeLeadingDotSegment` of `fast-glob`
                 let pattern = input.strip_prefix(b"./").unwrap_or(&input);
-                let glob = glob_of_prettier(pattern);
+                let glob = glob_of_prettier(pattern, false);
                 let parent = bun_glob::scan::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);
                 if parent != b"." {

@@ -33,9 +33,6 @@ const RULES: &[Param] = &[
         "--doctor                        Show which rules run natively and which packages you can remove"
     ),
     clap::param!(
-        "--flavor <tool>                 Use the <b>eslint<r> or the <b>oxlint<r> config in a project that has both"
-    ),
-    clap::param!(
         "--allow-unsupported             Warn instead of failing when the config has a rule or file that is not supported"
     ),
 ];
@@ -95,7 +92,7 @@ const TYPES: &[Param] = &[
     clap::param!("--type-aware                    Also run the rules that need types"),
     clap::param!("--no-type-aware                 Skip the rules that need types"),
     clap::param!(
-        "-p, --project/--tsconfig <path>  Use this tsconfig.json for the rules that need types <d>(alias: --tsconfig)<r>"
+        "--tsconfig <path>               Use this tsconfig.json for the rules that need types"
     ),
     clap::param!("--type-check                    With <b>--type-aware<r>, report type errors too"),
     clap::param!(
@@ -116,6 +113,10 @@ const OTHER: &[Param] = &[
 ];
 
 const OF_ESLINT: &[Param] = &[
+    clap::param!(
+        "--flavor <tool>                 Use the <b>eslint<r> or the <b>oxlint<r> config in a project that has both"
+    ),
+    clap::param!("-p, --project <path>            The same as <b>--tsconfig<r>"),
     clap::param!(
         "--parser-options <options>...   Set parser options: <b>--parser-options projectService:true<r>"
     ),
@@ -310,7 +311,7 @@ const ONLY_OF_ESLINT: [&[u8]; 36] = [
 ];
 
 /// The other way round, beside `--import-plugin` and the like.
-const ONLY_OF_OXLINT: [&[u8]; 10] = [
+const ONLY_OF_OXLINT: [&[u8]; 11] = [
     b"allow",
     b"warn",
     b"deny",
@@ -321,6 +322,7 @@ const ONLY_OF_OXLINT: [&[u8]; 10] = [
     b"fix-dangerously",
     b"type-check",
     b"rules",
+    b"lsp",
 ];
 
 /// Those of [`ONLY_OF_ESLINT`] that nothing can be done about with a configuration of oxlint.
@@ -395,6 +397,8 @@ pub enum Tool {
     Oxlint,
 }
 
+pub(crate) const INVALID_FIX_TYPE: &[u8] = b"Invalid Options:\n- 'fixTypes' must be an array of any of \"directive\", \"problem\", \"suggestion\", and \"layout\".";
+
 /// ESLint's `fixTypes`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FixType {
@@ -402,6 +406,19 @@ pub enum FixType {
     Problem,
     Suggestion,
     Layout,
+}
+
+/// An element of `overrides` in `[lint]`.
+#[derive(Clone, Debug, Default)]
+pub struct Override {
+    /// Patterns for paths from the working directory. One without a slash is for a name in any directory.
+    pub files: Vec<Vec<u8>>,
+    pub excluded: Vec<Vec<u8>>,
+    pub rules: Vec<(Vec<u8>, Json)>,
+    /// Where each of `rules` is.
+    pub places: Vec<crate::bunfig::RuleOfBunfig>,
+    pub globals: Vec<(Vec<u8>, Json)>,
+    pub settings: Vec<(Vec<u8>, Json)>,
 }
 
 /// What the command line says. The fields are ESLint's `ParsedCLIOptions`, by their names.
@@ -416,6 +433,8 @@ pub struct Options {
     pub of_one_tool: Vec<OfOneTool>,
     pub ext: Option<Vec<Vec<u8>>>,
     pub global: Vec<Vec<u8>>,
+    /// `[lint.globals]` of bunfig.toml, which `--global` comes after.
+    pub globals: Vec<(Vec<u8>, Json)>,
     pub parser: Option<Vec<u8>>,
     pub parser_options: Vec<(Vec<u8>, Json)>,
     /// `[lint.settings]` of bunfig.toml: ESLint's and oxlint's `settings`. No flag sets them.
@@ -424,6 +443,10 @@ pub struct Options {
     pub rule: Vec<(Vec<u8>, Json)>,
     /// For the first of them, which are in `[lint.rules]` of bunfig.toml: where.
     pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
+    /// `[[lint.overrides]]` of bunfig.toml. No flag sets them.
+    pub overrides: Vec<Override>,
+    /// With `overrides`: the command line alone, whose rules and globals come after them.
+    pub of_command_line: Option<Box<Options>>,
     pub fix: bool,
     pub fix_dry_run: bool,
     pub fix_type: Option<Vec<FixType>>,
@@ -470,8 +493,6 @@ pub struct Options {
     pub fix_safely: bool,
     /// oxlint's `--rules`: lists the rules, and lints nothing.
     pub rules: bool,
-    /// Serve an editor: [`crate::lsp`].
-    pub lsp: bool,
     /// Prints the page about this rule, and lints nothing.
     pub explain: Option<Vec<u8>>,
     /// oxlint's `--import-plugin` and `--disable-oxc-plugin`, ..: a plugin by the name that it has
@@ -486,7 +507,7 @@ pub struct Options {
     /// `--infer-globals=fast`: `InferGlobals::ByOptions` without a configuration file. It is to become what is done there
     /// without a flag, once it costs a project that reports no name next to nothing.
     pub infers_globals_by_options: bool,
-    pub project: Option<Vec<u8>>,
+    pub tsconfig: Option<Vec<u8>>,
     /// `0`: the number of cores.
     pub threads: usize,
     pub timing: bool,
@@ -530,12 +551,15 @@ impl Default for Options {
             of_one_tool: Vec::new(),
             ext: None,
             global: Vec::new(),
+            globals: Vec::new(),
             parser: None,
             parser_options: Vec::new(),
             settings: Vec::new(),
             plugin: Vec::new(),
             rule: Vec::new(),
             rules_of_bunfig: Vec::new(),
+            overrides: Vec::new(),
+            of_command_line: None,
             fix: false,
             fix_dry_run: false,
             fix_type: None,
@@ -573,14 +597,13 @@ impl Default for Options {
             fix_dangerously: false,
             fix_safely: false,
             rules: false,
-            lsp: false,
             explain: None,
             plugins: Vec::new(),
             type_aware: None,
             infer_globals: None,
             infers_globals_by_options: false,
             has_type_aware_flag: false,
-            project: None,
+            tsconfig: None,
             threads: 0,
             timing: false,
             all: false,
@@ -704,9 +727,7 @@ impl Options {
                         b"suggestion" => FixType::Suggestion,
                         b"layout" => FixType::Layout,
                         _ => {
-                            return error(&[
-                                b"Invalid Options:\n- 'fixTypes' must be an array of any of \"directive\", \"problem\", \"suggestion\", and \"layout\".",
-                            ]);
+                            return error(&[INVALID_FIX_TYPE]);
                         }
                     });
                 }
@@ -749,7 +770,7 @@ impl Options {
             b"doctor" => self.doctor = is_on,
             b"type-aware" => (self.type_aware, self.has_type_aware_flag) = (Some(is_on), is_on),
             b"infer-globals" => self.infer_globals = Some(is_on),
-            b"project" => self.project = owned(),
+            b"tsconfig" | b"project" => self.tsconfig = owned(),
             b"threads" | b"concurrency" => match (name, text) {
                 (b"concurrency", b"auto" | b"off") => {}
                 _ => match bun_core::fmt::parse_decimal::<usize>(text) {
@@ -818,7 +839,6 @@ impl Options {
             // Type errors are what `bun check` reports.
             b"type-check" => self.type_check = is_on,
             b"rules" => self.rules = is_on,
-            b"lsp" => self.lsp = is_on,
             b"explain" => self.explain = owned(),
             _ if is_on && name.ends_with(b"-plugin") => {
                 let plugin = &name[..name.len() - b"-plugin".len()];
@@ -842,11 +862,6 @@ impl Options {
             }
         }
         Ok(())
-    }
-
-    /// As `--rule` with what `rules` is.
-    pub(crate) fn add_rules(&mut self, rules: Vec<(Vec<u8>, Json)>) {
-        merge(&mut self.rule, rules);
     }
 
     /// As `--parser-options` with what `options` is.
@@ -897,6 +912,13 @@ impl Options {
         // ESLint refuses `--fix-type` in a run that fixes nothing. As a default it waits for one that does.
         if !alone.fix && !alone.fix_dry_run {
             defaults.fix_type = None;
+        }
+        // `typeCheck` asks for types.
+        if alone.type_aware == Some(false) {
+            defaults.type_check = false;
+        }
+        if !defaults.overrides.is_empty() {
+            defaults.of_command_line = Some(Box::new(alone));
         }
         defaults.with(args)
     }

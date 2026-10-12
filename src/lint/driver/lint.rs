@@ -8,7 +8,7 @@ use crate::embedded::Framework;
 use crate::inferred::Inferred;
 use crate::results::{Counts, FileResult, Linted};
 use crate::run::{Fatal, Timing};
-use crate::{Linter, fs, paths};
+use crate::{Linter, fs, git, paths};
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
@@ -35,6 +35,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) linter: &'c Linter,
     pub(crate) options: &'c Options,
     pub(crate) cwd: &'c [u8],
+    /// `--staged`, `--changed`
+    pub(crate) only: Option<&'c git::Files<'c>>,
     /// The configuration of the working directory, if it is one of oxlint.
     pub(crate) of_oxlint: Option<&'c Loaded>,
     /// `--type-check`: what the type checker reports is reported too.
@@ -191,6 +193,11 @@ impl Context<'_, '_> {
 
     pub(crate) fn fixes(&self) -> bool {
         self.options.fix || self.options.fix_dry_run
+    }
+
+    /// Whether the file at `path` is fixed. One that would not be written is reported as it is left.
+    pub(crate) fn fixes_file(&self, path: &[u8]) -> bool {
+        self.fixes() && !self.only.is_some_and(|it| it.is_partly_staged(path))
     }
 
     /// oxlint's `--fix-suggestions` and `--fix-dangerously`: a suggestion of a kind that they allow is as good as a fix.
@@ -399,7 +406,8 @@ impl Context<'_, '_> {
         let shown = std::mem::take(&mut result.path);
         // What the other files export is known now, so all rules can run on what the fixes make of the text. Its types are gone.
         let mut fixable = linted.messages.iter().filter(|it| it.fix.is_some());
-        *result = match self.fixes() && !had_types && fixable.any(|it| self.should_fix(it)) {
+        let is_fixed_now = self.fixes_file(&path) && !had_types;
+        *result = match is_fixed_now && fixable.any(|it| self.should_fix(it)) {
             true => {
                 let mut verify = |text: &[u8]| match framework {
                     Some(framework) => self.verify_scripts(framework, &path, text, &config),
@@ -543,7 +551,7 @@ impl Context<'_, '_> {
         on_circular_fixes: &dyn Fn(&[u8]),
         verify: &mut dyn FnMut(&[u8]) -> LintResult,
     ) -> FileResult {
-        let (result, text, is_fixed, fixes) = match self.fixes() {
+        let (result, text, is_fixed, fixes) = match self.fixes_file(path_to_verify) {
             false => (verify(&text), text, false, 0),
             true if config.language.is_oxlint => {
                 let mut result = verify(&text);

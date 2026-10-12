@@ -217,6 +217,8 @@ describe.concurrent("--explain", () => {
       "",
     ]);
     expect(stdout).toContain("\nExamples\n--------\n");
+    // The file name of a code block.
+    expect(stdout).toContain("\n\nbunfig.toml\n\n+- toml\n| [lint.rules]\n");
     expect(stdout).toEndWith(`\n${base}eslint/eqeqeq\n`);
     // Neither the frontmatter nor the comments of MDX.
     expect(stdout).not.toContain("title:");
@@ -290,6 +292,17 @@ describe.concurrent("--explain", () => {
     expect(here.exitCode).toBe(0);
   });
 
+  test("is the command's where package.json has a lint script", async () => {
+    const files = { "package.json": JSON.stringify({ scripts: { lint: "echo the script" } }) };
+    const [one, other, alone] = await Promise.all([
+      lint(files, ["--explain", "no-var"]),
+      lint(files, ["--explain=no-var"]),
+      lint({}, ["--explain", "no-var"]),
+    ]);
+    expect(one).toEqual(alone);
+    expect(other).toEqual(alone);
+  });
+
   test("wraps at the width of the terminal, and has colors where they are on", async () => {
     const [narrow, colored] = await Promise.all([
       lint({}, ["--explain", "no-var"], { COLUMNS: "40" }),
@@ -305,5 +318,7 @@ describe.concurrent("--explain", () => {
     const { output, exitCode } = await lintInTerminal(["--explain", "no-var"], { NO_COLOR: undefined });
     expect(output).toContain(`\x1b]8;;${base}eslint/no-var\x1b\\`);
     expect(exitCode).toBe(0);
+    const listed = await lintInTerminal(["--rules"], { NO_COLOR: undefined });
+    expect(listed.output).toContain(`\x1b]8;;${base}eslint/no-var\x1b\\no-var\x1b]8;;\x1b\\`);
   });
 });

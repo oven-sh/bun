@@ -81,12 +81,15 @@ It also follows oxfmt's defaults: lines wrap at 100 columns, every `.gitignore` 
 
 ---
 
-If your editor uses oxfmt's language server, switch it to [Bun's](/runtime/format#editors).
+Still have a `.prettierrc` next to `.oxfmtrc.json`? Bun uses `.oxfmtrc.json` and tells you so. Delete the one you no longer use, or pick one with `--config`.
 
-```sh terminal icon="terminal"
-oxfmt --lsp # [!code --]
-bun lint --lsp # [!code ++]
+```txt
+note: Using .oxfmtrc.json. .prettierrc is ignored. Use --config to pick it.
 ```
+
+---
+
+Keep `oxfmt` if your editor's oxc extension uses it. `bun format` has no language server.
 
 ---
 

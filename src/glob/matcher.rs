@@ -169,6 +169,12 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 ///     Matches zero or more characters, except for path separators, unless one
 ///     of the patterns and what follows the group match from the same place.
 ///     At the start of the pattern it is this, and does not negate the result.
+/// "{1..3}", "{a..e}", "{1..9..2}", "{01..10}"
+///     Matches one of the numbers, or of the letters, from the first to the
+///     second, or every second of them. If one of the two numbers is written
+///     with a zero in front, all are as long as the longer of the two.
+/// "{a}"
+///     Braces around one pattern are characters, as for a shell.
 ///
 /// Any syntax can be used between the parentheses. Groups, braces among them,
 /// can be nested to any depth and there can be any number of them.
@@ -177,6 +183,16 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 /// pattern is matched once for a position in the path. With `k` of `(`, `|`,
 /// `)`, `{`, `,`, `}` that takes `O(k * glob.len() * path.len()^2)` time.
 pub fn match_with<const EXTGLOB: bool>(glob: &[u8], path: &[u8]) -> MatchResult {
+    match_as::<EXTGLOB>(glob, path, false)
+}
+
+/// [`match_with`] with `EXTGLOB`, where only a `.` in the pattern matches the `.`
+/// that a name of the path starts with: not "*", "?", "[.]", "**" or "!(a)".
+pub fn match_without_dot(glob: &[u8], path: &[u8]) -> MatchResult {
+    match_as::<true>(glob, path, true)
+}
+
+fn match_as<const EXTGLOB: bool>(glob: &[u8], path: &[u8], hides_dots: bool) -> MatchResult {
     let mut state = State {
         glob_index: negations(glob, EXTGLOB) as u32,
         ..State::default()
@@ -185,7 +201,10 @@ pub fn match_with<const EXTGLOB: bool>(glob: &[u8], path: &[u8]) -> MatchResult 
 
     let mut brace_stack = BraceStack::default();
     let mut brace_budget = BRACE_BRANCH_BUDGET;
-    let mut groups = Groups::default();
+    let mut groups = Groups {
+        hides_dots,
+        ..Groups::default()
+    };
     // glob_start must point past the consumed `!` prefix so that a pattern-initial
     // `**` is still recognized as being at the start of a path segment.
     let glob_start = state.glob_index;
@@ -197,7 +216,7 @@ pub fn match_with<const EXTGLOB: bool>(glob: &[u8], path: &[u8]) -> MatchResult 
         &mut brace_stack,
         &mut brace_budget,
         &mut groups,
-        Inside::default(),
+        Inside::NO_GROUP,
     ) && !groups.is_too_deep;
 
     MatchResult {
@@ -220,6 +239,7 @@ fn glob_match_impl<const EXTGLOB: bool>(
     inside: Inside<'_>,
 ) -> bool {
     let entered_at = state.path_index;
+    let hides_dots = EXTGLOB && groups.hides_dots;
     'main_loop: while (state.glob_index as usize) < glob.len()
         || (state.path_index as usize) < path.len()
     {
@@ -228,18 +248,26 @@ fn glob_match_impl<const EXTGLOB: bool>(
                 let ch = glob[state.glob_index as usize];
                 if EXTGLOB {
                     let is_idle = inside.is_idle && state.path_index == entered_at;
-                    if let Some(group) = inside.group
-                        && group.is_end_of_alternative(ch)
+                    if state.glob_index == inside.end
+                        && let Some(group) = inside.group
                     {
                         if group.leave(glob, path, state.path_index, is_idle, groups) {
                             return true;
                         }
                         break 'fallthrough;
                     }
-                    if let Some(group) = Group::at(glob, state.glob_index, inside.group) {
+                    if let Some(group) = Group::at(glob, state.glob_index, inside, groups) {
                         if group.matches(glob, path, state.path_index, is_idle, groups) {
                             return true;
                         }
+                        break 'fallthrough;
+                    }
+                    // A `**` can still be nothing.
+                    if matches!(ch, b'*' | b'?' | b'[')
+                        && hides_dots
+                        && is_hidden_name_at(path, state.path_index)
+                        && !glob[state.glob_index as usize..].starts_with(b"**")
+                    {
                         break 'fallthrough;
                     }
                 }
@@ -253,6 +281,40 @@ fn glob_match_impl<const EXTGLOB: bool>(
                                     && glob.get(state.glob_index as usize + 2) == Some(&b'('));
                             if is_globstar {
                                 skip_globstars(glob, &mut state.glob_index);
+                            }
+                            let is_hidden = hides_dots && is_hidden_name_at(path, state.path_index);
+                            let before = state.wildcard;
+
+                            // `{**,a}/b`
+                            if EXTGLOB
+                                && is_globstar
+                                && is_name_start(glob, glob_start, state.glob_index)
+                                && let (slash, outer) = inside.outside(state.glob_index + 2)
+                                && slash > state.glob_index + 2
+                                && glob.get(slash as usize) == Some(&b'/')
+                            {
+                                let is_idle = inside.is_idle && state.path_index == entered_at;
+                                let mut at = state.path_index;
+                                loop {
+                                    let inside = Inside {
+                                        is_idle: is_idle && at == state.path_index,
+                                        ..outer
+                                    };
+                                    let next = (slash + 1, slash + 1);
+                                    if once((next.0, at, inside.is_idle), groups, |groups| {
+                                        enter(glob, next, path, at, inside, groups)
+                                    }) {
+                                        return true;
+                                    }
+                                    if hides_dots && is_hidden_name_at(path, at) {
+                                        break 'fallthrough;
+                                    }
+                                    let rest = path.get(at as usize..).unwrap_or_default();
+                                    match rest.iter().position(|it| is_separator(*it)) {
+                                        Some(separator) => at += separator as u32 + 1,
+                                        None => break 'fallthrough,
+                                    }
+                                }
                             }
 
                             state.wildcard.glob_index = state.glob_index;
@@ -268,11 +330,11 @@ fn glob_match_impl<const EXTGLOB: bool>(
                             if is_globstar {
                                 state.glob_index += 2;
 
+                                // `{a,b/**}`
                                 let is_end_invalid = (state.glob_index as usize) < glob.len()
                                     && !(EXTGLOB
-                                        && inside.group.is_some_and(|it| {
-                                            it.is_at_end_of_pattern(glob, state.glob_index)
-                                        }));
+                                        && inside.outside(state.glob_index).0 as usize
+                                            == glob.len());
 
                                 // FIXME: explain this bug fix
                                 if is_end_invalid
@@ -298,9 +360,18 @@ fn glob_match_impl<const EXTGLOB: bool>(
                                     // skip to separator
                                     state.skip_to_separator(path, is_end_invalid);
                                     in_globstar = true;
+                                    if is_hidden {
+                                        state.wildcard.path_index = 0;
+                                        state.globstar = state.wildcard;
+                                    }
                                 }
                             } else {
                                 state.glob_index += 1;
+                            }
+
+                            if is_hidden && !in_globstar {
+                                state.wildcard = before;
+                                break 'fallthrough;
                             }
 
                             if !in_globstar
@@ -591,7 +662,7 @@ fn match_brace_branch(
         brace_stack,
         brace_budget,
         &mut Groups::default(),
-        Inside::default(),
+        Inside::NO_GROUP,
     );
 
     let _ = brace_stack.pop();
@@ -677,16 +748,16 @@ pub(crate) enum Token {
     Unknown,
 }
 
-/// The piece of `glob` that starts at `at`, outside of a group, and where it ends.
-pub(crate) fn token_at(glob: &[u8], at: usize, has_extglob: bool) -> (Token, usize) {
+/// The piece of `glob` that starts at `at`, and where it ends. `shape`: of `glob`.
+pub(crate) fn token_at(glob: &[u8], at: usize, shape: &Shape) -> (Token, usize) {
     let next = glob.get(at + 1).copied();
-    let group = |first: usize, is_brace: bool| {
-        let close = scan_group(glob, first as u32, glob.len() as u32, is_brace, false)?;
+    let group = |first: usize| {
+        let close = shape.0[shape.group_at(first as u32)? as usize].close;
         Some((Token::Group { first }, close as usize + 1))
     };
     match glob[at] {
-        b'?' | b'*' | b'+' | b'@' | b'!' if has_extglob && next == Some(b'(') => {
-            if let Some(group) = group(at + 2, false) {
+        b'?' | b'*' | b'+' | b'@' | b'!' if next == Some(b'(') => {
+            if let Some(group) = group(at + 2) {
                 return group;
             }
         }
@@ -695,7 +766,7 @@ pub(crate) fn token_at(glob: &[u8], at: usize, has_extglob: bool) -> (Token, usi
     match glob[at] {
         b'\\' => (Token::Escape, glob.len().min(at + 2)),
         b'?' => (Token::Any, at + 1),
-        b'*' if next == Some(b'*') && !(has_extglob && glob.get(at + 2) == Some(&b'(')) => {
+        b'*' if next == Some(b'*') && !(shape.1 && glob.get(at + 2) == Some(&b'(')) => {
             (Token::Globstar, at + 2)
         }
         b'*' => (Token::Star, at + 1),
@@ -703,11 +774,10 @@ pub(crate) fn token_at(glob: &[u8], at: usize, has_extglob: bool) -> (Token, usi
             Some(end) => (Token::Class, end),
             None => (Token::Unknown, glob.len()),
         },
-        b'{' if has_extglob => group(at + 1, true).unwrap_or((Token::Literal, at + 1)),
-        b'{' => match find_brace_end(glob, at as u32) as usize {
-            close if close < glob.len() => (Token::Group { first: at + 1 }, close + 1),
-            _ => (Token::Unknown, glob.len()),
-        },
+        b'{' => group(at + 1).unwrap_or(match shape.1 {
+            true => (Token::Literal, at + 1),
+            false => (Token::Unknown, glob.len()),
+        }),
         _ => (Token::Literal, at + 1),
     }
 }
@@ -718,7 +788,8 @@ pub(crate) fn class_end(glob: &[u8], open: usize) -> Option<usize> {
     at += usize::from(matches!(glob.get(at), Some(b'^' | b'!')));
     let character = |at: usize| {
         let at = at + usize::from(glob.get(at) == Some(&b'\\'));
-        Some(at + usize::from(rune_len_at(glob.get(at..)?, 0)))
+        glob.get(at)?;
+        Some(at + usize::from(rune_len_at(glob, at)))
     };
     let mut is_first = true;
     while is_first || *glob.get(at)? != b']' {
@@ -732,40 +803,98 @@ pub(crate) fn class_end(glob: &[u8], open: usize) -> Option<usize> {
     Some(at + 1)
 }
 
-/// `{a,b}` or `@(a|b)`, with `EXTGLOB`.
+/// `{a,b}`, `{1..3}` or `@(a|b)`, with `EXTGLOB`.
 struct Group<'g> {
-    /// `{`, or what is before the `(`.
+    /// `{`, `.` for `{1..3}`, or what is before the `(`.
     kind: u8,
-    /// Where the first alternative starts.
+    /// Where in [`Shape`] its first alternative is.
     first: u32,
     /// Where the `}` or the `)` is.
     close: u32,
-    parent: Option<&'g Group<'g>>,
+    /// Where it is itself.
+    outer: Inside<'g>,
 }
 
 /// Where in the groups a part of the pattern is matched.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct Inside<'g> {
     group: Option<&'g Group<'g>>,
+    /// Where the alternative of `group` ends.
+    end: u32,
     /// Nothing of the path has been taken since a group was repeated. It is not repeated again then.
     is_idle: bool,
+}
+
+impl<'g> Inside<'g> {
+    const NO_GROUP: Inside<'static> = Inside {
+        group: None,
+        end: u32::MAX,
+        is_idle: false,
+    };
+
+    /// From `index`: behind all the groups of which an alternative ends there, and where that is.
+    fn outside(mut self, mut index: u32) -> (u32, Inside<'g>) {
+        while index == self.end
+            && let Some(group) = self.group
+        {
+            index = group.close + 1;
+            self = group.outer;
+        }
+        (index, self)
+    }
 }
 
 /// What one match with `EXTGLOB` keeps.
 #[derive(Default)]
 struct Groups {
+    shape: Option<Shape>,
     stack: Option<StackCheck>,
-    /// How often `enter` has run.
-    entered: u32,
-    /// What `enter` returned, by what it was asked.
-    known: HashMap<u64, bool>,
+    /// How often `once` has been asked.
+    asked: u32,
+    /// What `once` has answered, by what it was asked.
+    known: Option<HashMap<u64, bool>>,
     /// The stack has run out: nothing matches.
     is_too_deep: bool,
+    /// [`match_without_dot`]
+    hides_dots: bool,
+}
+
+/// Whether a name of `path` starts at `index`, with a `.`.
+#[inline(always)]
+fn is_hidden_name_at(path: &[u8], index: u32) -> bool {
+    let index = index as usize;
+    path.get(index) == Some(&b'.') && (index == 0 || is_separator(path[index - 1]))
+}
+
+/// Whether a name of `glob`, or the part of it that starts at `glob_start`, starts at `index`.
+#[inline(always)]
+fn is_name_start(glob: &[u8], glob_start: u32, index: u32) -> bool {
+    index <= glob_start || glob[index as usize - 1] == b'/'
 }
 
 impl Groups {
     /// Most patterns are through before anything is asked twice.
     const REMEMBERS_AFTER: u32 = 32;
+}
+
+/// What `ask` answers, which is asked once for a place in the pattern, a place in the path and `is_idle`.
+#[inline(always)]
+fn once(
+    (glob_index, path_index, is_idle): (u32, u32, bool),
+    groups: &mut Groups,
+    ask: impl FnOnce(&mut Groups) -> bool,
+) -> bool {
+    let key = u64::from(glob_index) << 33 | u64::from(path_index) << 1 | u64::from(is_idle);
+    groups.asked = groups.asked.saturating_add(1);
+    let remembers = groups.asked > Groups::REMEMBERS_AFTER;
+    if let Some(known) = groups.known.as_ref().and_then(|it| it.get(&key)) {
+        return *known;
+    }
+    let answer = ask(groups);
+    if remembers {
+        groups.known.get_or_insert_default().insert(key, answer);
+    }
+    answer
 }
 
 /// Whether the pattern from `glob_index` matches the path from `path_index`.
@@ -778,12 +907,6 @@ fn enter(
     inside: Inside<'_>,
     groups: &mut Groups,
 ) -> bool {
-    let key = u64::from(glob_index) << 33 | u64::from(path_index) << 1 | u64::from(inside.is_idle);
-    groups.entered = groups.entered.saturating_add(1);
-    let remembers = groups.entered > Groups::REMEMBERS_AFTER;
-    if remembers && let Some(known) = groups.known.get(&key) {
-        return *known;
-    }
     if groups.is_too_deep
         || !(groups.stack.get_or_insert_with(StackCheck::init)).is_safe_to_recurse()
     {
@@ -795,7 +918,7 @@ fn enter(
         path_index,
         ..State::default()
     };
-    let matched = glob_match_impl::<true>(
+    glob_match_impl::<true>(
         &mut state,
         glob,
         glob_start,
@@ -804,18 +927,14 @@ fn enter(
         &mut 0,
         groups,
         inside,
-    );
-    if remembers {
-        groups.known.insert(key, matched);
-    }
-    matched
+    )
 }
 
 impl<'g> Group<'g> {
-    /// The group that starts at `index`. One that is not closed inside of `parent` is none.
+    /// The group that starts at `index`.
     #[inline(always)]
-    fn at(glob: &[u8], index: u32, parent: Option<&'g Group<'g>>) -> Option<Group<'g>> {
-        let (kind, first) = match glob[index as usize] {
+    fn at(glob: &[u8], index: u32, outer: Inside<'g>, groups: &mut Groups) -> Option<Group<'g>> {
+        let (kind, start) = match glob[index as usize] {
             b'{' => (b'{', index + 1),
             kind @ (b'?' | b'*' | b'+' | b'@' | b'!')
                 if glob.get(index as usize + 1) == Some(&b'(') =>
@@ -824,36 +943,19 @@ impl<'g> Group<'g> {
             }
             _ => return None,
         };
-        let limit = parent.map_or(glob.len() as u32, |it| it.close);
+        let shape = groups.shape.get_or_insert_with(|| Shape::of(glob, true));
+        let first = shape.group_at(start)?;
+        let it = shape.0[first as usize];
         Some(Group {
-            kind,
+            kind: if it.next == Alternative::IS_SEQUENCE {
+                b'.'
+            } else {
+                kind
+            },
             first,
-            close: scan_group(glob, first, limit, kind == b'{', false)?,
-            parent,
+            close: it.close,
+            outer,
         })
-    }
-
-    #[inline(always)]
-    fn is_end_of_alternative(&self, ch: u8) -> bool {
-        match self.kind {
-            b'{' => matches!(ch, b',' | b'}'),
-            _ => matches!(ch, b'|' | b')'),
-        }
-    }
-
-    /// Whether an alternative ends at `index`, and the pattern with it: `**` in `{a,b/**}`.
-    fn is_at_end_of_pattern(&self, glob: &[u8], mut index: u32) -> bool {
-        let mut group = Some(self);
-        while let Some(&ch) = glob.get(index as usize) {
-            match group {
-                Some(it) if it.is_end_of_alternative(ch) => {
-                    index = it.close + 1;
-                    group = it.parent;
-                }
-                _ => return false,
-            }
-        }
-        true
     }
 
     /// Whether what follows the group matches.
@@ -866,12 +968,14 @@ impl<'g> Group<'g> {
         groups: &mut Groups,
     ) -> bool {
         let inside = Inside {
-            group: self.parent,
             is_idle,
+            ..self.outer
         };
         // A `**` there is not at the start of a path segment.
         let at = (self.close + 1, self.close);
-        enter(glob, at, path, path_index, inside, groups)
+        once((at.0, path_index, is_idle), groups, |groups| {
+            enter(glob, at, path, path_index, inside, groups)
+        })
     }
 
     /// Whether one of the alternatives matches, with what follows it.
@@ -883,20 +987,35 @@ impl<'g> Group<'g> {
         is_idle: bool,
         groups: &mut Groups,
     ) -> bool {
-        let inside = Inside {
-            group: Some(self),
-            is_idle,
-        };
-        let mut start = self.first;
-        loop {
-            if enter(glob, (start, start), path, path_index, inside, groups) {
-                return true;
+        let shape = groups.shape.as_ref();
+        let start = shape
+            .and_then(|it| it.0.get(self.first as usize))
+            .map_or(0, |it| it.start);
+        once((start, path_index, is_idle), groups, |groups| {
+            let mut next = self.first as usize;
+            let mut has_tried_nothing = false;
+            while let Some(&it) = groups.shape.as_ref().and_then(|shape| shape.0.get(next)) {
+                next = it.next as usize;
+                // Most start with a character that the path does not go on with. All that are empty are one.
+                let first = glob[it.start as usize];
+                let is_empty = it.start == it.end;
+                if (first.is_ascii_alphanumeric() || first == b'.')
+                    && path.get(path_index as usize) != Some(&first)
+                    || is_empty && std::mem::replace(&mut has_tried_nothing, true)
+                {
+                    continue;
+                }
+                let inside = Inside {
+                    group: Some(self),
+                    end: it.end,
+                    is_idle,
+                };
+                if enter(glob, (it.start, it.start), path, path_index, inside, groups) {
+                    return true;
+                }
             }
-            match scan_group(glob, start, self.close, self.kind == b'{', true) {
-                Some(separator) => start = separator + 1,
-                None => return false,
-            }
-        }
+            false
+        })
     }
 
     /// At its start.
@@ -909,11 +1028,14 @@ impl<'g> Group<'g> {
         is_idle: bool,
         groups: &mut Groups,
     ) -> bool {
+        if self.kind == b'.' {
+            return self.sequence(glob, path, path_index, is_idle, groups);
+        }
         if matches!(self.kind, b'?' | b'*') && self.rest(glob, path, path_index, is_idle, groups) {
             return true;
         }
         let is_one = self.alternatives(glob, path, path_index, is_idle, groups);
-        if self.kind != b'!' || is_one {
+        if self.kind != b'!' || is_one || groups.hides_dots && is_hidden_name_at(path, path_index) {
             return self.kind != b'!' && is_one;
         }
         let mut end = path_index;
@@ -926,6 +1048,43 @@ impl<'g> Group<'g> {
             }
             end += u32::from(rune_len_at(path, end as usize));
         }
+    }
+
+    /// `{1..3}`, at its start.
+    fn sequence(
+        &self,
+        glob: &[u8],
+        path: &[u8],
+        path_index: u32,
+        is_idle: bool,
+        groups: &mut Groups,
+    ) -> bool {
+        let shape = groups.shape.as_ref();
+        let Some(sequence) = shape
+            .and_then(|it| it.0.get(self.first as usize))
+            .and_then(|it| Sequence::read(&glob[it.start as usize..it.end as usize]))
+        else {
+            return false;
+        };
+        let rest = &path[path_index as usize..];
+        if sequence.has_nothing() && self.rest(glob, path, path_index, is_idle, groups) {
+            return true;
+        }
+        // The longest first: `12` of `{1..20}` before `1`.
+        let longest = match sequence.is_of_letters {
+            true => rest.len().min(1),
+            false => {
+                let sign = usize::from(rest.first() == Some(&b'-'));
+                sign + rest[sign..]
+                    .iter()
+                    .take_while(|it| it.is_ascii_digit())
+                    .count()
+            }
+        };
+        (1..=longest).rev().any(|len| {
+            sequence.has(&rest[..len])
+                && self.rest(glob, path, path_index + len as u32, false, groups)
+        })
     }
 
     /// At the end of an alternative.
@@ -945,60 +1104,202 @@ impl<'g> Group<'g> {
     }
 }
 
-/// Where the group that `from` is in closes, or with `to_separator` where the alternative ends, if that is before `limit`.
-fn scan_group(
-    glob: &[u8],
-    from: u32,
-    limit: u32,
-    is_brace: bool,
-    to_separator: bool,
-) -> Option<u32> {
-    // The groups in it that are open: whether each is of braces. And how many are of parentheses, of braces.
-    let mut open: SmallVec<[bool; 16]> = SmallVec::new();
-    let mut count = [0_usize; 2];
-    let mut in_brackets = false;
-    let mut escaped = usize::MAX;
-    let mut i = from as usize;
-    while i < limit as usize {
-        let ch = glob[i];
-        match ch {
-            b'\\' => {
-                i += 1;
-                escaped = i;
-            }
-            b']' => in_brackets = false,
-            _ if in_brackets => {}
-            b'[' => in_brackets = true,
-            b'{' => {
-                open.push(true);
-                count[1] += 1;
-            }
-            b'(' if escaped != i - 1 && matches!(glob[i - 1], b'?' | b'*' | b'+' | b'@' | b'!') => {
-                open.push(false);
-                count[0] += 1;
-            }
-            b'}' | b')' => {
-                let closes_brace = ch == b'}';
-                if count[usize::from(closes_brace)] > 0 {
-                    // What is open in it and of the other kind is not closed, so it is no group.
-                    while let Some(kind) = open.pop() {
-                        count[usize::from(kind)] -= 1;
-                        if kind == closes_brace {
-                            break;
-                        }
-                    }
-                } else if closes_brace == is_brace {
-                    return Some(i as u32);
-                }
-            }
-            b',' | b'|' if to_separator && open.is_empty() && (ch == b',') == is_brace => {
-                return Some(i as u32);
-            }
-            _ => {}
+/// An alternative of a group.
+#[derive(Copy, Clone)]
+struct Alternative {
+    start: u32,
+    /// Where the `,`, the `|`, the `}` or the `)` behind it is.
+    end: u32,
+    /// Where in [`Shape`] the next one of the group is. Behind the end: it is the last.
+    next: u32,
+    /// Of the first of a group: where the `}` or the `)` is. 0: the group is not closed, so it is none.
+    close: u32,
+}
+
+impl Alternative {
+    /// For `next`: it is `1..3` of `{1..3}`.
+    const IS_SEQUENCE: u32 = u32::MAX - 1;
+}
+
+/// `1..3`, `01..10`, `9..1..2`, `a..e`: what bash makes of it between braces, one after the other.
+struct Sequence {
+    from: i64,
+    to: i64,
+    /// At least 1.
+    step: i64,
+    /// How long each is at least, with zeros in front, if one of the two ends is written with a zero in front. Else 0.
+    width: usize,
+    is_of_letters: bool,
+}
+
+impl Sequence {
+    fn read(written: &[u8]) -> Option<Sequence> {
+        let mut parts = strings::split(written, b"..");
+        let (from, to, step) = (parts.next()?, parts.next()?, parts.next());
+        if parts.next().is_some() {
+            return None;
         }
-        i += 1;
+        let number = |text: &[u8]| -> Option<i64> {
+            let digits = text.strip_prefix(b"-").unwrap_or(text);
+            let is_number = !digits.is_empty() && digits.iter().all(u8::is_ascii_digit);
+            std::str::from_utf8(text)
+                .ok()
+                .filter(|_| is_number)?
+                .parse()
+                .ok()
+        };
+        let is_padded = |text: &[u8]| matches!(text.strip_prefix(b"-").unwrap_or(text), [b'0', next, ..] if next.is_ascii_digit());
+        let step = match step {
+            Some(step) => number(step)?.checked_abs()?.max(1),
+            None => 1,
+        };
+        match (from, to) {
+            ([from], [to]) if from.is_ascii_alphabetic() && to.is_ascii_alphabetic() => {
+                Some(Sequence {
+                    from: i64::from(*from),
+                    to: i64::from(*to),
+                    step,
+                    width: 0,
+                    is_of_letters: true,
+                })
+            }
+            _ => Some(Sequence {
+                from: number(from)?,
+                to: number(to)?,
+                step,
+                width: match is_padded(from) || is_padded(to) {
+                    true => from.len().max(to.len()),
+                    false => 0,
+                },
+                is_of_letters: false,
+            }),
+        }
     }
-    None
+
+    fn has_value(&self, value: i64) -> bool {
+        (self.from.min(self.to)..=self.from.max(self.to)).contains(&value)
+            && i128::from(value).abs_diff(i128::from(self.from)) % self.step as u128 == 0
+    }
+
+    /// In place of a `\\` there is nothing.
+    fn has_nothing(&self) -> bool {
+        self.is_of_letters && self.has_value(i64::from(b'\\'))
+    }
+
+    /// Whether `text`, a letter or a number, is one of them, written as it is written then.
+    fn has(&self, text: &[u8]) -> bool {
+        if self.is_of_letters {
+            return text[0] != b'\\' && self.has_value(i64::from(text[0]));
+        }
+        let digits = text.strip_prefix(b"-").unwrap_or(text);
+        let zeros = digits
+            .iter()
+            .take_while(|it| **it == b'0')
+            .count()
+            .min(digits.len() - 1);
+        let Some(value) = std::str::from_utf8(text)
+            .ok()
+            .and_then(|it| it.parse::<i64>().ok())
+        else {
+            return false;
+        };
+        self.has_value(value)
+            && !(value == 0 && digits.len() < text.len())
+            && match zeros {
+                0 => text.len() >= self.width,
+                _ => text.len() == self.width,
+            }
+    }
+}
+
+/// The alternatives of all groups of a pattern, by where they start, and whether `@(a|b)` is a group.
+pub(crate) struct Shape(SmallVec<[Alternative; 8]>, bool);
+
+impl Shape {
+    /// In one pass over `glob`.
+    pub(crate) fn of(glob: &[u8], has_extglob: bool) -> Shape {
+        let mut found: SmallVec<[Alternative; 8]> = SmallVec::new();
+        // The groups that are open: whether each is of braces, and where in `found` its first alternative is and its last so far.
+        let mut open: SmallVec<[(bool, u32, u32); 8]> = SmallVec::new();
+        // How many of them are of parentheses, of braces.
+        let mut count = [0_usize; 2];
+        let mut in_brackets = false;
+        let mut escaped = usize::MAX;
+        let mut i = 0;
+        while i < glob.len() {
+            let ch = glob[i];
+            let alternative = Alternative {
+                start: i as u32 + 1,
+                end: 0,
+                next: u32::MAX,
+                close: 0,
+            };
+            match ch {
+                b'\\' => {
+                    i += 1;
+                    escaped = i;
+                }
+                b']' => in_brackets = false,
+                _ if in_brackets => {}
+                b'[' => in_brackets = true,
+                b'{' | b'('
+                    if ch == b'{'
+                        || has_extglob
+                            && i > 0
+                            && escaped != i - 1
+                            && matches!(glob[i - 1], b'?' | b'*' | b'+' | b'@' | b'!') =>
+                {
+                    open.push((ch == b'{', found.len() as u32, found.len() as u32));
+                    count[usize::from(ch == b'{')] += 1;
+                    found.push(alternative);
+                }
+                b',' | b'|' => {
+                    if let Some(group) = open.last_mut().filter(|it| it.0 == (ch == b',')) {
+                        found[group.2 as usize].end = i as u32;
+                        found[group.2 as usize].next = found.len() as u32;
+                        group.2 = found.len() as u32;
+                        found.push(alternative);
+                    }
+                }
+                b'}' | b')' if count[usize::from(ch == b'}')] > 0 => {
+                    // What is open in it and of the other kind is not closed.
+                    while let Some((is_brace, first, last)) = open.pop() {
+                        count[usize::from(is_brace)] -= 1;
+                        if is_brace != (ch == b'}') {
+                            continue;
+                        }
+                        found[last as usize].end = i as u32;
+                        let it = &mut found[first as usize];
+                        // With `EXTGLOB`, as for bash: braces around one thing are characters, unless that is `1..3`.
+                        let is_one = has_extglob && is_brace && first == last;
+                        if is_one && Sequence::read(&glob[it.start as usize..i]).is_some() {
+                            it.next = Alternative::IS_SEQUENCE;
+                        }
+                        if !is_one || it.next == Alternative::IS_SEQUENCE {
+                            it.close = i as u32;
+                        }
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        Shape(found, has_extglob)
+    }
+
+    /// Whether the group whose first alternative starts at `start` is `{1..3}`.
+    pub(crate) fn is_sequence_at(&self, start: usize) -> bool {
+        let first = self.group_at(start as u32);
+        first.is_some_and(|it| self.0[it as usize].next == Alternative::IS_SEQUENCE)
+    }
+
+    /// Where the first alternative is of the group whose first alternative starts at `start`.
+    #[inline]
+    fn group_at(&self, start: u32) -> Option<u32> {
+        let at = self.0.binary_search_by_key(&start, |it| it.start).ok()?;
+        (self.0[at].close > 0).then_some(at as u32)
+    }
 }
 
 use bun_paths::is_sep_native as is_separator;

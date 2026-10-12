@@ -220,20 +220,27 @@ impl<'r> Rule<'r> {
     }
 }
 
-/// The groups of problems with the same rule and message, the largest first.
-fn grouped<'r>(problems: &[Problem<'r>]) -> Vec<Vec<Problem<'r>>> {
+/// The groups of problems with the same rule and message, the largest first. `by_rule`: whatever the message of a rule, and
+/// errors before warnings.
+fn grouped<'r>(problems: &[Problem<'r>], by_rule: bool) -> Vec<Vec<Problem<'r>>> {
     let mut index: FxHashMap<(Rule, &[u8]), usize> = FxHashMap::default();
     let mut groups: Vec<Vec<Problem>> = Vec::new();
     for problem in problems {
-        let at = *index
-            .entry((Rule::of(problem), &problem.message.message[..]))
-            .or_insert_with(|| {
-                groups.push(Vec::new());
-                groups.len() - 1
-            });
+        let key = match Rule::of(problem) {
+            Rule::None => (Rule::None, &problem.message.message[..]),
+            rule if by_rule => (rule, &b""[..]),
+            rule => (rule, &problem.message.message[..]),
+        };
+        let at = *index.entry(key).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
         groups[at].push(*problem);
     }
-    bun_lint::utils::sort::sort_by_key(&mut groups, |group| std::cmp::Reverse(group.len()));
+    bun_lint::utils::sort::sort_by_key(&mut groups, |group| {
+        let is_first = by_rule && group[0].is_error();
+        std::cmp::Reverse((is_first, group.len()))
+    });
     groups
 }
 
@@ -255,12 +262,109 @@ fn by_file<'r>(group: &[Problem<'r>]) -> Vec<(Problem<'r>, usize)> {
     files
 }
 
+/// The columns that are left of a place in sight when the start of its line is not.
+const LEFT_OF_THE_PLACE: usize = 30;
+
+/// `lines`, and the column of a place in the last of them, which is at `column` there. Both are counted as ESLint counts: from 1,
+/// in UTF-16 code units. Of lines that are wider than `room` columns of a terminal, the part around the place. 0: as wide as it takes.
+fn fitted(lines: &[&[u8]], column: u32, room: usize) -> (Vec<u8>, u32) {
+    use strings::visible::width::exclude_ansi_colors::{utf8 as width, utf8_index_at_width};
+    let text = without_tabs(lines);
+    if room == 0 || text.len() <= room || strings::split(&text, b"\n").all(|it| width(it) <= room) {
+        return (text, column);
+    }
+    const MARK: &[u8] = "\u{2026}".as_bytes();
+    let last = strings::split(&text, b"\n").last().unwrap_or_default();
+    let place = strings::wtf8_offset_of_utf16_index(last, column.saturating_sub(1));
+    let skipped = match width(&last[..place]) {
+        before if before + LEFT_OF_THE_PLACE / 2 < room => 0,
+        before => before - LEFT_OF_THE_PLACE.min(room / 2),
+    };
+    let (mut cut, mut column) = (Vec::with_capacity(text.len()), column);
+    // What is above the start of a line says nothing about its end.
+    let first = if skipped > 0 { lines.len() - 1 } else { 0 };
+    for (i, line) in strings::split(&text, b"\n").enumerate().skip(first) {
+        if i > first {
+            cut.push(b'\n');
+        }
+        let start = utf8_index_at_width(line, skipped);
+        let (rest, mut room) = (&line[start..], room);
+        if start > 0 {
+            cut.extend_from_slice(MARK);
+            room -= 1;
+        }
+        match utf8_index_at_width(rest, room) {
+            end if end == rest.len() => cut.extend_from_slice(rest),
+            _ => {
+                cut.extend_from_slice(&rest[..utf8_index_at_width(rest, room - 1)]);
+                cut.extend_from_slice(MARK);
+            }
+        }
+        if i + 1 == lines.len() {
+            let before = line.get(start..place).unwrap_or_default();
+            column = 1 + u32::from(start > 0) + strings::wtf8_len_utf16(before);
+        }
+    }
+    (cut, column)
+}
+
+/// The file, the line and the column of a place, and the lines of the file to show: the last is that of the place.
+type Spot<'s> = ((&'s [u8], u32, u32), &'s [&'s [u8]]);
+
+/// `text`, the way Bun prints its own errors.
+fn write_said(
+    out: &mut Vec<u8>,
+    meta: &Meta,
+    kind: bun_ast::Kind,
+    text: Vec<u8>,
+    spot: Option<Spot>,
+) {
+    let location = |line: u32, column: u32| bun_ast::Location {
+        line: line as i32,
+        column: column as i32,
+        ..Default::default()
+    };
+    let code = spot.map(|((_, line, column), lines)| {
+        let gutter = bun_core::fmt::digit_count(line) + " | ".len();
+        let room =
+            Some(meta.width.saturating_sub(gutter)).filter(|it| *it >= 2 * LEFT_OF_THE_PLACE);
+        let (text, column) = fitted(lines, column, room.unwrap_or(0));
+        bun_ast::Location {
+            line_text: Some(text.into()),
+            ..location(line, column)
+        }
+    });
+    let message = bun_ast::Msg {
+        kind,
+        data: bun_ast::Data {
+            text: text.into(),
+            location: code,
+        },
+        ..Default::default()
+    };
+    let place = spot.map_or_else(bun_ast::Location::default, |((file, line, column), _)| {
+        bun_ast::Location {
+            file: file.to_vec().into(),
+            ..location(line, column)
+        }
+    });
+    let to = &mut Appender(out);
+    let _ =
+        match meta.color {
+            true => (message.write_format::<true>(to))
+                .and_then(|()| place.write_place::<true>(to, kind)),
+            false => (message.write_format::<false>(to))
+                .and_then(|()| place.write_place::<false>(to, kind)),
+        };
+}
+
+/// Returns whether there is more below it than its place.
 fn write_pretty_problem<'r>(
     out: &mut Vec<u8>,
     problem: Problem<'r>,
     meta: &Meta,
     place: &mut Place<'r>,
-) {
+) -> bool {
     let helped = with_help(problem, meta, place);
     let (result, message) = (problem.result, helped.as_ref().unwrap_or(problem.message));
     let rule = problem.rule();
@@ -285,70 +389,78 @@ fn write_pretty_problem<'r>(
         .iter()
         .take_while(|line| line.trim_ascii().is_empty())
         .count();
-    let data = bun_ast::Data {
-        text: text.into(),
-        location: Some(bun_ast::Location {
-            file: place.of(result, meta).2.clone().into(),
-            line: message.line as i32,
-            column: message.column as i32,
-            line_text: Some(without_tabs(&shown[blank..]).into()),
-            ..Default::default()
-        }),
+    let kind = if problem.is_error() {
+        bun_ast::Kind::Err
+    } else {
+        bun_ast::Kind::Warn
     };
-    let said = |text: &str| bun_ast::Data {
-        text: text.as_bytes().to_vec().into(),
-        location: None,
-    };
+    let file = place.of(result, meta).2.clone();
+    let at = (&file[..], message.line, message.column);
+    write_said(out, meta, kind, text, Some((at, &shown[blank..])));
     let texts = [message.first_label(), message.help(), message.note()];
     let texts = texts.iter().filter(|it| !it.is_empty());
     let labels = message.details.iter().flat_map(|it| &it.labels);
     let labels = labels.filter(|it| !it.2.is_empty());
-    let mut notes = Vec::with_capacity(texts.clone().count() + labels.clone().count());
-    notes.extend(texts.map(|it| said(it)));
+    let has_notes = texts.clone().next().is_some() || labels.clone().next().is_some();
+    if has_notes {
+        out.push(b'\n');
+    }
+    for text in texts {
+        out.push(b'\n');
+        write_said(
+            out,
+            meta,
+            bun_ast::Kind::Note,
+            text.as_bytes().to_vec(),
+            None,
+        );
+    }
     for ((line, column), _, text) in labels {
         let shown = lines(result, (*line, *line), meta, place);
         let shown = shown.first().filter(|it| it.len() <= 1000);
-        notes.push(bun_ast::Data {
-            location: Some(bun_ast::Location {
-                file: place.of(result, meta).2.clone().into(),
-                line: *line as i32,
-                column: *column as i32,
-                line_text: shown.map(|it| without_tabs(&[it]).into()),
-                ..Default::default()
-            }),
-            ..said(text)
-        });
+        let spot = (
+            (&file[..], *line, *column),
+            shown.map_or(&[][..], std::slice::from_ref),
+        );
+        out.push(b'\n');
+        write_said(
+            out,
+            meta,
+            bun_ast::Kind::Note,
+            text.as_bytes().to_vec(),
+            Some(spot),
+        );
     }
-    let message = bun_ast::Msg {
-        kind: if problem.is_error() {
-            bun_ast::Kind::Err
-        } else {
-            bun_ast::Kind::Warn
-        },
-        data,
-        notes: notes.into(),
-        ..Default::default()
-    };
-    let to = &mut Appender(out);
-    let _ = match meta.color {
-        true => message.write_format::<true>(to),
-        false => message.write_format::<false>(to),
-    };
     out.push(b'\n');
+    has_notes
 }
 
 /// `12 problems (3 errors, 9 warnings)`, and how many of them `--fix` fixes. Without the end of the last line.
 fn write_pretty_summary(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let mut counts = Counts::default();
     results.iter().for_each(|it| counts.add(it.counts));
-    pretty!(
-        out,
-        meta.color,
-        "<b>{}<r> <d>(<r><red>{}<r><d>,<r> <yellow>{}<r><d>)<r>",
-        plural(counts.errors + counts.warnings, "problem"),
+    let (errors, warnings) = (
         plural(counts.errors, "error"),
-        plural(counts.warnings, "warning")
+        plural(counts.warnings, "warning"),
     );
+    let problems = plural(counts.errors + counts.warnings, "problem");
+    pretty!(out, meta.color, "<b>{}<r> <d>(<r>", problems);
+    match counts.errors {
+        0 => {
+            pretty!(out, meta.color, "<d>{}<r>", errors);
+        }
+        _ => {
+            pretty!(out, meta.color, "<red>{}<r>", errors);
+        }
+    }
+    match counts.warnings {
+        0 => {
+            pretty!(out, meta.color, "<d>, {})<r>", warnings);
+        }
+        _ => {
+            pretty!(out, meta.color, "<d>,<r> <yellow>{}<r><d>)<r>", warnings);
+        }
+    }
     let fixable = counts.fixable_errors + counts.fixable_warnings;
     if fixable > 0 {
         pretty!(
@@ -380,11 +492,14 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
         }
         return;
     }
-    let groups = grouped(&problems);
+    let groups = grouped(&problems, meta.is_native);
     let shown = groups.len().min(MAX_GROUPS);
     for group in &groups[..shown] {
-        write_pretty_problem(out, group[0], meta, place);
+        let has_notes = write_pretty_problem(out, group[0], meta, place);
         if group.len() > 1 {
+            if has_notes && meta.is_native {
+                out.push(b'\n');
+            }
             let files = by_file(group);
             pretty!(
                 out,
@@ -564,7 +679,7 @@ pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
             write_agent_problem(out, std::slice::from_ref(problem), meta, place)
         });
     } else {
-        let groups = grouped(&problems);
+        let groups = grouped(&problems, false);
         let shown = groups.len().min(MAX_GROUPS + MAX_COMPACT_GROUPS);
         groups[..shown]
             .iter()

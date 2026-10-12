@@ -119,6 +119,7 @@ describe.concurrent("bun lint --doctor", () => {
 You can remove: eslint, eslint-plugin-never-imported
 Still needed:   eslint-plugin-first, eslint-plugin-second (their rules run in JavaScript)
                 eslint-plugin-react-hooks (eslint.config.js loads it)
+Not checked:    other tools' configs, CI files, Git hooks
 `);
       expect(isUntouched).toBe(true);
       expect(exitCode).toBe(0);
@@ -131,7 +132,7 @@ Still needed:   eslint-plugin-first, eslint-plugin-second (their rules run in Ja
     async () => {
       const { stdout, exitCode } = await doctor(flat, ["-f", "json"]);
       expect(JSON.parse(stdout)).toEqual({
-        config: { path: "eslint.config.js", kind: "eslint", nested: [] },
+        config: { path: "eslint.config.js", kind: "eslint", nested: [], ignored: null },
         files: { linted: 3, by_eslint: {}, not_linted: {} },
         rules: {
           native: ["eqeqeq", "no-undef", "no-var", "react-hooks/rules-of-hooks"],
@@ -148,10 +149,11 @@ Still needed:   eslint-plugin-first, eslint-plugin-second (their rules run in Ja
         packages: {
           removable: ["eslint", "eslint-plugin-never-imported"],
           needed: [
-            { name: "eslint-plugin-first", reason: "rules" },
-            { name: "eslint-plugin-react-hooks", reason: "config" },
-            { name: "eslint-plugin-second", reason: "rules" },
+            { name: "eslint-plugin-first", reason: "rules", by: null },
+            { name: "eslint-plugin-react-hooks", reason: "config", by: "eslint.config.js" },
+            { name: "eslint-plugin-second", reason: "rules", by: null },
           ],
+          not_checked: ["other tools' configs", "CI files", "Git hooks"],
         },
         notes: [],
       });
@@ -180,7 +182,7 @@ Still needed:   eslint-plugin-first, eslint-plugin-second (their rules run in Ja
       const { rules, packages } = JSON.parse(stdout);
       expect(rules.native).toEqual(["eqeqeq", "no-undef", "no-var"]);
       expect(rules.javascript["eslint-plugin-react-hooks"]).toEqual(["react-hooks/rules-of-hooks"]);
-      expect(packages.needed).toContainEqual({ name: "eslint-plugin-react-hooks", reason: "rules" });
+      expect(packages.needed).toContainEqual({ name: "eslint-plugin-react-hooks", reason: "rules", by: null });
       expect(exitCode).toBe(0);
     },
     timeout,
@@ -221,6 +223,7 @@ Still needed:   eslint-plugin-first, eslint-plugin-second (their rules run in Ja
 
 You can remove: oxlint, oxlint-tsgolint
 Still needed:   eslint-plugin-first (its rules run in JavaScript)
+Not checked:    other tools' configs, CI files, Git hooks
 `);
       expect(isUntouched).toBe(true);
       expect(exitCode).toBe(0);
@@ -287,13 +290,14 @@ Still needed:   eslint-plugin-first (its rules run in JavaScript)
         ["-f", "json"],
       );
       const { config, rules, packages } = JSON.parse(stdout);
-      expect(config).toEqual({ path: ".eslintrc.json", kind: "eslintrc", nested: [] });
+      expect(config).toEqual({ path: ".eslintrc.json", kind: "eslintrc", nested: [], ignored: null });
       expect(rules).toEqual({
         native: ["no-var"],
         javascript: { "eslint-plugin-first": ["first/a"] },
         not_run: [{ rule: "semi", reason: "formatting" }],
       });
-      expect(packages).toEqual({ removable: ["eslint"], needed: [{ name: "eslint-plugin-first", reason: "rules" }] });
+      expect(packages.removable).toEqual(["eslint"]);
+      expect(packages.needed).toEqual([{ name: "eslint-plugin-first", reason: "rules", by: null }]);
       expect(exitCode).toBe(0);
     },
     timeout,
@@ -349,6 +353,155 @@ Still needed:   eslint (some files go to it)
     expect(missing.exitCode).toBe(0);
   });
 
+  test("with both an ESLint and an oxlint config it says which one is used, and why", async () => {
+    const files = {
+      "eslint.config.js": `export default [{ rules: { "no-var": "error", eqeqeq: "error" } }];`,
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-debugger": "error" } }),
+      "a.js": "",
+    };
+    const [text, json, picked] = await Promise.all([
+      doctor(files),
+      doctor(files, ["-f", "json"]),
+      doctor(files, ["--config", "eslint.config.js"]),
+    ]);
+    expect(text.stderr).toBe("");
+    expect(text.stdout).toStartWith(`Using .oxlintrc.json (oxlint config)
+eslint.config.js is ignored because the project also has an oxlint config. Use --config to pick it.
+
+    2 files to lint
+
+    1 rule runs natively
+`);
+    expect(JSON.parse(json.stdout).config).toEqual({
+      path: ".oxlintrc.json",
+      kind: "oxlint",
+      nested: [],
+      ignored: "eslint.config.js",
+    });
+    expect(picked.stdout).toStartWith(`Using eslint.config.js (ESLint flat config)
+
+    2 files to lint
+
+    2 rules run natively
+`);
+    expect(text.exitCode).toBe(0);
+    expect(picked.exitCode).toBe(0);
+  });
+
+  test("only what is tooling for the linter by the form of its name can be removed", async () => {
+    const names = [
+      "eslint",
+      "oxlint",
+      "oxlint-tsgolint",
+      "typescript-eslint",
+      "@eslint/js",
+      "@typescript-eslint/parser",
+      "eslint-plugin-a",
+      "@scope/eslint-plugin",
+      "@scope/eslint-plugin-a",
+      "eslint-config-a",
+      "@scope/eslint-config",
+      "@scope/eslint-config-a",
+      "eslint-import-resolver-typescript",
+    ];
+    const others = [
+      "vite-plugin-eslint",
+      "eslint-webpack-plugin",
+      "@nuxt/eslint",
+      "@rollup/plugin-eslint",
+      "eslint-pluginish",
+      "eslint-plugin",
+      "prettier-eslint",
+      "globals",
+    ];
+    const { stdout, exitCode } = await doctor(
+      {
+        "package.json": dependencies(...names, ...others),
+        "eslint.config.js": `export default [{ rules: { "no-var": "error" } }];`,
+      },
+      ["-f", "json"],
+    );
+    expect(JSON.parse(stdout).packages).toEqual({
+      removable: names.toSorted(),
+      needed: [],
+      not_checked: ["other tools' configs", "CI files", "Git hooks"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("what a script, lint-staged or a package that stays uses cannot be removed", async () => {
+    const installed = (name: string, fields: object) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", ...fields }),
+    });
+    const files = {
+      "package.json": JSON.stringify({
+        type: "module",
+        scripts: {
+          build: "vite build",
+          lint: "cross-env CI=1 eslint . && echo done",
+          "lint:ox": "node_modules/.bin/oxlint",
+        },
+        "lint-staged": { "*.ts": ["@scope/eslint-config-cli --fix", "git add"] },
+        devDependencies: Object.fromEntries(
+          [
+            "eslint",
+            "oxlint",
+            "@scope/eslint-config-cli",
+            "vite-plugin-eslint",
+            "eslint-plugin-of-vite",
+            "eslint-config-of-the-plugin",
+            "eslint-plugin-free",
+          ].map(name => [name, "*"]),
+        ),
+      }),
+      ...installed("vite-plugin-eslint", { peerDependencies: { eslint: "*", "eslint-plugin-of-vite": "*" } }),
+      ...installed("eslint-plugin-of-vite", { dependencies: { "eslint-config-of-the-plugin": "*" } }),
+      "eslint.config.js": `export default [{ rules: { "no-var": "error" } }];`,
+    };
+    const [text, json] = await Promise.all([doctor(files), doctor(files, ["-f", "json"])]);
+    expect(text.stdout).toEndWith(`
+You can remove: eslint-plugin-free
+Still needed:   @scope/eslint-config-cli (lint-staged runs it)
+                eslint (the "lint" script runs it)
+                eslint-config-of-the-plugin (eslint-plugin-of-vite needs it)
+                eslint-plugin-of-vite (vite-plugin-eslint needs it)
+                oxlint (the "lint:ox" script runs it)
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+    expect(JSON.parse(json.stdout).packages).toEqual({
+      removable: ["eslint-plugin-free"],
+      needed: [
+        { name: "@scope/eslint-config-cli", reason: "lint_staged", by: null },
+        { name: "eslint", reason: "script", by: "lint" },
+        { name: "eslint-config-of-the-plugin", reason: "dependent", by: "eslint-plugin-of-vite" },
+        { name: "eslint-plugin-of-vite", reason: "dependent", by: "vite-plugin-eslint" },
+        { name: "oxlint", reason: "script", by: "lint:ox" },
+      ],
+      not_checked: ["other tools' configs", "CI files", "Git hooks"],
+    });
+    expect(text.exitCode).toBe(0);
+  });
+
+  test("a plugin whose rules run in JavaScript keeps the eslint that it depends on", async () => {
+    const files = {
+      ...plugin("eslint-plugin-first", ["a"]),
+      "package.json": dependencies("eslint", "eslint-plugin-first"),
+      "eslint.config.js": `import first from "eslint-plugin-first";
+        export default [{ plugins: { first }, rules: { "first/a": "error" } }];`,
+    };
+    const manifest = JSON.parse(files["node_modules/eslint-plugin-first/package.json"]);
+    files["node_modules/eslint-plugin-first/package.json"] = JSON.stringify({
+      ...manifest,
+      peerDependencies: { eslint: ">=9" },
+    });
+    const { stdout, exitCode } = await doctor(files);
+    expect(stdout).toEndWith(`
+Still needed:   eslint (eslint-plugin-first needs it)
+                eslint-plugin-first (its rules run in JavaScript)
+`);
+    expect(exitCode).toBe(0);
+  });
+
   test("names the config files further down", async () => {
     const { stdout, exitCode } = await doctor({
       "eslint.config.js": `export default [{ rules: { "no-var": "error" } }];`,
@@ -393,7 +546,7 @@ Also packages/a/eslint.config.js
       ]),
     ]);
     const [before, after] = [JSON.parse(plain.stdout), JSON.parse(configured.stdout)];
-    expect(before.config).toEqual({ path: null, kind: "none", nested: [] });
+    expect(before.config).toEqual({ path: null, kind: "none", nested: [], ignored: null });
     expect(after.config).toEqual(before.config);
     expect(before.rules.native).toContain("no-debugger");
     expect(before.rules.native).not.toContain("no-console");

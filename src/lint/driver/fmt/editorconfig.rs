@@ -62,43 +62,25 @@ pub(crate) struct File {
 /// What takes any characters, `/` too, where a name has started and goes on.
 const ANYTHING: &[u8] = b"{*,*/**/*}";
 
-/// Where the stars that start at `at` end, whether a name starts with them, and whether one ends with them.
-fn stars(glob: &[u8], at: usize) -> (usize, bool, bool) {
-    let end = at + glob[at..].iter().take_while(|it| **it == b'*').count();
-    let before = at.checked_sub(1).map(|it| glob[it]);
-    (
-        end,
-        matches!(before, None | Some(b'/' | b'{' | b',')),
-        matches!(glob.get(end), None | Some(b'/' | b',' | b'}')),
-    )
+/// The stars at a place in a pattern, if any.
+struct Stars {
+    end: usize,
+    /// A name starts with them.
+    starts_name: bool,
+    /// A name ends with them.
+    ends_name: bool,
 }
 
-/// `{s1}` is these characters. For each byte of `glob`: whether it is such a brace.
-fn braces_without_comma(glob: &[u8]) -> Vec<bool> {
-    let mut found = vec![false; glob.len()];
-    // Where each group starts that is open, and whether it has a `,`.
-    let mut open: Vec<(usize, bool)> = Vec::new();
-    let mut at = 0;
-    while let Some(&byte) = glob.get(at) {
-        match byte {
-            b'\\' => at += 1,
-            b'{' => open.push((at, false)),
-            b',' => {
-                if let Some(group) = open.last_mut() {
-                    group.1 = true;
-                }
-            }
-            b'}' => {
-                if let Some((start, false)) = open.pop() {
-                    found[start] = true;
-                    found[at] = true;
-                }
-            }
-            _ => {}
+impl Stars {
+    fn at(glob: &[u8], at: usize) -> Stars {
+        let end = at + glob[at..].iter().take_while(|it| **it == b'*').count();
+        let before = at.checked_sub(1).map(|it| glob[it]);
+        Stars {
+            end,
+            starts_name: matches!(before, None | Some(b'/' | b'{' | b',')),
+            ends_name: matches!(glob.get(end), None | Some(b'/' | b',' | b'}')),
         }
-        at += 1;
     }
-    found
 }
 
 /// `buildFullGlob`: the name of a section in the `.editorconfig` of `directory`, as a pattern for an absolute path.
@@ -118,16 +100,13 @@ fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
         }
     }
     full.push(b'/');
-    let is_literal = braces_without_comma(&glob);
     // A `**` that is a part of a name crosses `/` too.
     let mut at = 0;
     while let Some(&byte) = glob.get(at) {
-        let (end, starts_name, ends_name) = stars(&glob, at);
-        match (end - at >= 2, starts_name, ends_name) {
+        let stars = Stars::at(&glob, at);
+        let end = stars.end;
+        match (end - at >= 2, stars.starts_name, stars.ends_name) {
             (false, ..) => {
-                if is_literal[at] {
-                    full.push(b'\\');
-                }
                 let len = 1 + usize::from(byte == b'\\' && at + 1 < glob.len());
                 full.extend_from_slice(&glob[at..at + len]);
                 at += len;
@@ -156,12 +135,15 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
     while let Some(&byte) = written.get(at) {
         match byte {
             b'*' => {
-                let (end, starts_name, ends_name) = stars(written, at);
-                glob.extend_from_slice(match (starts_name, end - at == 2 && ends_name) {
-                    (true, true) => b"**",
-                    (true, false) => b"**/*",
-                    (false, _) => ANYTHING,
-                });
+                let stars = Stars::at(written, at);
+                let end = stars.end;
+                glob.extend_from_slice(
+                    match (stars.starts_name, end - at == 2 && stars.ends_name) {
+                        (true, true) => b"**",
+                        (true, false) => b"**/*",
+                        (false, _) => ANYTHING,
+                    },
+                );
                 at = end;
                 continue;
             }

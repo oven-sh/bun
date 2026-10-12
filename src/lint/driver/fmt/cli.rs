@@ -74,7 +74,6 @@ const FILES: &[Param] = &[
     ),
     clap::param!("--ignore-pattern <pattern>...   Skip files that match this pattern"),
     clap::param!("--with-node-modules             Format files in <b>node_modules<r> too"),
-    clap::param!("--toml                          Format TOML files too"),
     clap::param!("--no-error-on-unmatched-pattern  Do not fail when an argument matches no file"),
     clap::param!("-u, --ignore-unknown            Ignore files in an unknown language"),
     clap::param!(
@@ -306,8 +305,6 @@ pub struct Options {
     /// `--staged`, `--changed`
     pub only: Option<crate::git::Only>,
     pub with_node_modules: bool,
-    /// TOML is formatted, also where the run is not like oxfmt.
-    pub toml: bool,
     pub error_on_unmatched_pattern: bool,
     /// Nothing is said about a file that there is no parser for.
     pub ignore_unknown: bool,
@@ -363,7 +360,6 @@ impl Default for Options {
             ignore_pattern: Vec::new(),
             only: None,
             with_node_modules: false,
-            toml: false,
             error_on_unmatched_pattern: true,
             ignore_unknown: false,
             allow_unsupported: false,
@@ -501,7 +497,6 @@ impl Options {
             b"ignore-pattern" => self.ignore_pattern.push(text.to_vec()),
             b"staged" | b"changed" => crate::git::Only::set(&mut self.only, name, value, is_on)?,
             b"with-node-modules" => self.with_node_modules = is_on,
-            b"toml" => self.toml = is_on,
             b"error-on-unmatched-pattern" => self.error_on_unmatched_pattern = is_on,
             b"ignore-unknown" => self.ignore_unknown = is_on,
             b"allow-unsupported" => self.allow_unsupported = is_on,

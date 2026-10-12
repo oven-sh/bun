@@ -16,6 +16,8 @@ A name that is declared and never read is dead code. Often it points at a mistak
 
 "Used" means read, so a variable that is only assigned to is reported. Exported names are not. Unlike ESLint's `no-unused-vars`, this rule also checks types, interfaces, and enums, and it knows that `options: Options` uses `Options`.
 
+To keep a name that you do not use, start it with `_`.
+
 This rule is on by default in TypeScript files.
 
 ## Examples
@@ -69,19 +71,21 @@ export type Settings = typeof defaults;
 | Option | Default | What it does |
 | --- | --- | --- |
 | `vars` | `"all"` | `"local"` skips variables in the global scope. The top level of a module is not the global scope, so this only matters for scripts. |
-| `varsIgnorePattern` | none | Regular expression for names of variables that may be unused. |
+| `varsIgnorePattern` | `"^_"` | Regular expression for names of variables that may be unused. |
 | `args` | `"after-used"` | Report unused parameters after the last one that is used. `"all"` reports every unused parameter, `"none"` reports none. |
-| `argsIgnorePattern` | none | Like `varsIgnorePattern`, for parameters. |
+| `argsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for parameters. |
 | `caughtErrors` | `"all"` | `"none"` allows an unused `error` in `catch (error)`. |
-| `caughtErrorsIgnorePattern` | none | Like `varsIgnorePattern`, for the parameter of `catch`. |
-| `destructuredArrayIgnorePattern` | none | Like `varsIgnorePattern`, for names in `const [a, b] = list`. |
-| `ignoreRestSiblings` | `false` | Allow unused names next to a `...rest` in object destructuring. |
+| `caughtErrorsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for the parameter of `catch`. |
+| `destructuredArrayIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for names in `const [a, b] = list`. |
+| `ignoreRestSiblings` | `true` | Allow unused names next to a `...rest` in object destructuring. |
 | `ignoreClassWithStaticInitBlock` | `false` | Allow an unused class that has a `static {}` block, which runs anyway. |
 | `ignoreUsingDeclarations` | `false` | Allow unused `using` and `await using` variables, which are disposed of anyway. |
 | `reportUsedIgnorePattern` | `false` | Report a name that matches one of the patterns and is used. |
 | `enableAutofixRemoval` | `{ "imports": false }` | With `imports: true`, `--fix` removes unused imports. |
 
 A string in place of the object, `"all"` or `"local"`, sets `vars`.
+
+The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config the defaults are ESLint's: no patterns, and `ignoreRestSiblings` is `false`.
 
 By default, a parameter in front of one that is used is allowed, because you cannot remove it without moving the others:
 
@@ -95,21 +99,26 @@ export const doubled = [1, 2, 3].map((value, index) => index * 2);
 export const doubled = [1, 2, 3].map((value, index) => index * 2);
 ```
 
-A leading underscore has no effect until you set a pattern:
+A name that starts with `_` is unused on purpose. Options of your own have to say so again:
 
-{/* bad */}
+{/* good */}
 ```ts
 export function onMessage(_event: string) {}
 ```
 
-{/* good {"options": [{"argsIgnorePattern": "^_"}]} */}
+{/* bad {"options": [{"args": "all"}]} */}
+```ts
+export function onMessage(_event: string) {}
+```
+
+{/* good {"options": [{"args": "all", "argsIgnorePattern": "^_"}]} */}
 ```ts
 export function onMessage(_event: string) {}
 ```
 
 `ignoreRestSiblings` is for taking properties out of an object:
 
-{/* good {"options": [{"ignoreRestSiblings": true}]} */}
+{/* good */}
 ```ts
 export function publicFields(user: { name: string; password: string }) {
   const { password, ...rest } = user;

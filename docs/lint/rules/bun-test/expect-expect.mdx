@@ -51,7 +51,7 @@ test.skip("reads the file", () => {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `assertFunctionNames` | `["expect", "expectTypeOf"]` | The functions that count as an assertion. Your list replaces the default, so keep `"expect"` in it. |
-| `additionalTestBlockFunctions` | `[]` | Other `bun:test` functions to check like `test`, such as `"afterEach"`. |
+| `additionalTestBlockFunctions` | `[]` | Other functions to check like `test`: your own wrappers around it, or a hook such as `"afterEach"`. |
 
 ### `assertFunctionNames`
 
@@ -105,20 +105,9 @@ test("is healthy", async () => {
 
 ### `additionalTestBlockFunctions`
 
-This option only works for functions that come from `bun:test`. With `["afterEach"]`, this is reported:
+With `["testWithDatabase"]`, a call of that wrapper needs an assertion too:
 
-{/* bad {"options": [{"additionalTestBlockFunctions": ["afterEach"]}]} */}
-```ts
-import { afterEach } from "bun:test";
-
-afterEach(() => {
-  closeDatabase();
-});
-```
-
-A wrapper of your own is not checked, even if you list it. With `["testWithDatabase"]`, this is not reported:
-
-{/* good {"options": [{"additionalTestBlockFunctions": ["testWithDatabase"]}]} */}
+{/* bad {"options": [{"additionalTestBlockFunctions": ["testWithDatabase"]}]} */}
 ```ts
 import { afterAll } from "bun:test";
 import { closeDatabase, testWithDatabase } from "./helpers";
@@ -129,3 +118,17 @@ testWithDatabase("saves the user", (db) => {
   db.save(createUser());
 });
 ```
+
+{/* good {"options": [{"additionalTestBlockFunctions": ["testWithDatabase"]}]} */}
+```ts
+import { afterAll, expect } from "bun:test";
+import { closeDatabase, testWithDatabase } from "./helpers";
+
+afterAll(closeDatabase);
+
+testWithDatabase("saves the user", (db) => {
+  expect(db.save(createUser())).toBe(true);
+});
+```
+
+The file has to import something from `bun:test`, as for every rule of `bun:test`.

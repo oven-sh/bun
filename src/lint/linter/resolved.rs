@@ -2,7 +2,6 @@
 
 use super::instances::Instance;
 use super::registry::{Deprecated, Registry, formatting_rule, parse_rule_id};
-use crate::ast::{ExprTag, File};
 use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
@@ -281,36 +280,17 @@ pub struct ResolvedConfig {
     pub for_eslint: Option<Arc<js_plugin::Configuration>>,
     /// The configuration is invalid, and ESLint would refuse to run: its message.
     pub error: Option<Vec<u8>>,
-    /// Part of it is for React only: all but that part. See [`ResolvedConfig::of`].
+    /// Part of it is for React only: all but that part. See [`ResolvedConfig::outside_of_react`].
     pub(super) without_react: Option<Arc<ResolvedConfig>>,
 }
 
 impl ResolvedConfig {
-    /// What `file`, which has this configuration, is linted with. The part for React is for a file with JSX in a project of React:
-    /// whoever knows the project [says](ResolvedConfig::outside_of_react) if it is none.
-    pub(super) fn of(&self, file: &File) -> &ResolvedConfig {
-        match &self.without_react {
-            Some(others) if !file.has_exprs([ExprTag::Jsx]) => others,
-            _ => self,
-        }
-    }
-
-    /// What a file that has this configuration has in a project that is not one of React.
+    /// What a file that has this configuration has in a project that is not one of React. Whoever knows the project asks.
     pub fn outside_of_react(self: Arc<Self>) -> Arc<ResolvedConfig> {
         match &self.without_react {
             Some(others) => Arc::clone(others),
             None => self,
         }
-    }
-
-    /// The rules that are on in the part for React only.
-    pub(super) fn only_for_react(&self) -> impl Iterator<Item = &'static Meta> {
-        let others = self.without_react.as_deref();
-        let is_on = |it: &ConfiguredRule| it.severity != Severity::Off;
-        let rules = self.rules.iter().filter(move |it| {
-            is_on(it) && others.is_some_and(|others| !others.rule(it.entry).is_some_and(is_on))
-        });
-        rules.map(|it| it.entry.meta)
     }
 
     pub fn rule(&self, entry: &RuleEntry) -> Option<&ConfiguredRule> {

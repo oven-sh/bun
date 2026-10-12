@@ -650,6 +650,14 @@ impl<'a, 'c> Checks<'a, 'c> {
             1488 => self.fail(at + 1, "Invalid escape sequence"),
             1127 | 18026 => self.unexpected_character(at),
             1351 => self.fail(at, "Identifier directly after number"),
+            1381 => self.fail(
+                at,
+                "Unexpected token `}`. Did you mean `&rbrace;` or `{\"}\"}`?",
+            ),
+            1382 => self.fail(
+                at,
+                "Unexpected token `>`. Did you mean `&gt;` or `{\">\"}`?",
+            ),
             6189 => self.fail(at, "Numeric separator must be exactly one underscore"),
             6188 => {
                 let before = text.get(..at as usize).unwrap_or_default();

@@ -80,9 +80,9 @@ test("parses a URL", () => {
 });
 ```
 
-Calls are counted per function and per block. An `expect` inside a loop or a callback does not count toward the test around it, so this is not reported:
+An `expect` in a loop, an `if` or a callback counts toward the test around it:
 
-{/* good {"options": [{"max": 2}]} */}
+{/* bad {"options": [{"max": 2}], "count": 1} */}
 ```ts
 import { expect, test } from "bun:test";
 
@@ -95,3 +95,5 @@ test("lists active users", () => {
   }
 });
 ```
+
+A helper function has a count of its own. `expect.assertions()` and `expect.hasAssertions()` are not counted.

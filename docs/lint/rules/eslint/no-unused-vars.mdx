@@ -16,7 +16,7 @@ A name that is declared and never read is clutter at best. Often it points at a 
 
 "Used" means read. A variable that is only assigned to or incremented is not used, and neither is a function that only calls itself. Anything you `export` is used.
 
-The rule suggests removing the declaration.
+The rule suggests removing the declaration. To keep a name that you do not use, start it with `_`.
 
 This rule is on by default in JavaScript files. In TypeScript files, `@typescript-eslint/no-unused-vars` is on instead.
 
@@ -58,6 +58,16 @@ An unused parameter is only reported if it comes after the last one that is used
 export const doubled = items.map((item, index) => index * 2);
 ```
 
+A name that starts with `_` is unused on purpose:
+
+{/* good */}
+```js
+export function onMessage(_event) {}
+
+const [_first, second] = items;
+send(second);
+```
+
 A component that only appears in JSX is used:
 
 {/* good */}
@@ -71,28 +81,30 @@ export const App = () => <Button />;
 
 ```toml bunfig.toml
 [lint.rules]
-no-unused-vars = ["error", { argsIgnorePattern = "^_", varsIgnorePattern = "^_" }]
+no-unused-vars = ["error", { args = "all", argsIgnorePattern = "^_" }]
 ```
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `vars` | `"all"` | `"local"` skips globals: the names in `/* global */` comments and the top-level variables of a classic script. The top level of a module or a CommonJS file is still checked. |
-| `varsIgnorePattern` | none | Regular expression for names of variables that may be unused. |
+| `varsIgnorePattern` | `"^_"` | Regular expression for names of variables that may be unused. |
 | `args` | `"after-used"` | `"all"` reports every unused parameter, `"none"` reports none. |
-| `argsIgnorePattern` | none | Like `varsIgnorePattern`, for parameters. |
+| `argsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for parameters. |
 | `caughtErrors` | `"all"` | `"none"` allows an unused `error` in `catch (error)`. |
-| `caughtErrorsIgnorePattern` | none | Like `varsIgnorePattern`, for the parameter of `catch`. |
-| `destructuredArrayIgnorePattern` | none | Like `varsIgnorePattern`, for names in `const [a, b] = list`. |
-| `ignoreRestSiblings` | `false` | Allow unused names next to a `...rest` in object destructuring. |
+| `caughtErrorsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for the parameter of `catch`. |
+| `destructuredArrayIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for names in `const [a, b] = list`. |
+| `ignoreRestSiblings` | `true` | Allow unused names next to a `...rest` in object destructuring. |
 | `ignoreClassWithStaticInitBlock` | `false` | Allow an unused class that has a `static {}` block, which runs anyway. |
 | `ignoreUsingDeclarations` | `false` | Allow unused `using` and `await using` variables, which are disposed of anyway. |
 | `reportUsedIgnorePattern` | `false` | Report a name that matches one of the patterns and is used. |
 
 A string in place of the object, `"all"` or `"local"`, sets `vars`.
 
+The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config the defaults are ESLint's: no patterns, and `ignoreRestSiblings` is `false`.
+
 {/* bad {"options": [{"args": "all"}]} */}
 ```js
-export const doubled = items.map((item, index) => index * 2);
+export const doubled = items.map((_item, index) => index * 2);
 ```
 
 {/* good {"options": [{"args": "all", "argsIgnorePattern": "^_"}]} */}
@@ -102,7 +114,13 @@ export const doubled = items.map((_item, index) => index * 2);
 
 `ignoreRestSiblings` is for taking properties out of an object:
 
-{/* good {"options": [{"ignoreRestSiblings": true}]} */}
+{/* good */}
+```js
+const { password, ...publicUser } = user;
+send(publicUser);
+```
+
+{/* bad {"options": [{"ignoreRestSiblings": false}]} */}
 ```js
 const { password, ...publicUser } = user;
 send(publicUser);

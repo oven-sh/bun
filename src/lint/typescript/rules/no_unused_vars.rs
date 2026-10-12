@@ -10,8 +10,7 @@ use bun_lint::utils::ts_scope::{
 };
 use bun_lint::utils::ts_utils::is_definition_file;
 use bun_lint_eslint::rules::no_unused_vars::{
-    Args, NoUnusedVars as Base, Pattern, UNUSED_VAR, USED_IGNORED_VAR, VariableType, Vars, hint,
-    is_first_parameter_named,
+    Args, NoUnusedVars as Base, Pattern, UNUSED_VAR, USED_IGNORED_VAR, VariableType, Vars, is_first_parameter_named,
 };
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -1160,9 +1159,9 @@ impl NoUnusedVars {
     }
 
     /// The `additional` of `getDefinedMessageData` and `getAssignedMessageData`.
-    fn get_unused_message_data(&self, unused_var: Variable) -> String {
+    fn get_unused_message_data(&self, unused_var: Variable, file: &File) -> String {
         (unused_var.defs().next())
-            .map_or_else(String::new, |def| self.base.unused_message_data(self.def_to_variable_type(def)))
+            .map_or_else(String::new, |def| self.base.unused_message_data(self.def_to_variable_type(def), file))
     }
 
     /// How a message of oxlint ends: what unused `plural` are to be called. `has_default`: without options it is `^_`.
@@ -1384,6 +1383,7 @@ impl NoUnusedVars {
             .data("action", action)
             .data("additional", additional);
         if message.id == UNUSED_VAR.id {
+            let hint = |def| self.base.hint(def, self.def_to_variable_type(def));
             report = report.hint(unused_var.defs().next().map_or("", hint));
         }
         if is_oxlint {
@@ -1681,7 +1681,7 @@ impl NoUnusedVars {
                 false => "defined",
             };
             let message = if used_only_as_type { USED_ONLY_AS_TYPE } else { UNUSED_VAR };
-            let additional = self.get_unused_message_data(unused_var);
+            let additional = self.get_unused_message_data(unused_var, file);
             self.report(cx, &mut reported, unused_var, message, (action, additional));
         }
 

@@ -119,13 +119,19 @@ There are two such cases: a JavaScript rule that needs types, and files in [othe
 
 ---
 
-If the project also has an oxlint config, tell Bun which one to use.
+If the project also has an oxlint config, Bun uses that one and tells you.
+
+```txt
+note: Using .oxlintrc.json. eslint.config.js is ignored. Use --config to pick it.
+```
+
+Pick the ESLint config with `--config`.
 
 ```json package.json icon="file-json"
 {
   "scripts": {
     "lint": "oxlint && eslint", // [!code --]
-    "lint": "bun lint --flavor=oxlint && bun lint --flavor=eslint" // [!code ++]
+    "lint": "bun lint && bun lint --config eslint.config.js" // [!code ++]
   }
 }
 ```

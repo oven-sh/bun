@@ -188,7 +188,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     write(root, "a.js", before);
     for (const written of ["nothing", "--output=written.txt", "-O", "HEAD..HEAD", "HEAD HEAD", "HEAD:a.js"]) {
       const { stdout, stderr, exitCode } = await bun(root, [command, `--changed=${written}`]);
-      expect(stderr).toContain(`"${written}" is not a branch, a tag or a commit of this repository`);
+      expect(stderr).toContain(`"${written}" is not a branch, tag or commit in this repository`);
       expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
     }
     expect(existsSync(join(root, "written.txt"))).toBe(false);
@@ -425,8 +425,102 @@ test.concurrent(
     });
     expect(await bun(repo.root, ["lint", "--changed=nothing"])).toEqual({
       stdout: "",
-      stderr: 'error: "nothing" is not a branch, a tag or a commit of this repository\n',
+      stderr: 'error: "nothing" is not a branch, tag or commit in this repository\n',
       exitCode: 2,
     });
   },
 );
+
+describe.concurrent("bun lint --staged --fix reports a file that it does not fix as it is left", () => {
+  // One problem that can be fixed, and one that cannot.
+  const staged = "let a = 1;\nexport { a };\nif (a) {\n}\n";
+  const left = staged + "export const unstaged = 1;\n";
+  const rules = ["--rule", "prefer-const: error", "--rule", "no-empty: error"];
+  const refusal = (ext: string) => `error: partly.${ext} has both staged and unstaged changes, so it was not fixed\n`;
+
+  async function partlyStaged(ext: string, more: Record<string, string> = {}) {
+    const repo = await repository({ [`partly.${ext}`]: tidy, [`whole.${ext}`]: tidy, ...more });
+    write(repo.root, `partly.${ext}`, staged);
+    write(repo.root, `whole.${ext}`, before);
+    await git(repo.root, "add", "-A");
+    write(repo.root, `partly.${ext}`, left);
+    return repo;
+  }
+
+  async function isUntouched(root: string, ext: string) {
+    expect(read(root, `partly.${ext}`)).toBe(left);
+    expect(await git(root, "show", `:partly.${ext}`)).toBe(staged);
+    expect(await git(root, "show", `:whole.${ext}`)).toBe(after.lint);
+    expect(await git(root, "status", "--porcelain")).toBe(`MM partly.${ext}\nM  whole.${ext}\n`);
+  }
+
+  test("for people", async () => {
+    using repo = await partlyStaged("js");
+    const { stdout, stderr, exitCode } = await bun(repo.root, ["lint", "--staged", "--fix", ...rules]);
+    expect(stdout.match(/\b(prefer-const|no-empty)$|partly\.js:\d+:\d+$/gm)).toEqual([
+      "prefer-const",
+      "partly.js:1:5",
+      "no-empty",
+      "partly.js:3:8",
+    ]);
+    expect(stdout).toEndWith("\n\n2 problems (2 errors, 0 warnings)\n1 can be fixed with --fix\n");
+    // The one in the other file.
+    expect(stderr).toContain("Fixed 1 problem in 1 file\n");
+    expect(stderr).toContain("Linted 2 files ");
+    expect(stderr).toContain(refusal("js"));
+    expect(exitCode).toBe(2);
+    await isUntouched(repo.root, "js");
+  });
+
+  const typed = ["--type-aware", "--rule", "@typescript-eslint/await-thenable: error"];
+  const oxlintrc = JSON.stringify({ rules: { "prefer-const": "error", "no-empty": "error" } });
+  test.each([
+    ["without a configuration file", "js", {}, rules],
+    ["with a rule that needs types", "ts", { "tsconfig.json": "{}" }, [...rules, ...typed]],
+    ["with a configuration of oxlint", "js", { ".oxlintrc.json": oxlintrc }, []],
+  ] as const)("as JSON, %s", async (_, ext, more, flags) => {
+    using repo = await partlyStaged(ext, more);
+    const { stdout, stderr, exitCode } = await bun(repo.root, ["lint", "--staged", "--fix", "-f", "json", ...flags]);
+    const printed = JSON.parse(stdout);
+    if (Array.isArray(printed)) {
+      const of = (name: string) => printed.find(it => it.filePath.endsWith(name));
+      expect(of(`partly.${ext}`)).toMatchObject({
+        messages: [{ ruleId: "prefer-const" }, { ruleId: "no-empty" }],
+        errorCount: 2,
+        fixableErrorCount: 1,
+      });
+      expect(of(`partly.${ext}`)).not.toHaveProperty("output");
+      expect(of(`whole.${ext}`)).toMatchObject({ messages: [], output: after.lint });
+    } else {
+      expect(printed.diagnostics.map(it => `${it.filename}: ${it.code}`).sort()).toEqual([
+        "partly.js: eslint(no-empty)",
+        "partly.js: eslint(prefer-const)",
+      ]);
+    }
+    expect(stderr).toContain(refusal(ext));
+    expect(exitCode).toBe(2);
+    await isUntouched(repo.root, ext);
+  });
+
+  test("a problem that cannot be fixed is no reason to refuse the file", async () => {
+    using repo = await partlyStaged("js");
+    const { stderr, exitCode } = await bun(repo.root, ["lint", "--staged", "--fix", "--rule", "no-empty: error"]);
+    expect(stderr).not.toContain("unstaged");
+    expect(exitCode).toBe(1);
+    expect(read(repo.root, "partly.js")).toBe(left);
+  });
+});
+
+test.concurrent("bun format --staged does not count a file that it does not write", async () => {
+  using repo = await repository({ "partly.js": tidy, "whole.js": tidy, "tidy.js": tidy });
+  const { root } = repo;
+  for (const name of ["partly.js", "whole.js"]) write(root, name, before);
+  write(root, "tidy.js", tidy + "\n" + tidy.replace("a", "b"));
+  await git(root, "add", "-A");
+  write(root, "partly.js", before + tidy.replace("a", "b"));
+  const { stdout, stderr, exitCode } = await bun(root, ["format", "--staged"]);
+  expect(stdout).toBe("whole.js\n");
+  expect(stderr).toContain("Formatted 1 file, 1 unchanged ");
+  expect(stderr).toContain("partly.js has both staged and unstaged changes, so it was not formatted\n");
+  expect(exitCode).toBe(2);
+});

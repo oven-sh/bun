@@ -41,7 +41,10 @@ impl PreferLazySchema {
             return false;
         }
         match callee.kind() {
-            ExprKind::Ident(name) => self.factory_suffix.as_deref().is_some_and(|it| name.bytes().ends_with(it)),
+            ExprKind::Ident(name) => {
+                self.factory_suffix.as_deref().is_some_and(|it| name.bytes().ends_with(it))
+                    && self.lazy_wrapper.as_deref() != Some(name.bytes())
+            }
             ExprKind::Dot { name, .. } => is_listed(&self.methods, name.bytes()) || self.is_root(chain_start(callee)),
             _ => false,
         }

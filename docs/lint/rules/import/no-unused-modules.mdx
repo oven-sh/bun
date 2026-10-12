@@ -39,7 +39,7 @@ import { formatDate } from "./format.js";
 console.log(formatDate(new Date()));
 ```
 
-{/* bad {"filename": "shop/format.js", "count": 1, "options": [{"unusedExports": true, "src": ["*?/*?/shop/*.js"]}]} */}
+{/* bad {"root": true, "filename": "shop/format.js", "count": 1, "options": [{"unusedExports": true, "src": ["shop"]}]} */}
 ```js shop/format.js
 export function formatDate(date) {}
 export function formatTime(date) {}
@@ -64,7 +64,7 @@ import { formatDate } from "./format.js";
 console.log(formatDate(new Date()));
 ```
 
-{/* good {"filename": "shop/format.js", "options": [{"unusedExports": true, "src": ["*?/*?/shop/*.js"]}]} */}
+{/* good {"root": true, "filename": "shop/format.js", "options": [{"unusedExports": true, "src": ["shop"]}]} */}
 ```js shop/format.js
 export function formatDate(date) {}
 function formatTime(date) {}
@@ -86,7 +86,7 @@ What counts as a use:
 | `ignoreExports` | `[]` | Files, folders and globs with exports that are never reported, such as entry points and tests. |
 | `ignoreUnusedTypeExports` | `false` | Do not report an unused exported `type`, `interface` or `enum`. |
 
-Only `.js`, `.mjs` and `.cjs` files are searched, unless the `import/extensions` setting of an ESLint config lists others.
+Only `.js`, `.mjs` and `.cjs` files are searched, unless the `import/extensions` setting lists others.
 
 The files that `main`, `bin` and `browser` in the closest `package.json` point to are entry points. Their exports are not reported, unless the package is `"private": true`.
 

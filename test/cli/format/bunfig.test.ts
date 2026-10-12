@@ -1,5 +1,5 @@
 // What `bun format` has built in besides the options of Prettier, from `[format]` in bunfig.toml and from the flags of the same
-// names: `sortImports`, `sortTailwindcss`, `sortPackageJson`, `jsdoc`, `insertFinalNewline`, `toml`.
+// names: `sortImports`, `sortTailwindcss`, `sortPackageJson`, `jsdoc`, `insertFinalNewline`, `overrides`. And TOML, which needs neither.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -36,7 +36,7 @@ const broken = `const value = someFunction(
 `;
 
 describe.concurrent("sortImports", () => {
-  const imports = `import { z, a } from "./sibling";
+  const imports = `import { a, z } from "./sibling";
 import x from "../parent";
 import type { T } from "zod";
 import React from "react";
@@ -64,7 +64,7 @@ import { c } from "~/c";
 
 import index from ".";
 import x from "../parent";
-import { z, a } from "./sibling";
+import { a, z } from "./sibling";
 
 import css from "./a.css";
 `;
@@ -112,7 +112,7 @@ import { b } from "@/lib/b";
 import i from "#internal";
 import { c } from "~/c";
 
-import { z, a } from "./sibling";
+import { a, z } from "./sibling";
 import css from "./a.css";
 import x from "../parent";
 import index from ".";
@@ -169,9 +169,9 @@ import index from ".";
     ["sortImports = 1", "expected boolean or object but received number"],
     [
       "sortImports = { newlineBetween = false }",
-      `unknown key "newlineBetween" in [format.sortImports]. Did you mean "newlinesBetween"?`,
+      `Unknown key "newlineBetween" in [format.sortImports]\n  Did you mean "newlinesBetween"?`,
     ],
-    ["sortImports = { importOrder = [] }", `unknown key "importOrder" in [format.sortImports].`],
+    ["sortImports = { importOrder = [] }", `Unknown key "importOrder" in [format.sortImports]\n`],
     [`sortImports = { newlinesBetween = "no" }`, "expected boolean but received string"],
     [`sortImports = { groups = "builtin" }`, "expected array but received string"],
     ["sortImports = { internalPattern = [1] }", "expected string but received number"],
@@ -284,7 +284,7 @@ preserveDuplicates = true
     [`sortTailwindcss = "yes"`, "expected boolean or object but received string"],
     [
       "sortTailwindcss = { function = [] }",
-      `unknown key "function" in [format.sortTailwindcss]. Did you mean "functions"?`,
+      `Unknown key "function" in [format.sortTailwindcss]\n  Did you mean "functions"?`,
     ],
     [`sortTailwindcss = { functions = "cn" }`, "expected array but received string"],
     ["sortTailwindcss = { attributes = [true] }", "expected string but received boolean"],
@@ -333,7 +333,7 @@ describe.concurrent("sortPackageJson", () => {
     ["sortPackageJson = []", "expected boolean or object but received array"],
     [
       "sortPackageJson = { sortScript = true }",
-      `unknown key "sortScript" in [format.sortPackageJson]. Did you mean "sortScripts"?`,
+      `Unknown key "sortScript" in [format.sortPackageJson]\n  Did you mean "sortScripts"?`,
     ],
     [`sortPackageJson = { sortScripts = "all" }`, "expected boolean but received string"],
   ])("%s is refused: %s", async (line, message) => {
@@ -390,7 +390,7 @@ export function add(a, b) {}
 
   test.each([
     [`jsdoc = "all"`, "expected boolean or object but received string"],
-    ["jsdoc = { capitalize = true }", `unknown key "capitalize" in [format.jsdoc].`],
+    ["jsdoc = { capitalize = true }", `Unknown key "capitalize" in [format.jsdoc]\n`],
     ["jsdoc = { descriptionTag = 1 }", "expected boolean but received number"],
     [`jsdoc = { commentLineStrategy = "one" }`, "Invalid jsdoc.commentLineStrategy value: one."],
   ])("%s is refused: %s", async (line, message) => {
@@ -429,40 +429,58 @@ describe.concurrent("insertFinalNewline", () => {
   });
 });
 
-describe.concurrent("toml", () => {
+describe.concurrent("TOML", () => {
   const input = `a   = 1\n[b]\nc = [ "d",'e' ]\n`;
   const formatted = `a = 1\n[b]\nc = ["d", 'e']\n`;
 
-  test("the key and the flags", async () => {
-    const [off, key, flag, under] = await Promise.all([
-      format({ "a.toml": input, "a.js": "a  ;\n" }),
-      format({ ...bunfig("toml   = true"), "a.toml": input }),
-      format({ "a.toml": input }, ["--toml", "."]),
-      format({ ...bunfig("toml = true"), "a.toml": input, "a.js": "a  ;\n" }, ["--no-toml", "."]),
-    ]);
-    expect(off.files["a.toml"]).toBe(input);
-    expect(key.stderr).toBe("");
-    expect(key.files).toEqual({ "bunfig.toml": "[format]\ntoml = true\n", "a.toml": formatted });
-    expect(flag.files["a.toml"]).toBe(formatted);
-    expect(under.files["a.toml"]).toBe(input);
-    expect(key.exitCode).toBe(0);
+  test("is formatted like any other language, bunfig.toml too", async () => {
+    const result = await format({ ...bunfig("semi   = false"), "a.toml": input, "a.js": "a  ;\n" });
+    expect(result.stderr).toBe("");
+    expect(result.files).toEqual({ "bunfig.toml": "[format]\nsemi = false\n", "a.toml": formatted, "a.js": "a\n" });
+    expect(result.exitCode).toBe(0);
   });
 
   test("a file that is named", async () => {
-    const [off, on] = await Promise.all([
-      format({ "a.toml": input }, ["a.toml"]),
-      format({ "a.toml": input }, ["--toml", "a.toml"]),
+    const result = await format({ "a.toml": input }, ["a.toml"]);
+    expect(result.files["a.toml"]).toBe(formatted);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("not where a configuration of Prettier counts, which has no TOML", async () => {
+    const [all, named, below] = await Promise.all([
+      format({ ".prettierrc": "{}", "a.toml": input, "a.js": "a  ;\n" }),
+      format({ ".prettierrc": "{}", "a.toml": input }, ["a.toml"]),
+      format({ "sub/.prettierrc": "{}", "sub/a.toml": input, "a.toml": input }),
     ]);
-    expect(off.stderr).toContain("No parser could be inferred for file");
-    expect(off.exitCode).toBe(2);
-    expect(on.files["a.toml"]).toBe(formatted);
-    expect(on.exitCode).toBe(0);
+    expect(all.files["a.toml"]).toBe(input);
+    expect(all.exitCode).toBe(0);
+    expect(named.stderr).toContain("No parser could be inferred for file");
+    expect(named.exitCode).toBe(2);
+    expect(below.files).toMatchObject({ "sub/a.toml": input, "a.toml": formatted });
   });
 
   test("the lines are as wide as everywhere", async () => {
     const items = Array(9).fill(`"aaaaaaaa"`);
-    const result = await format({ ...bunfig("toml = true"), "a.toml": `a = [${items.join(", ")}]\n` });
+    const result = await format({ "a.toml": `a = [${items.join(", ")}]\n` });
     expect(result.files["a.toml"]).toBe(`a = [\n${items.map(it => `  ${it},\n`).join("")}]\n`);
+  });
+
+  test("what is not TOML is an error", async () => {
+    const result = await format({ "a.toml": "a = \n", "b.toml": input });
+    expect(result.stderr).toContain("a.toml: SyntaxError:");
+    expect(result.files).toEqual({ "a.toml": "a = \n", "b.toml": formatted });
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("there is no key and no flag for it", async () => {
+    const [key, flag] = await Promise.all([
+      format({ ...bunfig("toml = true"), "a.toml": input }),
+      format({ "a.toml": input }, ["--toml", "."]),
+    ]);
+    expect(key.stderr).toContain(`nknown key "toml" in [format]`);
+    expect(flag.stderr).toContain("--toml");
+    expect([key.exitCode, flag.exitCode]).toEqual([2, 2]);
+    expect([key.files["a.toml"], flag.files["a.toml"]]).toEqual([input, input]);
   });
 });
 
@@ -558,16 +576,19 @@ insertFinalNewline = false
     ["overrides = [{ files = 1 }]", "expected string or array but received number"],
     ["overrides = [{ files = [1] }]", "expected string but received number"],
     [`overrides = [{ files = "a[" }]`, "Invalid glob pattern `a[`"],
-    [`overrides = [{ file = "a" }]`, `unknown key "file" in [format.overrides]. Did you mean "files"?`],
+    [`overrides = [{ file = "a" }]`, `Unknown key "file" in [format.overrides]\n  Did you mean "files"?`],
     [`overrides = [{ files = "a", options = { semi = 1 } }]`, "expected boolean but received number"],
     [`overrides = [{ files = "a", options = { printWidth = 1.5 } }]`, "Invalid printWidth value: 1.5."],
     [
       `overrides = [{ files = "a", options = { threads = 1 } }]`,
-      `unknown key "threads" in [format.overrides.options].`,
+      `Unknown key "threads" in [format.overrides.options]\n`,
     ],
-    [`overrides = [{ files = "a", options = { toml = true } }]`, `unknown key "toml" in [format.overrides.options].`],
-    [`overrides = [{ files = "a", options = { check = true } }]`, `unknown key "check" in [format.overrides.options].`],
-    [`overides = []`, `unknown key "overides" in [format]. Did you mean "overrides"?`],
+    [`overrides = [{ files = "a", options = { toml = true } }]`, `Unknown key "toml" in [format.overrides.options]\n`],
+    [
+      `overrides = [{ files = "a", options = { check = true } }]`,
+      `Unknown key "check" in [format.overrides.options]\n`,
+    ],
+    [`overides = []`, `Unknown key "overides" in [format]\n  Did you mean "overrides"?`],
   ])("%s is refused: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "a.js": "a  ;\n" });
     expect(result.stderr).toContain(message);

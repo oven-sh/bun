@@ -116,6 +116,38 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     expect(here.exitCode).toBe(0);
   });
 
+  // They ask Bun about itself, and nothing is linted or formatted.
+  test.each([
+    ["--doctor"],
+    ["--init"],
+    ["--rules"],
+    ["--explain", "no-var"],
+    ["--explain=no-var"],
+    ["--print-config", "a.js"],
+    ["--print-config=a.js"],
+    ["--version"],
+    ["-v"],
+    ["-V"],
+  ])("%s %s is not for a script of that name in package.json", async (...args) => {
+    const scripts = (name: string) => ({ "package.json": JSON.stringify({ scripts: { [name]: "echo the script" } }) });
+    const [here, elsewhere] = await Promise.all([
+      runIn(scripts(command), command, ...args),
+      runIn(scripts("other"), command, ...args),
+    ]);
+    expect(here.stderr).not.toContain("echo the script");
+    expect({ stdout: here.stdout, exitCode: here.exitCode }).toEqual({
+      stdout: elsewhere.stdout,
+      exitCode: elsewhere.exitCode,
+    });
+  });
+
+  test("another flag is for the script", async () => {
+    const files = { "package.json": JSON.stringify({ scripts: { [command]: "echo the script" } }) };
+    const { stdout, exitCode } = await runIn(files, command, "--threads=1");
+    expect(stdout).toBe("the script --threads=1\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("-- --help is for the script", async () => {
     const files = { "package.json": JSON.stringify({ scripts: { [command]: "echo the script" } }) };
     const { stdout, exitCode } = await runIn(files, command, "--", "--help");

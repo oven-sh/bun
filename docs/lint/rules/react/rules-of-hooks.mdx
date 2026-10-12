@@ -16,7 +16,7 @@ React tells one `useState` from the next by the order of the calls. If a hook ru
 
 So a hook must be called on every render, in the same order. It cannot be in a condition, a loop, a nested function, or after an early `return`. It also cannot be in a class, an async function, at the top level of a file, or in a function that is neither a component nor a hook. A name counts as a hook if it is `use` or starts with `use` and a capital letter. A component's name starts with a capital letter.
 
-This rule is on by default in files with JSX, if your `package.json` depends on `react`.
+This rule is on by default if your `package.json` depends on `react`.
 
 ## Examples
 

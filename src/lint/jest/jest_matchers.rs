@@ -585,7 +585,9 @@ pub(crate) mod prefer_to_be {
                 PreferToBeKind::NaN
             } else if first_matcher_arg.tag() == ExprTag::Null {
                 PreferToBeKind::Null
-            } else if should_use_tobe(first_matcher_arg) && !matcher.is_name_equal("toBe") {
+            } else if should_use_tobe(first_matcher_arg, ctx.runner)
+                && !matcher.is_name_equal("toBe")
+            {
                 PreferToBeKind::ToBe
             } else {
                 return;
@@ -603,12 +605,22 @@ pub(crate) mod prefer_to_be {
     }
 
     /// A literal that is no regular expression, or the negative of one. Not a number that is written with a `.`.
-    fn should_use_tobe(first_matcher_arg: Expr) -> bool {
+    fn should_use_tobe(first_matcher_arg: Expr, runner: Runner) -> bool {
         let expr = match first_matcher_arg.kind() {
             ExprKind::Unary {
                 op: UnOp::Minus,
                 operand,
             } if operand.is_parenthesized() => return false,
+            // oxlint looks for the `.` only where there is no `-`.
+            ExprKind::Unary {
+                op: UnOp::Minus,
+                operand,
+            } if runner == Runner::Bun
+                && operand.tag() == ExprTag::Number
+                && strings::contains_char(operand.text(), b'.') =>
+            {
+                return false;
+            }
             ExprKind::Unary {
                 op: UnOp::Minus,
                 operand,
@@ -1048,7 +1060,11 @@ pub(crate) mod no_large_snapshots {
             }
             for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 if let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
-                    && let Some(first_arg_expr) = first_expression(jest_fn_call.args)
+                    && let Some(first_arg_expr) = match ctx.runner {
+                        Runner::Jest | Runner::Vitest => first_expression(jest_fn_call.args),
+                        // `toMatchInlineSnapshot({ id: expect.any(Number) }, `..`)`
+                        Runner::Bun => jest_fn_call.args.last(),
+                    }
                     && let Some(snapshot_matcher) = (jest_fn_call.members.iter()).find(|member| {
                         INLINE_SNAPSHOT_MATCHERS
                             .iter()

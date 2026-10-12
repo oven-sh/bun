@@ -229,7 +229,7 @@ impl<'e> Files<'e> {
     /// The ID of the commit that `written` names. Only that goes on to git: `written` could be read as a flag, or as a range.
     fn commit(&self, written: &[u8]) -> Result<Vec<u8>, Fatal> {
         let unknown = || {
-            let rest = b"\" is not a branch, a tag or a commit of this repository";
+            let rest = b"\" is not a branch, tag or commit in this repository";
             Fatal([b"\"", written, rest].concat())
         };
         if written.starts_with(b"-") {

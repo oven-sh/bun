@@ -14,9 +14,9 @@ deprecated: false
 
 `describe` accepts a function or a class as its title and prints its name. A string that repeats the name is not updated when you rename the function, so the test output keeps showing a name that no longer exists.
 
-The rule reports a `describe` title that is a string equal to a name the file imports. A title like `slugify.name` is reported too.
+The rule reports a `describe` title that is a string equal to a name the file imports. A title like `slugify.name` is reported too. A name that is imported only as a type is not: there is no value to pass.
 
-`--fix-suggestions` replaces the title with the name, unless the import is type-only. `--fix` does not, because the import may not be a function or a class.
+`--fix-suggestions` replaces the title with the name. `--fix` does not, because the import may not be a function or a class.
 
 ## Examples
 
@@ -56,4 +56,12 @@ describe(slugify, () => {
 });
 
 describe("slugify with options", () => {});
+```
+
+{/* good */}
+```ts
+import { describe } from "bun:test";
+import type { Slug } from "./slugify";
+
+describe("Slug", () => {});
 ```

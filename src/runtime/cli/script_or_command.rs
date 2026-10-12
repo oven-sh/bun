@@ -17,19 +17,30 @@ pub(crate) enum Runs {
     Other,
 }
 
-/// Whether `bun <command>` runs something of the project, as it did before `command` was one. The help is always the command's,
-/// and so are `--doctor`, which none of the tools has that such a script runs, and `--lsp`, with which an editor starts it.
+/// Whether `arg` asks `bun <command>` about itself or its configuration, so that nothing is checked, linted or formatted.
+fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
+    let name = bun_core::strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
+    let of_lint_and_format = matches!(
+        name,
+        b"--doctor"
+            | b"--init"
+            | b"--rules"
+            | b"--explain"
+            | b"--print-config"
+            | b"--version"
+            | b"-v"
+            | b"-V"
+    );
+    matches!(name, b"--help" | b"-h" | b"--help-all") || (of_lint_and_format && command != b"check")
+}
+
+/// Whether `bun <command>` runs something of the project, as it did before `command` was one.
 #[cold]
 #[inline(never)]
 pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
     let args = bun_core::argv().into_iter();
     let mut of_command = (args.skip_while(|arg| *arg != command)).take_while(|arg| *arg != b"--");
-    !of_command.any(|arg| {
-        matches!(
-            arg,
-            b"--help" | b"-h" | b"--help-all" | b"--doctor" | b"--lsp"
-        )
-    }) && runs(command) != Runs::Command
+    !of_command.any(|arg| asks_the_command(command, arg)) && runs(command) != Runs::Command
 }
 
 /// Whatever the arguments of `command` are.

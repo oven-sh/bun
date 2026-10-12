@@ -63,7 +63,7 @@ Uninstall what `--doctor` says you can remove. Leave `.prettierrc` as it is, inc
 bun remove prettier @ianvs/prettier-plugin-sort-imports
 ```
 
-Keep `prettier` if your editor's Prettier extension uses it, or switch the editor to [Bun's formatter](/runtime/format#editors).
+Keep `prettier` if your editor's Prettier extension uses it.
 
 ---
 
@@ -128,20 +128,15 @@ With any other plugin, Bun skips the files that config covers and exits with cod
 
 ---
 
-You don't have to keep `.prettierrc`. The same options work in [`bunfig.toml`](/runtime/format#options).
-
-```json .prettierrc icon="file-json"
-{
-  "semi": false, // [!code --]
-  "singleQuote": true // [!code --]
-}
-```
+You don't have to keep `.prettierrc`. Move the options to [`bunfig.toml`](/runtime/format#options), under the same names, and delete the file. `overrides` become [`[[format.overrides]]`](/runtime/bunfig#format-overrides).
 
 ```toml bunfig.toml icon="settings"
 [format]
 semi = false
 singleQuote = true
 ```
+
+Without a Prettier config, `bun format` also formats TOML files, and `--check` prints a shorter report.
 
 ---
 

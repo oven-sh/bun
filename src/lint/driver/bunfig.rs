@@ -3,7 +3,7 @@
 //! same `Options::set`, and the command line is laid over it. So what a key takes is what its flag takes: the kind of
 //! value is read from the table of flags, and a value is refused by what refuses it after the flag.
 //!
-//! More than a flag can say: the tables of `[lint]`, and in `[format]` the options of what a flag turns on ([`FEATURES`])
+//! More than a flag can say: the tables and `overrides` of `[lint]`, and in `[format]` the options of what a flag turns on ([`FEATURES`])
 //! and `overrides`.
 //!
 //! Bun's reader of bunfig.toml finds and parses the file. What it calls with the file is here.
@@ -162,19 +162,32 @@ impl Table {
                 &[
                     b"\"",
                     key,
-                    b"\" cannot be set in bunfig.toml. Pass --",
+                    b"\" cannot be set in bunfig.toml\n  Use --",
                     flag,
-                    b" on the command line instead.",
+                    b" on the command line",
                 ],
             );
         }
-        unknown_key(key, at, self.section.as_bytes(), self.keys())
+        let section = self.section.as_bytes();
+        match self.renamed.iter().find(|it| key_of(it.1) == key) {
+            Some((meant, _)) => refuse(at, &[&not_a_key(key, section, Some(meant))]),
+            None => unknown_key(key, at, section, self.keys()),
+        }
     }
 
     /// Takes in `key = value`, as the flag.
     fn set(&self, key: &Key, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
         give(self.param_of(&key.name, key.at)?, value, set)
     }
+}
+
+/// What is wrong with `key`, which is no key of the table `section`. `meant`: one that is.
+fn not_a_key(key: &[u8], section: &[u8], meant: Option<&[u8]>) -> Vec<u8> {
+    let mut message = [b"Unknown key \"", key, b"\" in [", section, b"]"].concat();
+    if let Some(meant) = meant {
+        message.extend_from_slice(&[b"\n  Did you mean \"", meant, b"\"?"].concat());
+    }
+    message
 }
 
 /// `key` is none of `keys`, which are those of the table `section`.
@@ -185,20 +198,11 @@ fn unknown_key<T>(
     keys: impl Iterator<Item = Vec<u8>>,
 ) -> Result<T, Refusal> {
     let closest = keys
-        .min_by_key(|it| strings::edit_distance(key.iter().copied(), &it[..]))
-        .unwrap_or_default();
-    refuse(
-        at,
-        &[
-            b"unknown key \"",
-            key,
-            b"\" in [",
-            section,
-            b"]. Did you mean \"",
-            &closest,
-            b"\"?",
-        ],
-    )
+        .map(|it| (strings::edit_distance(key.iter().copied(), &it[..]), it))
+        .min_by_key(|it| it.0)
+        .filter(|it| it.0 <= key.len().max(3) / 3);
+    let closest = closest.as_ref().map(|it| &it.1[..]);
+    refuse(at, &[&not_a_key(key, section, closest)])
 }
 
 fn at(value: &Expr) -> impl Fn(UsageError) -> Refusal {
@@ -262,7 +266,6 @@ const FORMAT: Table = Table {
         b"config-precedence",
         b"ignore-path",
         b"with-node-modules",
-        b"toml",
         b"error-on-unmatched-pattern",
         b"ignore-unknown",
         b"log-level",
@@ -627,12 +630,18 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
                 }
             }
         }
-        match it.files.is_empty() {
-            true => refuse(item.loc, &[b"an override needs \"files\""]),
-            false => Ok(it),
-        }
+        needs_files(item, &it.files)?;
+        Ok(it)
     };
     items.slice().iter().map(one).collect()
+}
+
+/// `files` of `item`, an element of `overrides`, say which files it is for.
+fn needs_files(item: &Expr, files: &[Vec<u8>]) -> Result<(), Refusal> {
+    match files.is_empty() {
+        true => refuse(item.loc, &[b"an override needs \"files\""]),
+        false => Ok(()),
+    }
 }
 
 const LINT: Table = Table {
@@ -662,6 +671,7 @@ const LINT: Table = Table {
         b"allow-unsupported",
         b"type-aware",
         b"infer-globals",
+        b"tsconfig",
         b"project",
         b"type-check",
         b"disable-nested-config",
@@ -683,7 +693,7 @@ const LINT: Table = Table {
         (b"categories", b"warn"),
         (b"categories", b"deny"),
     ],
-    without_flag: &[b"settings"],
+    without_flag: &[b"settings", b"overrides"],
     actions: &[
         b"fix",
         b"fix-dry-run",
@@ -711,6 +721,7 @@ const LINT: Table = Table {
         b"debug",
         b"cwd",
         b"version",
+        b"lsp",
         b"help",
         b"help-all",
     ],
@@ -752,7 +763,6 @@ const LINT: Table = Table {
         b"concurrency",
         b"flag",
         b"mcp",
-        b"lsp",
     ],
 };
 
@@ -835,7 +845,7 @@ impl Place {
     }
 }
 
-/// An entry of `[lint.rules]`.
+/// An entry of `[lint.rules]`, or of `rules` of an override.
 #[derive(Clone, Debug)]
 pub struct RuleOfBunfig {
     pub key_at: usize,
@@ -849,6 +859,81 @@ fn json_of(value: &Expr) -> Result<Json, Refusal> {
         || refuse(value.loc, &[b"this value is nested too deeply"]),
         Ok,
     )
+}
+
+/// `[lint.rules]`, or `rules` of an override, and where each is. `--rule` reads levn, which has no way to write every string.
+fn rules(table: &Expr) -> Result<(Vec<(Vec<u8>, Json)>, Vec<RuleOfBunfig>), Refusal> {
+    let (mut rules, mut places) = (Vec::new(), Vec::new());
+    for (rule, setting) in entries(table)? {
+        let first = match &setting.data {
+            Data::EArray(items) => items.slice().first().unwrap_or(setting),
+            _ => setting,
+        };
+        severity_of(&rule.name, first)?;
+        let written = json_of(setting)?;
+        places.push(RuleOfBunfig {
+            key_at: rule.at.start.max(0) as usize,
+            setting: written.clone(),
+            place: Place::of(setting),
+        });
+        rules.push((rule.name, written));
+    }
+    Ok((rules, places))
+}
+
+/// `overrides` of `[lint]`.
+fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal> {
+    let Data::EArray(items) = &value.data else {
+        return expected("array", value);
+    };
+    let one = |item: &Expr| {
+        let mut it = crate::cli::Override::default();
+        for (key, value) in entries(item)? {
+            match &key.name[..] {
+                b"files" => it.files = patterns(value)?,
+                b"excludeFiles" => it.excluded = patterns(value)?,
+                b"rules" => (it.rules, it.places) = rules(value)?,
+                b"globals" => it.globals = globals(value)?,
+                b"settings" => it.settings = settings(value)?,
+                _ => {
+                    let keys = [
+                        &b"files"[..],
+                        b"excludeFiles",
+                        b"rules",
+                        b"globals",
+                        b"settings",
+                    ];
+                    let keys = keys.iter().map(|it| it.to_vec());
+                    return unknown_key(&key.name, key.at, b"lint.overrides", keys);
+                }
+            }
+        }
+        needs_files(item, &it.files)?;
+        Ok(it)
+    };
+    items.slice().iter().map(one).collect()
+}
+
+/// `[lint.globals]`, or `globals` of an override. A boolean is what ESLint takes it for: whether it can be written to.
+fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
+    let one = |(name, value): (Key, &Expr)| {
+        let kind: &[u8] = match bun_lint::json::from_parsed(value) {
+            Some(Json::Bool(true)) => b"writable",
+            Some(Json::Bool(false)) => b"readonly",
+            Some(Json::String(it)) if it == b"writable" => b"writable",
+            Some(Json::String(it)) if it == b"readonly" => b"readonly",
+            Some(Json::String(it)) if it == b"off" => b"off",
+            _ => return expected("\"readonly\", \"writable\" or \"off\"", value),
+        };
+        Ok((name.name, Json::String(kind.to_vec())))
+    };
+    entries(table)?.into_iter().map(one).collect()
+}
+
+/// `[lint.settings]`, or `settings` of an override.
+fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
+    let one = |(name, value): (Key, &Expr)| Ok((name.name, json_of(value)?));
+    entries(table)?.into_iter().map(one).collect()
 }
 
 /// What `[lint]` of `file` says, and `[format]`, which is for the rule that holds a file against what `bun format` prints.
@@ -865,8 +950,25 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
         match &key.name[..] {
             // One key for two flags, as in `linterOptions` of ESLint.
             b"reportUnusedDisableDirectives" if !matches!(value.data, Data::EBoolean(_)) => {
-                give(LINT.param(UNUSED_SEVERITY), value, set)?;
+                let severity = severity_of(&key.name, value)?;
+                options.report_unused_disable_directives_severity = Some(severity);
             }
+            b"reportUnusedInlineConfigs" => {
+                options.report_unused_inline_configs = Some(severity_of(&key.name, value)?);
+            }
+            b"maxWarnings" => match json_of(value)? {
+                Json::Number(count) if count.fract() == 0.0 => options.max_warnings = count as i64,
+                Json::Number(_) => {
+                    return refuse(value.loc, &[b"maxWarnings must be a whole number"]);
+                }
+                _ => return expected("number", value),
+            },
+            b"fixType" => LINT.set(&key, value, set).map_err(|mut refusal| {
+                if refusal.message == crate::cli::INVALID_FIX_TYPE {
+                    refusal.message = b"Unknown fix type\n  Expected \"directive\", \"problem\", \"suggestion\", or \"layout\"".to_vec();
+                }
+                refusal
+            })?,
             // With the flag, a wrong name comes out when the report is printed.
             b"format" => {
                 LINT.set(&key, value, set)?;
@@ -897,32 +999,16 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                 };
                 set(NATIVE_PLUGIN_RULES, Some(&text), true).map_err(at(value))?;
             }
-            b"globals" => {
-                for (name, value) in entries(value)? {
-                    let is_writable = match bun_lint::json::from_parsed(value) {
-                        Some(Json::Bool(is_writable)) => is_writable,
-                        Some(Json::String(it)) if it == b"writable" => true,
-                        Some(Json::String(it)) if it == b"readonly" => false,
-                        _ => return expected("\"readonly\" or \"writable\"", value),
-                    };
-                    let suffix: &[u8] = if is_writable { b":true" } else { b"" };
-                    set(
-                        &b"global"[..],
-                        Some(&[&name.name[..], suffix].concat()),
-                        true,
-                    )
-                    .map_err(at(value))?;
-                }
-            }
+            b"globals" => options.globals = globals(value)?,
             // oxlint goes through `-A`, `-W` and `-D` in their order, and `all` is about every other one.
             b"categories" => {
                 let mut categories = entries(value)?;
                 bun_lint::utils::sort::sort_by_key(&mut categories, |it| it.0.name != b"all");
                 for (name, value) in categories {
-                    let is_known = crate::configs::CATEGORIES.contains(&&name.name[..])
-                        || matches!(&name.name[..], b"all" | b"nursery");
-                    if !is_known {
-                        return refuse(name.at, &[b"unknown category \"", &name.name, b"\""]);
+                    if !crate::configs::is_category(&name.name) {
+                        let known = crate::configs::CATEGORIES.iter().copied();
+                        let known = known.chain([&b"nursery"[..], b"all"]).map(<[u8]>::to_vec);
+                        return unknown_key(&name.name, name.at, b"lint.categories", known);
                     }
                     let flag: &[u8] = match severity_of(&name.name, value)? {
                         Severity::Off => b"allow",
@@ -932,28 +1018,9 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                     set(flag, Some(&name.name), true).map_err(at(value))?;
                 }
             }
-            // The flags read levn, which has no way to write every string. The values go in behind that.
-            b"rules" => {
-                for (rule, setting) in entries(value)? {
-                    let first = match &setting.data {
-                        Data::EArray(items) => items.slice().first().unwrap_or(setting),
-                        _ => setting,
-                    };
-                    severity_of(&rule.name, first)?;
-                    let written = json_of(setting)?;
-                    options.rules_of_bunfig.push(RuleOfBunfig {
-                        key_at: rule.at.start.max(0) as usize,
-                        setting: written.clone(),
-                        place: Place::of(setting),
-                    });
-                    options.add_rules(vec![(rule.name, written)]);
-                }
-            }
-            b"settings" => {
-                for (name, value) in entries(value)? {
-                    options.settings.push((name.name, json_of(value)?));
-                }
-            }
+            b"rules" => (options.rule, options.rules_of_bunfig) = rules(value)?,
+            b"settings" => options.settings = settings(value)?,
+            b"overrides" => options.overrides = overrides_of_lint(value)?,
             b"parserOptions" => {
                 for (name, value) in entries(value)? {
                     options.add_parser_options(vec![(name.name, json_of(value)?)]);
@@ -961,6 +1028,10 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
             }
             _ => LINT.set(&key, value, set)?,
         }
+    }
+    // There are no type errors without types.
+    if options.type_check && options.type_aware.is_none() {
+        options.type_aware = Some(true);
     }
     // A flag that only ESLint or only oxlint has tells whom a command line was written for. A key was written for Bun.
     options.forget_whose_flags_it_has();

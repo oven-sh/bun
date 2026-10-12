@@ -2,7 +2,8 @@
 //
 // - descriptions: a line for each page, `<plugin>/<rule>\t<the description of its frontmatter>`, for `bun lint --rules`
 // - pages: for each page a NUL, `<plugin>/<rule>`, a newline and its Markdown, for `bun lint --explain <rule>`:
-//   the description, then the text without the frontmatter and the MDX comments
+//   the description, then the text without the frontmatter and the MDX comments, and with the file name of a code
+//   block in a line before it
 //
 // Both are sorted by `<plugin>/<rule>`. `src/lint/driver/explain.rs` reads them.
 //
@@ -28,8 +29,11 @@ function field(frontmatter: string, key: string): string {
   }
 }
 
-/** Without the comments of MDX. What is in a code block is code: `{/* .. *\/}` is a comment of JSX there. */
-function withoutComments(markdown: string): string {
+/**
+ * Without the comments of MDX. What is in a code block is code: `{/* .. *\/}` is a comment of JSX there.
+ * The file name after the language of a code block, which a terminal does not show, becomes a paragraph.
+ */
+function forTerminal(markdown: string): string {
   const lines: string[] = [];
   let fence = "";
   for (const line of markdown.split("\n")) {
@@ -38,6 +42,12 @@ function withoutComments(markdown: string): string {
       if (marker?.startsWith(fence) && line.trim() === marker) fence = "";
     } else if (marker) {
       fence = marker;
+      const [, start, name] = /^(\s*[`~]+\S+)\s+(\S.*?)\s*$/.exec(line) ?? [];
+      if (name) {
+        if (lines.at(-1)) lines.push("");
+        lines.push("`" + name + "`", "", start);
+        continue;
+      }
     } else if (line.includes("{/*")) {
       const rest = line.replace(/\{\/\*.*?\*\/\}/g, "");
       if (rest.trim()) lines.push(rest);
@@ -61,7 +71,7 @@ for (const name of names) {
   const text = readFileSync(join(root, name + ".mdx"), "utf8").replaceAll("\r\n", "\n");
   const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(text);
   const description = field(frontmatter?.[1] ?? "", "description").replace(/\s+/g, " ");
-  const body = withoutComments(text.slice(frontmatter?.[0].length ?? 0)).replaceAll("\0", "");
+  const body = forTerminal(text.slice(frontmatter?.[0].length ?? 0)).replaceAll("\0", "");
   descriptions += `${name}\t${description}\n`;
   pages += `\0${name}\n${description}\n\n${body.trim()}\n`;
 }

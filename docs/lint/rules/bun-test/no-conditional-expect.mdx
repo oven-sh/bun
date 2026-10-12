@@ -16,7 +16,7 @@ An `expect` that only runs under a condition may not run at all. If the conditio
 
 In a test, the rule reports an `expect` inside an `if`, a `switch`, a `catch` block, a `.catch()` callback, `a ? b : c`, or an operand of `&&`, `||` or `??`.
 
-It also checks `function` declarations that a test uses. It does not look inside an anonymous `function () {}`, even when that is the test callback.
+It also checks a helper that a test uses, written as `function check() {}` or `const check = () => {}`. Methods are not checked.
 
 ## Examples
 
@@ -58,6 +58,21 @@ test("finds the admin", () => {
   if (admin) {
     expect(admin.name).toBe("Ada");
   }
+});
+```
+
+{/* bad */}
+```ts
+import { expect, test } from "bun:test";
+
+const expectAdult = (user: { age?: number }) => {
+  if (user.age) {
+    expect(user.age).toBeGreaterThan(17);
+  }
+};
+
+test("signs up adults only", () => {
+  expectAdult({ age: 30 });
 });
 ```
 

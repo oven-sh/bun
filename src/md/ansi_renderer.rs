@@ -1053,12 +1053,9 @@ impl<'a> AnsiRenderer<'a> {
         let found = self.soft_break.take().and_then(|it| {
             let since = self.out.list.get(it.at..)?;
             let moved_cols = self.col.checked_sub(it.col)?;
-            let fits = moved_cols as usize + width <= room as usize;
-            (since.first() == Some(&b' ') && !since.contains(&b'\n') && fits).then_some((
-                it,
-                since.len() - 1,
-                moved_cols,
-            ))
+            let fits = moved_cols == 0 || moved_cols as usize + width <= room as usize;
+            (since.first() == Some(&b' ') && !strings::contains_char(since, b'\n') && fits)
+                .then_some((it, since.len() - 1, moved_cols))
         });
         let Some((space, moved_bytes, moved_cols)) = found else {
             self.wrap_break();

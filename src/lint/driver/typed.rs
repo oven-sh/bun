@@ -224,11 +224,9 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
 /// A link to a directory is not followed.
 fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
     let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
-    // `dot: false`: no `*` takes a name that starts with a dot.
-    let names_hidden = pattern.starts_with(b".") || strings::contains(pattern, b"/.");
-    let pattern = bun_glob::Pattern::with_extglob(pattern);
+    let pattern = bun_glob::Pattern::without_dot(pattern);
     let ignored: Vec<bun_glob::Pattern> = (ignored.iter())
-        .map(|it| bun_glob::Pattern::with_extglob(it))
+        .map(|it| bun_glob::Pattern::without_dot(it))
         .collect();
     let is_ignored = |relative: &[u8]| ignored.iter().any(|it| it.matches(relative));
     let mut found = Vec::new();
@@ -239,8 +237,7 @@ fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>
         let Some(listing) = crate::fs::list(&crate::paths::to_native(path)) else {
             continue;
         };
-        let entries = listing.entries.into_iter();
-        for entry in entries.filter(|it| names_hidden || !it.name.starts_with(b".")) {
+        for entry in listing.entries {
             let relative = match directory.is_empty() {
                 true => entry.name,
                 false => [&directory[..], b"/", &entry.name].concat(),
@@ -411,7 +408,7 @@ fn check_and_lint_in(
         cwd: &environment.cwd,
         project: match project {
             Project::This(config) => Some(config),
-            Project::Nearest | Project::Including => context.options.project.as_deref(),
+            Project::Nearest | Project::Including => context.options.tsconfig.as_deref(),
         },
         listed_projects: (listed.as_ref()).map(|it| it as &dyn bun_sema_driver::ListedProjects),
         build: false,
@@ -697,7 +694,7 @@ pub(crate) fn lint(
                 result.fixes = if is_fixed { fixes } else { 0 };
                 done[index] = Some(result);
             };
-            let has_fixes = context.fixes()
+            let has_fixes = context.fixes_file(file.path)
                 && !state.is_over
                 && result.messages.iter().any(|it| it.fix.is_some());
             let (true, Some(text)) = (has_fixes, &text) else {

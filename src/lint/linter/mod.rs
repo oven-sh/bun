@@ -363,7 +363,7 @@ impl<S: RuleSet> Linter<S> {
     }
 
     /// [`Rule::validate`](crate::rule::Rule::validate) of `entry`.
-    fn validate(&self, entry: &RuleEntry, options: &[Json]) -> Result<(), Vec<u8>> {
+    pub fn validate(&self, entry: &RuleEntry, options: &[Json]) -> Result<(), Vec<u8>> {
         let index = self.registry.index_of(entry);
         match index.and_then(|it| self.numbers.get(it)) {
             Some(number) => S::validate(*number, &Options::new(options)),
@@ -449,7 +449,6 @@ impl<S: RuleSet> Linter<S> {
         config: &ResolvedConfig,
         options: &LintOptions,
     ) -> LintResult {
-        let (whole, config) = (config, config.of(file));
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
         if let Some(fatal) = parse_error(file) {
@@ -585,6 +584,24 @@ impl<S: RuleSet> Linter<S> {
             }
             for comment in comments.iter().filter(is_understood) {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
+            }
+        }
+        let mut off: Vec<RuleId> = Vec::new();
+        if config.has_every_rule {
+            let is_on = |id: &RuleId| match is_plain {
+                true => (config
+                    .rules
+                    .iter()
+                    .filter(|it| it.severity != Severity::Off))
+                .any(|it| RuleId::Known(it.reported_as()) == *id),
+                false => (running.iter().filter(|it| it.severity != Severity::Off))
+                    .any(|it| it.ran().id() == *id),
+            };
+            let named = disable_directives.iter().filter_map(|it| it.rule.as_ref());
+            for rule in named.filter(|it| !is_on(it)) {
+                if !off.contains(rule) {
+                    off.push(rule.clone());
+                }
             }
         }
 
@@ -939,10 +956,6 @@ impl<S: RuleSet> Linter<S> {
                 None => !config::is_rule_of_oxlint(slash.map_or(name, |it| &name[it + 1..])),
             }
         };
-        let only_for_react: Vec<RuleId> = match has_directives && !std::ptr::eq(whole, config) {
-            true => whole.only_for_react().map(RuleId::Known).collect(),
-            false => Vec::new(),
-        };
         // Adds to each of `messages`, which are sorted by position, what suppresses it.
         let apply_comments =
             |report_unused, wants_fixes, wants_suppressions, messages: &mut Vec<LintMessage>| {
@@ -971,7 +984,7 @@ impl<S: RuleSet> Linter<S> {
                             wants_suppressions,
                             rules_to_ignore: &rules_to_ignore,
                             has_skipped_rules: config.has_skipped_rules,
-                            only_for_react: &only_for_react,
+                            off: &off,
                         },
                         messages,
                     );
@@ -1217,7 +1230,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 if is_turned_on && !self.skipped.iter().any(|it| **it == *id) {
                     self.skipped.push(id.into());
                 }
-            } else {
+            } else if is_turned_on || !config.has_every_rule {
                 let message = registry::missing_rule_message(id);
                 self.error(comment, Some(RuleId::Unknown(id.into())), message);
             }

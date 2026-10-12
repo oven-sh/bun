@@ -7,9 +7,10 @@ use bun_lint::paths;
 use std::borrow::Cow;
 use std::sync::OnceLock;
 
-/// The options that are not about the syntax, and `noext`.
+/// The options that are not about the syntax, `dot` and `noext`.
 #[derive(Copy, Clone, Default)]
 struct Asked {
+    dot: bool,
     nocomment: bool,
     nonegate: bool,
     flip_negate: bool,
@@ -44,9 +45,10 @@ impl Glob {
             true => Cow::Owned([b"\\", &written[..]].concat()),
             false => Cow::Borrowed(&written[bangs..]),
         };
-        let read = || match asked.noext {
-            true => Pattern::new(&text),
-            false => Pattern::with_extglob(&text),
+        let read = || match (asked.noext, asked.dot) {
+            (true, _) => Pattern::new(&text),
+            (false, true) => Pattern::with_extglob(&text),
+            (false, false) => Pattern::without_dot(&text),
         };
         Glob {
             pattern: (asked.nocomment || !written.starts_with(b"#")).then(read),
@@ -66,6 +68,7 @@ impl Glob {
         let options = group.object("patternOptions");
         let is_set = |key: &str| options.get(key).is_some_and(Json::is_truthy);
         let asked = Asked {
+            dot: is_set("dot"),
             nocomment: !group.has("patternOptions") || is_set("nocomment"),
             nonegate: is_set("nonegate"),
             flip_negate: is_set("flipNegate"),

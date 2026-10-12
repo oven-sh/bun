@@ -7,11 +7,10 @@ import Format from "/snippets/cli/format.mdx";
 
 Bun ships with a fast, built-in code formatter. There's nothing to install and nothing to configure.
 
-- JavaScript, TypeScript, JSX, CSS, SCSS, Less, HTML, Vue, Angular, JSON, YAML, Markdown, MDX, GraphQL, and Handlebars
+- JavaScript, TypeScript, JSX, CSS, SCSS, Less, HTML, Vue, Angular, JSON, YAML, TOML, Markdown, MDX, GraphQL, and Handlebars
 - The same output as [Prettier](https://prettier.io)
-- Sorts imports and Tailwind CSS classes
+- Sorts imports, Tailwind CSS classes, and `package.json`
 - Works with your existing Prettier or oxfmt config
-- Format on save in your editor
 
 ## Run the formatter
 
@@ -49,11 +48,18 @@ src/server.ts
 2 files need formatting. Run bun format to fix them.
 ```
 
-The exit code is `1` if a file needs formatting and `0` if none do.
+The exit code is `1` if a file needs formatting, `0` if none do, and `2` if something went wrong, like a syntax error. That makes it the command for CI.
+
+```yaml .github/workflows/format.yml icon="file-code"
+steps:
+  - uses: actions/checkout@v4
+  - uses: oven-sh/setup-bun@v2
+  - run: bun format --check
+```
 
 ## Options
 
-Options live in `bunfig.toml`. The names and defaults are [Prettier's](https://prettier.io/docs/options).
+Options live in `bunfig.toml`. To create the section, run `bun format --init`.
 
 ```toml bunfig.toml icon="settings"
 [format]
@@ -62,30 +68,16 @@ semi = false
 singleQuote = true
 ```
 
-To create the section, run `bun format --init`.
+| Option          | Default | What it does                  |
+| --------------- | ------- | ----------------------------- |
+| `printWidth`    | `80`    | Wrap lines at this column     |
+| `tabWidth`      | `2`     | Spaces per indentation level  |
+| `useTabs`       | `false` | Indent with tabs              |
+| `semi`          | `true`  | Print semicolons              |
+| `singleQuote`   | `false` | Use single quotes             |
+| `trailingComma` | `"all"` | `"all"`, `"es5"`, or `"none"` |
 
-| Option           | Default    | What it does                            |
-| ---------------- | ---------- | --------------------------------------- |
-| `printWidth`     | `80`       | Wrap lines at this column               |
-| `tabWidth`       | `2`        | Spaces per indentation level            |
-| `useTabs`        | `false`    | Indent with tabs                        |
-| `semi`           | `true`     | Print semicolons                        |
-| `singleQuote`    | `false`    | Use single quotes                       |
-| `trailingComma`  | `"all"`    | `"all"`, `"es5"`, or `"none"`           |
-| `bracketSpacing` | `true`     | `{ a }` or `{a}`                        |
-| `arrowParens`    | `"always"` | `(x) => x` or, with `"avoid"`, `x => x` |
-| `endOfLine`      | `"lf"`     | `"lf"`, `"crlf"`, `"cr"`, or `"auto"`   |
-
-See [`bunfig.toml`](/runtime/bunfig#formatter) for all of them. Each one is also a flag, like `--print-width 100` or `--no-semi`.
-
-A typo is an error, not a silent no-op:
-
-```txt
-2 | printWdith = 100
-    ^
-error: unknown key "printWdith" in [format]. Did you mean "printWidth"?
-    at /app/bunfig.toml:2:1
-```
+All of [Prettier's options](https://prettier.io/docs/options) work, under the same names. Each one is also a flag, like `--print-width 100` or `--no-semi`.
 
 ### Different options for some files
 
@@ -121,12 +113,7 @@ const matrix = [
 ];
 ```
 
-| Language       | Comment                    |
-| -------------- | -------------------------- |
-| JSX            | `{/* prettier-ignore */}`  |
-| CSS            | `/* prettier-ignore */`    |
-| HTML, Markdown | `<!-- prettier-ignore -->` |
-| YAML, GraphQL  | `# prettier-ignore`        |
+In JSX it's `{/* prettier-ignore */}`, in CSS `/* prettier-ignore */`, in HTML and Markdown `<!-- prettier-ignore -->`, and in YAML and GraphQL `# prettier-ignore`.
 
 ## Sort imports
 
@@ -135,25 +122,35 @@ const matrix = [
 sortImports = true
 ```
 
-Imports are grouped (built-in modules, packages, aliases like `@/`, relative paths, styles), with a blank line between groups, and sorted by path within each group.
+```ts title="Before"
+import { z } from "zod";
+import { b, a } from "./util";
+import { db } from "@/db";
+import { readFile } from "node:fs/promises";
+import { c } from "./util";
+```
 
-```ts
+```ts title="After"
 import { readFile } from "node:fs/promises";
 
 import { z } from "zod";
 
 import { db } from "@/db";
 
-import { b, a } from "./util";
+import { a, b, c } from "./util";
 ```
 
-Side-effect imports like `import "./setup"` don't move. To pick your own groups, use a table. See [`format.sortImports`](/runtime/bunfig#format-sortimports) for every option.
+- Imports are grouped: built-in modules, packages, aliases like `@/`, relative paths, styles.
+- Each group is sorted by path, and the names in `{ }` are sorted too.
+- Two imports from the same module become one.
+- Side-effect imports like `import "./setup"` never move, and nothing moves past one.
+
+To pick your own groups, use a table. See [`format.sortImports`](/runtime/bunfig#format-sortimports).
 
 ```toml bunfig.toml icon="settings"
 [format.sortImports]
-groups = ["builtin", "external", "internal", ["parent", "sibling", "index"]]
-internalPattern = ["@/", "~/"]
-newlinesBetween = false
+groups = ["react", "builtin", "external", "internal", ["parent", "sibling", "index"]]
+customGroups = [{ groupName = "react", elementNamePattern = ["react", "react-dom/**"] }]
 ```
 
 ## Sort Tailwind CSS classes
@@ -163,49 +160,80 @@ newlinesBetween = false
 sortTailwindcss = true
 ```
 
-Classes in `class` and `className` are sorted in Tailwind's recommended order. The order comes from the `tailwindcss` package in your project, so version 3 or 4 has to be installed.
-
 ```tsx
 <a className="p-4 flex m-2" /> // [!code --]
 <a className="m-2 flex p-4" /> // [!code ++]
 ```
 
-To sort the arguments of functions like `clsx` too, or to name your stylesheet, use a table. See [`format.sortTailwindcss`](/runtime/bunfig#format-sorttailwindcss) for every option.
+Classes in `class` and `className` are sorted in Tailwind's recommended order. The order comes from the `tailwindcss` package in your project, so version 3 or 4 has to be installed.
+
+To sort the arguments of functions like `clsx` too, use a table. See [`format.sortTailwindcss`](/runtime/bunfig#format-sorttailwindcss).
 
 ```toml bunfig.toml icon="settings"
 [format.sortTailwindcss]
-stylesheet = "./src/app.css"
 functions = ["clsx", "cn"]
 ```
 
-## package.json, JSDoc, and TOML
+## Sort `package.json`
 
-All off by default.
+```toml bunfig.toml icon="settings"
+[format]
+sortPackageJson = true
+```
 
-| Option            | What it does                              |
-| ----------------- | ----------------------------------------- |
-| `sortPackageJson` | Sort the keys of `package.json`           |
-| `jsdoc`           | Format JSDoc comments                     |
-| `toml`            | Format TOML files too, like `bunfig.toml` |
+Keys go in the conventional order: `name`, `version`, `description`, and so on.
 
-## Editors
-
-Install the [Bun extension for VS Code](https://marketplace.visualstudio.com/items?itemName=oven.bun-vscode) and make it your formatter.
-
-```json .vscode/settings.json icon="file-json"
+```json title="Before"
 {
-  "editor.defaultFormatter": "oven.bun-vscode",
-  "editor.formatOnSave": true
+  "dependencies": { "zod": "^4.0.0" },
+  "scripts": { "dev": "bun --hot src/index.ts" },
+  "version": "1.0.0",
+  "name": "app"
 }
 ```
 
-For any other editor, point its LSP client at `bun lint --lsp`. The same server lints and formats.
-
-```bash terminal icon="terminal"
-bun lint --lsp
+```json title="After"
+{
+  "name": "app",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "bun --hot src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  }
+}
 ```
 
-No LSP client? Pipe the buffer through `bun format`. The path picks the language and the options. The file doesn't have to exist.
+## Format JSDoc comments
+
+```toml bunfig.toml icon="settings"
+[format]
+jsdoc = true
+```
+
+```js title="Before"
+/**
+ * adds two numbers
+ * @returns {number} the sum
+ * @param {number} b second number
+ * @param {number} a   first number
+ */
+```
+
+```js title="After"
+/**
+ * Adds two numbers
+ *
+ * @param {number} a First number
+ * @param {number} b Second number
+ * @returns {number} The sum
+ */
+```
+
+## Standard input
+
+Pipe text through `bun format`. The path picks the language and the options. The file doesn't have to exist.
 
 ```bash terminal icon="terminal"
 bun format --stdin-filepath src/index.ts < src/index.ts
@@ -228,17 +256,6 @@ A file with both staged and unstaged changes isn't written, because staging it a
 bun format --changed
 bun format --changed=origin/dev
 ```
-
-## CI
-
-```yaml .github/workflows/format.yml icon="file-code"
-steps:
-  - uses: actions/checkout@v4
-  - uses: oven-sh/setup-bun@v2
-  - run: bun format --check
-```
-
-The exit code is `2` if something went wrong, like a syntax error. Bun reports that file and still checks the rest.
 
 ## Migrate from Prettier or oxfmt
 

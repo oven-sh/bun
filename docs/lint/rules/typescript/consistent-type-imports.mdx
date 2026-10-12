@@ -91,4 +91,14 @@ export type Users = import("./models").User[];
 
 The `verbatimModuleSyntax` option of TypeScript makes a missing `import type` a compile error. If it is on, you need this rule only for its fix.
 
-With `experimentalDecorators` and `emitDecoratorMetadata` both on, TypeScript needs some imported types at runtime, and `import type` removes them. Run `bun lint --type-aware` in such a project: only then does the rule read both settings from your `tsconfig.json`, and it leaves the imports alone in files that have a decorator.
+With `experimentalDecorators` and `emitDecoratorMetadata` both on, TypeScript needs some imported types at runtime, and `import type` removes them. The rule leaves the imports alone in a file that has a decorator. With `--type-aware` it reads both settings from your `tsconfig.json`, and checks such a file too if one of them is off.
+
+{/* good */}
+```ts
+import { Database } from "./database";
+
+@Injectable()
+export class Users {
+  constructor(private database: Database) {}
+}
+```

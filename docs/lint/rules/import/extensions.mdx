@@ -121,7 +121,7 @@ import { routes } from "~/generated/routes";
 import { routes } from "~/generated/routes";
 ```
 
-To learn which file `./user` stands for, the rule tries `.mjs`, `.js`, `.json` and `.node`, like Node.js. It does not find `./user.ts`. So a `ts` entry has no effect, and `"never"` does not report `./user.ts`:
+The rule looks up which file `./user` stands for, the way Bun and TypeScript do, so it knows that it is `./user.ts`:
 
 {/* file "user.ts" */}
 ```ts
@@ -130,9 +130,21 @@ export function createUser(name: string) {
 }
 ```
 
-{/* good {"options": ["never"]} */}
+{/* bad {"options": ["ignorePackages", {"ts": "never"}]} */}
 ```ts
 import { createUser } from "./user.ts";
 ```
 
-In an ESLint config, `settings["import/resolver"]` changes how files are found.
+{/* file "user.ts" */}
+```ts
+export function createUser(name: string) {
+  return { name };
+}
+```
+
+{/* good {"options": ["ignorePackages", {"ts": "never"}]} */}
+```ts
+import { createUser } from "./user";
+```
+
+With an ESLint config only `.mjs`, `.js`, `.json` and `.node` are tried, like in Node.js, unless `settings["import/resolver"]` says otherwise.

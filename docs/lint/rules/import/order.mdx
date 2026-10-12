@@ -18,7 +18,7 @@ The default order is Node.js built-ins, packages, parent folders (`../`), the sa
 
 - `import` and top-level `const x = require()` are checked. All `require()` calls go after all `import` statements.
 - `import "./app.css"` and other imports without a name are skipped, because moving them can change what the code does.
-- `bun` and `bun:test` count as packages, not as built-ins.
+- `bun` and `bun:test` count as built-ins. With an ESLint config they count as packages, unless `settings["import/core-modules"]` lists them.
 
 `--fix` moves the imports, unless there is other code between them.
 

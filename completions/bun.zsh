@@ -780,7 +780,6 @@ _bun_lint_completion() {
         '--report-unused-disable-directives[Report eslint-disable comments that disable nothing]' \
         '--print-config[Print the config for a file and exit]:print-config:_files' \
         '--doctor[Show which rules run natively and which packages you can remove]' \
-        '--flavor[Use the eslint or the oxlint config in a project that has both]:flavor' \
         '--allow-unsupported[Warn instead of failing when the config has a rule or file that is not supported]' \
         '--staged[Only lint files that are staged in git]' \
         '--changed[Only lint files that differ from a branch or commit (default\: the default branch)]' \
@@ -810,8 +809,7 @@ _bun_lint_completion() {
         '--fix-dangerously[Apply every fix and suggestion, even those that can change behavior]' \
         '--type-aware[Also run the rules that need types]' \
         '--no-type-aware[Skip the rules that need types]' \
-        '--project[Use this tsconfig.json for the rules that need types (alias\: --tsconfig)]:project:_files' \
-        '-p[Use this tsconfig.json for the rules that need types (alias\: --tsconfig)]:project:_files' \
+        '--tsconfig[Use this tsconfig.json for the rules that need types]:tsconfig:_files' \
         '--type-check[With --type-aware, report type errors too]' \
         '--infer-globals[Also treat what the project'"'"'s types declare as globals]' \
         '--no-infer-globals[Do not take globals from the project'"'"'s types]' \
@@ -821,6 +819,9 @@ _bun_lint_completion() {
         '--help[Print the common flags. With --all, every flag]' \
         '-h[Print the common flags. With --all, every flag]' \
         '--help-all[The same as --help --all]' \
+        '--flavor[Use the eslint or the oxlint config in a project that has both]:flavor' \
+        '--project[The same as --tsconfig]:project:_files' \
+        '-p[The same as --tsconfig]:project:_files' \
         '--parser-options[Set parser options\: --parser-options projectService\:true]:parser-options' \
         '--parser[Parse files with this package]:parser' \
         '--plugin[Load these plugins]:plugin' \
@@ -906,7 +907,6 @@ _bun_format_completion() {
         '--ignore-path[Read ignore patterns from these files (default\: .gitignore and .prettierignore)]:ignore-path:_files' \
         '--ignore-pattern[Skip files that match this pattern]:ignore-pattern' \
         '--with-node-modules[Format files in node_modules too]' \
-        '--toml[Format TOML files too]' \
         '--no-error-on-unmatched-pattern[Do not fail when an argument matches no file]' \
         '--ignore-unknown[Ignore files in an unknown language]' \
         '-u[Ignore files in an unknown language]' \

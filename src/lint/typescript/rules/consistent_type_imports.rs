@@ -548,7 +548,7 @@ impl ConsistentTypeImports {
 
 impl Rule for ConsistentTypeImports {
     const META: Meta =
-        Meta::typescript("consistent-type-imports", Kind::Suggestion).fixable(Fixable::Code);
+        Meta::typescript("consistent-type-imports", Kind::Suggestion).fixable(Fixable::Code).uses_types();
     const ON: On = On::new()
         .stmts(&[StmtTag::Import])
         .types(&[TypeTag::Import])
@@ -584,6 +584,8 @@ impl Rule for ConsistentTypeImports {
                 let options = types.compiler_options();
                 (options.experimental_decorators, options.emit_decorator_metadata)
             }
+            // Nothing can say it there, and the fix takes away what the metadata needs.
+            None if file.language().stands_alone => (true, true),
             None => (file.language().experimental_decorators, file.language().emit_decorator_metadata),
         };
         if experimental_decorators && emit_decorator_metadata {

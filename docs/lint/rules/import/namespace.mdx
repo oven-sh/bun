@@ -16,7 +16,7 @@ With `import * as api from "./api"`, reading a name that `./api` does not export
 
 The rule reads the imported file and checks `api.name`, `const { name } = api` and `<api.Name />`. A computed read like `api[key]` cannot be checked, so it is reported as well unless you allow it.
 
-Only `.js`, `.mjs` and `.cjs` files are read. In an ESLint config, `settings["import/extensions"]` changes that list.
+JavaScript and TypeScript files are read, JSX included. With an ESLint config only `.js`, `.mjs` and `.cjs` files are, unless `settings["import/extensions"]` lists others.
 
 ## Examples
 

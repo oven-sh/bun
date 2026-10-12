@@ -38,19 +38,13 @@ fn cannot(verb: &str, why: &[u8]) -> Vec<u8> {
 }
 
 impl Section {
-    fn text(&self, flavor: Option<&str>, line_break: &[u8]) -> Vec<u8> {
-        let flavor = flavor.map_or_else(String::new, |it| format!("flavor = \"{it}\"\n"));
-        let text = format!("[{}]\n{flavor}{}", self.name, self.body);
+    fn text(&self, line_break: &[u8]) -> Vec<u8> {
+        let text = format!("[{}]\n{}", self.name, self.body);
         strings::replace_owned(text.as_bytes(), b"\n", line_break)
     }
 
     /// `Ok`: what has been done. `Err`: why nothing has.
-    fn try_add(
-        &self,
-        flavor: Option<&str>,
-        other: Option<&[u8]>,
-        cwd: &[u8],
-    ) -> Result<Vec<u8>, Vec<u8>> {
+    fn try_add(&self, other: Option<&[u8]>, cwd: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
         if let Some(other) = other {
             let key = match paths::basename(other).starts_with(b"package.") {
                 true => format!("{} in ", self.key_in_package),
@@ -64,7 +58,7 @@ impl Section {
         let before = match fs::read(&path) {
             Ok(before) => before,
             Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
-                fs::write_new(&path, &self.text(flavor, b"\n"))
+                fs::write_new(&path, &self.text(b"\n"))
                     .map_err(|error| cannot("write", &fs::describe(&error)))?;
                 return Ok(
                     format!("Created bunfig.toml with a [{}] section", self.name).into_bytes(),
@@ -96,7 +90,7 @@ impl Section {
         let breaks = wanted
             .saturating_sub(strings::count_char(&text[written..], b'\n'))
             .max(usize::from(is_in_a_line));
-        let mut added = [line_break.repeat(breaks), self.text(flavor, line_break)].concat();
+        let mut added = [line_break.repeat(breaks), self.text(line_break)].concat();
         if bom == Some(BOM::Utf16Le) {
             added = added.iter().flat_map(|it| [*it, 0]).collect();
         }
@@ -105,16 +99,10 @@ impl Section {
         Ok(format!("Added [{}] to bunfig.toml", self.name).into_bytes())
     }
 
-    /// `flavor`: `--flavor`, which is kept for the runs to come. `other`: the configuration file of another tool that counts in the
-    /// working directory.
-    pub(crate) fn add(
-        &self,
-        flavor: Option<&str>,
-        other: Option<&[u8]>,
-        environment: &Environment,
-    ) -> Outcome {
+    /// `other`: the configuration file of another tool that counts in the working directory.
+    pub(crate) fn add(&self, other: Option<&[u8]>, environment: &Environment) -> Outcome {
         let mut out = Outcome::default();
-        match self.try_add(flavor, other, &environment.cwd) {
+        match self.try_add(other, &environment.cwd) {
             Ok(done) => out.stdout = [&done[..], b"\n"].concat(),
             Err(why) => {
                 write_error(&mut out.stderr, environment.stderr.colors, &why);

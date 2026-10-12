@@ -774,7 +774,10 @@ impl Rc<'_, '_> {
                 true => Vec::new(),
                 false => [&certain[..], plugins.as_deref().unwrap_or_default()].concat(),
             };
+            // `$basePath`, which an override of bunfig.toml has: its directory.
+            let base_path = item.get(b"$basePath").and_then(Json::as_str);
             let object = ConfigObject {
+                base_path: base_path.map(<[u8]>::to_vec),
                 files: Some(
                     (files.iter())
                         .map(|it| vec![Pattern::of_oxlint(it)])

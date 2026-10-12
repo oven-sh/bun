@@ -213,16 +213,14 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
   });
 
   const flavor = command === "lint" ? "oxlint" : "oxfmt";
-  test(`--flavor=${flavor} is kept, in bunfig.toml`, async () => {
+  test(`--flavor=${flavor} is not written down`, async () => {
     using dir = tempDir("bun-init-section", { "a.js": "a;\n" });
     expect(await run(String(dir), command, "--init", `--flavor=${flavor}`)).toEqual({
       stdout: `Created bunfig.toml with a [${command}] section\n`,
       stderr: "",
       exitCode: 0,
     });
-    expect(readFileSync(join(String(dir), "bunfig.toml"), "utf8")).toBe(
-      section.replace("\n", `\nflavor = "${flavor}"\n`),
-    );
+    expect(readFileSync(join(String(dir), "bunfig.toml"), "utf8")).toBe(section);
     expect(readdirSync(String(dir)).sort()).toEqual(["a.js", "bunfig.toml"]);
   });
 });

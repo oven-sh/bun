@@ -66,7 +66,7 @@ import { createReadStream } from "node:fs";
 createReadStream(file).on("error", fail).pipe(response);
 ```
 
-An emitter that is returned or passed to another function is not reported, because the listener may be added there. `pipeline()` handles the errors of its streams:
+An emitter that is returned, exported or passed to another function is not reported, because the listener may be added there. `pipeline()` handles the errors of its streams:
 
 {/* good */}
 ```js
@@ -78,6 +78,8 @@ await pipeline(createReadStream(file), response);
 export function open(path) {
   return createReadStream(path);
 }
+
+export const log = createReadStream("app.log");
 ```
 
 ## Options

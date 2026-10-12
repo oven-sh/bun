@@ -48,23 +48,30 @@ const REMOVE_VAR: Message = Message::new("removeVar", "Remove unused variable '{
 
 /// One of the `..IgnorePattern` options.
 pub struct Pattern {
-    regex: Regex,
+    /// `None`: `^_`, the usual one, and the default without a configuration file. JavaScriptCore is not started for it.
+    regex: Option<Regex>,
     /// `String(regex)`
     text: String,
 }
 
 impl Pattern {
     fn new(options: Object, key: &str) -> Option<Pattern> {
-        options.str(key).filter(|source| !source.is_empty())?;
+        let source = options.str(key).filter(|source| !source.is_empty())?;
+        if source == "^_" {
+            return Some(Pattern { regex: None, text: "/^_/u".to_string() });
+        }
         let regex = options.regex(key, "u")?;
         Some(Pattern {
             text: regex.to_string(),
-            regex,
+            regex: Some(regex),
         })
     }
 
     pub fn test(&self, name: Name) -> bool {
-        self.regex.test(name.bytes())
+        match &self.regex {
+            Some(regex) => regex.test(name.bytes()),
+            None => name.bytes().starts_with(b"_"),
+        }
     }
 
     /// As it is in the configuration.
@@ -894,9 +901,11 @@ impl NoUnusedVars {
         }
     }
 
-    /// The `additional` of `getDefinedMessageData` and `getAssignedMessageData`.
-    pub fn unused_message_data(&self, kind: VariableType) -> String {
+    /// The `additional` of `getDefinedMessageData` and `getAssignedMessageData`. Without a configuration file [the hint](Self::hint)
+    /// says it of `^_`, which is the default there.
+    pub fn unused_message_data(&self, kind: VariableType, file: &File) -> String {
         match self.description(kind) {
+            (_, Some(pattern)) if file.language().stands_alone && pattern.source() == "^_" => String::new(),
             (description, Some(pattern)) => format!(". Allowed unused {description} must match {}", pattern.text),
             _ => String::new(),
         }
@@ -1047,8 +1056,8 @@ impl NoUnusedVars {
         cx.report(last_write.map_or(at, identifier_span), UNUSED_VAR)
             .data("varName", name)
             .data("action", if is_assigned { "assigned a value" } else { "defined" })
-            .data("additional", self.unused_message_data(kind))
-            .hint(hint(def))
+            .data("additional", self.unused_message_data(kind, cx.file()))
+            .hint(self.hint(def, kind))
             .suggest_with(REMOVE_VAR, &[("varName", name.bytes())], |fixer| {
                 handle_fixes(fixer, variable, def, at)
             });
@@ -1080,22 +1089,29 @@ impl NoUnusedVars {
                 .data("additional", "");
         }
     }
-}
 
-/// For a variable that is unused. `def`: its first definition.
-pub fn hint(def: Declaration) -> &'static str {
-    match def {
-        // What is thrown there should have it as its cause.
-        Declaration::Var(pat) if def.is_catch_parameter() && matches!(pat.parent(), Node::VarDecl(_)) => {
-            let throws = matches!(pat.parent().parent(), Node::Stmt(it)
-                if matches!(it.kind(), StmtKind::Try { handler: Some(handler), .. }
-                    if handler.as_block().is_some_and(|body| body.iter().any(|it| it.tag() == StmtTag::Throw))));
-            if throws { "" } else { "A catch needs no parameter. Remove it and its parentheses." }
+    /// For a variable that is unused. `def`: its first definition.
+    pub fn hint(&self, def: Declaration, kind: VariableType) -> &'static str {
+        match def {
+            // What is thrown there should have it as its cause.
+            Declaration::Var(pat) if def.is_catch_parameter() && matches!(pat.parent(), Node::VarDecl(_)) => {
+                let throws = matches!(pat.parent().parent(), Node::Stmt(it)
+                    if matches!(it.kind(), StmtKind::Try { handler: Some(handler), .. }
+                        if handler.as_block().is_some_and(|body| body.iter().any(|it| it.tag() == StmtTag::Throw))));
+                if throws { "" } else { "A catch needs no parameter. Remove it and its parentheses." }
+            }
+            Declaration::Var(pat) | Declaration::Param(pat) if has_rest_sibling(Node::Pat(pat)) => {
+                "To leave a property out this way, turn on the option ignoreRestSiblings."
+            }
+            Declaration::ImportDefault(_)
+            | Declaration::ImportNamespace(_)
+            | Declaration::ImportSpec(_)
+            | Declaration::ImportEquals(_) => "",
+            _ if self.description(kind).1.is_some_and(|it| it.source() == "^_") => {
+                "Remove it, or start its name with _ to keep it."
+            }
+            _ => "",
         }
-        Declaration::Var(pat) | Declaration::Param(pat) if has_rest_sibling(Node::Pat(pat)) => {
-            "To leave a property out this way, turn on the option ignoreRestSiblings."
-        }
-        _ => "",
     }
 }
 

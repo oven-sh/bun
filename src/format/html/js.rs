@@ -202,7 +202,9 @@ fn with_file(
         options.flavor = flavor;
         options.jsdoc = f.options().jsdoc;
         match f.options().sort_imports.clone() {
-            Some(how) if how.is_applied_by_format() => options.sort_imports = Some(how),
+            Some(how) if how.is_applied_by_format() => {
+                (options.sort_imports, sorts_text) = (Some(std::sync::Arc::clone(&how)), Some(how));
+            }
             how => sorts_text = how,
         }
     }

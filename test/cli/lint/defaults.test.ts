@@ -1,6 +1,8 @@
 // What `bun lint` does in a project that has no configuration of ESLint or oxlint.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
@@ -16,7 +18,7 @@ const env = {
 
 type Result = { filePath: string; messages: { line: number; column: number; severity: number; ruleId: string }[] };
 
-/** `reports`: `a.js:1:1 error no-debugger` for each problem. */
+/** `reports`: `a.js:1:1 error no-debugger` for each problem. `texts`: the files when the command has run. */
 async function lint(files: Record<string, string>, args: string[], stdin?: string) {
   using dir = tempDir("bun-lint-defaults", files);
   await using proc = spawn({
@@ -35,7 +37,10 @@ async function lint(files: Record<string, string>, args: string[], stdin?: strin
       it => `${nameOf(filePath)}:${it.line}:${it.column} ${it.severity === 2 ? "error" : "warning"} ${it.ruleId}`,
     ),
   );
-  return { json, reports, stderr, exitCode };
+  const texts = Object.fromEntries(
+    Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]),
+  );
+  return { json, reports, texts, stderr, exitCode };
 }
 
 describe.concurrent("severities", () => {
@@ -143,6 +148,13 @@ describe.concurrent("severities", () => {
   test("--print-config", async () => {
     const { json } = await lint(files, ["--print-config", "b.ts"]);
     const { rules } = json;
+    const unusedOnPurpose = {
+      argsIgnorePattern: "^_",
+      varsIgnorePattern: "^_",
+      caughtErrorsIgnorePattern: "^_",
+      destructuredArrayIgnorePattern: "^_",
+      ignoreRestSiblings: true,
+    };
     expect({
       "no-debugger": rules["no-debugger"],
       "no-empty": rules["no-empty"],
@@ -155,8 +167,8 @@ describe.concurrent("severities", () => {
       "no-empty": [1],
       "prefer-const": [1],
       "@typescript-eslint/no-explicit-any": [1],
-      "@typescript-eslint/no-unused-vars": [1],
-      "no-unused-vars": [0],
+      "@typescript-eslint/no-unused-vars": [1, unusedOnPurpose],
+      "no-unused-vars": [0, unusedOnPurpose],
     });
   });
 });
@@ -213,6 +225,104 @@ declare const c: any;
   });
 });
 
+describe.concurrent("a name that starts with _ is unused on purpose", () => {
+  const code = `const _a = 1;
+export function f(_b, c) {}
+try {
+  f();
+} catch (_e) {
+  f();
+}
+const [_d, e] = [1, 2];
+const { g, ...rest } = Bun;
+console.log(e, rest);
+const h = 1;
+`;
+  const all = ["1:7", "2:19", "2:23", "5:10", "8:8", "9:9", "11:7"];
+
+  test.each([
+    ["a.js", "no-unused-vars"],
+    ["a.ts", "@typescript-eslint/no-unused-vars"],
+  ])("%s", async (name, rule) => {
+    const set = (setting: string) => ({ [name]: code, "bunfig.toml": `[lint.rules]\n"${rule}" = ${setting}\n` });
+    const [plain, severity, options] = await Promise.all([
+      lint({ [name]: code }, []),
+      lint(set(`"error"`), []),
+      lint(set(`["warn", { args = "all" }]`), []),
+    ]);
+    expect(plain.reports).toEqual([`${name}:2:23 warning ${rule}`, `${name}:11:7 warning ${rule}`]);
+    expect(plain.json[0].messages.map((it: { message: string }) => it.message)).toEqual([
+      "'c' is defined but never used.",
+      "'h' is assigned a value but never used.",
+    ]);
+    // As in ESLint, a severity alone leaves the options as they are, and options replace them.
+    expect(severity.reports).toEqual([`${name}:2:23 error ${rule}`, `${name}:11:7 error ${rule}`]);
+    expect(options.reports).toEqual(all.map(at => `${name}:${at} warning ${rule}`));
+  });
+
+  test("not with an eslint.config.js", async () => {
+    const config = `export default [{ rules: { "no-unused-vars": "error" } }];\n`;
+    const { reports } = await lint({ "eslint.config.js": config, "a.js": code }, ["a.js"]);
+    expect(reports).toEqual(all.map(at => `a.js:${at} error no-unused-vars`));
+  });
+});
+
+describe.concurrent("comments that disable rules", () => {
+  const code = `// eslint-disable-next-line no-console
+console.log(1);
+// eslint-disable-next-line no-debugger
+console.log(2);
+// eslint-disable-next-line some-plugin/some-rule, not-a-rule
+console.log(3);
+// eslint-disable-next-line
+console.log(4);
+/* eslint-disable unicorn/no-null, no-empty */
+console.log(5);
+`;
+  const unused = (line: number) => `a.js:${line}:1 warning null`;
+
+  test("one for a rule that is off, or that does not exist, is left alone", async () => {
+    const [reported, fixed] = await Promise.all([lint({ "a.js": code }, []), lint({ "a.js": code }, ["--fix"])]);
+    expect(reported.reports).toEqual([unused(3), unused(7), unused(9)]);
+    expect(reported.json[0].messages.map((it: { message: string }) => it.message)).toEqual([
+      "Unused eslint-disable directive (no problems were reported from 'no-debugger').",
+      "Unused eslint-disable directive (no problems were reported).",
+      "Unused eslint-disable directive (no problems were reported from 'no-empty').",
+    ]);
+    expect(reported.exitCode).toBe(0);
+    expect(fixed.texts["a.js"]).toBe(
+      code
+        .replace("// eslint-disable-next-line no-debugger", " ")
+        .replace("// eslint-disable-next-line\n", " \n")
+        .replace("unicorn/no-null, no-empty", "unicorn/no-null"),
+    );
+  });
+
+  test("a rule that the project or a comment turns on is on", async () => {
+    const bunfig = `[lint.rules]\n"no-alert" = "warn"\n`;
+    const text = `/* eslint no-eval: error */\n// eslint-disable-next-line no-alert, no-eval, no-console\nconsole.log(1);\n`;
+    const { json } = await lint({ "bunfig.toml": bunfig, "a.js": text }, []);
+    expect(json[0].messages.map((it: { message: string }) => it.message)).toEqual([
+      "Unused eslint-disable directive (no problems were reported from 'no-alert').",
+      "Unused eslint-disable directive (no problems were reported from 'no-eval').",
+    ]);
+  });
+
+  test("with an eslint.config.js they are reported, as by ESLint", async () => {
+    const config = `export default [{ rules: { "no-debugger": "error" } }];\n`;
+    const { reports } = await lint({ "eslint.config.js": config, "a.js": code }, ["a.js"]);
+    expect(reports).toEqual([
+      unused(1),
+      unused(3),
+      "a.js:5:1 error some-plugin/some-rule",
+      "a.js:5:1 error not-a-rule",
+      unused(7),
+      "a.js:9:1 error unicorn/no-null",
+      unused(9),
+    ]);
+  });
+});
+
 describe.concurrent("React", () => {
   const component = `import { useEffect, useState } from "react";
 export function App({ items, on }) {
@@ -240,6 +350,10 @@ export function useThing(a, on) {
   }
 }
 `;
+  const foundInHook = (name: string) => [
+    `${name}:4:5 error react-hooks/rules-of-hooks`,
+    `${name}:6:8 warning react-hooks/exhaustive-deps`,
+  ];
   const found = (name: string) => [
     `${name}:4:5 error react-hooks/rules-of-hooks`,
     `${name}:8:6 warning react-hooks/exhaustive-deps`,
@@ -258,10 +372,15 @@ export function useThing(a, on) {
     },
   );
 
-  test("JSX in a .js file counts, a file without JSX does not", async () => {
-    const files = { "package.json": dependingOn("dependencies"), "App.js": component, "useThing.js": hook };
+  test("every file of the project, with JSX or without", async () => {
+    const files = {
+      "package.json": dependingOn("dependencies"),
+      "App.js": component,
+      "useThing.js": hook,
+      "useThing.ts": hook,
+    };
     const { reports } = await lint(files, []);
-    expect(reports).toEqual(found("App.js"));
+    expect(reports).toEqual([...found("App.js"), ...foundInHook("useThing.js"), ...foundInHook("useThing.ts")]);
   });
 
   test.each([
@@ -269,7 +388,7 @@ export function useThing(a, on) {
     ["a package.json without react", { "package.json": dependingOn("dependencies", "preact") }],
     ["react in optionalDependencies", { "package.json": dependingOn("optionalDependencies") }],
   ])("%s: nothing", async (_, more) => {
-    const { reports, exitCode } = await lint({ ...more, "App.jsx": component }, []);
+    const { reports, exitCode } = await lint({ ...more, "App.jsx": component, "useThing.js": hook }, []);
     expect(reports).toEqual([]);
     expect(exitCode).toBe(0);
   });
@@ -306,10 +425,10 @@ export function useThing(a, on) {
       "useThing.ts": hook,
     };
     const { reports } = await lint(files, ["--type-aware"]);
-    expect(reports.filter(it => it.includes("react"))).toEqual(found("App.tsx"));
+    expect(reports.filter(it => it.includes("react"))).toEqual([...found("App.tsx"), ...foundInHook("useThing.ts")]);
   });
 
-  test("what is set for them stays as it is set, also for a file without JSX", async () => {
+  test("what is set for them stays as it is set, with react in package.json or without", async () => {
     const bunfig = `[lint.rules]\n"react-hooks/rules-of-hooks" = "warn"\n"react-hooks/exhaustive-deps" = "error"\n"react/jsx-key" = "off"\n`;
     const files = { "bunfig.toml": bunfig, "App.jsx": component, "useThing.js": hook };
     const expected = [
@@ -324,17 +443,6 @@ export function useThing(a, on) {
     ]);
     expect(withReact.reports).toEqual(expected);
     expect(without.reports).toEqual(expected);
-  });
-
-  test("a comment that names one in a file without JSX is not called unused", async () => {
-    const commented = hook.replace(
-      "    }, []);",
-      "      // eslint-disable-next-line react-hooks/exhaustive-deps\n    }, []);",
-    );
-    const files = { "package.json": dependingOn("dependencies"), "useThing.js": commented };
-    const { reports, exitCode } = await lint(files, []);
-    expect(reports).toEqual([]);
-    expect(exitCode).toBe(0);
   });
 
   test("comments disable them", async () => {

@@ -35,8 +35,9 @@ pub(crate) struct Compiler<'a> {
     arena: bun_alloc::Arena,
 }
 
-/// oxlint's `react_compiler_plugin_options`, the plugin's `COMPILER_OPTIONS`
-fn config_of(flavor: Flavor) -> EnvironmentConfig {
+/// oxlint's `react_compiler_plugin_options`, the plugin's `COMPILER_OPTIONS`. `stands_alone`: the plugin is not to be followed
+/// where that makes a rule useless.
+fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
     let is_oxlint = flavor == Flavor::Oxlint;
     EnvironmentConfig {
         validate_ref_access_during_render: true,
@@ -57,17 +58,18 @@ fn config_of(flavor: Flavor) -> EnvironmentConfig {
         validate_static_components: true,
         validate_no_freezing_known_mutable_functions: true,
         validate_no_void_use_memo: true,
-        validate_no_capitalized_calls: Some(match flavor {
+        validate_no_capitalized_calls: Some(match is_oxlint || stands_alone {
             // Globals that oxc's compiler knows and Bun's does not.
-            Flavor::Oxlint => vec!["BigInt".to_owned(), "Symbol".to_owned()],
-            Flavor::Eslint => Vec::new(),
+            true => vec!["BigInt".to_owned(), "Symbol".to_owned()],
+            false => Vec::new(),
         }),
         validate_hooks_usage: true,
         validate_no_derived_computations_in_effects: true,
         validate_exhaustive_memoization_dependencies: true,
-        validate_exhaustive_effect_dependencies: match flavor {
-            Flavor::Oxlint => ExhaustiveEffectDepsMode::All,
-            Flavor::Eslint => ExhaustiveEffectDepsMode::Off,
+        // The plugin has it behind a flag that is off, so that its `exhaustive-effect-dependencies` never reports.
+        validate_exhaustive_effect_dependencies: match is_oxlint || stands_alone {
+            true => ExhaustiveEffectDepsMode::All,
+            false => ExhaustiveEffectDepsMode::Off,
         },
         ..EnvironmentConfig::default()
     }
@@ -79,7 +81,7 @@ impl<'a> Compiler<'a> {
             file,
             flavor,
             wanted,
-            config: config_of(flavor),
+            config: config_of(flavor, file.language().stands_alone),
             arena: bun_alloc::Arena::new(),
         }
     }

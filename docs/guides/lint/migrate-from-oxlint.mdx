@@ -85,10 +85,10 @@ bun remove oxlint oxlint-tsgolint
 
 `import { defineConfig } from "oxlint"` in an `oxlint.config.ts` keeps working without the package.
 
-No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, run this before you uninstall. It writes `flavor = "oxlint"` to `bunfig.toml`. Without it you get [Bun's defaults](/runtime/lint#default-rules).
+No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, write them to an `.oxlintrc.json` before you uninstall. Without it you get [Bun's defaults](/runtime/lint#default-rules).
 
 ```sh terminal icon="terminal"
-bun lint --init --flavor=oxlint
+bunx oxlint --init
 ```
 
 ---
@@ -122,13 +122,13 @@ bun lint --type-aware # [!code ++]
 
 ---
 
-If the project also has an ESLint config, tell Bun which one to use.
+If the project also has an ESLint config, Bun uses the oxlint config. Pick the other one with `--config`.
 
 ```json package.json icon="file-json"
 {
   "scripts": {
     "lint": "oxlint && eslint", // [!code --]
-    "lint": "bun lint --flavor=oxlint && bun lint --flavor=eslint" // [!code ++]
+    "lint": "bun lint && bun lint --config eslint.config.js" // [!code ++]
   }
 }
 ```
@@ -148,7 +148,7 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 - **Control flow rules follow ESLint** where oxlint differs: `no-unreachable`, `no-fallthrough`, `getter-return`, `array-callback-return`, `constructor-super`, `no-this-before-super`, `no-useless-assignment`.
 - **`--fix` never writes a file that no longer parses.** Bun leaves the file alone and warns.
 - **`--init` adds `[lint]` to `bunfig.toml`**, not an `.oxlintrc.json`. If you already have an oxlint config, it does nothing.
-- **`--lsp` starts [Bun's language server](/runtime/lint#editors)**, not oxlint's.
+- **No language server.** `--lsp` is an error. Keep `oxlint` if your editor's oxc extension uses it.
 
 ---
 

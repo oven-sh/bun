@@ -371,6 +371,8 @@ pub struct Meta {
     /// It runs only on a file of a program that has been type checked, and
     /// [`File::types`](crate::ast::File::types) never fails in it.
     pub requires_types: bool,
+    /// It runs without types too, and asks them where the file has them.
+    pub uses_types: bool,
     pub is_deprecated: bool,
     /// The rule of ESLint that this rule of typescript-eslint replaces.
     pub extends_base_rule: Option<&'static str>,
@@ -399,6 +401,7 @@ impl Meta {
             has_suggestions: false,
             presets: Presets::empty(),
             requires_types: false,
+            uses_types: false,
             is_deprecated: false,
             extends_base_rule: None,
             needs_modules: false,
@@ -453,6 +456,16 @@ impl Meta {
     pub const fn requires_types(mut self) -> Meta {
         self.requires_types = true;
         self
+    }
+
+    pub const fn uses_types(mut self) -> Meta {
+        self.uses_types = true;
+        self
+    }
+
+    /// Whether a file whose configuration wants types is type checked for it.
+    pub const fn asks_types(&self) -> bool {
+        self.requires_types || self.uses_types
     }
 
     pub const fn needs_modules(mut self) -> Meta {

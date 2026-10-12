@@ -108,7 +108,7 @@ describe.concurrent("bun lint", () => {
 describe.concurrent("bun format", () => {
   test("a file in UTF-16", async () => {
     const { stderr, exitCode } = await bun({ "a.js": Buffer.from("﻿a;\n", "utf16le") }, ["format", "a.js"]);
-    expect(stderr).toStartWith("[error] a.js: SyntaxError: This file is UTF-16. bun format only reads UTF-8.\n");
+    expect(stderr).toStartWith("error: a.js: SyntaxError: This file is UTF-16. bun format only reads UTF-8.\n");
     expect(exitCode).toBe(2);
   });
 
@@ -117,7 +117,7 @@ describe.concurrent("bun format", () => {
       bun({ "a.js": "a;\n" }, ["format", "--plugin=prettier-plugin-x", "--allow-unsupported", "--check", "a.js"]),
       bun({ "a.js": "a;\n" }, ["format", "--migrate=prettier"]),
     ]);
-    expect(plugin.stderr).toContain("[warn] --plugin has no effect because bun format does not load Prettier plugins");
+    expect(plugin.stderr).toContain("warn: --plugin has no effect because bun format does not load Prettier plugins");
     expect(plugin.exitCode).toBe(0);
     expect(flag.stderr).toStartWith("error: bun format does not support --migrate\n");
     expect(flag.exitCode).toBe(2);

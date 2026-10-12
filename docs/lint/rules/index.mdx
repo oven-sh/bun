@@ -383,25 +383,25 @@ description: "Every rule built into bun lint"
 | Rule | Description | Default | Fixable | Needs types |
 | --- | --- | --- | --- | --- |
 | [`react-hooks/capitalized-calls`](/lint/rules/react/capitalized-calls) | Disallow calling a function with a capitalized name from a component or a hook |  |  |  |
-| [`react-hooks/component-hook-factories`](/lint/rules/react/component-hook-factories) |  |  |  |  |
-| [`react-hooks/config`](/lint/rules/react/config) |  |  | yes |  |
+| [`react-hooks/component-hook-factories`](/lint/rules/react/component-hook-factories) | Deprecated: reports nothing, and is kept so that older configs still load |  |  |  |
+| [`react-hooks/config`](/lint/rules/react/config) | Report an invalid configuration of the React Compiler |  | yes |  |
 | [`react-hooks/error-boundaries`](/lint/rules/react/error-boundaries) | Disallow JSX inside a `try` block, where `catch` cannot see rendering errors |  |  |  |
 | [`react-hooks/exhaustive-deps`](/lint/rules/react/exhaustive-deps) | Require the dependency array of a hook to list every value its callback reads | warn | yes |  |
-| [`react-hooks/exhaustive-effect-dependencies`](/lint/rules/react/exhaustive-effect-dependencies) |  |  |  |  |
-| [`react-hooks/fbt`](/lint/rules/react/fbt) |  |  | yes |  |
-| [`react-hooks/gating`](/lint/rules/react/gating) |  |  | yes |  |
+| [`react-hooks/exhaustive-effect-dependencies`](/lint/rules/react/exhaustive-effect-dependencies) | Require the dependency array of an effect to match what the effect reads |  |  |  |
+| [`react-hooks/fbt`](/lint/rules/react/fbt) | Reserved for problems with `fbt` translations in the React Compiler: reports nothing |  | yes |  |
+| [`react-hooks/gating`](/lint/rules/react/gating) | Validate the directive that puts a compiled component behind a feature flag |  | yes |  |
 | [`react-hooks/globals`](/lint/rules/react/globals) | Disallow reassigning variables declared outside a component or hook during render |  |  |  |
 | [`react-hooks/hooks`](/lint/rules/react/hooks) | Require hooks to be called at the top level of a component or hook, never conditionally |  |  |  |
 | [`react-hooks/immutability`](/lint/rules/react/immutability) | Disallow modifying props, state, and other values that React expects to stay unchanged |  |  |  |
 | [`react-hooks/incompatible-library`](/lint/rules/react/incompatible-library) | Report calls to library APIs that the React Compiler cannot memoize safely |  |  |  |
 | [`react-hooks/invariant`](/lint/rules/react/invariant) | Report code that makes the React Compiler fail one of its internal checks |  |  |  |
 | [`react-hooks/memo-dependencies`](/lint/rules/react/memo-dependencies) | Require the dependency list of `useMemo` and `useCallback` to match what the callback reads |  |  |  |
-| [`react-hooks/memoized-effect-dependencies`](/lint/rules/react/memoized-effect-dependencies) |  |  | yes |  |
+| [`react-hooks/memoized-effect-dependencies`](/lint/rules/react/memoized-effect-dependencies) | Require the dependencies of an effect to be memoized |  | yes |  |
 | [`react-hooks/no-deriving-state-in-effects`](/lint/rules/react/no-deriving-state-in-effects) | Disallow effects that only compute state from props or other state |  |  |  |
-| [`react-hooks/preserve-manual-memoization`](/lint/rules/react/preserve-manual-memoization) | Report `useMemo` and `useCallback` calls that React Compiler cannot keep memoized |  |  |  |
+| [`react-hooks/preserve-manual-memoization`](/lint/rules/react/preserve-manual-memoization) | Disallow `useMemo` and `useCallback` calls that React Compiler cannot keep memoized |  |  |  |
 | [`react-hooks/purity`](/lint/rules/react/purity) | Disallow calls such as `Math.random()` and `Date.now()` while a component renders |  |  |  |
 | [`react-hooks/refs`](/lint/rules/react/refs) | Disallow reading or writing `ref.current` while a component renders |  |  |  |
-| [`react-hooks/rule-suppression`](/lint/rules/react/rule-suppression) |  |  |  |  |
+| [`react-hooks/rule-suppression`](/lint/rules/react/rule-suppression) | Disallow comments that turn off `rules-of-hooks` or `exhaustive-deps` |  |  |  |
 | [`react-hooks/rules-of-hooks`](/lint/rules/react/rules-of-hooks) | Require hooks to be called at the top level of a component or a custom hook | error |  |  |
 | [`react-hooks/set-state-in-effect`](/lint/rules/react/set-state-in-effect) | Disallow calling a state setter directly in the body of an effect |  |  |  |
 | [`react-hooks/set-state-in-render`](/lint/rules/react/set-state-in-render) | Disallow calling a state setter unconditionally while a component renders |  |  |  |
@@ -462,8 +462,8 @@ description: "Every rule built into bun lint"
 | [`react/jsx-sort-default-props`](/lint/rules/react/jsx-sort-default-props) | Require the keys of `defaultProps` to be sorted alphabetically |  |  |  |
 | [`react/jsx-sort-props`](/lint/rules/react/jsx-sort-props) | Require JSX props to be sorted alphabetically |  | yes |  |
 | [`react/jsx-tag-spacing`](/lint/rules/react/jsx-tag-spacing) | Enforce spacing around the `<`, `/` and `>` of JSX tags |  | yes |  |
-| [`react/jsx-uses-react`](/lint/rules/react/jsx-uses-react) |  |  |  |  |
-| [`react/jsx-uses-vars`](/lint/rules/react/jsx-uses-vars) |  |  |  |  |
+| [`react/jsx-uses-react`](/lint/rules/react/jsx-uses-react) | Count `React` as used in files that contain JSX |  |  |  |
+| [`react/jsx-uses-vars`](/lint/rules/react/jsx-uses-vars) | Count a variable as used when it is the name of a JSX tag |  |  |  |
 | [`react/jsx-wrap-multilines`](/lint/rules/react/jsx-wrap-multilines) | Require parentheses around JSX that spans several lines |  | yes |  |
 | [`react/no-access-state-in-setstate`](/lint/rules/react/no-access-state-in-setstate) | Disallow reading `this.state` in the argument of `this.setState()` |  |  |  |
 | [`react/no-adjacent-inline-elements`](/lint/rules/react/no-adjacent-inline-elements) | Disallow inline elements that touch each other without whitespace between them |  |  |  |
@@ -497,11 +497,11 @@ description: "Every rule built into bun lint"
 | [`react/no-unused-class-component-methods`](/lint/rules/react/no-unused-class-component-methods) | Disallow methods and properties of a class component that the class never uses |  |  |  |
 | [`react/no-unused-prop-types`](/lint/rules/react/no-unused-prop-types) | Disallow props that are declared but never used in the component |  |  |  |
 | [`react/no-unused-state`](/lint/rules/react/no-unused-state) | Disallow fields of a class component's state that are never read |  |  |  |
-| [`react/no-will-update-set-state`](/lint/rules/react/no-will-update-set-state) |  |  |  |  |
-| [`react/only-export-components`](/lint/rules/react/only-export-components) |  |  |  |  |
+| [`react/no-will-update-set-state`](/lint/rules/react/no-will-update-set-state) | Disallow `this.setState` in `componentWillUpdate` |  |  |  |
+| [`react/only-export-components`](/lint/rules/react/only-export-components) | Require files with components to export only components, so Fast Refresh works |  |  |  |
 | [`react/prefer-es6-class`](/lint/rules/react/prefer-es6-class) | Enforce one way to write class components: `class` or `createReactClass` |  |  |  |
-| [`react/prefer-exact-props`](/lint/rules/react/prefer-exact-props) |  |  |  |  |
-| [`react/prefer-function-component`](/lint/rules/react/prefer-function-component) |  |  |  |  |
+| [`react/prefer-exact-props`](/lint/rules/react/prefer-exact-props) | Require `propTypes` to be wrapped in a function that rejects unknown props |  |  |  |
+| [`react/prefer-function-component`](/lint/rules/react/prefer-function-component) | Require function components instead of class components |  |  |  |
 | [`react/prefer-read-only-props`](/lint/rules/react/prefer-read-only-props) | Require the props in a component's type to be `readonly` |  | yes |  |
 | [`react/prefer-stateless-function`](/lint/rules/react/prefer-stateless-function) | Require class components that only render from props to be functions |  |  |  |
 | [`react/prop-types`](/lint/rules/react/prop-types) | Require every prop that a component uses to be declared |  |  |  |

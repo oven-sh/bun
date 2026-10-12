@@ -77,7 +77,7 @@ pub(super) fn is_error(message: &LintMessage) -> bool {
 }
 
 /// Finds the offsets of the lines and columns that ESLint counts.
-pub(crate) struct Offsets<'t> {
+pub(super) struct Offsets<'t> {
     text: &'t [u8],
     /// Where each line starts.
     pub(super) lines: LineStarts,
@@ -109,7 +109,7 @@ fn sizes(first: u8) -> Sizes {
 
 impl<'t> Offsets<'t> {
     /// `lines`: where the lines start, if that is known.
-    pub(crate) fn new(text: &'t [u8], lines: Option<&[u32]>) -> Offsets<'t> {
+    pub(super) fn new(text: &'t [u8], lines: Option<&[u32]>) -> Offsets<'t> {
         Offsets {
             text,
             lines: match lines {
@@ -161,7 +161,7 @@ impl<'t> Offsets<'t> {
 
     /// The offset of a line from 1 and a column from 1 in UTF-16 code units, and the column from 1
     /// in bytes.
-    pub(crate) fn at(&self, line: u32, column: u32) -> (usize, usize) {
+    pub(super) fn at(&self, line: u32, column: u32) -> (usize, usize) {
         let start = match line {
             0 | 1 => self.start,
             line => (self.lines.start_of(line)).map_or(self.text.len(), |it| it as usize),

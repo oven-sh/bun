@@ -181,3 +181,35 @@ test.concurrent("many groups, and groups in groups, take no time to speak of", a
     ),
   ).toEqual(expected);
 });
+
+// eslint-plugin-import asks minimatch without `dot`.
+test.concurrent("for the rules of import no `*` and no `**` takes the dot that a name starts with", async () => {
+  const code = 'import "./a.css";\nimport "./a.less";\nimport "./a.scss";\n';
+  const styles = { "a.css": "", "a.less": "", "a.scss": "" };
+  const inside = (directory: string) =>
+    Object.fromEntries(
+      Object.entries({ "a.js": code, ...styles }).map(([name, text]) => [`${directory}/${name}`, text]),
+    );
+  using dir = tempDir("bun-lint-glob", {
+    // `{**,}/` is `**/` or `/`.
+    "bunfig.toml": `[lint.rules]\n"import/no-unassigned-import" = ["error", { allow = ["{**,}/*.css", "**/*.less"] }]\n`,
+    ...inside("src/x"),
+    ...inside(".hidden/x"),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", "-f", "json", "src", ".hidden/x/a.js"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (!stdout.startsWith("[")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+  const results: { filePath: string; messages: { line: number }[] }[] = JSON.parse(stdout);
+  const lines = results.map(it => [
+    relative(String(dir), it.filePath).replaceAll("\\", "/"),
+    it.messages.map(message => message.line),
+  ]);
+  expect(Object.fromEntries(lines)).toEqual({ "src/x/a.js": [3], ".hidden/x/a.js": [1, 2, 3] });
+  expect(exitCode).toBe(1);
+});

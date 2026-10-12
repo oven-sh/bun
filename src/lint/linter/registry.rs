@@ -421,17 +421,22 @@ impl Registry {
         if let Some(plugin) = Plugin::spelled(prefix).find(|it| it.has_no_rules()) {
             return Missing::OfPluginWithoutRules(plugin);
         }
-        // The name has to be close. The plugin too, unless the name is right or no plugin is written.
+        // The name has to be close. The plugin is as it is written if that is close to a spelling of it. Else, if the name is
+        // right or no plugin is written, as reports have it.
         let distance = |a: &[u8], b: &str| strings::edit_distance(a.iter().copied(), b.as_bytes());
         let is_close = |distance: usize, written: &[u8]| distance <= written.len().max(3) / 3;
         let close = self.rules.iter().flat_map(|it| {
             let other = it.meta.name;
             let of_name = Some(distance(name, other)).filter(|it| is_close(*it, name));
-            let prefixes = it.meta.plugin.spellings().iter();
-            prefixes.filter_map(move |it| {
-                let (of_name, of_prefix) = (of_name?, distance(prefix, it));
-                (of_name == 0 || prefix.is_empty() || is_close(of_prefix, prefix))
-                    .then(|| (of_name + of_prefix, written(it, other)))
+            let prefixes = it.meta.plugin.spellings().iter().enumerate();
+            prefixes.filter_map(move |(nth, it)| {
+                let of_prefix = match prefix {
+                    b"" => 0,
+                    prefix => distance(prefix, it),
+                };
+                let is_meant = !prefix.is_empty() && is_close(of_prefix, prefix);
+                let is_usual = nth == 0 && (of_name == Some(0) || prefix.is_empty());
+                (is_meant || is_usual).then_some((of_name? + of_prefix, written(it, other)))
             })
         });
         Missing::Unknown(close.min_by_key(|it| it.0).map(|it| it.1))

@@ -42,7 +42,7 @@ test("checks the password", () => {
 });
 ```
 
-`not.toBeTruthy()` is reported too, and the rewrite is `not.toBe(true)`, which passes for everything except `true`. Write `toBe(false)` instead.
+`not.toBeTruthy()` is reported too. The rewrite is `toBe(false)`, not `not.toBe(true)`, which would pass for everything except `true`.
 
 {/* bad */}
 ```ts

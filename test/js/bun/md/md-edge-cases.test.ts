@@ -1429,6 +1429,48 @@ describe("ansi renderer link and metadata control bytes", () => {
   });
 });
 
+describe("ansi renderer line wrapping", () => {
+  const sources = [
+    "The declaration and the assignment can be one `const`. Then (see `let`), use **bold text**: it is *fine*; [a link](https://example.com/x), and `more code`.\n",
+    "> A quote with `code`, **bold**, and (`parens`). Then `a longer code span`, which goes on.\n",
+    "- An item with `code`. And **bold words that go on**, with `x`; and (`y`), [text](https://e.com).\n  - nested `item`, with more `code`: yes.\n",
+  ];
+
+  test("what has no space before it stays with the word before it", () => {
+    expect(Markdown.ansi("It can be one `const`.\n", { colors: false, columns: 19 })).toBe("It can be one\nconst.\n");
+    expect(Markdown.ansi("a word (`code`) ends\n", { colors: false, columns: 9 })).toBe("a word\n(code)\nends\n");
+    expect(Markdown.ansi("one **two**, three\n", { colors: false, columns: 7 })).toBe("one\ntwo,\nthree\n");
+  });
+
+  test.each([
+    { colors: false, hyperlinks: false },
+    { colors: true, hyperlinks: false },
+    { colors: true, hyperlinks: true },
+  ])("no line starts with punctuation, ends with a space or is too wide: %j", theme => {
+    for (const source of sources) {
+      const words = (text: string) => Bun.stripANSI(text).replace(/[\s│|]+/g, "");
+      const unwrapped = words(Markdown.ansi(source, { ...theme, columns: 0 }));
+      for (let columns = 34; columns <= 100; columns++) {
+        const out = Markdown.ansi(source, { ...theme, columns });
+        const lines = Bun.stripANSI(out).split("\n");
+        const wrong = lines.filter(
+          line => /^[\s│|]*[.,:;)]/.test(line) || /\S\s+$/.test(line) || Bun.stringWidth(line) > columns,
+        );
+        expect({ columns, wrong }).toEqual({ columns, wrong: [] });
+        expect(words(out)).toBe(unwrapped);
+      }
+    }
+  });
+
+  test("the styles of the place where the line is broken are closed and opened again", () => {
+    const out = Markdown.ansi("> **some bold `code`**.\n", { columns: 16 });
+    expect(Bun.stripANSI(out)).toBe("│ some bold\n│ code.\n");
+    const [first, second] = out.split("\n");
+    expect(first).toEndWith("some bold\x1b[39m\x1b[49m");
+    expect(second).toContain("\x1b[1m");
+  });
+});
+
 // ============================================================================
 // Pathological inputs: emphasis delimiter floods. Each closer used to scan
 // backward over every already-consumed delimiter in the paragraph, so

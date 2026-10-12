@@ -100,7 +100,7 @@ import { test } from "bun:test";
 test("Should add an item", () => {});
 ```
 
-`mustMatch` and `mustNotMatch` take a regular expression as a string, either `"^adds "` or `"/^adds /"`. Flags after the last `/` are ignored. To set the message of the report, pass `[pattern, message]`:
+`mustMatch` and `mustNotMatch` take a regular expression as a string, either `"^adds "` or `"/^adds /i"`. Of the flags only `i` has an effect. To set the message of the report, pass `[pattern, message]`:
 
 {/* bad {"options": [{"mustNotMatch": ["\\.$", "Do not end a title with a period"]}]} */}
 ```ts
@@ -109,7 +109,7 @@ import { test } from "bun:test";
 test("adds an item.", () => {});
 ```
 
-To use a different pattern for `describe`, `test` and `it`, pass an object. A function that is not in the object is not checked:
+To use a different pattern for `describe`, `test` and `it`, pass an object. Each value is a pattern. A function that is not in the object is not checked:
 
 {/* bad {"options": [{"mustMatch": {"it": "^should "}}], "count": 1} */}
 ```ts

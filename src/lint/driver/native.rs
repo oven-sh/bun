@@ -1,10 +1,11 @@
 //! What `[lint]` of bunfig.toml and the command line say about rules where neither ESLint nor oxlint has a configuration.
 //! Every rule that is built in can be named, by any of its names, and a name of no rule is a mistake.
 
+use crate::bunfig::RuleOfBunfig;
 use crate::cli::Options;
 use crate::configs::{CATEGORIES, is_category, severity_name};
 use crate::print_config::object;
-use crate::{fs, paths};
+use crate::{Linter, fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::{
@@ -96,12 +97,24 @@ pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
     message
 }
 
-/// The first mistake in `[lint.rules]` and after `--rule`: the name of no rule, no severity, options that the rule does not
+/// The first mistake in `[lint.rules]`, after `--rule` and in the `rules` of `[[lint.overrides]]`: the name of no rule, no severity, options that the rule does not
 /// take. To turn off what was left out on purpose asks for nothing.
-pub(crate) fn check_rules(registry: &Registry, options: &Options) -> Result<(), Mistake> {
-    for (at, (id, setting)) in options.rule.iter().enumerate() {
+pub(crate) fn check_rules(linter: &Linter, options: &Options) -> Result<(), Mistake> {
+    check(linter, &options.rule, &options.rules_of_bunfig)?;
+    let mut overrides = options.overrides.iter();
+    overrides.try_for_each(|it| check(linter, &it.rules, &it.places))
+}
+
+/// `places`: for the first of `rules`, which are in bunfig.toml, where.
+fn check(
+    linter: &Linter,
+    rules: &[(Vec<u8>, Json)],
+    places: &[RuleOfBunfig],
+) -> Result<(), Mistake> {
+    let registry = linter.registry();
+    for (at, (id, setting)) in rules.iter().enumerate() {
         // What `--rule` says about the same rule has taken its place.
-        let written = options.rules_of_bunfig.get(at);
+        let written = places.get(at);
         let written = written.filter(|it| it.setting == *setting);
         let parts: &[Json] = match setting {
             Json::Array(items) => items,
@@ -141,6 +154,13 @@ pub(crate) fn check_rules(registry: &Registry, options: &Options) -> Result<(), 
             return Err(Mistake {
                 message: mistake.message,
                 at: written.map(|it| it.place.find(&path, mistake.is_about_key)),
+            });
+        }
+        // What no schema can tell: a selector or a regular expression that cannot be read.
+        if let Some(Err(thrown)) = entry.map(|it| linter.validate(it, given)) {
+            return Err(Mistake {
+                message: [b"Invalid options for ", &id[..], b"\n  ", &thrown].concat(),
+                at: written.map(|it| it.place.find(&[Step::Index(1)], false)),
             });
         }
     }

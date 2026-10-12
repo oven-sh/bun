@@ -2,14 +2,14 @@
 //! of oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
-    Ctx, JestFnKind, JestGeneralFnKind, ParsedJestFnCall, PossibleJestNode, get_node_name,
+    Ctx, JestFnKind, JestGeneralFnKind, ParsedJestFnCall, PossibleJestNode, Runner, get_node_name,
     is_type_of_jest_fn_call, mention_bits, mentions_any, parent_expression, parse_jest_fn_call_in,
     print_expression,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint_oxlint::ast_util::{as_member_expression, static_property_info};
-use bun_lint_oxlint::import::import_entries_of;
+use bun_lint_oxlint::import::{ImportImportName, import_entries, import_entries_of};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -285,14 +285,14 @@ pub(crate) mod prefer_mock_return_shorthand {
         return_expression: Expr<'a>,
     }
 
-    fn as_mock<'a>(node: Expr<'a>, methods: &[Name<'a>]) -> Option<Mock<'a>> {
+    fn as_mock<'a>(node: Expr<'a>, methods: &[Name<'a>], runner: Runner) -> Option<Mock<'a>> {
         let (property_span, property_name, expr) = method_call_with_argument(node, methods)?;
         let new_property_name = match property_name.bytes() {
             b"mockImplementation" => "mockReturnValue",
             b"mockImplementationOnce" => "mockReturnValueOnce",
             _ => return None,
         };
-        let (func, return_expression) = get_mock_return(expr)?;
+        let (func, return_expression) = get_mock_return(expr, runner)?;
         let is_update = matches!(
             return_expression.unary_op(),
             Some(UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec)
@@ -312,7 +312,7 @@ pub(crate) mod prefer_mock_return_shorthand {
             .file
             .exprs_of_kind(ExprTag::Call)
             .take_while(|_| !methods.is_empty())
-            .filter_map(|it| as_mock(it, &methods))
+            .filter_map(|it| as_mock(it, &methods, ctx.runner))
             .collect();
         // What is returned by one can have others in it. These come first, and are not looked at again.
         utils::sort::sort_unstable_by_key(&mut mocks, |it| {
@@ -329,6 +329,10 @@ pub(crate) mod prefer_mock_return_shorthand {
         {
             let found = visitor.visit(return_expression);
             if !func.is_arrow() && found.has_this_expression || found.has_mutable_reference {
+                continue;
+            }
+            // `mockReturnValue(create())` calls it once, not each time.
+            if ctx.runner == Runner::Bun && found.contains_call_like_expression {
                 continue;
             }
             let report = ctx
@@ -362,7 +366,10 @@ pub(crate) mod prefer_mock_return_shorthand {
     }
 
     /// The function `argument_expression`, which is not `async` and has no parameters, and what it returns, if it does nothing else.
-    fn get_mock_return(argument_expression: Expr<'_>) -> Option<(Func<'_>, Expr<'_>)> {
+    fn get_mock_return(
+        argument_expression: Expr<'_>,
+        runner: Runner,
+    ) -> Option<(Func<'_>, Expr<'_>)> {
         let func = argument_expression
             .as_fn()
             .filter(|it| !argument_expression.is_parenthesized() && !it.is_async())?;
@@ -375,7 +382,10 @@ pub(crate) mod prefer_mock_return_shorthand {
         let mut statements = statements_of(func)?;
         match (statements.next()?.kind(), statements.next()) {
             (StmtKind::Return(Some(arg_expr)), None) => Some((func, arg_expr)),
-            (StmtKind::Expr(expression), None) if !func.is_arrow() => Some((func, expression)),
+            // oxlint takes `function () { a; }` for one that returns `a`.
+            (StmtKind::Expr(expression), None) if !func.is_arrow() && runner != Runner::Bun => {
+                Some((func, expression))
+            }
             _ => None,
         }
     }
@@ -468,8 +478,68 @@ pub(crate) mod prefer_spy_on {
     const USE_JEST_SPY_ON: Message =
         Message::new("", "Suggest using `jest.spyOn()` or `vi.spyOn()`.");
 
-    pub(crate) fn should_run(file: &File) -> bool {
-        file.mentions("fn") && file.has_exprs([ExprTag::Assign])
+    const USE_SPY_ON: Message = Message::new("", "Suggest using `spyOn()`.");
+
+    pub(crate) fn should_run(file: &File, runner: Runner) -> bool {
+        (file.mentions("fn") || runner == Runner::Bun && file.mentions("mock"))
+            && file.has_exprs([ExprTag::Assign])
+    }
+
+    /// The `mock` of `mock(..)`, if it is what `bun:test` exports under that name.
+    fn mock_of_bun(value: Expr<'_>) -> Option<Expr<'_>> {
+        let callee = value.as_call().filter(|_| is_plain(value))?.callee();
+        let (file, local) = (value.file(), callee.as_ident()?);
+        let is_mock = import_entries(file).any(|it| {
+            it.declaration.spec().bytes() == b"bun:test"
+                && matches!(
+                    it.import_name,
+                    ImportImportName::Name(specifier)
+                        if specifier.imported().bytes() == b"mock" && specifier.local().name() == local
+                )
+        });
+        (is_mock && callee.symbol() == file.top_level_scope().get_name(local)).then_some(callee)
+    }
+
+    /// `a, 'b'` for `a.b`
+    fn print_object_and_property(content: &mut Vec<u8>, left_assign: Expr) {
+        match left_assign.kind() {
+            ExprKind::Index { obj, index, .. } => {
+                print_expression(content, obj);
+                content.extend_from_slice(b", ");
+                print_expression(content, index);
+            }
+            ExprKind::Dot { obj, name, .. } if !left_assign.is_private_member() => {
+                print_expression(content, obj);
+                content.extend_from_slice(b", '");
+                content.extend_from_slice(name.bytes());
+                content.push(b'\'');
+            }
+            _ => {}
+        }
+    }
+
+    /// `a.b = mock(c)`
+    fn check_mock_of_bun<'a>(
+        assign_expr: Expr<'a>,
+        (callee, call_expr): (Expr<'a>, Expr<'a>),
+        left_assign: Expr<'a>,
+        ctx: &Ctx<'a, '_>,
+    ) {
+        let report = ctx.report(callee, USE_SPY_ON);
+        if !ctx.can_write(b"spyOn") || left_assign.is_private_member() {
+            return;
+        }
+        report.suggest(USE_SPY_ON, |fixer| {
+            let mut content = b"spyOn(".to_vec();
+            print_object_and_property(&mut content, left_assign);
+            content.extend_from_slice(b").mockImplementation(");
+            let arguments = call_expr.as_call().map(Call::args);
+            if let Some(argument) = arguments.and_then(|it| it.first()) {
+                content.extend_from_slice(ctx.file.slice(argument.outer_span()));
+            }
+            content.push(b')');
+            fixer.replace(assign_expr, content)
+        });
     }
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
@@ -480,6 +550,12 @@ pub(crate) mod prefer_spy_on {
             // Not the default in `[a.b = jest.fn()] = c`.
             if !matches!(target.tag(), ExprTag::Dot | ExprTag::Index) || node.is_assignment_target()
             {
+                continue;
+            }
+            if ctx.runner == Runner::Bun
+                && let Some(callee) = mock_of_bun(value)
+            {
+                check_mock_of_bun(node, (callee, value), target, ctx);
                 continue;
             }
             // `jest.fn()`, or a member of what a call returns: `jest.fn().a`
@@ -530,20 +606,7 @@ pub(crate) mod prefer_spy_on {
                 };
                 let (framework_spy, argument) = get_test_fn_call(call_expr);
                 let mut content = framework_spy.as_bytes().to_vec();
-                match left_assign.kind() {
-                    ExprKind::Index { obj, index, .. } => {
-                        print_expression(&mut content, obj);
-                        content.extend_from_slice(b", ");
-                        print_expression(&mut content, index);
-                    }
-                    ExprKind::Dot { obj, name, .. } if !left_assign.is_private_member() => {
-                        print_expression(&mut content, obj);
-                        content.extend_from_slice(b", '");
-                        content.extend_from_slice(name.bytes());
-                        content.push(b'\'');
-                    }
-                    _ => {}
-                }
+                print_object_and_property(&mut content, left_assign);
                 content.push(b')');
                 if !has_mock_implementation {
                     content.extend_from_slice(b".mockImplementation(");

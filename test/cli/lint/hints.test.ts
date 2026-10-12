@@ -217,12 +217,13 @@ const cases: [code: string, ...reports: string[]][] = [
     `try {\n  f();\n} catch (e) {\n  g();\n}`,
     "no-unused-vars 3: A catch needs no parameter. Remove it and its parentheses.",
   ],
-  [`try {\n  f();\n} catch ({ a, b }) {\n  g(a);\n}`, "no-unused-vars 3"],
   [
-    `const { a, ...others } = f();\nuse(others);`,
-    "no-unused-vars 1: To leave a property out this way, turn on the option ignoreRestSiblings.",
+    `try {\n  f();\n} catch ({ a, b }) {\n  g(a);\n}`,
+    "no-unused-vars 3: Remove it, or start its name with _ to keep it.",
   ],
-  [`const a = f();`, "no-unused-vars 1"],
+  [`const a = f();`, "no-unused-vars 1: Remove it, or start its name with _ to keep it."],
+  [`export function a(b) {}`, "no-unused-vars 1: Remove it, or start its name with _ to keep it."],
+  [`import a from "a";`, "no-unused-vars 1"],
   [
     `use(1,\u00a02);`,
     "no-irregular-whitespace 1: It is the character U+00A0. Replace it with a plain space or a line break.",
@@ -241,11 +242,21 @@ test.concurrent.each(cases)("%s", async (code, ...reports) => {
 });
 
 test.concurrent("@typescript-eslint/no-unused-vars", async () => {
-  const code = `try {\n  f();\n} catch (e) {\n  f();\n}\nconst { a, ...others } = f();\nf(others);\ndeclare function f(a?: unknown): any;\n`;
+  const code = `try {\n  f();\n} catch (e) {\n  f();\n}\nconst { a, ...others } = f();\nconst b = f(others);\ndeclare function f(a?: unknown): any;\n`;
   expect(await hints(code, "a.ts")).toEqual([
     "@typescript-eslint/no-unused-vars 3: A catch needs no parameter. Remove it and its parentheses.",
-    "@typescript-eslint/no-unused-vars 6: To leave a property out this way, turn on the option ignoreRestSiblings.",
+    "@typescript-eslint/no-unused-vars 7: Remove it, or start its name with _ to keep it.",
     "@typescript-eslint/no-explicit-any 8: unknown is the safe choice where the type is not known.",
+  ]);
+});
+
+test.concurrent.each(["a.js", "a.ts"])("no-unused-vars with options of the project, in %s", async file => {
+  const rule = file === "a.js" ? "no-unused-vars" : "@typescript-eslint/no-unused-vars";
+  const bunfig = `[lint.rules]\n"${rule}" = ["warn", { args = "all" }]\n`;
+  const code = `const { a, ...others } = Bun;\nconsole.log(others);\nconst _b = 1;\n`;
+  expect(await hints(code, file, { "bunfig.toml": bunfig })).toEqual([
+    `${rule} 1: To leave a property out this way, turn on the option ignoreRestSiblings.`,
+    `${rule} 3`,
   ]);
 });
 

@@ -135,6 +135,8 @@ pub(crate) struct Options {
     /// not sorted.
     pub(super) regroups_side_effect: bool,
     pub(super) regroups_side_effect_style: bool,
+    /// Nothing moves across an import for its side effects. oxfmt leaves such an import where it is, counted from the top.
+    pub(super) stops_at_side_effects: bool,
 }
 
 /// `fast_glob::glob_match`: `bun_glob` is a port of the same `glob-match`.
@@ -198,7 +200,10 @@ fn shown(name: &[u8]) -> &bstr::BStr {
 }
 
 /// `value`: as it is written in JSON. `None`: imports are left as they are.
-pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
+pub(crate) fn compile(
+    value: &[u8],
+    stops_at_side_effects: bool,
+) -> Result<Option<Options>, Vec<u8>> {
     let config = match bun_lint::json::parse(value) {
         Some(Json::Bool(false)) => return Ok(None),
         Some(Json::Bool(true)) => Json::Object(Vec::new()),
@@ -329,6 +334,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
 
     let partition_by_newline = boolean(&config, "partitionByNewline", false)?;
     let newlines_between = boolean(&config, "newlinesBetween", true)?;
+    let sort_side_effects = boolean(&config, "sortSideEffects", false)?;
 
     // `SortImportsOptions::validate`
     if partition_by_newline && newline_boundary_overrides.iter().any(Option::is_some) {
@@ -409,7 +415,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
     Ok(Some(Options {
         partition_by_newline,
         partition_by_comment: boolean(&config, "partitionByComment", false)?,
-        sort_side_effects: boolean(&config, "sortSideEffects", false)?,
+        sort_side_effects,
         is_descending: match present("order").map(|value| value.as_str()) {
             None | Some(Some(b"asc")) => false,
             Some(Some(b"desc")) => true,
@@ -423,6 +429,10 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         },
         regroups_side_effect: has_catch_all_group_for(Selector::SideEffect),
         regroups_side_effect_style: has_catch_all_group_for(Selector::SideEffectStyle),
+        stops_at_side_effects: stops_at_side_effects
+            && !sort_side_effects
+            && !has_catch_all_group_for(Selector::SideEffect)
+            && !has_catch_all_group_for(Selector::SideEffectStyle),
         newline_boundary_overrides,
         predefined_groups: predefined
             .into_iter()

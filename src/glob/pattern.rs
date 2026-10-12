@@ -1,6 +1,6 @@
 //! A pattern that many paths are matched with: [`crate::match`], behind what tells most paths apart without it.
 
-use crate::matcher::{self, Token};
+use crate::matcher::{self, Shape, Token};
 use bun_core::strings;
 use std::ops::Range;
 
@@ -49,6 +49,8 @@ impl<'p> Candidate<'p> {
 pub struct Pattern {
     pattern: Box<[u8]>,
     has_extglob: bool,
+    /// [`matcher::match_without_dot`]
+    hides_dots: bool,
     /// An odd number of `!` at its start.
     is_negated: bool,
     /// What matches starts with one of these, up to a `/` or to its end. Empty: it is not known.
@@ -75,18 +77,18 @@ fn is_plain_class(class: &[u8]) -> bool {
     })
 }
 
-/// Whether what `part` matches is in one name. `is_in_group`: a group in it is not looked into.
-fn stays_in_a_name(part: &[u8], has_extglob: bool, is_in_group: bool) -> bool {
-    let mut at = 0;
-    while at < part.len() {
-        let (token, end) = matcher::token_at(part, at, has_extglob);
+/// Whether what `part` of `pattern` matches is in one name. `is_in_group`: a group in it is not looked into.
+fn stays_in_a_name(pattern: &[u8], part: Range<usize>, shape: &Shape, is_in_group: bool) -> bool {
+    let mut at = part.start;
+    while at < part.end {
+        let (token, end) = matcher::token_at(pattern, at, shape);
         let stays = match token {
-            Token::Literal => part[at] != b'/',
+            Token::Literal => pattern[at] != b'/',
             Token::Star | Token::Any => true,
-            Token::Class => is_plain_class(&part[at..end]),
+            Token::Class => is_plain_class(&pattern[at..end]),
             // A `,` or a `|` is a character there, which changes nothing.
             Token::Group { first } if !is_in_group => {
-                stays_in_a_name(&part[first..end - 1], has_extglob, true)
+                stays_in_a_name(pattern, first..end - 1, shape, true)
             }
             _ => false,
         };
@@ -118,10 +120,23 @@ impl Pattern {
         }
     }
 
+    /// `match_without_dot(pattern, path)`: `dot: false` of minimatch and of picomatch.
+    pub fn without_dot(pattern: &[u8]) -> Pattern {
+        Pattern {
+            hides_dots: true,
+            // A `**` does not get to every name.
+            is_for_name: false,
+            ..Pattern::read(pattern, true)
+        }
+    }
+
     fn read(pattern: &[u8], has_extglob: bool) -> Pattern {
+        // Without a group it is the same.
+        let has_extglob = has_extglob && strings::index_of_any(pattern, b"{(").is_some();
         let mut read = Pattern {
             pattern: pattern.into(),
             has_extglob,
+            hides_dots: false,
             is_negated: false,
             heads: Box::default(),
             start_len: 0,
@@ -136,13 +151,14 @@ impl Pattern {
             read.is_negated = bangs % 2 == 1;
             return read;
         }
+        let shape = Shape::of(pattern, has_extglob);
         // The runs of characters without magic, and where the names start that are outside of all groups.
         let mut runs: Vec<Range<usize>> = Vec::new();
         let mut starts = vec![0];
         let mut first_group = None;
         let (mut at, mut is_in_run, mut is_known) = (0, false, true);
         while at < pattern.len() {
-            let (token, mut end) = matcher::token_at(pattern, at, has_extglob);
+            let (token, mut end) = matcher::token_at(pattern, at, &shape);
             match token {
                 Token::Literal => {
                     match runs.last_mut().filter(|_| is_in_run) {
@@ -180,24 +196,27 @@ impl Pattern {
         if let Some(run) = between.max_by_key(|it| it.len()) {
             read.inner = run.start as u32..run.end as u32;
         }
-        read.heads = heads(pattern, &runs, first_group, has_extglob);
+        read.heads = heads(pattern, &runs, first_group, &shape);
 
-        let stays =
-            |part: &[u8]| !part.starts_with(b"!") && stays_in_a_name(part, has_extglob, false);
+        let stays = |part: &Range<usize>| {
+            pattern.get(part.start) != Some(&b'!')
+                && stays_in_a_name(pattern, part.clone(), &shape, false)
+        };
         let ends = (starts.iter().skip(1).map(|it| it - 1)).chain([pattern.len()]);
         let parts = starts.iter().zip(ends).map(|(start, end)| *start..end);
-        let names = parts.take_while(|it| stays(&pattern[it.clone()]));
+        let names = parts.take_while(stays);
         read.names = names.map(|it| it.start as u32..it.end as u32).collect();
         read.is_names_only = read.names.len() == starts.len();
-        read.is_for_name = pattern.strip_prefix(b"**/").is_some_and(stays);
+        read.is_for_name = pattern.starts_with(b"**/") && stays(&(3..pattern.len()));
         read
     }
 
     #[inline]
     fn asks(&self, pattern: &[u8], path: &[u8]) -> matcher::MatchResult {
-        match self.has_extglob {
-            true => matcher::match_with::<true>(pattern, path),
-            false => matcher::r#match(pattern, path),
+        match (self.has_extglob, self.hides_dots) {
+            (_, true) => matcher::match_without_dot(pattern, path),
+            (true, false) => matcher::match_with::<true>(pattern, path),
+            (false, false) => matcher::r#match(pattern, path),
         }
     }
 
@@ -267,7 +286,7 @@ fn heads(
     pattern: &[u8],
     runs: &[Range<usize>],
     group: Option<(usize, usize, usize)>,
-    has_extglob: bool,
+    shape: &Shape,
 ) -> Box<[Box<[u8]>]> {
     let run_from = |at: usize| {
         runs.iter()
@@ -287,9 +306,8 @@ fn heads(
             let after = run_from(end);
             let separator: &[u8] = if pattern[at] == b'{' { b"," } else { b"|" };
             let inside = &pattern[first..end - 1];
-            let mut tokens =
-                (0..inside.len()).map(|it| matcher::token_at(inside, it, has_extglob).0);
-            if !tokens.all(|it| it == Token::Literal) {
+            let mut tokens = (first..end - 1).map(|it| matcher::token_at(pattern, it, shape).0);
+            if shape.is_sequence_at(first) || !tokens.all(|it| it == Token::Literal) {
                 return Box::default();
             }
             for alternative in strings::split(inside, separator) {

@@ -3,8 +3,8 @@
 
 use crate::jest::{
     Arguments, AstKind, Ctx, EnclosingFunctions, ExpectError, JestFnKind, JestGeneralFnKind,
-    KnownMemberExpressionParentKind, PossibleJestNode, Runner, Scopes, convert_pattern,
-    enclosing_function, get_first_node_name, get_node_name, get_node_name_vec,
+    KnownMemberExpressionParentKind, PossibleJestNode, Runner, Scopes, calls_of_own_test_blocks,
+    convert_pattern, enclosing_function, get_first_node_name, get_node_name, get_node_name_vec,
     is_type_of_jest_fn_call, is_vitest, is_vitest_import_source, iter_possible_jest_call_node,
     parse_expect_jest_fn_call, parse_general_jest_fn_call, possible_jest_node_of,
 };
@@ -769,7 +769,9 @@ pub(crate) mod expect_expect {
                 true => &self.assert_function_matchers_vitest,
                 false => &self.assert_function_matchers_jest,
             });
-            for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
+            for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner).chain(
+                calls_of_own_test_blocks(ctx, &self.additional_test_block_functions),
+            ) {
                 self.run(possible_jest_node, ctx, use_vitest_assertions, &mut visitor);
             }
         }
@@ -1285,8 +1287,18 @@ pub(crate) mod no_conditional_expect {
         Conditional,
         /// A call of `it` or `test`.
         Test,
-        /// A function that is no arrow function.
-        Function(Func<'a>),
+        /// A function that is no arrow function, and what its name declares. For `bun:test` one that has a name to call it by, or
+        /// is a method: `function () {}` and `() => {}` run where they are passed to.
+        Function(Option<Symbol<'a>>),
+    }
+
+    /// `check` of `const check = () => {};`
+    fn variable_of(func: Func<'_>) -> Option<Symbol<'_>> {
+        let function = func.owner().as_expr()?;
+        match function.parent() {
+            Node::VarDecl(it) if it.init() == Some(function) => it.pat().symbol(),
+            _ => None,
+        }
     }
 
     fn is_test<'a>(ctx: &Ctx<'a, '_>, node: Node<'a>) -> bool {
@@ -1304,8 +1316,13 @@ pub(crate) mod no_conditional_expect {
     /// Where the way ends.
     fn end<'a>(ctx: &Ctx<'a, '_>, parent: Node<'a>) -> Option<Stop<'a>> {
         match parent {
-            Node::Func(func) => (!func.is_arrow() && func.kind() != FnKind::StaticBlock)
-                .then_some(Stop::Function(func)),
+            Node::Func(func) => match (ctx.runner, func.kind()) {
+                (_, FnKind::StaticBlock) | (Runner::Jest | Runner::Vitest, FnKind::Arrow) => None,
+                (Runner::Bun, FnKind::Arrow | FnKind::Expr) => {
+                    variable_of(func).map(|it| Stop::Function(Some(it)))
+                }
+                _ => Some(Stop::Function(func.name().and_then(|_| func.symbol()))),
+            },
             _ => is_test(ctx, parent).then_some(Stop::Test),
         }
     }
@@ -1356,18 +1373,15 @@ pub(crate) mod no_conditional_expect {
                 continue;
             }
             let is_in_test = match ends.find(node, |_, parent| end(ctx, parent)) {
-                Some(Stop::Function(function)) => function
-                    .name()
-                    .and_then(|_| function.symbol())
-                    .is_some_and(|symbol| {
-                        (symbol.references().filter_map(Reference::expr)).any(|it| {
-                            tests
-                                .find(Node::Expr(it), |_, parent| {
-                                    is_test(ctx, parent).then_some(())
-                                })
-                                .is_some()
-                        })
-                    }),
+                Some(Stop::Function(symbol)) => symbol.is_some_and(|symbol| {
+                    (symbol.references().filter_map(Reference::expr)).any(|it| {
+                        tests
+                            .find(Node::Expr(it), |_, parent| {
+                                is_test(ctx, parent).then_some(())
+                            })
+                            .is_some()
+                    })
+                }),
                 Some(_) => true,
                 None => false,
             };
@@ -1386,9 +1400,21 @@ pub(crate) mod max_expects {
         "Enforces a maximum number assertion calls in a test body.",
     );
 
+    /// Whether `func` is passed to a call, or called where it is written, and is not the callback of a test.
+    fn runs_with_what_is_around<'a>(ctx: &Ctx<'a, '_>, func: Func<'a>) -> bool {
+        matches!(
+            func.owner().as_expr().map(|it| it.parent()),
+            Some(Node::Expr(call)) if call.tag() == ExprTag::Call && !is_type_of_jest_fn_call(
+                ctx.file,
+                PossibleJestNode::new(call, ctx.runner),
+                &[JestFnKind::General(JestGeneralFnKind::Test)],
+            )
+        )
+    }
+
     pub(crate) fn run_once<'a>(max: u32, ctx: &Ctx<'a, '_>) {
-        let mut scopes = Scopes::default();
-        // How many there are in each scope. A block is one.
+        let (mut scopes, mut functions) = (Scopes::default(), AncestorMemo::default());
+        // How many there are in each scope. A block is one. For `bun:test` in each test, with its blocks and callbacks.
         let mut count_map: FxHashMap<Option<Node<'a>>, u32> = FxHashMap::default();
         for jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let Some(ident) = jest_node
@@ -1398,12 +1424,21 @@ pub(crate) mod max_expects {
             else {
                 continue;
             };
-            let count = count_map
-                .entry(scopes.of(Node::Expr(jest_node.node)))
-                .or_insert(0);
+            let node = Node::Expr(jest_node.node);
+            let (scope, limit) = match ctx.runner {
+                // The first is never too many.
+                Runner::Jest | Runner::Vitest => (scopes.of(node), max.max(1)),
+                Runner::Bun => (
+                    functions.find(node, |_, parent| match parent {
+                        Node::Func(func) if !runs_with_what_is_around(ctx, func) => Some(parent),
+                        _ => None,
+                    }),
+                    max,
+                ),
+            };
+            let count = count_map.entry(scope).or_insert(0);
             *count += 1;
-            // The first is never too many.
-            if *count > max.max(1) {
+            if *count > limit {
                 ctx.report(ident, EXCEEDED_MAX_ASSERTION)
                     .data("count", count.to_string())
                     .data("max", max.to_string());

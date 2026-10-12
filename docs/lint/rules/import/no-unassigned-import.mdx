@@ -55,7 +55,7 @@ A package name is matched as you wrote it. A relative path is made absolute firs
 
 With this configuration, these are allowed:
 
-{/* good {"options": [{"allow": ["*?/*?/*.css", "reflect-metadata"]}]} */}
+{/* good {"root": true, "options": [{"allow": ["*.css", "reflect-metadata"]}]} */}
 ```js
 import "./app.css";
 import "reflect-metadata";
@@ -63,7 +63,7 @@ import "reflect-metadata";
 
 And this is still reported:
 
-{/* bad {"options": [{"allow": ["*?/*?/*.css", "reflect-metadata"]}]} */}
+{/* bad {"root": true, "options": [{"allow": ["*.css", "reflect-metadata"]}]} */}
 ```js
 import "./register-globals.js";
 ```

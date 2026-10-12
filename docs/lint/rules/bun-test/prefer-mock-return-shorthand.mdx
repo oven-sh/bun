@@ -59,13 +59,14 @@ const nextVisit = mock().mockImplementation(() => {
 });
 ```
 
-A function that returns the result of a call or a `new` is reported, but `--fix` leaves it alone. `mockReturnValue(createUser())` calls `createUser()` once, not each time the mock is called.
+A function that calls something or creates an object with `new` is not reported either. `mockReturnValue(createUser())` calls `createUser()` once, not each time the mock is called.
 
-{/* bad */}
+{/* good */}
 ```ts
 import { mock } from "bun:test";
 
 const getUser = mock().mockImplementation(() => createUser());
+const getDate = mock().mockImplementation(() => new Date());
 ```
 
 ## When not to use it

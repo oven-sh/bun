@@ -14,7 +14,7 @@ deprecated: false
 
 Nobody reads a snapshot of several hundred lines in a review. When it changes, it gets updated without a look, and then the test passes whatever the code does. A short snapshot, or an assertion on the few values that matter, still tells you something when it fails.
 
-The rule counts the lines of the first argument of `toMatchInlineSnapshot` and `toThrowErrorMatchingInlineSnapshot`. The limit is 50 lines. A snapshot that comes after a property matcher is not counted, and snapshots in `.snap` files are not checked.
+The rule counts the lines of the snapshot in `toMatchInlineSnapshot` and `toThrowErrorMatchingInlineSnapshot`. The limit is 50 lines. Snapshots in `.snap` files are not checked.
 
 ## Examples
 
@@ -31,6 +31,21 @@ test("loads the user", () => {
     {
       "email": "ada@example.com",
       "id": 1,
+      "name": "Ada",
+    }
+  `);
+});
+```
+
+{/* bad {"options": [{"inlineMaxSize": 3}]} */}
+```ts
+import { expect, test } from "bun:test";
+
+test("creates a user", () => {
+  expect(createUser("Ada")).toMatchInlineSnapshot({ id: expect.any(Number) }, `
+    {
+      "email": null,
+      "id": Any<Number>,
       "name": "Ada",
     }
   `);

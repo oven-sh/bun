@@ -16,7 +16,7 @@ React runs an effect again, or recomputes a memoized value, only when something 
 
 The rule checks `useEffect`, `useLayoutEffect`, `useMemo`, `useCallback`, and `useImperativeHandle`. It also reports dependencies that do nothing, dependency lists it cannot read, and an `async` function passed to an effect. You do not have to list values that never change between renders: a `setState` function, a `dispatch` from `useReducer`, a ref from `useRef`, and anything declared outside the component.
 
-This rule is on by default as a warning in files with JSX, if your `package.json` depends on `react`.
+This rule is on by default as a warning if your `package.json` depends on `react`.
 
 Most reports come with a suggestion that rewrites the array, which your editor can apply. `--fix` does not apply it.
 

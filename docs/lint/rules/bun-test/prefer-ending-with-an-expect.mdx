@@ -62,7 +62,7 @@ test("loads the user", async () => {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `assertFunctionNames` | any name that contains `expect` | The calls that count as an assertion, besides `expect` itself. |
-| `additionalTestBlockFunctions` | `[]` | Other functions to check like `test`. It only works for names that `bun:test` defines, such as `afterEach`. Your own wrappers around `test` are not checked. |
+| `additionalTestBlockFunctions` | `[]` | Other functions to check like `test`: your own wrappers around it, or a hook such as `afterEach`. |
 
 By default, a helper or a method with `expect` in its name counts:
 
@@ -103,7 +103,18 @@ test("has a valid user", () => {
 });
 ```
 
-With `additionalTestBlockFunctions`, a hook is checked too:
+With `additionalTestBlockFunctions`, a wrapper of your own or a hook is checked too:
+
+{/* bad {"options": [{"additionalTestBlockFunctions": ["scenario"]}]} */}
+```ts
+import { expect } from "bun:test";
+import { scenario } from "./helpers";
+
+scenario("saves the user", async () => {
+  expect(await saveUser()).toBe(true);
+  await cleanup();
+});
+```
 
 {/* bad {"options": [{"additionalTestBlockFunctions": ["afterEach"]}]} */}
 ```ts

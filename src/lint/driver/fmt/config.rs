@@ -119,6 +119,9 @@ const OPTIONS_WITH_STRINGS: [&[u8]; 10] = [
 /// What else there is at the top of a configuration file of Prettier.
 const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath"];
 
+/// `sortImports` of a flag or of `[format]`, as [`SortSettings`] knows it.
+const SORT_IMPORTS_OF_BUN: &[u8] = b"bun.sortImports";
+
 /// The largest number that is read. It stands for `Infinity` and for `max_line_length = off`.
 pub(super) const NO_END: &[u8] = b"4294967295";
 
@@ -188,8 +191,34 @@ pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
     bun_glob::Pattern::of_oxc_glob_set(pattern)
 }
 
+/// What picomatch makes of `1..3` between braces: the class `[1-3]` of a regular expression, of what is written in the order of
+/// `sort()`, or else the characters without the braces. `None`: it is not letters, digits and `-` around `..`.
+fn range_of_picomatch(written: &[u8]) -> Option<Vec<u8>> {
+    let mut ends: Vec<&[u8]> = strings::split(written, b"..").collect();
+    let is_end = |it: &&[u8]| {
+        !it.is_empty() && (it.iter()).all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+    };
+    if ends.len() < 2 || !ends.iter().all(is_end) {
+        return None;
+    }
+    let as_written = ends.join(&b".."[..]);
+    sort_slice(&mut ends[..]);
+    let class = ends.join(&b'-');
+    // `b-a` is a syntax error.
+    let mut at = 0;
+    while at < class.len() {
+        match class.get(at + 1..at + 3) {
+            Some([b'-', to]) if class[at] > *to => return Some(as_written),
+            Some([b'-', _]) => at += 3,
+            _ => at += 1,
+        }
+    }
+    Some([b"[", &class[..], b"]"].concat())
+}
+
 /// A pattern that Prettier hands to micromatch or to fast-glob, in Bun's syntax: `(a|b)` is `@(a|b)`, and `a/**` matches `a` too.
-pub(crate) fn glob_of_prettier(pattern: &[u8]) -> bun_glob::Pattern {
+/// `is_of_override`: micromatch has it as it is. For fast-glob `{1..3}` is 1, 2 and 3.
+pub(crate) fn glob_of_prettier(pattern: &[u8], is_of_override: bool) -> bun_glob::Pattern {
     let (written, is_deep) = match pattern.strip_suffix(b"/**") {
         Some(before) if !before.is_empty() => (before, true),
         _ => (pattern, false),
@@ -202,6 +231,16 @@ pub(crate) fn glob_of_prettier(pattern: &[u8]) -> bun_glob::Pattern {
             b'[' => strings::index_of_char_pos(written, b']', at + 2).map_or(1, |it| it + 1 - at),
             _ => 1,
         };
+        if byte == b'{'
+            && is_of_override
+            && let Some(close) = strings::index_of_any(&written[at + 1..], b"{},")
+            && written[at + 1 + close] == b'}'
+            && let Some(range) = range_of_picomatch(&written[at + 1..at + 1 + close])
+        {
+            glob.extend_from_slice(&range);
+            at += close + 2;
+            continue;
+        }
         if byte == b'('
             && !matches!(glob.last(), Some(b'?' | b'*' | b'+' | b'@' | b'!'))
             && strings::contains_char(&written[at..], b')')
@@ -226,7 +265,7 @@ fn patterns_of<'t>(all: impl Iterator<Item = &'t [u8]>, is_oxfmt: bool) -> Vec<P
         glob: if is_oxfmt {
             glob_of_oxc(text)
         } else {
-            glob_of_prettier(text)
+            glob_of_prettier(text, true)
         },
         text: text.into(),
         has_slash: strings::contains_char(text, b'/'),
@@ -534,6 +573,17 @@ fn is_name_of_oxfmt(name: &[u8]) -> bool {
     strings::contains(name, b"oxfmt")
 }
 
+/// The configuration of Prettier that `NAMES[at]` in `directory` is, as it is shown. It is not run to find out.
+fn of_prettier(directory: &[u8], at: usize) -> Option<Vec<u8>> {
+    let name = *NAMES.get(at)?;
+    if !name.starts_with(b"package.") {
+        return Some(name.to_vec());
+    }
+    let package = json::parse(&fs::read(&paths::join(directory, name)).ok()?)?;
+    let has_it = !matches!(package.get(b"prettier")?, Json::Null | Json::Bool(false));
+    has_it.then(|| [b"prettier in ", name].concat())
+}
+
 /// Which formatters are among the dependencies of a project. That tells what one without a configuration file is
 /// formatted with.
 #[derive(Copy, Clone, Default)]
@@ -745,6 +795,8 @@ pub(crate) struct Configs<'c> {
     arguments: Guarded<Vec<Vec<u8>>>,
     /// [`Configs::lacks_file`]
     lacks_file: OnceLock<bool>,
+    /// [`Configs::note`]
+    note: OnceLock<Vec<u8>>,
     /// Who asks has seen to it that the configuration files of a file count.
     counts_everywhere: bool,
     pub(crate) flavor: Flavor,
@@ -800,6 +852,7 @@ impl<'c> Configs<'c> {
             named: None,
             arguments: Default::default(),
             lacks_file: OnceLock::new(),
+            note: OnceLock::new(),
             counts_everywhere,
             flavor: Flavor::Prettier,
             tsconfigs: Guarded::new(FxHashMap::default()),
@@ -1126,10 +1179,16 @@ impl<'c> Configs<'c> {
                     .concat(),
                 ));
             }
-            for at in candidates {
+            let mut candidates = candidates.into_iter();
+            for at in candidates.by_ref() {
                 if let Some(found) =
                     self.load(&paths::join(directory, NAMES[at]), at < NAMES_OF_OXFMT)?
                 {
+                    if at < NAMES_OF_OXFMT
+                        && let Some(other) = candidates.find_map(|it| of_prettier(directory, it))
+                    {
+                        self.note_ignored(&found.path, &other);
+                    }
                     config = Some(found);
                     break;
                 }
@@ -1157,6 +1216,22 @@ impl<'c> Configs<'c> {
             config,
             editorconfigs,
         }))
+    }
+
+    /// oxfmt's configuration file at `used` counts, and not what is shown as `ignored`, which is in the same directory.
+    fn note_ignored(&self, used: &[u8], ignored: &[u8]) {
+        self.note.get_or_init(|| {
+            let used = paths::relative(&self.environment.cwd, used);
+            let end = b" is ignored. Use --config to pick it.";
+            [b"Using ", &used[..], b". ", ignored, end].concat()
+        });
+    }
+
+    /// For the user, once: which of two configuration files in a directory counts.
+    pub(crate) fn note(&self) -> Option<&[u8]> {
+        // What is found before `--config` is looked at does not count.
+        let is_looked_for = self.named.is_none() && self.options.config_lookup;
+        self.note.get().filter(|_| is_looked_for).map(|it| &it[..])
     }
 
     /// Whether the working directory has no configuration file, in it or above it.
@@ -1358,9 +1433,10 @@ impl<'c> Configs<'c> {
             .unwrap_or(false)
     }
 
-    /// `--toml`
-    pub(crate) fn formats_toml(&self) -> bool {
-        self.options.toml
+    /// Whether TOML, which Prettier has not, is formatted where `scope` counts: the run stands in for no tool, and no
+    /// configuration file says how Prettier formats there.
+    pub(crate) fn formats_toml(&self, scope: &Scope) -> bool {
+        self.is_native() && self.config_of(scope).is_ok_and(|it| it.is_none())
     }
 
     /// The option `parser` for the file at `path`, which has `scope`, if it is set.
@@ -1434,6 +1510,10 @@ impl<'c> Configs<'c> {
                 from_flags.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
             }
         }
+        // It does more than what a configuration file of oxfmt calls so.
+        for it in from_flags.iter_mut().filter(|it| it.0 == b"sortImports") {
+            it.0 = SORT_IMPORTS_OF_BUN;
+        }
         let of_flags = from_flags.iter().copied();
         let all: Vec<(&[u8], &[u8])> = match self.options.config_precedence {
             Precedence::CliOverride => from_files.into_iter().chain(of_flags).collect(),
@@ -1455,7 +1535,7 @@ impl<'c> Configs<'c> {
         resolved.options.format_javascript = Some(super::format_javascript(self.options.verify));
         resolved.options.parse_javascript = Some(super::parse_javascript);
         resolved.options.embedded_html = true;
-        resolved.options.toml = self.options.toml;
+        resolved.options.toml = self.formats_toml(scope);
         if is_oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
             // It sorts the keys of a `package.json` unless it is told not to.
@@ -1472,6 +1552,7 @@ impl<'c> Configs<'c> {
         let mut unknown: Vec<(&[u8], &[u8])> = Vec::new();
         for (name, value) in all {
             match name {
+                SORT_IMPORTS_OF_BUN => _ = sort.set(name, value),
                 // An override of oxfmt changes the keys that it has. `experimentalSortImports` is the old name.
                 name if is_oxfmt && name.ends_with(b"ortImports") => {
                     let merged = sort_imports

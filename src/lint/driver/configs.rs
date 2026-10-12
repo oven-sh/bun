@@ -8,10 +8,11 @@
 //! nor oxlint reads them beside a file of its own. They are merged with those above them.
 //!
 //! No tool reads the files of another. So the one that the configuration of the working directory is for decides whose files
-//! count further down: templates, fixtures and examples have all sorts. `--flavor` says it where that directory has both.
-//! A flag that only one tool has says it there too, and where there is no file at all. It never takes the place of a file.
+//! count further down: templates, fixtures and examples have all sorts. Where that directory has both, a flag that only one
+//! tool has says it, or else it is oxlint: who has both is on the way there. Such a flag also says it where there is no file at
+//! all. It never takes the place of a file.
 
-use crate::cli::{Options, Tool, merge};
+use crate::cli::{Options, Override, Tool, merge};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Files, OfGit};
 use crate::print_config::object;
@@ -32,8 +33,8 @@ use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
-/// The version of the package that `specifier` names, as it is installed for the files in `directory`. `None` for a path.
-fn installed_version(directory: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+/// The `package.json` of the package that `specifier` names, as it is installed for the files in `directory`. `None` for a path.
+pub(crate) fn installed_package(directory: &[u8], specifier: &[u8]) -> Option<Json> {
     if specifier.starts_with(b".") || paths::is_absolute(specifier) {
         return None;
     }
@@ -46,8 +47,13 @@ fn installed_version(directory: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
     ]
     .concat();
     let json = paths::ancestors(directory).find_map(|it| fs::read(&paths::join(it, &file)).ok())?;
-    let version = bun_lint::json::parse(&json)?;
-    Some(version.get(b"version")?.as_str()?.to_vec())
+    bun_lint::json::parse(&json)
+}
+
+/// Its version.
+fn installed_version(directory: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+    let package = installed_package(directory, specifier)?;
+    Some(package.get(b"version")?.as_str()?.to_vec())
 }
 
 /// Whose rules of the game apply: what is ignored without being asked for, what a pattern means.
@@ -85,7 +91,8 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
 ];
 
 /// What is linted, and how, if there is no configuration file. `$severityByKind`: see `Reader::grade_by_kind`. `$forReact`: see
-/// `ResolvedConfig::of`. `$withoutWarnings`: see `Reader::without_warnings`.
+/// `ResolvedConfig::outside_of_react`. `$withoutWarnings`: see `Reader::without_warnings`.
+/// `UNUSED_ON_PURPOSE`: see there.
 const BUILT_IN: &[u8] = br#"[
     { "ignores": ["**/.git/", "**/*.min.js"] },
     { "files": ["**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"] },
@@ -97,7 +104,14 @@ const BUILT_IN: &[u8] = br#"[
             "globals": { "Bun": "readonly" },
             "parserOptions": { "ecmaFeatures": { "jsx": true } }
         },
-        "plugins": { "react": "eslint-plugin-react", "react-hooks": "eslint-plugin-react-hooks" }
+        "settings": {
+            "import/core-modules": ["bun", "bun:ffi", "bun:jsc", "bun:sqlite", "bun:test"],
+            "import/extensions": [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"],
+            "import/external-module-folders": ["node_modules", "node_modules/@types"],
+            "import/parsers": { "@typescript-eslint/parser": [".ts", ".mts", ".cts", ".tsx"] },
+            "import/resolver": { "typescript": true }
+        },
+        "rules": { "no-unused-vars": ["warn", UNUSED_ON_PURPOSE] }
     },
     {
         "files": ["**/*{.,_}{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"],
@@ -113,7 +127,8 @@ const BUILT_IN: &[u8] = br#"[
     {
         "files": ["**/*.{ts,mts,cts,tsx}"],
         "extends": ["typescript-eslint/TYPESCRIPT"],
-        "$severityByKind": true
+        "$severityByKind": true,
+        "rules": { "@typescript-eslint/no-unused-vars": ["warn", UNUSED_ON_PURPOSE] }
     },
     {
         "rules": {
@@ -140,6 +155,12 @@ const BUILT_IN: &[u8] = br#"[
     }
 ]"#;
 
+/// The options of the two `no-unused-vars` in [`BUILT_IN`]: a name that starts with `_` says that it is not used.
+const UNUSED_ON_PURPOSE: &[u8] = br#"{
+    "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "caughtErrorsIgnorePattern": "^_",
+    "destructuredArrayIgnorePattern": "^_", "ignoreRestSiblings": true
+}"#;
+
 /// [`BUILT_IN`]. `with_types`: with the rules that need types.
 fn built_in_json(with_types: bool) -> Json {
     let preset: &[u8] = match with_types {
@@ -147,6 +168,7 @@ fn built_in_json(with_types: bool) -> Json {
         false => b"recommended",
     };
     let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
+    let text = strings::replace_owned(&text, b"UNUSED_ON_PURPOSE", UNUSED_ON_PURPOSE);
     bun_lint::json::parse(&text).unwrap_or(Json::Null)
 }
 
@@ -297,8 +319,8 @@ pub(crate) struct Loader<'l> {
     rulesdir: OnceLock<Result<Json, Fatal>>,
     /// [`Loader::tool`]
     tool: OnceLock<Option<Flavor>>,
-    /// [`Loader::undecided`]
-    undecided: OnceLock<(Vec<u8>, Vec<u8>)>,
+    /// [`Loader::passed_over`]
+    passed_over: OnceLock<(Vec<u8>, Vec<u8>)>,
     /// The working directory has an `eslint.config.*`, in it or above it, and that is what the run is for.
     has_file_of_eslint: OnceLock<bool>,
     /// [`Loader::lacks_file`]
@@ -350,12 +372,9 @@ fn plugin_shorthand(name: &[u8]) -> Vec<u8> {
         .to_vec()
 }
 
-/// `--global a,b:true`
+/// `[lint.globals]`, and `--global a,b:true`
 fn globals_of(options: &Options) -> Option<Json> {
-    if options.global.is_empty() {
-        return None;
-    }
-    let mut globals: Vec<(Vec<u8>, Json)> = Vec::new();
+    let mut globals = options.globals.clone();
     for name in &options.global {
         let (name, value): (&[u8], &[u8]) = match name.strip_suffix(b":true") {
             Some(name) => (name, b"writable"),
@@ -364,7 +383,30 @@ fn globals_of(options: &Options) -> Option<Json> {
         globals.retain(|it| it.0 != name);
         globals.push((name.to_vec(), Json::String(value.to_vec())));
     }
-    Some(Json::Object(globals))
+    (!globals.is_empty()).then_some(Json::Object(globals))
+}
+
+/// `--rule` for ESLint, and before it `-A`, `-W` and `-D` of oxlint with a rule: the options that the rule has stay.
+fn rules_of(options: &Options) -> Vec<(Vec<u8>, Json)> {
+    let filters = options.filters.iter();
+    let filters = filters.filter(|it| !is_category(&it.1));
+    let mut rules = Vec::new();
+    for (severity, rule) in filters {
+        merge(&mut rules, vec![(rule.clone(), severity_name(*severity))]);
+    }
+    merge(&mut rules, options.rule.clone());
+    rules
+}
+
+/// What an override is written as.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Shape {
+    /// An object of an `eslint.config.js`.
+    Flat,
+    /// An element of `overrides` in an `.oxlintrc.json`.
+    Oxlint,
+    /// The same in an `.eslintrc.json`.
+    Legacy,
 }
 
 /// oxlint's `validateConfigExtends`: what a program exports extends objects that it has imported, no files.
@@ -518,7 +560,7 @@ impl<'l> Loader<'l> {
             is_legacy: OnceLock::new(),
             rulesdir: OnceLock::new(),
             tool: OnceLock::new(),
-            undecided: OnceLock::new(),
+            passed_over: OnceLock::new(),
             has_file_of_eslint: OnceLock::new(),
             lacks_file: OnceLock::new(),
             named: Default::default(),
@@ -674,20 +716,64 @@ impl<'l> Loader<'l> {
         self.by_file.lock().len() > 1
     }
 
-    /// `--rule` for ESLint, and before it `-A`, `-W` and `-D` of oxlint with a rule: the options that the rule has stay.
-    fn rules_of_the_command_line(&self) -> Vec<(Vec<u8>, Json)> {
-        let filters = self.options.filters.iter();
-        let filters = filters.filter(|it| !is_category(&it.1));
-        let mut rules = Vec::new();
-        for (severity, rule) in filters {
-            merge(&mut rules, vec![(rule.clone(), severity_name(*severity))]);
-        }
-        merge(&mut rules, self.options.rule.clone());
-        rules
+    /// `[[lint.overrides]]`, and after them what the command line says about rules and globals. `base_path`: what patterns are
+    /// relative to unless an override says otherwise.
+    fn overrides(&self, shape: Shape, base_path: &[u8]) -> Vec<Json> {
+        let text = |it: &[u8]| Json::String(it.to_vec());
+        let write = |it: &Override| {
+            let mut entries = vec![(&b"files"[..], strings_of(&it.files))];
+            if !it.excluded.is_empty() {
+                let key: &[u8] = match shape {
+                    Shape::Flat => b"ignores",
+                    Shape::Oxlint => b"excludeFiles",
+                    Shape::Legacy => b"excludedFiles",
+                };
+                entries.push((key, strings_of(&it.excluded)));
+            }
+            match shape {
+                Shape::Flat => entries.push((b"$globsOfBun", Json::Bool(true))),
+                Shape::Oxlint | Shape::Legacy => {}
+            }
+            match shape {
+                _ if base_path == self.cwd() => {}
+                Shape::Flat => entries.push((b"basePath", text(self.cwd()))),
+                Shape::Oxlint => entries.push((b"$basePath", text(self.cwd()))),
+                // Those of the command line are from the working directory.
+                Shape::Legacy => {}
+            }
+            if !it.rules.is_empty() {
+                entries.push((b"rules", Json::Object(it.rules.clone())));
+            }
+            match (it.globals.is_empty(), Json::Object(it.globals.clone())) {
+                (true, _) => {}
+                (false, globals) if shape == Shape::Flat => {
+                    entries.push((b"languageOptions", object(vec![(b"globals", globals)])));
+                }
+                (false, globals) => entries.push((b"globals", globals)),
+            }
+            if !it.settings.is_empty() {
+                entries.push((b"settings", Json::Object(it.settings.clone())));
+            }
+            object(entries)
+        };
+        let alone = self.options.of_command_line.as_deref();
+        let last = alone.map(|alone| Override {
+            files: vec![b"**/*".to_vec()],
+            rules: rules_of(alone),
+            globals: match globals_of(alone) {
+                Some(Json::Object(globals)) => globals,
+                _ => Vec::new(),
+            },
+            ..Override::default()
+        });
+        let last = last.filter(|it| !it.rules.is_empty() || !it.globals.is_empty());
+        (self.options.overrides.iter().chain(&last))
+            .map(write)
+            .collect()
     }
 
     /// ESLint's `overrideConfig`, as `translateOptions` makes it from the command line.
-    fn override_config(&self) -> Vec<Json> {
+    fn override_config(&self, base_path: &[u8]) -> Vec<Json> {
         let options = self.options;
         let mut language_options = Vec::new();
         if let Some(globals) = globals_of(options) {
@@ -706,7 +792,7 @@ impl<'l> Loader<'l> {
         if !language_options.is_empty() {
             first.push((&b"languageOptions"[..], object(language_options)));
         }
-        first.push((b"rules", Json::Object(self.rules_of_the_command_line())));
+        first.push((b"rules", Json::Object(rules_of(options))));
         if !options.settings.is_empty() {
             first.push((b"settings", Json::Object(options.settings.clone())));
         }
@@ -733,6 +819,7 @@ impl<'l> Loader<'l> {
             first.push((b"plugins", Json::Object(plugins.collect())));
         }
         let mut all = vec![object(first)];
+        all.extend(self.overrides(Shape::Flat, base_path));
         if let Some(extensions) = &options.ext {
             let patterns = extensions.iter().map(|extension| {
                 let dot: &[u8] = if extension.starts_with(b".") {
@@ -748,7 +835,7 @@ impl<'l> Loader<'l> {
     }
 
     /// What ESLint's `calculateConfigArray` adds to what a configuration file exports.
-    fn added(&self) -> Vec<Json> {
+    fn added(&self, base_path: &[u8]) -> Vec<Json> {
         let mut added = Vec::new();
         if !self.options.ignore_pattern.is_empty() {
             added.push(object(vec![
@@ -756,7 +843,7 @@ impl<'l> Loader<'l> {
                 (b"ignores", strings_of(&self.options.ignore_pattern)),
             ]));
         }
-        added.extend(self.override_config());
+        added.extend(self.override_config(base_path));
         added
     }
 
@@ -791,7 +878,7 @@ impl<'l> Loader<'l> {
                 (b"aboutLayout", Json::Array(about_layout.collect())),
                 (b"file", file.map_or(Json::Null, native)),
                 (b"ignores", Json::Bool(options.ignore)),
-                (b"added", Json::Array(self.added())),
+                (b"added", Json::Array(self.added(base_path))),
             ]),
         );
         Some(ForEslint {
@@ -809,7 +896,7 @@ impl<'l> Loader<'l> {
         is_of_eslint: bool,
     ) -> Result<Config, Fatal> {
         let mut all = vec![file_config];
-        all.extend(self.added());
+        all.extend(self.added(base_path));
         let mut all = Json::Array(all);
         if !self.options.ignore {
             all = without_global_ignores(all);
@@ -885,6 +972,12 @@ impl<'l> Loader<'l> {
             }
             if last.len() > 1 {
                 put(b"overrides", vec![object(last)]);
+            }
+            if !options.overrides.is_empty() {
+                put(
+                    b"overrides",
+                    self.overrides(Shape::Oxlint, paths::dirname(path)),
+                );
             }
             apply_filters(entries, &options.filters);
             if !options.plugins.is_empty() {
@@ -987,7 +1080,7 @@ impl<'l> Loader<'l> {
             }));
         }
         self.check_flags(Flavor::BuiltIn, None)?;
-        if let Err(mistake) = native::check_rules(self.linter.registry(), self.options) {
+        if let Err(mistake) = native::check_rules(self.linter, self.options) {
             let colors = self.environment.stderr.colors;
             let _ = self.mistake.set(mistake.print(self.cwd(), colors));
             return Err(Fatal(mistake.message));
@@ -1264,7 +1357,17 @@ impl<'l> Loader<'l> {
                     (false, true) => Some(Flavor::Eslint),
                     _ => None,
                 };
-                // Who has both runs both. A run that stands in for the wrong one leaves the rules of the other out, in silence.
+                let legacy = || {
+                    let names = || eslintrc::NAMES.iter().filter(|it| **it != b"package.json");
+                    paths::ancestors(self.cwd()).find_map(|directory| {
+                        let found = names().find(|it| is_there(directory, it))?;
+                        Some(paths::join(directory, found))
+                    })
+                };
+                let pass_over = |of_eslint: &[u8], of_oxlint: &[u8]| {
+                    let shown = |it: &[u8]| paths::relative(self.cwd(), it);
+                    let _ = self.passed_over.set((shown(of_eslint), shown(of_oxlint)));
+                };
                 match (nearest(Flavor::Eslint), nearest(Flavor::Oxlint), by_flags) {
                     (Some(_), Some(_), Some(flavor)) => return Some(flavor),
                     // `bun lint` has the flag for both, ESLint has it not: a command that was written for one of the two was oxlint's.
@@ -1274,15 +1377,12 @@ impl<'l> Loader<'l> {
                         return Some(Flavor::Oxlint);
                     }
                     (Some(of_eslint), Some(of_oxlint), None) => {
-                        let shown = |it: &[u8]| paths::relative(self.cwd(), it);
-                        let _ = self.undecided.set((shown(&of_eslint), shown(&of_oxlint)));
+                        pass_over(&of_eslint, &of_oxlint);
+                        return Some(Flavor::Oxlint);
                     }
-                    // Most flags of oxlint mean something with the file too.
-                    (Some(of_eslint), None, None | Some(Flavor::Oxlint)) => {
-                        if let Some((package, true, _)) = self.tools_of_the_package() {
-                            let shown = |it: &[u8]| paths::relative(self.cwd(), it);
-                            let dependency = [&b"an oxlint dependency in "[..], &shown(&package)];
-                            let _ = (self.undecided).set((shown(&of_eslint), dependency.concat()));
+                    (None, Some(of_oxlint), _) => {
+                        if let Some(of_eslint) = legacy() {
+                            pass_over(&of_eslint, &of_oxlint);
                         }
                     }
                     _ => {}
@@ -1360,8 +1460,10 @@ impl<'l> Loader<'l> {
         let is_about =
             |id: &[u8]| strings::contains(why, &[b"Key \"rules\": Key \"", id, b"\""].concat());
         let rule = self.options.rule.iter().position(|it| is_about(&it.0));
+        let mut of_overrides = self.options.overrides.iter().flat_map(|it| &it.rules);
         let place = match (rule, file) {
             (Some(at), _) if at < self.options.rules_of_bunfig.len() => b"bunfig.toml".to_vec(),
+            (None, _) if of_overrides.any(|it| is_about(&it.0)) => b"bunfig.toml".to_vec(),
             (Some(_), _) => b"--rule".to_vec(),
             (None, Some(file)) => paths::relative(self.cwd(), file),
             (None, None) => return why.to_vec(),
@@ -1398,7 +1500,7 @@ impl<'l> Loader<'l> {
             self.warn(&[
                 b"No config file found, and ",
                 &paths::relative(self.cwd(), &path),
-                b" depends on both eslint and oxlint\n  Using oxlint's defaults. Use --flavor=eslint for ESLint's.",
+                b" depends on both eslint and oxlint\n  Using oxlint's defaults. Add a config file to change that.",
             ]);
         }
         has_oxlint.then_some(Flavor::Oxlint)
@@ -1423,11 +1525,11 @@ impl<'l> Loader<'l> {
         })
     }
 
-    /// A configuration of ESLint and one of oxlint that both count for the run, where nothing on the command line tells which of the
-    /// two tools it stands in for.
-    pub(crate) fn undecided(&self) -> Option<&(Vec<u8>, Vec<u8>)> {
+    /// A configuration of ESLint, which is not read, and the one of oxlint that is, where both count for the run and nothing on the
+    /// command line tells which of the two tools it stands in for. From the working directory.
+    pub(crate) fn passed_over(&self) -> Option<&(Vec<u8>, Vec<u8>)> {
         self.tool();
-        self.undecided.get()
+        self.passed_over.get()
     }
 
     /// Those of [`NAMES`] that count.
@@ -1529,9 +1631,13 @@ impl<'l> Loader<'l> {
         if !options.settings.is_empty() {
             entries.push((b"settings", Json::Object(options.settings.clone())));
         }
-        let rules = self.rules_of_the_command_line();
+        let rules = rules_of(options);
         if !rules.is_empty() {
             entries.push((b"rules", Json::Object(rules)));
+        }
+        if !options.overrides.is_empty() {
+            let overrides = self.overrides(Shape::Legacy, self.cwd());
+            entries.push((b"overrides", Json::Array(overrides)));
         }
         let unused = match options.report_unused_disable_directives {
             true => Some(Severity::Error),

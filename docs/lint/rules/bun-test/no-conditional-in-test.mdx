@@ -82,9 +82,9 @@ test.skipIf(isWindows)("finds the home directory", () => {
 });
 ```
 
-The argument of `skipIf` counts as part of the test, so an `||` written there is reported. Put the condition in a variable first.
+Only the callback counts as the test. A condition in the argument of `skipIf`, in the title or in the timeout is not reported.
 
-{/* bad */}
+{/* good */}
 ```ts
 import { expect, test } from "bun:test";
 import { homeDirectory } from "./paths";

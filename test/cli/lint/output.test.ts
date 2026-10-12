@@ -340,3 +340,134 @@ describe.concurrent("--fix says what it has fixed", () => {
     });
   });
 });
+
+describe.concurrent("what pretty shows of the code", () => {
+  test("the ^ is under the place, whatever is before it", async () => {
+    const { stdout } = await lint({
+      "a.js": `console.log("日本語", "😀"); debugger;\n`,
+      "b.js": "{\n\t\tdebugger;\n}\n",
+      "c.js": `console.log("é"); debugger;\r\n`,
+    });
+    expect(stdout.split("\n\n").slice(0, 3)).toEqual([
+      [
+        `1 | console.log("日本語", "😀"); debugger;`,
+        `${" ".repeat(4 + 29)}^`,
+        `error: Unexpected 'debugger' statement.  no-debugger`,
+        `    at a.js:1:27`,
+      ].join("\n"),
+      [
+        `1 | {`,
+        `2 |   debugger;`,
+        `      ^`,
+        `error: Unexpected 'debugger' statement.  no-debugger`,
+        `    at b.js:2:3`,
+      ].join("\n"),
+      [
+        `1 | console.log("é"); debugger;`,
+        `${" ".repeat(4 + 18)}^`,
+        `error: Unexpected 'debugger' statement.  no-debugger`,
+        `    at c.js:1:19`,
+      ].join("\n"),
+    ]);
+  });
+
+  test("a problem of several lines is shown where it starts", async () => {
+    const { stdout } = await lint({ "a.js": "function f() {\n  return 1;\n  f(\n    2,\n  );\n}\nf();\n" });
+    expect(stdout).toStartWith(
+      ["1 | function f() {", "2 |   return 1;", "3 |   f(", "      ^", "warn: Unreachable code.  no-unreachable"].join(
+        "\n",
+      ),
+    );
+  });
+
+  const filler = Buffer.alloc(150, "a").toString();
+  const long = {
+    "end.js": `console.log(1);\nconsole.log("${filler}"); debugger;\n`,
+    "start.js": `debugger; console.log("${filler}");\n`,
+  };
+
+  test.skipIf(!hasTerminal)("of a line that is wider than the terminal, the part around the place", async () => {
+    const { output } = await inTerminal(long, [], { NO_COLOR: "1" });
+    expect(output.split("\n\n").slice(0, 2)).toEqual([
+      [
+        `2 | …${filler.slice(0, 26)}"); debugger;`,
+        `${" ".repeat(4 + 1 + 30)}^`,
+        `error: Unexpected 'debugger' statement.  no-debugger`,
+        `    at end.js:2:168`,
+      ].join("\n"),
+      [
+        `1 | debugger; console.log("${filler.slice(0, 72)}…`,
+        `    ^`,
+        `error: Unexpected 'debugger' statement.  no-debugger`,
+        `    at start.js:1:1`,
+      ].join("\n"),
+    ]);
+  });
+
+  test("in a pipe nothing is cut", async () => {
+    const { stdout } = await lint(long);
+    expect(stdout).toContain(`\n2 | console.log("${filler}"); debugger;\n`);
+    expect(stdout).toContain(`\n1 | debugger; console.log("${filler}");\n`);
+  });
+
+  test("a warning is yellow, an error red", async () => {
+    const { stdout } = await lint({ "a.js": bad }, warnsAboutVar, { FORCE_COLOR: "1" });
+    expect(stdout).toContain("\x1b[33mwarn\x1b[0m");
+    expect(stdout).toContain("\x1b[31merror\x1b[0m");
+    expect(stdout).toContain("\x1b[31m1 error\x1b[0m");
+    expect(stdout).toContain("\x1b[33m1 warning\x1b[0m");
+  });
+
+  test("a count of none has no color", async () => {
+    const { stdout } = await lint({ "a.js": "debugger;\n" }, [], { FORCE_COLOR: "1" });
+    expect(stdout).toContain("\x1b[31m1 error\x1b[0m");
+    expect(stdout).not.toContain("\x1b[33m0 warnings");
+    expect(Bun.stripANSI(stdout)).toEndWith("\n\n1 problem (1 error, 0 warnings)\n");
+  });
+});
+
+describe.concurrent("above 50 problems", () => {
+  const names = Array.from({ length: 60 }, (_, i) => `let a${i};`).join("\n") + "\n";
+
+  test("the problems of a rule are one group, and errors come first", async () => {
+    const { stdout, exitCode } = await lint({ "a.js": names, "b.js": "debugger;\n" }, [
+      "--rule",
+      "no-unused-vars: warn",
+    ]);
+    expect(stdout).toBe(
+      [
+        "1 | debugger;",
+        "    ^",
+        "error: Unexpected 'debugger' statement.  no-debugger",
+        "    at b.js:1:1",
+        "",
+        "1 | let a0;",
+        "        ^",
+        "warn: 'a0' is defined but never used.  no-unused-vars",
+        "   at a.js:1:5",
+        "",
+        "note: Remove it, or start its name with _ to keep it.",
+        "",
+        "    60 times in 1 file",
+        "        60  a.js:1",
+        "",
+        "bun lint --all  show every problem",
+        "",
+        "61 problems (1 error, 60 warnings)",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("with a configuration file, those that say the same are", async () => {
+    const config = `export default [{ rules: { "no-unused-vars": "warn", "no-debugger": "error" } }];\n`;
+    const { stdout } = await lint({ "eslint.config.js": config, "a.js": names, "b.js": "debugger;\n" }, [
+      "-f",
+      "pretty",
+    ]);
+    expect(stdout).toStartWith("1 | let a0;\n");
+    expect(stdout).not.toContain(" times in ");
+    expect(stdout).toContain("\n  and 19 more problems of 19 other kinds\n");
+  });
+});

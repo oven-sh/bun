@@ -2,12 +2,13 @@
 
 use super::config::{self, Configs, Flavor};
 use super::files::{Expanded, Target};
-use crate::doctor::{How, Kinds, Modules, Need, Packages, sorted, texts, write_count, write_notes};
+use crate::doctor::{
+    How, Kinds, Modules, Need, Packages, is_for_formatting, sorted, texts, write_count, write_notes,
+};
 use crate::paths;
 use crate::print_config::{object, text, write_indented};
 use crate::run::{Fatal, Pool};
 use bstr::BStr;
-use bun_core::strings;
 use bun_lint::options::Json;
 use bun_threading::Guarded;
 use std::io::Write;
@@ -114,19 +115,13 @@ pub(super) fn report(
         return Err(error);
     }
     let options = sorted(std::mem::take(&mut *configs.unsupported_options.lock()));
-    let notes = std::mem::take(&mut *configs.warnings.lock());
+    let mut notes = std::mem::take(&mut *configs.warnings.lock());
+    notes.extend(configs.note().map(<[u8]>::to_vec));
 
     let loaded = modules.packages();
     let packages = Packages::new(
         cwd,
-        |name| {
-            let is_of_a_formatter =
-                strings::contains(name, b"prettier") || strings::contains(name, b"oxfmt");
-            // What is for the linter is up to `bun lint --doctor`.
-            is_of_a_formatter
-                && !strings::contains(name, b"eslint")
-                && !plugins.not_supported.iter().any(|it| it == name)
-        },
+        |name| is_for_formatting(name) && !plugins.not_supported.iter().any(|it| it == name),
         |name| {
             if for_files.iter().any(|it| it == name) {
                 Some(Need::Files)

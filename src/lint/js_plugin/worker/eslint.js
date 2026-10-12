@@ -79,7 +79,13 @@ function longPluginName(name) {
 async function reviveOverride(object) {
   const resolve = createRequire(nodePath.join(cwd, "noop.js")).resolve;
   const importFrom = async name => load(pathToFileURL(resolve(name)).href);
-  const revived = { ...object };
+  const { $globsOfBun: isOfBunfig, ...revived } = object;
+  if (isOfBunfig) {
+    // A pattern without a slash is for a name in any directory.
+    const glob = it => (it.startsWith("./") ? it.slice(2) : it.includes("/") ? it : `**/${it}`);
+    revived.files = object.files.map(glob);
+    if (object.ignores !== undefined) revived.ignores = object.ignores.map(glob);
+  }
   if (object.plugins !== undefined) {
     revived.plugins = {};
     for (const [prefix, name] of Object.entries(object.plugins)) {

@@ -11,6 +11,7 @@ mod compare;
 mod generator;
 mod ianvs;
 mod layout;
+mod native;
 mod organize;
 mod oxfmt;
 mod settings;
@@ -27,6 +28,8 @@ enum How {
     Trivago(trivago::Options),
     Ianvs(ianvs::Options),
     Oxfmt(oxfmt::Options),
+    /// `sortImports` of `[format]` in bunfig.toml: oxfmt's, and `native.rs`.
+    Native(oxfmt::Options),
     Organize(organize::Options),
 }
 
@@ -41,7 +44,13 @@ impl SortImports {
     /// Whether it is `format` that sorts the imports, and not [`sorted_text`]: then what it writes
     /// has the tokens of the file in another order.
     pub fn is_applied_by_format(&self) -> bool {
-        matches!(self.how, How::Oxfmt(_))
+        matches!(self.how, How::Oxfmt(_) | How::Native(_))
+    }
+
+    /// Whether `after`, which is what [`sorted_text`] has made of `before`, still imports what that does. Of a plugin
+    /// of Prettier nothing is known.
+    pub fn keeps_imports<'a, 'b>(&self, before: &'a File<'a>, after: &'b File<'b>) -> bool {
+        !matches!(self.how, How::Native(_)) || native::keeps_imports(before, after)
     }
 
     /// Whether [`sorted_text`] asks which imports are used: the file has to be bound with its
@@ -63,6 +72,9 @@ pub fn sorted_text<'a>(file: &'a File<'a>, how: &SortImports) -> Option<Vec<u8>>
     if file.has_parse_errors() || matches!(how.how, How::Oxfmt(_)) {
         return None;
     }
+    if matches!(how.how, How::Native(_)) {
+        return native::preprocess(file);
+    }
     // Prettier's `guessEndOfLine`
     let text = file.text();
     let end_of_line: &[u8] = match bun_core::strings::index_of_char_usize(text, b'\n') {
@@ -76,6 +88,6 @@ pub fn sorted_text<'a>(file: &'a File<'a>, how: &SortImports) -> Option<Vec<u8>>
     match &how.how {
         How::Trivago(options) => trivago::preprocess(&mut model, options, end_of_line),
         How::Ianvs(options) => ianvs::preprocess(&mut model, options, end_of_line),
-        How::Oxfmt(_) | How::Organize(_) => None,
+        How::Oxfmt(_) | How::Native(_) | How::Organize(_) => None,
     }
 }

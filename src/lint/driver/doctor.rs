@@ -4,20 +4,22 @@
 //! What runs where is asked of what decides it in a run: the [`ResolvedConfig`] of each file, its [`Route`], the [`Host`] of the
 //! plugins. Which packages a configuration file cannot be read without is seen while it is read: [`watching`].
 
+mod packages;
+
 use crate::cli::Options;
 use crate::configs::{Flavor, Loaded, Loader};
 use crate::discover::{self, Status};
 use crate::print_config::{object, text, write_indented};
 use crate::run::{Environment, Fatal, Pool, Script};
-use crate::{evaluate, fs, paths};
+use crate::{evaluate, paths};
 use bstr::BStr;
-use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{self, Host, Route};
 use bun_lint::linter::{FileConfig, ResolvedConfig, RuleId, parse_rule_id};
 use bun_lint::options::Json;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
+pub(crate) use packages::{Need, Packages, is_for_formatting};
 use std::io::Write;
 use std::sync::Arc;
 
@@ -128,136 +130,6 @@ impl Kinds {
             all.map(|it| (it.0.clone(), Json::Number(it.1 as f64)))
                 .collect(),
         )
-    }
-}
-
-/// Why a package has to stay installed.
-#[derive(Clone, PartialEq, Eq)]
-pub(crate) enum Need {
-    /// Rules of it run in JavaScript.
-    Rules,
-    /// It lints or formats files.
-    Files,
-    /// The configuration file, which is shown as this, cannot be read without it.
-    Configuration(Vec<u8>),
-    /// There is no configuration file: that the project depends on it says whose defaults apply.
-    Defaults,
-}
-
-impl Need {
-    fn key(&self) -> &'static [u8] {
-        match self {
-            Need::Rules => b"rules",
-            Need::Files => b"files",
-            Need::Configuration(_) => b"config",
-            Need::Defaults => b"defaults",
-        }
-    }
-
-    /// Behind the names of `count` packages.
-    fn shown(&self, count: usize) -> String {
-        let (it, its) = if count == 1 {
-            ("it", "its")
-        } else {
-            ("them", "their")
-        };
-        match self {
-            Need::Rules => format!("{its} rules run in JavaScript"),
-            Need::Files => format!("some files go to {it}"),
-            Need::Configuration(file) => format!("{} loads {it}", BStr::new(file)),
-            Need::Defaults => format!("{its} defaults apply while package.json has {it}"),
-        }
-    }
-}
-
-/// The names in `dependencies` and `devDependencies` of the `package.json` nearest to `cwd`.
-fn dependencies(cwd: &[u8]) -> Vec<Vec<u8>> {
-    let nearest =
-        paths::ancestors(cwd).find_map(|it| fs::read(&paths::join(it, b"package.json")).ok());
-    let Some(json) = nearest.and_then(|it| bun_lint::json::parse(&it)) else {
-        return Vec::new();
-    };
-    let sections = [&b"dependencies"[..], b"devDependencies"].into_iter();
-    let entries = sections
-        .filter_map(|it| json.get(it)?.as_object())
-        .flatten();
-    sorted(entries.map(|it| it.0.clone()).collect())
-}
-
-/// What becomes of the packages of the tools that `package.json` depends on.
-pub(crate) struct Packages {
-    removable: Vec<Vec<u8>>,
-    needed: Vec<(Vec<u8>, Need)>,
-}
-
-impl Packages {
-    /// `is_of_a_tool`: whether a package is there for the tool that is replaced. `need`: why it has to stay.
-    pub(crate) fn new(
-        cwd: &[u8],
-        is_of_a_tool: impl Fn(&[u8]) -> bool,
-        need: impl Fn(&[u8]) -> Option<Need>,
-    ) -> Packages {
-        let mut packages = Packages {
-            removable: Vec::new(),
-            needed: Vec::new(),
-        };
-        for name in dependencies(cwd) {
-            match need(&name) {
-                Some(need) => packages.needed.push((name, need)),
-                None if is_of_a_tool(&name) => packages.removable.push(name),
-                None => {}
-            }
-        }
-        packages
-    }
-
-    pub(crate) fn json(&self) -> Json {
-        let needed = self
-            .needed
-            .iter()
-            .map(|(name, need)| object(vec![(b"name", text(name)), (b"reason", text(need.key()))]));
-        object(vec![
-            (b"removable", texts(&self.removable)),
-            (b"needed", Json::Array(needed.collect())),
-        ])
-    }
-
-    pub(crate) fn write(&self, out: &mut Vec<u8>, colors: bool) {
-        if self.removable.is_empty() && self.needed.is_empty() {
-            return;
-        }
-        out.push(b'\n');
-        if !self.removable.is_empty() {
-            let names = self.removable.join(&b", "[..]);
-            pretty!(
-                out,
-                colors,
-                "<green>You can remove:<r> {}\n",
-                BStr::new(&names)
-            );
-        }
-        let mut groups: Vec<(&Need, Vec<&[u8]>)> = Vec::new();
-        for (name, need) in &self.needed {
-            match groups.iter_mut().find(|it| it.0 == need) {
-                Some(group) => group.1.push(name),
-                None => groups.push((need, vec![name])),
-            }
-        }
-        for (at, (need, names)) in groups.iter().enumerate() {
-            let label = if at == 0 {
-                "Still needed:  "
-            } else {
-                "               "
-            };
-            pretty!(
-                out,
-                colors,
-                "{} {} <d>({})<r>\n",
-                label,
-                BStr::new(&names.join(&b", "[..])),
-                need.shown(names.len())
-            );
-        }
     }
 }
 
@@ -537,27 +409,24 @@ pub(crate) fn lint(
     let nested = all_loaded.iter().skip(1).filter_map(|it| it.file.as_ref());
     let nested = sorted(nested.map(shown).collect());
     let loaded = modules.packages();
-    let packages = Packages::new(
-        cwd,
-        |name| strings::contains(name, b"eslint") || strings::contains(name, b"oxlint"),
-        |name| {
-            let is_named = || sources.iter().any(|it| it.1 == name);
-            if javascript.iter().any(|it| it.0 == name) {
-                Some(Need::Rules)
-            } else if name == b"eslint" && (by_eslint.count() > 0 || lacks_eslint) {
-                Some(Need::Files)
-            } else if let Some(file) = file.as_ref().or_else(|| nested.first()) {
-                (loaded.iter().any(|it| it == name) || is_named())
-                    .then(|| Need::Configuration(file.clone()))
-            } else {
-                let decides =
-                    own.flavor == Flavor::Oxlint && matches!(name, b"oxlint" | b"vite-plus");
-                decides.then_some(Need::Defaults)
-            }
-        },
-    );
+    let packages = Packages::new(cwd, packages::is_for_linting, |name| {
+        let is_named = || sources.iter().any(|it| it.1 == name);
+        if javascript.iter().any(|it| it.0 == name) {
+            Some(Need::Rules)
+        } else if name == b"eslint" && (by_eslint.count() > 0 || lacks_eslint) {
+            Some(Need::Files)
+        } else if let Some(file) = file.as_ref().or_else(|| nested.first()) {
+            (loaded.iter().any(|it| it == name) || is_named())
+                .then(|| Need::Configuration(file.clone()))
+        } else {
+            let decides = own.flavor == Flavor::Oxlint && matches!(name, b"oxlint" | b"vite-plus");
+            decides.then_some(Need::Defaults)
+        }
+    });
     let mut notes = std::mem::take(&mut *loader.warnings.lock());
     notes.append(&mut *loader.advice.lock());
+
+    let ignored = loader.passed_over().map(|it| &it.0[..]);
 
     let mut out = Vec::new();
     if how.as_json {
@@ -573,6 +442,7 @@ pub(crate) fn lint(
                     (b"path", file.as_ref().map_or(Json::Null, |it| text(it))),
                     (b"kind", text(kind_of(own.flavor).0)),
                     (b"nested", texts(&nested)),
+                    (b"ignored", ignored.map_or(Json::Null, text)),
                 ]),
             ),
             (
@@ -620,6 +490,14 @@ pub(crate) fn lint(
         (None, Flavor::Eslint | Flavor::EslintRc) => {
             out.extend_from_slice(b"No config file is used. Only the command line sets rules.\n");
         }
+    }
+    if let Some(ignored) = ignored {
+        pretty!(
+            &mut out,
+            colors,
+            "<d>{} is ignored because the project also has an oxlint config. Use --config to pick it.<r>\n",
+            BStr::new(ignored)
+        );
     }
     if !nested.is_empty() {
         pretty!(

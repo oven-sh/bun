@@ -32,7 +32,7 @@ Reported:
 export function query() {}
 ```
 
-{/* bad {"filename": "src/client/app.js", "options": [{"zones": [{"target": "*?/*?/src/client/**", "from": "*?/*?/src/server/**"}]}]} */}
+{/* bad {"filename": "src/client/app.js", "root": true, "options": [{"zones": [{"target": "./src/client", "from": "./src/server"}]}]} */}
 ```js src/client/app.js
 import { query } from "../server/db.js";
 ```
@@ -44,7 +44,7 @@ Not reported:
 export function formatDate() {}
 ```
 
-{/* good {"filename": "src/client/app.js", "options": [{"zones": [{"target": "*?/*?/src/client/**", "from": "*?/*?/src/server/**"}]}]} */}
+{/* good {"filename": "src/client/app.js", "root": true, "options": [{"zones": [{"target": "./src/client", "from": "./src/server"}]}]} */}
 ```js src/client/app.js
 import { formatDate } from "../shared/format.js";
 ```

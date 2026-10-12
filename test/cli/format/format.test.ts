@@ -35,6 +35,8 @@ import { inputs as lineEndingInputs } from "./line-endings.cases.ts";
 afterAll(endChildren);
 
 const command = [bunExe(), "format"];
+/** The start of an error, in Prettier's words and in Bun's. */
+const anError = /^(?:\[error\]|error:) /m;
 
 const env = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined };
 
@@ -129,7 +131,7 @@ describe.concurrent("bun format", () => {
         ["-l", "--check", "--no-config", "--config", "x", "."],
         "[error] Cannot use --no-config and --config together.",
       ],
-      ["no configuration", {}, ["-l", "--check", "."], together],
+      ["no configuration", {}, ["-l", "--check", "."], together.replace("[error]", "error:")],
       ["oxfmt", oxfmt, ["--list-different", "--check", "."], second("--check", "--list-different")],
       ["oxfmt", oxfmt, ["--check", "--list-different", "."], second("--list-different", "--check")],
       ["oxfmt", oxfmt, ["--list-different", "--write", "."], second("--write", "--list-different")],
@@ -240,14 +242,14 @@ describe.concurrent("bun format", () => {
     });
 
     test.each<[Record<string, string>, string[], string, number]>([
-      [{}, ["--tab-width=4294967295"], "[error] a.js: RangeError: Invalid string length", 2],
+      [{}, ["--tab-width=4294967295"], "error: a.js: RangeError: Invalid string length", 2],
       [{ ".prettierrc": '{"tabWidth": 1e20}' }, [], "[error] a.js: RangeError: Invalid string length", 2],
-      [{}, ["--print-width", "1.5"], "[error] Invalid --print-width value. Expected an integer, but received 1.5.", 1],
-      [{}, ["--print-width=abc"], "[error] Invalid --print-width value. Expected an integer, but received null.", 1],
-      [{}, ["--print-width", "1e-1"], "[error] Invalid --print-width value. Expected an integer, but received 0.1.", 1],
-      [{}, ["--print-width=1_000"], "[error] Invalid --print-width value. Expected an integer, but received null.", 1],
-      [{}, ["--tab-width=1.5"], "[error] Invalid --tab-width value. Expected an integer, but received 1.5.", 1],
-      [{}, ["--tab-width", "NaN"], "[error] Invalid --tab-width value. Expected an integer, but received null.", 1],
+      [{}, ["--print-width", "1.5"], "error: Invalid --print-width value. Expected an integer, but received 1.5.", 1],
+      [{}, ["--print-width=abc"], "error: Invalid --print-width value. Expected an integer, but received null.", 1],
+      [{}, ["--print-width", "1e-1"], "error: Invalid --print-width value. Expected an integer, but received 0.1.", 1],
+      [{}, ["--print-width=1_000"], "error: Invalid --print-width value. Expected an integer, but received null.", 1],
+      [{}, ["--tab-width=1.5"], "error: Invalid --tab-width value. Expected an integer, but received 1.5.", 1],
+      [{}, ["--tab-width", "NaN"], "error: Invalid --tab-width value. Expected an integer, but received null.", 1],
       [
         { ".prettierrc": '{"printWidth": 1.5}' },
         [],
@@ -402,7 +404,7 @@ describe.concurrent("bun format", () => {
       for (const result of [inRepository, inNone]) {
         expect(result.files).toEqual({ "outside/c/d.js": ugly });
         expect(result.stderr).toContain(
-          '[error] Unable to write file "c/d.js":\n[error] it is a symlink to a file outside the repository',
+          'error: Unable to write file "c/d.js":\nit is a symlink to a file outside the repository',
         );
         expect(result.exitCode).toBe(2);
       }
@@ -451,7 +453,7 @@ describe.concurrent("bun format", () => {
       chmodSync(join(String(dir), "src"), 0o555);
       try {
         const { stderr, exitCode } = await write(String(dir), []);
-        expect(stderr).not.toContain("[error]");
+        expect(stderr).not.toMatch(anError);
         expect(read(String(dir), "src/a.js")).toBe(formatted);
         expect(exitCode).toBe(0);
       } finally {
@@ -480,7 +482,7 @@ describe.concurrent("bun format", () => {
     // Linux takes 4,096 bytes, macOS 1,024, Windows 32,767 characters, which is also all that its command line has.
     const long = Buffer.alloc(isWindows ? 30_000 : 40_000, "a/").toString() + "a.js";
     const result = await format({ "a.js": ugly }, [long, "a.js"], { reads: ["a.js"] });
-    expect(result.stderr).toStartWith('[error] No files matching the pattern were found: "a/a/');
+    expect(result.stderr).toStartWith('error: No files matching the pattern were found: "a/a/');
     expect(result.files).toEqual({ "a.js": formatted });
     expect(result.exitCode).toBe(2);
   });
@@ -554,7 +556,7 @@ describe.concurrent("bun format", () => {
   test("a syntax error is reported, the other files are formatted, and the exit code is 2", async () => {
     const result = await format({ "a.js": "const = 1;\n", "b.js": ugly }, [], { reads: ["a.js", "b.js"] });
     expect(result.files).toEqual({ "a.js": "const = 1;\n", "b.js": formatted });
-    expect(result.stderr).toContain("[error] a.js: SyntaxError:");
+    expect(result.stderr).toContain("error: a.js: SyntaxError:");
     expect(result.stderr).toContain("(1:7)");
     expect(result.exitCode).toBe(2);
   });
@@ -675,7 +677,7 @@ describe.concurrent("bun format", () => {
       ["sign-before-a-word.json5", "-null\n", "Unexpected token (1:2)"],
     ];
     const result = await format(Object.fromEntries(cases.map(([name, text]) => [name, text])), []);
-    const said = [...result.stderr.matchAll(/^\[error\] ([^:\n]+): SyntaxError: (.+)$/gm)].map(it => [it[1], it[2]]);
+    const said = [...result.stderr.matchAll(/^error: ([^:\n]+): SyntaxError: (.+)$/gm)].map(it => [it[1], it[2]]);
     expect(Object.fromEntries(said)).toEqual(Object.fromEntries(cases.map(([name, , message]) => [name, message])));
     expect(result.exitCode).toBe(2);
   });
@@ -690,38 +692,38 @@ describe.concurrent("bun format", () => {
     };
     const result = await format(files, []);
     expect(result.stderr).toMatchInlineSnapshot(`
-      "[error] a.css: SyntaxError: Unclosed string (2:16)
-      [error]   1 | a {
-      [error] > 2 |   /* é😀 */ b: "x
-      [error]     |                ^
-      [error]   3 | }
-      [error]   4 |
-      [error] b.css: SyntaxError: Unclosed string (7:6)
-      [error]    5 |
-      [error]    6 | d {
-      [error] >  7 |   e: "f
-      [error]      |      ^
-      [error]    8 | }
-      [error]    9 |
-      [error]   10 | g {
-      [error] c.js: SyntaxError: Expression expected. (1:11)
-      [error] > 1 | const a = ;
-      [error]     |           ^
-      [error]   2 |
-      [error] d.yaml: SyntaxError: Tabs cannot be used for indentation (2:2)
-      [error]   1 | a:
-      [error] > 2 | 	- b
-      [error]     | 	^
-      [error]   3 |
+      "error: a.css: SyntaxError: Unclosed string (2:16)
+        1 | a {
+      > 2 |   /* é😀 */ b: "x
+          |                ^
+        3 | }
+        4 |
+      error: b.css: SyntaxError: Unclosed string (7:6)
+         5 |
+         6 | d {
+      >  7 |   e: "f
+           |      ^
+         8 | }
+         9 |
+        10 | g {
+      error: c.js: SyntaxError: Expression expected. (1:11)
+      > 1 | const a = ;
+          |           ^
+        2 |
+      error: d.yaml: SyntaxError: Tabs cannot be used for indentation (2:2)
+        1 | a:
+      > 2 | 	- b
+          | 	^
+        3 |
       Formatted 0 files, 0 unchanged"
     `);
     expect(result.exitCode).toBe(2);
     const stdin = await format({}, ["--stdin-filepath", "a.css"], { stdin: "a {\n" });
     expect(stdin.stderr).toMatchInlineSnapshot(`
-      "[error] a.css: SyntaxError: Unclosed block (1:1)
-      [error] > 1 | a {
-      [error]     | ^
-      [error]   2 |"
+      "error: a.css: SyntaxError: Unclosed block (1:1)
+      > 1 | a {
+          | ^
+        2 |"
     `);
     expect(stdin.exitCode).toBe(2);
   });
@@ -750,7 +752,7 @@ describe.concurrent("bun format", () => {
       reads: ["a.js"],
     });
     expect(result.files).toEqual({ "a.js": text });
-    expect(result.stderr).toContain("[error] a.js: formatting would change what the code does.");
+    expect(result.stderr).toContain("error: a.js: formatting would change what the code does.");
     expect(result.exitCode).toBe(2);
   });
 
@@ -818,12 +820,12 @@ describe.concurrent("bun format", () => {
     };
     const files = Object.fromEntries(Object.entries(damaged).map(([name, text]) => [`${name}.hbs`, text]));
     const errors = Object.keys(files)
-      .map(name => `[error] ${name}: formatting like Prettier would change its meaning. It was not formatted.`)
+      .map(name => `error: ${name}: formatting like Prettier would change its meaning. It was not formatted.`)
       .sort();
     const errorsIn = (stderr: string) =>
       stderr
         .split("\n")
-        .filter(line => line.startsWith("[error] "))
+        .filter(line => line.startsWith("error: "))
         .sort();
 
     test.each([[[] as string[]], [["--check"]], [["-l"]]])("%j", async args => {
@@ -839,7 +841,7 @@ describe.concurrent("bun format", () => {
       const result = await format({}, ["--stdin-filepath", "a.hbs"], { stdin: damaged.doctype });
       expect(result.raw).toBe("");
       expect(errorsIn(result.stderr)).toEqual([
-        "[error] a.hbs: formatting like Prettier would change its meaning. It was not formatted.",
+        "error: a.hbs: formatting like Prettier would change its meaning. It was not formatted.",
       ]);
       expect(result.exitCode).toBe(2);
     });
@@ -963,7 +965,7 @@ describe.concurrent("bun format", () => {
       reads: ["a.html", "b.html"],
     });
     expect(result.files).toEqual({ "a.html": "<div></span>\n", "b.html": "<p>a</p>\n" });
-    expect(result.stderr).toContain("[error] a.html: SyntaxError:");
+    expect(result.stderr).toContain("error: a.html: SyntaxError:");
     expect(result.exitCode).toBe(2);
   });
 
@@ -971,21 +973,21 @@ describe.concurrent("bun format", () => {
     // Prettier 3.9.9 writes a media query in lower case, which makes a `k` of the Kelvin sign.
     const lossy = "<style>@media (\u212Aa){a{b:c}}</style>\n";
     const error = (name: string) =>
-      `[error] ${name}: formatting like Prettier would change its contents. It was not formatted.`;
+      `error: ${name}: formatting like Prettier would change its contents. It was not formatted.`;
 
     test.each([[[] as string[]], [["--check"]], [["-l"]]])("%j", async args => {
       const result = await format({ "a.html": lossy, "b.html": "<p   >a</p>\n" }, args, {
         reads: ["a.html", "b.html"],
       });
       expect(result.files).toEqual({ "a.html": lossy, "b.html": args.length > 0 ? "<p   >a</p>\n" : "<p>a</p>\n" });
-      expect(result.stderr.split("\n").filter(line => line.startsWith("[error] "))).toEqual([error("a.html")]);
+      expect(result.stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([error("a.html")]);
       expect(result.exitCode).toBe(2);
     });
 
     test("standard input", async () => {
       const result = await format({}, ["--stdin-filepath", "a.html"], { stdin: lossy });
       expect(result.raw).toBe("");
-      expect(result.stderr.split("\n").filter(line => line.startsWith("[error] "))).toEqual([error("a.html")]);
+      expect(result.stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([error("a.html")]);
       expect(result.exitCode).toBe(2);
     });
 
@@ -1052,7 +1054,7 @@ describe.concurrent("bun format", () => {
     const text = "const a = html`<${b}>c`;\n";
     const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": text });
-    expect(result.stderr).toContain("[error] a.js: formatting would change what the code does.");
+    expect(result.stderr).toContain("error: a.js: formatting would change what the code does.");
     expect(result.exitCode).toBe(2);
   });
 
@@ -1432,8 +1434,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       exitCode: 2,
     });
     expect(await piped("{}\n")).toMatchObject({ raw: files["a.svelte"], stderr: "", exitCode: 0 });
-    // Prettier has no TOML.
-    expect(await different(files, [])).toEqual(["c.js"]);
+    // Prettier has no TOML. Where neither tool is stood in for, it is a language like another.
+    expect(await different({ ...files, ".prettierrc": "{}\n" }, [])).toEqual(["c.js"]);
+    expect(await different(files, [])).toEqual(["b.toml", "c.js", "Pipfile"]);
     const broken = await format({ "b.toml": "a = = 1\n", ".oxfmtrc.json": "{}\n" }, [], { reads: ["b.toml"] });
     expect(broken.files["b.toml"]).toBe("a = = 1\n");
     expect(broken.stderr).toMatch(/b\.toml: SyntaxError: .+ \(1:\d+\)/);
@@ -1519,8 +1522,8 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const result = await format({ "a.json": "", "b.js": ugly }, ["--check", "."], {
       before: dir => truncateSync(join(dir, "a.json"), 2 ** 29),
     });
-    expect(result.stderr).toContain(`[error] Unable to read file "a.json":\n[error] EFBIG: `);
-    expect(result.stderr).toContain("[warn] b.js");
+    expect(result.stderr).toContain(`error: Unable to read file "a.json":\nEFBIG: `);
+    expect(result.stdout).toBe("b.js");
     expect(result.exitCode).toBe(2);
   });
 
@@ -1738,7 +1741,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       );
       expect(both.files["a.ts"]).toBe(asPrettier);
       expect(both.stderr).toContain(
-        "[warn] No config file found, and package.json depends on both oxfmt and prettier\n[warn]   Formatting like Prettier.",
+        "warn: No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like Prettier.",
       );
       // A configuration file says more than that.
       expect(
@@ -1961,11 +1964,11 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     test("after --parser: an error, and nothing is written", async () => {
       const result = await format(files, ["--parser", "nonsense"], { reads });
       expect(result.files).toEqual(files);
-      expect(result.stderr).toContain(`[error] Couldn't resolve parser "nonsense".`);
+      expect(result.stderr).toContain(`error: Couldn't resolve parser "nonsense".`);
       expect(result.exitCode).toBe(2);
       const piped = await format({}, ["--parser", "nonsense", "--stdin-filepath", "c.js"], { stdin: files["c.js"] });
       expect(piped.raw).toBe("");
-      expect(piped.stderr).toContain(`[error] Couldn't resolve parser "nonsense".`);
+      expect(piped.stderr).toContain(`error: Couldn't resolve parser "nonsense".`);
       expect(piped.exitCode).toBe(2);
     });
   });
@@ -1979,8 +1982,8 @@ ${packages["node_modules/prettier/index.cjs"]}`;
   ])("JSON is not formatted into gigabytes: %s", async (_, make) => {
     const files = { "ok.json": make(512), "huge.json": make(200_000) };
     const [ok, huge] = await Promise.all(Object.keys(files).map(name => format(files, ["--check", name])));
-    expect(ok.stderr).not.toContain("[error]");
-    expect(huge.stderr).toContain("[error] huge.json:");
+    expect(ok.stderr).not.toContain("error:");
+    expect(huge.stderr).toContain("error: huge.json:");
     expect(huge.exitCode).toBe(2);
   });
 
@@ -2259,7 +2262,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
           stderr: "pipe",
         });
         const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        expect(stderr).toBeOneOf(["", "[error] a.js: RangeError: The code is nested too deeply.\n"]);
+        expect(stderr).toBeOneOf(["", "error: a.js: RangeError: The code is nested too deeply.\n"]);
         expect({ exitCode, signalCode: proc.signalCode }).toEqual({
           exitCode: stderr === "" ? 0 : 2,
           signalCode: null,
@@ -2272,7 +2275,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       const text = `<img srcset="${"u".repeat(70_000)} 1w${", a 2w".repeat(8_000)}">\n`;
       const result = await format({ "a.html": text }, ["a.html"], { reads: ["a.html"] });
       expect(result.files["a.html"]).toBe(text);
-      expect(result.stderr).toContain("[error] a.html: RangeError: Invalid string length");
+      expect(result.stderr).toContain("error: a.html: RangeError: Invalid string length");
       expect(result.exitCode).toBe(2);
     });
 
@@ -2280,9 +2283,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       const result = await format({ "a.css": `a{${"b:c;".repeat(250)}}}` }, ["a.css"]);
       // As Prettier shows them.
       expect(result.stderr.split("\n").slice(0, 3)).toEqual([
-        `[error] a.css: SyntaxError: Unexpected "}" (1:1004)`,
-        `[error] > 1 | a{${"b:c;".repeat(250)}}}`,
-        `[error]     | ${" ".repeat(1_003)}^`,
+        `error: a.css: SyntaxError: Unexpected "}" (1:1004)`,
+        `> 1 | a{${"b:c;".repeat(250)}}}`,
+        `    | ${" ".repeat(1_003)}^`,
       ]);
       expect(result.exitCode).toBe(2);
     });
@@ -2308,8 +2311,8 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     async word => {
       const text = word === "@" ? word.repeat(100_000) : `// @flow\ntype A = ${word.repeat(100_000)}x;`;
       const result = await format({ "deep.js": text + "\n" }, ["--check", "deep.js"]);
-      expect(result.stderr).toMatch(/^\[(?:error\] deep\.js:|warn\] deep\.js$)/m);
-      expect(result.exitCode).toBe(result.stderr.includes("[error]") ? 2 : 1);
+      expect(result.stdout + "\n" + result.stderr).toMatch(/^(?:error: deep\.js:|deep\.js$)/m);
+      expect(result.exitCode).toBe(result.stderr.includes("error:") ? 2 : 1);
     },
   );
 
@@ -2333,7 +2336,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const files = { "a.js": code + "\n", "b.mjs": code + "\n", "c.jsx": code + "\n" };
     const result = await format(files, [], { reads: Object.keys(files) });
     expect(result.files).toEqual(files);
-    for (const name of Object.keys(files)) expect(result.stderr).toContain(`[error] ${name}: SyntaxError: `);
+    for (const name of Object.keys(files)) expect(result.stderr).toContain(`error: ${name}: SyntaxError: `);
     expect(result.exitCode).toBe(2);
   });
 
@@ -2364,7 +2367,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
   ])("what only TypeScript's parser reads is a syntax error in JavaScript: %j", async code => {
     const result = await format({ "a.js": code + "\n" }, ["a.js"], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": code + "\n" });
-    expect(result.stderr).toContain("[error] a.js: SyntaxError: ");
+    expect(result.stderr).toContain("error: a.js: SyntaxError: ");
     expect(result.exitCode).toBe(2);
   });
 
@@ -2378,7 +2381,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const files = { "a.js": `// @flow\n${code}\n` };
     const result = await format(files, ["a.js"], { reads: ["a.js"] });
     expect(result.files).toEqual(files);
-    expect(result.stderr).toContain("[error] a.js: SyntaxError: ");
+    expect(result.stderr).toContain("error: a.js: SyntaxError: ");
     expect(result.exitCode).toBe(2);
   });
 
@@ -2422,7 +2425,7 @@ declare export function h(): void;
     ["a.js", "for (const a of b);"],
   ])("with an .oxfmtrc.json what OXC's parser takes is formatted: %s: %j", async (name, code) => {
     const result = await format({ [name]: code + "\n", ".oxfmtrc.json": "{}\n" }, ["--check", name]);
-    expect(result.stderr).not.toContain("[error]");
+    expect(result.stderr).not.toMatch(anError);
     expect(result.exitCode).toBe(0);
   });
 
@@ -2542,7 +2545,7 @@ try {
       { ".editorconfig": "root = true\n[*]\ninsert_final_newline = true\nindent_size = 4\n", "a.js": "if (a) b;\n" },
       ["--check", "a.js"],
     );
-    expect(result.stderr).toBe("");
+    expect(result.stderr).toBe("1 file is formatted.");
     expect(result.exitCode).toBe(0);
   });
 
@@ -2564,7 +2567,7 @@ try {
     // In a directory the others are passed over.
     const directory = await format(files, ["bin"], { reads });
     expect(directory.files).toEqual(after);
-    expect(directory.stderr).not.toContain("[error]");
+    expect(directory.stderr).not.toMatch(anError);
     expect(directory.exitCode).toBe(0);
     const named = await format(files, reads, { reads });
     expect(named.files).toEqual(after);
@@ -2583,7 +2586,7 @@ try {
       };
       const result = await format(files, ["bin/a", "bin/b"], { reads: ["bin/a", "bin/b"] });
       expect(result.files).toEqual({ ...files, "bin/a": `#!/usr/bin/env ${interpreter}\na;\n` });
-      expect(result.stderr).toContain("[error] bin/b: SyntaxError:");
+      expect(result.stderr).toContain("error: bin/b: SyntaxError:");
       expect(result.exitCode).toBe(2);
     },
   );
@@ -2616,7 +2619,7 @@ try {
     const files = { "FOO": "x   y\n", "a.xyz": "x   y\n" };
     for (const named of ["FOO", "*.xyz"]) {
       const result = await format(files, [...flags, named], { reads: Object.keys(files) });
-      expect(result.stderr.includes("[error] No parser could be inferred for file")).toBe(exitCode === 2);
+      expect(result.stderr.includes("error: No parser could be inferred for file")).toBe(exitCode === 2);
       expect(result.files).toEqual(files);
       expect(result.exitCode).toBe(exitCode);
     }
@@ -2634,7 +2637,7 @@ try {
   ])("standard input that there is no parser for: %j", async (flags, exitCode, isSaid) => {
     const result = await format({}, [...flags, "--stdin-filepath", "FOO"], { stdin: "x   y\n" });
     expect(result.raw).toBe("");
-    expect(result.stderr.includes("[error] No parser could be inferred for file")).toBe(isSaid);
+    expect(result.stderr.includes("error: No parser could be inferred for file")).toBe(isSaid);
     expect(result.exitCode).toBe(exitCode);
   });
 
@@ -2651,11 +2654,12 @@ try {
   ])("standard input that does not parse: %j %j", async (configuration, flags, exitCode, before) => {
     const result = await format(configuration, [...flags, "--stdin-filepath", "a.ts"], { stdin: "let a: = 1;\n" });
     expect(result.raw).toBe("");
+    const [first, other] = Object.keys(configuration).length === 0 ? ["error: ", ""] : ["[error] ", "[error] "];
     expect(result.stderr.split("\n")).toEqual([
-      `[error] ${before}Type expected. (1:8)`,
-      "[error] > 1 | let a: = 1;",
-      "[error]     |        ^",
-      "[error]   2 |",
+      `${first}${before}Type expected. (1:8)`,
+      `${other}> 1 | let a: = 1;`,
+      `${other}    |        ^`,
+      `${other}  2 |`,
     ]);
     expect(result.exitCode).toBe(exitCode);
   });
@@ -2671,14 +2675,14 @@ try {
   ])("standard input that does not parse, with --check: %s", async (name, stdin) => {
     const result = await format({}, ["--check", "--stdin-filepath", name], { stdin });
     expect(result.raw).toBe("");
-    expect(result.stderr).toStartWith("[error] ");
+    expect(result.stderr).toStartWith("error: ");
     expect(result.stderr).not.toContain(name);
     expect(result.exitCode).toBe(0);
   });
 
   test.each(["--check", "--list-different"])("a file that does not parse, with %s", async flag => {
     const result = await format({ "a.ts": "let a: = 1;\n" }, [flag, "a.ts"]);
-    expect(result.stderr).toStartWith("[error] a.ts: SyntaxError: Type expected. (1:8)\n");
+    expect(result.stderr).toStartWith("error: a.ts: SyntaxError: Type expected. (1:8)\n");
     expect(result.exitCode).toBe(2);
   });
 
@@ -3012,7 +3016,7 @@ try {
           ["--check"],
         );
       const [shapes, plain] = [await run(index => texts[index]), await run(() => prose.repeat(length / prose.length))];
-      expect(shapes.stderr).not.toContain("[error]");
+      expect(shapes.stderr).not.toMatch(anError);
       expect(shapes.cpu / plain.cpu).toBeLessThan(6);
     },
     120_000,
@@ -3085,9 +3089,9 @@ try {
     ];
     const files = Object.fromEntries(cases.map(([ending, text], index) => [`${index}${ending}`, text]));
     const result = await format(files, ["--check"]);
-    const errors = result.stderr.split("\n").filter(line => /^\[error\] \d+\./.test(line));
+    const errors = result.stderr.split("\n").filter(line => /^error: \d+\./.test(line));
     expect(errors.sort()).toEqual(
-      cases.map(([ending, , message], index) => `[error] ${index}${ending}: SyntaxError: ${message}`).sort(),
+      cases.map(([ending, , message], index) => `error: ${index}${ending}: SyntaxError: ${message}`).sort(),
     );
     expect(result.exitCode).toBe(2);
   });
@@ -3101,7 +3105,7 @@ try {
       [],
       { reads: ["a.html", "b.vue"] },
     );
-    expect(result.stderr).not.toContain("[error]");
+    expect(result.stderr).not.toMatch(anError);
     expect(result.files).toEqual({
       "a.html": "<script>\n  e.e;\n</script>\n",
       "b.vue": "<script>\nmodule.exports = a1.e + 1 + 1;\n</script>\n",
@@ -3193,7 +3197,7 @@ try {
     test("an argument that matches nothing fails with 2", async () => {
       const result = await format(files, ["nothing/*.js", "a.js"], { reads: ["a.js"] });
       expect(result.files).toEqual({ "a.js": formatted });
-      expect(result.stderr).toContain('[error] No files matching the pattern were found: "nothing/*.js".');
+      expect(result.stderr).toContain('error: No files matching the pattern were found: "nothing/*.js".');
       expect(result.exitCode).toBe(2);
     });
 
@@ -3891,7 +3895,7 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     const kept = ["generated/a.js", "generated/deep/b.js", "vendor/c.js"];
     const result = await format(files, ["generated", "generated/*.js", "vendor", "src"], { reads: kept });
     expect(result.stdout).toBe("src/d.js");
-    expect(result.stderr).not.toContain("[error]");
+    expect(result.stderr).not.toMatch(anError);
     expect(result.files).toEqual(Object.fromEntries(kept.map(name => [name, ugly])));
     expect(result.exitCode).toBe(0);
   });
@@ -3901,7 +3905,7 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     async (...args) => {
       const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
       const result = await format(files, ["--check", ...args], { reads: ["src/a.js"] });
-      expect(result.stderr).not.toContain("[error]");
+      expect(result.stderr).not.toMatch(anError);
       expect(result.files).toEqual({ "src/a.js": ugly });
       expect(result.exitCode).toBe(0);
     },
@@ -3910,7 +3914,7 @@ describe.concurrent("what an ignore file has is not written, however it is come 
   test("a pattern that matches nothing is an error beside a directory of which every file is ignored", async () => {
     const files = { ".prettierignore": "src/a.js\n", "src/a.js": ugly };
     const result = await format(files, ["--check", "src", "none/*.js"]);
-    expect(result.stderr).toContain(`[error] No files matching the pattern were found: "none/*.js".`);
+    expect(result.stderr).toContain(`error: No files matching the pattern were found: "none/*.js".`);
     expect(result.stderr).not.toContain(`"src"`);
     expect(result.exitCode).toBe(2);
   });
@@ -4047,14 +4051,14 @@ describe.concurrent("how a path is written", () => {
       });
       return (await proc.stderr.text()).split(/\r?\n/)[0];
     };
-    const noParser = `[error] No parser could be inferred for file "${join(String(dir), "notes.foo")}".`;
+    const noParser = `error: No parser could be inferred for file "${join(String(dir), "notes.foo")}".`;
     expect(
       await Promise.all([
         firstLine(["-l", join("src", "*.foo")]),
         firstLine(["-l", join(String(dir), "notes.foo")]),
         firstLine(["--stdin-filepath", join("src", "..", "notes.foo")], "a\n"),
       ]),
-    ).toEqual([`[error] No files matching the pattern were found: "${join("src", "*.foo")}".`, noParser, noParser]);
+    ).toEqual([`error: No files matching the pattern were found: "${join("src", "*.foo")}".`, noParser, noParser]);
   });
 
   // src/config/prettier-config/config-searcher.js and the package `editorconfig` ask the system for a file of that name.
@@ -4087,8 +4091,7 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     return {
-      // Not the lines of a code frame: `[error] > 2 | ..`, `[error]     |     ^`.
-      errors: stderr.split(/\r?\n/).filter(line => /^\[error\] [^ >|]/.test(line)),
+      errors: stderr.split(/\r?\n/).filter(line => line.startsWith("error: ")),
       exitCode,
       files: Object.fromEntries(
         Object.keys(files).map(name => [name, readFileSync(join(String(dir), name)).toString("latin1")]),
@@ -4122,9 +4125,9 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     expect(result.files).toEqual(
       Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, bytes.toString("latin1")])),
     );
-    expect(result.errors.map(line => line.split(":")[0]).sort()).toEqual(
+    expect(result.errors.map(line => line.split(":").slice(0, 2).join(":")).sort()).toEqual(
       Object.keys(files)
-        .map(name => `[error] ${name}`)
+        .map(name => `error: ${name}`)
         .sort(),
     );
     expect(result.exitCode).toBe(2);
@@ -4140,8 +4143,8 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     const result = await bytesAfter(files);
     expect(result.files).toEqual(files);
     expect(result.errors.sort()).toEqual([
-      "[error] a.html: SyntaxError: Unexpected NUL character (2:5)",
-      "[error] a.vue: SyntaxError: Unexpected NUL character (2:5)",
+      "error: a.html: SyntaxError: Unexpected NUL character (2:5)",
+      "error: a.vue: SyntaxError: Unexpected NUL character (2:5)",
     ]);
     expect(result.exitCode).toBe(2);
   });
@@ -4153,7 +4156,7 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     ["the value of an attribute without quotes", "<p   title=a\0b>x</p>\n", "p"],
   ])("a NUL in %s", async (_, text, name) => {
     expect(await bytesAfter({ "a.html": text })).toEqual({
-      errors: [`[error] a.html: SyntaxError: Opening tag "${name}" not terminated. (1:1)`],
+      errors: [`error: a.html: SyntaxError: Opening tag "${name}" not terminated. (1:1)`],
       exitCode: 2,
       files: { "a.html": text },
     });
@@ -4207,8 +4210,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return {
-      // Not the lines of a code frame: `[error] > 2 | ..`, `[error]     |     ^`.
-      errors: stderr.split(/\r?\n/).filter(line => /^\[error\] [^ >|]/.test(line)),
+      errors: stderr.split(/\r?\n/).filter(line => line.startsWith("error: ")),
       exitCode,
       files: Object.fromEntries(
         Object.keys(files).map(name => [name, readFileSync(join(String(dir), name)).toString("latin1")]),
@@ -4541,7 +4543,7 @@ describe.concurrent("upper and lower case in the name of a file", () => {
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("[error]");
+    expect(stderr).not.toMatch(anError);
     expect(readFileSync(join(String(dir), "a.ts"), "utf8")).toBe("let a: number = 1;\n");
     // The file that takes its place has its name, not the one that was typed.
     expect(readdirSync(String(dir))).toEqual(["a.ts"]);
@@ -4627,10 +4629,11 @@ describe.concurrent("what bun format takes from Bun", () => {
 
   test("colors are Bun's to decide: FORCE_COLOR, NO_COLOR, and none in a pipe", async () => {
     const files = { "a.js": ugly };
+    const ofPrettier = { ...files, ".prettierrc": "{}\n" };
     const [forced, refused, piped, asOxfmt] = await Promise.all([
-      format(files, ["--check"], { env: { FORCE_COLOR: "1" } }),
-      format(files, ["--check"], { env: { NO_COLOR: "1" } }),
-      format(files, ["--check"]),
+      format(ofPrettier, ["--check"], { env: { FORCE_COLOR: "1" } }),
+      format(ofPrettier, ["--check"], { env: { NO_COLOR: "1" } }),
+      format(ofPrettier, ["--check"]),
       format({ ...files, ".oxfmtrc.json": "{}\n" }, ["--check", "a.js"], { env: { FORCE_COLOR: "1" } }),
     ]);
     expect(forced.stderr.split("\n")[0]).toBe("[\x1b[33mwarn\x1b[0m] a.js");
@@ -4780,7 +4783,7 @@ describe.concurrent("what bun format takes from Bun", () => {
     async open => {
       const result = await format({}, ["--stdin-filepath", "deep.jsx"], { stdin: open.repeat(100_000) + "\n" });
       expect(result.raw).toBe("");
-      expect(result.stderr).toStartWith("[error] deep.jsx:");
+      expect(result.stderr).toStartWith("error: deep.jsx:");
       expect(result.exitCode).toBe(2);
     },
   );
@@ -4904,7 +4907,7 @@ describe("bun format on Windows, macOS and Linux", () => {
         "a.js\nsrc/deep/b.ts\n",
       ]);
       for (const { stderr } of results) {
-        expect(stderr).toContain("[error] src/broken.js: SyntaxError: ");
+        expect(stderr).toContain("error: src/broken.js: SyntaxError: ");
         expect(stderr).not.toContain("\r");
       }
     });
@@ -4991,7 +4994,7 @@ describe("bun format on Windows, macOS and Linux", () => {
           "sources é/中文.js": formatted,
         });
         const { stdout, stderr, exitCode } = await format(dir, ["sources é"]);
-        expect(stderr).not.toContain("[error]");
+        expect(stderr).not.toMatch(anError);
         expect(stdout).toBe("sources é/ü 100%.js\nsources é/中文.js\n");
         expect(read(dir, "sources é", "ü 100%.js")).toBe("a\n");
         expect(exitCode).toBe(0);
@@ -5007,7 +5010,7 @@ describe("bun format on Windows, macOS and Linux", () => {
       writeFileSync(join(String(dir), ...names, "a.js"), formatted);
       writeFileSync(join(String(dir), ...names, "b.js"), formatted);
       const walked = await format(dir, []);
-      expect(walked.stderr).not.toContain("[error]");
+      expect(walked.stderr).not.toMatch(anError);
       expect(walked.stdout).toBe(`${names.join("/")}/a.js\n${names.join("/")}/b.js\n`);
       expect(read(dir, ...names, "a.js")).toBe("a\n");
       writeFileSync(join(String(dir), ...names, "b.js"), formatted);
@@ -5068,7 +5071,7 @@ describe("bun format on Windows, macOS and Linux", () => {
         ]),
       ).toEqual([["src/a.js"], ["src/a.js"], [`${share}/src/a.js`.replaceAll("\\", "/")]]);
       const written = await format(share, []);
-      expect(written.stderr).not.toContain("[error]");
+      expect(written.stderr).not.toMatch(anError);
       expect(read(dir, "src", "a.js")).toBe("a\n");
       expect(read(dir, "src", "ignored.js")).toBe(formatted);
       expect(everythingIn(dir)).toEqual([".prettierignore", ".prettierrc", "src", "src/a.js", "src/ignored.js"]);
@@ -5085,7 +5088,7 @@ describe("bun format on Windows, macOS and Linux", () => {
         });
         const real = realpathSync(String(dir));
         const { stderr, exitCode } = await format(`\\\\127.0.0.1\\${real[0]}$\\${real.slice(3)}`, ["a.js"]);
-        expect(stderr).not.toContain("[error]");
+        expect(stderr).not.toMatch(anError);
         expect(read(dir, "a.js")).toBe("a\n");
         expect(exitCode).toBe(0);
       },
@@ -5234,7 +5237,7 @@ describe("bun format on Windows, macOS and Linux", () => {
         name === ".editorconfig" ? ["if (a) {\n  b;\n}\n", "if (a) {\n\tb;\n}\n"] : [formatted, "a\n"];
       using dir = tempDir("bun-format-platform", { [name]: crlf(text), "a.js": before });
       const { stderr } = await format(dir, ["a.js"]);
-      expect(stderr).not.toContain("[error]");
+      expect(stderr).not.toMatch(anError);
       expect(read(dir, "a.js")).toBe(after);
     });
   });
@@ -5259,7 +5262,7 @@ describe("bun format on Windows, macOS and Linux", () => {
       using dir = tempDir("bun-format-platform", { "real/a.js": ugly });
       link(join(String(dir), "real"), join(String(dir), "linked"));
       const { stderr, exitCode } = await format(dir, ["-l", "linked"]);
-      expect(stderr).toContain('[error] Explicitly specified pattern "linked" is a symbolic link.');
+      expect(stderr).toContain('error: Explicitly specified pattern "linked" is a symbolic link.');
       expect(exitCode).toBe(2);
     });
 
@@ -5326,7 +5329,7 @@ describe("bun format on Windows, macOS and Linux", () => {
       expect(handle).not.toBe(0xffffffffffffffffn);
       try {
         const { stderr, exitCode } = await format(dir, []);
-        expect(stderr).not.toContain("[error]");
+        expect(stderr).not.toMatch(anError);
         expect(read(dir, "a.js")).toBe(formatted);
         expect(everythingIn(dir)).toEqual(["a.js"]);
         expect(exitCode).toBe(0);
@@ -5535,12 +5538,14 @@ describe.concurrent("[format] in bunfig.toml", () => {
 
   test.each(others)("%s", async (line, flags, opposite, files, args) => {
     const bunfig = { "bunfig.toml": `[format]\n${line}\n` };
+    // The file is one of those that are formatted, so it is there in every run.
+    const empty = { "bunfig.toml": "# Nothing.\n" };
     const [plain, byKey, byFlag, underFlag, byOtherFlag] = await Promise.all([
-      run(files, args),
+      run({ ...files, ...empty }, args),
       run({ ...files, ...bunfig }, args),
-      run(files, [...flags, ...args]),
+      run({ ...files, ...empty }, [...flags, ...args]),
       run({ ...files, ...bunfig }, [...opposite, ...args]),
-      run(files, [...(opposite.length ? opposite : flags), ...args]),
+      run({ ...files, ...empty }, [...(opposite.length ? opposite : flags), ...args]),
     ]);
     expect(byKey).toEqual(byFlag);
     expect(byKey).not.toEqual(plain);
@@ -5614,7 +5619,9 @@ describe.concurrent("[format] in bunfig.toml", () => {
   ])("%s is refused, and nothing is written", async (line, flag) => {
     const key = line.split(" ")[0];
     const result = await run({ "bunfig.toml": `[format]\n${line}\n`, "a.js": ugly }, ["a.js"]);
-    expect(result.stderr).toContain(`"${key}" cannot be set in bunfig.toml. Pass ${flag} on the command line instead.`);
+    expect(result.stderr).toContain(
+      `error: "${key}" cannot be set in bunfig.toml\n  Use ${flag} on the command line\n`,
+    );
     expect(result.files["a.js"]).toBe(ugly);
     expect(result.exitCode).toBe(2);
   });
@@ -5634,10 +5641,10 @@ describe.concurrent("[format] in bunfig.toml", () => {
     [`flavor = "biome"`, `Invalid --flavor value. Expected "oxfmt" or "prettier", but received "biome".`],
     [`logLevel = "loud"`, `Invalid --log-level value.`],
     [`configPrecedence = "mine"`, `Invalid --config-precedence value.`],
-    ["semicolons = false", `unknown key "semicolons" in [format]. Did you mean "semi"?`],
-    ["printwidth = 80", `unknown key "printwidth" in [format]. Did you mean "printWidth"?`],
-    [`plugins = ["a"]`, `unknown key "plugins" in [format].`],
-    [`parser = "babel"`, `unknown key "parser" in [format].`],
+    ["semicolons = false", `Unknown key "semicolons" in [format]\n`],
+    ["printwidth = 80", `Unknown key "printwidth" in [format]\n  Did you mean "printWidth"?`],
+    [`plugins = ["a"]`, `Unknown key "plugins" in [format]\n`],
+    [`parser = "babel"`, `Unknown key "parser" in [format]\n`],
   ])("%s is refused: %s", async (line, message) => {
     const result = await run({ "bunfig.toml": `[format]\n${line}\n`, "a.js": ugly }, ["a.js"]);
     expect(result.stderr).toContain(message);

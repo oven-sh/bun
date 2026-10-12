@@ -61,7 +61,9 @@ describe.concurrent("bun format --check", () => {
       ["--check"],
     );
     expect(stdout).toBe("a.js\n");
-    expect(stderr).toContain("broken.js: SyntaxError: ");
+    expect(stderr).toStartWith("error: broken.js: SyntaxError: ");
+    expect(stderr).toContain("\n> 1 | const = 1;\n");
+    expect(stderr).not.toContain("[error]");
     expect(stderr).toEndWith("\n1 file needs formatting. Run bun format to fix it.\nCould not check 1 file.\n");
     expect(exitCode).toBe(2);
   });
@@ -88,7 +90,7 @@ describe.concurrent("bun format --check", () => {
     expect(silent).toMatchObject({ stdout: "", stderr: "", exitCode: 1 });
     expect(error).toMatchObject({ stdout: "", stderr: "", exitCode: 1 });
     expect(warn).toMatchObject({
-      stdout: "",
+      stdout: "a.js\n",
       stderr: "1 file needs formatting. Run bun format to fix it.\n",
       exitCode: 1,
     });
@@ -129,6 +131,30 @@ describe.concurrent("bun format --check", () => {
 });
 
 describe.concurrent("bun format", () => {
+  test("errors and warnings look like Bun's", async () => {
+    const [missing, ofPrettier] = await Promise.all([
+      format({ "a.js": formatted }, ["nothing.js"]),
+      format({ "a.js": formatted, ".prettierrc": "{}\n" }, ["nothing.js"]),
+    ]);
+    expect(missing.stderr).toStartWith('error: No files matching the pattern were found: "nothing.js".\n');
+    expect(missing.exitCode).toBe(2);
+    expect(ofPrettier.stderr).toStartWith('[error] No files matching the pattern were found: "nothing.js".\n');
+    expect(ofPrettier.exitCode).toBe(2);
+  });
+
+  test("also what is said before a file is looked at", async () => {
+    const flags = ["--plugin", "prettier-plugin-x"];
+    const [refused, allowed, ofPrettier] = await Promise.all([
+      format({ "a.js": formatted }, flags),
+      format({ "a.js": formatted }, [...flags, "--allow-unsupported"]),
+      format({ "a.js": formatted, ".prettierrc": "{}\n" }, flags),
+    ]);
+    expect(refused.stderr).toStartWith("error: bun format does not include the plugin prettier-plugin-x\n");
+    expect(allowed.stderr).toStartWith("warn: --plugin has no effect ");
+    expect(ofPrettier.stderr).toStartWith("[error] bun format does not include the plugin prettier-plugin-x\n");
+    expect([refused.exitCode, allowed.exitCode, ofPrettier.exitCode]).toEqual([2, 0, 2]);
+  });
+
   test("names the files that it writes, and counts them", async () => {
     const { stdout, stderr, exitCode, files } = await format({ "a.js": ugly, "b.js": formatted, "c.js": ugly }, []);
     expect(stdout).toBe("a.js\nc.js\n");

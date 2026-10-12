@@ -226,8 +226,22 @@ impl Known {
     }
 }
 
+/// `functions` where `[format]` or the flag turns the sorting on and names none: what projects call the functions that put
+/// classes together. oxfmt and the plugin know none by themselves.
+const FUNCTIONS: [&[u8]; 9] = [
+    b"clsx",
+    b"cn",
+    b"cva",
+    b"cx",
+    b"classNames",
+    b"classnames",
+    b"twMerge",
+    b"twJoin",
+    b"tv",
+];
+
 /// `sortTailwindcss` for the file at `path`. `value`: the option as JSON, which is not `false`. `of_config`: the directory of
-/// the configuration file, if there is one.
+/// the configuration file of oxfmt that has it. `None`: `[format]` or the flag has it.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
     environment: &Environment,
@@ -270,7 +284,10 @@ pub(crate) fn for_file(
         stylesheet,
     });
     Tailwind {
-        functions: Names::new(names(b"functions")),
+        functions: Names::new(match (of_config, get(b"functions")) {
+            (None, None) => FUNCTIONS.map(<[u8]>::to_vec).to_vec(),
+            _ => names(b"functions"),
+        }),
         attributes: Names::new(names(b"attributes")),
         preserves_whitespace: is_on(b"preserveWhitespace"),
         preserves_duplicates: is_on(b"preserveDuplicates"),

@@ -1389,7 +1389,7 @@ describe.concurrent("what is built in is not loaded to evaluate an eslint.config
     const file = join(String(dir), "loaded.txt");
     const loaded = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
     const reported = [...stdout.matchAll(/a\.ts:(\d+:\d+): (.+) \[Error\/.+\]\r?$/gm)].map(it => `${it[1]} ${it[2]}`);
-    return { reported, loaded: [...new Set(loaded)].sort(), failure: /^error: .*/m.exec(stderr)?.[0] };
+    return { reported, loaded: [...new Set(loaded)].sort(), failure: /^error: .*(\n.+)*/m.exec(stderr)?.[0] };
   }
   const builtIn = "1:17 Unexpected any. Specify a different type.";
   const recommended = `export default [{ files: ["**/*.ts"], ...all.configs.recommended }];`;
@@ -3255,45 +3255,44 @@ describe.concurrent("whose configuration files count", () => {
     "sub/b.js": "var y = 1;\nif (y == 2) {}\n",
   };
 
-  // `oxlint --fix && eslint --fix .`, each replaced by `bun lint`: one of the two tools would be left out, in silence.
-  test("where files of both tools count and nothing decides, nothing is linted", async () => {
-    const say = "\n  Choose one with --flavor=eslint or --flavor=oxlint";
-    const { problems, stdout, stderr, exitCode } = await lint(both, ["--fix", "a.js", "sub/b.js"]);
-    expect([problems, stdout]).toEqual([[], ""]);
-    expect(stderr).toBe(`error: Found both eslint.config.js and .oxlintrc.json${say}`);
-    expect(exitCode).toBe(2);
+  const ignores = (ignored: string, used = ".oxlintrc.json") =>
+    `note: Using ${used}. ${ignored} is ignored. Use --config to pick it.`;
+
+  // Who has both is on the way to oxlint.
+  test("where files of both tools count and nothing decides, those of oxlint do, and one note says so", async () => {
+    const { problems, stderr, exitCode } = await lint(both, ["a.js", "sub/b.js"]);
+    expect(problems).toEqual(["a.js:2:7 eqeqeq"]);
+    expect(stderr).toBe(ignores("eslint.config.js"));
+    expect(exitCode).toBe(1);
     // Also where one is further up than the other.
     const { "sub/.oxlintrc.json": _, ...above } = both;
-    const below = await lint(above, ["."], { cwd: "sub" });
-    expect(below.stderr).toBe(`error: Found both eslint.config.js and ../.oxlintrc.json${say}`);
-    expect(below.exitCode).toBe(2);
+    const below = await lint(above, ["b.js"], { cwd: "sub" });
+    expect(below.problems).toEqual(["sub/b.js:2:7 eqeqeq"]);
+    expect(below.stderr).toBe(ignores("eslint.config.js", "../.oxlintrc.json"));
+    expect(below.exitCode).toBe(1);
+    expect((await lint(both, ["--silent", "a.js"])).stderr).toBe("");
     expect((await lint(both, ["--nonsense"])).exitCode).toBe(1);
   });
 
-  test("oxlint needs no file: an eslint.config.js and the dependency", async () => {
+  test("an eslint.config.js and only a dependency on oxlint: the file counts", async () => {
     const files = {
       "eslint.config.js": both["eslint.config.js"],
       "package.json": JSON.stringify({ devDependencies: { eslint: "*", oxlint: "*" } }),
       "a.js": code,
     };
-    const { stderr, exitCode } = await lint(files, ["a.js"]);
-    expect(stderr).toStartWith(
-      "error: Found both eslint.config.js and an oxlint dependency in package.json\n  Choose one",
-    );
-    expect(exitCode).toBe(2);
+    const { problems, stderr } = await lint(files, ["a.js"]);
+    expect(problems).toEqual(["a.js:1:1 no-var"]);
+    expect(stderr).not.toContain("is ignored");
     expect((await lint(files, ["--flavor=eslint", "a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
     // Its defaults.
     expect((await lint(files, ["--flavor=oxlint", "a.js"])).problems).toEqual(["a.js:2:13 no-debugger"]);
-    expect((await lint(files, ["--type-aware", "a.js"])).exitCode).toBe(2);
-    const { "package.json": _, ...alone } = files;
-    expect((await lint(alone, ["a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
-    expect((await lint(alone, ["--type-aware", "a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
+    expect((await lint(files, ["--type-aware", "a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
   });
 
   test("--type-aware, which ESLint does not have, is for oxlint where there are files of both", async () => {
     const { problems, stderr } = await lint(both, ["--type-aware", "a.js"]);
     expect(problems).toEqual(["a.js:2:7 eqeqeq"]);
-    expect(stderr).not.toContain("Both ");
+    expect(stderr).not.toContain("is ignored");
     expect((await lint(both, ["--type-aware", "--cache", "a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
   });
 
@@ -3302,7 +3301,7 @@ describe.concurrent("whose configuration files count", () => {
     async (...flags) => {
       const { problems, stderr } = await lint(both, [...flags, "a.js"]);
       expect(problems).toEqual(["a.js:1:1 no-var"]);
-      expect(stderr).not.toContain("Both ");
+      expect(stderr).not.toContain("is ignored");
     },
   );
 
@@ -3312,7 +3311,7 @@ describe.concurrent("whose configuration files count", () => {
   ])("--flavor=%s", async (flavor, expected) => {
     const { problems, stderr } = await lint(both, [`--flavor=${flavor}`, "a.js", "sub/b.js"]);
     expect(problems).toEqual(expected);
-    expect(stderr).not.toContain("Both ");
+    expect(stderr).not.toContain("is ignored");
   });
 
   test("--flavor takes two values", async () => {
@@ -3346,11 +3345,11 @@ describe.concurrent("whose configuration files count", () => {
     expect(eslint.exitCode).toBe(1);
     const both = await lint({ ...files, "package.json": dependsOn("eslint", "oxlint") });
     expect(both.stderr).toContain(
-      "No config file found, and package.json depends on both eslint and oxlint\n  Using oxlint's defaults. Use --flavor=eslint for ESLint's.",
+      "No config file found, and package.json depends on both eslint and oxlint\n  Using oxlint's defaults. Add a config file to change that.",
     );
     expect(both.exitCode).toBe(0);
     const chosen = await lint({ ...files, "package.json": dependsOn("eslint", "oxlint") }, ["--flavor=eslint", "."]);
-    expect(chosen.stderr).not.toContain("No configuration file found");
+    expect(chosen.stderr).not.toContain("No config file found");
     expect(chosen.exitCode).toBe(1);
     expect((await lint(files)).exitCode).toBe(1);
   });
@@ -3412,7 +3411,7 @@ describe.concurrent("whose configuration files count", () => {
   test("flags that only oxlint has, where there are both, are for oxlint", async () => {
     const { problems, stderr } = await lint(both, ["-D", "no-debugger", "a.js"]);
     expect(problems).toEqual(["a.js:2:13 no-debugger", "a.js:2:7 eqeqeq"]);
-    expect(stderr).not.toContain("Both ");
+    expect(stderr).not.toContain("is ignored");
   });
 
   describe("the file that is found decides, whatever flags there are", () => {
@@ -3424,6 +3423,7 @@ describe.concurrent("whose configuration files count", () => {
       ".eslintrc.json": { ".eslintrc.json": rc(noVar) },
       ".oxlintrc.json": oxlint,
       "both": { ...flat, ...oxlint },
+      ".eslintrc.json and .oxlintrc.json": { ".eslintrc.json": rc(noVar), ...oxlint },
       "eslint.config.js and the dependency": { ...flat, "package.json": `{ "devDependencies": { "oxlint": "*" } }` },
       "the dependency": { "package.json": `{ "devDependencies": { "oxlint": "*" } }` },
       "files by other names": { "mine.js": both["eslint.config.js"], "mine.json": both[".oxlintrc.json"] },
@@ -3437,7 +3437,6 @@ describe.concurrent("whose configuration files count", () => {
     const [ofESLint, ofOxlint] = [[["a.js:1:1 no-var"], 1] as const, [["a.js:2:7 eqeqeq"], 1] as const];
     const [defaults, builtIn] = [[["a.js:2:13 no-debugger"], 0] as const, [["a.js:2:13 no-debugger"], 1] as const];
     const [nothing, failsInSilence] = [[[], 0] as const, [[], 1] as const];
-    const asks = [[], 2, "Choose one with --flavor=eslint or --flavor=oxlint"] as const;
     const refused = (flag: string, whose: string, where: string) =>
       [[], 2, `error: ${flag} is an ${whose} flag and has no effect here\n  This run uses ${where}.`] as const;
     const withFlat = "eslint.config.js, an ESLint config";
@@ -3508,16 +3507,20 @@ describe.concurrent("whose configuration files count", () => {
       ["the dependency", [], defaults],
       ["the dependency", ["--cache"], defaults],
       ["the dependency", ["--parser", "espree"], refused("--parser espree", "ESLint", "oxlint's defaults")],
-      ["both", [], asks],
+      ["both", [], [...ofOxlint, ignores("eslint.config.js")]],
+      [".eslintrc.json and .oxlintrc.json", [], [...ofOxlint, ignores(".eslintrc.json")]],
       ["both", ["--silent"], failsInSilence],
       ["both", ["--deny-warnings"], ofOxlint],
       ["both", ["--cache"], ofESLint],
       ["both", ["--env", "browser"], refused("--env browser", "ESLint 8", withFlat)],
 
-      // The command without the flag does not guess, and most flags of oxlint mean something to both.
-      ["eslint.config.js and the dependency", [], asks],
-      ["eslint.config.js and the dependency", ["--silent"], asks],
-      ["eslint.config.js and the dependency", ["--deny-warnings", "-D", "correctness"], asks],
+      ["eslint.config.js and the dependency", [], ofESLint],
+      ["eslint.config.js and the dependency", ["--silent"], failsInSilence],
+      [
+        "eslint.config.js and the dependency",
+        ["--deny-warnings", "-D", "correctness"],
+        refused("-D correctness", "oxlint", withFlat),
+      ],
       ["eslint.config.js and the dependency", ["--cache"], ofESLint],
       ["eslint.config.js and the dependency", ["--rules"], nothing],
 
@@ -3903,14 +3906,12 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     expect((await lint({ ...files, "a.js": "let x = 1;\nx;\n" }, ["--allow-unsupported", "."])).exitCode).toBe(0);
   });
 
-  test("a rule that only a comment turns on, of a plugin that is built in only in part", async () => {
+  test("a rule that only a comment turns on and that is not built in: without a config file no package has it", async () => {
     const files = { "a.js": "/* eslint promise/not-there: error, jest/nope: error */\nexport {};\n" };
     const { problems, stderr, exitCode } = await lint(files);
-    expect(problems).toEqual([]);
-    expect(stderr).toContain(
-      "error: 2 rules enabled in comments did not run: jest/nope, promise/not-there\n  Everything else was linted.",
-    );
-    expect(exitCode).toBe(2);
+    expect(problems).toEqual(["a.js:1:1 jest/nope", "a.js:1:1 promise/not-there"]);
+    expect(stderr).not.toContain("did not run");
+    expect(exitCode).toBe(1);
   });
 
   test("files in a language that is not read here", async () => {
@@ -5153,7 +5154,7 @@ describe("an infinite number in an eslint.config.mjs", () => {
     };
     const { raw, stderr, exitCode } = await lint(files, ["a.js"]);
     if (typeof expected === "string") {
-      expect(stderr).toBe(`error: ${expected}`);
+      expect(stderr).toBe(`error: Invalid config in eslint.config.mjs\n${expected}`);
       expect(exitCode).toBe(2);
       return;
     }
@@ -5215,7 +5216,7 @@ describe("an infinite number in an eslint.config.mjs", () => {
     };
     const { raw, stderr, exitCode } = await lint(files, ["a.js"]);
     if (typeof expected === "string") {
-      expect(stderr).toBe(`error: ${expected}`);
+      expect(stderr).toBe(`error: Invalid config in eslint.config.mjs\n${expected}`);
       expect(exitCode).toBe(2);
       return;
     }

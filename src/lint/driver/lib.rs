@@ -6,7 +6,6 @@
 //! - [`bunfig`]: their defaults in bunfig.toml.
 //! - [`run`]: `bun lint`, given the flags and an [`Environment`].
 //! - [`fmt`]: the same for `bun format`.
-//! - [`lsp`]: both for an editor.
 
 #![forbid(unsafe_code)]
 
@@ -30,7 +29,6 @@ mod gitignore;
 mod inferred;
 mod init;
 mod lint;
-pub mod lsp;
 mod native;
 mod print_config;
 mod processor;

@@ -24,8 +24,8 @@ fn printed(value: &Json) -> Vec<u8> {
     out
 }
 
-fn quoted(text: &[u8]) -> Vec<u8> {
-    [b"\"", text, b"\""].concat()
+fn string(text: &[u8]) -> Vec<u8> {
+    printed(&Json::String(text.to_vec()))
 }
 
 /// `a`, `a or b`, `a, b, or c`
@@ -128,7 +128,7 @@ pub(super) fn explain(rule: &[u8], errors: &[SchemaError]) -> OptionMistake {
     });
     let (path, is_about_key) = place_of(best);
     let key = path.iter().rev().find_map(|it| match it {
-        Step::Key(key) => Some(quoted(key)),
+        Step::Key(key) => Some(string(key)),
         Step::Index(_) => None,
     });
     let mut expected = Vec::new();
@@ -144,15 +144,15 @@ pub(super) fn explain(rule: &[u8], errors: &[SchemaError]) -> OptionMistake {
             let most = name.len().max(3) / 3;
             let distance = |it: &&Vec<u8>| strings::edit_distance(name.iter().copied(), &it[..]);
             let close = known.iter().min_by_key(distance);
-            let names: Vec<Vec<u8>> = known.iter().map(|it| quoted(it)).collect();
+            let names: Vec<Vec<u8>> = known.iter().map(|it| string(it)).collect();
             let hint = match close.filter(|it| distance(it) <= most) {
-                Some(close) => [b"\n  Did you mean ", &quoted(close)[..], b"?"].concat(),
+                Some(close) => [b"\n  Did you mean ", &string(close)[..], b"?"].concat(),
                 None if names.is_empty() => Vec::new(),
                 None => [b"\n  Expected ", &one_of(&names)[..]].concat(),
             };
-            [b"Unknown option ", &quoted(name)[..], b" for ", rule, &hint].concat()
+            [b"Unknown option ", &string(name)[..], b" for ", rule, &hint].concat()
         }
-        (Why::Missing(name), _) => [rule, b" needs the option ", &quoted(name)].concat(),
+        (Why::Missing(name), _) => [rule, b" needs the option ", &string(name)].concat(),
         (Why::Most(most, Of::Items), None) if *most == 0.0 => [rule, b" takes no options"].concat(),
         (Why::Most(most, Of::Items), None) => {
             [rule, b" takes at most ", &counted(*most, "option")].concat()

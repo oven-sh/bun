@@ -1685,5 +1685,40 @@
  "no-unsafe-assignment/methods-and-accessors-are-left-alone": [
   "a.ts typescript(no-unsafe-assignment) 10:24+9 \"Assigned value has type `error`.\" | 10:21+1 \"Target expects type `error`.\" | 10:22+1",
   "a.ts typescript(no-unsafe-assignment) 16:52+1 \"Assigned value has type `any`.\" | 16:49+1 \"Target expects type `any`.\" | 16:50+1"
+ ],
+ "constructor-super/what-is-found": [
+  "a35.js eslint(constructor-super) 1:48+7 \"This path may call `super()` after it was already called.\" | 1:37+7 \"`super()` was first called here.\""
+ ],
+ "constructor-super/paths": [
+  "d14.js eslint(constructor-super) 1:67+7 \"This path may call `super()` after it was already called.\" | 1:37+7 \"`super()` was first called here.\"",
+  "d27.js eslint(constructor-super) 1:74+7 \"This path may call `super()` after it was already called.\" | 1:43+7 \"`super()` was first called here.\"",
+  "d28.js eslint(constructor-super) 1:64+7 \"This path may call `super()` after it was already called.\" | 1:43+7 \"`super()` was first called here.\"",
+  "d33.js eslint(constructor-super) 1:76+7 \"This path may call `super()` after it was already called.\" | 1:58+7 \"`super()` was first called here.\"",
+  "d37.js eslint(constructor-super) 1:53+7 \"This path may call `super()` after it was already called.\" | 1:44+7 \"`super()` was first called here.\"",
+  "d38.js eslint(constructor-super) 1:58+7 \"This path may call `super()` after it was already called.\" | 1:44+7 \"`super()` was first called here.\"",
+  "d38.js eslint(constructor-super) 1:67+7 \"This path may call `super()` after it was already called.\" | 1:44+7 \"`super()` was first called here.\"",
+  "d48.js eslint(constructor-super) 1:46+7 \"This path may call `super()` after it was already called.\" | 1:37+7 \"`super()` was first called here.\"",
+  "d48.js eslint(constructor-super) 1:55+7 \"This path may call `super()` after it was already called.\" | 1:37+7 \"`super()` was first called here.\"",
+  "d49.js eslint(constructor-super) 1:55+7 \"This path may call `super()` after it was already called.\" | 1:46+7 \"`super()` was first called here.\"",
+  "d49.js eslint(constructor-super) 1:73+7 \"This path may call `super()` after it was already called.\" | 1:46+7 \"`super()` was first called here.\"",
+  "d58.js eslint(constructor-super) 1:67+7 \"This path may call `super()` after it was already called.\" | 1:37+7 \"`super()` was first called here.\""
+ ],
+ "no-dupe-class-members/the-last-of-the-name": [
+  "m02.js eslint(no-dupe-class-members) 1:13+1 \"\\\"a\\\" is previously declared here\" | 1:24+1 \"\\\"a\\\" is re-declared here\"",
+  "m10.js eslint(no-dupe-class-members) 1:11+1 \"\\\"a\\\" is previously declared here\" | 1:18+1 \"\\\"a\\\" is re-declared here\"",
+  "m10.js eslint(no-dupe-class-members) 1:18+1 \"\\\"a\\\" is previously declared here\" | 1:25+1 \"\\\"a\\\" is re-declared here\"",
+  "m11.js eslint(no-dupe-class-members) 1:20+1 \"\\\"a\\\" is previously declared here\" | 1:36+1 \"\\\"a\\\" is re-declared here\"",
+  "m12.js eslint(no-dupe-class-members) 1:20+1 \"\\\"a\\\" is previously declared here\" | 1:27+1 \"\\\"a\\\" is re-declared here\"",
+  "m13.js eslint(no-dupe-class-members) 1:20+1 \"\\\"a\\\" is previously declared here\" | 1:31+1 \"\\\"a\\\" is re-declared here\"",
+  "m21.js eslint(no-dupe-class-members) 1:15+1 \"\\\"a\\\" is previously declared here\" | 1:22+1 \"\\\"a\\\" is re-declared here\"",
+  "m21.js eslint(no-dupe-class-members) 1:22+1 \"\\\"a\\\" is previously declared here\" | 1:29+1 \"\\\"a\\\" is re-declared here\"",
+  "m22.js eslint(no-dupe-class-members) 1:15+1 \"\\\"a\\\" is previously declared here\" | 1:26+1 \"\\\"a\\\" is re-declared here\"",
+  "m23.js eslint(no-dupe-class-members) 1:18+11 \"\\\"constructor\\\" is previously declared here\" | 1:42+11 \"\\\"constructor\\\" is re-declared here\"",
+  "m25.js eslint(no-dupe-class-members) 1:12+13 \"\\\"constructor\\\" is previously declared here\" | 1:33+13 \"\\\"constructor\\\" is re-declared here\"",
+  "m26.js eslint(no-dupe-class-members) 1:11+1 \"\\\"1\\\" is previously declared here\" | 1:18+3 \"\\\"1\\\" is re-declared here\"",
+  "m27.js eslint(no-dupe-class-members) 1:12+1 \"\\\"1\\\" is previously declared here\" | 1:21+3 \"\\\"1\\\" is re-declared here\"",
+  "m28.js eslint(no-dupe-class-members) 1:12+2 \"\\\"1\\\" is previously declared here\" | 1:21+1 \"\\\"1\\\" is re-declared here\"",
+  "m29.js eslint(no-dupe-class-members) 1:12+4 \"\\\"null\\\" is previously declared here\" | 1:23+4 \"\\\"null\\\" is re-declared here\"",
+  "m30.js eslint(no-dupe-class-members) 1:12+3 \"\\\"/a/\\\" is previously declared here\" | 1:22+5 \"\\\"/a/\\\" is re-declared here\""
  ]
 }

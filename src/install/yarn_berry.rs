@@ -1654,6 +1654,11 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                                 Some(dependency::VersionTag::Workspace),
                                 crate::resolution::Tag::Workspace,
                             ) => true,
+                            // a tag names whatever version the registry gives it
+                            (
+                                Some(dependency::VersionTag::DistTag),
+                                crate::resolution::Tag::Npm,
+                            ) => true,
                             _ => false,
                         };
                         if !accepted {

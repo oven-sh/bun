@@ -83,7 +83,11 @@ function isWritableStream(obj) {
 }
 
 function isTransformStream(obj) {
-  return $inheritsTransformStream(obj);
+  // Node's duck type for a { readable, writable } pair. isNodeStream() reads the most, so it is last.
+  return (
+    $inheritsTransformStream(obj) ||
+    !!(obj && typeof obj.readable === "object" && typeof obj.writable === "object" && !isNodeStream(obj))
+  );
 }
 
 function isWebStream(obj) {

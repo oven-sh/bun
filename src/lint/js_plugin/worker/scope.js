@@ -2,7 +2,7 @@
 //
 // ESLint's `sourceCode.scopeManager`. `scopes.rs` sends the final answer as arrays of numbers, and `native.scopes`
 // (src/jsc/bindings/LintScopes.cpp) builds all the objects of a file in one call. What is here are the classes of `eslint-scope` and
-// of `@typescript-eslint/scope-manager` with their public methods, and which property goes where.
+// of `@typescript-eslint/scope-manager` with their public methods.
 
 // What is known about the scopes of the file. `null`: nobody has asked for them yet.
 let scopeData = null;
@@ -16,55 +16,11 @@ function usedVariables() {
   return native.usedVariables() ?? [];
 }
 
-const namesIn = text => text.split(/\s+/u);
 // `make()`, which is only called the first time. Many files are linted without a rule that asks for scopes.
 const once = make => {
   let made;
   return () => (made ??= make());
 };
-
-// The numbers of `Field` in LintScopes.cpp, by the name of the property. Any other property has the value of the template.
-const scopeFields = Object.fromEntries(
-  [
-    "",
-    ...namesIn(`$id set taints block through variables references variableScope upper isStrict thisFound childScopes
-    __declaredVariables implicit name identifiers defs stack scope eslintUsed eslintExported
-    eslintImplicitGlobalSetting eslintExplicitGlobal writeable isTypeVariable isValueVariable node parent index
-    kind rest identifier from resolved flag writeExpr partial init tainted`),
-  ].map((name, field) => [name, field]),
-);
-
-// A template and its program for objects of `type` with the properties `keys`. `constants`: the values of those that are the same
-// in all of them. `fields`: other names for a field.
-function scopeShape(type, keys, constants = {}, fields = {}) {
-  const template = native.shape(type.prototype, keys, undefined);
-  for (const key of keys) if (key in constants) template[key] = constants[key];
-  const fieldOf = key => (key in constants ? 0 : (scopeFields[fields[key] ?? key] ?? 0));
-  return [template, Uint8Array.from(keys, fieldOf)];
-}
-
-// In the order of `ScopeKind` and `DeclarationKind`.
-const scopeTypes =
-  namesIn(`global module function function-expression-name block switch catch with for class class-field-initializer
-    class-static-block tsModule tsEnum type conditionalType functionType mappedType`);
-const definitionTypes =
-  namesIn(`Variable Parameter FunctionName ClassName CatchClause ImportBinding TSEnumName TSEnumMemberName TSModuleName
-    Type ImplicitGlobalVariable`);
-const scopeStrings = ["arguments", "readonly", "writable", "off", "var", "let", "const", "using", "await using"];
-
-// The shapes of a variable, by which properties it has besides `base`: see `SHAPE_GLOBAL` in `scopes.rs`.
-function variableShapes(type, libType, base, libKeys, constants) {
-  const ofESLint = ["eslintImplicitGlobalSetting", "eslintExplicitGlobal", "eslintExplicitGlobalComments", "writeable"];
-  return Array.from({ length: 16 }, (_, shape) => {
-    const isPossible =
-      (shape & 3) !== 3 && !(shape & 2 && libType === null) && !(shape & 4 && base.includes("eslintUsed"));
-    if (!isPossible) return [undefined, undefined];
-    const keys = [...base, ...(shape & 1 ? ofESLint : []), ...(shape & 2 ? libKeys : [])];
-    if (shape & 4) keys.push("eslintUsed");
-    if (shape & 8) keys.push("eslintExported");
-    return scopeShape(shape & 2 ? libType : type, keys, constants);
-  }).flat();
-}
 
 // ------------- `eslint-scope` -------------
 
@@ -112,17 +68,6 @@ const eslintScopeLayout = once(() => {
     class ClassFieldInitializerScope extends Scope {},
     class ClassStaticBlockScope extends Scope {},
   ];
-  const keys = namesIn(`type set taints dynamic block through variables references variableScope functionExpressionScope
-    directCallToEvalScope thisFound __left upper isStrict childScopes __declaredVariables`);
-  const scopes = types.flatMap((type, kind) =>
-    scopeShape(type, kind === 0 ? [...keys, "implicit"] : keys, {
-      type: scopeTypes[kind],
-      dynamic: kind === 0 || scopeTypes[kind] === "with",
-      functionExpressionScope: scopeTypes[kind] === "function-expression-name",
-      directCallToEvalScope: false,
-      __left: null,
-    }),
-  );
 
   class Variable {}
   Object.assign(Variable, {
@@ -134,18 +79,12 @@ const eslintScopeLayout = once(() => {
     ImportBinding: "ImportBinding",
     ImplicitGlobalVariable: "ImplicitGlobalVariable",
   });
-  const variableKeys = ["name", "identifiers", "references", "defs", "tainted", "stack", "scope"];
 
   class Definition {}
   class ParameterDefinition extends Definition {}
-  const definitionKeys = ["type", "name", "node", "parent", "index", "kind"];
-  const definitions = definitionTypes.flatMap(type => {
-    if (type === "Parameter")
-      return scopeShape(ParameterDefinition, [...definitionKeys, "rest"], { type, parent: null, kind: null });
-    if (type === "ImplicitGlobalVariable")
-      return scopeShape(Definition, definitionKeys, { type, parent: null, index: null, kind: null });
-    return scopeShape(Definition, definitionKeys, { type });
-  });
+  // By the `DeclarationKind`.
+  const definitionClasses = new Array(11).fill(Definition);
+  definitionClasses[1] = ParameterDefinition;
 
   class Reference {
     isStatic() {
@@ -168,18 +107,6 @@ const eslintScopeLayout = once(() => {
     }
   }
   Object.assign(Reference, { READ: 1, WRITE: 2, RW: 3 });
-  const referenceKeys = written => [
-    "identifier",
-    "from",
-    "tainted",
-    "resolved",
-    "flag",
-    ...written,
-    "__maybeImplicitGlobal",
-  ];
-  const references = [[], ["writeExpr", "partial", "init"]].flatMap(written =>
-    scopeShape(Reference, referenceKeys(written)),
-  );
 
   class ScopeManager {
     constructor(scopes, nodeToScope, declaredVariables) {
@@ -239,14 +166,7 @@ const eslintScopeLayout = once(() => {
 
   return {
     ScopeManager,
-    forNative: [
-      scopes,
-      variableShapes(Variable, null, variableKeys, [], { eslintExplicitGlobalComments: undefined }),
-      definitions,
-      references,
-      scopeShape(Object, ["set", "variables", "left"], {}, { left: "through" }),
-      [new Map(), new WeakMap(), new Map()],
-    ],
+    forNative: [types, Variable, null, definitionClasses, Reference, new Map()],
   };
 });
 
@@ -296,22 +216,27 @@ const typescriptLayout = once(() => {
       return this.variableScope === this;
     }
   }
-  const names =
-    namesIn(`GlobalScope ModuleScope FunctionScope FunctionExpressionNameScope BlockScope SwitchScope CatchScope WithScope
-    ForScope ClassScope ClassFieldInitializerScope ClassStaticBlockScope TSModuleScope TSEnumScope TypeScope
-    ConditionalTypeScope FunctionTypeScope MappedTypeScope`);
-  // A class called `name`.
-  const subclass = (name, base) => ({ [name]: class extends base {} })[name];
-  const keys =
-    namesIn(`$id block childScopes functionExpressionScope isStrict leftToResolve references set through type upper
-    variables variableScope`);
-  const scopes = names.flatMap((name, kind) =>
-    scopeShape(subclass(name, ScopeBase), kind === 0 ? [...keys, "implicit"] : keys, {
-      functionExpressionScope: scopeTypes[kind] === "function-expression-name",
-      leftToResolve: null,
-      type: scopeTypes[kind],
-    }),
-  );
+  // By the `ScopeKind`.
+  const types = [
+    class GlobalScope extends ScopeBase {},
+    class ModuleScope extends ScopeBase {},
+    class FunctionScope extends ScopeBase {},
+    class FunctionExpressionNameScope extends ScopeBase {},
+    class BlockScope extends ScopeBase {},
+    class SwitchScope extends ScopeBase {},
+    class CatchScope extends ScopeBase {},
+    class WithScope extends ScopeBase {},
+    class ForScope extends ScopeBase {},
+    class ClassScope extends ScopeBase {},
+    class ClassFieldInitializerScope extends ScopeBase {},
+    class ClassStaticBlockScope extends ScopeBase {},
+    class TSModuleScope extends ScopeBase {},
+    class TSEnumScope extends ScopeBase {},
+    class TypeScope extends ScopeBase {},
+    class ConditionalTypeScope extends ScopeBase {},
+    class FunctionTypeScope extends ScopeBase {},
+    class MappedTypeScope extends ScopeBase {},
+  ];
 
   class VariableBase {}
   class Variable extends VariableBase {
@@ -324,24 +249,22 @@ const typescriptLayout = once(() => {
   }
   class ESLintScopeVariable extends VariableBase {}
   class ImplicitLibVariable extends ESLintScopeVariable {}
-  const variableKeys = ["$id", "defs", "eslintUsed", "identifiers", "name", "references", "scope"];
-  const libKeys =
-    namesIn(`writeable eslintExplicitGlobal eslintImplicitGlobalSetting eslintExplicitGlobalComments isTypeVariable
-    isValueVariable`);
 
   class DefinitionBase {}
-  const definitionKeys = ["$id", "type", "name", "node", "parent", "isTypeDefinition", "isVariableDefinition"];
-  const typeDefinitions = ["ClassName", "ImportBinding", "TSEnumName", "TSEnumMemberName", "TSModuleName", "Type"];
-  const definitions = definitionTypes.flatMap(type => {
-    const name = `${type === "TSEnumMemberName" ? "TSEnumMember" : type}Definition`;
-    const constants = { type, isTypeDefinition: typeDefinitions.includes(type), isVariableDefinition: type !== "Type" };
-    if (type === "ImplicitGlobalVariable") constants.parent = null;
-    return scopeShape(
-      subclass(name, DefinitionBase),
-      type === "Parameter" ? [...definitionKeys, "rest"] : definitionKeys,
-      constants,
-    );
-  });
+  // By the `DeclarationKind`.
+  const definitionClasses = [
+    class VariableDefinition extends DefinitionBase {},
+    class ParameterDefinition extends DefinitionBase {},
+    class FunctionNameDefinition extends DefinitionBase {},
+    class ClassNameDefinition extends DefinitionBase {},
+    class CatchClauseDefinition extends DefinitionBase {},
+    class ImportBindingDefinition extends DefinitionBase {},
+    class TSEnumNameDefinition extends DefinitionBase {},
+    class TSEnumMemberDefinition extends DefinitionBase {},
+    class TSModuleNameDefinition extends DefinitionBase {},
+    class TypeDefinition extends DefinitionBase {},
+    class ImplicitGlobalVariableDefinition extends DefinitionBase {},
+  ];
 
   // The flags of a reference, which the real one has in private fields, are in the message.
   const flagsOf = reference => scopeData.referenceFlags[reference.$id - 1];
@@ -368,15 +291,6 @@ const typescriptLayout = once(() => {
       return (flagsOf(this) & 3) === 3;
     }
   }
-  const reference = scopeShape(Reference, [
-    "$id",
-    "from",
-    "identifier",
-    "init",
-    "maybeImplicitGlobal",
-    "resolved",
-    "writeExpr",
-  ]);
 
   class ScopeManager {
     constructor(scopes, nodeToScope, declaredVariables) {
@@ -420,14 +334,7 @@ const typescriptLayout = once(() => {
   return {
     ScopeManager,
     ImplicitLibVariable,
-    forNative: [
-      scopes,
-      variableShapes(Variable, ImplicitLibVariable, variableKeys, libKeys, { eslintExplicitGlobalComments: undefined }),
-      definitions,
-      [...reference, ...reference],
-      scopeShape(Object, ["leftToBeResolved", "set", "variables"], {}, { leftToBeResolved: "through" }),
-      [new Map(), new WeakMap(), new GlobalSet()],
-    ],
+    forNative: [types, Variable, ImplicitLibVariable, definitionClasses, Reference, new GlobalSet()],
   };
 });
 
@@ -478,7 +385,7 @@ function scopeManager() {
   const layout = fileDialect === 1 ? eslintScopeLayout() : typescriptLayout();
   const names =
     globalNames.get(fileSettings) ?? globalNames.set(fileSettings, Object.keys(fileSettings.globals)).get(fileSettings);
-  const made = native.scopes(layout.forNative, names, scopeStrings, fileDialect === 0);
+  const made = native.scopes(layout.forNative, names, fileDialect === 0);
   const [listed, globalScope, variableCount, nodeToScope, declaredVariables, referenceFlags, explicitGlobals] = made;
   scopeData = {
     manager: new layout.ScopeManager(listed, nodeToScope, declaredVariables),

@@ -6,11 +6,27 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSWeakMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
+#include <array>
 #include <span>
+#include <wtf/Vector.h>
 
 namespace Bun {
 
-// The scopes of the file that's being linted. A member of LintHost. All are null until a rule asks for the scopes.
+// How the objects of `eslint-scope`, or of `@typescript-eslint/scope-manager`, are laid out. It's the same for all files. A template is
+// made when the first object needs it.
+struct LintScopeLayout {
+    // 18 kinds of scopes, 16 shapes of variables, 11 kinds of definitions, 2 shapes of references, and `globalScope.implicit`.
+    static constexpr size_t templateCount = 18 + 16 + 11 + 2 + 1;
+
+    // From src/lint/js_plugin/worker/scope.js: see `scopes` in LintScopes.cpp.
+    JSC::WriteBarrier<JSC::JSArray> classes;
+    // An object with the Structure of the objects, and with what is the same in all of them.
+    std::array<JSC::WriteBarrier<JSC::JSObject>, templateCount> templates;
+    // What goes into each property: a `Field`.
+    std::array<WTF::Vector<uint8_t>, templateCount> programs;
+};
+
+// The scopes of the file that's being linted. A member of LintHost. All but the layouts are null until a rule asks for the scopes.
 struct LintScopeState {
     void endFile()
     {
@@ -31,7 +47,18 @@ struct LintScopeState {
         visitor.append(nodeToScope);
         visitor.append(declaredVariables);
         visitor.append(variables);
+        visitor.append(strings);
+        for (auto& layout : layouts) {
+            visitor.append(layout.classes);
+            for (auto& it : layout.templates)
+                visitor.append(it);
+        }
     }
+
+    // For typescript-eslint and for eslint-scope.
+    std::array<LintScopeLayout, 2> layouts;
+    // `arguments`, the three settings of a global, the five kinds of a declaration.
+    JSC::WriteBarrier<JSC::JSArray> strings;
 
     // `sourceCode.scopeManager`
     JSC::WriteBarrier<JSC::JSObject> manager;

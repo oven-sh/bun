@@ -43,6 +43,63 @@ async function lint(files: Record<string, string>, args: string[], stdin?: strin
   return { json, reports, texts, stderr, exitCode };
 }
 
+describe.concurrent("globals", () => {
+  test("every global that Bun has is defined", async () => {
+    // `bun -e` also makes `fs`, `path` and other built-in modules global, so ask a file.
+    using dir = tempDir("bun-lint-defaults-globals", {
+      "names.js": "console.log(JSON.stringify(Object.getOwnPropertyNames(globalThis)));",
+    });
+    await using proc = spawn({ cmd: [bunExe(), "names.js"], env, cwd: String(dir), stdout: "pipe", stderr: "inherit" });
+    const names = (JSON.parse(await proc.stdout.text()) as string[]).filter(name => /^[A-Za-z_$][\w$]*$/.test(name));
+    expect(names).toContain("HTMLRewriter");
+    const { reports } = await lint({ "a.js": `console.log(\n${names.join(",\n")},\n);\n` }, []);
+    expect(reports).toEqual([]);
+  });
+
+  const tests = `
+    describe("a", () => {
+      before(() => {});
+      beforeAll(() => {});
+      beforeEach(() => {});
+      it("b", () => expect(1).toBe(1));
+      test("c", () => expectTypeOf(jest.fn()).toBeFunction());
+      fit("d", () => vi.fn());
+      xit("e", () => {});
+      afterEach(() => {});
+      afterAll(() => {});
+      after(() => {});
+    });
+    fdescribe("f", () => {});
+    xdescribe("g", () => {});
+  `;
+
+  test.each([
+    "a.test.js",
+    "a.spec.mjs",
+    "a_test.cjs",
+    "a_spec.jsx",
+    "__tests__/a.js",
+    "src/__tests__/deep/a.js",
+    "test/a.js",
+    "packages/x/test/a.mjs",
+    "tests/a.js",
+    "spec/a.js",
+  ])("the test runners' globals are defined in %s", async name => {
+    const { reports, exitCode } = await lint({ [name]: tests }, []);
+    expect(reports).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["a.js", "src/a.js", "testing/a.js", "latest/a.js", "src/test.js"])(
+    "the test runners' globals are not defined in %s",
+    async name => {
+      const { reports, exitCode } = await lint({ [name]: 'describe("a", () => {});\n' }, []);
+      expect(reports).toEqual([`${name}:1:1 error no-undef`]);
+      expect(exitCode).toBe(1);
+    },
+  );
+});
+
 describe.concurrent("severities", () => {
   const files = {
     "a.js": "debugger;\nif (Bun) {\n}\nlet unused;\n",

@@ -207,6 +207,8 @@ pub struct ConfigGlobals {
     /// For each name of the pool, two bits: whether the libraries of TypeScript define it as a
     /// type, as a value.
     libs: Box<[u8]>,
+    /// The names that they define, in the order in which typescript-eslint defines them.
+    lib_order: Box<[u16]>,
 }
 
 impl ConfigGlobals {
@@ -240,15 +242,18 @@ impl ConfigGlobals {
         settings.reverse();
         crate::utils::sort::sort_by(&mut settings, |a, b| a.0.cmp(&b.0));
         settings.dedup_by(|a, b| a.0 == b.0);
+        let (libs, lib_order) = Self::libs(language);
         ConfigGlobals {
             settings,
-            libs: Self::libs(language),
+            libs,
+            lib_order,
         }
     }
 
     /// `populateGlobalsFromLib` of typescript-eslint's scope manager.
-    fn libs(language: &LanguageOptions) -> Box<[u8]> {
+    fn libs(language: &LanguageOptions) -> (Box<[u8]>, Box<[u16]>) {
         let mut flags = vec![0u8; tables::NAME_ENDS.len().div_ceil(4)].into_boxed_slice();
+        let mut order = Vec::new();
         let find = |name: &[u8]| {
             tables::LIBS
                 .binary_search_by(|it| it.0.as_bytes().cmp(name))
@@ -275,10 +280,13 @@ impl ConfigGlobals {
             }
             for entry in entries(start, len) {
                 let (id, shift) = ((entry >> 2) as usize, (entry >> 2) % 4 * 2);
+                if (flags[id / 4] >> shift) & 3 == 0 {
+                    order.push(entry >> 2);
+                }
                 flags[id / 4] |= ((entry & 3) as u8) << shift;
             }
         }
-        flags
+        (flags, order.into())
     }
 
     fn setting(&self, name: &[u8]) -> Option<Global> {
@@ -300,12 +308,16 @@ impl ConfigGlobals {
 }
 
 impl LanguageOptions {
-    /// What the libraries of TypeScript define, sorted by name: the name, whether it is a type, whether it is a value.
+    /// What the libraries of TypeScript define, in the order in which typescript-eslint defines it: the name, whether it is a type,
+    /// whether it is a value.
     pub fn lib_variables(&self) -> impl Iterator<Item = (&'static [u8], bool, bool)> + '_ {
-        let libs = &self.config_globals().libs;
-        (0..tables::NAME_ENDS.len()).filter_map(move |id| {
-            let flags = (libs.get(id / 4)? >> (id % 4 * 2)) & 3;
-            (flags != 0).then(|| (name_at(id), flags & TYPE != 0, flags & VALUE != 0))
+        let ConfigGlobals {
+            libs, lib_order, ..
+        } = self.config_globals();
+        lib_order.iter().map(move |&id| {
+            let id = usize::from(id);
+            let flags = (libs[id / 4] >> (id % 4 * 2)) & 3;
+            (name_at(id), flags & TYPE != 0, flags & VALUE != 0)
         })
     }
 }

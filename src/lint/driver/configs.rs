@@ -103,7 +103,11 @@ const BUILT_IN: &[u8] = br#"[
         "$severityByKind": true,
         "languageOptions": {
             "$env": { "browser": true, "node": true },
-            "globals": { "Bun": "readonly" },
+            "globals": {
+                "Bun": "readonly", "HTMLRewriter": "readonly", "ShadowRealm": "readonly",
+                "BuildMessage": "readonly", "ResolveMessage": "readonly",
+                "BuildError": "readonly", "ResolveError": "readonly"
+            },
             "parserOptions": { "ecmaFeatures": { "jsx": true } }
         },
         "settings": {
@@ -116,14 +120,13 @@ const BUILT_IN: &[u8] = br#"[
         "rules": { "no-unused-vars": ["warn", UNUSED_ON_PURPOSE] }
     },
     {
-        "files": ["**/*{.,_}{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"],
+        "files": [
+            "**/*{.,_}{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}",
+            "**/{__tests__,test,tests,spec}/**"
+        ],
         "languageOptions": {
-            "globals": {
-                "test": "readonly", "it": "readonly", "describe": "readonly", "expect": "readonly",
-                "expectTypeOf": "readonly", "beforeAll": "readonly", "beforeEach": "readonly",
-                "afterEach": "readonly", "afterAll": "readonly", "jest": "readonly", "vi": "readonly",
-                "xit": "readonly", "xtest": "readonly", "xdescribe": "readonly"
-            }
+            "$env": { "jest": true, "mocha": true },
+            "globals": { "expectTypeOf": "readonly", "vi": "readonly", "fdescribe": "readonly" }
         }
     },
     {

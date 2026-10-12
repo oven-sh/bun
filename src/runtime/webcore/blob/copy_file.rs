@@ -869,8 +869,7 @@ impl CopyFile {
 
         #[cfg(target_os = "macos")]
         {
-            // fcopyfile sets dest's length to the bytes it copied and the slice trim is
-            // ftruncate; both are only safe for a file that Bun's own open emptied.
+            // fcopyfile and the slice trim set dest's length: only safe for a file that Bun's own open emptied.
             if self.opened_new_destination() {
                 let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
                     u64::try_from(stat.st_size).expect("int cast"),

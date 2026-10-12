@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{is_closing_brace_token, is_comma_token, is_opening_brace_token};
+use bun_lint::utils::oxlint::AmbientAncestors;
 use bun_lint::utils::ts_utils::format_word_list;
 use rustc_hash::FxHashMap;
 use std::cell::OnceCell;
@@ -131,6 +132,13 @@ fn has_attributes(import: Import) -> bool {
     (import.stmt().import_attributes()).is_some_and(|attributes| !attributes.entries().is_empty())
 }
 
+/// oxc's `in_ambient_context`, in `class`.
+fn oxlint_is_ambient(class: Class) -> bool {
+    class.file().is_declaration_file()
+        || class.flags().contains(Flags::AMBIENT)
+        || AmbientAncestors::default().has_ambient_typescript_ancestor(class.into())
+}
+
 /// Whether an `import type` would do for `reference`.
 fn is_type_only_use(reference: Reference) -> bool {
     if !reference.is_value() {
@@ -143,17 +151,26 @@ fn is_type_only_use(reference: Reference) -> bool {
     let Some(mut child) = reference.expr() else {
         return false;
     };
+    let is_oxlint = child.file().language().is_oxlint;
     loop {
         match child.parent() {
             // `typeof foo.bar`
             Node::Type(ty) => return ty.tag() == TypeTag::Typeof,
-            // `{ [foo.bar]: string }`
+            // `{ [foo.bar]: string }`. For oxlint also `{ [foo.bar](): string }`, and in a class where nothing is evaluated.
             Node::Member(member) => {
-                return member.kind() == MemberKind::Property
-                    && !matches!(member.parent(), Node::Class(_))
-                    && matches!(member.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == child);
+                return matches!(member.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == child)
+                    && match member.parent() {
+                        Node::Class(class) => {
+                            is_oxlint
+                                && (member.flags().intersects(Flags::ABSTRACT | Flags::AMBIENT) || oxlint_is_ambient(class))
+                        }
+                        _ => is_oxlint || member.kind() == MemberKind::Property,
+                    };
             }
+            // `declare class A extends foo.bar {}`
+            Node::Class(class) => return is_oxlint && class.extends() == Some(child) && oxlint_is_ambient(class),
             Node::Expr(parent) => match parent.kind() {
+                ExprKind::Call(call) if is_oxlint && call.callee() == child => child = parent,
                 ExprKind::Dot {
                     obj,
                     chain: Chain::No,

@@ -841,6 +841,7 @@ impl<'s> Program<'s> {
             refused_expressions: Vec::new(),
             side_effect_free: Default::default(),
             context_sensitive_functions: Default::default(),
+            context_sensitivity_asked: Default::default(),
             unwind_to: usize::MAX,
             unwind_work: 0,
             restart_with: None,
@@ -1677,6 +1678,8 @@ pub struct Checker<'p, 's> {
     side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
     /// `isContextSensitive` of the functions that have many in them, each all that the one around it returns.
     context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
+    /// Of how many functions it has been asked.
+    context_sensitivity_asked: std::cell::Cell<u64>,
     /// A query was refused at `MAX_DEPTH`: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none was. See
     /// `refuse_as_too_deep`.
     unwind_to: usize,

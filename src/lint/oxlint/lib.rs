@@ -11,5 +11,6 @@ pub mod import;
 pub mod module_record;
 pub mod no_negated_condition;
 pub mod regex_flags;
+pub mod regex_pattern;
 pub mod same_expression;
 pub mod text;

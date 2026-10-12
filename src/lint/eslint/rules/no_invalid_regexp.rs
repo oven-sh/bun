@@ -1,8 +1,8 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex;
-use bun_lint::utils::char_source::parse_string_literal;
 use bun_lint_oxlint::ast_util::get_inner_expression;
+use bun_lint_oxlint::regex_pattern::Pattern;
 use smallvec::SmallVec;
 
 /// Disallow invalid regular expression strings in `RegExp` constructors.
@@ -97,27 +97,6 @@ fn string_literal(argument: Expr<'_>) -> Option<Expr<'_>> {
     (argument.tag() == ExprTag::String && !argument.is_parenthesized()).then_some(argument)
 }
 
-/// Where the string literal `literal` has what is from `start` to `end` in its value, as oxc counts: what is between two
-/// characters belongs to the second.
-fn written(literal: Expr<'_>, value: &[u8], (start, end): (u32, u32)) -> Span {
-    let units = parse_string_literal(literal.text());
-    let span = literal.span();
-    let [first, after] = [start, end].map(|it| regex::utf16_index(value, it as usize));
-    let unit = |index: usize| units.get(index);
-    let start = match (unit(first), first.checked_sub(1).and_then(unit)) {
-        // The second half of a character.
-        (Some(it), Some(before)) if before.start == it.start => span.start + it.end,
-        (Some(it), _) => span.start + it.start,
-        (None, _) => span.end - 1,
-    };
-    let end = match after.checked_sub(1).and_then(unit) {
-        _ if after == first => start,
-        Some(last) if after < units.len() => span.start + last.end,
-        _ => span.end - 1,
-    };
-    Span::new(start, end)
-}
-
 impl NoInvalidRegexp {
     /// oxlint does not ask what `RegExp` is, reads the flags as they are written, and looks at the pattern only if it knows
     /// the flags. It points at the flag, or at what its parser points at.
@@ -177,20 +156,20 @@ impl NoInvalidRegexp {
                 }
             }
         }
-        let Some((pattern, value)) = pattern.and_then(|it| Some((it, it.as_string()?.bytes()))) else {
+        let Some(pattern) = pattern.and_then(|it| Pattern::read(it, mode)) else {
             return;
         };
         let Err(regex::SyntaxError { oxc: Some(found), .. }) =
-            regex::validate_pattern(value, mode, regex::Options::default(), &mut regex::Ignore)
+            regex::validate_pattern(pattern.text(), mode, regex::Options::default(), &mut regex::Ignore)
         else {
             return;
         };
         let report = cx
-            .report(written(pattern, value, (found.start, found.end)), INVALID)
+            .report(pattern.span(found.start, found.end), INVALID)
             .data("message", found.message.into_owned())
             .help(found.help);
-        if let Some(also) = found.also {
-            report.label(written(pattern, value, also), "");
+        if let Some((start, end)) = found.also {
+            report.label(pattern.span(start, end), "");
         }
     }
 }

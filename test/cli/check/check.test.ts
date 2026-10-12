@@ -3141,18 +3141,27 @@ const wrong: number = "";
     });
 
     // Whether a function is sensitive to its context was asked of each from every one around it, each time down to the last:
-    // the cube of their number: 25 s.
+    // the cube of their number: 25 s, and with a literal or a condition between them a minute and a half for fewer.
     test.skipIf(isDebug || isASAN).each([
-      ["arrows", "(a: number) => ", ""],
-      ["functions", "function (a: number) { return ", " }"],
-    ])("2,000 %s in each other", async (_, open, close) => {
-      using dir = project({
-        "a.ts": `export const g = ${repeat(open, 2_000)}0${repeat(close, 2_000)};\nexport const wrong: number = "";\n`,
-      });
-      const { stdout, exitCode } = await check(dir);
-      expect(stdout).toContain(`a.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
-      expect(exitCode).toBe(1);
-    });
+      ["arrows", "(a: number) => ", "", 2_000],
+      ["functions", "function (a: number) { return ", " }", 2_000],
+      ["arrows in array literals", "[(a: number) => ", "]", 1_400],
+      ["arrows in object literals", "{ a: (a: number) => (", ") }", 1_400],
+      ["methods of object literals", "{ m(a: number) { return ", " } }", 1_400],
+      ["arrows in conditions", "c ? 0 : (a: number) => ", "", 1_400],
+    ])(
+      "%s in each other",
+      async (_, open, close, depth) => {
+        using dir = project({
+          "a.ts": `declare const c: boolean;\nexport const g = ${repeat(open, depth)}0${repeat(close, depth)};\nexport const wrong: number = "";\n`,
+        });
+        const { stdout, exitCode } = await check(dir, [], {}, 10_000);
+        expect(stdout).toContain(`a.ts(3,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+        expect(exitCode).toBe(1);
+      },
+      // Longer than the child may take, which does not outlive the test then.
+      20_000,
+    );
 
     // What reads a tsconfig.json called itself for each file that is extended, on the main thread.
     test("a chain of 5,000 configuration files that extend each other", async () => {

@@ -191,12 +191,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isContextSensitiveFunctionLikeDeclaration`
     fn is_context_sensitive_function_like_declaration(&self, file: FileId, f: FnId) -> bool {
         /// Of fewer functions in each other nothing is kept.
-        const MANY: usize = 8;
-        // A function that returns nothing but a function is what that one is, unless its own parameters decide. It is asked of
-        // each from every one around it: so not by recursion, and what many of them come to is kept. It depends on the tree alone.
+        const MANY: u64 = 8;
+        // It is asked of each function from every one around it, each time down to the last, so what many of them come to is
+        // kept. It depends on the tree alone. A function that returns nothing but a function is what that one is, unless its
+        // own parameters decide: so not by recursion.
         let times_cut_short = self.times_cut_short.get();
+        let asked_before = self.context_sensitivity_asked.get();
         let (mut at, mut passed) = (f, 0);
         let answer = loop {
+            (self.context_sensitivity_asked).set(self.context_sensitivity_asked.get() + 1);
             if let Some(&known) = self.context_sensitive_functions.borrow().get(&(file, at)) {
                 break known;
             }
@@ -210,10 +213,12 @@ impl<'p, 's> Checker<'p, 's> {
             (at, passed) = (returned, passed + 1);
         };
         // Where the stack was low the answer is that of who asked.
-        if passed >= MANY && self.times_cut_short.get() == times_cut_short {
+        if self.context_sensitivity_asked.get() - asked_before > MANY
+            && self.times_cut_short.get() == times_cut_short
+        {
             let mut known = self.context_sensitive_functions.borrow_mut();
             let mut at = Some(f);
-            for _ in 0..passed {
+            for _ in 0..=passed {
                 let Some(it) = at else { break };
                 known.insert((file, it), answer);
                 at = self.only_function_returned(file, it);

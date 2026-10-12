@@ -343,6 +343,10 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         }
     }
 
+    // Nothing below can be taken back: the env tree, the transfer, the thread.
+    auto* structure = structureForNewTarget<Worker>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
     // Resolve the spawning thread's env tree (founding one if needed) so disjoint
     // SHARE_ENV chains stay isolated. Runs only after every option validated,
     // because founding a tree swaps this thread's process.env.
@@ -399,12 +403,9 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-
-    setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
 
     // Emit the 'worker' event on the process. If we are constructing a `node:worker_threads`
     // worker, we emit the event with the worker_threads Worker object instead of the Web Worker.

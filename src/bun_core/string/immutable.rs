@@ -2243,6 +2243,23 @@ pub fn percent_encode_write(
     Ok(())
 }
 
+/// JavaScript's `encodeURIComponent` on bytes: every byte but `A-Z a-z 0-9 - _ . ! ~ * ' ( )` becomes `%XX`.
+pub fn percent_encode_uri_component(input: &[u8], writer: &mut Vec<u8>) {
+    for &byte in input {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+        {
+            writer.push(byte);
+        } else {
+            let h = crate::fmt::hex2_upper(byte);
+            writer.extend_from_slice(&[b'%', h[0], h[1]]);
+        }
+    }
+}
+
 /// Levenshtein's distance: how many elements have to be replaced, added or removed to make `b` of `a`.
 pub fn edit_distance<T: PartialEq>(a: impl Iterator<Item = T>, b: &[T]) -> usize {
     let mut row: Vec<usize> = (0..=b.len()).collect();

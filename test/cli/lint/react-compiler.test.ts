@@ -447,6 +447,33 @@ describe.concurrent(
       slow,
     );
 
+    // The value is one of two, so it has the reasons of both, and so has what is read from it.
+    test("of two reasons for which a value is frozen the message has the one that the compiler prefers, whichever came first", async () => {
+      const component = (first: string, second: string) => `function Component(props) {
+  const context = useContext(Context);
+  const value = props.flag ? ${first} : ${second};
+  value.inner.x = 1;
+  return <div />;
+}
+`;
+      const { files, exitCode } = await messages({
+        "props-first.jsx": component("props.a", "context"),
+        "context-first.jsx": component("context", "props.a"),
+      });
+      const isAboutContext = (name: string) =>
+        files[name].messages
+          .filter(it => it.ruleId === "react-hooks/immutability")
+          .map(it => it.message.includes("Modifying a value returned from 'useContext()' is not allowed"));
+      expect({
+        propsFirst: isAboutContext("props-first.jsx"),
+        contextFirst: isAboutContext("context-first.jsx"),
+      }).toEqual({
+        propsFirst: [true],
+        contextFirst: [true],
+      });
+      expect(exitCode).toBe(1);
+    });
+
     test("the whole message, suggestions, comments, and files that the plugin does not compile", async () => {
       const { files, exitCode } = await messages(eslintSmall);
       expect(files).toEqual(expected.eslint.small);

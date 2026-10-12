@@ -31,6 +31,23 @@ fn is_valid_ts_ignore_present(comment: Token) -> bool {
     strings::trim_js_whitespace_start(rest).starts_with(TS_IGNORE)
 }
 
+/// The same for oxlint: any number of `/`, and of `*` in a block, with blanks between them. Only a `\n` ends a line.
+fn is_valid_ts_ignore_present_for_oxlint(comment: Token) -> bool {
+    let (value, is_block) = (comment.comment_value(), comment.kind() == TokenKind::Block);
+    let mut rest = value;
+    if is_block {
+        let lines = value.strip_suffix(b"\n").unwrap_or(value);
+        rest = strings::last_index_of_char(lines, b'\n').and_then(|at| lines.get(at + 1..)).unwrap_or(lines);
+    }
+    loop {
+        rest = match strings::trim_unicode_whitespace_start(rest) {
+            [b'/', after @ ..] => after,
+            [b'*', after @ ..] if is_block => after,
+            trimmed => return trimmed.starts_with(TS_IGNORE) && comment.kind() != TokenKind::Shebang,
+        };
+    }
+}
+
 impl Rule for PreferTsExpectError {
     const META: Meta = Meta::typescript("prefer-ts-expect-error", Kind::Problem)
         .fixable(Fixable::Code)
@@ -50,7 +67,11 @@ impl Rule for PreferTsExpectError {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         for comment in cx.file().comments() {
-            if !is_valid_ts_ignore_present(comment) {
+            let is_oxlint = cx.language().is_oxlint;
+            if !match is_oxlint {
+                true => is_valid_ts_ignore_present_for_oxlint(comment),
+                false => is_valid_ts_ignore_present(comment),
+            } {
                 continue;
             }
             cx.report(comment, PREFER_EXPECT_ERROR_COMMENT).fix(|fixer| {
@@ -59,6 +80,11 @@ impl Rule for PreferTsExpectError {
                 let is_line_comment = comment.kind() == TokenKind::Line;
                 let open: &[u8] = if is_line_comment { b"//" } else { b"/*" };
                 let close: &[u8] = if is_line_comment { b"" } else { b"*/" };
+                // oxlint changes every one in the comment.
+                if is_oxlint {
+                    let parts: Vec<&[u8]> = strings::split(value, TS_IGNORE).collect();
+                    return Some(fixer.replace(comment, [open, &parts.join(&b"@ts-expect-error"[..]), close].concat()));
+                }
                 let after = &value[at + TS_IGNORE.len()..];
                 Some(fixer.replace(comment, [open, &value[..at], b"@ts-expect-error", after, close].concat()))
             });

@@ -919,8 +919,8 @@ struct Context {
     aliasing_config_temp_cache: HashMap<(IdentifierId, u32), Place>,
     /// Pass-local ValueId allocator.
     next_value_id: u32,
-    /// Stable per-identifier fallback ValueIds for the read-before-define paths
-    /// (`assign()` from an undefined source, lvalue default).
+    /// Stable per-identifier fallback ValueIds for the read-before-define path
+    /// (`assign()` from an undefined source).
     fallback_value_ids: HashMap<IdentifierId, ValueId>,
 }
 
@@ -1567,19 +1567,9 @@ fn apply_signature(
         apply_effect(context, state, effect, &mut initialized, effects, env)?;
     }
 
-    // If lvalue is not yet defined, initialize it with a default value.
-    // The TS version asserts this as an invariant, but the Rust port may have
-    // edge cases where effects don't cover the lvalue (e.g. missing signature entries).
     if !state.is_defined(instr.lvalue.identifier) {
-        let vid = context.fallback_value_id(instr.lvalue.identifier);
-        state.initialize(
-            vid,
-            AbstractValue {
-                kind: ValueKind::Mutable,
-                reason: hashset_of(ValueReason::Other),
-            },
-        );
-        state.define(instr.lvalue.identifier, vid);
+        let reason = "Expected instruction lvalue to be initialized";
+        return Err(crate::diagnostics::cold_invariant(reason, None, instr.loc).into());
     }
 
     Ok(())
@@ -3766,11 +3756,9 @@ fn compute_effects_for_aliasing_signature(
 // Helpers
 // =============================================================================
 
-/// Select the primary (most specific) reason from a set of reasons.
-/// TS uses `[...set][0]` which returns the first-inserted element;
-/// since the primary reason is always inserted first, this effectively
-/// picks the most specific non-Other reason. We replicate this by
-/// preferring any non-Other reason over Other.
+/// TS has `[...set][0]`, the reason that was inserted first, which a set of bits does not know.
+/// It is for the `Create` among the effects of an instruction, whose reason nothing reads: the
+/// value itself has the whole set, and `get_write_error_reason` chooses from that.
 fn primary_reason(reasons: ValueReasonSet) -> ValueReason {
     for r in reasons.iter() {
         if r != ValueReason::Other {

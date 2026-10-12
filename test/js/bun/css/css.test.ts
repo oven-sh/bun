@@ -8063,6 +8063,124 @@ describe("css tests", () => {
             "@media (min-width:100px){.x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}}",
             `@media (min-width:100px){.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}}`,
           ],
+          // The next rule starts clean, with or without copies of its own.
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}.y{top:0}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}.y{top:0}`,
+          ],
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}.y{color:var(--c,lab(50% 20 30))}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}.y{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, ".y")}`,
+          ],
+          // Every selector is split off: nothing is printed for the emptied selector list.
+          [
+            ".x:focus-visible,.y:focus-visible{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}",
+            [".x:focus-visible", ".y:focus-visible"]
+              .map(
+                selector =>
+                  `${selector}{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, selector)}${selector}{color:oklch(50% .1 40)}`,
+              )
+              .join(""),
+          ],
+          [
+            ".x:focus-visible,.y:focus-visible{color:var(--c,lab(50% 20 30))}",
+            [".x:focus-visible", ".y:focus-visible"]
+              .map(selector => `${selector}{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, selector)}`)
+              .join(""),
+          ],
+          // The nested rules of a split-off selector follow its tail, as they follow the whole block in the source.
+          [
+            ".x,.y:focus-visible{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40);margin:0;@media (min-width:100px){margin:1px}}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40);margin:0}` +
+              `.y:focus-visible{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, ".y:focus-visible")}.y:focus-visible{color:oklch(50% .1 40);margin:0}` +
+              "@media (min-width:100px){.y:focus-visible{margin:1px}}@media (min-width:100px){.x{margin:1px}}",
+          ],
+          // The dark-mode rule of `color-scheme` overrides two variables that sit behind the cut, so it follows them.
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40);color-scheme:light dark}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40);--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}` +
+              "@media (prefers-color-scheme:dark){.x{--buncss-light: ;--buncss-dark:initial}}",
+          ],
+          [
+            ":root{background-color:var(--bg,lab(50% 20 30));background-image:var(--img);color-scheme:light dark}",
+            `:root{background-color:var(--bg,#a16945)}${copies(c => `background-color:var(--bg,${c})`, ":root")}:root{background-image:var(--img);--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}` +
+              "@media (prefers-color-scheme:dark){:root{--buncss-light: ;--buncss-dark:initial}}",
+          ],
+          [
+            ".x,.y:focus-visible{border-color:var(--b,lab(50% 20 30));border-top-color:foo(1);color-scheme:light dark}",
+            [".x", ".y:focus-visible"]
+              .map(
+                selector =>
+                  `${selector}{border-color:var(--b,#a16945)}${copies(c => `border-color:var(--b,${c})`, selector)}${selector}{border-top-color:foo(1);--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}` +
+                  `@media (prefers-color-scheme:dark){${selector}{--buncss-light: ;--buncss-dark:initial}}`,
+              )
+              .join(""),
+          ],
+        ])("%s", (source, expected) => {
+          expect(minified(source)).toBe(expected);
+        });
+
+        test("the ltr and rtl rules of a compiled logical property follow it as well", () => {
+          const safari8 = { safari: 8 << 16 };
+          const logical = cssInternals.minifyTest(".x{margin-inline-start:1px}", "", safari8);
+          expect(logical).toStartWith(".x:not(");
+          expect(
+            cssInternals.minifyTest(
+              ".x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40);margin-inline-start:1px}",
+              "",
+              safari8,
+            ),
+          ).toBe(
+            `.x{color:var(--c,#a16945)}@supports (color:lab(0% 0 0)){.x{color:var(--c,lab(50% 20 30))}}.x{color:oklch(50% .1 40)}${logical}`,
+          );
+        });
+      });
+
+      // The rule in front of a cut holds only the first declarations of its block. It is not a duplicate of a rule
+      // that has the same selector and the same properties as those, in either direction.
+      describe("a rule that was cut takes no part in the duplicate check", () => {
+        test.each([
+          [
+            ".x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}.y{top:0}.x{color:revert-layer}",
+            `.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}.y{top:0}.x{color:revert-layer}`,
+          ],
+          [
+            ".x{color:blue}.y{top:0}.x{color:color-mix(in srgb,currentColor,lab(50% 20 30));color:oklch(50% .1 40)}",
+            `.x{color:#00f}.y{top:0}.x{color:color-mix(in srgb,currentColor,#a16945)}${copies(c => `color:color-mix(in srgb,currentColor,${c})`)}.x{color:oklch(50% .1 40)}`,
+          ],
+          [
+            ".x{color:red!important}.y{top:0}.x{color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}",
+            `.x{color:red!important}.y{top:0}.x{color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40)}`,
+          ],
+        ])("%s", (source, expected) => {
+          expect(minified(source)).toBe(expected);
+        });
+      });
+
+      // A prefixed background in front of an unparsed one, and a border-image in front of an unparsed border, are
+      // printed behind it. A cut would carry them over its copies, which cover them today, so such a block is not cut.
+      describe("a block that prints an earlier declaration behind the copied one is left whole", () => {
+        test.each([
+          // The sRGB base still survives a later value that a browser may drop.
+          [
+            ".x{border-image:linear-gradient(red,blue) 1;border:1px solid var(--b,lab(50% 20 30));color:var(--c,lab(50% 20 30));color:foo(1)}",
+            `.x{border:1px solid var(--b,#a16945);color:var(--c,#a16945);color:foo(1);border-image:linear-gradient(red,#00f) 1}${copies(c => `border:1px solid var(--b,${c});color:var(--c,${c})`)}`,
+          ],
+          // Nothing that the copies cover is printed late here, so these are cut: one prefixed background is flushed
+          // in front of the unparsed one, and the border-image has no copy of its family to overtake.
+          [
+            ".x{background:-webkit-linear-gradient(red,blue);background:linear-gradient(var(--a,lab(50% 20 30)),blue);background-size:cover}",
+            `.x{background:-webkit-linear-gradient(red,#00f);background:linear-gradient(var(--a,#a16945),blue)}${copies(c => `background:linear-gradient(var(--a,${c}),blue)`)}.x{background-size:cover}`,
+          ],
+          [
+            ".x{border-image:linear-gradient(red,blue) 1;border:1px solid var(--b);color:var(--c,lab(50% 20 30));color:oklch(50% .1 40)}",
+            `.x{border:1px solid var(--b);color:var(--c,#a16945)}${colorCopies}.x{color:oklch(50% .1 40);border-image:linear-gradient(red,#00f) 1}`,
+          ],
+          // Only `border` resets a border-image, so the copies of another border property never covered it.
+          [
+            ".x{border-image:linear-gradient(red,blue) 1;border-color:var(--b,lab(50% 20 30));border-width:2px}",
+            `.x{border-color:var(--b,#a16945)}${copies(c => `border-color:var(--b,${c})`)}.x{border-width:2px;border-image:linear-gradient(red,#00f) 1}`,
+          ],
         ])("%s", (source, expected) => {
           expect(minified(source)).toBe(expected);
         });
@@ -8143,6 +8261,20 @@ describe("css tests", () => {
             ".x{color:red;all:unset;color:var(--c,lab(50% 20 30))}",
             `.x{color:var(--c,#a16945);all:unset}${colorCopies}`,
           ],
+          // The same two shapes with a later declaration of the family: a cut would put the earlier one behind the copies.
+          [
+            ".x{background-image:-webkit-linear-gradient(red,blue);background-image:-moz-linear-gradient(red,blue);background-image:linear-gradient(var(--from,lab(50% 20 30)),blue);background-repeat:no-repeat}",
+            `.x{background-image:-moz-linear-gradient(red,#00f);background-image:linear-gradient(var(--from,#a16945),blue);background-image:-webkit-linear-gradient(red,#00f);background-repeat:no-repeat}${copies(c => `background-image:linear-gradient(var(--from,${c}),blue)`)}`,
+          ],
+          [
+            ".x{border-image:linear-gradient(green,blue) 1;border:1px solid var(--b,lab(50% 20 30));border-style:dashed}",
+            `.x{border:1px solid var(--b,#a16945);border-style:dashed;border-image:linear-gradient(green,#00f) 1}${copies(c => `border:1px solid var(--b,${c})`)}`,
+          ],
+          // Without a cut the dark-mode rule keeps its place in front of the copies.
+          [
+            ".x{color:var(--c,lab(50% 20 30));color-scheme:light dark}",
+            `.x{color:var(--c,#a16945);--buncss-light:initial;--buncss-dark: ;color-scheme:light dark}@media (prefers-color-scheme:dark){.x{--buncss-light: ;--buncss-dark:initial}}${colorCopies}`,
+          ],
         ])("%s", (source, expected) => {
           expect(minified(source)).toBe(expected);
         });
@@ -8164,7 +8296,17 @@ describe("css tests", () => {
 
         test("fit the selector expansion limit", () => {
           const last = ".b63 .c{color:oklch(50% .1 40)}";
-          expect(minified(nested(14)).slice(-last.length)).toBe(last);
+          const output = minified(nested(14));
+          expect(output.slice(-last.length)).toBe(last);
+
+          // Each `.b*` is printed alone under `:is()` of the `.a*` list: 14 rules with their copies, then the last tail.
+          const expected = Array.from({ length: 64 }, (_, i) => {
+            const selector = `:is(${list("a")}) .b${i} .c`;
+            const head = `${selector}{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, selector)}`;
+            return `${Buffer.alloc(14 * head.length, head).toString()}${selector}{color:oklch(50% .1 40)}`;
+          }).join("");
+          // A megabyte of diff helps nobody: compare the whole, report the sizes.
+          expect(output === expected ? "same" : `${output.length} bytes, expected ${expected.length}`).toBe("same");
         });
 
         test("count against the selector expansion limit", () => {
@@ -8193,6 +8335,7 @@ describe("css tests", () => {
       test("Bun.build", async () => {
         using dir = tempDir("css-supports-later-declaration", { "in.css": sheet });
         const build = await Bun.build({ entrypoints: [join(String(dir), "in.css")], minify: true });
+        expect(build.success).toBe(true);
         expect(await build.outputs[0].text()).toBe(built);
       });
 

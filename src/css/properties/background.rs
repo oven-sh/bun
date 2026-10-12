@@ -1143,6 +1143,11 @@ impl BackgroundHandler {
             // Drop handles deinit.
         }
 
+        // What is left prints here, which is behind any unparsed declaration that followed it in the source.
+        if !self.decls.is_empty() {
+            context.mark_output_unordered(PropertyId::Background);
+        }
+
         let arena = dest.bump();
         for decl in self.decls.drain(..) {
             // `Property` is not `Clone` here, so move out via drain.

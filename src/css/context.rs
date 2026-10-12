@@ -55,7 +55,12 @@ impl StagedList {
         self.counts.iter().any(|(counted, _)| *counted == id)
     }
 
-    /// Removes every copy of `id`.
+    fn holds_family(&self, family: PropertyIdTag) -> bool {
+        self.counts
+            .iter()
+            .any(|(counted, _)| family_of(*counted) == family)
+    }
+
     fn retract(&mut self, id: PropertyId) {
         let Some(counted) = self.counts.iter().position(|(counted, _)| *counted == id) else {
             return;
@@ -145,7 +150,7 @@ fn family_of(id: PropertyId) -> PropertyIdTag {
     }
 }
 
-/// Whether `declaration` is `all`, which the parser keeps as an unknown property.
+/// Whether `declaration` is `all`, which the parser keeps as an unknown property until it has a typed one (#42042).
 fn is_all(declaration: &css::Property) -> bool {
     let css::Property::Custom(custom) = declaration else {
         return false;
@@ -172,6 +177,8 @@ pub struct PropertyHandlerContext<'a> {
     pub(crate) is_important: bool,
     pub(crate) supports: Vec<SupportsEntry>,
     pub(crate) tails: Vec<Tail>,
+    /// A handler printed a declaration behind a later one of its family, and that family has copies staged.
+    output_unordered: bool,
     pub(crate) ltr: Vec<css::Property>,
     pub(crate) rtl: Vec<css::Property>,
     pub(crate) dark: Vec<css::Property>,
@@ -191,6 +198,7 @@ impl<'a> PropertyHandlerContext<'a> {
             is_important: false,
             supports: Vec::new(),
             tails: Vec::new(),
+            output_unordered: false,
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -206,6 +214,7 @@ impl<'a> PropertyHandlerContext<'a> {
             is_important: false,
             supports: Vec::new(),
             tails: Vec::new(),
+            output_unordered: false,
             ltr: Vec::new(),
             rtl: Vec::new(),
             dark: Vec::new(),
@@ -445,6 +454,7 @@ impl<'a> PropertyHandlerContext<'a> {
         // and SupportsEntry / Property own their resources via Drop.
         self.supports.clear();
         self.tails.clear();
+        self.output_unordered = false;
         self.ltr.clear();
         self.rtl.clear();
         self.dark.clear();
@@ -536,6 +546,16 @@ impl<'a> PropertyHandlerContext<'a> {
                 .any(|entry| entry.list(self.is_important).holds(property_id))
     }
 
+    /// For a handler that prints a declaration of `id`'s family behind a later one: a cut would carry it over the copies of that family.
+    pub(crate) fn mark_output_unordered(&mut self, id: PropertyId) {
+        let family = family_of(id);
+        self.output_unordered |= self.supports.iter().any(|entry| {
+            [&entry.declarations, &entry.important_declarations]
+                .into_iter()
+                .any(|list| list.holds_family(family))
+        });
+    }
+
     /// Cuts the output lists in front of each declaration that competes with a staged copy, and parks what is behind a cut in `tails`.
     #[cold]
     #[inline(never)]
@@ -545,7 +565,7 @@ impl<'a> PropertyHandlerContext<'a> {
         output: &mut css::DeclarationList<'_>,
         important_output: &mut css::DeclarationList<'_>,
     ) {
-        if self.context != DeclarationContext::StyleRule {
+        if self.context != DeclarationContext::StyleRule || self.output_unordered {
             return;
         }
 
@@ -561,6 +581,14 @@ impl<'a> PropertyHandlerContext<'a> {
         output: &mut css::DeclarationList<'_>,
         important: bool,
     ) {
+        if self
+            .supports
+            .iter()
+            .all(|entry| entry.list(important).copies.is_empty())
+        {
+            return;
+        }
+
         debug_assert!(
             self.supports.iter().all(|entry| {
                 let copies = &entry.list(important).copies;
@@ -667,7 +695,7 @@ fn last_uncopied(copies: &[StagedCopy], source: &[css::Property]) -> Vec<(Proper
         if found.len() == families.len() {
             break;
         }
-        // `all: revert-layer` is the placeholder of a slot whose declaration no handler took.
+        // `all: revert-layer` is the placeholder of a slot whose declaration no handler took; a typed `all` (#42042) would need telling apart here.
         if sources.next_if_eq(&index).is_some() || matches!(declaration, css::Property::All(_)) {
             continue;
         }

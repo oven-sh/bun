@@ -1430,6 +1430,12 @@ mod border_handler_body {
                     if is_border_property(val.property_id.tag()) {
                         self.flush(dest, context);
                         self.flush_unparsed(val, dest, context);
+                        // A buffered border-image prints behind this `border`, which follows it in the source and resets it.
+                        if val.property_id.tag() == PropertyIdTag::Border
+                            && self.border_image_handler.has_any
+                        {
+                            context.mark_output_unordered(val.property_id);
+                        }
                     } else {
                         if self.border_image_handler.will_flush(property) {
                             self.flush(dest, context);

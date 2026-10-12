@@ -716,9 +716,15 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         None
     };
 
-    // Built before the merge below, which can move this rule's selectors into the previous rule.
-    let supps = context.handler_context.get_supports_rules::<R>(sty);
-    let tails = context.handler_context.get_tail_rules::<R>(sty);
+    // Built before the merge below, which can move this rule's selectors into the previous rule. Not built when every selector was split off above.
+    let (supps, tails) = if sty.selectors.v.len() > 0 {
+        (
+            context.handler_context.get_supports_rules::<R>(sty),
+            context.handler_context.get_tail_rules::<R>(sty),
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
 
     // Attempt to merge the new rule with the last rule we added.
     let mut merged = false;
@@ -821,18 +827,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         && sty.selectors.v.len() > 0
         && (!logical.is_empty() || !supps.is_empty() || !incompatible_rules.is_empty())
     {
-        let mut rulesss = CssRuleList::<R>::default();
-        core::mem::swap(&mut sty.rules, &mut rulesss);
-        // Empty block: route through the centralized `'bump`-erasure helper
-        // instead of fabricating
-        // `&'static Arena` here (PORTING.md §Forbidden).
-        Some(style::StyleRule {
-            selectors: sty.selectors.deep_clone(),
-            declarations: dc::decl_block_empty_static(context.arena),
-            rules: rulesss,
-            vendor_prefix: sty.vendor_prefix,
-            loc: sty.loc,
-        })
+        Some(take_nested_rules(sty, context.arena))
     } else {
         None
     };
@@ -853,7 +848,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // Check if this rule is a duplicate of an earlier rule, meaning it has
         // the same selectors and defines the same properties. If so, remove the
         // earlier rule because this one completely overrides it.
-        if has_no_rules {
+        // A rule that was cut holds only the front of its block, so it neither overrides an earlier rule nor is overridden by a later one.
+        if has_no_rules && tails.is_empty() {
             let key = StyleRuleKey::new(rules, idx);
             if idx > 0
                 && let Some(i) = style_rules.remove_duplicate(rules, &key)
@@ -878,32 +874,75 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         merge_state.last_compat = None;
     }
 
-    // The ltr/rtl rules get no cut: behind any rule boundary their :dir()/:lang() selectors still outrank a later declaration.
-    if !logical.is_empty() {
-        let mut log = CssRuleList { v: logical };
-        log.minify(context, parent_is_unused)?;
-        rules.append(&mut log.v);
-    }
-    rules.extend(supps);
-    // Pushed as written: another minify would lower a tail that is kept for the browsers that read it, and the duplicate check would drop the head it follows.
-    rules.extend(tails);
+    push_extra_rules(rules, logical, supps, tails, context, parent_is_unused)?;
     while incompatible_rules.len() > 0 {
-        let entry = incompatible_rules.ordered_remove(0);
+        let mut entry = incompatible_rules.ordered_remove(0);
+        // Its nested rules follow the whole block in the source, so they print behind the tails.
+        let nested = if !entry.tails.is_empty() && !entry.rule.rules.v.is_empty() {
+            Some(take_nested_rules(&mut entry.rule, context.arena))
+        } else {
+            None
+        };
         if !entry.rule.is_empty() {
             rules.push(CssRule::Style(entry.rule));
         }
-        if !entry.logical.is_empty() {
-            let mut log = CssRuleList { v: entry.logical };
-            log.minify(context, parent_is_unused)?;
-            rules.append(&mut log.v);
+        push_extra_rules(
+            rules,
+            entry.logical,
+            entry.supports,
+            entry.tails,
+            context,
+            parent_is_unused,
+        )?;
+        if let Some(nested) = nested {
+            rules.push(CssRule::Style(nested));
         }
-        rules.extend(entry.supports);
-        rules.extend(entry.tails);
     }
     if let Some(nested) = nested_rule {
         rules.push(CssRule::Style(nested));
     }
 
+    Ok(())
+}
+
+/// Moves `rule`'s nested rules into a rule of their own with the same selectors and no declarations.
+fn take_nested_rules<R>(
+    rule: &mut style::StyleRule<R>,
+    arena: &bun_alloc::Arena,
+) -> style::StyleRule<R> {
+    // Empty block: route through the centralized `'bump`-erasure helper
+    // instead of fabricating
+    // `&'static Arena` here (PORTING.md §Forbidden).
+    style::StyleRule {
+        selectors: rule.selectors.deep_clone(),
+        declarations: dc::decl_block_empty_static(arena),
+        rules: core::mem::take(&mut rule.rules),
+        vendor_prefix: rule.vendor_prefix,
+        loc: rule.loc,
+    }
+}
+
+/// Appends the rules generated for a style rule that was just pushed: its ltr/rtl/dark rules, its `@supports` rules and its tails.
+fn push_extra_rules<R: for<'b> css::generics::DeepClone<'b>>(
+    rules: &mut Vec<CssRule<R>>,
+    logical: Vec<CssRule<R>>,
+    supports: Vec<CssRule<R>>,
+    tails: Vec<CssRule<R>>,
+    context: &mut MinifyContext<'_, '_>,
+    parent_is_unused: bool,
+) -> Result<(), MinifyErr> {
+    let mut logical = CssRuleList { v: logical };
+    if !logical.v.is_empty() {
+        logical.minify(context, parent_is_unused)?;
+    }
+    // The dark rule follows the tails, which can hold the variables it overrides. The ltr/rtl rules get no cut: their :dir()/:lang() selectors outrank a later declaration behind any rule boundary.
+    if tails.is_empty() {
+        rules.append(&mut logical.v);
+    }
+    rules.extend(supports);
+    // Pushed as they are: a minify here would lower a tail that is kept as written for the browsers that read it.
+    rules.extend(tails);
+    rules.append(&mut logical.v);
     Ok(())
 }
 

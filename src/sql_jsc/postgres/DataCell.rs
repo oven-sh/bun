@@ -1028,7 +1028,8 @@ fn parse_binary_numeric<'a>(
     }
 
     // Read header values using big-endian
-    let ndigits: i16 = read_be!(i16);
+    // ndigits is uint16 in numeric_recv: a value of 131072 digits has 32768 words.
+    let ndigits: u16 = read_be!(u16);
     let weight: i16 = read_be!(i16);
     let sign: u16 = read_be!(u16);
     let dscale: i16 = read_be!(i16);

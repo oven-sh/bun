@@ -1253,10 +1253,11 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
   // The directories of one bunx user: a cwd, a bunx cache (in TMPDIR), and a
   // project and a global install directory that bunx has no reason to touch.
   function scratch() {
-    const { x_dir, env } = setup();
+    const { x_dir, env: base } = setup();
     const project = String(tempDir("bun-options-project", { "package.json": projectPackageJson }));
     const global = String(tempDir("bun-options-global", {}));
-    return { x_dir, project, global, env: { ...env, BUN_INSTALL: global, npm_config_registry: registry } };
+    const env: Record<string, string> = { ...base, BUN_INSTALL: global, npm_config_registry: registry };
+    return { x_dir, project, global, env };
   }
 
   // A JSON file from the one bunx cache directory in `dirs`, or null.
@@ -1400,7 +1401,7 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
     ["BUN_OPTIONS of `bun create`", `create-${name}`, ["create", name], "--silent"],
     ["the arguments of `bun create`", `create-${name}`, ["create", "--silent", name], null],
   ])("--silent in %s silences the install", async (_, pkg, args, BUN_OPTIONS) => {
-    const vars = BUN_OPTIONS ? { BUN_OPTIONS } : {};
+    const vars: Record<string, string> = BUN_OPTIONS ? { BUN_OPTIONS } : {};
     const { stderr, result } = await run(scratch(), pkg, [bunExe(), ...args], vars);
     expect(result).toEqual(ranFromCache(pkg, BUN_OPTIONS));
     expect(stderr).toBe("");
@@ -1411,7 +1412,7 @@ require("fs").writeFileSync("postinstall.json", JSON.stringify({ BUN_OPTIONS }))
     ["BUN_OPTIONS of `bun create`", `create-${name}`, ["create", name], "--verbose"],
     ["the arguments of `bun create`", `create-${name}`, ["create", "--verbose", name], null],
   ])("--verbose in %s makes the install verbose", async (_, pkg, args, BUN_OPTIONS) => {
-    const vars = BUN_OPTIONS ? { BUN_OPTIONS } : {};
+    const vars: Record<string, string> = BUN_OPTIONS ? { BUN_OPTIONS } : {};
     const { stderr, result } = await run(scratch(), pkg, [bunExe(), ...args], vars);
     // A verbose install also prints to stdout, before the bin runs.
     const lastLine = result.stdout.split(/\r?\n/).at(-1);

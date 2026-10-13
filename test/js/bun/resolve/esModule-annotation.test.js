@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import * as WithTypeModuleExportEsModuleAnnotationMissingDefault from "./with-type-module/export-esModule-annotation-empty.cjs";
 import * as WithTypeModuleExportEsModuleAnnotationNoDefault from "./with-type-module/export-esModule-annotation-no-default.cjs";
@@ -79,5 +79,41 @@ describe("CJS exports the ESM wrapper cannot enumerate", () => {
       });`,
     });
     await expect(import(join(String(dir), "mod.cjs"))).rejects.toThrow("ownKeys trap");
+  });
+});
+
+describe("__esModule is a getter", () => {
+  // The ESM wrapper looks for the annotation without running user code, so it does not call the
+  // getter. A getter is not the annotation: the default import is module.exports.
+  test.concurrent.each([
+    ["import", `import def, { named } from "./getter.cjs";`],
+    ["import()", `const { default: def, named } = await import("./getter.cjs");`],
+  ])("%s does not call it", async (_, importGetter) => {
+    using dir = tempDir("cjs-esmodule-getter", {
+      "getter.cjs": `
+        globalThis.getterCalls = 0;
+        Object.defineProperty(exports, "__esModule", {
+          get() {
+            globalThis.getterCalls++;
+            return true;
+          },
+        });
+        exports.default = "default";
+        exports.named = "named";
+      `,
+      "entry.mjs": `
+        ${importGetter}
+        console.log(JSON.stringify({ defaultImport: typeof def, named, getterCalls: globalThis.getterCalls }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe(`{"defaultImport":"object","named":"named","getterCalls":0}\n`);
+    expect(exitCode).toBe(0);
   });
 });

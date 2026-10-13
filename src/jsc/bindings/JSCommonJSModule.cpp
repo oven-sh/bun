@@ -1134,7 +1134,9 @@ void populateESMExports(
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
             auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
             RETURN_IF_EXCEPTION(scope, );
-            if (has) {
+            // VMInquiry forbids VM entry, so a JS getter cannot be called: it is not the marker.
+            // A custom getter is native (a lazy process.env entry) and is still read.
+            if (has && !slot.isAccessor()) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
                 CLEAR_IF_EXCEPTION(scope);
                 if (!value.isUndefinedOrNull()) {

@@ -395,7 +395,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
     try {
       $Object.$defineProperty(globalThis, key, descriptor);
     } catch (error) {
-      for (let j = defined.length; j--; ) putBack(defined[j], originals[j]);
+      for (let j = defined.length; j--;) putBack(defined[j], originals[j]);
       return `cannot define "${key}" on globalThis: ${(error as Error).message}`;
     }
     $arrayPush(defined, key);

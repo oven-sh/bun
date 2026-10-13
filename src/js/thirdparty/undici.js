@@ -437,7 +437,7 @@ function buildConnector(_options = {}) {
    * @param {string} [options.servername]
    * @param {AbortSignal} [options.signal]
    */
-  return function connect(_) {
+  return function connect(_options) {
     notImplemented();
   };
 }

@@ -244,7 +244,10 @@ describe("transpiler cache", () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "fifo", "intact"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("intact");
     expect(newCacheCount()).toBe(1);
-    const entry = join(cache_dir, readdirSync(cache_dir).find(f => f.endsWith(".pile"))!);
+    const entry = join(
+      cache_dir,
+      readdirSync(cache_dir).find(f => f.endsWith(".pile"))!,
+    );
     const good = readFileSync(entry);
     unlinkSync(entry);
     mkfifo(entry);

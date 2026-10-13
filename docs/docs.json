@@ -79,11 +79,6 @@
             ]
           },
           {
-            "group": "Linter & Formatter",
-            "icon": "sparkles",
-            "pages": ["/runtime/lint", "/lint/rules/index", "/lint/plugins", "/runtime/format"]
-          },
-          {
             "group": "File & Module System",
             "icon": "file",
             "pages": [
@@ -311,6 +306,43 @@
             "group": "Reporting",
             "icon": "file-text",
             "pages": ["/test/code-coverage", "/test/reporters"]
+          }
+        ]
+      },
+      {
+        "tab": "Linter",
+        "icon": "badge-check",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "circle-play",
+            "pages": ["/lint/index"]
+          },
+          {
+            "group": "Rules",
+            "icon": "scroll-text",
+            "pages": ["/lint/rules/index", "/lint/plugins"]
+          },
+          {
+            "group": "Migrate",
+            "icon": "arrow-right",
+            "pages": ["/guides/lint/migrate-from-eslint", "/guides/lint/migrate-from-oxlint"]
+          }
+        ]
+      },
+      {
+        "tab": "Formatter",
+        "icon": "braces",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "circle-play",
+            "pages": ["/format/index"]
+          },
+          {
+            "group": "Migrate",
+            "icon": "arrow-right",
+            "pages": ["/guides/format/migrate-from-prettier", "/guides/format/migrate-from-oxfmt"]
           }
         ]
       },

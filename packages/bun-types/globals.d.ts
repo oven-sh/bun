@@ -2218,12 +2218,7 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   compress?:
-    | boolean
-    | "gzip"
-    | "deflate"
-    | "br"
-    | "zstd"
-    | { encoding: "gzip" | "deflate" | "br" | "zstd"; level?: number };
+    boolean | "gzip" | "deflate" | "br" | "zstd" | { encoding: "gzip" | "deflate" | "br" | "zstd"; level?: number };
 
   /**
    * The maximum number of redirects to follow when `redirect` is `"follow"`.

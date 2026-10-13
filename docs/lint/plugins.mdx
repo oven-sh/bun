@@ -122,7 +122,7 @@ ESLint's core rules are always native. Keep `@typescript-eslint` native if you u
 
 ## `prettier/prettier`
 
-`prettier/prettier` from [eslint-plugin-prettier](https://github.com/prettier/eslint-plugin-prettier) is native. It compares each file with the output of [`bun fmt`](/runtime/format) and never starts Prettier.
+`prettier/prettier` from [eslint-plugin-prettier](https://github.com/prettier/eslint-plugin-prettier) is native. It compares each file with the output of [`bun fmt`](/format) and never starts Prettier.
 
 Bun falls back to the installed package, and says why, when it can't guarantee the same output as your Prettier:
 

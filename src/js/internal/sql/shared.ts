@@ -928,9 +928,11 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   }
 }
 
-abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, ConnectionHandle, QueryHandle>
-  implements DatabaseAdapter<PooledConnection, ConnectionHandle, QueryHandle>
-{
+abstract class BaseSQLAdapter<
+  PooledConnection extends BasePooledConnection,
+  ConnectionHandle,
+  QueryHandle,
+> implements DatabaseAdapter<PooledConnection, ConnectionHandle, QueryHandle> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
   public readonly connections: PooledConnection[];

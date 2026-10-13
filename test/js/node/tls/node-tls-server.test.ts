@@ -5222,7 +5222,7 @@ describe("a send that the kernel rejects", () => {
       let received = 0;
       // More than the socket buffers arrives in the one read, so the reads stop until this runs.
       socket.on("readable", () => {
-        for (let chunk; (chunk = socket.read()) !== null; ) received += chunk.length;
+        for (let chunk; (chunk = socket.read()) !== null;) received += chunk.length;
       });
       socket.on("error", () => {}).on("close", () => outcome.resolve(received));
       process.nextTick(() => socket.write(Buffer.alloc(8 * 1024 * 1024, "a")));

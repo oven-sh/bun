@@ -502,8 +502,8 @@ let a = 1;
       format(files, ["--check", "src"]),
       format(files, ["src/a.svelte"]),
     ]);
-    expect(written).toMatchObject({ stderr: "", ...untouched, exitCode: 0 });
-    expect(checked).toMatchObject({ stderr: "", ...untouched, exitCode: 0 });
+    expect(written).toMatchObject({ stdout: "", stderr: "", ...untouched, exitCode: 0 });
+    expect(checked).toMatchObject({ stdout: "", stderr: "", ...untouched, exitCode: 0 });
     // As without the `parser`.
     const noParser = (cwd: string) =>
       `error: No parser could be inferred for file "${join(cwd, "src", "a.svelte")}".\n`;

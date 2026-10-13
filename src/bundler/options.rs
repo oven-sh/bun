@@ -479,6 +479,8 @@ pub enum ImportSuffix {
     Raw,
     /// `?url`, `?worker&url`: its path.
     Url,
+    /// `?inline` on a file that is neither code nor data nor a style sheet: a `data:` URL of it.
+    Inline,
     /// `?init`: a function that instantiates the WebAssembly module.
     Init,
     /// `?worker`, `?sharedworker`: a function that constructs the global of this name with the path.
@@ -494,20 +496,34 @@ impl ImportSuffix {
             match parameter {
                 b"raw" => raw = true,
                 b"url" => url = true,
-                b"inline" => inline = true,
-                b"init" => init = true,
+                // On WebAssembly the first of `init` and `inline` wins.
+                b"init" => init = !inline,
                 b"worker" => worker = worker.or(Some("Worker")),
                 b"sharedworker" => worker = worker.or(Some("SharedWorker")),
-                _ => {}
+                // `/[?&]inline\b/`
+                _ => {
+                    inline |= parameter.strip_prefix(b"inline").is_some_and(|rest| {
+                        !matches!(
+                            rest.first(),
+                            Some(b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_')
+                        )
+                    });
+                }
             }
         }
+        let init = init && by_extension == Some(Loader::Wasm);
+        let is_asset = matches!(
+            by_extension,
+            None | Some(Loader::File | Loader::Wasm | Loader::Text)
+        );
         match worker {
             Some(_) if url => Some(Self::Url),
             Some(constructor) => Some(Self::Worker(constructor)),
             None if raw => Some(Self::Raw),
+            None if inline && is_asset && !init => Some(Self::Inline),
             None if url => Some(Self::Url),
             None if inline && by_extension == Some(Loader::Css) => Some(Self::Raw),
-            None if init && by_extension == Some(Loader::Wasm) => Some(Self::Init),
+            None if init => Some(Self::Init),
             None => None,
         }
     }
@@ -516,7 +532,7 @@ impl ImportSuffix {
         match self {
             Self::Raw => Loader::Text,
             Self::Url => Loader::File,
-            Self::Init | Self::Worker(_) => Loader::Js,
+            Self::Inline | Self::Init | Self::Worker(_) => Loader::Js,
         }
     }
 
@@ -525,6 +541,29 @@ impl ImportSuffix {
         let quoted = bun_core::fmt::format_json_string_utf8(file, Default::default());
         let contents = match self {
             Self::Raw | Self::Url => return None,
+            Self::Inline => match bun_sys::File::read_from(bun_sys::Fd::cwd(), file) {
+                Ok(bytes) => {
+                    use bun_resolver::data_url::DataURL;
+                    let extension = Fs::PathName::init(file).ext_without_leading_dot();
+                    let mime_type = bun_http_types::MimeType::by_extension(extension).value;
+                    let mime_type =
+                        strings::split_once_char(&mime_type, b';').map_or(&*mime_type, |it| it.0);
+                    let url = match mime_type {
+                        b"image/svg+xml" => DataURL::encode_svg_as_data_url(&bytes),
+                        _ => DataURL::encode_as_base64_data_url(mime_type, &bytes),
+                    };
+                    let url = bun_core::fmt::format_json_string_utf8(&url, Default::default());
+                    format!("export default {url};\n")
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    let message = bun_core::fmt::format_json_string_utf8(
+                        message.as_bytes(),
+                        Default::default(),
+                    );
+                    format!("throw new Error({message});\n")
+                }
+            },
             Self::Init => format!(
                 "export default async function init(imports) {{\n  return (await WebAssembly.instantiate(await Bun.file({quoted}).arrayBuffer(), imports)).instance;\n}}\n"
             ),

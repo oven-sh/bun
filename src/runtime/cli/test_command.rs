@@ -1745,7 +1745,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         let by_extension = options.loader(bun_path::extension(&slice[..query]));
         if matches!(
             ImportSuffix::find(&slice[query..], Some(by_extension)),
-            Some(ImportSuffix::Init | ImportSuffix::Worker(_))
+            Some(ImportSuffix::Inline | ImportSuffix::Init | ImportSuffix::Worker(_))
         ) {
             return false;
         }

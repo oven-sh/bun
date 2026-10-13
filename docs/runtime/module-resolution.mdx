@@ -373,11 +373,13 @@ A query at the end of an import path chooses what is imported, as in [Vite](http
 | `?sharedworker`            | The same for `SharedWorker`, a global that Bun does not provide                 |
 | `?worker&url`              | The absolute path of the file                                                   |
 | `?inline` on a `.css` file | The text of the file                                                            |
+| `?inline` on an asset      | A `data:` URL of the file: an image, a font, audio, video, `.wasm`, `.txt`, ... |
 | `?init` on a `.wasm` file  | An async function that takes the imports and returns the `WebAssembly.Instance` |
 
 ```ts
 import shader from "./shader.glsl?raw";
 import path from "./resize.ts?url";
+import logo from "./logo.png?inline"; // "data:image/png;base64,..."
 import ResizeWorker from "./resize.ts?worker";
 
 const worker = new ResizeWorker({ name: "resize" });

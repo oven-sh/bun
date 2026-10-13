@@ -133,7 +133,7 @@ test("coverage excludes node_modules directory", () => {
   expect(result.signalCode).toBeUndefined();
 });
 
-test("coverage leaves out the modules generated for ?worker and ?init, and nothing else that has a query", async () => {
+test("coverage leaves out the modules generated for ?worker, ?init and ?inline, and nothing else that has a query", async () => {
   using dir = tempDir("cov", {
     "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
     "echo.ts": `postMessage("started");`,
@@ -152,12 +152,13 @@ test("coverage leaves out the modules generated for ?worker and ?init, and nothi
       import EchoWorker from "./echo.ts?worker";
       import EchoSharedWorker from "./echo.ts?sharedworker";
       import init from "./empty.wasm?init";
+      import url from "./empty.wasm?inline";
       import { used } from "./lib.ts?again";
       import { supplied } from "./lib.ts?supplied";
       test("uses them", () => {
         vi.stubGlobal("Worker", class {});
         new EchoWorker();
-        expect([used(), supplied(), typeof init, typeof EchoSharedWorker]).toEqual([1, 2, "function", "function"]);
+        expect([used(), supplied(), typeof init, typeof EchoSharedWorker, url]).toEqual([1, 2, "function", "function", "data:application/wasm;base64,AGFzbQEAAAA="]);
       });
     `,
   });

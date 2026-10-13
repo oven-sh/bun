@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import * as path from "path";
 
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
@@ -476,19 +476,22 @@ describe.concurrent("suffixes of an import path", () => {
       "./data.json?worker": "function WorkerWrapper",
       "./icon.svg": "<dir>/icon.svg",
       "./icon.svg?url": "<dir>/icon.svg",
-      "./icon.svg?inline": "<dir>/icon.svg",
+      "./icon.svg?inline": "data:image/svg+xml,%3csvg%3e%3c/svg%3e",
       "./icon.svg?no-inline": "<dir>/icon.svg",
       "./icon.svg?raw": "<svg></svg>\n",
       "./note.txt": "note\n",
       "./note.txt?raw": "note\n",
       "./note.txt?url": "<dir>/note.txt",
-      "./note.txt?inline": "note\n",
+      "./note.txt?inline": "data:text/plain;base64,bm90ZQo=",
       "./page.html?url": "<dir>/page.html",
       "./page.html?raw": "<p></p>\n",
       "./add.wasm": "<dir>/add.wasm",
       "./add.wasm?url": "<dir>/add.wasm",
       "./add.wasm?init": "function init",
       "./add.wasm?init&url": "<dir>/add.wasm",
+      "./add.wasm?inline": "data:application/wasm;base64,",
+      "./add.wasm?inline&init": "data:application/wasm;base64,",
+      "./add.wasm?init&inline": "function init",
     };
     expect(
       await runMain({
@@ -502,6 +505,144 @@ describe.concurrent("suffixes of an import path", () => {
         "main.ts": `const specifiers = ${JSON.stringify(Object.keys(expected))}; ${describeDefaults}`,
       }),
     ).toEqual({ printed: expected, stderr: "", exitCode: 0 });
+  });
+
+  const base64 = (type: string, content: string | Buffer) =>
+    `data:${type};base64,${Buffer.from(content).toString("base64")}`;
+
+  test("?inline on a file that is neither code nor data nor a style sheet", async () => {
+    const types = {
+      "a.png": "image/png",
+      "a.jpg": "image/jpeg",
+      "a.gif": "image/gif",
+      "a.webp": "image/webp",
+      "a.avif": "image/avif",
+      "a.ico": "image/x-icon",
+      "a.mp3": "audio/mpeg",
+      "a.ogg": "audio/ogg",
+      "a.mp4": "video/mp4",
+      "a.ttf": "font/ttf",
+      "a.woff2": "font/woff2",
+      "a.pdf": "application/pdf",
+      "a.txt": "text/plain",
+      "a.webmanifest": "application/manifest+json",
+      "a.wasm": "application/wasm",
+      "upper.PNG": "image/png",
+      "a.bin": "application/octet-stream",
+      "a.unknown": "application/octet-stream",
+    };
+    const content = (name: string) => Buffer.concat([Buffer.from([0, 0xff, 0x80, 0x22, 0x5c, 0x0a]), Buffer.from(name)]);
+    const png = base64("image/png", content("a.png"));
+    const expected = {
+      ...Object.fromEntries(Object.entries(types).map(([name, type]) => [`./${name}?inline`, base64(type, content(name))])),
+      "./empty.png?inline": "data:image/png;base64,",
+      "./a.png?inline&url": png,
+      "./a.png?url&inline": png,
+      "./a.png?inline&no-inline": png,
+      "./a.png?no-inline&inline": png,
+      "./a.png?inline&other": png,
+      "./a.png?other=1&inline": png,
+      "./a.png?inline=1": png,
+      "./a.png?inline=": png,
+      "./a.png?&inline": png,
+      "./a.png?inline&": png,
+      "./a.png?init&inline": png,
+      "./a.png?INLINE": "<dir>/a.png",
+      "./a.png?xinline": "<dir>/a.png",
+      "./a.png?inlinex": "<dir>/a.png",
+      "./a.png?inline_": "<dir>/a.png",
+      "./a.png?a=inline": "<dir>/a.png",
+      "./a.png?no-inline": "<dir>/a.png",
+      "./a.png?worker&inline": "function WorkerWrapper",
+      "./ascii.txt?raw&inline": "text\n",
+      "./ascii.txt?inline&raw": "text\n",
+    };
+    expect(
+      await runMain({
+        ...Object.fromEntries(Object.keys(types).map(name => [name, content(name)])),
+        "empty.png": Buffer.alloc(0),
+        "ascii.txt": "text\n",
+        "main.ts": `const specifiers = ${JSON.stringify(Object.keys(expected))}; ${describeDefaults}`,
+      }),
+    ).toEqual({ printed: expected, stderr: "", exitCode: 0 });
+  });
+
+  test("?inline on an .svg file", async () => {
+    const svg = "image/svg+xml";
+    const files = {
+      "messy.svg": `\n\n  <svg xmlns="http://www.w3.org/2000/svg" fill="#fff" width="50%">\n    <g>\n      <path d="M0 0  L1 1"/>\n    </g>   <!-- é \u2028 \u00a0x -->\n  </svg>  \n\n`,
+      "single.svg": `<svg a='1' b='2'>\t<g/> <g/>\r\n</svg>`,
+      "between.svg": `<svg>> < <</svg>`,
+      "empty.svg": ``,
+      "blank.svg": ` \n `,
+      "text.svg": `<svg><text x="1">a</text></svg>\n`,
+      "foreign.svg": `<svg><foreignObject></foreignObject></svg>`,
+      "single-in-double.svg": `<svg style="font-family: 'a'"></svg>\n`,
+      "double-in-single.svg": `<svg data-x='a"b'></svg>\n`,
+      "mixed.svg": `<svg a="1" b='2' c="3"></svg>`,
+      "two-kinds.svg": `<svg a="1" b='2'></svg>`,
+      "not-utf8.svg": Buffer.from("fffe3c7376673e3c2f7376673e", "hex"),
+    };
+    const expected = {
+      "./messy.svg?inline": `data:${svg},%3csvg%20xmlns='http://www.w3.org/2000/svg'%20fill='%23fff'%20width='50%25'%3e%3cg%3e%3cpath%20d='M0%200%20L1%201'/%3e%3c/g%3e%3c!--%20é%20x%20--%3e%3c/svg%3e`,
+      "./single.svg?inline": `data:${svg},%3csvg%20a='1'%20b='2'%3e%3cg/%3e%3cg/%3e%3c/svg%3e`,
+      "./between.svg?inline": `data:${svg},%3csvg%3e%3e%3c%20%3c%3c/svg%3e`,
+      "./empty.svg?inline": `data:${svg},`,
+      "./blank.svg?inline": `data:${svg},`,
+      "./text.svg?inline": base64(svg, files["text.svg"]),
+      "./foreign.svg?inline": base64(svg, files["foreign.svg"]),
+      "./single-in-double.svg?inline": base64(svg, files["single-in-double.svg"]),
+      "./double-in-single.svg?inline": base64(svg, files["double-in-single.svg"]),
+      "./mixed.svg?inline": base64(svg, files["mixed.svg"]),
+      "./two-kinds.svg?inline": `data:${svg},%3csvg%20a='1'%20b='2'%3e%3c/svg%3e`,
+      "./not-utf8.svg?inline": base64(svg, files["not-utf8.svg"]),
+    };
+    expect(
+      await runMain({
+        ...files,
+        "main.ts": `const specifiers = ${JSON.stringify(Object.keys(expected))}; ${describeDefaults}`,
+      }),
+    ).toEqual({ printed: expected, stderr: "", exitCode: 0 });
+  });
+
+  test("?inline in import.meta.glob, in a static import, and what the URL holds", async () => {
+    const wasm = Buffer.from("0061736d01000000", "hex");
+    expect(
+      await runMain({
+        "sounds/a.mp3": "first",
+        "sounds/b.mp3": "second",
+        "empty.wasm": wasm,
+        "main.ts": `
+          import url from "./empty.wasm?inline";
+          const sounds = import.meta.glob("./sounds/*.mp3", { query: "?inline", import: "default", eager: true });
+          const module = await WebAssembly.compile(Buffer.from(url.slice(url.indexOf(",") + 1), "base64"));
+          const fetched = Buffer.from(await (await fetch(url)).arrayBuffer()).toString("hex");
+          console.log("@" + JSON.stringify({ sounds, isModule: module instanceof WebAssembly.Module, fetched }));
+        `,
+      }),
+    ).toEqual({
+      printed: {
+        sounds: { "./sounds/a.mp3": base64("audio/mpeg", "first"), "./sounds/b.mp3": base64("audio/mpeg", "second") },
+        isModule: true,
+        fetched: wasm.toString("hex"),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The administrator reads it all the same, and Windows has no such mode.
+  test.skipIf(isWindows || process.getuid?.() === 0)("?inline on a file that cannot be read", async () => {
+    expect(
+      await runMain({
+        "secret.png": "secret",
+        "main.ts": `
+          import { chmodSync } from "node:fs";
+          chmodSync("secret.png", 0);
+          console.log("@" + JSON.stringify(await import("./secret.png?inline").then(() => "imported", error => error.message)));
+        `,
+      }),
+    ).toEqual({ printed: expect.stringContaining("EACCES"), stderr: "", exitCode: 0 });
   });
 
   const echoWorker = `

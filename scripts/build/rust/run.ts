@@ -61,7 +61,7 @@ function main(): void {
  */
 function emit(fd: 1 | 2, text: string): void {
   const bytes = Buffer.from(text);
-  for (let at = 0; at < bytes.length; ) {
+  for (let at = 0; at < bytes.length;) {
     try {
       at += writeSync(fd, bytes, at);
     } catch (e) {

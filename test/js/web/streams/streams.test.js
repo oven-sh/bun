@@ -4348,7 +4348,7 @@ describe("direct stream edge cases", () => {
         });
         const reader = rs.getReader();
         const reads = [];
-        for (let r; !(r = await reader.read()).done; ) reads.push(txt(r.value));
+        for (let r; !(r = await reader.read()).done;) reads.push(txt(r.value));
         expect({ reads, after, pulls: t.pulls, cancels: t.cancels.length }).toEqual({
           reads: ["a"],
           after: { write: 0, flush: undefined, end: undefined, "close(error)": undefined, error: undefined },

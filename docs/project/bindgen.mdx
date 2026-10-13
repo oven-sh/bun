@@ -188,12 +188,12 @@ left out, and the object is then built one property at a time.
 
 The second argument of `b.dictionary` takes:
 
-| Key              | What it does                                                                                                   |
-| ---------------- | -------------------------------------------------------------------------------------------------------------- |
-| `userFacingName` | what error messages call it, when that is not its name                                                         |
-| `allowNonObject` | so is a value whose `typeof` is not `"object"`, as in Node's `if (typeof options !== "object") options = null` |
-| `allowArray`     | an array is an object with none of the members, not an error                                                   |
-| `fromJS`         | also generates `Name::from_js(global, value, \|converted\| ..)`, for a `#[host_fn]` body                       |
+| Key              | What it does                                                                                                                                                                             |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `userFacingName` | what error messages call it, when that is not its name                                                                                                                                   |
+| `allowArray`     | an array is read like any other object, not refused                                                                                                                                      |
+| `allowNonObject` | a value whose `typeof` is not `"object"` gives every member its default, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
+| `fromJS`         | also generates `Name::from_js(global, value, \|converted\| ..)`, for a `#[host_fn]` body                                                                                                 |
 
 ### Enumerations
 

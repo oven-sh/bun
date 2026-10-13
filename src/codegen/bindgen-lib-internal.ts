@@ -899,9 +899,9 @@ export interface DictionaryOptions {
   userFacingName?: string;
   /** Also generate `Name::from_js`, for Rust that holds a JS value and no typed signature. */
   fromJS?: boolean;
-  /** An array is an object with none of the members, not an error. */
+  /** An array is read like any other object, not refused. */
   allowArray?: boolean;
-  /** So is a value whose `typeof` is not "object": Node's `if (typeof options !== "object") options = null`. */
+  /** A value whose `typeof` is not "object" gives every member its default: Node's `if (typeof options !== "object") options = null`. */
   allowNonObject?: boolean;
 }
 
@@ -920,6 +920,7 @@ export class DictionaryType extends NamedType {
     this.options = options;
     this.members = Object.entries(members).map(([name, spec]) => new Member(name, spec));
     assert(this.members.length > 0, "a dictionary has members");
+    assert(!this.allowNonObject || this.hasDefault, "allowNonObject: every member must be optional or have a default");
     assert(
       !this.borrowsHeap,
       "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",

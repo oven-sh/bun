@@ -1252,4 +1252,37 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
       exitCode: 0,
     });
   });
+
+  // The rule of fs.readFile: on Linux a read as large as the RAM fails at once, before the OOM killer acts.
+  // The sparse file has 4 TiB, which is more than the RAM of a machine.
+  test.skipIf(!isLinux)("a part as large as the RAM throws ENOMEM and reads nothing", async () => {
+    using dir = tempDir("blob-file-part-huge", { "sparse.bin": "x" });
+    const sparse = path.join(String(dir), "sparse.bin");
+    fs.truncateSync(sparse, 2 ** 42);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let code;
+          try {
+            new Blob(["x", Bun.file(process.env.SPARSE_PATH)]);
+          } catch (e) {
+            code = e.code;
+          }
+          // maxRSS is in KiB. The first reserve of a read is 8 GiB.
+          console.log(JSON.stringify({ code, peakBelow4GiB: process.resourceUsage().maxRSS < 4 * 1024 * 1024 }));
+        `,
+      ],
+      env: { ...bunEnv, SPARSE_PATH: sparse },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: { code: "ENOMEM", peakBelow4GiB: true },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

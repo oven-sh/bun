@@ -190,9 +190,9 @@ impl<'f> Expander<'f, '_> {
     }
 }
 
-const BEFORE_PATTERN: &[u8] = b"function _(";
+pub(crate) const BEFORE_PATTERN: &[u8] = b"function _(";
 
-fn path_of(is_typescript: bool) -> &'static [u8] {
+pub(crate) fn path_of(is_typescript: bool) -> &'static [u8] {
     match is_typescript {
         true => b"dummy.ts",
         false => b"dummy.js",

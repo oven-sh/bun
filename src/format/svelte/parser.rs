@@ -66,12 +66,9 @@ pub(crate) trait Js {
     fn type_at(&mut self, text: &[u8], at: usize) -> std::result::Result<Span, usize>;
     /// `pattern`, which is in brackets or braces, as the left side of an assignment.
     fn check_pattern(&mut self, text: &[u8], pattern: Span) -> std::result::Result<(), usize>;
-    /// `parameters`, from a `<` or a `(` to a `)`, as those of an arrow function. Returns where the last ends, with its type.
-    fn parameters(
-        &mut self,
-        text: &[u8],
-        parameters: Span,
-    ) -> std::result::Result<Option<u32>, usize>;
+    /// `parameters`, from a `<` or a `(` to a `)`, as those of an arrow function.
+    fn check_parameters(&mut self, text: &[u8], parameters: Span)
+    -> std::result::Result<(), usize>;
 }
 
 const VOID_ELEMENT_NAMES: [&[u8]; 16] = [
@@ -1496,6 +1493,12 @@ impl<'a> Parser<'a, '_> {
             Err(at) if at == self.len => return fail(Message::UnexpectedEnd, at),
             Err(at) => return fail(Message::UnexpectedToken, at),
         };
+        // The `;` is part of it.
+        let semicolon = behind_trivia(template, end);
+        let end = match template.get(semicolon) {
+            Some(b';') => semicolon + 1,
+            _ => end,
+        };
         self.index = end;
         self.allow_whitespace();
         self.expect(b"}")?;
@@ -1690,16 +1693,15 @@ impl<'a> Parser<'a, '_> {
             }
             self.expect(b")")?;
             let (template, parameters) = (self.template(), Span::new(parameters_start, self.index));
-            let last_parameter_end = match self.js.parameters(template, parameters) {
-                Ok(end) => end,
-                Err(at) => return fail(Message::UnexpectedToken, at),
-            };
+            if let Err(at) = self.js.check_parameters(template, parameters) {
+                return fail(Message::UnexpectedToken, at);
+            }
             self.allow_whitespace();
             self.expect(b"}")?;
             let body = self.tree.add_fragment();
             let kind = Kind::SnippetBlock {
                 expression: name,
-                last_parameter_end,
+                end_of_parameters: parameters.end,
                 body,
             };
             return self.add_block(kind, start, body);

@@ -1008,8 +1008,6 @@ impl<'a, 'o> Printer<'a, 'o> {
             "script" if lang.ends_with(b"json") || lang.ends_with(b"importmap") => {
                 Some(Parser::Json)
             }
-            // The plugin reads it as JavaScript, and `<p>{{a}}</p>` in a `text/template` is JSX, which gets a `;`.
-            "script" if self.is_data_block(attributes) => None,
             "script" => Some(Parser::BabelTs),
             "style" if lang == b"less" => Some(Parser::Less),
             "style" if matches!(lang, b"sass" | b"scss") => Some(Parser::Scss),
@@ -1021,6 +1019,10 @@ impl<'a, 'o> Printer<'a, 'o> {
             .last()
             .is_some_and(|it| self.is_ignore_directive(it.0));
         let body = match parser.filter(|_| self.is_supported_language(attributes) && !is_ignored) {
+            // The plugin reads it as JavaScript, and `<p>{{a}}</p>` in a `text/template` is JSX, which gets a `;`.
+            Some(Parser::BabelTs) if self.is_data_block(attributes) => {
+                lines_as_they_are(&Cow::Borrowed(content))
+            }
             Some(parser) if !strings::trim_js_whitespace(content).is_empty() => {
                 Doc::Code(Box::new(Code::Body {
                     content,
@@ -2042,15 +2044,12 @@ impl<'a, 'o> Printer<'a, 'o> {
             }
             Kind::SnippetBlock {
                 expression,
-                last_parameter_end,
+                end_of_parameters,
                 body,
             } => {
-                let from = last_parameter_end.unwrap_or(expression.end) as usize;
-                let end = (self.text.get(from..))
-                    .and_then(|rest| strings::index_of_char_usize(rest, b')'))
-                    .map_or(0, |at| from + at + 1);
+                // The plugin goes up to the first `)` behind the last parameter, which can be in a comment: `a(b /* () */)`.
                 let head = Self::code(Js {
-                    text: self.js_text(expression.start, (end as u32).max(expression.start)),
+                    text: self.js_text(expression.start, end_of_parameters),
                     kind: JsKind::Function,
                     has_single_quotes: false,
                     is_on_one_line: false,

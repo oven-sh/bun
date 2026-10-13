@@ -215,8 +215,8 @@ pub(crate) enum Kind<'a> {
     SnippetBlock {
         /// The name.
         expression: Span,
-        /// Where the last parameter ends, with its type.
-        last_parameter_end: Option<u32>,
+        /// Behind the `)` of the parameters.
+        end_of_parameters: u32,
         body: FragmentId,
     },
     Script {

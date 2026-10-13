@@ -371,17 +371,10 @@ impl Js for FromParser<'_> {
         self.program((&program, pattern.start), |_| Some(()))
     }
 
-    fn parameters(&mut self, text: &[u8], parameters: Span) -> Result<Option<u32>, usize> {
+    fn check_parameters(&mut self, text: &[u8], parameters: Span) -> Result<(), usize> {
         let program = [b"(", parameters.of(text), b" => {}\n)"].concat();
         self.program((&program, parameters.start), |statement| match statement {
-            StmtKind::Expr(e) => match e.kind() {
-                // One byte, the `(`, is before them.
-                ExprKind::Fn(function) => Some(
-                    (function.params().iter().last())
-                        .map(|it| parameters.start + it.span_without_modifiers().end - 1),
-                ),
-                _ => None,
-            },
+            StmtKind::Expr(e) if matches!(e.kind(), ExprKind::Fn(_)) => Some(()),
             _ => None,
         })
     }

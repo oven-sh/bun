@@ -107,9 +107,9 @@ mod _impl {
         }
         pub(crate) fn user_info<'a>(
             cx: &mut JsCall<'a>,
-            options: UserInfoOptions,
+            options: UserInfoOptions<'a>,
         ) -> bindgen::Result<'a, JsValue<'a>> {
-            cx.with_global_value(|global| super::user_info(global, &options))
+            cx.with_global_value(|global| super::user_info(global, options))
         }
         pub(crate) fn set_priority<'a>(
             cx: &mut JsCall<'a>,
@@ -1391,7 +1391,7 @@ mod _impl {
 
     pub(crate) fn user_info(
         global_this: &JSGlobalObject,
-        options: &crate::generated_bindgen::node_os::UserInfoOptions,
+        options: crate::generated_bindgen::node_os::UserInfoOptions<'_>,
     ) -> JsResult<JSValue> {
         let _ = options; // TODO:
 

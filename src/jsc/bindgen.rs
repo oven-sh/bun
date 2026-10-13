@@ -100,7 +100,7 @@ impl<'a> JsHeap<'a> {
 }
 
 impl<'a> JsCall<'a> {
-    /// For generated thunks and event-loop dispatch.
+    /// For generated thunks, event-loop dispatch, and code that only has a `&JSGlobalObject`.
     ///
     /// # Safety
     /// `global` is the current thread's live global object, and no borrow of an outer `JsCall` is
@@ -113,16 +113,6 @@ impl<'a> JsCall<'a> {
     ) -> R {
         // SAFETY: `JsCall` is zero-sized and `global` is non-null.
         f(unsafe { &mut *global.cast::<JsCall<'_>>() })
-    }
-
-    /// For code that only has a `&JSGlobalObject`.
-    ///
-    /// # Safety
-    /// As [`with`](Self::with).
-    #[inline(always)]
-    pub unsafe fn from_global(global: &'a JSGlobalObject) -> &'a mut JsCall<'a> {
-        // SAFETY: `JsCall` is zero-sized; caller upholds exclusivity.
-        unsafe { &mut *global.as_mut_ptr().cast::<JsCall<'a>>() }
     }
 
     /// Anything can be done with a `&JSGlobalObject`, so it costs the whole `JsCall` for as long as
@@ -157,7 +147,8 @@ impl<'a> JsCall<'a> {
 
     /// Takes the pending exception off the VM.
     pub fn take_exception(&mut self, error: Error<'a>) -> Option<JsValue<'a>> {
-        match error.0 {
+        let Error(state, ..) = error;
+        match state {
             ErrorState::ToThrow(value) => Some(JsValue::wrap(value)),
             ErrorState::Pending(JsError::Thrown) => {
                 self.heap.global().try_take_exception().map(JsValue::wrap)
@@ -185,7 +176,7 @@ enum ErrorState {
 pub struct Error<'a>(ErrorState, InvariantLifetime<'a>, NotSend);
 pub type Result<'a, T> = core::result::Result<T, Error<'a>>;
 
-impl Error<'_> {
+impl<'a> Error<'a> {
     #[inline(always)]
     fn to_throw(value: JSValue) -> Self {
         Error(ErrorState::ToThrow(value), PhantomData, PhantomData)
@@ -201,9 +192,8 @@ impl Error<'_> {
     #[doc(hidden)]
     #[cold]
     #[inline(never)]
-    pub fn into_host_fn_return(self, global: *mut JSGlobalObject) -> JSValue {
-        // SAFETY: the thunk's own global.
-        let global = unsafe { JSGlobalObject::opaque_ref_nn(global) };
+    pub fn into_host_fn_return(self, cx: &mut JsCall<'a>) -> JSValue {
+        let global = cx.global();
         match self.0 {
             ErrorState::Pending(error) => crate::host_fn::host_call_error_value(global, error),
             ErrorState::ToThrow(value) => {
@@ -387,10 +377,10 @@ pub unsafe trait JsPayload: Sized + 'static {
     /// # Safety
     /// The caller writes the payload before anything else runs.
     #[doc(hidden)]
-    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<u8>;
+    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
     /// `value`'s cell if it is a wrapper of `Self`, else null.
     #[doc(hidden)]
-    fn cell_from_js(value: JSValue) -> *mut u8;
+    fn cell_from_js(value: JSValue) -> *mut c_void;
 
     /// A new JS object that owns `self`.
     #[inline]
@@ -411,7 +401,11 @@ pub unsafe trait JsPayload: Sized + 'static {
 /// The JS object that wraps a `T`. A cell pointer; the payload is reached only through
 /// [`JsPayloads`].
 #[repr(transparent)]
-pub struct JsWrapper<'a, T: JsPayload>(NonNull<u8>, InvariantLifetime<'a>, PhantomData<*const T>);
+pub struct JsWrapper<'a, T: JsPayload>(
+    NonNull<c_void>,
+    InvariantLifetime<'a>,
+    PhantomData<*const T>,
+);
 impl<T: JsPayload> Clone for JsWrapper<'_, T> {
     #[inline(always)]
     fn clone(&self) -> Self {
@@ -427,7 +421,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     /// `cell` is a live wrapper of `T` belonging to the call `'a`.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn from_extern(cell: NonNull<u8>) -> Self {
+    pub unsafe fn from_extern(cell: NonNull<c_void>) -> Self {
         JsWrapper(cell, PhantomData, PhantomData)
     }
 
@@ -475,7 +469,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     #[inline(always)]
     fn payload(self) -> *mut T {
         // SAFETY: generated offset inside the cell.
-        unsafe { self.0.as_ptr().add(T::PAYLOAD_OFFSET).cast() }
+        unsafe { self.0.as_ptr().byte_add(T::PAYLOAD_OFFSET).cast() }
     }
 
     #[inline(always)]
@@ -516,7 +510,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         JsValue::wrap(unsafe {
             self.0
                 .as_ptr()
-                .add(T::INTERNAL_FIELDS_OFFSET)
+                .byte_add(T::INTERNAL_FIELDS_OFFSET)
                 .cast::<JSValue>()
                 .add(index)
                 .read()
@@ -553,7 +547,9 @@ impl<T: JsPayload> JsWrapperStrong<T> {
     #[inline]
     pub fn get<'a>(&self, _: &JsHeap<'a>) -> JsWrapper<'a, T> {
         // SAFETY: made from a `JsWrapper<T>`; a cell value is its pointer.
-        unsafe { JsWrapper::from_extern(NonNull::new_unchecked(self.0.get().encoded() as *mut u8)) }
+        unsafe {
+            JsWrapper::from_extern(NonNull::new_unchecked(self.0.get().encoded() as *mut c_void))
+        }
     }
 }
 
@@ -670,5 +666,5 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
         },
         Err(error) => error.into_error(&cx.heap),
     };
-    error.into_host_fn_return(cx.heap.global_ptr())
+    error.into_host_fn_return(cx)
 }

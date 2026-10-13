@@ -9,7 +9,7 @@ export const BracesOptions = b.dictionary({
 
 export const braces = b.fn({
   args: {
-    input: b.string.loose,
+    input: b.string.loose.utf8,
     options: BracesOptions.nullable.default({}),
   },
   returns: b.any,

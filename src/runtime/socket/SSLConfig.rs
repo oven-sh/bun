@@ -145,13 +145,14 @@ impl SSLConfigFromJs for SSLConfig {
         value: JSValue,
         is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
+        let from_js = |cx: &mut jsc::bindgen::JsCall<'_>| {
+            let value = jsc::bindgen::JsValue::new(&cx.heap, value);
+            let generated =
+                generated::SSLConfig::from_js(cx, value).map_err(|e| e.into_js_error(global))?;
+            Self::from_generated(vm, global, &generated, is_server)
+        };
         // SAFETY: reached from a host function with no `JsCall` borrowed.
-        let cx = unsafe { jsc::bindgen::JsCall::from_global(global) };
-        let value = jsc::bindgen::JsValue::new(&cx.heap, value);
-        let generated =
-            generated::SSLConfig::from_js(cx, value).map_err(|e| e.into_js_error(global))?;
-        // `generated` dropped at scope exit
-        Self::from_generated(vm, global, &generated, is_server)
+        unsafe { jsc::bindgen::JsCall::with(global.as_mut_ptr(), from_js) }
     }
 
     fn from_generated(

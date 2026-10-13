@@ -25,7 +25,7 @@ export const totalmem = b.fn({ returns: b.u64 });
 export const uptime = b.fn({ returns: b.f64, capability: "js", throws: true });
 
 export const UserInfoOptions = b.dictionary({
-  encoding: b.string.loose.default(""),
+  encoding: b.string.loose.utf8.default(""),
 });
 export const userInfo = b.fn({
   args: {

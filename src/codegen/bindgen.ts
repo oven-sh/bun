@@ -9,8 +9,8 @@
 
 import assert from "node:assert";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   analyze,
   cppCounts,
@@ -32,8 +32,6 @@ import {
 } from "./bindgen-lib-internal.ts";
 import { argParse, writeIfNotChanged } from "./helpers.ts";
 
-const require = createRequire(import.meta.url);
-
 /** The Cargo package whose directory contains `file`. */
 function crateOf(file: string): string {
   for (let dir = path.dirname(file); dir !== path.dirname(dir); dir = path.dirname(dir)) {
@@ -45,7 +43,7 @@ function crateOf(file: string): string {
   throw new Error(`${file} is not inside a Cargo package`);
 }
 
-function load(file: string): SchemaFile {
+async function load(file: string): Promise<SchemaFile> {
   const stem = path.basename(file, ".bind.ts");
   const origin: Origin = {
     file,
@@ -55,7 +53,7 @@ function load(file: string): SchemaFile {
     crate: crateOf(file),
   };
   const result: SchemaFile = { origin, moduleDefinition: null, types: [], functions: [] };
-  for (const [name, value] of Object.entries(require(file) as Record<string, unknown>)) {
+  for (const [name, value] of Object.entries((await import(pathToFileURL(file).href)) as Record<string, unknown>)) {
     if (value instanceof ModuleDefinition) {
       assert(name === "default", `${stem}.bind.ts: b.module() is the default export`);
       result.moduleDefinition = value;
@@ -96,7 +94,7 @@ const sources = (args.sources as string)
   .filter(source => source.length > 0)
   .sort();
 
-const files = sources.map(load);
+const files = await Promise.all(sources.map(load));
 files.forEach(sortTypes);
 const names = files.flatMap(file => file.types.map(type => type.name));
 assert(new Set(names).size === names.length, "two .bind.ts files export a type with the same name");

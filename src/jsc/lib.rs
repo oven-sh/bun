@@ -1579,16 +1579,5 @@ unsafe extern "C" {
 #[path = "generated.rs"]
 pub mod generated;
 
-/// What `src/codegen/bindgen.ts` generates from this crate's `.bind.ts` files.
-#[allow(
-    non_snake_case,
-    unused_unsafe,
-    clippy::missing_safety_doc,
-    clippy::identity_op
-)]
-pub mod generated_bindgen {
-    include!(concat!(
-        env!("BUN_CODEGEN_DIR"),
-        "/generated_bindgen_bun_jsc.rs"
-    ));
-}
+#[path = "generated_bindgen.rs"]
+pub mod generated_bindgen;

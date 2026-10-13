@@ -128,6 +128,10 @@ export abstract class Type {
   get borrowsFrame(): boolean {
     return this.dependencies.some(type => type.borrowsFrame);
   }
+  /** `rustType` is `Copy`. */
+  get rustIsCopy(): boolean {
+    return this.dependencies.length > 0 && this.dependencies.every(type => type.rustIsCopy);
+  }
   get needsLifetime(): boolean {
     return this.holdsJSValue || this.borrowsFrame || this.borrowsHeap;
   }
@@ -174,6 +178,9 @@ export abstract class Type {
 // ───────────────────────────── primitives ─────────────────────────────
 
 class PrimitiveType extends Type {
+  get rustIsCopy(): boolean {
+    return true;
+  }
   readonly idlType: string;
   readonly tsType: string;
   readonly rustName: string;
@@ -307,6 +314,9 @@ export class DoubleType extends PrimitiveType {
 
 /** Only as a union alternative or a return type. */
 export class UnitType extends Type {
+  get rustIsCopy(): boolean {
+    return true;
+  }
   readonly idlType: string;
   readonly tsType: string;
   constructor(tsType: "null" | "undefined") {
@@ -389,6 +399,9 @@ export class StringType extends Type {
  * transcoded into the thunk's frame otherwise.
  */
 export class Utf8Type extends Type {
+  get rustIsCopy(): boolean {
+    return true;
+  }
   readonly idlType: string;
   readonly tsType = "string";
   constructor(idlType = "::Bun::Bindgen::IDLStrictUTF8String") {
@@ -440,6 +453,9 @@ export class Utf8Type extends Type {
 
 /** The bytes of a typed array, `DataView` or `ArrayBuffer`, as `&[u8]`. */
 export class BytesType extends Type {
+  get rustIsCopy(): boolean {
+    return true;
+  }
   readonly idlType = "::Bun::Bindgen::IDLBufferSourceBytes";
   readonly tsType = "ArrayBuffer | ArrayBufferView";
   get borrowsHeap(): boolean {
@@ -470,6 +486,9 @@ export class BytesType extends Type {
 
 /** A typed array, `DataView` or `ArrayBuffer`, as a handle whose bytes are read through `with_bytes`. */
 export class BufferSourceType extends Type {
+  get rustIsCopy(): boolean {
+    return true;
+  }
   readonly idlType = "::Bun::Bindgen::IDLRawBufferSource";
   readonly tsType = "ArrayBuffer | ArrayBufferView";
   /** `&[u8]` for the duration of the call. Not for `capability: "js"`, where JavaScript could detach it. */
@@ -550,6 +569,9 @@ export class WithValueType extends Type {
 }
 
 export class AnyType extends Type {
+  get rustIsCopy(): boolean {
+    return true;
+  }
   readonly idlType = "::Bun::IDLRawAny";
   readonly tsType = "any";
   get holdsJSValue(): boolean {
@@ -746,6 +768,9 @@ export class DefaultType extends Type {
 }
 
 export class ArrayType extends Type {
+  get rustIsCopy(): boolean {
+    return false;
+  }
   readonly element: Type;
   constructor(element: Type) {
     super();
@@ -823,6 +848,9 @@ export abstract class NamedType extends Type {
 }
 
 export class EnumType extends NamedType {
+  get rustIsCopy(): boolean {
+    return true;
+  }
   /** `spellings[i]` all parse to variant `i`; the first is the canonical one. */
   readonly spellings: readonly (readonly string[])[];
   /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
@@ -969,7 +997,7 @@ export class DictionaryType extends NamedType {
     return this.path(scope, `Extern${this.name}`);
   }
   rustFromExtern(expr: string, scope: RustScope): string {
-    return `${this.path(scope, this.name)}::from_extern(${expr})`;
+    return `${this.path(scope, this.name)}::from_extern(&${expr})`;
   }
   rustToJS(value: string, scope: RustScope): string {
     return `${value}.to_js(heap)`;
@@ -1018,7 +1046,7 @@ export class UnionType extends NamedType {
     return this.path(scope, `Extern${this.name}`);
   }
   rustFromExtern(expr: string, scope: RustScope): string {
-    return `${this.path(scope, this.name)}::from_extern(${expr})`;
+    return `${this.path(scope, this.name)}::from_extern(&${expr})`;
   }
 }
 
@@ -1202,6 +1230,9 @@ export const selfType = new SelfType();
 
 /** As an argument or a result: the wrapper, `JsWrapper<'a, T>`. */
 export class ClassType extends NamedType {
+  get rustIsCopy(): boolean {
+    return true;
+  }
   readonly rustPath: string;
   readonly construct: Signature | null;
   readonly methods: readonly Method[];
@@ -1284,7 +1315,7 @@ export class ClassType extends NamedType {
     return { size: 8, align: 8 };
   }
   rustExternType(): string {
-    return "*mut u8";
+    return "*mut core::ffi::c_void";
   }
   rustType(): string {
     return `bindgen::JsWrapper<'a, ${this.rustPath}>`;

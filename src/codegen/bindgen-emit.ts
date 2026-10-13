@@ -774,7 +774,13 @@ const capabilityParameter = {
 };
 const capabilityArgument = { none: [], heap: ["&cx.heap"], js: ["cx"] };
 
-const infallible = (call: string, throws: boolean) => (throws ? call : `Ok::<_, core::convert::Infallible>(${call})`);
+const unit = new UnitType("undefined");
+const infallible = (call: string, throws: boolean, returns: Type | null = null) =>
+  throws
+    ? call
+    : returns instanceof UnitType
+      ? `{ ${call}; Ok::<_, core::convert::Infallible>(()) }`
+      : `Ok::<_, core::convert::Infallible>(${call})`;
 
 const rustThunk = (symbol: string, parameters: string[], returns: string, body: string) => `
 #[unsafe(no_mangle)]
@@ -819,14 +825,14 @@ union Extern${type.name}Data {
 ${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
 }
 ${rustLayoutAssert(`Extern${type.name}`, type)}
-pub enum ${type.name}${lifetime} {
+${type.rustIsCopy ? "#[derive(Clone, Copy)]\n" : ""}pub enum ${type.name}${lifetime} {
 ${type.alternatives.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a.variant}(${a.type.rustType(scope)}),`)).join("\n")}
 }
 impl${lifetime} ${type.name}${lifetime} {
     /// # Safety
     /// \`value\` was just filled in by generated C++ and is read once.
     #[doc(hidden)]
-    pub unsafe fn from_extern(value: Extern${type.name}) -> Self {
+    pub unsafe fn from_extern(value: &Extern${type.name}) -> Self {
         // SAFETY: C++ initialized the arm \`tag\` names.
         unsafe {
             match value.tag {
@@ -849,7 +855,7 @@ function rustForDictionary(type: DictionaryType, scope: RustScope): string {
   const lifetime = type.needsLifetime ? "<'a>" : "";
   const fieldType = (t: Type) => (type.accepted ? t.rustType(scope) : t.rustResultFieldType(scope));
   let text = `
-pub struct ${type.name}${lifetime} {
+${type.accepted && type.rustIsCopy ? "#[derive(Clone, Copy)]\n" : ""}pub struct ${type.name}${lifetime} {
 ${type.members.map(member => `    pub ${member.rustName}: ${fieldType(member.type)},`).join("\n")}
 }
 `;
@@ -875,7 +881,7 @@ impl${lifetime} ${type.name}${lifetime} {
     /// # Safety
     /// \`value\` was just filled in by generated C++ and is read once.
     #[doc(hidden)]
-    pub unsafe fn from_extern(value: Extern${type.name}) -> Self {
+    pub unsafe fn from_extern(value: &Extern${type.name}) -> Self {
         // SAFETY: as above, member by member.
         unsafe {
             Self {
@@ -897,7 +903,7 @@ impl<'a> ${type.name}${lifetime} {
         // SAFETY: C++ fills \`result\` exactly when it returns true.
         unsafe {
             bindgen::extern_types::from_js(cx, |global| Bun__Bindgen__${type.name}__fromJS(global, value.to_js(), result.as_mut_ptr()))?;
-            Ok(Self::from_extern(result.assume_init()))
+            Ok(Self::from_extern(result.assume_init_ref()))
         }
     }
 }
@@ -996,9 +1002,9 @@ bindgen::host_fn_return(cx, result, |heap, value| bindgen::to_js::any(heap, bind
     ].join(", ")})`;
     thunks += rustThunk(
       methodSymbolName(type, method),
-      [...(isStatic ? [] : ["this: *mut u8"]), ...rustExternParameters(method, scope)],
+      [...(isStatic ? [] : ["this: *mut core::ffi::c_void"]), ...rustExternParameters(method, scope)],
       "JSValue",
-      `${isStatic ? "" : `${takeThis}\n`}let result = ${infallible(call, method.throws)};
+      `${isStatic ? "" : `${takeThis}\n`}let result = ${infallible(call, method.throws, method.returns)};
 bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("value", scope)})`,
     );
   }
@@ -1014,7 +1020,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${method.returns.rustToJS("val
     );
     thunks += rustThunk(
       getterSymbolName(type, getter),
-      ["this: *mut u8"],
+      ["this: *mut core::ffi::c_void"],
       "JSValue",
       `${takeThis}
 let result = ${infallible(`<${rustPath} as ${trait}>::${getter.rustName}(${[...receiverArgument[receiver], ...capabilityArgument[getter.capability]].join(", ")})`, getter.throws)};
@@ -1036,10 +1042,10 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
     );
     thunks += rustThunk(
       setterSymbolName(type, getter),
-      ["this: *mut u8", `value: ${getter.type.rustExternType(scope)}`],
+      ["this: *mut core::ffi::c_void", `value: ${getter.type.rustExternType(scope)}`],
       "bool",
       `${takeThis}
-let result = ${infallible(`<${rustPath} as ${trait}>::${setterName}(${[...receiverArgument[setterReceiver], ...capabilityArgument[getter.capability], getter.type.rustFromExtern("value", scope)].join(", ")})`, getter.throws)};
+let result = ${infallible(`<${rustPath} as ${trait}>::${setterName}(${[...receiverArgument[setterReceiver], ...capabilityArgument[getter.capability], getter.type.rustFromExtern("value", scope)].join(", ")})`, getter.throws, unit)};
 !bindgen::host_fn_return(cx, result, bindgen::to_js::undefined).is_empty()`,
     );
   }
@@ -1074,8 +1080,8 @@ ${declarations.map(declaration => `    ${declaration}`).join("\n")}
 }
 
 unsafe extern "C" {
-    fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<u8>;
-    fn ${symbolName(type, "fromJS")}(value: JSValue) -> *mut u8;${
+    fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void>;
+    fn ${symbolName(type, "fromJS")}(value: JSValue) -> *mut core::ffi::c_void;${
       type.construct
         ? `
     fn ${symbolName(type, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;`
@@ -1087,12 +1093,12 @@ unsafe impl bindgen::JsPayload for ${rustPath} {
     const INTERNAL_FIELDS_OFFSET: usize = ${offsetOfInternalFields};
     const PAYLOAD_OFFSET: usize = ${offsetOfPayload(type)};
     #[inline(always)]
-    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<u8> {
+    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void> {
         // SAFETY: forwarded.
         unsafe { ${symbolName(type, "create")}(global, structure) }
     }
     #[inline(always)]
-    fn cell_from_js(value: JSValue) -> *mut u8 {
+    fn cell_from_js(value: JSValue) -> *mut core::ffi::c_void {
         // SAFETY: a type check; reads the value's header.
         unsafe { ${symbolName(type, "fromJS")}(value) }
     }
@@ -1137,7 +1143,7 @@ function rustForFunction(fn: FunctionDefinition, file: SchemaFile): string {
         thunkSymbol(fn, signature),
         rustExternParameters(signature, scope),
         "JSValue",
-        `let result = ${infallible(call, signature.throws)};
+        `let result = ${infallible(call, signature.throws, signature.returns)};
 bindgen::host_fn_return(cx, result, |heap, value| ${signature.returns.rustToJS("value", scope)})`,
       );
     })
@@ -1151,6 +1157,18 @@ export function rustForCrate(files: readonly SchemaFile[]): string {
       .map(
         file => `
 /// \`${file.origin.stem}.bind.ts\`
+#[allow(
+    non_snake_case,
+    non_upper_case_globals,
+    unreachable_pub,
+    dead_code,
+    unused_unsafe,
+    clippy::missing_safety_doc,
+    clippy::identity_op,
+    clippy::derivable_impls,
+    clippy::large_enum_variant,
+    clippy::trivially_copy_pass_by_ref
+)]
 pub mod ${file.origin.rustModule} {
     use bun_jsc::{JSGlobalObject, JSValue, bindgen};
 ${indent(

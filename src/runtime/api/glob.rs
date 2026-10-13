@@ -329,12 +329,12 @@ impl JobContext for WalkTask {
             promise.reject_with_async_stack(global, err.to_js(global))?;
             return Ok(());
         }
-        // SAFETY: a job's completion, entered from the event loop with no `JsCall` borrowed.
-        let heap = &unsafe { JsCall::from_global(global) }.heap;
-        match this.walker.matched_paths_to_js(heap) {
+        let settle = |cx: &mut JsCall<'_>| match this.walker.matched_paths_to_js(&cx.heap) {
             Ok(paths) => promise.resolve(global, paths.to_js()),
             Err(err) => promise.reject(global, Err(err.into_js_error(global))),
-        }
+        };
+        // SAFETY: a job's completion, entered from the event loop with no `JsCall` borrowed.
+        unsafe { JsCall::with(global.as_mut_ptr(), settle) }
     }
 }
 

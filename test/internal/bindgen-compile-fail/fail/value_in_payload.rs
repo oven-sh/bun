@@ -5,10 +5,10 @@ struct Holder<'a> {
 unsafe impl<'a> JsPayload for Holder<'a> {
     const INTERNAL_FIELDS_OFFSET: usize = 24;
     const PAYLOAD_OFFSET: usize = 24;
-    unsafe fn create_cell(_: *mut JSGlobalObject, _: *mut core::ffi::c_void) -> core::ptr::NonNull<u8> {
+    unsafe fn create_cell(_: *mut JSGlobalObject, _: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void> {
         unreachable!()
     }
-    fn cell_from_js(_: JSValue) -> *mut u8 {
+    fn cell_from_js(_: JSValue) -> *mut core::ffi::c_void {
         unreachable!()
     }
 }

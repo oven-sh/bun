@@ -64,21 +64,7 @@ pub(crate) mod napi;
 pub(crate) mod run_main;
 pub(crate) mod timer;
 
-/// What `src/codegen/bindgen.ts` generates from this crate's `.bind.ts` files.
-#[allow(
-    non_snake_case,
-    unreachable_pub,
-    dead_code,
-    unused_unsafe,
-    clippy::missing_safety_doc,
-    clippy::identity_op
-)]
-pub(crate) mod generated_bindgen {
-    include!(concat!(
-        env!("BUN_CODEGEN_DIR"),
-        "/generated_bindgen_bun_runtime.rs"
-    ));
-}
+pub(crate) mod generated_bindgen; // include!()s ${BUN_CODEGEN_DIR}/generated_bindgen_bun_runtime.rs
 pub(crate) mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs
 pub(crate) mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host_exports.rs
 pub(crate) mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2native.rs

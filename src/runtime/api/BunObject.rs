@@ -388,10 +388,10 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 pub(crate) fn braces<'a>(
     cx: &mut JsCall<'a>,
-    input: BunString,
+    input: &'a [u8],
     options: BracesOptions,
 ) -> bindgen::Result<'a, JsValue<'a>> {
-    cx.with_global_value(|global| braces_impl(global, &input, options))
+    cx.with_global_value(|global| braces_impl(global, input, options))
 }
 
 /// `Bun.gc(force)`: heap size after the collection.
@@ -401,17 +401,15 @@ pub(crate) fn gc_from_js(cx: &mut JsCall<'_>, force: bool) -> usize {
 
 fn braces_impl(
     global: &JSGlobalObject,
-    brace_str: &BunString,
+    brace_slice: &[u8],
     opts: BracesOptions,
 ) -> JsResult<JSValue> {
-    let brace_slice = brace_str.to_utf8();
-
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
     let mut lexer_output = 'lexer_output: {
-        if strings::is_all_ascii(brace_slice.slice()) {
-            break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
+        if strings::is_all_ascii(brace_slice) {
+            break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
                 Ok(v) => v,
                 Err(err) => {
                     return Err(
@@ -421,7 +419,7 @@ fn braces_impl(
             };
         }
 
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice()) {
+        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice) {
             Ok(v) => break 'lexer_output v,
             Err(err) => {
                 return Err(
@@ -456,7 +454,7 @@ fn braces_impl(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, core::slice::from_ref(brace_str));
+        return bun_string_jsc::to_js_array(global, &[BunString::from_bytes(brace_slice)]);
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -1751,8 +1749,11 @@ fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 
 fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // SAFETY: a lazy property callback, entered from JSC with no `JsCall` borrowed.
-    let cx = unsafe { JsCall::from_global(global_this) };
-    crate::api::glob::Glob::get_constructor(&cx.heap).to_js()
+    unsafe {
+        JsCall::with(global_this.as_mut_ptr(), |cx| {
+            crate::api::glob::Glob::get_constructor(&cx.heap).to_js()
+        })
+    }
 }
 
 fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

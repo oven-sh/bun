@@ -2,7 +2,7 @@
 //! C++ and Rust. Everything here is plain data; ownership is taken by the generated conversion that
 //! reads it, exactly once.
 
-use core::ffi::c_uint;
+use core::ffi::{c_uint, c_void};
 
 use crate::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 
@@ -36,8 +36,11 @@ union ExternOptionalData<T: Copy> {
 impl<T: Copy> ExternOptional<T> {
     #[inline(always)]
     pub fn get(self) -> Option<T> {
+        if self.tag == 0 {
+            return None;
+        }
         // SAFETY: C++ initialized the arm `tag` names.
-        (self.tag != 0).then(|| unsafe { self.data.some })
+        Some(unsafe { self.data.some })
     }
 }
 
@@ -124,7 +127,7 @@ unsafe extern "C" {
     pub fn Bun__Bindgen__enumerationValueToJS(global: *mut JSGlobalObject, index: u32) -> JSValue;
     pub fn Bun__Bindgen__setInternalField(
         global: *mut JSGlobalObject,
-        cell: *mut u8,
+        cell: *mut c_void,
         offset: u32,
         value: JSValue,
     );

@@ -94,6 +94,8 @@ struct Early {
     first_error: Option<u32>,
     /// In JavaScript: where the first `as`, `satisfies` or `!` of TypeScript is. acorn stops before it.
     first_of_typescript: Option<u32>,
+    /// In JavaScript: where the first `<T>a` is, about which the parser says nothing.
+    first_assertion: Option<u32>,
 }
 
 /// 1 for a function that is no arrow function, and for a class.
@@ -136,7 +138,13 @@ impl<'a> Visitor<'a> for Early {
             }
             // "The keyword 'yield' is reserved"
             ExprKind::Ident(_) => (e.text() == b"yield").then(|| e.span().start),
-            ExprKind::As { .. } | ExprKind::AsConst(_) if e.is_angle_bracket_assertion() => None,
+            ExprKind::As { .. } | ExprKind::AsConst(_) if e.is_angle_bracket_assertion() => {
+                let start = e.span().start;
+                if !self.is_typescript && self.first_assertion.is_none_or(|it| start < it) {
+                    self.first_assertion = Some(start);
+                }
+                None
+            }
             ExprKind::As { expr, .. }
             | ExprKind::Satisfies { expr, .. }
             | ExprKind::AsConst(expr)
@@ -190,11 +198,14 @@ impl FromParser<'_> {
                     depth: 0,
                     first_error: None,
                     first_of_typescript: None,
+                    first_assertion: None,
                 };
                 walk(file, &mut early);
                 stops_at = early.first_of_typescript;
                 // acorn knows none of it.
-                typescript_at = (file.first_of_typescript_in_javascript())
+                typescript_at = (file.first_of_typescript_in_javascript().into_iter())
+                    .chain(early.first_assertion)
+                    .min()
                     .filter(|it| {
                         !is_typescript && early.first_error.is_none_or(|error| *it < error)
                     })

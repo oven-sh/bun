@@ -589,6 +589,7 @@ describe("Headers", () => {
       });
     });
 
+    // What Bun does today. The Fetch spec sorts "set-cookie" in with the other names.
     test("Set-Cookie headers come last, one entry each", () => {
       const headers = new Headers([
         ["Set-Cookie", "a=1"],
@@ -744,6 +745,36 @@ describe("Headers", () => {
         seen.push(iterator.next());
         expect(seen).toEqual(["a", "c", "h", "x", "y", "a=1", "b=2", { value: undefined, done: true }]);
       });
+      test("a name the server removes as it writes the response is skipped", async () => {
+        const seen: unknown[] = [];
+        let iterator: ReturnType<Headers["entries"]> | undefined;
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            const response = new Response("ok", {
+              headers: [
+                ["Accept", "a"],
+                ["Content-Length", "2"],
+                ["Host", "h"],
+                ["Vary", "v"],
+                ["X-Custom", "x"],
+              ],
+            });
+            iterator = response.headers.entries();
+            seen.push(iterator.next().value);
+            return response;
+          },
+        });
+        const response = await fetch(server.url);
+        expect(await response.text()).toBe("ok");
+        for (const entry of iterator!) seen.push(entry);
+        expect(seen).toEqual([
+          ["accept", "a"],
+          ["host", "h"],
+          ["vary", "v"],
+          ["x-custom", "x"],
+        ]);
+      });
       test("forEach sees what its callback changes", () => {
         const headers = start();
         const seen: [string, string][] = [];
@@ -807,18 +838,19 @@ describe("Headers", () => {
     });
 
     test("an iterator keeps its headers alive", () => {
+      const valueOf = (i: number) => Buffer.alloc(64, "v").toString() + i;
       const iterator = (() => {
         const headers = new Headers();
-        for (let i = 0; i < 32; i++) headers.set(`X-Custom-${i}`, Buffer.alloc(64, "v").toString() + i);
+        for (let i = 0; i < 32; i++) headers.set(`X-Custom-${i}`, valueOf(i));
         headers.set("Content-Type", "text/plain");
         const iterator = headers.entries();
         iterator.next();
         return iterator;
       })();
       Bun.gc(true);
-      const rest = [...iterator];
-      expect(rest).toHaveLength(32);
-      expect(rest.every(([key, value]) => key.startsWith("x-custom-") && value.length > 64)).toBe(true);
+      expect([...iterator]).toEqual(
+        Array.from({ length: 32 }, (_, i) => [`x-custom-${i}`, valueOf(i)]).sort((a, b) => byCodeUnit(a[0], b[0])),
+      );
     });
 
     test("each entry is a new array in a new result object", () => {
@@ -837,7 +869,7 @@ describe("Headers", () => {
         cmd: [
           bunExe(),
           "-e",
-          `const { heapStats } = require("bun:jsc");
+          `import { heapStats } from "bun:jsc";
            const headers = new Headers({ "Content-Type": "a", "Content-Length": "1", "Cache-Control": "b", "Accept": "c", "Host": "d", "User-Agent": "e", "ETag": "f", "Date": "g" });
            const kept = [];
            const walk = () => {

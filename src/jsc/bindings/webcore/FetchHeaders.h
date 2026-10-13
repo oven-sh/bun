@@ -72,23 +72,19 @@ public:
 
     inline uint32_t size() const
     {
-        return m_headers.size();
+        return internalHeaders().size();
     }
 
     inline uint32_t sizeAfterJoiningSetCookieHeader() const
     {
-        return m_headers.commonHeaders().size() + m_headers.uncommonHeaders().size() + (m_headers.getSetCookieHeaders().size() > 0);
+        return internalHeaders().commonHeaders().size() + internalHeaders().uncommonHeaders().size() + (internalHeaders().getSetCookieHeaders().size() > 0);
     }
 
-    String fastGet(HTTPHeaderName name) const { return m_headers.get(name); }
-    bool fastHas(HTTPHeaderName name) const { return m_headers.contains(name); }
-    bool fastRemove(HTTPHeaderName name)
-    {
-        ++m_updateCounter;
-        return m_headers.remove(name);
-    }
+    String fastGet(HTTPHeaderName name) const { return internalHeaders().get(name); }
+    bool fastHas(HTTPHeaderName name) const { return internalHeaders().contains(name); }
+    bool fastRemove(HTTPHeaderName name) { return m_headers.willChange().remove(name); }
 
-    const Vector<String, 0>& getSetCookieHeaders() const { return m_headers.getSetCookieHeaders(); }
+    const Vector<String, 0>& getSetCookieHeaders() const { return internalHeaders().getSetCookieHeaders(); }
 
     class Iterator {
     public:
@@ -111,10 +107,9 @@ public:
 
         Ref<FetchHeaders> m_headers;
         size_t m_currentIndex { 0 };
-        // Sorted by key. A null key, always last, stands for the Set-Cookie headers.
+        // Sorted by key, then one entry for all the Set-Cookie headers: nextEntry() points it at each in turn.
         Vector<Entry> m_entries;
         Vector<String> m_lowercasedKeys;
-        Entry m_setCookieEntry;
         uint64_t m_updateCounter { 0 };
         size_t m_cookieIndex { 0 };
         bool m_lowerCaseKeys { true };
@@ -129,12 +124,8 @@ public:
         return Iterator(*this, true);
     }
 
-    void setInternalHeaders(HTTPHeaderMap&& headers)
-    {
-        ++m_updateCounter;
-        m_headers = WTF::move(headers);
-    }
-    const HTTPHeaderMap& internalHeaders() const { return m_headers; }
+    void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers.willChange() = WTF::move(headers); }
+    const HTTPHeaderMap& internalHeaders() const { return m_headers.get(); }
 
     void setGuard(Guard);
     Guard guard() const { return m_guard; }
@@ -142,11 +133,34 @@ public:
     FetchHeaders(Guard, HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
 
-    uint64_t m_updateCounter { 0 };
-
 private:
+    // An iterator points into the map while the counter stands still, so the one way to a map that can be changed moves it.
+    class CountedHeaderMap {
+    public:
+        explicit CountedHeaderMap(HTTPHeaderMap&& map)
+            : m_map(WTF::move(map))
+        {
+        }
+        explicit CountedHeaderMap(const HTTPHeaderMap& map)
+            : m_map(map)
+        {
+        }
+
+        const HTTPHeaderMap& get() const { return m_map; }
+        HTTPHeaderMap& willChange()
+        {
+            ++m_updateCounter;
+            return m_map;
+        }
+        uint64_t updateCounter() const { return m_updateCounter; }
+
+    private:
+        HTTPHeaderMap m_map;
+        uint64_t m_updateCounter { 0 };
+    };
+
     Guard m_guard;
-    HTTPHeaderMap m_headers;
+    CountedHeaderMap m_headers;
 };
 
 inline FetchHeaders::FetchHeaders(Guard guard, HTTPHeaderMap&& headers)
@@ -158,13 +172,13 @@ inline FetchHeaders::FetchHeaders(Guard guard, HTTPHeaderMap&& headers)
 inline FetchHeaders::FetchHeaders(const FetchHeaders& other)
     : RefCounted<FetchHeaders>()
     , m_guard(other.m_guard)
-    , m_headers(other.m_headers)
+    , m_headers(other.internalHeaders())
 {
 }
 
 inline void FetchHeaders::setGuard(Guard guard)
 {
-    ASSERT(!m_headers.size());
+    ASSERT(!internalHeaders().size());
     m_guard = guard;
 }
 

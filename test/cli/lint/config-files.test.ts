@@ -198,6 +198,7 @@ describe.concurrent("an eslint.config.js", () => {
     await using proc = spawn({
       cmd: [
         bunExe(),
+        "--no-install",
         "-e",
         `${source}
         const { posix, win32 } = require("node:path");

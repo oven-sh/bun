@@ -25,6 +25,7 @@ use crate::resolve::{
     has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
     try_extract_ts_extension,
 };
+use crate::util::SharedSort;
 use crate::verify::relative_from_file;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
@@ -278,7 +279,7 @@ impl Checker<'_, '_> {
                 _ => None,
             })
             .collect();
-        lefts.sort_unstable_by_key(|&left| hir[left].pos);
+        lefts.shared_sort_unstable_by_key(|&left| hir[left].pos);
         for left in lefts {
             let parameter = self.unassigned_parameter_read_by(file, left);
             self.type_of_expr(file, left);
@@ -367,7 +368,7 @@ impl Checker<'_, '_> {
             })
             .collect();
         // Of two that start at the same position, the outer was created last.
-        accesses.sort_by_key(|&e| (self.start_of(file, e), std::cmp::Reverse(e)));
+        accesses.shared_sort_by_key(|&e| (self.start_of(file, e), std::cmp::Reverse(e)));
         for e in accesses {
             let is_computed_name = matches!(
                 bound.expr_parent[e.idx()],
@@ -422,7 +423,7 @@ impl Checker<'_, '_> {
                 reported.push((collision.duplicate.1, arguments));
             }
         }
-        reported.sort();
+        reported.shared_sort();
         reported.dedup();
         for (star, arguments) in reported {
             let start = hir[star].start;

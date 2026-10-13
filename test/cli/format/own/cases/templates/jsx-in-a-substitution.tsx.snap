@@ -1,0 +1,149 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = md`${1}, ${<strong>x</strong>}`;
+const b = tag`${1}, ${<strong>x</strong>}`;
+const c = `${<strong>x</strong>}`;
+const d = `${<></>}`;
+class A extends (<a />) {}
+const e = (<a />).b;
+const f = (<a />)();
+const g = [...(<a />)];
+const h = (<a />)!;
+const i = (<a />) as B;
+const j = (<a />) satisfies B;
+const k = !(<a />);
+async function l() {
+  await (<a />);
+}
+function* y() {
+  yield <a />;
+  yield* <a />;
+}
+const m = (<a />) < 1;
+const n = 1 < <a />;
+const o = (<a />)`x`;
+const p = ((<a />), (<b />));
+const q = <a {...(<b />)} />;
+const r = () => <a />;
+const s = typeof (<a />);
+const t = new (<a />)();
+const u = <a /> in b;
+const v = <a /> instanceof b;
+const w = <a /> + 1;
+if (<a />) {
+}
+while (<a />) {}
+do {} while (<a />);
+for (const x of <a />) {
+}
+for (const x in <a />) {
+}
+for (<a />; <b />; <c />) {}
+switch (<a />) {
+  case <b />:
+}
+class B {
+  #c;
+  d = <a />.#c;
+  static e = <a />;
+  accessor f = <a />;
+  [<a />] = 1;
+}
+const z = { [<a />]: 1, ...(<a />) };
+const aa = (<a />)?.b;
+const ab = (<a />)?.();
+const ac = (<a />)[0];
+const ad = a ?? <a />;
+const ae = <a /><T>;
+const af = void (<a />);
+const ag = delete (<a />);
+const ah = import(<a />);
+const ai = [<a />];
+const aj = a[(<a />)];
+const ak = a ? <a /> : <b />;
+const al = <a /> ? 1 : 2;
+function am(a = <a />) {}
+const [an = <a />] = [];
+enum Ao {
+  a = <a />,
+}
+@(<a />)
+class Ap {}
+export default <a />;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = md`${1}, ${<strong>x</strong>}`;
+const b = tag`${1}, ${<strong>x</strong>}`;
+const c = `${<strong>x</strong>}`;
+const d = `${<></>}`;
+class A extends (<a />) {}
+const e = (<a />).b;
+const f = (<a />)();
+const g = [...(<a />)];
+const h = (<a />)!;
+const i = (<a />) as B;
+const j = (<a />) satisfies B;
+const k = !(<a />);
+async function l() {
+  await (<a />);
+}
+function* y() {
+  yield <a />;
+  yield* <a />;
+}
+const m = (<a />) < 1;
+const n = 1 < <a />;
+const o = (<a />)`x`;
+const p = ((<a />), (<b />));
+const q = <a {...(<b />)} />;
+const r = () => <a />;
+const s = typeof (<a />);
+const t = new (<a />)();
+const u = <a /> in b;
+const v = <a /> instanceof b;
+const w = <a /> + 1;
+if (<a />) {
+}
+while (<a />) {}
+do {} while (<a />);
+for (const x of <a />) {
+}
+for (const x in <a />) {
+}
+for (<a />; <b />; <c />) {}
+switch (<a />) {
+  case <b />:
+}
+class B {
+  #c;
+  d = <a />.#c;
+  static e = <a />;
+  accessor f = <a />;
+  [<a />] = 1;
+}
+const z = { [<a />]: 1, ...(<a />) };
+const aa = (<a />)?.b;
+const ab = (<a />)?.();
+const ac = (<a />)[0];
+const ad = a ?? <a />;
+const ae = <a /><T>;
+const af = void (<a />);
+const ag = delete (<a />);
+const ah = import(<a />);
+const ai = [<a />];
+const aj = a[(<a />)];
+const ak = a ? <a /> : <b />;
+const al = <a /> ? 1 : 2;
+function am(a = <a />) {}
+const [an = <a />] = [];
+enum Ao {
+  a = <a />,
+}
+@(<a />)
+class Ap {}
+export default <a />;
+
+===================== End =====================

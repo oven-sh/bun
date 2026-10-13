@@ -49,7 +49,7 @@ struct OutdatedTable {
 // TODO: use in `bun pack, publish, run, ...`
 enum FilterType<'a> {
     All,
-    Name(&'a [u8]),
+    Name(Box<glob::Prepared<&'a [u8]>>),
     Path,
 }
 
@@ -58,7 +58,7 @@ impl<'a> FilterType<'a> {
         if is_path {
             FilterType::Path
         } else {
-            FilterType::Name(pattern)
+            FilterType::Name(Box::new(glob::Prepared::new(pattern)))
         }
     }
     // *NOTE*: name and path are not allocated → no Drop impl needed.
@@ -397,12 +397,10 @@ impl OutdatedCommand {
                             match pattern {
                                 FilterType::Path => unreachable!(),
                                 FilterType::Name(name_pattern) => {
-                                    if name_pattern.is_empty() {
+                                    if name_pattern.pattern().is_empty() {
                                         continue;
                                     }
-                                    if !glob::r#match(name_pattern, dep.name.slice(string_buf))
-                                        .matches()
-                                    {
+                                    if !name_pattern.r#match(dep.name.slice(string_buf)).matches() {
                                         break 'match_ false;
                                     }
                                 }

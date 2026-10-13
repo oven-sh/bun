@@ -993,7 +993,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // like a failed write (syscall "write", same shape as net.ts
         // failWrite) and close the socket so 'error' is followed by 'close'.
         #[cfg(not(windows))]
-        if fatal_send_errno != 0 {
+        if !SSL && fatal_send_errno != 0 {
             let global = handlers.global_object;
             let _scope = ScopeExit {
                 socket: this,
@@ -1013,8 +1013,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             return Ok(());
         }
-        #[cfg(windows)]
-        let _ = fatal_send_errno;
         log!(
             "onWritable buffered_data_for_node_net {}",
             this.buffered_data_for_node_net.get().len()
@@ -1033,7 +1031,11 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
+        // The TLS engine ended the writes only: it reads what the peer sent, then closes.
+        // node:net gets what `$write` returns for such a send, and holds the write until that close.
+        let args = [this_value, JSValue::js_number(f64::from(-fatal_send_errno))];
+        let argc = if SSL && fatal_send_errno != 0 { 2 } else { 1 };
+        if let Err(err) = callback.call(&global, this_value, &args[..argc]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
         Ok(())
@@ -3154,7 +3156,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
     /// a fatal send error (buffer dropped, writable not re-armed).
-    /// On POSIX, `on_writable` consumes the errno: it dispatches the error
+    /// `on_writable` consumes the errno. It hands a TLS socket's to the drain
+    /// callback. For plain TCP on POSIX it dispatches the error
     /// handler and closes the socket. On Windows the errno is still ignored
     /// (the drain callback is dispatched regardless) - skipping the drain on
     /// fatal made Windows servers reset FIN-terminated responses (see

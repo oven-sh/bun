@@ -1552,7 +1552,7 @@ describe("TLS write() that ends short while another TLS socket is stalled", () =
   // Writes `step` until a write is short. Returns the sum write() reported.
   function fill(socket: Socket<Pair>, step: Buffer) {
     let total = 0;
-    for (let wrote = step.length; wrote === step.length && total < 64 * STEP; ) {
+    for (let wrote = step.length; wrote === step.length && total < 64 * STEP;) {
       wrote = socket.write(step);
       total += Math.max(wrote, 0);
     }

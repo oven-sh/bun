@@ -2224,6 +2224,20 @@ impl StackCheck {
             .saturating_sub(Self::THRESHOLD)
     }
 
+    /// The same check, which says no after at most `bytes` more of stack
+    /// than are in use here. For what builds a tree that other code walks
+    /// afterwards: that code needs stack for each level too, its frames can
+    /// be larger, and a derived `Drop` cannot ask.
+    #[inline]
+    pub fn with_at_most(self, bytes: usize) -> Self {
+        let end = Self::frame_address()
+            .saturating_sub(Self::THRESHOLD)
+            .saturating_sub(bytes);
+        Self {
+            cached_stack_end: self.cached_stack_end.max(end),
+        }
+    }
+
     /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
     /// headroom on top of the platform threshold. Use when the code after the
     /// check makes a deep call (e.g. into the transpiler) before reaching the

@@ -621,7 +621,6 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         null,
       ],
       ['<style lang= "scss">b{c:d}</style>\n', '<style lang="scss">\n  b {\n    c: d;\n  }\n</style>\n', null],
-      ['<script lang="ts>let b</script>\n', '<script lang="ts>\n  let b;\n</script>\n', null],
     ],
     "a comment next to a script takes nothing with it": [
       [
@@ -663,6 +662,10 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["<b>y</b> <script></script>c\n", "<script></script>\n\n<b>y</b> c\n", "<script></script>\n\n<b>y</b>c\n"],
       ["\u00A0b\n", "\u00A0b\n", "b\n"],
       ["\u2028b\n", "\u2028b\n", "b\n"],
+      // At the end of the file it would be nothing to Svelte, which has `trimEnd()`.
+      ["b\u00A0<script></script>\n", "<script></script>\n\nb&nbsp;\n", "<script></script>\n\nb\u00A0\n"],
+      ["b\u2028<script></script>\n", "<script></script>\n\nb&#x2028;\n", "<script></script>\n\nb\u2028\n"],
+      ["b\u00A0<style></style>\n", "b\u00A0\n\n<style></style>\n", null],
       [
         "<pre><span>let</span><span> </span><span>y</span></pre>\n",
         "<pre><span>let</span><span> </span><span>y</span></pre>\n",
@@ -967,6 +970,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "<script>\r\n  let a;\r\n</script>\r\n<p>{/if}</p>\r\n",
       "There is no open block to end here",
       [4, 5, "<p>{/if}</p>"],
+    ],
+    // To Svelte this is `t`, or all that is up to a quote further down.
+    [
+      "at a quote in a <script> tag that is not closed",
+      '<script lang="ts>let a</script>\n',
+      "Unclosed string",
+      [1, 14, '<script lang="ts>let a</script>'],
     ],
   ])("a syntax error is shown where it is: %s", async (_, text, message, [line, column, shown]) => {
     const caret = Buffer.alloc(`${line} | `.length + column - 1, " ").toString() + "^";

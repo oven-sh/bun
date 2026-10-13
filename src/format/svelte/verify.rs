@@ -10,7 +10,8 @@
 //! - There are as many comments: in the markup, between attributes, and around expressions.
 //! - The text of the markup has the same words in the same order, with white space between the same of them, and between
 //!   them and what is next to them. White space is nothing next to a block element, and at the ends of the markup, of a
-//!   block element and of a component. In `<pre>` and `<textarea>` every byte counts.
+//!   block element and of a component, also where it is in an inline element that is the first or the last thing there. In
+//!   `<pre>` and `<textarea>` every byte counts.
 
 use super::Parsers;
 use super::ast::{
@@ -33,12 +34,11 @@ struct Check<'t, 'a> {
 /// What the text in a fragment is.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Text {
-    /// Words. The white space at the ends of the fragment is nothing.
-    Words,
-    /// The same, and the white space at the ends is what it is between two words: an inline element.
-    WordsWithEnds,
-    /// The same, unless there is nothing else in the fragment: a block of Svelte.
-    WordsWithEndsAroundThem,
+    /// Words. Whether the white space at the start of the fragment is nothing, and the same for its end. For a node: whether
+    /// white space before it would be nothing, and behind it.
+    Words(bool, bool),
+    /// Words in a block of Svelte: the white space at the ends is what it is between two words, unless there is nothing else.
+    WordsInBlock,
     /// `<pre>`, `<textarea>`
     Preformatted,
     /// A script, a style sheet, a template in another language.
@@ -234,9 +234,10 @@ impl Check<'_, '_> {
         })
     }
 
-    /// The texts in `run`, which has nothing else in it but comments, and is between `previous` and `next`.
+    /// The texts in `run`, which has nothing else in it but comments. `is_free`: whether white space is nothing at its start, and
+    /// at its end. Returns whether there is a word in it.
     #[optimize(size)]
-    fn texts(&mut self, run: &[Id], (previous, next): (Option<Id>, Option<Id>), how: Text) {
+    fn texts(&mut self, run: &[Id], is_free: (bool, bool), is_preformatted: bool) -> bool {
         let tree = self.tree;
         let mut texts = run.iter().filter_map(|&it| match &tree[it].kind {
             Kind::Text { raw } => Some(&raw[..]),
@@ -248,27 +249,18 @@ impl Check<'_, '_> {
             all
         });
         let merged = with_white_space_decoded(merged);
-        if how == Text::Preformatted {
-            return self.reader.exact(&merged);
+        if is_preformatted {
+            self.reader.exact(&merged);
+            return true;
         }
         let mut words = strings::split_any(&merged, b" \t\n\r\x0C").filter(|it| !it.is_empty());
-        let is_all_there_is =
-            previous.is_none() && next.is_none() && merged.trim_ascii().is_empty();
-        let is_free_at_end = match how {
-            Text::WordsWithEnds => false,
-            Text::WordsWithEndsAroundThem => is_all_there_is,
-            _ => true,
-        };
-        let is_free_next_to =
-            |it: Option<Id>| it.map_or(is_free_at_end, |it| self.is_block_element(it));
-        let (is_free_before, is_free_behind) = (is_free_next_to(previous), is_free_next_to(next));
         let Some(first) = words.next() else {
-            if !merged.is_empty() && !is_free_before && !is_free_behind {
+            if !merged.is_empty() && !is_free.0 && !is_free.1 {
                 self.reader.mark(8);
             }
-            return;
+            return false;
         };
-        if merged.first().is_some_and(u8::is_ascii_whitespace) && !is_free_before {
+        if merged.first().is_some_and(u8::is_ascii_whitespace) && !is_free.0 {
             self.reader.mark(8);
         }
         self.reader.exact(first);
@@ -276,29 +268,66 @@ impl Check<'_, '_> {
             self.reader.mark(8);
             self.reader.exact(word);
         }
-        if merged.last().is_some_and(u8::is_ascii_whitespace) && !is_free_behind {
+        if merged.last().is_some_and(u8::is_ascii_whitespace) && !is_free.1 {
             self.reader.mark(8);
         }
+        true
     }
 
-    /// The text in `fragment`, and where it is among what else is in it.
+    /// Reads the text in `fragment`, and where it is among what else is in it, which it says in `next`, the last first.
     #[optimize(size)]
-    fn texts_of(&mut self, fragment: FragmentId, how: Text) {
+    fn enter_fragment(&mut self, fragment: FragmentId, how: Text, next: &mut Vec<Next>) {
         let tree = self.tree;
         let children = tree.fragment(fragment);
+        let from = next.len();
+        if matches!(how, Text::Code) {
+            next.extend(children.iter().rev().map(|&id| Next::Node(id, how)));
+            return;
+        }
         let is_text = |id: &Id| matches!(tree[*id].kind, Kind::Text { .. } | Kind::Comment { .. });
+        let is_blank = children.iter().all(|&id| match &tree[id].kind {
+            Kind::Text { raw } => raw.trim_ascii().is_empty(),
+            Kind::Comment { .. } => true,
+            _ => false,
+        });
+        let is_free_at = match how {
+            Text::Words(start, end) => (start, end),
+            _ => (is_blank, is_blank),
+        };
         let (mut at, mut previous) = (0, None);
         while at < children.len() {
             let len = children[at..].iter().take_while(|it| is_text(it)).count();
-            let next = children.get(at + len).copied();
-            if len > 0 {
-                self.texts(&children[at..at + len], (previous, next), how);
+            let following = children.get(at + len).copied();
+            let is_free_before = previous.map_or(is_free_at.0, |it| self.is_block_element(it));
+            let is_free_behind = following.map_or(is_free_at.1, |it| self.is_block_element(it));
+            let run = &children[at..at + len];
+            let has_words = len > 0
+                && self.texts(
+                    run,
+                    (is_free_before, is_free_behind),
+                    how == Text::Preformatted,
+                );
+            // Now it is known what is behind `previous`.
+            if let Some(Next::Node(_, Text::Words(_, behind))) =
+                next.last_mut().filter(|_| previous.is_some())
+            {
+                *behind = !has_words && is_free_behind;
             }
-            if next.is_some() {
+            next.extend(run.iter().map(|&id| Next::Node(id, how)));
+            if let Some(following) = following {
                 self.reader.mark(9);
+                next.push(Next::Node(
+                    following,
+                    match how {
+                        Text::Preformatted => how,
+                        // What is behind it is known when it has been read, unless nothing is.
+                        _ => Text::Words(!has_words && is_free_before, is_free_at.1),
+                    },
+                ));
             }
-            (at, previous) = (at + len + 1, next);
+            (at, previous) = (at + len + 1, following);
         }
+        next[from..].reverse();
     }
 
     /// Reads `id`, and says in `next` what is in it, the last first.
@@ -314,7 +343,7 @@ impl Check<'_, '_> {
         let mut fragments: [Option<Option<FragmentId>>; 3] = [None; 3];
         let mut how = match is_pre {
             true => Text::Preformatted,
-            false => Text::WordsWithEndsAroundThem,
+            false => Text::WordsInBlock,
         };
         match &node.kind {
             // The rest has been read with the fragment.
@@ -344,15 +373,16 @@ impl Check<'_, '_> {
                     {
                         Text::Preformatted
                     }
-                    // One without an end tag goes on up to the end tag of what it is in, with the white space before that.
                     _ if is_regular
                         && !self.is_block_element(id)
-                        && self.sensitivity != HtmlWhitespaceSensitivity::Ignore
-                        && has_end_tag(whole.of(self.text), element.name) =>
+                        && self.sensitivity != HtmlWhitespaceSensitivity::Ignore =>
                     {
-                        Text::WordsWithEnds
+                        match around {
+                            Text::Words(..) => around,
+                            _ => Text::Words(false, false),
+                        }
                     }
-                    _ => Text::Words,
+                    _ => Text::Words(true, true),
                 };
             }
             Kind::Script {
@@ -455,14 +485,6 @@ impl Check<'_, '_> {
     }
 }
 
-/// Whether `written`, an element with the name `name`, ends with `</name>`.
-#[optimize(size)]
-fn has_end_tag(written: &[u8], name: &[u8]) -> bool {
-    strings::last_index_of(written, b"</")
-        .and_then(|at| written[at + 2..].strip_prefix(name))
-        .is_some_and(|behind| strings::trim_js_whitespace(behind) == b">")
-}
-
 /// `text` with the characters in the place of `&nbsp;` and of `&#xA0;` and the like, if they are white space to JavaScript.
 #[optimize(size)]
 fn with_white_space_decoded(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
@@ -512,11 +534,11 @@ fn signature(
         comments: 0,
         sensitivity,
     };
-    let mut next = vec![Next::Fragment(Some(tree.fragment), Text::Words)];
+    let mut next = vec![Next::Fragment(Some(tree.fragment), Text::Words(true, true))];
     next.extend(
         ([tree.css, tree.instance, tree.module, tree.options].into_iter())
             .flatten()
-            .map(|id| Next::Node(id, Text::Words)),
+            .map(|id| Next::Node(id, Text::Words(true, true))),
     );
     while let Some(it) = next.pop() {
         match it {
@@ -525,15 +547,7 @@ fn signature(
             Next::Fragment(None, _) => check.reader.mark(6),
             Next::Fragment(Some(fragment), how) => {
                 check.reader.mark(7);
-                if how != Text::Code {
-                    check.texts_of(fragment, how);
-                }
-                next.extend(
-                    tree.fragment(fragment)
-                        .iter()
-                        .rev()
-                        .map(|&id| Next::Node(id, how)),
-                );
+                check.enter_fragment(fragment, how, &mut next);
             }
         }
     }

@@ -732,7 +732,29 @@ describe("Headers", () => {
         seen.push(iterator.next());
         expect(seen).toEqual(["a", "c", "h", "x", "y", "a=1", "b=2", { value: undefined, done: true }]);
       });
-      test("a name the server removes as it writes the response is skipped", async () => {
+      // The server takes Content-Length out of the headers it was given. The iterator treats that like delete().
+      test.each([
+        [
+          "before it is reached is skipped",
+          1,
+          [
+            ["accept", "a"],
+            ["host", "h"],
+            ["vary", "v"],
+            ["x-custom", "x"],
+          ],
+        ],
+        [
+          "after it was reached moves the position",
+          2,
+          [
+            ["accept", "a"],
+            ["content-length", "2"],
+            ["vary", "v"],
+            ["x-custom", "x"],
+          ],
+        ],
+      ])("a name the server removes as it writes the response %s", async (_, steps, expected) => {
         const seen: unknown[] = [];
         let iterator: ReturnType<Headers["entries"]> | undefined;
         using server = Bun.serve({
@@ -748,19 +770,14 @@ describe("Headers", () => {
               ],
             });
             iterator = response.headers.entries();
-            seen.push(iterator.next().value);
+            for (let i = 0; i < steps; i++) seen.push(iterator.next().value);
             return response;
           },
         });
         const response = await fetch(server.url);
         expect(await response.text()).toBe("ok");
         for (const entry of iterator!) seen.push(entry);
-        expect(seen).toEqual([
-          ["accept", "a"],
-          ["host", "h"],
-          ["vary", "v"],
-          ["x-custom", "x"],
-        ]);
+        expect(seen).toEqual(expected);
       });
       test("forEach sees what its callback changes", () => {
         const headers = start();

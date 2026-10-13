@@ -819,7 +819,6 @@ impl CssColor {
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
         // No gamut mapping here: https://www.w3.org/TR/css-color-4/#interpolation-space
-        // The conversions into hsl and hwb still map an operand that is outside sRGB.
         let mut first_color = T::try_from_css_color(self)?;
         let mut second_color = T::try_from_css_color(other)?;
 
@@ -1712,8 +1711,7 @@ macro_rules! define_colorspace {
     };
     (@interp none $pow:ident $(($eps:literal))? $name:ident { $a:ident, $b:ident, $c:ident }) => {};
 
-    // A converted color has no hue when its chroma (hsl: saturation, hwb: 1 - w - b) is $eps or less.
-    // The values are the ones of the css-color-4 conversion code: https://www.w3.org/TR/css-color-4/#lab-to-lch
+    // $eps is the chroma at or below which a converted color has no hue: https://www.w3.org/TR/css-color-4/#lab-to-lch
     (@powerless none $name:ident { $a:ident, $b:ident, $c:ident }) => {};
     (@powerless lch($eps:literal) $name:ident { $l:ident, $c:ident, $h:ident }) => {
         fn adjust_powerless_components(&mut self) {

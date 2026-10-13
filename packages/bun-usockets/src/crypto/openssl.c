@@ -2427,11 +2427,9 @@ struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
   return us_dispatch_timeout(s);
 }
 
-/* The read side delivers what the peer sent before it closes, unless the owner already let go, or stopped reading until
- * what was rejected drains (hangup_closes_unsent). */
+/* The read side delivers what the peer sent before it closes, unless the owner already let go. */
 static struct us_socket_t *ssl_close_after_rejected_send(struct us_socket_t *s, int send_error) {
-  const int reads_go_on = !s->ssl_close_after_spill && !(s->hangup_closes_unsent && s->flags.is_paused);
-  if (reads_go_on && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) return s;
+  if (!s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) return s;
   if (s->ssl_handshake_state == HANDSHAKE_PENDING) {
     ssl_set_loop_data(s);
     ssl_trigger_handshake_econnreset(s);

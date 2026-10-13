@@ -878,6 +878,11 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   // What bindgen.ts writes follows from the names and places of its inputs alone.
   const stems = sources.bindgen.map(src => `Generated${pascalCase(basename(src, ".bind.ts"))}`);
+  stems.forEach((stem, i) => {
+    const first = stems.indexOf(stem);
+    if (first !== i)
+      throw new BuildError(`${sources.bindgen[first]} and ${sources.bindgen[i]} both generate ${stem}.h`);
+  });
   const cpp = stems.map(stem => resolve(cfg.codegenDir, `${stem}.cpp`));
   const headers = [
     ...stems.map(stem => resolve(cfg.codegenDir, `${stem}.h`)),

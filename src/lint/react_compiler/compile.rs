@@ -35,8 +35,9 @@ pub(crate) struct Compiler<'a> {
     arena: bun_alloc::Arena,
 }
 
-/// oxlint's `react_compiler_plugin_options`, the plugin's `COMPILER_OPTIONS`
-fn config_of(flavor: Flavor) -> EnvironmentConfig {
+/// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `stands_alone` we don't follow the plugin
+/// where that would make a rule useless.
+fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
     let is_oxlint = flavor == Flavor::Oxlint;
     EnvironmentConfig {
         validate_ref_access_during_render: true,
@@ -57,17 +58,18 @@ fn config_of(flavor: Flavor) -> EnvironmentConfig {
         validate_static_components: true,
         validate_no_freezing_known_mutable_functions: true,
         validate_no_void_use_memo: true,
-        validate_no_capitalized_calls: Some(match flavor {
+        validate_no_capitalized_calls: Some(match is_oxlint || stands_alone {
             // Globals that oxc's compiler knows and Bun's does not.
-            Flavor::Oxlint => vec!["BigInt".to_owned(), "Symbol".to_owned()],
-            Flavor::Eslint => Vec::new(),
+            true => vec!["BigInt".to_owned(), "Symbol".to_owned()],
+            false => Vec::new(),
         }),
         validate_hooks_usage: true,
         validate_no_derived_computations_in_effects: true,
         validate_exhaustive_memoization_dependencies: true,
-        validate_exhaustive_effect_dependencies: match flavor {
-            Flavor::Oxlint => ExhaustiveEffectDepsMode::All,
-            Flavor::Eslint => ExhaustiveEffectDepsMode::Off,
+        // The plugin keeps this behind a flag that's off, so its `exhaustive-effect-dependencies` never reports.
+        validate_exhaustive_effect_dependencies: match is_oxlint || stands_alone {
+            true => ExhaustiveEffectDepsMode::All,
+            false => ExhaustiveEffectDepsMode::Off,
         },
         ..EnvironmentConfig::default()
     }
@@ -79,7 +81,7 @@ impl<'a> Compiler<'a> {
             file,
             flavor,
             wanted,
-            config: config_of(flavor),
+            config: config_of(flavor, file.language().stands_alone),
             arena: bun_alloc::Arena::new(),
         }
     }
@@ -265,7 +267,7 @@ fn too_deep() -> Finding {
     Finding {
         category: ErrorCategory::Todo,
         reason: "Support functions of this size".to_owned(),
-        description: Some("What is in it is nested too deeply".to_owned()),
+        description: Some("The function body is nested too deeply".to_owned()),
         details: Vec::new(),
         suggestions: Vec::new(),
         is_error_detail: true,

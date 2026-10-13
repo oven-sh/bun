@@ -1,8 +1,8 @@
+use bun_lint::prelude::*;
+use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_inner_expression_unless_chain, get_member_expr, static_property_name,
 };
-use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 use smallvec::SmallVec;
 
 /// Disallow useless array length check.
@@ -30,16 +30,28 @@ fn operand(e: Expr<'_>, operator: BinOp) -> Option<Operand<'_>> {
                 BinOp::Or => op == BinOp::EqEqEq,
                 _ => matches!(op, BinOp::NotEqEq | BinOp::Gt),
             };
-            if !is_check || right.tag() != ExprTag::Number || right.is_parenthesized() || right.text() != b"0" {
+            if !is_check
+                || right.tag() != ExprTag::Number
+                || right.is_parenthesized()
+                || right.text() != b"0"
+            {
                 return None;
             }
             let member = get_inner_expression_unless_chain(left)?;
-            static_property_name(member)?.is("length").then_some(Operand::LengthCheck(array_of(member)?, e.span()))
+            static_property_name(member)?
+                .is("length")
+                .then_some(Operand::LengthCheck(array_of(member)?, e.span()))
         }
         ExprKind::Call(call) if !e.is_chain_root() => {
             let member = get_member_expr(call.callee())?;
-            let method = if operator == BinOp::Or { "every" } else { "some" };
-            static_property_name(member)?.is(method).then_some(Operand::Call(array_of(member)?))
+            let method = if operator == BinOp::Or {
+                "every"
+            } else {
+                "some"
+            };
+            static_property_name(member)?
+                .is(method)
+                .then_some(Operand::Call(array_of(member)?))
         }
         _ => None,
     }
@@ -70,21 +82,29 @@ impl Rule for NoUselessLengthCheck {
         let mut pending: SmallVec<[(Expr<'a>, u32); 8]> = SmallVec::new();
         let (mut at, mut depth, mut around_both) = (root, 0, 0);
         let mut previous = None;
+        // The `&&` around where it is, from the outside in. oxlint's rule is called with each.
+        let mut around: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
         loop {
             while let ExprKind::Binary { op, left, right } = at.kind()
                 && op == operator
             {
+                around.truncate(depth as usize);
+                around.push(at);
                 depth += 1;
                 pending.push((right, depth));
                 at = left;
             }
             let current = operand(at, operator);
             if let (Some(Operand::LengthCheck(array, span)), Some(Operand::Call(called)))
-            | (Some(Operand::Call(called)), Some(Operand::LengthCheck(array, span))) = (previous, current)
+            | (Some(Operand::Call(called)), Some(Operand::LengthCheck(array, span))) =
+                (previous, current)
                 && array == called
             {
-                for _ in 0..around_both {
-                    cx.report(span, USELESS_LENGTH_CHECK).help(match operator {
+                for called_with in around.iter().take(around_both as usize) {
+                    let report = cx
+                        .report(span, USELESS_LENGTH_CHECK)
+                        .called_with(*called_with);
+                    report.help(match operator {
                         BinOp::And => {
                             "The non-empty check is useless as `Array#some()` returns `false` for an empty array."
                         }

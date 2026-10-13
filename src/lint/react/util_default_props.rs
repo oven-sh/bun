@@ -334,6 +334,10 @@ impl<'a> Instructions<'a> for DefaultPropsInstructions<'a> {
     }
 
     fn program_exit(&mut self, components: &mut Components<'a>) {
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "each is written to its own component"
+        )]
         for (component, default_props) in self.default_props.drain() {
             let default_props = match default_props {
                 Some(default_props) => DefaultProps::Known(

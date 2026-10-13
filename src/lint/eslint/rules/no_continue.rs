@@ -17,7 +17,12 @@ impl Rule for NoContinue {
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let whole = stmt.span();
         // oxlint points at the keyword.
-        let end = if cx.language().is_oxlint { whole.start + "continue".len() as u32 } else { whole.end };
-        cx.report(Span::new(whole.start, end), UNEXPECTED);
+        let end = if cx.language().is_oxlint {
+            whole.start + "continue".len() as u32
+        } else {
+            whole.end
+        };
+        cx.report(Span::new(whole.start, end), UNEXPECTED)
+            .called_with(stmt);
     }
 }

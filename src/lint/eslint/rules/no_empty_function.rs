@@ -72,17 +72,16 @@ fn method_definition_of(func: Func<'_>) -> Option<Member<'_>> {
     let member = match func.owner() {
         Node::Member(member) => member,
         Node::Expr(e) => match e.parent() {
-            Node::Member(member)
-                if matches!(member.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == e) =>
-            {
+            Node::Member(member) if matches!(member.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == e) => {
                 member
             }
             _ => return None,
         },
         _ => return None,
     };
-    let is_method_definition =
-        member.func().is_some() && !member.is_signature() && !member.flags().contains(Flags::ABSTRACT);
+    let is_method_definition = member.func().is_some()
+        && !member.is_signature()
+        && !member.flags().contains(Flags::ABSTRACT);
     is_method_definition.then_some(member)
 }
 
@@ -102,7 +101,10 @@ fn get_kind(func: Func) -> Option<u16> {
         FnKind::Arrow => return Some(ARROW_FUNCTIONS),
         FnKind::Decl => false,
         FnKind::Expr | FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
-            match (method_definition_of(func), property_of(func).map(Prop::kind)) {
+            match (
+                method_definition_of(func),
+                property_of(func).map(Prop::kind),
+            ) {
                 (Some(member), _) if member.is_constructor() => return Some(CONSTRUCTORS),
                 (Some(member), _) => match member.kind() {
                     MemberKind::Getter => return Some(GETTERS),
@@ -160,7 +162,9 @@ fn is_allowed_by_oxlint(func: Func, allow: Allow) -> bool {
     let is_allowed_method = is_async && allow.includes(ASYNC_METHODS)
         || is_generator && allow.includes(GENERATOR_METHODS)
         || allow.includes(METHODS);
-    let is_decorated = |member: Member| allow.includes(DECORATED_FUNCTIONS) && member.decorators().next().is_some();
+    let is_decorated = |member: Member| {
+        allow.includes(DECORATED_FUNCTIONS) && member.decorators().next().is_some()
+    };
     if func.is_arrow() {
         return allow.includes(ARROW_FUNCTIONS)
             || is_async && allow.includes(ASYNC_FUNCTIONS)
@@ -177,12 +181,17 @@ fn is_allowed_by_oxlint(func: Func, allow: Allow) -> bool {
                     _ if member.is_constructor() => {
                         allow.includes(CONSTRUCTORS)
                             || func.params().iter().any(Param::is_parameter_property)
-                            || flags.contains(Flags::PRIVATE) && allow.includes(PRIVATE_CONSTRUCTORS)
-                            || flags.contains(Flags::PROTECTED) && allow.includes(PROTECTED_CONSTRUCTORS)
+                            || flags.contains(Flags::PRIVATE)
+                                && allow.includes(PRIVATE_CONSTRUCTORS)
+                            || flags.contains(Flags::PROTECTED)
+                                && allow.includes(PROTECTED_CONSTRUCTORS)
                     }
                     MemberKind::Getter => allow.includes(GETTERS),
                     MemberKind::Setter => allow.includes(SETTERS),
-                    _ => is_allowed_method || flags.contains(Flags::OVERRIDE) && allow.includes(OVERRIDE_METHODS),
+                    _ => {
+                        is_allowed_method
+                            || flags.contains(Flags::OVERRIDE) && allow.includes(OVERRIDE_METHODS)
+                    }
                 }
         }
         FunctionParent::ObjectProperty(prop) => match prop.kind() {
@@ -255,14 +264,14 @@ fn check_without_statements<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'
     let report = match cx.language().is_oxlint {
         true => {
             let (name, fn_kind) = name_for_oxlint(func);
-            cx.report(body, UNEXPECTED).data("name", name).data("fn_kind", fn_kind)
+            let report = cx.report(body, UNEXPECTED).called_with(func);
+            report.data("name", name).data("fn_kind", fn_kind)
         }
         false => cx.report(body, UNEXPECTED).data("name", name.clone()),
     };
-    report
-        .suggest_with(SUGGEST_COMMENT, &[("name", &name[..])], |fixer| {
-            fixer.replace(inside, " /* empty */ ")
-        });
+    report.suggest_with(SUGGEST_COMMENT, &[("name", &name[..])], |fixer| {
+        fixer.replace(inside, " /* empty */ ")
+    });
 }
 
 impl Rule for NoEmptyFunction {

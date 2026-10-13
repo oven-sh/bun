@@ -13,6 +13,7 @@ use super::conditional::{ConditionalLike, Operand, should_extra_indent};
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::parentheses;
 use crate::js::print::binary_like_expression::is_angular_pipe;
+use crate::js::print::statements::parenthesis_before_needs_semicolon;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -283,9 +284,12 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
 
     let format_test_with_question_mark = format_with(|f| {
         let format_test = format_with(|f| match conditional {
-            ConditionalLike::ConditionalExpression(_) => {
+            ConditionalLike::ConditionalExpression(e) => {
                 let is_conditional = test.is_conditional();
                 let test = FormatOperand(test, comments.after_test);
+                if parenthesis_before_needs_semicolon(e, f) {
+                    write!(f, if_group_breaks(&";"));
+                }
                 write!(
                     f,
                     [

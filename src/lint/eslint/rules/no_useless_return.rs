@@ -54,7 +54,8 @@ struct ReturnSets {
 impl ReturnSets {
     fn add(&mut self, set: ReturnSet) -> u32 {
         if self.sets.is_empty() {
-            self.sets.push((ReturnSet::Union(EMPTY, EMPTY), Filtered::Used));
+            self.sets
+                .push((ReturnSet::Union(EMPTY, EMPTY), Filtered::Used));
         }
         self.sets.push((set, Filtered::No));
         self.sets.len() as u32 - 1
@@ -82,7 +83,11 @@ impl ReturnSets {
     fn mark_as_used(&mut self, set: u32, mut uses: impl FnMut(u32) -> bool) -> u32 {
         let mut pending = vec![set];
         while let Some(&at) = pending.last() {
-            let Some(&(kind, _)) = self.sets.get(at as usize).filter(|_| self.left_of(at).is_none()) else {
+            let Some(&(kind, _)) = self
+                .sets
+                .get(at as usize)
+                .filter(|_| self.left_of(at).is_none())
+            else {
                 pending.pop();
                 continue;
             };
@@ -154,7 +159,9 @@ pub struct State<'a> {
 
 /// ESLint's `isReturned`: `segment` ends with a `return`, or it is unreachable.
 fn is_returned(segments: &SegmentInfoMap, segment: Segment<'_>) -> bool {
-    segments.get(&segment.id()).is_none_or(|info| info.is_returned)
+    segments
+        .get(&segment.id())
+        .is_none_or(|info| info.is_returned)
 }
 
 /// ESLint's `isInLoop` or `isInFinally`, as far as `parent`, which `child` is directly in, tells.
@@ -182,11 +189,18 @@ impl<'a> State<'a> {
         let mut pending = segment.all_prev_segments();
         while let Some(prev) = pending.pop() {
             if prev.is_reachable() {
-                let of_prev = self.segments.get(&prev.id()).map_or(EMPTY, |info| info.useless_returns);
+                let of_prev = self
+                    .segments
+                    .get(&prev.id())
+                    .map_or(EMPTY, |info| info.useless_returns);
                 useless_returns = self.sets.union(useless_returns, of_prev);
             } else if traversed.insert(prev.id()) {
                 let before = prev.all_prev_segments();
-                pending.extend(before.into_iter().filter(|it| is_returned(&self.segments, *it)));
+                pending.extend(
+                    before
+                        .into_iter()
+                        .filter(|it| is_returned(&self.segments, *it)),
+                );
             }
         }
         useless_returns
@@ -205,9 +219,14 @@ impl<'a> State<'a> {
         while let Some(segment) = pending.pop() {
             if !segment.is_reachable() {
                 // Nothing is added to what has ended before it.
-                if self.used_unreachable.insert(segment.id(), self.sets.age) != Some(self.sets.age) {
+                if self.used_unreachable.insert(segment.id(), self.sets.age) != Some(self.sets.age)
+                {
                     let before = segment.all_prev_segments();
-                    pending.extend(before.into_iter().filter(|it| is_returned(&self.segments, *it)));
+                    pending.extend(
+                        before
+                            .into_iter()
+                            .filter(|it| is_returned(&self.segments, *it)),
+                    );
                 }
                 continue;
             }
@@ -219,7 +238,11 @@ impl<'a> State<'a> {
                     return true;
                 };
                 let span = statement.span();
-                if scope.traversed_try_blocks.iter().any(|block| block.contains(span)) {
+                if scope
+                    .traversed_try_blocks
+                    .iter()
+                    .any(|block| block.contains(span))
+                {
                     return false;
                 }
                 self.useless_count -= usize::from(std::mem::take(is_useless));
@@ -235,7 +258,10 @@ impl<'a> State<'a> {
         };
         if !scope.is_active
             || !scope.code_path.is_current_reachable()
-            || self.in_loop_or_finally.find(statement.into(), is_in_loop_or_finally) == Some(true)
+            || self
+                .in_loop_or_finally
+                .find(statement.into(), is_in_loop_or_finally)
+                == Some(true)
         {
             return;
         }
@@ -318,13 +344,21 @@ fn what_is_known<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Known> {
                 | StmtTag::While
                 | StmtTag::DoWhile
         ) || matches!(next.as_return(), Some(Some(_)));
-        return Some(if is_executed { Known::Useful } else { Known::Nothing });
+        return Some(if is_executed {
+            Known::Useful
+        } else {
+            Known::Nothing
+        });
     }
     match parent {
         // A `return` in a static block is an error.
-        Node::Func(func) if list.is_some() && func.kind() != FnKind::StaticBlock => Some(Known::Useless),
+        Node::Func(func) if list.is_some() && func.kind() != FnKind::StaticBlock => {
+            Some(Known::Useless)
+        }
         Node::Stmt(parent) => match parent.tag() {
-            StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => Some(Known::Useful),
+            StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => {
+                Some(Known::Useful)
+            }
             StmtTag::If => None,
             StmtTag::Block if parent.as_block().is_some() => None,
             _ => Some(Known::Nothing),
@@ -339,11 +373,16 @@ fn oxlint_is_at_the_end<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> {
     let is_last = |list: List<'a, Stmt<'a>>| list.last().map(Node::Stmt) == Some(child);
     match parent {
         // A `return` in a static block is an error.
-        Node::Func(func) => Some(func.kind() != FnKind::StaticBlock && func.body_statements().is_some_and(is_last)),
+        Node::Func(func) => {
+            Some(func.kind() != FnKind::StaticBlock && func.body_statements().is_some_and(is_last))
+        }
         Node::Case(_) => None,
         Node::Stmt(parent) => match parent.kind() {
             StmtKind::Block(list) if !is_last(list) => Some(false),
-            StmtKind::Try { finalizer: Some(finalizer), .. } if Node::Stmt(finalizer) == child => Some(false),
+            StmtKind::Try {
+                finalizer: Some(finalizer),
+                ..
+            } if Node::Stmt(finalizer) == child => Some(false),
             _ => parent.is_loop().then_some(false),
         },
         _ => Some(false),
@@ -385,8 +424,12 @@ fn oxlint_executes_after<'a>(child: Node<'a>, case: Case<'a>) -> Option<bool> {
         return None;
     };
     let body = case.body();
-    let rest = std::iter::successors(body.after(child.span().start), |it| body.after(it.span().start));
-    let later = std::iter::successors(cases.after(case.span().start), |it| cases.after(it.span().start));
+    let rest = std::iter::successors(body.after(child.span().start), |it| {
+        body.after(it.span().start)
+    });
+    let later = std::iter::successors(cases.after(case.span().start), |it| {
+        cases.after(it.span().start)
+    });
     oxlint_executes(&mut rest.chain(later.flat_map(|it| it.body().iter())))
 }
 
@@ -394,14 +437,17 @@ impl NoUselessReturn {
     /// oxlint does not follow the ways through a function: it asks what is written after the `return`.
     fn is_useless_for_oxlint<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> bool {
         let at_the_end = &mut state.oxlint_at_the_end;
-        let is_useless = state.oxlint_useless.find(statement.into(), |child, parent| match parent {
-            Node::Case(case) => match oxlint_executes_after(child, case)? {
-                true => Some(false),
-                // It looks no further, not after the `switch` that the `break` leaves either.
-                false => Some(at_the_end.find(parent, oxlint_is_at_the_end) == Some(true)),
-            },
-            _ => oxlint_is_at_the_end(child, parent),
-        });
+        let is_useless =
+            state
+                .oxlint_useless
+                .find(statement.into(), |child, parent| match parent {
+                    Node::Case(case) => match oxlint_executes_after(child, case)? {
+                        true => Some(false),
+                        // It looks no further, not after the `switch` that the `break` leaves either.
+                        false => Some(at_the_end.find(parent, oxlint_is_at_the_end) == Some(true)),
+                    },
+                    _ => oxlint_is_at_the_end(child, parent),
+                });
         is_useless == Some(true)
     }
 
@@ -409,7 +455,9 @@ impl NoUselessReturn {
     fn check_code_path<'a>(&self, root: Node<'a>, cx: &mut Cx<'a, Self>) {
         for step in steps_of_code_path(root, STATEMENTS, [StmtTag::Block, StmtTag::Try]) {
             match step {
-                Step::Event(Event::CodePathStart(path, node)) => self.on_code_path_start(path, node == root, cx),
+                Step::Event(Event::CodePathStart(path, node)) => {
+                    self.on_code_path_start(path, node == root, cx)
+                }
                 Step::Event(Event::CodePathEnd(..)) => self.on_code_path_end(cx),
                 Step::Event(Event::SegmentStart(segment, _)) => self.on_segment_start(segment, cx),
                 Step::Event(_) => {}
@@ -424,7 +472,12 @@ impl NoUselessReturn {
         state.used_unreachable.clear();
     }
 
-    fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, is_active: bool, cx: &mut Cx<'a, Self>) {
+    fn on_code_path_start<'a>(
+        &self,
+        code_path: CodePath<'a>,
+        is_active: bool,
+        cx: &mut Cx<'a, Self>,
+    ) {
         cx.state.scopes.push(ScopeInfo {
             code_path,
             is_active,
@@ -449,7 +502,11 @@ impl NoUselessReturn {
             let is_removable = ast_utils::is_statement_list_parent(statement.parent())
                 && fixer.file().comments_in(statement).next().is_none();
             // The whole function, so that this does not conflict with `no-else-return`.
-            is_removable.then(|| FixTracker::new(fixer).retain_enclosing_function(statement).remove(statement))
+            is_removable.then(|| {
+                FixTracker::new(fixer)
+                    .retain_enclosing_function(statement)
+                    .remove(statement)
+            })
         });
     }
 
@@ -492,7 +549,8 @@ impl NoUselessReturn {
             StmtKind::Fn(func) if func.has_body() => innermost.wrapping_sub(1),
             _ => innermost,
         };
-        cx.state.mark_return_statements_on_current_segments_as_used(scope);
+        cx.state
+            .mark_return_statements_on_current_segments_as_used(scope);
     }
 
     fn exit_statement<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -520,7 +578,9 @@ impl NoUselessReturn {
 }
 
 impl Rule for NoUselessReturn {
-    const META: Meta = Meta::eslint("no-useless-return", Kind::Suggestion).fixable(Fixable::Code).reports_on_code_path_end();
+    const META: Meta = Meta::eslint("no-useless-return", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .reports_on_code_path_end();
     const ON: On = On::new().stmts(&[StmtTag::Return]).finish();
     type State<'a> = State<'a>;
 
@@ -546,7 +606,10 @@ impl Rule for NoUselessReturn {
         if matches!(known, Some(Known::Useful)) {
             return;
         }
-        let function = cx.state.functions.find(statement.into(), |_, parent| parent.as_func());
+        let function = cx
+            .state
+            .functions
+            .find(statement.into(), |_, parent| parent.as_func());
         let root = function.map_or_else(|| Node::File(cx.file()), Node::Func);
         match known {
             Some(Known::Useless) => cx.state.at_the_end.push((root, statement)),
@@ -563,7 +626,8 @@ impl Rule for NoUselessReturn {
                 self.report(statement, cx);
             }
         }
-        for root in std::mem::take(&mut cx.state.roots) {
+        let as_entered = |it: &Node<'_>| (it.span().start, std::cmp::Reverse(it.span().end));
+        for root in utils::sort::in_order_of(std::mem::take(&mut cx.state.roots), as_entered) {
             self.check_code_path(root, cx);
         }
     }

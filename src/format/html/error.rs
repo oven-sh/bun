@@ -124,7 +124,7 @@ impl<'a> SyntaxError<'a> {
                 "Incomplete @let declaration \"",
                 "\". @let declarations must be written as `@let <name> = <value>;`",
             ),
-            TextBehindNul => ("What follows this NUL would be lost", ""),
+            TextBehindNul => ("Unexpected NUL character", ""),
             Other => ("Unexpected token", ""),
         };
         let name: &[u8] = match (self.kind, &name[..]) {

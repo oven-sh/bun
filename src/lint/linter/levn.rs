@@ -262,15 +262,15 @@ fn cast(node: &Node, room: RoomToNest) -> Option<Json> {
 }
 
 fn cast_fields(fields: &[(Vec<u8>, Node)], room: RoomToNest) -> Option<Vec<(Vec<u8>, Json)>> {
-    let mut out: Vec<(Vec<u8>, Json)> = Vec::with_capacity(fields.len());
+    let mut out = Vec::with_capacity(fields.len());
     for (key, value) in fields {
         let (key, value) = (unquote(key), cast(value, room)?);
-        match out.iter_mut().find(|it| it.0 == key) {
-            Some(entry) => entry.1 = value,
-            None => out.push((key, value)),
+        // levn assigns each to an object, which makes no property of this one.
+        if key != b"__proto__" {
+            out.push((key, value));
         }
     }
-    Some(out)
+    Json::object(out).into_object()
 }
 
 /// `levn.parse("Object", text)`, which also reads `--rule` and `--parser-options` on the command line of

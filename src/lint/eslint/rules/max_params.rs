@@ -27,7 +27,10 @@ impl Config {
     pub fn new(options: &Options) -> Config {
         let object = options.object(0);
         let max = match object.has("maximum") || object.has("max") {
-            true => object.usize("maximum").filter(|it| *it != 0).or_else(|| object.usize("max")),
+            true => object
+                .usize("maximum")
+                .filter(|it| *it != 0)
+                .or_else(|| object.usize("max")),
             false => Some(options.number(0).map_or(3, |it| it as usize)),
         };
         let count_this = match (object.str("countThis"), object.bool("countVoidThis")) {
@@ -69,7 +72,8 @@ impl Config {
             // Without a body it is a `TSEmptyBodyFunctionExpression` or a `TSMethodSignature`. The first is a function
             // for oxlint.
             FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
-                func.has_body() || is_oxlint && matches!(func.owner(), Node::Member(it) if !it.is_signature())
+                func.has_body()
+                    || is_oxlint && matches!(func.owner(), Node::Member(it) if !it.is_signature())
             }
             _ => false,
         };
@@ -83,18 +87,24 @@ impl Config {
         });
         // oxlint does not count a rest parameter.
         let has_uncounted_rest = is_oxlint && func.params().last().is_some_and(Param::is_rest);
-        let count = func.params().len() + usize::from(counts_this) - usize::from(has_uncounted_rest);
+        let count =
+            func.params().len() + usize::from(counts_this) - usize::from(has_uncounted_rest);
         if count > max {
             // oxlint knows the name that the function itself has.
             let name = match (is_oxlint, func.name()) {
-                (false, _) => text::upper_case_first(&ast_utils::get_function_name_with_kind(func)).into_owned(),
+                (false, _) => text::upper_case_first(&ast_utils::get_function_name_with_kind(func))
+                    .into_owned(),
                 (true, _) if func.is_arrow() => b"Arrow function".to_vec(),
                 (true, Some(name)) => [&b"Function '"[..], name.bytes(), b"'"].concat(),
                 (true, None) => b"Function".to_vec(),
             };
             // oxlint points at the parameters.
             if is_oxlint && let Some(params) = func.params_span() {
-                cx.report(params, EXCEED).data("name", name).data("count", count).data("max", max);
+                let report = cx.report(params, EXCEED).called_with(func);
+                report
+                    .data("name", name)
+                    .data("count", count)
+                    .data("max", max);
                 return;
             }
             let mut head = ast_utils::get_function_head_loc(func);
@@ -103,7 +113,9 @@ impl Config {
                 && func.is_arrow()
                 && func.arrow_span() != Some(head)
                 && func.params().len() == 1
-                && func.this_param().is_some_and(|this| this.ty().is_some_and(|ty| ty.is_keyword(Keyword::Void)))
+                && func
+                    .this_param()
+                    .is_some_and(|this| this.ty().is_some_and(|ty| ty.is_keyword(Keyword::Void)))
                 && let Some(only) = func.params().first()
             {
                 head.end = only.span().start;
@@ -115,7 +127,10 @@ impl Config {
             {
                 head = Span::new(func.estree_span().start, paren);
             }
-            cx.report(head, EXCEED).data("name", name).data("count", count).data("max", max);
+            cx.report(head, EXCEED)
+                .data("name", name)
+                .data("count", count)
+                .data("max", max);
         }
     }
 }

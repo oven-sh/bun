@@ -1,6 +1,7 @@
 //! What a run says to people that is not a problem in a file, and what oxlint calls `default`. ESLint's flavour has the former on
 //! standard error. oxlint writes nothing there, so its `default` is `pretty` with all of it after the problems.
 
+use super::stylish::plural;
 use super::{Format, Meta, excerpt};
 use crate::results::{Counts, FileResult};
 use bstr::BStr;
@@ -23,7 +24,22 @@ pub(crate) fn too_many_warnings(most: i64) -> Vec<u8> {
     format!("Found too many warnings (maximum: {most}).").into_bytes()
 }
 
-/// The last line. `fixed`: how many files were written.
+/// Prints `Fixed 2 problems in 1 file`, if `--fix` fixed anything.
+pub(crate) fn write_fixed(out: &mut Vec<u8>, colors: bool, problems: usize, files: usize) {
+    if problems > 0 {
+        pretty!(
+            out,
+            colors,
+            "Fixed {} problem{}<d> in {} file{}<r>\n",
+            problems,
+            plural(problems),
+            files,
+            plural(files)
+        );
+    }
+}
+
+/// Prints the last line. `fixed` is the number of files written, or 0 if that was already printed.
 pub(crate) fn write(
     out: &mut Vec<u8>,
     colors: bool,
@@ -136,7 +152,9 @@ pub(crate) fn about_suppressions(has_unused: bool, has_new: bool) -> Option<File
         had_types: false,
         text: Some(Vec::new()),
         line_starts: None,
+        run_keys: Vec::new(),
         is_fixed: false,
+        fixes: 0,
         fixed_text: None,
         linted: None,
         deprecated: None,

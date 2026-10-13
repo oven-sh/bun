@@ -10,23 +10,66 @@ use bun_lint::options::Json;
 /// What precedes the JSON. The file itself can print, too.
 const MARKER: &[u8] = b"\x1e--bun-lint-configuration--\x1e";
 
-/// What every script begins with.
-pub(crate) const START: &str = include_str!("evaluate-start.js");
-const DESCRIBE: &str = include_str!("evaluate-describe.js");
-const STAND_INS: &str = include_str!("evaluate-stand-ins.js");
+/// A file that scripts are made of. Several scripts start with the same files.
+#[derive(Copy, Clone)]
+pub enum Part {
+    /// Every script starts with this.
+    Start,
+    Describe,
+    StandIns,
+    Eslint,
+    Eslintrc,
+    Prettier,
+    Tailwind,
+    EslintPatch,
+}
+
+impl Part {
+    /// Release builds embed the files compressed, in one frame, and inflate it the first time a script is run.
+    pub fn text(self) -> &'static [u8] {
+        if matches!(self, Part::EslintPatch) {
+            return bun_lint::js_plugin::eslint_patch();
+        }
+        // In the order of `Part`. `emitCompressedEmbeds` in scripts/build/codegen.ts lists the same files in the same order.
+        let all = bun_zstd::embed_compressed!(
+            "lint/config-scripts.js",
+            concat!(
+                include_str!("evaluate-start.js"),
+                "\0",
+                include_str!("evaluate-describe.js"),
+                "\0",
+                include_str!("evaluate-stand-ins.js"),
+                "\0",
+                include_str!("evaluate-eslint.js"),
+                "\0",
+                include_str!("evaluate-eslintrc.js"),
+                "\0",
+                include_str!("fmt/evaluate-prettier.js"),
+                "\0",
+                include_str!("fmt/tailwind.js"),
+            )
+            .as_bytes()
+        );
+        strings::split(all, b"\0")
+            .nth(self as usize)
+            .unwrap_or_default()
+    }
+}
 
 /// For `eslint.config.*` and `oxlint.config.ts`.
 pub(crate) const ESLINT: Source = &[
-    START,
-    DESCRIBE,
-    STAND_INS,
-    bun_lint::js_plugin::ESLINT_PATCH,
-    include_str!("evaluate-eslint.js"),
+    Part::Start,
+    Part::Describe,
+    Part::StandIns,
+    Part::EslintPatch,
+    Part::Eslint,
 ];
 /// For what the configuration files of ESLint 8 name.
-pub(crate) const ESLINTRC: Source = &[START, DESCRIBE, include_str!("evaluate-eslintrc.js")];
+pub(crate) const ESLINTRC: Source = &[Part::Start, Part::Describe, Part::Eslintrc];
 /// For the configuration files of Prettier.
-pub(crate) const PRETTIER: Source = &[START, include_str!("fmt/evaluate-prettier.js")];
+pub(crate) const PRETTIER: Source = &[Part::Start, Part::Prettier];
+/// For `fmt/tailwind.rs`.
+pub(crate) const TAILWIND: Source = &[Part::Start, Part::Tailwind];
 
 /// What the script `source` makes of the configuration file at `path`.
 pub(crate) fn evaluate(
@@ -76,7 +119,7 @@ fn run(
     path: &[u8],
     argument: &[u8],
 ) -> Result<Json, Vec<u8>> {
-    const SILENT: &[u8] = b"It could not be evaluated.";
+    const SILENT: &[u8] = b"It exited before it exported a config.";
     let text = |it: &[u8]| Json::String(it.to_vec());
     let command_line = environment.command_line.iter().map(|it| text(it));
     // See evaluate-start.js.
@@ -100,8 +143,7 @@ fn run(
         b"" => SILENT.to_vec(),
         why => why.to_vec(),
     })?;
-    let json = strings::last_index_of(&printed, MARKER).map(|at| &printed[at + MARKER.len()..]);
-    let Some(Json::Object(entries)) = json.and_then(bun_lint::json::parse) else {
+    let Some(entries) = handed_to_finish(&printed) else {
         return Err(SILENT.to_vec());
     };
     let config = entries.into_iter().find(|it| it.0 == b"config");
@@ -109,6 +151,22 @@ fn run(
         read_what_is_no_number(&mut it.1);
         it.1
     }))
+}
+
+/// Finds the object that the script's `finish` wrote. `printed` is everything the script printed.
+fn handed_to_finish(printed: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+    let at = strings::last_index_of(printed, MARKER)?;
+    bun_lint::json::parse(&printed[at + MARKER.len()..])?.into_object()
+}
+
+/// Paths of the modules a script loaded. It only reports them under `--doctor`. `printed` is everything it printed.
+pub(crate) fn modules_in(printed: &[u8]) -> Vec<Vec<u8>> {
+    let entries = handed_to_finish(printed).unwrap_or_default();
+    let modules = entries.iter().find(|it| it.0 == b"modules");
+    let modules = modules.and_then(|it| it.1.as_array()).unwrap_or_default();
+    (modules.iter().filter_map(Json::as_str))
+        .map(<[u8]>::to_vec)
+        .collect()
 }
 
 /// `NaN`, which JSON has no word for: `serialize` in evaluate-describe.js.

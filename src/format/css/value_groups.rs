@@ -1,6 +1,7 @@
 //! Prettier's `print/comma-separated-value-group.js` and `print/parenthesized-value-group.js`.
 
 use super::Parser as Syntax;
+use super::misc::ends_before_escaped_blank;
 use super::postcss::Kind;
 use super::printer::{Printer, Statement};
 use super::sink::Separator;
@@ -102,6 +103,13 @@ fn line_of_closing_parenthesis(node: ValueRef<'_>) -> Option<u32> {
 
 fn end_of_closing_parenthesis(node: ValueRef<'_>) -> Option<u32> {
     closing_parenthesis(node).and_then(|it| it.node().loc.end_offset())
+}
+
+/// Whether white space follows `node`, and the backslash that it ends with escapes that.
+fn is_before_escaped_blank(node: ValueRef<'_>) -> bool {
+    node.kind() == ValueKind::Word
+        && node.value().is_some_and(ends_before_escaped_blank)
+        && node.blanks_behind() > 0
 }
 
 fn ends_where_starts(a: ValueRef<'_>, b: ValueRef<'_>) -> bool {
@@ -384,6 +392,10 @@ impl<'a> Printer<'a, '_> {
                 continue;
             }
             let Some(next_node) = next_node else {
+                // `(b a\ )`, of which Prettier prints `(b a\)`. The end of all of the value is up to who prints that.
+                if is_in_paren_group && is_before_escaped_blank(i_node) && i_node.is_before_more() {
+                    self.sink.token(" ");
+                }
                 continue;
             };
             // `if(condition: value; else: value)`
@@ -455,6 +467,23 @@ impl<'a> Printer<'a, '_> {
                 && i_value.is_some_and(|it| bun_core::strings::contains_char(it, b'\\'))
                 && !is_comment(next_node)
             {
+                // Prettier writes nothing between the two: `Font\ Awesome` becomes `Font\Awesome`, and `a\b c` one word.
+                if next_node.node().before == Before::Spaces {
+                    let is_word = matches!(
+                        next_node.kind(),
+                        ValueKind::Word
+                            | ValueKind::Number
+                            | ValueKind::String
+                            | ValueKind::Func
+                            | ValueKind::AtWord
+                    );
+                    match is_before_escaped_blank(i_node) {
+                        true if is_word && i_node.blanks_behind() > 1 => self.sink.token("  "),
+                        true => self.sink.token(" "),
+                        false if is_word => self.sink.token(" "),
+                        false => {}
+                    }
+                }
                 continue;
             }
             // An escaped `/`.
@@ -995,6 +1024,10 @@ impl<'a> Printer<'a, '_> {
                 }
                 self.print_child_value(statement, id, child.id);
                 if index + 1 < count {
+                    // Or the backslash would escape the `,`.
+                    if is_before_escaped_blank(child) {
+                        self.sink.token(" ");
+                    }
                     self.sink.token(",");
                     is_behind_comment =
                         self.print_comment_behind_comma(statement, node.group(index + 1));
@@ -1084,6 +1117,10 @@ impl<'a> Printer<'a, '_> {
                 self.sink.start_dedent();
             }
             self.print_child_value(statement, id, child.id);
+            // `(a\ )`, of which Prettier prints `(a\)`. One word is in no group that would write the blank.
+            if is_before_escaped_blank(child) {
+                self.sink.token(" ");
+            }
             self.comments_above_item = (0, 0);
             if is_dedented {
                 self.sink.end_indent();

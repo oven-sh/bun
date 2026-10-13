@@ -890,7 +890,7 @@ estree_schema! {
             Node::EnumMember(member) => VNode::of_expr(member.init()?)?,
             _ => return None,
         };
-        ts_hidden Computed = match v.base {
+        ts_data Computed = match v.base {
             Node::EnumMember(member) => is_computed(member.key()),
             _ => return None,
         };
@@ -1195,9 +1195,9 @@ estree_schema! {
     JSXText [ExprTag::String, ExprTag::Jsx] (v) {
         data Raw = v.file().slice(v.span());
         data Value = match v.part {
-            Part::Whitespace(_) => v.file().slice(v.span()),
             // oxlint does not read `&amp;` and the like.
             _ if v.file().language().is_oxlint => v.file().slice(v.span()),
+            Part::Whitespace(_) => jsx_whitespace_value(v),
             _ => jsx_text_value(v.expr()?)?,
         };
         // acorn reads the text with `parseLiteral`, which takes what ends in `n` for a `bigint`.

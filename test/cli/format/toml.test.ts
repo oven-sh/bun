@@ -10,7 +10,7 @@ afterAll(endChildren);
 async function format(files: Record<string, string>, config: object, args: string[] = []) {
   using dir = tempDir("bun-format-toml", { ...files, ".oxfmtrc.json": JSON.stringify(config) });
   await using proc = spawn({
-    cmd: [bunExe(), "format", ...args],
+    cmd: [bunExe(), "fmt", ...args],
     env: { ...bunEnv, NO_COLOR: "1" },
     cwd: String(dir),
     stdout: "pipe",

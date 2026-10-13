@@ -110,6 +110,9 @@ const tsconfigPaths: Case[] = [
   ['import.meta.glob("@/dir/[ab].ts", { eager: true, import: "name" })', [["/src/dir/a.ts", "eager", "a"], ["/src/dir/b.ts", "eager", "b"]]],
   ['import.meta.glob(["./dir/a.ts", "@/dir/b.ts"])', [["/src/dir/a.ts", "lazy", A], ["/src/dir/b.ts", "lazy", B]]],
   ['import.meta.glob("@/**/d.ts")', [["/src/dir/sub/d.ts", "lazy", {"default":"sub/d"}]]],
+  ['import.meta.glob("@/\\\\[id\\\\]/\\\\(group\\\\)/\\\\{x\\\\}/*.ts")', [["/src/[id]/(group)/{x}/p.ts", "lazy", {"default":"p"}], ["/src/[id]/(group)/{x}/q.ts", "lazy", {"default":"q"}]]],
+  ['import.meta.glob("@/\\\\[id\\\\]/\\\\(group\\\\)/\\\\{x\\\\}/p.ts")', [["/src/[id]/(group)/{x}/p.ts", "lazy", {"default":"p"}]]],
+  ['import.meta.glob("@/\\\\[id\\\\]/\\\\(group\\\\)/**/p.ts")', [["/src/[id]/(group)/{x}/p.ts", "lazy", {"default":"p"}]]],
 ];
 table('tsconfig.json "paths" and "baseUrl"', tsconfigPaths, async () => {
   using dir = tempDir("import-meta-glob", {

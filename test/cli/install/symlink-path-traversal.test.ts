@@ -1735,12 +1735,35 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     const repo = await project(String(root));
     await expectInstalled(repo, await install(repo));
     const link = join(await entryOf(repo, "@x+dep@.+"), "node_modules", "@x", "dep");
+    // A tarball copy counts as installed if its .bun-tag has the hash that bun.lock pins.
+    const tag = await Bun.file(join(link, ".bun-tag")).text();
+    await writeFile(join(victim, ".bun-tag"), tag);
     await rm(link, { recursive: true });
     await linkDir(victim, link);
 
     const result = await install(repo);
 
     expect(result.stdout).toContain("(no changes)");
+    expect((await readdir(victim)).sort()).toEqual([".bun-tag", "keep.txt", "package.json"]);
+    expect(await Bun.file(join(victim, "package.json")).text()).toBe(manifest);
+    await expectInstalled(repo, result);
+  });
+
+  it("replaces a link where a tarball package should be, without touching what it points at", async () => {
+    using root = tempDir("nm-leaf-replaced", {});
+    const victim = await plantVictim(String(root));
+    const manifest = JSON.stringify({ name: "@x/dep", version: "1.0.0" });
+    await writeFile(join(victim, "package.json"), manifest);
+    const repo = await project(String(root));
+    await expectInstalled(repo, await install(repo));
+    const link = join(await entryOf(repo, "@x+dep@.+"), "node_modules", "@x", "dep");
+    await rm(link, { recursive: true });
+    await linkDir(victim, link);
+
+    const result = await install(repo);
+
+    expect(result.stdout).toContain("1 package installed");
+    expect((await lstat(link)).isSymbolicLink()).toBe(false);
     expect((await readdir(victim)).sort()).toEqual(["keep.txt", "package.json"]);
     expect(await Bun.file(join(victim, "package.json")).text()).toBe(manifest);
     await expectInstalled(repo, result);

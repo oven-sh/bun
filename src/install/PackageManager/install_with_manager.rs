@@ -56,6 +56,11 @@ pub fn install_with_manager(
 ) -> crate::Result<()> {
     let log_level = manager.options.log_level;
 
+    // Under `--no-verify` the name of a tarball's cache entry depends on what the cache holds.
+    if manager.skips_verify(ResolutionTag::RemoteTarball) {
+        let _ = manager.get_cache_directory();
+    }
+
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.
     if !manager.env().has_http_proxy()

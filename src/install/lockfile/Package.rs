@@ -931,9 +931,6 @@ impl Diff {
         let (from_deps, from_resolutions) = (from_deps.slice(), from_resolutions.slice());
         let mut to_i: usize = 0;
 
-        // Upgrading Bun is not a change of package.json.
-        let dropped_resolutions =
-            frozen && (to_lockfile.overrides).drop_resolutions_unknown_to(&from_lockfile.overrides);
         if lockfile::OverrideMap::changed(
             &mut from_lockfile.overrides,
             from_lockfile.buffers.string_bytes.as_slice(),
@@ -945,14 +942,6 @@ impl Diff {
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!("Overrides changed since last install");
             }
-        } else if dropped_resolutions {
-            log.add_warning_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "\"resolutions\" in package.json is not applied: the lockfile was saved by a version of Bun that read only \"overrides\". Run \"bun install\" to update it"
-                ),
-            );
         }
 
         let mut catalog_entries_skipped: Vec<Box<[u8]>> = Vec::new();

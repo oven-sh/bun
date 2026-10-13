@@ -1029,8 +1029,7 @@ describe.concurrent.each(
       });
     });
 
-    // The isolated linker goes by the name of the folder in node_modules/.bun, not by .bun-tag.
-    it.skipIf(linker === "isolated")("a later install without the flag replaces the unverified copy", async () => {
+    it("a later install without the flag replaces the unverified copy", async () => {
       const { box, real } = await unverified("no-verify-then-verify");
       using _ = box;
 
@@ -1046,6 +1045,26 @@ describe.concurrent.each(
       await box.put("app", v1);
       await box.ok("app", "install", "--no-verify");
       expect(await box.state("app")).toEqual(stateOf("v1", v1));
+      expect(box.requests).toEqual(["/pkg.tgz"]);
+
+      // The hash was computed from these bytes, so nothing is unverified: every later install is a cache hit.
+      expect(await box.cacheEntries()).toEqual([v1.cacheEntry]);
+      await box.reinstall("app");
+      await box.reinstall("app", "--no-verify");
+      await box.reinstall("app", "--offline");
+      expect(await box.state("app")).toEqual(stateOf("v1", v1));
+      expect(box.requests).toEqual(["/pkg.tgz"]);
+    });
+
+    it("uses an entry that a verified install cached", async () => {
+      const real = await tarball("real");
+      using box = noVerifySandbox("no-verify-prefers-verified", { app: {} });
+
+      await box.put("app", real);
+      await box.ok("app", "install");
+      await box.reinstall("app", "--no-verify");
+      expect(await box.state("app")).toEqual(stateOf("real", real));
+      expect(await box.cacheEntries()).toEqual([real.cacheEntry]);
       expect(box.requests).toEqual(["/pkg.tgz"]);
     });
 

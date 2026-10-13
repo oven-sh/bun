@@ -905,6 +905,13 @@ impl LinkBatch {
 /// Holds the commit of a git package or the integrity of a tarball. Both linkers look for it.
 pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
 
+/// Whether an installed tarball's `.bun-tag` says it holds the bytes bun.lock pins.
+pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {
+    // A copy installed with `--no-verify` has an empty tag.
+    strings::eql_long(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]), tag, true)
+        || (skips_verify && tag.is_empty())
+}
+
 impl<'a> PackageInstall<'a> {
     fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: &Dir) -> bool {
         // hash from the .patch file, to be checked against bun tag
@@ -941,8 +948,7 @@ impl<'a> PackageInstall<'a> {
     // 2. check .bun-tag against what bun.lock records: the commit, or a tarball's integrity
     fn verify_bun_tag(
         &mut self,
-        expected: &[u8],
-        accepts_unverified: bool,
+        matches: &dyn Fn(&[u8]) -> bool,
         root_node_modules_dir: &Dir,
     ) -> bool {
         let mut spill = Vec::new();
@@ -957,9 +963,7 @@ impl<'a> PackageInstall<'a> {
         else {
             return false;
         };
-        // A copy installed with `--no-verify` has an empty tag.
-        strings::eql_long(expected, &bun_tag_file.bytes, true)
-            || (accepts_unverified && bun_tag_file.bytes.is_empty())
+        matches(&bun_tag_file.bytes)
     }
 
     pub(crate) fn verify(
@@ -972,18 +976,17 @@ impl<'a> PackageInstall<'a> {
         let verified = match resolution.tag {
             resolution::Tag::Git | resolution::Tag::Github => {
                 let lockfile = self.lockfile;
+                let resolved = resolution
+                    .repository()
+                    .resolved
+                    .slice(&lockfile.buffers.string_bytes);
                 self.verify_bun_tag(
-                    resolution
-                        .repository()
-                        .resolved
-                        .slice(&lockfile.buffers.string_bytes),
-                    false,
+                    &|tag| strings::eql_long(resolved, tag, true),
                     root_node_modules_dir,
                 )
             }
             resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball => self.verify_bun_tag(
-                integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]),
-                skips_verify,
+                &|tag| tarball_tag_matches(tag, integrity, skips_verify),
                 root_node_modules_dir,
             ),
             resolution::Tag::Root => self.verify_directory_exists(root_node_modules_dir),

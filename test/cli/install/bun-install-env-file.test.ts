@@ -5,7 +5,7 @@ import { join } from "node:path";
 // https://github.com/oven-sh/bun/issues/12011
 // `bun install` always loaded the production `.env` files for bunfig `$VAR`
 // substitution. It ignored --env-file, --no-env-file, bunfig `env = false` and
-// NODE_ENV=development.
+// NODE_ENV.
 
 type Files = Record<string, string>;
 
@@ -91,12 +91,13 @@ describe("bun install .env loading (#12011)", () => {
     expect(auth[0]).toBe("Bearer CUSTOM");
   });
 
-  // Only `development` moves install off the production files.
+  // Same files as `bun run` for each mode. Without a mode, install reads the production files.
   const modes: [label: string, env: Record<string, string>, token: string][] = [
     ["NODE_ENV=development", { NODE_ENV: "development" }, "DEV"],
     ["BUN_ENV=development", { BUN_ENV: "development", NODE_ENV: "production" }, "DEV"],
     ["NODE_ENV=production", { NODE_ENV: "production" }, "PROD"],
-    ["NODE_ENV=test", { NODE_ENV: "test" }, "PROD"],
+    ["NODE_ENV=test", { NODE_ENV: "test" }, "TESTSUFFIX"],
+    ["BUN_ENV=test", { BUN_ENV: "test", NODE_ENV: "production" }, "TESTSUFFIX"],
     ["no NODE_ENV", {}, "PROD"],
   ];
   test.concurrent.each(modes)("default files with %s", async (_label, env, token) => {

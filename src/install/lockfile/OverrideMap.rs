@@ -23,7 +23,7 @@ use super::override_selector::{
 use super::package::PackageColumns as _;
 use super::package::workspace_map::{WorkspaceMap, package_json_dir};
 use super::package::{DependencyGroup, value_loc_of};
-use super::{Lockfile, StringBuilder, package::Package};
+use super::{CatalogMap, Lockfile, StringBuilder, package::Package};
 use crate::bun_json::Expr;
 
 declare_scope!(OverrideMap, visible);
@@ -81,7 +81,7 @@ fn range_selects(range: &dependency::Version, declared: &dependency::Version, bu
                 && range.version.intersects(buf, &declared.version, buf)
         }
         (VersionTag::Catalog, VersionTag::Catalog) => {
-            range.catalog().eql(*declared.catalog(), buf, buf)
+            CatalogMap::same_name(range.catalog().slice(buf), declared.catalog().slice(buf))
         }
         _ => false,
     }
@@ -126,8 +126,6 @@ pub struct OverrideMap {
     pub(crate) scoped: Vec<ScopedOverride>,
     scoped_names: ArrayHashMap<PackageNameHash, ()>,
     owner_index: RefCell<OwnerIndex>,
-    /// `map` / `scoped` entries of `"overrides"` (first until `sort`), if `"resolutions"` added.
-    overrides_field: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -395,24 +393,6 @@ impl OverrideMap {
                 out.push(rule.dep.name_hash);
             }
         }
-    }
-
-    /// For a frozen install: Bun 1.4 and older recorded `"overrides"` alone when both were present.
-    #[cold]
-    pub(crate) fn drop_resolutions_unknown_to(&mut self, recorded: &OverrideMap) -> bool {
-        let Some((flat, scoped)) = self.overrides_field.take() else {
-            return false;
-        };
-        if recorded.map.count() != flat || recorded.scoped.len() != scoped {
-            return false;
-        }
-        self.map.shrink_and_free(flat);
-        self.scoped.truncate(scoped);
-        self.scoped_names.clear_retaining_capacity();
-        for rule in &self.scoped {
-            self.scoped_names.insert(rule.dep.name_hash, ());
-        }
-        true
     }
 
     pub(crate) fn changed(
@@ -752,14 +732,10 @@ impl OverrideMap {
         if let Some(overrides) = expr.as_property(b"overrides") {
             self.parse_from_overrides(&mut ctx, overrides.expr)?;
             (ctx.overrides_flat, ctx.overrides_scoped) = (self.map.count(), self.scoped.len());
-            self.overrides_field = Some((ctx.overrides_flat, ctx.overrides_scoped));
         }
         if let Some(resolutions) = expr.as_property(b"resolutions") {
             ctx.field = Field::Resolutions;
             self.parse_from_resolutions(&mut ctx, resolutions.expr)?;
-        }
-        if self.overrides_field == Some((self.map.count(), self.scoped.len())) {
-            self.overrides_field = None;
         }
         scoped_log!(
             OverrideMap,

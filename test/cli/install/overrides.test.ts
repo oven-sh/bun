@@ -270,8 +270,8 @@ test.concurrent("overrides do not apply to workspaces", async () => {
   await expectLockfileStable(dir, lock);
 });
 
-// Bun 1.4 and older read "resolutions" only when package.json had no "overrides". Upgrading Bun is not a change of
-// package.json, so a frozen install of such a project installs what its bun.lock has.
+// Bun 1.4 and older read "resolutions" only when package.json had no "overrides". Its bun.lock looks exactly like one
+// saved before "resolutions" was added, so a frozen install fails on both: `bun install` would rewrite either.
 describe("a bun.lock written by Bun 1.4", () => {
   const dependencies = { "one-dep": "1.0.0", "a-dep": "^1.0.1" };
   const integrity = {
@@ -297,9 +297,9 @@ describe("a bun.lock written by Bun 1.4", () => {
       `  }\n}\n`
     );
   }
-  const notApplied =
-    'warn: "resolutions" in package.json is not applied: the lockfile was saved by a version of Bun that read only "overrides". Run "bun install" to update it';
   const frozen = ["install --frozen-lockfile", "ci", "install --production"];
+  const changed = (section: string) =>
+    `error: lockfile had changes, but lockfile is frozen\nnote: ${section} in package.json changed since bun.lock was saved\nnote: try re-running without --frozen-lockfile and commit the updated lockfile`;
 
   async function upgraded(rules: object, overridden = true) {
     const lock = lockOf14(overridden);
@@ -329,24 +329,21 @@ describe("a bun.lock written by Bun 1.4", () => {
       title: "a flat rule in resolutions",
       rules: { overrides: { "no-deps": "1.0.0" }, resolutions: { "a-dep": "1.0.2" } },
       overridden: true,
-      locked: "a-dep@1.0.10, no-deps@1.0.0",
       updated: "a-dep@1.0.2, no-deps@1.0.0",
     },
     {
       title: "a scoped rule in resolutions",
       rules: { overrides: { "no-deps": "1.0.0" }, resolutions: { "one-dep/no-deps": "2.0.0" } },
       overridden: true,
-      locked: "a-dep@1.0.10, no-deps@1.0.0",
       updated: "a-dep@1.0.10, no-deps@2.0.0",
     },
     {
       title: "an empty overrides",
       rules: { overrides: {}, resolutions: { "no-deps": "1.0.0" } },
       overridden: false,
-      locked: "a-dep@1.0.10, no-deps@1.0.1",
       updated: "a-dep@1.0.10, no-deps@1.0.0",
     },
-  ])("overrides and resolutions, $title", ({ rules, overridden, locked, updated }) => {
+  ])("overrides and resolutions, $title", ({ rules, overridden, updated }) => {
     const installed = async (dir: string) =>
       (
         await Promise.all(
@@ -357,13 +354,18 @@ describe("a bun.lock written by Bun 1.4", () => {
         )
       ).join(", ");
 
-    test.concurrent.each(frozen)("bun %s installs what is locked and warns once", async command => {
+    test.concurrent.each(frozen)("bun %s fails until bun.lock records both fields", async command => {
       const { dir, lock } = await upgraded(rules, overridden);
       const { stderr, exitCode } = await bun(dir, ...command.split(" "));
-      expect(stderr).toBe(notApplied);
-      expect(await installed(dir)).toBe(locked);
+      expect(stderr).toBe(changed("overrides or resolutions"));
       expect(await lockfile(dir)).toBe(lock);
-      expect(exitCode).toBe(0);
+      expect(exitCode).toBe(1);
+
+      expect((await bun(dir, "install")).exitCode).toBe(0);
+      expect(await installed(dir)).toBe(updated);
+      const after = await bun(dir, ...command.split(" "));
+      expect(after.stderr).toBe("");
+      expect(after.exitCode).toBe(0);
     });
 
     test.concurrent("bun install records both fields, once", async () => {
@@ -379,8 +381,6 @@ describe("a bun.lock written by Bun 1.4", () => {
   });
 
   const both = { overrides: { "no-deps": "1.0.0" }, resolutions: { "a-dep": "1.0.2" } };
-  const changed = (section: string) =>
-    `error: lockfile had changes, but lockfile is frozen\nnote: ${section} in package.json changed since bun.lock was saved\nnote: try re-running without --frozen-lockfile and commit the updated lockfile`;
 
   test.concurrent("an edit of overrides still fails a frozen install", async () => {
     const { dir, lock } = await upgraded({ ...both, overrides: { "no-deps": "1.0.1" } });
@@ -388,6 +388,19 @@ describe("a bun.lock written by Bun 1.4", () => {
     expect(stderr).toBe(changed("overrides or resolutions"));
     expect(exitCode).toBe(1);
     expect(await lockfile(dir)).toBe(lock);
+  });
+
+  test.concurrent("resolutions added next to overrides that this version recorded fail a frozen install", async () => {
+    const dir = await project({ name: "foo", dependencies, overrides: both.overrides });
+    expect((await bun(dir, "install")).exitCode).toBe(0);
+    const lock = await lockfile(dir);
+    await editPackageJson(dir, pkg => void (pkg.resolutions = both.resolutions));
+    for (const command of frozen) {
+      const { stderr, exitCode } = await bun(dir, ...command.split(" "));
+      expect({ command, stderr }).toEqual({ command, stderr: changed("overrides or resolutions") });
+      expect(await lockfile(dir)).toBe(lock);
+      expect(exitCode).toBe(1);
+    }
   });
 
   test.concurrent("once both fields are recorded, an edit of resolutions fails a frozen install", async () => {

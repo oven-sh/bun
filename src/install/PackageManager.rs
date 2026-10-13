@@ -2244,11 +2244,11 @@ pub fn init(
                     .collect(),
             )
         };
-        // The production set unless `BUN_ENV` or `NODE_ENV` is `development`.
-        let suffix = if env.get_node_env() == Some(b"development") {
-            dot_env::DotEnvFileSuffix::Development
-        } else {
-            dot_env::DotEnvFileSuffix::Production
+        // Follows `BUN_ENV` / `NODE_ENV` like `bun run`, but defaults to the production set.
+        let suffix = match env.get_node_env() {
+            Some(b"development") => dot_env::DotEnvFileSuffix::Development,
+            Some(b"test") => dot_env::DotEnvFileSuffix::Test,
+            _ => dot_env::DotEnvFileSuffix::Production,
         };
         env.load(&env_probe_keys, &[], suffix, false)?;
     }

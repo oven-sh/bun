@@ -830,14 +830,27 @@ pub fn cached_tarball_folder_name(
         ResolutionTag::LocalTarball => resolution.local_tarball(),
         _ => resolution.remote_tarball(),
     };
-    cached_tarball_folder_name_print(
-        cached_package_folder_name_buf(),
-        integrity,
-        this.skips_verify(resolution.tag),
-        resolution.tag,
-        this.lockfile.str(url),
-        patch_hash,
-    )
+    let print = |skips_verify: bool| {
+        cached_tarball_folder_name_print(
+            cached_package_folder_name_buf(),
+            integrity,
+            skips_verify,
+            resolution.tag,
+            this.lockfile.str(url),
+            patch_hash,
+        )
+    };
+    if !this.skips_verify(resolution.tag) {
+        return print(false);
+    }
+    // Verified bytes are good for every install, so `--no-verify` prefers them.
+    let verified = print(false);
+    if (this.cache_directory.as_ref())
+        .is_some_and(|dir| is_package_in_cache_at(dir.fd(), verified, resolution.tag))
+    {
+        return verified;
+    }
+    print(true)
 }
 
 impl PackageManager {
@@ -1095,6 +1108,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            // Opened first: under `--no-verify` the name depends on what the cache holds.
+            cache_dir = get_cache_directory(manager);
             cache_dir_subpath =
                 cached_tarball_folder_name(manager, integrity, resolution, patch_hash);
             if cache_dir_subpath.is_empty() {
@@ -1110,7 +1125,6 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 );
                 Global::exit(1);
             }
-            cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Workspace => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();

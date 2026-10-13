@@ -1,6 +1,6 @@
 use bun_core::strings;
 
-use crate::dependency::{Dependency, DependencyExt as _};
+use crate::dependency::{Dependency, DependencyExt as _, TagExt as _, VersionTag};
 
 #[derive(Clone, Copy)]
 pub(crate) struct PackageSelector<'a> {
@@ -38,9 +38,9 @@ pub(crate) fn parse_package_segment(segment: &[u8]) -> Result<PackageSelector<'_
         return Err(SelectorError::InvalidName);
     }
     let range = range.unwrap_or(b"");
-    // `npm:^1` is the range `^1`. `npm:other@^1` is an alias and keeps its prefix.
+    // `npm:^1` is the range `^1`. `npm:other` and `npm:other@^1` are aliases and keep the prefix.
     let range = match range.strip_prefix(b"npm:") {
-        Some(rest) if Dependency::split_name_and_maybe_version(rest).1.is_none() => rest,
+        Some(rest) if rest.is_empty() || VersionTag::infer(rest) == VersionTag::Npm => rest,
         _ => range,
     };
     if range.is_empty() && segment.len() > name.len() {
@@ -129,6 +129,14 @@ fn parse_yarn_path(key: &[u8]) -> Result<Selector<'_>, SelectorError> {
                 return Err(SelectorError::EmptyName);
             }
             end = name_start + name.len();
+        }
+        // In `name@npm:@scope/other@^1` the `/` is part of the alias target, not a path separator.
+        if strings::contains(&key[start..end], b"@npm:@")
+            && let Some(rest_start) = cursor
+        {
+            let (rest, after) = next_token(key, rest_start);
+            cursor = after;
+            end = rest_start + rest.len();
         }
         if count == segments.len() {
             return Err(SelectorError::TooDeep);

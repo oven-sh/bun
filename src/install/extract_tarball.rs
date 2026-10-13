@@ -521,8 +521,10 @@ impl ExtractTarball {
                     )
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                    // A hash computed from these bytes is as good as a checked one.
+                    let unchecked = self.skip_verify && self.integrity.tag.is_supported();
                     // `.bun-tag` does not claim a hash that `--no-verify` left unchecked.
-                    let tag = if self.skip_verify && self.integrity.tag.is_supported() {
+                    let tag = if unchecked {
                         Integrity::default()
                     } else {
                         *integrity
@@ -549,7 +551,7 @@ impl ExtractTarball {
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
                         integrity,
-                        self.skip_verify,
+                        unchecked,
                         self.resolution.tag,
                         self.url.slice(),
                         None,

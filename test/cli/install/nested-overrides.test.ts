@@ -1150,6 +1150,21 @@ describe.concurrent("version-scoped targets", () => {
       await installNoChanges(dir, "--frozen-lockfile");
     });
 
+    test.each([
+      ["catalog:", "catalog:default"],
+      ["catalog:default", "catalog:"],
+    ])("a %s key matches a dependency declared as %s", async (key, declared) => {
+      const dir = await project({
+        workspaces: ["packages/*"],
+        catalog: { "no-deps": "^1.0.0" },
+        dependencies: { "no-deps": declared },
+        [field]: { [`no-deps@${key}`]: "2.0.0" },
+      });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, ".", "no-deps")).toBe("2.0.0");
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+
     test("a catalog: key does not match another catalog group", async () => {
       const dir = await project({
         workspaces: ["packages/*"],
@@ -1176,8 +1191,34 @@ describe.concurrent("version-scoped targets", () => {
       await installNoChanges(dir, "--frozen-lockfile");
     });
 
+    test("an alias key without a version overrides that alias at any range", async () => {
+      const dir = await project({
+        dependencies: { "my-alias": "npm:no-deps@^1.0.0" },
+        [field]: { "my-alias@npm:no-deps": "npm:no-deps@1.0.0" },
+      });
+      await installOk(dir);
+      expect(await packageSeenBy(dir, ".", "my-alias")).toBe("no-deps@1.0.0");
+      await installNoChanges(dir);
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+
+    test("an alias key can point at a scoped package", async () => {
+      const dir = await project({
+        dependencies: { "my-alias": "npm:@types/no-deps@^1.0.0" },
+        [field]: { "my-alias@npm:@types/no-deps@^1.0.0": "npm:@types/no-deps@2.0.0" },
+      });
+      await installOk(dir);
+      expect(await packageSeenBy(dir, ".", "my-alias")).toBe("@types/no-deps@2.0.0");
+      expect(overridesSection(await lock(dir))).toBe(
+        `"overrides": {\n  "my-alias@npm:@types/no-deps@^1.0.0": {\n    ".": "npm:@types/no-deps@2.0.0",\n  },\n},`,
+      );
+      await installNoChanges(dir);
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+
     test.each([
       ["another package", "my-alias@npm:a-dep@^1.0.0"],
+      ["another package and no version", "my-alias@npm:a-dep"],
       ["a range that does not intersect", "my-alias@npm:no-deps@^2.0.0"],
       ["no alias in the key", "my-alias@^1.0.0"],
       ["no range at all", "my-alias"],

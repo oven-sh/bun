@@ -2226,15 +2226,32 @@ pub(crate) fn install_isolated_packages(
                             let local_entry_len = store_path.len();
                             store_path.append(b"node_modules").assume_ok();
                             store_path.append(pkg_name.slice(string_buf)).assume_ok();
+                            let package_len = store_path.len();
                             let mut hash_buf: install::BuntagHashBuf = Default::default();
                             store_path
                                 .append(installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf))
                                 .assume_ok();
                             // `exists` follows the link of an entry that left the global store.
-                            !sys::exists_z(store_path.slice_z()) || {
-                                store_path.set_length(local_entry_len);
-                                installer::is_link(store_path.slice_z()) == Some(true)
+                            if !sys::exists_z(store_path.slice_z()) {
+                                break 'needs_install true;
                             }
+                            // Like the hoisted linker, replace a tarball copy that holds other bytes than bun.lock pins.
+                            if matches!(pkg_res.tag, ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball) {
+                                store_path.set_length(package_len);
+                                store_path.append(crate::package_install::BUN_TAG).assume_ok();
+                                let is_current = sys::File::read_from(Fd::cwd(), store_path.slice()).is_ok_and(|tag| {
+                                    crate::package_install::tarball_tag_matches(
+                                        &tag,
+                                        &pkgs.items_meta()[pkg_id as usize].integrity,
+                                        installer.manager().skips_verify(pkg_res.tag),
+                                    )
+                                });
+                                if !is_current {
+                                    break 'needs_install true;
+                                }
+                            }
+                            store_path.set_length(local_entry_len);
+                            installer::is_link(store_path.slice_z()) == Some(true)
                         };
 
                     if !needs_install {

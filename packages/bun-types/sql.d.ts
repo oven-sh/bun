@@ -184,6 +184,12 @@ declare module "bun" {
        * - `./dev.db`
        * - `:memory:`
        *
+       * The value can end with a `?mode=` query parameter: `ro` (read-only),
+       * `rw` (read-write) or `rwc` (read-write, and create the file if it does
+       * not exist). The `memory` mode of SQLite has no effect, and any other
+       * value throws an error. When `mode` repeats, the most restrictive one
+       * applies.
+       *
        * @default ":memory:"
        */
       filename?: URL | ":memory:" | (string & {}) | undefined;

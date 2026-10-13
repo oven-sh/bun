@@ -1545,6 +1545,14 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   return null;
 }
 
+// What a `mode` query parameter allows, from least to most.
+const enum SQLiteAccess {
+  unset = 0,
+  readonly = 1,
+  readwrite = 2,
+  readwriteCreate = 3,
+}
+
 function parseSQLiteOptions(
   filenameOrUrl: string | URL | null | undefined,
   options: Bun.SQL.__internal.Define<Bun.SQL.SQLiteOptions>,
@@ -1590,19 +1598,53 @@ function parseSQLiteOptions(
   // Empty filename defaults to :memory:
   sqliteOptions.filename = filename || ":memory:";
 
-  // Parse query parameters if present
+  // Only `mode` is read from the query, with the values of https://www.sqlite.org/uri.html#urimode
   if (queryString) {
-    const params = new URLSearchParams(queryString);
-    const mode = params.get("mode");
+    // Whitespace at the end of the string is not a part of the last value, as in `new URL()`.
+    const modes = new URLSearchParams(queryString.trimEnd()).getAll("mode");
+    let access = SQLiteAccess.unset;
+    for (let i = 0, length = modes.length; i < length; i++) {
+      let mode = modes[i];
+      // A fragment is not a part of the mode.
+      const fragmentIndex = mode.indexOf("#");
+      if (fragmentIndex !== -1) {
+        mode = mode.slice(0, fragmentIndex);
+      }
+      let next = access;
+      switch (mode) {
+        case "ro":
+          next = SQLiteAccess.readonly;
+          break;
+        case "rw":
+          next = SQLiteAccess.readwrite;
+          break;
+        case "rwc":
+          next = SQLiteAccess.readwriteCreate;
+          break;
+        case "memory":
+          // Not an access mode. The file name decides where the database is.
+          break;
+        default:
+          throw $ERR_INVALID_ARG_VALUE("mode", mode, "must be one of: ro, rw, rwc, memory");
+      }
+      // When `mode` repeats, the most restrictive one applies.
+      if (access === SQLiteAccess.unset || next < access) {
+        access = next;
+      }
+    }
 
-    if (mode === "ro") {
-      sqliteOptions.readonly = true;
-    } else if (mode === "rw") {
-      sqliteOptions.readonly = false;
-      sqliteOptions.create = false;
-    } else if (mode === "rwc") {
-      sqliteOptions.readonly = false;
-      sqliteOptions.create = true;
+    switch (access) {
+      case SQLiteAccess.readonly:
+        sqliteOptions.readonly = true;
+        break;
+      case SQLiteAccess.readwrite:
+        sqliteOptions.readonly = false;
+        sqliteOptions.create = false;
+        break;
+      case SQLiteAccess.readwriteCreate:
+        sqliteOptions.readonly = false;
+        sqliteOptions.create = true;
+        break;
     }
   }
 

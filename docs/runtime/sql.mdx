@@ -248,6 +248,8 @@ Bun parses query parameters in the URL to set these options:
 - `?mode=rw` → `readonly: false, create: false`
 - `?mode=rwc` → `readonly: false, create: true` (default)
 
+The `memory` mode of SQLite has no effect. Bun throws an error for any other `mode`. When a URL repeats `mode`, the most restrictive one applies.
+
 </Accordion>
 
 ## Inserting data

@@ -574,15 +574,34 @@ describe("Connection & Initialization", () => {
       ["?mode=rwc", { create: undefined }, readWriteCreate],
       ["?mode=rwc", { create: false }, readWrite],
       ["?mode=rwc", { readwrite: false }, readOnly],
+      // When mode repeats, the most restrictive one applies, in any order.
+      ["?mode=rw&mode=ro", {}, readOnly],
+      ["?mode=ro&mode=rw", {}, readOnly],
+      ["?mode=rwc&mode=rw", {}, readWrite],
+      ["?mode=rw&mode=rwc", {}, readWrite],
+      ["?mode=rwc&mode=rw&mode=ro", {}, readOnly],
+      ["?cache=shared&mode=ro", {}, readOnly],
+      // `memory` is not an access mode, before or after another mode.
+      ["?mode=memory", {}, readWriteCreate],
+      ["?mode=memory&mode=ro", {}, readOnly],
+      ["?mode=ro&mode=memory", {}, readOnly],
+      ["?mode=rw&mode=memory", {}, readWrite],
+      // A fragment is not a part of the mode, and a mode after a fragment still applies.
+      ["?mode=ro#fragment", {}, readOnly],
+      ["?cache=shared#fragment&mode=ro", {}, readOnly],
+      // Whitespace at the end of the URL is not a part of the mode.
+      ["?mode=ro\n", {}, readOnly],
+      ["?mode=ro ", {}, readOnly],
+      ["?mode=ro\r\n", {}, readOnly],
+      ["?mode=rwc\n", {}, readWriteCreate],
     ];
 
-    test.concurrent.each(urlRows.map(([query, options, mode]) => [query, show(options), options, mode] as const))(
-      "%s with %s",
-      async (query, _title, options, mode) => {
-        const open = (filename: string) => new SQL(`sqlite://${filename}${query}`, options as SQL.Options);
-        expect(await observe(open)).toEqual(mode);
-      },
-    );
+    test.concurrent.each(
+      urlRows.map(([query, options, mode]) => [JSON.stringify(query), show(options), query, options, mode] as const),
+    )("%s with %s", async (_query, _title, query, options, mode) => {
+      const open = (filename: string) => new SQL(`sqlite://${filename}${query}`, options as SQL.Options);
+      expect(await observe(open)).toEqual(mode);
+    });
 
     const unset: { readonly?: boolean; strict?: boolean } = { strict: true };
     test.concurrent.each([
@@ -678,6 +697,34 @@ describe("Connection & Initialization", () => {
       }
       expect(error).toBeInstanceOf(TypeError);
       expect((error as TypeError).message).toBe('Misspelled option "readOnly" should be "readonly"');
+      expect(existsSync(missing)).toBe(false);
+    });
+
+    test.concurrent.each([
+      ["?mode=RO", "RO"],
+      ["?mode=readonly", "readonly"],
+      ["?mode=", ""],
+      ["?mode=rwc&mode=bogus", "bogus"],
+    ])("%s throws and creates no file", async (query, received) => {
+      using dir = tempDir("sqlite-open-mode-unknown", {});
+      const missing = join(String(dir), "missing.db");
+      // The query is read from a URL and from a file name with no scheme.
+      for (const open of [
+        () => new SQL(`sqlite://${missing}${query}`),
+        () => new SQL({ adapter: "sqlite", filename: missing + query }),
+      ]) {
+        let error: unknown;
+        try {
+          await open().close();
+        } catch (e) {
+          error = e;
+        }
+        expect(error).toBeInstanceOf(TypeError);
+        expect(error).toMatchObject({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: `The argument 'mode' must be one of: ro, rw, rwc, memory. Received '${received}'`,
+        });
+      }
       expect(existsSync(missing)).toBe(false);
     });
 

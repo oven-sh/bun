@@ -17,6 +17,7 @@ use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
 use crate::types::LinkCounts;
 use crate::util::InParallel;
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 /// How much native stack a checker may use, measured from `Checker::begin_stack_budget`. One
@@ -191,7 +192,7 @@ impl<'s> Checker<'_, 's> {
             .flat_map(|&tag| index.of(tag).iter().copied())
             .filter(|&e| (self.p.deferred_nodes.get(&self.task, &(file, e))).is_some())
             .collect();
-        earlier.sort_unstable_by_key(|&e| hir[e].pos);
+        earlier.shared_sort_unstable_by_key(|&e| hir[e].pos);
         for e in earlier {
             self.check_node_deferred(file, e);
         }
@@ -395,7 +396,16 @@ impl<'s> Checker<'_, 's> {
                     }
                 }
                 self.check_getter_returns_a_value(file, func);
-                if hir[func].ret.is_none() && hir[func].kind != FnKind::Setter {
+                if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
+                    // `checkAccessorDeclaration`: `getTypeOfAccessors` of the symbol, whose getter comes first.
+                    if let Parent::Prop(p) = self.bound(file).expr_parent[e.idx()] {
+                        let getter = match hir[p].kind {
+                            PropKind::Setter => self.accessor_of_literal(file, p, PropKind::Getter),
+                            _ => None,
+                        };
+                        self.type_of_literal_prop(file, getter.unwrap_or(p));
+                    }
+                } else if hir[func].ret.is_none() {
                     self.return_type_of_fn(file, func);
                 }
                 self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
@@ -668,20 +678,30 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// The end of `checkParameter`: 2370.
-    pub(super) fn check_rest_parameter_type(&mut self, file: FileId, func: FnId, p: ParamId) {
+    /// Whether `assignParameterType` adds `undefined` for the `?` of the parameter `p` of `func`:
+    /// it assigns only the parameters of a context sensitive function expression or method.
+    pub(super) fn is_optional_in_assign_parameter_type(
+        &self,
+        file: FileId,
+        func: FnId,
+        p: ParamId,
+    ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (param, f) = (&hir[p], &hir[func]);
-        let mut ty = self.type_of_param(file, p);
-        // `assignParameterType`: by the time it is checked, a parameter of a context sensitive function expression has had its `?`
-        // added.
-        if param.flags.contains(Flags::OPTIONAL)
+        param.flags.contains(Flags::OPTIONAL)
             && param.ty.is_none()
             && param.default.is_none()
             && f.type_params.is_empty()
             && matches!(f.kind, FnKind::Expr | FnKind::Arrow | FnKind::Method)
             && matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))
-        {
+    }
+
+    /// The end of `checkParameter`: 2370.
+    pub(super) fn check_rest_parameter_type(&mut self, file: FileId, func: FnId, p: ParamId) {
+        let mut ty = self.type_of_param(file, p);
+        // `assignParameterType`: by the time it is checked, a parameter of a context sensitive function expression has had its `?`
+        // added.
+        if self.is_optional_in_assign_parameter_type(file, func, p) {
             ty = self.optional(ty);
         }
         let ty = self.reduced(ty);
@@ -772,7 +792,7 @@ impl<'s> Checker<'_, 's> {
     /// `checkVariableLikeDeclaration`, the part for `node.Name()`: a name, or the elements of a
     /// pattern (`checkBindingElement`).
     fn check_binding_name(&mut self, file: FileId, pat: PatId, is_bodiless: bool) {
-        if pat.is_none() {
+        if pat.is_none() || self.is_stack_low() {
             return;
         }
         let hir = self.hir(file);

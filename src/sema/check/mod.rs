@@ -56,6 +56,7 @@ mod flow;
 mod grammarchecks;
 mod infer;
 mod instantiate;
+pub mod jsdoc;
 mod jsx;
 mod late_bound;
 mod loop_cycles;
@@ -66,9 +67,10 @@ pub(crate) mod regexp_scanner;
 mod relate;
 mod related;
 mod related_expected;
+pub mod services;
 mod shape;
 mod sink;
-pub(crate) mod spans;
+pub mod spans;
 mod symbol_ids;
 #[cfg(feature = "baselines")]
 #[path = "../standalone/symbol_writer.rs"]
@@ -100,8 +102,8 @@ use errors_names_and_exports::{root_declaration, root_pattern};
 use errors_type_nodes::array_element_type_node;
 use errors_type_nodes::has_parse_diagnostics;
 use errors_type_nodes::start_of_type;
+pub use regexp_scanner::get_spelling_suggestion;
 use regexp_scanner::spelling_suggestion;
-pub use regexp_scanner::{decode_rune, get_spelling_suggestion};
 use shape::members_among;
 use sink::{Arg, Reported};
 use spans::end_of_brackets;
@@ -199,6 +201,8 @@ pub struct Program<'s> {
     emit_helper_errors_of_earlier_files: Guarded<Vec<errors_emit_helpers::EarlierEmitHelperError>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
+    /// See `Services::file_info`. Made when it is first asked for.
+    package_names_of_linked_files: std::sync::OnceLock<FxHashMap<FileId, Vec<u8>>>,
     pub files: &'s Files<'s>,
     pub types: TypeStore<'s>,
 
@@ -269,6 +273,8 @@ pub struct Program<'s> {
     resolved_parameter_symbols: ByNode<(FileId, ParamId), (), Buffered, &'s Session>,
     /// See `is_untyped_signature_in_js_file`.
     untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered, &'s Session>,
+    /// The flag, of a type alias: `typeAliasLinks.typeParameters` is nil, because no evaluation has ended with a
+    /// `popTypeResolution` that succeeded.
     declared_types: ByNode<Sym, (TypeId, bool), Buffered, &'s Session>,
     shapes: ByIdIndirect<TypeId, shape::Resolved<'s>, Buffered, &'s Session>,
     /// `intersectionTypes`, for sets that contain a union.
@@ -352,6 +358,8 @@ pub struct Program<'s> {
     union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered, &'s Session>,
     /// `UnionOrIntersectionType.resolvedProperties` of a union: `union_as_object`.
     union_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
+    /// An object type with the signatures and the index signatures of an intersection:
+    /// `structured_members`.
     intersection_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
     /// `get_literal_type_from_properties` without index flags. Instantiations under several
     /// mappers arrive at one object type.
@@ -460,6 +468,7 @@ impl<'s> Program<'s> {
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,
+            package_names_of_linked_files: Default::default(),
             types,
             expr_types: ByNode::new_in(&exprs, session),
             type_node_types: ByNode::new_in(&type_nodes, session),
@@ -619,6 +628,7 @@ impl<'s> Program<'s> {
             resolution_start: 0,
             eager: Vec::new(),
             loop_values: Vec::new(),
+            unmarked_refusals: 0,
             non_circular_returns: Vec::new(),
             array_or_tuple_constraint_requests: Vec::new(),
             mapped_instantiations_in_progress: Vec::new(),
@@ -628,6 +638,7 @@ impl<'s> Program<'s> {
             late_bound_members: Default::default(),
             late_bound_declarations: Default::default(),
             this_types: Default::default(),
+            instantiated_symbol_links: Default::default(),
             late_binding: Vec::new(),
             late_binding_by_symbol: Vec::new(),
             early_bound_for_good: Default::default(),
@@ -640,7 +651,9 @@ impl<'s> Program<'s> {
             inheriting: Vec::new(),
             base_types_so_far: Vec::new(),
             members_resolved_before_base_types: Vec::new(),
+            resolving_at_base_types: Vec::new(),
             mapped_constraints_in_progress: Vec::new(),
+            mapped_props_reentered_through_members: Vec::new(),
             serialization_level: 0,
             flow_type_cache: Default::default(),
             flow_type_cache_depth: usize::MAX,
@@ -654,6 +667,8 @@ impl<'s> Program<'s> {
             printing_floors: Vec::new(),
             serialized_types: Default::default(),
             context_free_level: usize::MAX,
+            calls_to_resolve_afresh: None,
+            calls_resolved_afresh: Vec::new(),
             found_cycle: false,
             left_a_cycle: false,
             stale_resolutions: Vec::new(),
@@ -674,6 +689,7 @@ impl<'s> Program<'s> {
             pulls_contextual_types_at: usize::MAX,
             rechecks_at: usize::MAX,
             mode_of_recheck: CheckMode::empty(),
+            type_only_node: None,
             rechecked_exprs: Default::default(),
             rechecked_members: Default::default(),
             literals_checked_under: Default::default(),
@@ -696,6 +712,7 @@ impl<'s> Program<'s> {
             instantiations_up_to_a_limit: Default::default(),
             relations_cut_short: Default::default(),
             enum_relation: Default::default(),
+            enum_literal_types: Default::default(),
             unknown_like_unions: Default::default(),
             relation_sizes: [0; 6],
             generic_relation_entries_not_published: 0,
@@ -724,6 +741,7 @@ impl<'s> Program<'s> {
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             never_in_progress_from: Vec::new(),
+            reverse_mapped_inferences_from: Vec::new(),
             defaults_in_progress: Vec::new(),
             identical_base_types_in_progress: Vec::new(),
             generic_object_flags: FxHashMap::default(),
@@ -747,6 +765,8 @@ impl<'s> Program<'s> {
             conditional_constraint_depth: 0,
             deepest_stack: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
+            scopes_of_what_is_in: Default::default(),
+            spread_indices_of_many: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
             provisional_shapes: Default::default(),
@@ -816,11 +836,13 @@ impl<'s> Program<'s> {
             is_call_re_resolved: false,
             untyped_call_resolved_again: None,
             assigned_parameters: Vec::new(),
+            assigned_unknown: Vec::new(),
             context_checking: Vec::new(),
             context_checked_here: Default::default(),
             resolved_signatures: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
+            signatures_resolved_within: Vec::new(),
             restrictive_instantiations: Default::default(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
@@ -830,6 +852,9 @@ impl<'s> Program<'s> {
             work: 0,
             work_trap: WORK_TRAP_DISARMED,
             refused_expressions: Vec::new(),
+            side_effect_free: Default::default(),
+            context_sensitive_functions: Default::default(),
+            context_sensitivity_asked: Default::default(),
             unwind_to: usize::MAX,
             unwind_work: 0,
             restart_with: None,
@@ -869,6 +894,9 @@ enum Query {
     /// signature (`Return`) and the instantiation of its result.
     ReturnOfSignature(SigId),
     Shape(TypeId),
+    /// `getPropertiesOfUnionOrIntersectionType` of an intersection, whose `Shape` is
+    /// `resolveIntersectionTypeMembers`: see `structured_members`.
+    Properties(TypeId),
     Bases(Sym),
     /// `TypeSystemPropertyNameResolvedBaseConstructorType`
     BaseConstructor(Sym),
@@ -944,6 +972,7 @@ impl Query {
             Query::BaseConstructor(sym) => (sym.file, 13),
             Query::ReturnOfSignature(_)
             | Query::Shape(_)
+            | Query::Properties(_)
             | Query::Constraint(_)
             | Query::InferredConstraint(_)
             | Query::MappedProp(..)
@@ -1113,6 +1142,9 @@ pub struct Checker<'p, 's> {
     late_bound_declarations: crate::util::FxHashSet<(FileId, crate::bind::Decl)>,
     /// `has_this_type` of an interface.
     this_types: FxHashMap<Sym, bool>,
+    /// `links.resolvedType` and, with `true`, `links.writeType` of the instantiated symbols, by target
+    /// and mapper, that are not what the type of the target gives. See `link_of_instantiated_symbol`.
+    instantiated_symbol_links: FxHashMap<Sym, Vec<(MapperId, bool, TypeId)>>,
     /// `getResolvedMembersOrExportsOfSymbol` is binding the computed names, with `earlySymbols` in
     /// `links[resolutionKind]`. For each one in progress: the depth of `stack` at that point, the
     /// container, and whether it is at the exports. See `is_late_binding`. Where `earlySymbols` is
@@ -1150,17 +1182,24 @@ pub struct Checker<'p, 's> {
     /// The classes and interfaces whose shapes are at the members of their base types, by the key
     /// of the shape. `resolveObjectTypeMembers` calls `setStructuredTypeMembers` with the declared
     /// members before that.
-    inheriting: Vec<TypeId>,
+    /// Each with `t` of `resolveObjectTypeMembers`: `ObjectFlagsUnresolvedMembers` is on that reference alone.
+    inheriting: Vec<(TypeId, TypeId)>,
     /// `resolvedBaseTypes` of each class or interface whose base types are being resolved.
     base_types_so_far: Vec<(Sym, Vec<TypeId>)>,
     /// `ObjectFlagsMembersResolved` of a class or an interface whose members were resolved while
     /// `getBaseTypes` was at it, which lasts until that returns: the key of the shape, the shape,
     /// and the index of the entry of `base_types_so_far`.
     members_resolved_before_base_types: Vec<(TypeId, &'p shape::Resolved<'p>, usize)>,
+    /// `t` of each `resolveObjectTypeMembers` that is at `getBaseTypes(source)`. It sets the members
+    /// of `t` when that returns, over what a request in the meantime has set.
+    resolving_at_base_types: Vec<TypeId>,
     /// `pushTypeResolution(key, ResolvedBaseConstraint)`, for the key of each mapped type whose
     /// constraint type is being resolved, the height of `stack` at that time, and whether a cycle
     /// has closed around it (`mark_cycle_from`).
     mapped_constraints_in_progress: Vec<((FileId, TypeNodeId, MapperId), usize, bool)>,
+    /// The indices in `stack` of the `MappedProp` frames that were entered again through what
+    /// `resolveMappedTypeMembers` resolves before the symbol exists (`type_of_mapped_prop`).
+    mapped_props_reentered_through_members: Vec<usize>,
     /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
     /// resolutions are made eagerly.
     serialization_level: u32,
@@ -1194,6 +1233,11 @@ pub struct Checker<'p, 's> {
     /// The height of `inference_contexts` while `getContextFreeTypeOfExpression` rechecks an
     /// expression: diagnostics reported then are kept.
     context_free_level: usize,
+    /// `resolved_signature` resolves the calls in this range of a file as if nothing had resolved them, and stores nothing:
+    /// see `context_free_type_of_call_resolved_afresh`.
+    calls_to_resolve_afresh: Option<(FileId, u32, u32)>,
+    /// Those that it has resolved so, each with what it has found, or `None` while it is at it.
+    calls_resolved_afresh: Vec<(ExprId, Option<ResolvedCall>)>,
     /// The stack depth at each point where a query was made that TypeScript would not have made
     /// there, or not yet.
     /// A cycle through such a point may be an artifact of this resolver: the result is unresolved,
@@ -1202,6 +1246,9 @@ pub struct Checker<'p, 's> {
     /// The entries of `eager` that represent the value assigned on the back edge of a loop in
     /// progress. TypeScript requests that value there as well: see `is_cycle_of_initializers`.
     loop_values: Vec<usize>,
+    /// How many cycles `mark_cycle_from` has left unmarked because of `eager`. A walk of a loop
+    /// during which it grows is not one tsgo makes: see `Flow::Loop` in `flow_type`.
+    unmarked_refusals: u64,
     /// The height of `stack` at each request of `getNonCircularReturnTypeOfSignature` in progress.
     non_circular_returns: Vec<usize>,
     /// The height of `stack` at each request of `hasArrayOrTypeTypeConstraint` in progress.
@@ -1256,6 +1303,9 @@ pub struct Checker<'p, 's> {
     rechecks_at: usize,
     /// `checkMode` of the non-memoized check. See `check_mode`.
     mode_of_recheck: CheckMode,
+    /// `node` of the innermost `getTypeOfExpression` in progress, which is checked under
+    /// `CheckModeTypeOnly`. See `is_checked_type_only`.
+    type_only_node: Option<(FileId, ExprId)>,
     /// Results of rechecks with nothing pushed: they are the same for any caller. Keyed by
     /// expression, and by member of an object literal or JSX attribute.
     rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
@@ -1320,6 +1370,8 @@ pub struct Checker<'p, 's> {
     relations_cut_short: FxHashMap<relate::Key, (u64, bool)>,
     /// `enumRelation`, by the source and the target symbol.
     enum_relation: FxHashMap<(Sym, Sym), bool>,
+    /// `enumLiteralTypes` and `enumNaNLiteralTypes`, by the enum symbol and the value.
+    enum_literal_types: FxHashMap<(Sym, crate::types::EnumValue), TypeId>,
     /// `ObjectFlagsIsUnknownLikeUnion` of the unions that have
     /// `ObjectFlagsIsUnknownLikeUnionComputed`, `undefined` and `null`.
     unknown_like_unions: FxHashMap<TypeId, bool>,
@@ -1380,6 +1432,8 @@ pub struct Checker<'p, 's> {
     pub(super) never_in_progress: Vec<TypeId>,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
+    /// The height of `stack` at which the worker of each `inferReverseMappedType` in progress began.
+    pub(super) reverse_mapped_inferences_from: Vec<usize>,
     /// The type parameters whose `resolvedDefaultType` is `resolvingDefaultType`, each with the
     /// height of `stack` when that began. `true`: it has become `circularConstraintType`.
     defaults_in_progress: Vec<(TypeId, usize, bool)>,
@@ -1422,6 +1476,10 @@ pub struct Checker<'p, 's> {
     conditional_constraint_depth: u32,
     deepest_stack: std::cell::Cell<usize>,
     ran_out_of_stack: std::cell::Cell<bool>,
+    /// `enclosing_scope_of_expr` of what is in these expressions.
+    scopes_of_what_is_in: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
+    /// `spread_indices` of the array literals and the calls with many elements or arguments.
+    spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
     /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.
     times_cut_short: std::cell::Cell<u64>,
     /// For the most recently queried file.
@@ -1601,6 +1659,9 @@ pub struct Checker<'p, 's> {
     /// The indices in `stack` of the parameters whose type `assignParameterType` is computing. It
     /// pushes no type resolution, so a cycle through the initializer of one is not its cycle.
     assigned_parameters: Vec<usize>,
+    /// The patterns of the parameters whose `links.resolvedType` is `unknown` while
+    /// `assignParameterType` computes the type of the pattern to replace it.
+    assigned_unknown: Vec<(FileId, PatId)>,
     /// `links.resolvedSignature != nil` for the calls that this checker has resolved and that
     /// `Program::calls` may not have: tsgo caches a signature that was resolved inside a cycle,
     /// `calls` does not. Whether a call is deferred under `CheckModeSkipGenericFunctions` depends
@@ -1609,7 +1670,8 @@ pub struct Checker<'p, 's> {
     /// The functions whose first check is in progress, see `context_checked`. They are published to
     /// `Program::context_checked`, for every thread, only once the results of the first check are:
     /// a thread that found one without the other would continue without a first check of its own.
-    context_checking: Vec<((FileId, crate::hir::FnId), AssignedSignature)>,
+    /// The third: the number of parameters for which `assignParameterType` has returned.
+    context_checking: Vec<((FileId, crate::hir::FnId), AssignedSignature, usize)>,
     /// The functions whose entry in `Program::context_checked` this checker wrote or tried to write. See `is_context_checked`.
     context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,
     /// The functions whose first check is not published because a frame in progress is tainted,
@@ -1635,6 +1697,10 @@ pub struct Checker<'p, 's> {
     /// `resolvedSignature = result`, while `resolveCall` reports the errors of a call that no
     /// candidate accepts.
     resolved_meanwhile: Vec<(FileId, ExprId, call::ResolvedCall)>,
+    /// `links.resolvedSignature` of a call that is being resolved, assigned by the first resolution
+    /// inside the outermost one to return, where `Program::calls` does not take that result.
+    /// `getResolvedSignature` returns it in place of the result of each resolution around it.
+    signatures_resolved_within: Vec<(FileId, ExprId, call::ResolvedCall)>,
     /// `cachedTypes[CachedTypeKindRestrictiveInstantiation][t] == t`: the conditional types that
     /// `getRestrictiveInstantiation` has returned.
     restrictive_instantiations: crate::util::FxHashSet<TypeId>,
@@ -1653,6 +1719,12 @@ pub struct Checker<'p, 's> {
     work_trap: u64,
     /// The file, start and end of the expressions in which a query was refused for lack of native stack. See `refuse_for_lack_of_stack`.
     refused_expressions: Vec<(FileId, u32, u32)>,
+    /// `is_side_effect_free` of the binary expressions that have many on their left.
+    side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
+    /// `isContextSensitive` of the functions that have many in them, each all that the one around it returns.
+    context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
+    /// Of how many functions it has been asked.
+    context_sensitivity_asked: std::cell::Cell<u64>,
     /// A query was refused at `MAX_DEPTH`: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none was. See
     /// `refuse_as_too_deep`.
     unwind_to: usize,
@@ -1921,9 +1993,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// The slow path of the first test in `enter`. `false`: `q` is not refused.
     ///
     /// After a refusal no query in flight is cacheable. Every later query about a part of the same
-    /// expression would descend the same chain and be refused again, which costs depth^3 for nested
-    /// calls. So the outermost expression in flight is recorded, and until the end of `check_file`
-    /// every query about an expression inside it is refused immediately.
+    /// expression or type node would descend the same chain and be refused again, which costs depth^3
+    /// for nested calls. So the outermost one in flight is recorded, and until the end of `check_file`
+    /// every query about an expression or a type node inside it is refused immediately.
     #[cold]
     #[inline(never)]
     fn refuse_for_lack_of_stack(&mut self, q: Query) -> bool {
@@ -1939,26 +2011,9 @@ impl<'p, 's> Checker<'p, 's> {
             self.unwind_to = usize::MAX;
             self.restart_with = None;
         }
-        let span_of = |c: &Self, q: Query| match q {
-            Query::Expr(file, e) | Query::Call(file, e) => {
-                Some((file, c.start_of(file, e), c.end_of_expr(file, e)))
-            }
-            _ => None,
-        };
-        let is_refused = |c: &Self, (file, start, end): (FileId, u32, u32)| {
-            let contains =
-                |outer: &(FileId, u32, u32)| outer.0 == file && outer.1 <= start && end <= outer.2;
-            c.refused_expressions.iter().any(contains)
-        };
-        let queried = span_of(self, q);
         let is_low = self.is_stack_low();
         if is_low {
-            let outermost = self.stack.iter().find_map(|&q| span_of(self, q));
-            if let Some(outermost) = outermost.or(queried)
-                && !is_refused(self, outermost)
-            {
-                self.refused_expressions.push(outermost);
-            }
+            self.refuse_outermost_in_flight(q);
         }
         // Every later `enter` takes this path.
         self.work_trap = if self.refused_expressions.is_empty() {
@@ -1966,12 +2021,66 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.work + 1
         };
-        if !is_low && !queried.is_some_and(|queried| is_refused(self, queried)) {
+        if !is_low && !self.is_refused(q) {
             return false;
         }
         self.last_enter = EnterOutcome::Refused;
         self.bailed_out();
         true
+    }
+
+    /// The file, start and end of the expression or the type node that `q` is about.
+    fn span_of_query(&self, q: Query) -> Option<(FileId, u32, u32)> {
+        match q {
+            Query::Expr(file, e) | Query::Call(file, e) => {
+                Some((file, self.start_of(file, e), self.end_of_expr(file, e)))
+            }
+            Query::TypeNode(file, node) => {
+                let node = &self.hir(file)[node];
+                Some((file, node.pos, node.end.max(node.pos)))
+            }
+            _ => None,
+        }
+    }
+
+    fn is_in_refused_expression(&self, (file, start, end): (FileId, u32, u32)) -> bool {
+        let contains =
+            |outer: &(FileId, u32, u32)| outer.0 == file && outer.1 <= start && end <= outer.2;
+        self.refused_expressions.iter().any(contains)
+    }
+
+    /// Whether `q` is about a part of one of `refused_expressions`.
+    fn is_refused(&self, q: Query) -> bool {
+        !self.refused_expressions.is_empty()
+            && (self.span_of_query(q)).is_some_and(|span| self.is_in_refused_expression(span))
+    }
+
+    /// Adds the outermost expression or type node in flight to `refused_expressions`. `q` is the innermost.
+    fn refuse_outermost_in_flight(&mut self, q: Query) {
+        let mut in_flight = self.stack.iter().chain([&q]);
+        let outermost = in_flight.find_map(|&q| Some((q, self.span_of_query(q)?)));
+        if let Some((outermost, span)) = outermost
+            && !self.is_in_refused_expression(span)
+        {
+            let span = match outermost {
+                Query::TypeNode(..) => self.span_of_statement_around(span),
+                _ => span,
+            };
+            self.refused_expressions.push(span);
+        }
+    }
+
+    /// `checkSourceElement` is no query, and asks for the type of a type node after it has visited what is in the node. So
+    /// the outermost type node in flight is the one that it has come back to, and the next one it comes back to is around
+    /// that: it would descend to what is refused, be cut short, and the one around it in turn, which costs depth^2 and,
+    /// with the search in `stack`, more. What is refused is the statement of the file that `span` is in.
+    fn span_of_statement_around(&self, span: (FileId, u32, u32)) -> (FileId, u32, u32) {
+        let hir = self.hir(span.0);
+        let mut statements = hir.ids(hir.body).map(|s| hir[s].loc);
+        match statements.find(|loc| (loc.pos..loc.end).contains(&span.1)) {
+            Some(loc) => (span.0, loc.pos, loc.end.max(span.2)),
+            None => span,
+        }
     }
 
     /// `q` would be entry `MAX_DEPTH` of `stack`. Always `false`.
@@ -2023,6 +2132,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.unwind_to = 0;
                 self.restart_with = None;
                 self.ran_out_of_stack.set(true);
+                self.refuse_outermost_in_flight(q);
             }
         }
         self.bailed_out_from(self.unwind_to);
@@ -2079,7 +2189,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `assignParameterType` and `assignBindingElementTypes` push no type resolution, and assign
         // `links.resolvedType` at their end. A request in the meantime resolves the declaration
         // itself. Not a request that tsgo may not make (`eager`).
-        if self.assigned_parameters.contains(&i) && !self.eager.iter().any(|&from| from > i) {
+        if self.assigned_parameters.contains(&i) && !self.is_behind_barrier(i + 1) {
             return false;
         }
         // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` sets
@@ -2133,6 +2243,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.ends_at_array_or_tuple_constraint(i)
                 || self.ends_at_members_in_place(i)
                 || self.ends_at_reduction_in_progress(i)
+                || self.ends_at_reverse_mapped_inference_in_progress(i)
                 || self.ends_at_default_in_progress(i)
                 || self.ends_at_identical_base_type_in_progress(i)
                 || self.ends_at_function_in_context_check(i)
@@ -2141,7 +2252,8 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         // `resolveIntersectionTypeMembers` has none either, and calls `setStructuredTypeMembers` at its end.
-        if matches!(q, Query::Shape(ty) if matches!(self.data(ty), TypeData::Intersection(_)))
+        // Nor has `getPropertiesOfUnionOrIntersectionType`, which sets `resolvedProperties` at its end.
+        if matches!(q, Query::Shape(ty) | Query::Properties(ty) if matches!(self.data(ty), TypeData::Intersection(_)))
             && self.ends_at_reduction_in_progress(i)
         {
             return false;
@@ -2155,9 +2267,22 @@ impl<'p, 's> Checker<'p, 's> {
         // `interface D extends M<D>`, the members that `M<D>` has from `D` without a base type.
         let from = match q {
             Query::Bases(sym) => {
+                // `t.objectFlags &^= ObjectFlagsMembersResolved` is for the declared type alone. Its
+                // shape can also have the key with the declared type as the `this` argument.
+                let declared = self.p.declared_types.get(&self.task, &sym).map(|it| it.0);
+                let own_arguments = declared.and_then(|declared| match self.data(declared) {
+                    TypeData::Ref { args, .. } => args.actual(),
+                    _ => None,
+                });
                 let is_own = |f: &Query| {
-                    matches!(*f, Query::Shape(t)
-                        if matches!(self.data(t), TypeData::Ref { target, .. } if *target == sym))
+                    let Query::Shape(t) = *f else { return false };
+                    let TypeData::Ref { target, args } = self.data(t) else {
+                        return false;
+                    };
+                    *target == sym
+                        && (declared.is_none_or(|declared| declared == t)
+                            || matches!((args.actual(), own_arguments), (Some(args), Some(own))
+                                if args.split_last() == declared.as_ref().map(|this| (this, own))))
                 };
                 let own = self.stack[from..].iter().rposition(is_own);
                 own.map_or(self.stack.len(), |above| from + above)
@@ -2195,13 +2320,18 @@ impl<'p, 's> Checker<'p, 's> {
         // callee of a call that is resolved again has its type, and the arguments their contextual
         // types. See `recheck_in_flow_loop` for a path that ends at a loop that is visible.
         // `getTypeFromTypeNode` has none either: the node has its type for the next request.
-        !(marked
-            && matches!(q, Query::Expr(..) | Query::TypeNode(..))
-            && self.frames[i + 1..].iter().any(|frame| frame.circular))
+        // Nor has `checkPropertyAssignment`, nor `getTypeForVariableLikeDeclaration` of a declaration
+        // whose name is a pattern.
+        let restarts = matches!(
+            q,
+            Query::Expr(..) | Query::TypeNode(..) | Query::Pat(..) | Query::LiteralProp(..)
+        ) && !self.is_resolution(q);
+        !(marked && restarts && self.frames[i + 1..].iter().any(|frame| frame.circular))
     }
 
-    /// Whether `q` requests the members of a function, class, enum or module as a value, or of a
-    /// mapped type.
+    /// Whether `q` requests the members of a type literal, of a function, class, enum or module as
+    /// a value, or of a mapped type. For a type literal `resolveAnonymousTypeMembers` begins with
+    /// `setStructuredTypeMembers(t, nil, nil, nil, nil)`.
     /// `resolveAnonymousTypeMembers` calls `setStructuredTypeMembers` before it requests the base
     /// constructor type or a signature, and `resolveMappedTypeMembers` before anything else ("such
     /// that recursive references see an empty object type"). So for any caller in the meantime
@@ -2210,7 +2340,8 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(q, Query::Shape(ty) if matches!(
             self.data(ty),
             TypeData::Anon {
-                origin: Origin::ClassStatic(_)
+                origin: Origin::TypeLiteral(..)
+                    | Origin::ClassStatic(_)
                     | Origin::Function(_)
                     | Origin::EnumObject(_)
                     | Origin::Module(_)
@@ -2253,6 +2384,18 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let resolution = self.first_resolution_from(i);
         let mut began = self.never_in_progress_from.iter();
+        began.any(|&height| height > i && height <= resolution)
+    }
+
+    /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at an
+    /// `inferReverseMappedType` whose worker is running: the next one for the same source and target
+    /// has both `reverseExpandingFlags` and infers nothing.
+    fn ends_at_reverse_mapped_inference_in_progress(&self, i: usize) -> bool {
+        if self.reverse_mapped_inferences_from.is_empty() {
+            return false;
+        }
+        let resolution = self.first_resolution_from(i);
+        let mut began = self.reverse_mapped_inferences_from.iter();
         began.any(|&height| height > i && height <= resolution)
     }
 
@@ -2367,6 +2510,7 @@ impl<'p, 's> Checker<'p, 's> {
             || barriers > loop_values
             || barriers > 0 && !self.is_cycle_of_initializers(i)
         {
+            self.unmarked_refusals += 1;
             return false;
         }
         for j in i..self.stack.len() {
@@ -2387,11 +2531,18 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The end of `getTypeOfMappedSymbol`, where `popTypeResolution` finds the cycle: 2615 at
     /// `c.currentNode`.
-    pub(super) fn circular_mapped_property(&mut self, mapped: TypeId, name: Atom) {
+    pub(super) fn circular_mapped_property(
+        &mut self,
+        mapped: TypeId,
+        name: Atom,
+        reentered_through_members: bool,
+    ) {
         // `resolveMappedTypeMembers` resolves the constraint `keyof R` first, and
         // `resolveReverseMappedTypeMembers` the type of every property of the source of `R`. tsgo
         // finds a cycle through one of those there, with no mapped symbol in progress.
-        if (self.types().object_flags(mapped)).contains(ObjectFlags::HAS_REVERSE_MAPPED) {
+        if reentered_through_members
+            && (self.types().object_flags(mapped)).contains(ObjectFlags::HAS_REVERSE_MAPPED)
+        {
             return;
         }
         let at = match self.current_node().or(self.current_source_element) {
@@ -2451,8 +2602,10 @@ impl<'p, 's> Checker<'p, 's> {
                     PatKind::Ident(_) | PatKind::Missing
                 )
             }
-            // `getTypeOfAccessors` of an accessor of an object literal. `Query::Return` of the getter stands for it, if there is one.
-            Query::LiteralProp(file, p) => self.hir(file)[p].kind == PropKind::Setter,
+            // `getTypeOfAccessors` of an accessor of an object literal. `Query::Return` of the getter is `getReturnTypeOfSignature` alone.
+            Query::LiteralProp(file, p) => {
+                matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter)
+            }
             // `getDeclaredTypeOfTypeAlias` is the only one to push `TypeSystemPropertyNameDeclaredType`.
             Query::Declared(sym) => self.files().flags(sym).contains(SymFlags::TYPE_ALIAS),
             _ => false,
@@ -3112,14 +3265,19 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(frame) = self.left_frame.take() else {
             return;
         };
-        let flow = frame.incomplete_flow;
+        // A frame that `enter` has pushed above a resolution has the mark of the frame below it, but has seen no loop from
+        // below the resolution (`is_flow_loop_visible`): its result is no more short-lived than that of any other
+        // non-cacheable frame. It is asked for from where the loop is not visible either, where a result that follows from a
+        // loop is no hit: every use would compute it again, and uses in uses cost uses ^ depth.
+        let flow = frame.incomplete_flow
+            && (self.flow_loops.last())
+                .is_some_and(|innermost| self.is_flow_loop_visible(innermost.5));
         // tsgo computes it again, and then finds in `flowLoopCache` the loop of which this
         // computation saw the types collected so far.
         if flow && self.is_flow_loop_cached_since(frame.serial) {
             return;
         }
         let scope = if flow {
-            // No loop on `flow_loops`: `type_of_expr_outside_loops` has set them aside, so the height is unknown and nothing is stored.
             let innermost_loop = self.flow_loops.last().map(|in_progress| in_progress.5);
             let outermost = self.frames.iter().position(|frame| frame.incomplete_flow);
             (outermost.zip(innermost_loop))

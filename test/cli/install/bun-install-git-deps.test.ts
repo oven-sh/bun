@@ -3293,13 +3293,61 @@ test.concurrent("a refresh that cannot write one ref still installs from the oth
 test.concurrent("a refresh that cannot reach the repository fails", async () => {
   using dir = tempDir("git-dep-refresh-unreachable", {});
   const root = String(dir);
-  const server = serveStatic(root);
+  await using server = serveStatic(root);
   const { project, cache } = await installedFromBranch(root, server.port!, "feature");
   await server.stop(true);
 
   const { stderr, exitCode } = await runBun(project, cache, {}, "update");
   expect(stderr).toContain('error: "git fetch" for "dep" failed');
   expect(exitCode).toBe(1);
+});
+
+// Puts a `git` on PATH that runs the real one, then ends every `fetch` with `message` and exit code 1.
+function gitWhoseFetchEndsWith(root: string, message: string) {
+  mkdirSync(join(root, "bin"));
+  writeFileSync(
+    join(root, "bin", "git"),
+    `#!/bin/sh
+"${Bun.which("git")}" "$@" || exit
+for arg in "$@"; do
+  if [ "$arg" = fetch ]; then
+    echo "$LANGUAGE" > "${join(root, "language")}"
+    echo "${message}" >&2
+    exit 1
+  fi
+done
+`,
+  );
+  chmodSync(join(root, "bin", "git"), 0o755);
+  return { PATH: `${join(root, "bin")}:${process.env.PATH}`, LANGUAGE: "de", LC_ALL: "de_DE.UTF-8" };
+}
+
+// git exits with 1 for both. What it says tells them apart, so it has to say it in English.
+test.concurrent.skipIf(isWindows).each([
+  // git 2.51 and later, for `Dev` next to `dev`
+  ["goes on after", "error: fetching ref refs/heads/Dev failed: incorrect old value provided", 0],
+  ["goes on after", "error: some local refs could not be updated; try running", 0],
+  // Before it writes any ref.
+  ["fails after", "error: http://localhost/repo.git did not send all necessary objects", 1],
+  ["fails after", "error: something this version of bun has not heard of", 1],
+  ["fails after", "", 1],
+])("a refresh %s %j", async (_, message, expectedExitCode) => {
+  using dir = tempDir("git-dep-fetch-exit-1", {});
+  const root = String(dir);
+  await using server = serveStatic(root);
+  const { bare, project, cache } = await installedFromBranch(root, server.port!, "feature");
+  await moveBranch(bare, "feature", "feature-v2");
+
+  const { stderr, exitCode } = await runBun(project, cache, gitWhoseFetchEndsWith(root, message), "update");
+  expect(readFileSync(join(root, "language"), "utf8")).toBe("en\n");
+  if (expectedExitCode === 0) {
+    expect(stderr).toContain('warn: "git fetch" for "dep" could not update every ref');
+    expect(await installedVersionOf(project, "dep")).toBe("feature-v2");
+  } else {
+    expect(stderr).toContain('error: "git fetch" for "dep" failed');
+    expect(await installedVersionOf(project, "dep")).toBe("feature");
+  }
+  expect(exitCode).toBe(expectedExitCode);
 });
 
 // The refresh moves every branch, so no ref keeps the old commit. git collects garbage after a fetch.

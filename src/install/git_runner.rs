@@ -70,6 +70,19 @@ enum Step {
     Checkout,
 }
 
+/// `Dev` next to `dev` on a case-insensitive disk. git writes refs once it has checked that every object arrived.
+fn only_ref_writes_failed(stderr: &[u8]) -> bool {
+    let mut errors = strings::split(stderr, b"\n")
+        .filter(|line| line.starts_with(b"error:") || line.starts_with(b"fatal:"))
+        .peekable();
+    errors.peek().is_some()
+        && errors.all(|line| {
+            line.starts_with(b"error: cannot lock ref '")
+                || line.starts_with(b"error: fetching ref ")
+                || line.starts_with(b"error: some local refs could not be updated")
+        })
+}
+
 /// `refs/heads/main` of `ref: refs/heads/main\tHEAD`, the first line `git ls-remote --symref` prints.
 fn remote_default_branch(stdout: &[u8]) -> Option<&[u8]> {
     let (branch, _) = strings::split_once_char(stdout.strip_prefix(b"ref: ")?, b'\t')?;
@@ -919,10 +932,10 @@ impl GitSubprocess {
                 && strings::contains(stderr, b"not")
                 && strings::contains(stderr, b"found"))
                 || strings::contains(stderr, b"does not exist"));
-        // Everything was fetched, but a ref could not be written: `Dev` next to `dev` on a case-insensitive disk.
         let some_refs_failed = matches!(step, Step::Fetch(_))
             && matches!(status, Status::Exited(exit) if exit.code == 1)
-            && this.read_error.get().is_none();
+            && this.read_error.get().is_none()
+            && only_ref_writes_failed(stderr);
         if !ok && !not_found && !some_refs_failed && !matches!(step, Step::Head(..)) {
             this.report_failure(status, stderr);
         }

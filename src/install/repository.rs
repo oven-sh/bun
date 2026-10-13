@@ -179,6 +179,9 @@ impl GitEnv {
             }
         }
 
+        // What git prints decides what happens next. This changes the language of messages and nothing else.
+        bun_core::handle_oom(map.put(b"LANGUAGE", b"en"));
+
         // The spawn does no `PATH` search; resolve `git` on the child's `PATH`.
         let mut git_buf = bun_paths::path_buffer_pool::get();
         let git = bun_which::which(&mut git_buf, map.get(b"PATH").unwrap_or(b""), b"", b"git")

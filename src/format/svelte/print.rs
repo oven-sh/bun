@@ -1119,15 +1119,16 @@ impl<'a, 'o> Printer<'a, 'o> {
     // ───────────── print/index.ts ─────────────
 
     /// What is printed in the place of a node that is ignored.
-    fn print_ignored(&mut self, id: Id) -> Option<Doc<'a>> {
+    fn print_ignored(&mut self, id: Id, place: Option<Place>) -> Option<Doc<'a>> {
         let is_ignored =
             self.ignore_next || (self.ignore_range && !self.is_ignore_end_directive(id));
         if !is_ignored || self.is_empty_text(id) {
             return None;
         }
         self.ignore_next = false;
-        Some(match self.raw(id) {
-            Some(raw) if self.pre_depth == 0 => print_text_as_written(raw),
+        Some(match (self.raw(id), place) {
+            (Some(raw), _) if self.pre_depth == 0 => print_text_as_written(raw),
+            (None, Some(place)) => self.print_element_as_written(id, place),
             _ => self.print_as_written(id),
         })
     }
@@ -1135,9 +1136,30 @@ impl<'a, 'o> Printer<'a, 'o> {
     /// The node as the component has it.
     fn print_as_written(&self, id: Id) -> Doc<'a> {
         let (start, end) = (self.tree[id].start, self.tree[id].end);
-        // An element without an end tag goes on up to the next tag.
-        let written = Span { start, end }.of(self.text).trim_ascii_end();
-        lines_as_they_are(&Cow::Borrowed(written))
+        lines_as_they_are(&Cow::Borrowed(Span { start, end }.of(self.text)))
+    }
+
+    /// The same for what is in a fragment. An element without an end tag goes on up to the next tag, with the white space
+    /// before that, which is printed around it too where it is nothing.
+    fn print_element_as_written(&self, id: Id, place: Place) -> Doc<'a> {
+        let (start, end) = (self.tree[id].start, self.tree[id].end);
+        let written = Span { start, end }.of(self.text);
+        let trimmed = written.trim_ascii_end();
+        if self.pre_depth > 0 || trimmed.len() == written.len() {
+            return self.print_as_written(id);
+        }
+        let printed = lines_as_they_are(&Cow::Borrowed(trimmed));
+        let is_in_block = match place.element {
+            Some(element) => self.is_block_element(element),
+            None => place.fragment == self.tree.fragment,
+        };
+        let is_last = (self.tree.fragment(place.fragment).iter().rev())
+            .find(|&&it| !self.is_empty_text(it))
+            == Some(&id);
+        match self.is_block_element(id) || (is_in_block && is_last) {
+            true => printed,
+            false => Doc::List(vec![printed, Doc::Line]),
+        }
     }
 
     /// `printComment`
@@ -1169,7 +1191,7 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     /// A `Text` or an `ExpressionTag` in the value of `owner`. `is_last`: it is the last part of it.
     fn print_in_value(&mut self, id: Id, owner: Owner, is_last: bool) -> Doc<'a> {
-        if let Some(ignored) = self.print_ignored(id) {
+        if let Some(ignored) = self.print_ignored(id, None) {
             return ignored;
         }
         match &self.tree[id].kind {
@@ -1227,7 +1249,7 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     /// What is in the list of attributes of `owner`.
     fn print_attribute(&mut self, id: Id, owner: Id) -> Doc<'a> {
-        if let Some(ignored) = self.print_ignored(id) {
+        if let Some(ignored) = self.print_ignored(id, None) {
             return ignored;
         }
         let allows_shorthand = self.svelte.allows_shorthand;
@@ -1535,7 +1557,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         if kind == ElementKind::RegularElement
             && (self.tree.fragment(element.fragment).iter()).any(would_end_it)
         {
-            return self.print_as_written(id);
+            return self.print_element_as_written(id, place);
         }
         let is_pre = kind == ElementKind::RegularElement
             && (name.eq_ignore_ascii_case(b"pre") || name.eq_ignore_ascii_case(b"textarea"));
@@ -1757,6 +1779,10 @@ impl<'a, 'o> Printer<'a, 'o> {
     /// `body()`
     fn print_body(&mut self, inner: Place, (is_empty, has_line_in_it): (bool, bool)) -> Doc<'a> {
         if is_empty {
+            // With `bracketSameLine` the plugin has a line there too, which breaks with the start tag.
+            if self.pre_depth > 0 {
+                return EMPTY;
+            }
             return match (has_line_in_it, self.bracket_same_line()) {
                 (true, _) => Doc::Line,
                 (false, true) => Doc::Softline,
@@ -1783,7 +1809,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         {
             return self.embed_top_level(id, which);
         }
-        if let Some(ignored) = self.print_ignored(id) {
+        if let Some(ignored) = self.print_ignored(id, Some(place)) {
             return ignored;
         }
         // `["{..", printJS(..), "}"]`

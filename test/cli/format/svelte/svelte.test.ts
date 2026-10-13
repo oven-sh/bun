@@ -384,7 +384,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "a.svelte",
     ]);
     // Once for each file: the configuration is one too.
-    const error = "error: Invalid svelteSortOrder value: a-b.\n";
+    const error = "error: Invalid svelte.sortOrder value: a-b.\n";
     expect(wrong).toMatchObject({
       stderr: `${error}${error}Error occurred when checking code style in the above files.\n`,
       files: [input],
@@ -567,9 +567,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<script></script>\n\n<p>y</p>\n\n<style>\n  b {\n    content: "<script>";\n  }\n</style>\n',
       ],
       [
-        '<div><script type = "y">let  b = 2</script></div>\n',
-        '<div>\n  <script type="y">\n    let b = 2;\n  </script>\n</div>\n',
-        '<div><script type="y"></script></div>\n',
+        '<div><script type = "module">let  b = 2</script></div>\n',
+        '<div>\n  <script type="module">\n    let b = 2;\n  </script>\n</div>\n',
+        '<div><script type="module"></script></div>\n',
       ],
       [
         '<svelte:head><style media = "screen">b{c:d}</style></svelte:head>\n',
@@ -601,7 +601,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<template lang="pug">\np\n  <script>b</script>\n</template>\n',
         '<template lang="pug">\np\n  <script ✂prettier:content✂="0">{}</script>\n</template>\n',
       ],
-      ["{`<script>y</script\n>`}\n", "{`<script>y</script\n>`}\n", "{`<script>y</script>`}\n", false],
+      ["{`<script>y</script\n>`}\n", "{`<script>y</script\n>`}\n", "{`<script>y</script>`}\n"],
       ["<p>{'<script>b</script>'}</p>\n", '<p>{"<script>b</script>"}</p>\n', '<p>{"<script>b</script>"}</p>\n'],
       ['{@html "<style>" + css + "</style>"}\n', '{@html "<style>" + css + "</style>"}\n', null],
       [

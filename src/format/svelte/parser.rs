@@ -1343,13 +1343,15 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
-    /// `read_value`: where the `;`, `{` or `}` is that ends what starts at `start`.
-    fn end_of_css_value(&self, start: usize) -> Option<usize> {
+    /// `read_value`: where the `;`, `{` or `}` is that ends what starts at `start`. `is_selector`: it is read by
+    /// `read_selector_list`, which throws at a `<`.
+    fn end_of_css_value(&self, start: usize, is_selector: bool) -> Option<usize> {
         let text = &self.text[..self.len];
         let (mut at, mut is_in_url, mut quote) = (start, false, None);
         loop {
-            at += strings::index_of_any(text.get(at..)?, b"\\\"'()/;{}")?;
+            at += strings::index_of_any(text.get(at..)?, b"\\\"'()/;{}<")?;
             match text[at] {
+                b'<' if is_selector && quote.is_none() => return None,
                 b'\\' => at += 1,
                 byte if quote == Some(byte) => quote = None,
                 b')' => is_in_url = false,
@@ -1386,8 +1388,8 @@ impl<'a> Parser<'a, '_> {
             match rest.first()? {
                 b'<' if depth == 0 && rest.starts_with(b"</style") => return Some(at),
                 b'}' => depth = depth.checked_sub(1)?,
-                _ => {
-                    at = self.end_of_css_value(at)?;
+                &first => {
+                    at = self.end_of_css_value(at, depth == 0 && first != b'@')?;
                     match text[at] {
                         b'{' => depth += 1,
                         b';' => {}

@@ -72,10 +72,11 @@ fn starts_like_a_tag<'a>(mut e: Expr<'a>, brace: Brace, f: &Formatter<'a>) -> bo
 /// waits for the end of a line. Any other stays before what follows it, unless all of that goes: parentheses, and the `;` of
 /// a statement.
 fn can_end_with_comment(text: &[u8], comments: &[Comment]) -> bool {
-    let Some(last) = comments.last() else {
+    // They are in the order in which they are printed.
+    let Some(end) = comments.iter().map(|it| it.span.end).max() else {
         return false;
     };
-    let mut behind = text.get(last.span.end as usize..).unwrap_or_default();
+    let mut behind = text.get(end as usize..).unwrap_or_default();
     loop {
         behind = strings::trim_js_whitespace_end(behind);
         match behind {

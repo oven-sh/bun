@@ -1003,7 +1003,11 @@ module.exports = {
   async function found(files: Record<string, string>, args: string[] = []) {
     const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", ...args, "src"]);
     const lines = [...stdout.matchAll(/:(\d+:\d+): .* \[\w+\/(.+)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
-    return { found: lines.sort(), stderr: stderr.replace(/^(Linted \d+ files?|✓ No problems in \d+ files?).*$/m, "").trim(), exitCode };
+    return {
+      found: lines.sort(),
+      stderr: stderr.replace(/^(Linted \d+ files?|✓ No problems in \d+ files?).*$/m, "").trim(),
+      exitCode,
+    };
   }
   const both = bunfig(`["./lint/plugin.js", "eslint-plugin-demo"]`, {
     "local/no-todo": "warn",

@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -520,6 +520,57 @@ describe("bunshell", () => {
     expect(new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer)))).toEqual(
       `LMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\n`,
     );
+  });
+
+  // `&>` points stdout and stderr at one target. Like `&> file`, the two
+  // streams share one write position, so neither overwrites the other.
+  describe("redirect stdout and stderr to one JS object", () => {
+    const bothStreams = `console.log("out 1"); console.error("err 1"); console.log("out 2"); console.error("err 2");`;
+
+    test("a buffer keeps both streams of a builtin", async () => {
+      using dir = tempDir("shell-both-streams-buffer", { "found.txt": "x" });
+      const buffer = new Uint8Array(256);
+      const { exitCode } = await $`ls found.txt missing.txt &> ${buffer}`.cwd(String(dir)).quiet();
+      // `ls` lists each operand on its own thread-pool task, so the two lines
+      // land in either order.
+      expect(stringifyBuffer(buffer).split("\n").sort()).toEqual([
+        "",
+        "found.txt",
+        "ls: missing.txt: No such file or directory",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a buffer gets a builtin's stderr after its stdout", async () => {
+      // `yes` fills the buffer, then reports ENOSPC on stderr. The message
+      // goes after the output, where no room is left, not over its start.
+      const buffer = new Uint8Array(64);
+      const { exitCode } = await $`yes &> ${buffer}`.quiet();
+      expect(new TextDecoder().decode(buffer)).toBe(Buffer.alloc(64, "y\n").toString());
+      expect(exitCode).toBe(1);
+    });
+
+    test("a buffer keeps both streams of an external command in write order", async () => {
+      const buffer = new Uint8Array(256);
+      const { exitCode } = await $`${BUN} -e ${bothStreams} &> ${buffer}`.env(bunEnv).quiet();
+      expect(stringifyBuffer(buffer)).toBe("out 1\nerr 1\nout 2\nerr 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a Bun.file(fd) keeps both streams of an external command in write order", async () => {
+      // Only a path-backed Bun.file() is inlined as a path. One made from a
+      // file descriptor stays a JS object redirect.
+      using dir = tempDir("shell-both-streams-fd", {});
+      const path = join(String(dir), "out.txt");
+      const fd = openSync(path, "w");
+      try {
+        const { exitCode } = await $`${BUN} -e ${bothStreams} &> ${Bun.file(fd)}`.env(bunEnv).quiet();
+        expect(readFileSync(path, "utf8")).toBe("out 1\nerr 1\nout 2\nerr 2\n");
+        expect(exitCode).toBe(0);
+      } finally {
+        closeSync(fd);
+      }
+    });
   });
 
   test("pipeline", async () => {

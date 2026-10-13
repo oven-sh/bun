@@ -146,12 +146,26 @@ impl Spanned for Comment {
     }
 }
 
+/// Whose tree Prettier has.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum ParsedBy {
+    WhatItsNameSays,
+    /// Also if it is TypeScript: `babel-ts`.
+    Babel,
+}
+
 /// Appends the comments of `file` to `comments`.
-pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec<Comment>) {
+pub(crate) fn collect<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    parsed_by: ParsedBy,
+    comments: &mut Vec<Comment>,
+) {
     let text = file.text();
     let source = SourceText::new(text);
     let first = comments.len();
-    let has_type_casts = file.is_javascript() || type_casts_are_kept_in_typescript(flavor);
+    let has_tree_of_babel = parsed_by == ParsedBy::Babel || file.is_javascript();
+    let has_type_casts = has_tree_of_babel || type_casts_are_kept_in_typescript(flavor);
     for token in file.comments() {
         let span = token.span();
         let content = token.comment_value();
@@ -211,7 +225,7 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec
     move_comments(
         file,
         flavor,
-        file.is_javascript(),
+        has_tree_of_babel,
         comments.get_mut(first..).unwrap_or_default(),
     );
 }

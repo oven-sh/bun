@@ -1522,6 +1522,9 @@ impl Host for Disk {
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         self.io_pool.as_deref()
     }
+    fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        crate::for_each_on_this_thread(&self.caches, count, work);
+    }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         if self.is_of_a_thread_of_the_pool {
             return crate::for_each_on_this_thread(&self.caches, count, work);

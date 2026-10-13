@@ -85,7 +85,7 @@ Each rule's page says what differs and how to change it.
 
 ## Configure rules
 
-Rules live in `bunfig.toml`. Every built-in rule works the same way. There are no plugins to install.
+Rules live in `bunfig.toml`. Every built-in rule works the same way, with nothing to install.
 
 ```toml bunfig.toml icon="settings"
 [lint.rules]
@@ -117,6 +117,19 @@ Browse [all rules](/lint/rules), or look one up from the terminal. In most termi
 ```bash terminal icon="terminal"
 bun lint --rules                 # list every rule
 bun lint --explain prefer-const  # what it does, examples, options
+```
+
+### Add an ESLint plugin
+
+Need a rule that isn't built in? Load any [ESLint plugin](/lint/plugins), from npm or your own. The default rules stay on.
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["eslint-plugin-perfectionist", "./lint/plugin.js"]
+
+[lint.rules]
+"perfectionist/sort-imports" = "error"
+"local/no-todo" = "warn"
 ```
 
 ### Turn on a group of rules

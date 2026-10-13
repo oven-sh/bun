@@ -246,9 +246,9 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
   test("without the package it is an error, and the files with classes are left as they are", async () => {
     const files = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "a.jsx": `${input}a  ;\n`, "b.js": "b  ;\n" };
     const result = await format(files, ["a.jsx", "b.js"]);
-    expect(result.stderr).toContain("[error] sortTailwindcss: the tailwindcss package was not found from ");
-    expect(result.stderr).toContain("[error]   Run bun add -d tailwindcss\n");
-    expect(result.stderr).toContain(`[error] a.jsx: ${unknown} It was not formatted.\n`);
+    expect(result.stderr).toContain("error: sortTailwindcss: the tailwindcss package was not found from ");
+    expect(result.stderr).toContain("  Run bun add -d tailwindcss\n");
+    expect(result.stderr).toContain(`error: a.jsx: ${unknown} It was not formatted.\n`);
     expect(result.files).toEqual([`${input}a  ;\n`, "b;\n"]);
     expect(result.exitCode).toBe(2);
     // The first directory in the order of the names, not the one whose file has come first.
@@ -256,7 +256,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     const inMany = await format({ ".oxfmtrc.json": files[".oxfmtrc.json"], ...many }, []);
     expect(inMany.stderr).toMatch(/was not found from \S*[\\/]b\n/);
     const allowed = await format(files, ["a.jsx", "b.js"], ["--allow-unsupported"]);
-    expect(allowed.stderr).toContain("[warn] sortTailwindcss: the tailwindcss package was not found from ");
+    expect(allowed.stderr).toContain("warn: sortTailwindcss: the tailwindcss package was not found from ");
     expect(allowed.files).toEqual([`${input}a;\n`, "b;\n"]);
     expect(allowed.exitCode).toBe(0);
   });
@@ -315,9 +315,9 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       "c.jsx": '<a className="p-4 flex odd" />;\n',
     });
     const result = await formatIn(String(dir), ["a.jsx", "b.jsx", "c.jsx"]);
-    expect(result.stderr.split("\n").filter(line => line.startsWith("[error]"))).toEqual([
-      `[error] b.jsx: ${unknown} It was not formatted.`,
-      `[error] c.jsx: ${unknown} It was not formatted.`,
+    expect(result.stderr.split("\n").filter(line => line.startsWith("error:"))).toEqual([
+      `error: b.jsx: ${unknown} It was not formatted.`,
+      `error: c.jsx: ${unknown} It was not formatted.`,
     ]);
     expect(result.files).toEqual([
       sorted,
@@ -326,7 +326,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     ]);
     expect(result.exitCode).toBe(2);
     const piped = await formatIn(String(dir), [], ["--stdin-filepath", "d.jsx"], '<a className="p-4 odd flex" />;\n');
-    expect(piped).toMatchObject({ stdout: "", stderr: `[error] d.jsx: ${unknown}\n`, exitCode: 2 });
+    expect(piped).toMatchObject({ stdout: "", stderr: `error: d.jsx: ${unknown}\n`, exitCode: 2 });
   });
 
   // There oxfmt 0.72 sorts in the order of the Tailwind CSS that it brings along, whatever that of the project says.
@@ -344,10 +344,10 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       for (const [name, text] of Object.entries({ ...version4, "b.jsx": `${input}b  ;\n` }))
         writeFileSync(inside(`/${name}`), text);
       const result = await formatIn(String(dir), ["a.jsx"]);
-      expect(result.stderr.split("\n").filter(line => line.startsWith("[error]"))).toEqual([
-        `[error] caf\uFFFD/b.jsx: ${unknown} It was not formatted.`,
-        `[error] sortTailwindcss: ${String(dir)}/caf\uFFFD/node_modules/tailwindcss: cannot load Tailwind CSS from a path that is not UTF-8`,
-        "[error] 1 file with classes was not formatted.",
+      expect(result.stderr.split("\n").filter(line => /^error:|not formatted/.test(line))).toEqual([
+        `error: caf\uFFFD/b.jsx: ${unknown} It was not formatted.`,
+        `error: sortTailwindcss: ${String(dir)}/caf\uFFFD/node_modules/tailwindcss: cannot load Tailwind CSS from a path that is not UTF-8`,
+        "1 file with classes was not formatted.",
       ]);
       expect(result.files).toEqual([sorted]);
       expect(readFileSync(inside("/b.jsx"), "utf8")).toBe(`${input}b  ;\n`);
@@ -369,10 +369,10 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     using dir = tempDir("bun-format-tailwind", { ".oxfmtrc.json": '{ "sortTailwindcss": true }' });
     const from = ["--stdin-filepath", "a.jsx"];
     const refused = await formatIn(String(dir), [], from, `${input}a  ;\n`);
-    expect(refused.stderr).toContain("[error] sortTailwindcss: the tailwindcss package was not found from ");
+    expect(refused.stderr).toContain("error: sortTailwindcss: the tailwindcss package was not found from ");
     expect(refused).toMatchObject({ stdout: "", exitCode: 2 });
     const allowed = await formatIn(String(dir), [], ["--allow-unsupported", ...from], `${input}a  ;\n`);
-    expect(allowed.stderr).toContain("[warn] sortTailwindcss: the tailwindcss package was not found from ");
+    expect(allowed.stderr).toContain("warn: sortTailwindcss: the tailwindcss package was not found from ");
     expect(allowed).toMatchObject({ stdout: `${input}a;\n`, exitCode: 0 });
   });
 
@@ -446,8 +446,10 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
         lists.push({ files: stdout.split("\n").filter(it => it.endsWith(".jsx")), stdout, stderr, exitCode });
       }
       expect(lists[0].files).toEqual(allows ? names.toSorted() : ["four/a.jsx", "one/a.jsx", "two/a.jsx"]);
+      // One error, or one warning, for all of them.
+      expect(lists[0].stderr).toContain(`${allows ? "warn:" : "error:"} sortTailwindcss: `);
       expect(lists[0].stderr).toContain(
-        `[${allows ? "warn" : "error"}] sortTailwindcss: ${join(String(dir), "three/tailwind.config.js").replaceAll("\\", "/")}: It has no such plugin.`,
+        `\nsortTailwindcss: ${join(String(dir), "three/tailwind.config.js").replaceAll("\\", "/")}: It has no such plugin.\n`,
       );
       expect(lists[0].stderr).toContain(
         allows ? "Classes were not sorted in 7 files." : "7 files with classes were not formatted.",
@@ -572,11 +574,11 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(result).toMatchObject({ stderr: "", files: [after || before], exitCode: 0 });
     });
 
-    // The plugin says the same, behind the directory of the config and without the `[warn]`.
+    // The plugin says the same, behind the directory of the config and without the `warn:`.
     const deprecated = (name: string) =>
-      `[warn] Deprecated: Use the \`tailwindStylesheet\` option for v4 projects instead of \`${name}\`.\n`;
+      `warn: Deprecated: Use the \`tailwindStylesheet\` option for v4 projects instead of \`${name}\`.\n`;
     const both =
-      "[warn] You have specified a Tailwind CSS stylesheet and a Tailwind CSS config at the same time. Use stylesheetPath unless you are using v3. Preferring the stylesheet.\n";
+      "warn: You have specified a Tailwind CSS stylesheet and a Tailwind CSS config at the same time. Use stylesheetPath unless you are using v3. Preferring the stylesheet.\n";
     test.each<[object, string]>([
       [{ tailwindStylesheet: "./css/app.css" }, ""],
       [{ tailwindStylesheet: "css/app.css" }, ""],
@@ -659,7 +661,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       ],
     ])("a value of the wrong type is refused: %j", async (options, refusal) => {
       const result = await format({ ...project, ...config(options), "a.jsx": input }, ["a.jsx"]);
-      expect(result.stderr).toBe(`[error] ${refusal}\n`);
+      expect(result.stderr).toBe(`error: ${refusal}\n`);
       expect(result.files).toEqual([input]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -669,15 +671,15 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       const without = await format({ ...project, ".prettierrc": JSON.stringify(options), "a.jsx": input }, ["a.jsx"]);
       expect(without).toMatchObject({
         stderr:
-          '[warn] Ignored unknown option { tailwindFunctions: ["cn"] }.\n' +
-          '[warn] Ignored unknown option { tailwindConfig: "./x.js" }.\n' +
-          "[warn] Ignored unknown option { tailwindPreserveWhitespace: true }.\n",
+          'warn: Ignored unknown option { tailwindFunctions: ["cn"] }.\n' +
+          'warn: Ignored unknown option { tailwindConfig: "./x.js" }.\n' +
+          "warn: Ignored unknown option { tailwindPreserveWhitespace: true }.\n",
         files: [input],
         exitCode: 0,
       });
       const unknown = await format({ ...project, ...config({ tailwindOther: 1 }), "a.jsx": input }, ["a.jsx"]);
       expect(unknown).toMatchObject({
-        stderr: "[warn] Ignored unknown option { tailwindOther: 1 }.\n",
+        stderr: "warn: Ignored unknown option { tailwindOther: 1 }.\n",
         files: [sorted],
         exitCode: 0,
       });
@@ -919,7 +921,7 @@ export async function createSorter({ configPath, stylesheetPath }) {
       ])("has to be installed for that: %#", async (files, said) => {
         const result = await format({ ...files, "a.jsx": input }, ["a.jsx"]);
         for (const line of said)
-          expect(result.stderr).toContain(`[error] ${line.startsWith(" ") ? "" : "sortTailwindcss: "}${line}`);
+          expect(result.stderr).toContain(line.startsWith(" ") ? `\n${line}\n` : `error: sortTailwindcss: ${line}`);
         expect(result.files).toEqual([input]);
         expect(result.exitCode).toBe(2);
       });
@@ -934,9 +936,9 @@ export async function createSorter({ configPath, stylesheetPath }) {
         "Checking formatting...\nError occurred when checking code style in the above file.\n",
       );
       expect(result.stderr.split("\n")).toEqual([
-        `[error] a.jsx: ${unknown} It was not formatted.`,
-        expect.stringMatching(/^\[error\] sortTailwindcss: \S+tailwind\.config\.js: boom$/),
-        "[error] 1 file with classes was not formatted.",
+        `error: a.jsx: ${unknown} It was not formatted.`,
+        expect.stringMatching(/^error: sortTailwindcss: \S+tailwind\.config\.js: boom$/),
+        "1 file with classes was not formatted.",
         "",
       ]);
       expect(result.exitCode).toBe(2);

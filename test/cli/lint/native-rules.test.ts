@@ -1030,14 +1030,23 @@ describe.concurrent("unknown rules", () => {
     ["no-null", `Unknown rule "no-null"\n  Did you mean "unicorn/no-null"?`],
     ["react-hooks/jsx-key", `Unknown rule "react-hooks/jsx-key"\n  Did you mean "react/jsx-key"?`],
     // Nothing is close enough to suggest.
-    ["foo/bar-baz", `Unknown rule "foo/bar-baz"`],
+    [
+      "foo/bar-baz",
+      `Unknown rule "foo/bar-baz"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]`,
+    ],
     ["perfectly-fine", `Unknown rule "perfectly-fine"`],
     // Rules that bun lint leaves out on purpose.
     ["indent", `"indent" is a formatting rule\n  bun fmt does that`],
     ["eslint/semi", `"eslint/semi" is a formatting rule\n  bun fmt does that`],
     ["@stylistic/quotes", `"@stylistic/quotes" is a formatting rule\n  bun fmt does that`],
-    ["jsdoc/require-param", `"jsdoc/require-param" is not supported\n  bun lint has no jsdoc rules`],
-    ["vue/no-dupe-keys", `"vue/no-dupe-keys" is not supported\n  bun lint has no vue rules`],
+    [
+      "jsdoc/require-param",
+      `"jsdoc/require-param" is not supported\n  bun lint has no jsdoc rules. To run eslint-plugin-jsdoc, add it to plugins in [lint]`,
+    ],
+    [
+      "vue/no-dupe-keys",
+      `"vue/no-dupe-keys" is not supported\n  bun lint has no vue rules. To run eslint-plugin-vue, add it to plugins in [lint]`,
+    ],
   ];
 
   test.each(cases)("%s is rejected", async (written, said) => {

@@ -45,8 +45,8 @@ struct Plugins {
 
 impl Plugins {
     #[optimize(size)]
-    fn add(&mut self, name: &[u8]) {
-        let list = if config::is_built_in_plugin(name) {
+    fn add(&mut self, name: &[u8], is_built_in: bool) {
+        let list = if is_built_in {
             &mut self.built_in
         } else if config::is_missing_plugin(name) {
             &mut self.not_supported
@@ -83,7 +83,7 @@ pub(super) fn report(
         let missing = configs.missing_plugins(scope, Some(path)).iter();
         named
             .chain(missing.map(|it| &it[..]))
-            .for_each(|it| plugins.add(it));
+            .for_each(|it| plugins.add(it, configs.is_built_in(it)));
         nested.extend(configs.path_of_config(scope).map(shown));
     }
     let mut nested = sorted(nested);

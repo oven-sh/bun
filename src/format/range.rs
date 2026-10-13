@@ -214,7 +214,8 @@ pub(crate) fn write_with_line_ending(mut text: &[u8], line_ending: &[u8], out: &
 fn comments_of<'a>(file: &'a File<'a>, flavor: Flavor) -> &'a [Comment] {
     let comments = file.extension(|| {
         let mut comments = Vec::new();
-        comments::collect(file, flavor, &mut comments);
+        let parsed_by = comments::ParsedBy::WhatItsNameSays;
+        comments::collect(file, flavor, parsed_by, &mut comments);
         comments
     });
     comments.map_or(&[][..], |comments: &Vec<Comment>| comments)

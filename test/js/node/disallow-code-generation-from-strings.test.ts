@@ -1,7 +1,7 @@
 // --disallow-code-generation-from-strings: as Node.js's flag, eval and the Function constructors
 // throw. With "=strict" (Bun's own), nothing in the process turns a string into script.
-import { describe, expect, test } from "bun:test";
 import * as internals from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isGlibc, isLinux, isWindows, nodeExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";

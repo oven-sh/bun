@@ -137,7 +137,9 @@ fn build_wrapping_fix<'a>(
     if let Some(primitive_type) = primitive_type {
         code.extend_from_slice(b" satisfies ");
         code.extend_from_slice(primitive_type.as_bytes());
-        if is_weak_precedence_parent_for_tsgolint(node) && !node.is_parenthesized() {
+        // Not in tsgolint: `typeof a satisfies number` is `(typeof a) satisfies number`.
+        let is_operand = matches!(node.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Unary { .. }));
+        if (is_operand || is_weak_precedence_parent_for_tsgolint(node)) && !node.is_parenthesized() {
             code = [b"(".as_slice(), code.as_slice(), b")".as_slice()].concat();
         }
     }

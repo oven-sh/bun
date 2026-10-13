@@ -310,6 +310,8 @@ pub struct Options {
     pub bunfig: Vec<u8>,
     /// It has a `[fmt]` section, which was read.
     pub has_section_of_bunfig: bool,
+    /// `bun --config=<path>` names it.
+    pub is_bunfig_named: bool,
     /// `--staged`, `--changed`
     pub only: Option<crate::git::Only>,
     pub with_node_modules: bool,
@@ -369,6 +371,7 @@ impl Default for Options {
             ignore_patterns_of_bunfig: 0,
             bunfig: b"bunfig.toml".to_vec(),
             has_section_of_bunfig: false,
+            is_bunfig_named: false,
             only: None,
             with_node_modules: false,
             error_on_unmatched_pattern: true,
@@ -612,18 +615,17 @@ impl Options {
         Options::default().with(args)
     }
 
-    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts where
-    /// the file is.
-    pub fn of_bunfig_at(mut self, path: &[u8]) -> Options {
+    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts at
+    /// [`Options::start_of_bunfig`]. `is_named`: [`Options::is_bunfig_named`].
+    pub fn of_bunfig_at(mut self, path: &[u8], is_named: bool) -> Options {
         self.bunfig = paths::from_native(path);
         self.has_section_of_bunfig = true;
+        self.is_bunfig_named = is_named;
         self.ignore_patterns_of_bunfig = self.ignore_pattern.len();
         let directory = paths::dirname(&self.bunfig).to_vec();
-        if directory != b"." {
-            let is_relative = |it: &&mut Vec<u8>| it.starts_with(b"./") || it.starts_with(b"../");
-            let plugins = self.plugins.iter_mut().filter(is_relative);
+        if directory != b"." && !is_named {
             let files = self.ignore_path.iter_mut().flatten();
-            for it in self.config.iter_mut().chain(files).chain(plugins) {
+            for it in self.config.iter_mut().chain(files) {
                 let written = paths::from_native(it);
                 if !paths::is_absolute(&written) {
                     *it = paths::join_normalized(&directory, &written);
@@ -633,9 +635,13 @@ impl Options {
         self
     }
 
-    /// Where [`Options::bunfig`] is.
-    pub(crate) fn directory_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {
-        paths::dirname(&paths::resolve(cwd, &self.bunfig)).to_vec()
+    /// Where the paths and the patterns in bunfig.toml start: where the file is. `--config` can name a file that is kept
+    /// anywhere, and then it is the working directory.
+    pub(crate) fn start_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {
+        match self.is_bunfig_named {
+            true => cwd.to_vec(),
+            false => paths::dirname(&paths::resolve(cwd, &self.bunfig)).to_vec(),
+        }
     }
 
     /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::format`].

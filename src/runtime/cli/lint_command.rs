@@ -12,6 +12,7 @@ use bun_sys::File;
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
+use bun_bunfig::Above;
 
 pub(crate) struct LintCommand;
 
@@ -63,30 +64,30 @@ fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
         .last()
 }
 
-/// Has `read` read the bunfig.toml files that can say something to `command`, each with its path from the working directory:
-/// the one in the working directory, then those above it, from the nearest, until `read` says that it has enough. With
-/// `--config` there is only that file. A file that cannot be used ends the process. Call this after `--cwd`.
+/// Has `read` read the bunfig.toml files that can say something to `command`, each with its path from the working directory
+/// and whether `--config` names it: the one in the working directory, then those above it, from the nearest, for as long as
+/// `read` wants the next. With `--config` there is only that file. Call this after `--cwd`.
 pub(crate) fn read_bunfigs(
     ctx: &mut ContextData,
     tag: Tag,
     command: &[u8],
-    read: &mut dyn FnMut(&bun_ast::Expr, &[u8]) -> Result<bool, bunfig::Refusal>,
+    read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::Refusal>,
 ) {
-    let mut read = |file: &bun_ast::Expr, path: &[u8]| {
-        read(file, path).map_err(|refusal| (refusal.at, refusal.message))
-    };
     let named = bunfig_before(command);
-    let mut has_enough = false;
+    let mut read = |file: &bun_ast::Expr, path: &[u8]| {
+        read(file, path, named.is_some()).map_err(|refusal| (refusal.at, refusal.message))
+    };
+    let mut above = Above::Needed;
     let here = &mut |file: &bun_ast::Expr| {
-        has_enough = read(file, named.unwrap_or(b"bunfig.toml"))?;
+        above = read(file, named.unwrap_or(b"bunfig.toml"))?;
         Ok(())
     };
     if let Err(err) = bun_bunfig::load_config_for_tool(tag, named, ctx, Some(here)) {
         Output::err(err, "failed to load bunfig", ());
         Global::exit(2);
     }
-    if named.is_none() && !has_enough {
-        bun_bunfig::load_config_above_for_tool(tag, ctx, &mut read);
+    if named.is_none() && above != Above::Unwanted {
+        bun_bunfig::load_config_above_for_tool(tag, ctx, above, &mut read);
     }
 }
 
@@ -351,15 +352,25 @@ impl LintCommand {
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
             // `[fmt]` is for the rule that holds a file against what `bun fmt` prints: it is the one that `bun fmt` would read.
             let (mut defaults, mut of_bun_format) = (None, None);
-            read_bunfigs(ctx, Tag::LintCommand, b"lint", &mut |file, path| {
-                if defaults.is_none() {
-                    defaults = bunfig::lint(file)?.map(|it| it.of_bunfig_at(path));
-                }
-                if of_bun_format.is_none() {
-                    of_bun_format = bunfig::format(file)?.map(|it| it.of_bunfig_at(path));
-                }
-                Ok(defaults.is_some() && of_bun_format.is_some())
-            });
+            read_bunfigs(
+                ctx,
+                Tag::LintCommand,
+                b"lint",
+                &mut |file, path, is_named| {
+                    if defaults.is_none() {
+                        defaults = bunfig::lint(file)?.map(|it| it.of_bunfig_at(path, is_named));
+                    }
+                    if of_bun_format.is_none() {
+                        of_bun_format =
+                            bunfig::format(file)?.map(|it| it.of_bunfig_at(path, is_named));
+                    }
+                    Ok(match (&defaults, &of_bun_format) {
+                        (Some(_), Some(_)) => Above::Unwanted,
+                        (Some(_), None) => Above::Optional,
+                        (None, _) => Above::Needed,
+                    })
+                },
+            );
             if let Some(of_bun_format) = of_bun_format {
                 defaults.get_or_insert_default().of_bun_format = Some(Box::new(of_bun_format));
             }

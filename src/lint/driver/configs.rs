@@ -929,9 +929,17 @@ impl<'l> Loader<'l> {
         by_file.keys().filter(|it| !it.is_empty()).count() > 1
     }
 
-    /// Where bunfig.toml is. What is a pattern in it starts there, and not in the working directory, which can be below.
-    fn directory_of_bunfig(&self) -> Vec<u8> {
-        paths::dirname(&paths::resolve(self.cwd(), &self.options.bunfig)).to_vec()
+    /// [`Options::start_of_bunfig`]
+    fn start_of_bunfig(&self) -> Vec<u8> {
+        self.options.start_of_bunfig(self.cwd())
+    }
+
+    /// Where the patterns start in the file that `--config` names, or `config` in bunfig.toml.
+    fn start_of_named_config(&self) -> Vec<u8> {
+        match self.options.is_config_of_bunfig {
+            true => self.start_of_bunfig(),
+            false => self.cwd().to_vec(),
+        }
     }
 
     /// `ignorePatterns` of bunfig.toml and `--ignore-pattern`, each with where they start.
@@ -940,7 +948,7 @@ impl<'l> Loader<'l> {
         let (of_bunfig, of_flags) =
             all.split_at(self.options.ignore_patterns_of_bunfig.min(all.len()));
         [
-            (self.directory_of_bunfig(), of_bunfig),
+            (self.start_of_bunfig(), of_bunfig),
             (self.cwd().to_vec(), of_flags),
         ]
     }
@@ -950,7 +958,7 @@ impl<'l> Loader<'l> {
     /// override says otherwise.
     fn overrides(&self, shape: Shape, base_path: &[u8]) -> Vec<Json> {
         let text = |it: &[u8]| Json::String(it.to_vec());
-        let start = self.directory_of_bunfig();
+        let start = self.start_of_bunfig();
         let write = |it: &Override| {
             let mut entries = vec![(&b"files"[..], strings_of(&it.files))];
             if !it.excluded.is_empty() {
@@ -1418,8 +1426,9 @@ impl<'l> Loader<'l> {
                 return Err(mistake(message.to_vec()));
             }
             // A path in bunfig.toml is relative to that file.
-            let of_bunfig = self.directory_of_bunfig();
-            let directory = written.map_or_else(|| self.cwd(), |_| &of_bunfig[..]);
+            let of_bunfig = paths::resolve(self.cwd(), &self.options.bunfig);
+            let of_bunfig = paths::dirname(&of_bunfig);
+            let directory = written.map_or_else(|| self.cwd(), |_| of_bunfig);
             // Not a package that it needs.
             let is_missing = |why: &[u8], name: &[u8]| {
                 strings::contains(why, &[b"Cannot find module '", name, b"'"].concat())
@@ -2271,7 +2280,8 @@ impl<'l> Loader<'l> {
         let cascade = files.len();
         // `createCLIConfigArray`
         if let Some(path) = &options.config {
-            files.push(eslintrc::named(&absolute(path), cwd, &mut modules)?);
+            let start = self.start_of_named_config();
+            files.push(eslintrc::named(&absolute(path), &start, &mut modules)?);
         }
         if options.ignore {
             let path = options.ignore_path.as_ref().map(absolute);
@@ -2430,7 +2440,7 @@ impl<'l> Loader<'l> {
             return match &self.options.config {
                 Some(path) => self.load(
                     &paths::resolve(self.cwd(), &paths::from_native(path)),
-                    self.cwd(),
+                    &self.start_of_named_config(),
                 ),
                 None => self.load(b"", self.cwd()),
             };
@@ -2615,7 +2625,7 @@ impl<'l> Loader<'l> {
     /// Where the patterns start in the file that `--ignore-path`, or `ignorePath` of bunfig.toml, names.
     fn start_of_ignore_path(&self) -> Vec<u8> {
         match self.options.ignore_file_name_of_bunfig {
-            Some(_) => self.directory_of_bunfig(),
+            Some(_) => self.start_of_bunfig(),
             None => self.cwd().to_vec(),
         }
     }

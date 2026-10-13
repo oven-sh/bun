@@ -855,6 +855,35 @@ debugger;
     expect(problems(stdout)).toEqual(["a.js:4 no-debugger"]);
   });
 
+  test("the rules about comments pass over the comments of both", async () => {
+    const code = `// oxlint-disable-next-line no-debugger
+debugger;
+debugger; // oxlint-disable-line no-debugger
+// eslint-disable-next-line no-debugger
+debugger;
+debugger; // eslint-disable-line no-debugger
+// another
+`;
+    const rules = { "capitalized-comments": "error", "no-inline-comments": "error", "no-debugger": "error" } as const;
+    const flat = { "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n` };
+    const [alone, fixed, withEslint] = await Promise.all([
+      lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json"]),
+      // A capital letter would end what the comment does.
+      lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json", "--fix-dry-run"]),
+      lint({ "a.js": code, ...flat }, ["-f", "json"]),
+    ]);
+    expect(problems(alone.stdout)).toEqual(["a.js:7 capitalized-comments"]);
+    expect(JSON.parse(fixed.stdout)[0].output).toBe(code.replace("another", "Another"));
+    expect(problems(withEslint.stdout)).toEqual([
+      "a.js:1 capitalized-comments",
+      "a.js:2 no-debugger",
+      "a.js:3 capitalized-comments",
+      "a.js:3 no-debugger",
+      "a.js:3 no-inline-comments",
+      "a.js:7 capitalized-comments",
+    ]);
+  });
+
   test("eslint-disable accepts every name of a rule", async () => {
     const code = `// eslint-disable-next-line unicorn/no-null
 export const a = null;

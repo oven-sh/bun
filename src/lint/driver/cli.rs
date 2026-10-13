@@ -443,6 +443,12 @@ pub struct Options {
     pub bunfig: Vec<u8>,
     /// It has a `[lint]` section, which was read.
     pub has_section_of_bunfig: bool,
+    /// `bun --config=<path>` names it.
+    pub is_bunfig_named: bool,
+    /// [`Options::config`] is what bunfig.toml says.
+    pub is_config_of_bunfig: bool,
+    /// [`Options::suppressions_location`] is what the flag says.
+    pub is_suppressions_location_of_flag: bool,
     /// `[[lint.overrides]]` from bunfig.toml. There's no flag for it.
     pub overrides: Vec<Override>,
     /// Only set if there are `overrides`. The command line's options on their own, because its rules and globals apply
@@ -564,6 +570,9 @@ impl Default for Options {
             rules_of_bunfig: Vec::new(),
             bunfig: b"bunfig.toml".to_vec(),
             has_section_of_bunfig: false,
+            is_bunfig_named: false,
+            is_config_of_bunfig: false,
+            is_suppressions_location_of_flag: false,
             overrides: Vec::new(),
             of_command_line: None,
             fix: false,
@@ -709,7 +718,7 @@ impl Options {
             });
         }
         match name {
-            b"config" => self.config = owned(),
+            b"config" => (self.config, self.is_config_of_bunfig) = (owned(), false),
             b"config-lookup" => self.config_lookup = is_on,
             b"flavor" => {
                 self.flavor = Some(match text {
@@ -808,7 +817,10 @@ impl Options {
                 .suppress_rule
                 .get_or_insert_default()
                 .extend(list(text)),
-            b"suppressions-location" => self.suppressions_location = owned(),
+            b"suppressions-location" => {
+                self.suppressions_location = owned();
+                self.is_suppressions_location_of_flag = true;
+            }
             b"prune-suppressions" => self.prune_suppressions = is_on,
             b"pass-on-unpruned-suppressions" => self.pass_on_unpruned_suppressions = is_on,
             b"stats" => self.stats = is_on,
@@ -898,16 +910,19 @@ impl Options {
         Options::default().with(args)
     }
 
-    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts where
-    /// the file is.
-    pub fn of_bunfig_at(mut self, path: &[u8]) -> Options {
+    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts at
+    /// [`Options::start_of_bunfig`]. `is_named`: [`Options::is_bunfig_named`].
+    pub fn of_bunfig_at(mut self, path: &[u8], is_named: bool) -> Options {
         self.bunfig = paths::from_native(path);
         self.has_section_of_bunfig = true;
+        self.is_bunfig_named = is_named;
+        self.is_config_of_bunfig = self.config.is_some();
+        self.is_suppressions_location_of_flag = false;
         self.ignore_patterns_of_bunfig = self.ignore_pattern.len();
         self.ignore_file_name_of_bunfig
             .clone_from(&self.ignore_path);
         let directory = paths::dirname(&self.bunfig).to_vec();
-        if directory != b"." {
+        if directory != b"." && !is_named {
             let all = [
                 &mut self.config,
                 &mut self.ignore_path,
@@ -922,6 +937,15 @@ impl Options {
             }
         }
         self
+    }
+
+    /// Where the paths and the patterns in bunfig.toml start: where the file is, which is the project to a run from any
+    /// directory of it. `--config` can name a file that is kept anywhere, and then it is the working directory.
+    pub(crate) fn start_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {
+        match self.is_bunfig_named {
+            true => cwd.to_vec(),
+            false => paths::dirname(&paths::resolve(cwd, &self.bunfig)).to_vec(),
+        }
     }
 
     /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::lint`].

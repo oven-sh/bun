@@ -615,10 +615,15 @@ describe.concurrent("a bunfig.toml above the working directory", () => {
   /** Runs `bun lint -f unix ...args` in `cwd`, a directory of `files`. Returns the problems as `path:line rule`, from the root. */
   async function lintIn(cwd: string, files: Record<string, string>, args: string[], before: string[] = []) {
     using dir = tempDir("bun-lint", files);
+    return await lintAt(String(dir), cwd, args, before);
+  }
+
+  /** The same in a project that is there, at `dir`. */
+  async function lintAt(dir: string, cwd: string, args: string[], before: string[] = []) {
     await using proc = spawn({
       cmd: [bunExe(), ...before, "lint", "-f", "unix", ...args],
       env,
-      cwd: join(String(dir), cwd),
+      cwd: join(dir, cwd),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -635,7 +640,7 @@ describe.concurrent("a bunfig.toml above the working directory", () => {
     );
     return {
       found: found.sort(),
-      stderr: normalizeBunSnapshot(stderr, String(dir)).replace(/ \[[\d.]+m?s\]/, ""),
+      stderr: normalizeBunSnapshot(stderr, dir).replace(/ \[[\d.]+m?s\]/, ""),
       exitCode,
     };
   }
@@ -695,15 +700,136 @@ rules = { "no-console" = "off" }
       expect(await lintIn(cwd, { ...project, ...config }, args)).toMatchObject({ found: expected, exitCode: 1 });
     });
 
-    test("--config names the same file", async () => {
-      const result = await lintIn("packages/app", { ...project, ...config }, ["."], ["--config=../../bunfig.toml"]);
+    test("the patterns of a file that --config names start in the working directory", async () => {
+      const { "bunfig.toml": bunfig, ...rest } = project;
+      const files = { ...rest, ...config, "tools/bunfig.toml": bunfig.replace("./tools/plugin.js", "./plugin.js") };
+      const result = await lintIn(".", files, ["packages/app"], ["--config=tools/bunfig.toml"]);
       expect(result).toMatchObject({ found: expected, exitCode: 1 });
+    });
+
+    test("the suppressions file is one file for every directory", async () => {
+      const bunfig = `[lint]\nsuppressionsLocation = "tools/suppressed.json"\n[lint.rules]\n"no-debugger" = "error"\n`;
+      using dir = tempDir("bun-lint", {
+        ...config,
+        "package.json": `{ "type": "module" }`,
+        "bunfig.toml": bunfig,
+        "packages/app/a.js": "debugger;\n",
+        "packages/lib/b.js": "debugger;\n",
+      });
+      const read = async () => Object.keys(await Bun.file(join(String(dir), "tools/suppressed.json")).json()).sort();
+      expect(await lintAt(String(dir), "packages/app", ["--suppress-all"])).toMatchObject({ found: [], exitCode: 0 });
+      expect(await read()).toEqual(["packages/app/a.js"]);
+      expect(await lintAt(String(dir), ".", ["--suppress-all"])).toMatchObject({ found: [], exitCode: 0 });
+      expect(await read()).toEqual(["packages/app/a.js", "packages/lib/b.js"]);
+      for (const cwd of [".", "packages", "packages/app", "packages/lib"]) {
+        expect(await lintAt(String(dir), cwd, [])).toMatchObject({ found: [], exitCode: 0 });
+      }
+      // What another directory has is not unused.
+      expect(await lintAt(String(dir), "packages/app", ["--prune-suppressions"])).toMatchObject({ exitCode: 0 });
+      expect(await read()).toEqual(["packages/app/a.js", "packages/lib/b.js"]);
     });
 
     test("--ignore-pattern starts in the working directory", async () => {
       const result = await lintIn("packages/app", { ...project, ...config }, [".", "--ignore-pattern", "test/"]);
       expect(result).toMatchObject({ found: all("packages/app/src/a.js").sort(), exitCode: 1 });
     });
+  });
+
+  test("the suppressions file with the usual name is looked for where bunfig.toml is", async () => {
+    using dir = tempDir("bun-lint", {
+      "bunfig.toml": `[lint.rules]\n"no-debugger" = "error"\n`,
+      "packages/app/a.js": "debugger;\n",
+    });
+    expect(await lintAt(String(dir), "packages/app", ["--suppress-all"])).toMatchObject({ found: [], exitCode: 0 });
+    expect(await Bun.file(join(String(dir), "eslint-suppressions.json")).json()).toEqual({
+      "packages/app/a.js": { "no-debugger": { count: 1 } },
+    });
+    expect(await lintAt(String(dir), ".", [])).toMatchObject({ found: [], exitCode: 0 });
+  });
+
+  test("--suppressions-location, and the names in that file, start in the working directory", async () => {
+    using dir = tempDir("bun-lint", {
+      "bunfig.toml": `[lint]\nsuppressionsLocation = "unused.json"\n[lint.rules]\n"no-debugger" = "error"\n`,
+      "packages/app/a.js": "debugger;\n",
+    });
+    const flags = ["--suppressions-location", "mine.json"];
+    expect(await lintAt(String(dir), "packages/app", [...flags, "--suppress-all"])).toMatchObject({ exitCode: 0 });
+    expect(await Bun.file(join(String(dir), "packages/app/mine.json")).json()).toEqual({
+      "a.js": { "no-debugger": { count: 1 } },
+    });
+    expect(await lintAt(String(dir), "packages/app", flags)).toMatchObject({ found: [], exitCode: 0 });
+  });
+
+  test.each([
+    [
+      "tools/eslint.config.js",
+      `export default [{ ignores: ["packages/app/gen/**"] }, { files: ["packages/app/**"], rules: { "no-debugger": "error" } }];\n`,
+    ],
+    [
+      "tools/.eslintrc.json",
+      `{ "root": true, "ignorePatterns": ["packages/app/gen/**"], "overrides": [{ "files": ["packages/app/**"], "rules": { "no-debugger": "error" } }] }`,
+    ],
+  ])("the patterns in %s, which `config` names, start where bunfig.toml is", async (path, config) => {
+    const files = {
+      "package.json": `{ "type": "module" }`,
+      "bunfig.toml": `[lint]\nconfig = "${path}"\n`,
+      [path]: config,
+      "packages/app/a.js": "debugger;\n",
+      "packages/app/gen/b.js": "debugger;\n",
+      "packages/lib/c.js": "debugger;\n",
+    };
+    for (const [cwd, args] of [
+      [".", ["packages"]],
+      ["packages/app", ["..", "--no-warn-ignored"]],
+      ["packages/app/gen", ["../.."]],
+    ] as const) {
+      expect(await lintIn(cwd, files, [...args])).toMatchObject({ found: ["packages/app/a.js:1 no-debugger"] });
+    }
+    // The flag is as it was.
+    const flag = ["--config", `../../${path}`, "."];
+    expect(await lintIn("packages/app", files, flag)).toMatchObject({ found: [], exitCode: 0 });
+  });
+
+  test("a path in the options of a rule starts where bunfig.toml is", async () => {
+    const files = {
+      "bunfig.toml": `[lint.rules]
+"import/no-restricted-paths" = ["error", { zones = [{ target = "./src/client", from = "./src/server" }] }]
+"import/no-unassigned-import" = ["error", { allow = ["src/client/*.css"] }]
+`,
+      "src/server/s.js": "export const s = 1;\n",
+      "src/client/style.css": "a {}\n",
+      "src/client/c.js": `import "./style.css";\nimport { s } from "../server/s.js";\nexport const c = s;\n`,
+    };
+    for (const [cwd, args] of [
+      [".", []],
+      ["src", []],
+      ["src/client", []],
+      ["src/server", ["../client"]],
+    ] as const) {
+      expect(await lintIn(cwd, files, [...args])).toMatchObject({
+        found: ["src/client/c.js:2 import/no-restricted-paths"],
+        exitCode: 1,
+      });
+    }
+  });
+
+  test.each([
+    ["that is no TOML", "[install\n"],
+    ["with a mistake in [fmt]", "[fmt]\nprintWidht = 80\n"],
+    ["with a mistake in [lint]", "[lint]\nnope = 1\n"],
+  ])("a project with a [lint] of its own does not mind a bunfig.toml above it %s", async (_, above) => {
+    const files = {
+      "bunfig.toml": above,
+      "work/project/bunfig.toml": `[lint.rules]\n"no-debugger" = "warn"\n`,
+      "work/project/src/a.js": "debugger;\n",
+    };
+    for (const cwd of ["work/project", "work/project/src"]) {
+      expect(await lintIn(cwd, files, [])).toEqual({
+        found: ["work/project/src/a.js:1 no-debugger"],
+        stderr: "Linted 1 file",
+        exitCode: 0,
+      });
+    }
   });
 
   test("ignorePath, and what the file has, start where bunfig.toml is", async () => {

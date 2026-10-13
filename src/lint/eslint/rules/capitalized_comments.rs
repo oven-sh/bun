@@ -25,8 +25,10 @@ impl CommentOptions {
             false => raw,
         };
         CommentOptions {
-            ignore_pattern: (options.str("ignorePattern").filter(|pattern| !pattern.is_empty()))
-                .and_then(|pattern| Regex::new(&format!("^\\s*(?:{pattern})"), "u").ok()),
+            ignore_pattern: (options
+                .str("ignorePattern")
+                .filter(|pattern| !pattern.is_empty()))
+            .and_then(|pattern| Regex::new(&format!("^\\s*(?:{pattern})"), "u").ok()),
             ignore_inline_comments: options.bool_or("ignoreInlineComments", false),
             ignore_consecutive_comments: options.bool_or("ignoreConsecutiveComments", false),
         }
@@ -72,14 +74,19 @@ fn is_maybe_url(value: &[u8]) -> bool {
         && after_scheme == u32::from(b':')
         && rest.next() == Some(u32::from(b'/'))
         && rest.next() == Some(u32::from(b'/'))
-        && rest.next().is_some_and(|c| !matches!(u8::try_from(c), Ok(b'?' | b'#')))
+        && rest
+            .next()
+            .is_some_and(|c| !matches!(u8::try_from(c), Ok(b'?' | b'#')))
 }
 
 /// oxlint's `is_url`: `text` starts with a scheme and `://`.
 fn oxlint_is_url(text: &[u8]) -> bool {
     let is_in_scheme = |c: &&u8| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.');
     let scheme_len = text.iter().take_while(is_in_scheme).count();
-    scheme_len > 0 && text.get(scheme_len..).is_some_and(|it| it.starts_with(b"://"))
+    scheme_len > 0
+        && text
+            .get(scheme_len..)
+            .is_some_and(|it| it.starts_with(b"://"))
 }
 
 /// What oxlint passes over: its `is_directive_comment`. In a block the URL can come after the `*` of a line.
@@ -128,7 +135,10 @@ impl CapitalizedComments {
         let [b'/', b'/' | b'*', rest @ ..] = comment.text() else {
             return false;
         };
-        match rest.iter().find(|b| !matches!(b, 0x09..=0x0D | b' ' | b'*')) {
+        match rest
+            .iter()
+            .find(|b| !matches!(b, 0x09..=0x0D | b' ' | b'*'))
+        {
             Some(first) if self.is_always => first.is_ascii() && !first.is_ascii_lowercase(),
             Some(first) => first.is_ascii() && !first.is_ascii_uppercase(),
             None => true,
@@ -145,15 +155,16 @@ impl CapitalizedComments {
             _ => return,
         };
         let value = comment.comment_value();
-        let mut word_chars =
-            strings::wtf8_codepoints(value).filter(|&(_, c)| c != u32::from(b'*') && !strings::is_js_whitespace(c));
+        let mut word_chars = strings::wtf8_codepoints(value)
+            .filter(|&(_, c)| c != u32::from(b'*') && !strings::is_js_whitespace(c));
         let Some((at, first)) = word_chars.next() else {
             return;
         };
         if !is_letter(first) {
             return;
         }
-        let Some(letter) = value.get(at..at + char::from_u32(first).map_or(1, char::len_utf8)) else {
+        let Some(letter) = value.get(at..at + char::from_u32(first).map_or(1, char::len_utf8))
+        else {
             return;
         };
         let expected = || match self.is_always {
@@ -170,10 +181,13 @@ impl CapitalizedComments {
         }
         let is_directive = match cx.language().is_oxlint {
             true => oxlint_is_directive(comment, value),
+            // Both tools' comments count there.
+            false if cx.language().stands_alone && oxlint_is_directive(comment, value) => true,
             false => ast_utils::matches_comments_ignore_pattern(value) || is_maybe_url(value),
         };
         if is_directive
-            || (options.ignore_pattern.as_ref()).is_some_and(|it| it.test(&without_asterisks(value)))
+            || (options.ignore_pattern.as_ref())
+                .is_some_and(|it| it.test(&without_asterisks(value)))
             || options.ignore_inline_comments && is_inline_comment(cx.file(), comment)
             || options.ignore_consecutive_comments && is_consecutive_comment(cx.file(), comment)
         {
@@ -194,7 +208,8 @@ impl CapitalizedComments {
 }
 
 impl Rule for CapitalizedComments {
-    const META: Meta = Meta::eslint("capitalized-comments", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta =
+        Meta::eslint("capitalized-comments", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     no_state!();
 

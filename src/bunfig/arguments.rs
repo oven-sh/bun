@@ -301,13 +301,26 @@ pub fn load_config_for_tool(
     Ok(())
 }
 
+/// Whether `bun lint` or `bun fmt` goes on to the bunfig.toml of the directory above.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Above {
+    /// It has all that it looks for.
+    Unwanted,
+    /// A file there that cannot be used ends the process.
+    Needed,
+    /// It has its own section and looks for one that it can do without. A file there that cannot be used ends the search: it
+    /// can be that of another project.
+    Optional,
+}
+
 /// For `bun lint` and `bun fmt`, which have not found all that is for them in the working directory: has `tool` read the
-/// bunfig.toml of each directory above it, from the nearest, until `tool` says that it has enough. It is called with the file
-/// and its path from the working directory. Nothing else in these files counts.
+/// bunfig.toml of each directory above it, from the nearest, for as long as it wants the next. It is called with the file and
+/// its path from the working directory. Nothing else in these files counts.
 pub fn load_config_above_for_tool(
     cmd: CommandTag,
     ctx: Context<'_>,
-    tool: &mut dyn FnMut(&bun_ast::Expr, &[u8]) -> Result<bool, (bun_ast::Loc, Vec<u8>)>,
+    mut above: Above,
+    tool: &mut dyn FnMut(&bun_ast::Expr, &[u8]) -> Result<Above, (bun_ast::Loc, Vec<u8>)>,
 ) -> Option<()> {
     let cwd = ctx.args.absolute_working_dir.clone()?;
     let mut buffer = bun_paths::path_buffer_pool::get();
@@ -322,15 +335,29 @@ pub fn load_config_above_for_tool(
         if path.as_bytes() == below {
             return None;
         }
-        let mut has_enough = false;
+        let is_optional = above == Above::Optional;
         let read: &mut ToolReader<'_> = &mut |file| {
-            has_enough = tool(file, &shown)?;
+            above = tool(file, &shown)?;
             Ok(())
         };
+        // SAFETY: process-global Log; see `load_bunfig` note.
+        let said = unsafe { &*ctx.log }.msgs.len();
         if let Err(err) = load_bunfig(cmd, true, path, &mut *ctx, Some(read), true) {
-            report_bunfig_load_failure_as(cmd, ctx.log, err, Some(&shown));
+            if !is_optional {
+                report_bunfig_load_failure_as(cmd, ctx.log, err, Some(&shown));
+            }
+            // SAFETY: as above.
+            let log = unsafe { &mut *ctx.log };
+            for it in log.msgs.drain(said..) {
+                match it.kind {
+                    bun_ast::Kind::Err => log.errors -= 1,
+                    bun_ast::Kind::Warn => log.warnings -= 1,
+                    _ => {}
+                }
+            }
+            return None;
         }
-        if has_enough {
+        if above == Above::Unwanted {
             return Some(());
         }
         below.clear();

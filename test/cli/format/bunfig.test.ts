@@ -982,8 +982,10 @@ options = { singleQuote = true }
     expect(await formatIn(cwd, project, args)).toEqual({ stdout: "", stderr: "", exitCode: 0, changed: expected });
   });
 
-  test("--config names the same file", async () => {
-    const result = await formatIn("packages/app", project, ["."], ["--config=../../bunfig.toml"]);
+  test("the patterns of a file that --config names start in the working directory", async () => {
+    const { "bunfig.toml": bunfig, ...rest } = project;
+    const files = { ...rest, "tools/bunfig.toml": bunfig };
+    const result = await formatIn(".", files, ["packages/app"], ["--config=tools/bunfig.toml"]);
     expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0, changed: expected });
   });
 

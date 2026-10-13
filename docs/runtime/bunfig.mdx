@@ -408,7 +408,9 @@ files = ["scripts/**"]
 rules = { "no-console" = "off" }
 ```
 
-`bun lint` uses the nearest `bunfig.toml` that has a `[lint]` section, from the working directory up, so it finds the same problems from any directory of the project. Paths and patterns in the section are relative to the file.
+`bun lint` uses the nearest `bunfig.toml` that has a `[lint]` section, from the working directory up, so it finds the same problems from any directory of the project.
+
+Paths and patterns in the section are relative to the file. So are paths in rule options, the patterns in a config file that `config` names, and the file names in the suppressions file. With `bun --config=<path> lint` they are relative to the working directory, except `plugins`.
 
 A typo is an error. `bun lint` exits with code `2` on an unknown key or an unknown rule.
 
@@ -603,7 +605,9 @@ sortImports = true
 ignorePatterns = ["vendor/", "**/*.gen.ts"]
 ```
 
-`bun fmt` uses the nearest `bunfig.toml` that has a `[fmt]` section, from the working directory up, so it prints the same from any directory of the project. Paths and patterns in the section are relative to the file.
+`bun fmt` uses the nearest `bunfig.toml` that has a `[fmt]` section, from the working directory up, so it prints the same from any directory of the project.
+
+Paths and patterns in the section are relative to the file. With `bun --config=<path> fmt` they are relative to the working directory.
 
 A typo doesn't go unnoticed. An unknown key or a bad value is an error, and `bun fmt` exits with code `2`.
 

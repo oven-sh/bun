@@ -929,7 +929,8 @@ impl Run<'_> {
             &paths::to_native(environment.cwd.clone()),
         )
         .measuring(options.timing);
-        let store = bun_lint_graph::Store::new(&environment.cwd);
+        let store = bun_lint_graph::Store::new(&environment.cwd)
+            .starting_at(&options.start_of_bunfig(&environment.cwd));
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
             let of_the_run = (&linter, environment, &js_plugins);
@@ -1595,7 +1596,16 @@ impl Run<'_> {
         } else {
             suppressions::DEFAULT_FILE_NAME
         };
-        let path = paths::resolve(cwd, location.as_deref().unwrap_or(default));
+        // The names in the file start where it is looked for, so that it is one file for a run from any directory of the project.
+        let start = match options.is_suppressions_location_of_flag {
+            true => cwd.clone(),
+            false => options.start_of_bunfig(cwd),
+        };
+        let path = match &location {
+            Some(location) => paths::resolve(cwd, location),
+            None => paths::resolve(&start, default),
+        };
+        let cwd = &start;
         let writes = options.suppress_all || options.suppress_rule.is_some();
         let exists = fs::is_file(&path);
         if location.is_some() && !exists && !writes {

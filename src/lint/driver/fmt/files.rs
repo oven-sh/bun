@@ -473,7 +473,7 @@ impl Ignored {
         let all = &options.ignore_pattern;
         let (of_bunfig, of_flags) = all.split_at(options.ignore_patterns_of_bunfig.min(all.len()));
         for (start, lines) in [
-            (&options.directory_of_bunfig(cwd)[..], of_bunfig),
+            (&options.start_of_bunfig(cwd)[..], of_bunfig),
             (cwd, of_flags),
         ] {
             if !lines.is_empty() {

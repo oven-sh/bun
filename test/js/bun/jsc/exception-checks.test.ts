@@ -27,6 +27,24 @@ const snippets: Record<string, { code: string; stdout: string }> = {
     code: `const a = "SIG"; const b = "BOGUS"; try { process.kill(process.pid, a + b); } catch (e) { console.log(e.code); }`,
     stdout: "ERR_UNKNOWN_SIGNAL",
   },
+  // console.assert is a JSC host function. A failed assertion calls Bun's
+  // console hook, which declares a ThrowScope of its own and can throw.
+  "console.assert with a falsy condition": {
+    code: `console.assert(false); console.log("returned");`,
+    stdout: "returned",
+  },
+  "console.assert with a falsy condition and a message": {
+    code: `console.assert(0, "%s failed", "check"); console.log("returned");`,
+    stdout: "returned",
+  },
+  "console.assert with a message whose custom inspect function throws": {
+    code: `try { console.assert(false, { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom"); } }); } catch (e) { console.log(e.message); }`,
+    stdout: "boom",
+  },
+  "console.assert called by native code": {
+    code: `JSON.stringify({ toJSON: console.assert }); console.log("returned");`,
+    stdout: "returned",
+  },
 };
 
 for (const [name, { code, stdout: expected }] of Object.entries(snippets)) {

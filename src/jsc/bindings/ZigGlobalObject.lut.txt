@@ -42,6 +42,26 @@
   ResolveMessage                  GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
   Response                        GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResponse]                           ClassStructure
   TextDecoder                     GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSTextDecoder]                        ClassStructure
+  GPU                             GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPU]                             DontEnum|ClassStructure
+  GPUAdapter                      GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUAdapter]                      DontEnum|ClassStructure
+  GPUBindGroup                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUBindGroup]                    DontEnum|ClassStructure
+  GPUBindGroupLayout              GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUBindGroupLayout]              DontEnum|ClassStructure
+  GPUBuffer                       GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUBuffer]                       DontEnum|ClassStructure
+  GPUCommandBuffer                GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUCommandBuffer]                DontEnum|ClassStructure
+  GPUCommandEncoder               GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUCommandEncoder]               DontEnum|ClassStructure
+  GPUComputePassEncoder           GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUComputePassEncoder]           DontEnum|ClassStructure
+  GPUComputePipeline              GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUComputePipeline]              DontEnum|ClassStructure
+  GPUPipelineLayout               GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUPipelineLayout]               DontEnum|ClassStructure
+  GPUQuerySet                     GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUQuerySet]                     DontEnum|ClassStructure
+  GPUQueue                        GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUQueue]                        DontEnum|ClassStructure
+  GPURenderBundle                 GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPURenderBundle]                 DontEnum|ClassStructure
+  GPURenderBundleEncoder          GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPURenderBundleEncoder]          DontEnum|ClassStructure
+  GPURenderPassEncoder            GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPURenderPassEncoder]            DontEnum|ClassStructure
+  GPURenderPipeline               GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPURenderPipeline]               DontEnum|ClassStructure
+  GPUSampler                      GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUSampler]                      DontEnum|ClassStructure
+  GPUShaderModule                 GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUShaderModule]                 DontEnum|ClassStructure
+  GPUTexture                      GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUTexture]                      DontEnum|ClassStructure
+  GPUTextureView                  GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSGPUTextureView]                  DontEnum|ClassStructure
 
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback
   AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback
@@ -91,5 +111,25 @@
   WritableStream                  WritableStreamConstructorCallback                    DontEnum|PropertyCallback
   WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   DontEnum|PropertyCallback
   WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       DontEnum|PropertyCallback
+
+  GPUAdapterInfo                  jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUBufferUsage                  jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUColorWrite                   jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUCompilationInfo              jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUCompilationMessage           jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUDevice                       jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUDeviceLostInfo               jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUError                        jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUInternalError                jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUMapMode                      jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUOutOfMemoryError             jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUPipelineError                jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUShaderStage                  jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUSupportedFeatures            jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUSupportedLimits              jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUTextureUsage                 jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUUncapturedErrorEvent         jsWebGPUGlobal                                       DontEnum|CustomValue
+  GPUValidationError              jsWebGPUGlobal                                       DontEnum|CustomValue
+  WGSLLanguageFeatures            jsWebGPUGlobal                                       DontEnum|CustomValue
 @end
 */

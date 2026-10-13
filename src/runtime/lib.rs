@@ -85,4 +85,5 @@ pub(crate) use cli::{
     shell_completions, test_command,
 };
 
+pub(crate) mod webgpu;
 pub(crate) mod webview;

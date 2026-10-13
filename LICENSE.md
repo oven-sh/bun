@@ -43,6 +43,7 @@ Bun statically links these libraries:
 | [`libspng`](https://github.com/randy408/libspng) | BSD 2-Clause |
 | [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |
+| [`wgpu`](https://github.com/gfx-rs/wgpu) (with [`naga`](https://github.com/gfx-rs/wgpu/tree/trunk/naga)) | dual-licensed under the MIT License or Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |
 | A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) | Apache 2.0 licensed |
 | Parts of [Tigerbeetle's IO code](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.zig#L1) | Apache 2.0 licensed |

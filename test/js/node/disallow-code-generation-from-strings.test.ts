@@ -832,7 +832,7 @@ describe.concurrent("=strict in a compiled executable", () => {
       using dir = tempDir("strict-compiled-reports", {
         "entry.ts": `
         import fs from "node:fs";
-        function evaluate() { return eval("1 + 1"); }
+        function evaluate() { return eval("1 + 1") + eval("[0]")[0] + (0, eval)("[0]")[0]; }
         fs.writeFileSync(process.argv[2] + "/written.mjs", "export default function written() { return 2; }");
         const results = [];
         for (let i = 0; i < 3; i++) results.push(evaluate(), (await import(process.argv[2] + "/written.mjs?" + i)).default());
@@ -849,11 +849,16 @@ describe.concurrent("=strict in a compiled executable", () => {
           .split("\n")
           .filter(line => line.startsWith("[non-embedded code]"))
           .map(line => line.replaceAll(cwd, "<dir>").replaceAll("\\", "/")),
-        evalStack: /^\[non-embedded code\] run: \(no source URL\)\n    at .*\n    at evaluate@/m.test(log),
+        evalStack: /^\[non-embedded code\] eval: \(no source URL\)\n    at .*\n    at evaluate@/m.test(log),
       }).toEqual({
         stdout: "[2,2,2,2,2,2]\n",
         reports: [
+          "[non-embedded code] eval: (no source URL)",
           "[non-embedded code] run: (no source URL)",
+          "[non-embedded code] eval: (no source URL)",
+          "[non-embedded code] run: (no source URL)",
+          // The indirect eval of a literal: the engine makes the value without making code to run.
+          "[non-embedded code] eval: (no source URL)",
           "[non-embedded code] module: <dir>/written.mjs",
           // The module's own code, and the function it exports: two stacks.
           "[non-embedded code] run: <dir>/written.mjs",

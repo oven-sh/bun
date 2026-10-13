@@ -193,7 +193,7 @@ BUN_JSC_reportNonEmbeddedCode=1 ./server
 
 ```txt
 [non-embedded code] module: /app/plugins/extra.js
-[non-embedded code] run: (no source URL)
+[non-embedded code] eval: (no source URL)
     at eval@[native code]
     at render@/$bunfs/root/server:412:16
 ```
@@ -204,6 +204,7 @@ Each report says what was about to happen, the URL of the source, and the stack:
 | ---------- | ------------------------------------------------------------------------------- |
 | `module`   | A module was about to be parsed                                                 |
 | `program`  | A script was about to run, which includes a CommonJS module                     |
+| `eval`     | `eval()` was about to evaluate a string                                         |
 | `run`      | A function, `eval()` code, script or module was about to run for the first time |
 | `bytecode` | Cached bytecode was about to be decoded                                         |
 

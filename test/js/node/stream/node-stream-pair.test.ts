@@ -6,9 +6,11 @@
  * is not an instance of TransformStream. Node classifies a stage with isTransformStream(), which
  * is a duck type, and a sink with isWritableStream(), which is one too:
  * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L90-L106
+ *
+ * Node takes any object as the `writable` of a pair. Bun takes only a WritableStream, native or
+ * userland. The results for an object that only looks like a pair are in the group for Bun.
  */
 import assert from "node:assert";
-import { spawn } from "node:child_process";
 import { getEventListeners, once } from "node:events";
 import { createReadStream, createWriteStream, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -445,18 +447,20 @@ describe("what counts as a pair", () => {
     });
   }
 
-  for (const [sides, last] of [
-    ["null sides", () => ({ readable: null, writable: null })],
-    ["plain objects as sides", () => ({ signal: new AbortController().signal, readable: {}, writable: {} })],
-  ] as const) {
-    test(`an object with ${sides}: it is a stream, not the options of promises.pipeline()`, async () => {
-      await assert.rejects(pipelineP(source(), sink().stream, last()), {
-        code: "ERR_INVALID_ARG_TYPE",
-        message:
-          'The "val" argument must be an instance of Readable, Iterable, AsyncIterable, ReadableStream, or TransformStream. Received an instance of Writable',
-      });
+  test("an object with a WritableStream and a node Readable, as a middle stage", async () => {
+    const readable = new Readable({ read() {} });
+    const writable = new WritableStream({
+      write(chunk) {
+        readable.push(String(Buffer.from(chunk)).toUpperCase());
+      },
+      close() {
+        readable.push(null);
+      },
     });
-  }
+    const out = sink();
+    await pipelineP(source(), { readable, writable }, out.stream);
+    assert.strictEqual(out.text(), "HELLO");
+  });
 
   test("an object with a null readable side, as the last stage", async () => {
     let got = "";
@@ -622,50 +626,10 @@ describe("the web transforms that have their own class", () => {
   }
 });
 
-// An object with `readable` and `writable` objects that are not web streams gets Node's result.
-describe("an object that only looks like a pair", () => {
-  test("compose() throws the TypeError of getWriter() for a pair of node streams", () => {
-    const nodeStreams = { readable: new PassThrough(), writable: new PassThrough() };
-    assert.throws(() => compose(nodeStreams, new PassThrough()), {
-      name: "TypeError",
-      message: /getWriter is not a function/,
-    });
-  });
-
-  // pipeline() calls getWriter() after it has returned. Nothing catches the TypeError: it is an
-  // unhandled rejection, and the pipeline does not settle.
-  test("pipeline() raises the TypeError of getWriter() for a plain object as the writable side", async () => {
-    const script = `
-      const { Readable, Writable } = require("node:stream");
-      const { pipeline } = require("node:stream/promises");
-      const report = (how, err) => {
-        const getWriter = /getWriter is not a function/.test(err.message);
-        console.log(JSON.stringify({ how, name: err.name, code: err.code, getWriter }));
-        process.exit(0);
-      };
-      process.on("unhandledRejection", err => report("unhandled rejection", err));
-      const sink = new Writable({ write(chunk, encoding, callback) { callback(); } });
-      const stage = { readable: new ReadableStream(), writable: {} };
-      pipeline(Readable.from(["hello"]), stage, sink).then(
-        () => report("resolved", {}),
-        err => report("rejected", err),
-      );
-    `;
-    const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "inherit"] });
-    let stdout = "";
-    child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
-    const [exitCode] = await once(child, "close");
-    assert.deepStrictEqual(
-      { stdout: stdout.trim(), exitCode },
-      { stdout: JSON.stringify({ how: "unhandled rejection", name: "TypeError", getWriter: true }), exitCode: 0 },
-    );
-  });
-});
-
-// Only in Bun: Node.js does not have these, and it must not spawn itself again.
+// Only in Bun: the results that are Bun's own, and the run of this file under Node.js, which must
+// not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { bunEnv, bunExe, nodeExe } = await import("harness");
-  const node = nodeExe();
 
   describe("Only in Bun", () => {
     // Node has the duck type only. Bun keeps the class check in front of it, so that a
@@ -685,51 +649,53 @@ if (typeof Bun !== "undefined") {
       });
     });
 
-    // The `readable` of a Subprocess is its stdout stream. Its `writable` is its stdin FileSink,
-    // which has no getWriter(). So the Subprocess only looks like a pair.
-    test("compose() throws the TypeError of getWriter() for a Subprocess with piped stdio", async () => {
-      await using subprocess = Bun.spawn({
-        cmd: [bunExe(), "--version"],
-        env: bunEnv,
-        stdin: "pipe",
-        stdout: "pipe",
+    // An object whose `writable` is not a WritableStream only looks like a pair. Node takes it for
+    // one, calls getWriter() on the `writable`, and the TypeError is an unhandled rejection of a
+    // pipeline that never settles. Bun does not take it for a pair.
+    describe("an object that only looks like a pair", () => {
+      for (const [sides, options] of [
+        ["null sides", () => ({ readable: null, writable: null })],
+        ["plain objects as sides", () => ({ signal: new AbortController().signal, readable: {}, writable: {} })],
+      ] as const) {
+        test(`with ${sides} is the options of promises.pipeline()`, async () => {
+          const out = sink();
+          await pipelineP(source(), out.stream, options());
+          assert.strictEqual(out.text(), "hello");
+        });
+      }
+
+      test("with a plain object as the writable side is not a stage of pipeline()", async () => {
+        const stage = { readable: new ReadableStream(), writable: {} };
+        await assert.rejects(pipelineP(source(), stage, sink().stream), { code: "ERR_INVALID_ARG_TYPE" });
       });
-      assert.throws(() => compose(subprocess, new PassThrough()), {
-        name: "TypeError",
-        message: /getWriter is not a function/,
+
+      test("with two node streams is a member of compose(), through Duplex.from()", async () => {
+        const readable = new PassThrough();
+        readable.end("hello");
+        const composed = compose({ readable, writable: new PassThrough() }, new PassThrough());
+        assert.strictEqual(composed.writable, false);
+        assert.strictEqual(await text(composed), "hello");
+      });
+
+      // The `readable` of a Subprocess is its stdout stream. Its `writable` is its stdin FileSink.
+      test("a Subprocess with piped stdio is not a stage of pipeline() or a member of compose()", async () => {
+        const spawn = () => Bun.spawn({ cmd: [bunExe(), "--version"], env: bunEnv, stdin: "pipe", stdout: "pipe" });
+        await using inPipeline = spawn();
+        await using inCompose = spawn();
+        await assert.rejects(pipelineP(source(), inPipeline, sink().stream), { code: "ERR_INVALID_ARG_TYPE" });
+        assert.throws(() => compose(inCompose, new PassThrough()), { code: "ERR_INVALID_ARG_TYPE" });
       });
     });
 
-    test("pipeline() raises the TypeError of getWriter() for a Subprocess with piped stdio", async () => {
-      const script = `
-        const { Readable, Writable } = require("node:stream");
-        const { pipeline } = require("node:stream/promises");
-        const report = (how, err) => {
-          const getWriter = /getWriter is not a function/.test(err.message);
-          console.log(JSON.stringify({ how, name: err.name, code: err.code, getWriter }));
-          process.exit(0);
-        };
-        process.on("unhandledRejection", err => report("unhandled rejection", err));
-        const sink = new Writable({ write(chunk, encoding, callback) { callback(); } });
-        const stage = Bun.spawn({ cmd: [process.execPath, "--version"], stdin: "pipe", stdout: "pipe" });
-        pipeline(Readable.from(["hello"]), stage, sink).then(
-          () => report("resolved", {}),
-          err => report("rejected", err),
-        );
-      `;
-      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      assert.deepStrictEqual(
-        { stdout: stdout.trim(), stderr, exitCode },
-        {
-          stdout: JSON.stringify({ how: "unhandled rejection", name: "TypeError", getWriter: true }),
-          stderr: "",
-          exitCode: 0,
-        },
-      );
-    });
+    // The expected results of this file are those of Node.js 26.
+    const node = nodeExe();
+    const nodeMajor = node
+      ? Bun.spawnSync({ cmd: [node, "-p", "process.versions.node.split('.')[0]"], env: bunEnv })
+          .stdout.toString()
+          .trim()
+      : "";
 
-    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+    (nodeMajor === "26" ? test : test.skip)("all tests pass in Node.js 26", async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       await using proc = Bun.spawn({

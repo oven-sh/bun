@@ -82,27 +82,28 @@ function isWritableStream(obj) {
   return $inheritsWritableStream(obj);
 }
 
-// Node has only the duck type, for a { readable, writable } pair, and tests isNodeStream() first:
+// Node's isWritableStream(), for a WritableStream that is not native, as a polyfill makes it:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L90-L97
+// It has no isNodeStream() test: no caller needs one. isWritableStream() stays a class check: its
+// other callers give the stream to native code.
+function isWritableStreamLike(obj) {
+  return !!(obj && typeof obj.getWriter === "function" && typeof obj.abort === "function");
+}
+
+// Node has only a duck type, for a { readable, writable } pair. It tests isNodeStream() first, and
+// it accepts any object as `writable`:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L99-L106
-// The class check stays in front, so a TransformStream costs no getter call. isNodeStream() reads
-// the most, so it is last.
+// The class check stays in front, so a TransformStream costs no getter call. `writable` must be a
+// web stream: pumpToWeb() calls its getWriter() where a throw is an unhandled rejection.
 function isTransformStream(obj) {
   return (
     $inheritsTransformStream(obj) ||
-    !!(obj && typeof obj.readable === "object" && typeof obj.writable === "object" && !isNodeStream(obj))
+    !!(obj && typeof obj.readable === "object" && isWritableStreamLike(obj.writable) && !isNodeStream(obj))
   );
 }
 
 function isWebStream(obj) {
   return isReadableStream(obj) || isWritableStream(obj) || isTransformStream(obj);
-}
-
-// Node's isWritableStream(), for a WritableStream that is not native, as a polyfill makes it:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L90-L97
-// The two callers have ruled out a node stream. isWritableStream() stays a class check: its other
-// callers give the stream to native code.
-function isWritableStreamLike(obj) {
-  return !!(obj && typeof obj.getWriter === "function" && typeof obj.abort === "function");
 }
 
 function isIterable(obj, isAsync?) {

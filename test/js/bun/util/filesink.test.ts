@@ -1455,17 +1455,20 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
 // first: the second write() is the one that finds out, with the first still pending.
 it.skipIf(!isPosix)("a write() that fails while another is pending rejects the pending promise once", async () => {
   const [readFd, writeFd] = createSocketPair();
+  let readFdOpen = true;
   const sink = Bun.file(writeFd).writer();
   try {
     // Nothing drains `readFd`, so the socket buffers fill up.
     const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
     expect(Bun.peek.status(first)).toBe("pending");
     fs.closeSync(readFd);
+    readFdOpen = false;
     const second = sink.write("tail");
     expect(second).toBe(first);
     await expect(first).rejects.toMatchObject({ code: "EPIPE" });
   } finally {
     await Promise.resolve(sink.end()).catch(() => {});
     fs.closeSync(writeFd);
+    if (readFdOpen) fs.closeSync(readFd);
   }
 });

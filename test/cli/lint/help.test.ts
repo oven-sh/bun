@@ -72,7 +72,7 @@ describe.concurrent.each([
     expect(Object.keys(listed(stdout))).toEqual(common);
     expect(lines.filter(line => line.startsWith(`  bun ${command}`))).toHaveLength(3);
     expect(lines.slice(-2)).toEqual([
-      `Full documentation is available at https://bun.com/docs/runtime/${command === "fmt" ? "format" : command}`,
+      `Full documentation is available at https://bun.com/docs/${command === "fmt" ? "format" : command}`,
       `See every flag with bun ${command} --help --all`,
     ]);
     expect(lines.length).toBeLessThanOrEqual(25);

@@ -277,7 +277,7 @@ describe.concurrent("wss:// after the close event", () => {
       // The content type of the last TLS record the client sent.
       lastRecordType() {
         let offset = 0;
-        for (let next; (next = offset + 5 + fromClient.readUInt16BE(offset + 3)) < fromClient.length; ) offset = next;
+        for (let next; (next = offset + 5 + fromClient.readUInt16BE(offset + 3)) < fromClient.length;) offset = next;
         return fromClient[offset];
       },
       [Symbol.dispose]: () => void relay.close(),

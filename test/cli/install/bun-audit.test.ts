@@ -16,10 +16,7 @@ import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixt
 
 function fixture(
   folder:
-    | "express@3"
-    | "vuln-with-only-dev-dependencies"
-    | "safe-is-number@7"
-    | "mix-of-safe-and-vulnerable-dependencies",
+    "express@3" | "vuln-with-only-dev-dependencies" | "safe-is-number@7" | "mix-of-safe-and-vulnerable-dependencies",
 ) {
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }

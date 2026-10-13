@@ -699,6 +699,7 @@ const LINT: Table = Table {
             b"report-unused-disable-directives",
         ),
         (b"reportUnusedDisableDirectives", UNUSED_SEVERITY),
+        (b"plugins", b"plugin"),
         (b"rules", b"rule"),
         (b"globals", b"global"),
         (b"parserOptions", b"parser-options"),
@@ -749,7 +750,6 @@ const LINT: Table = Table {
         b"no-native-plugin-rules",
         b"no-eslintrc",
         b"parser",
-        b"plugin",
         b"eslintrc",
         b"env",
         b"rulesdir",
@@ -857,6 +857,68 @@ impl Place {
         }
         at
     }
+}
+
+/// One entry of `plugins` in `[lint]`.
+#[derive(Clone, Debug)]
+pub struct PluginOfBunfig {
+    /// `name`: the prefix of its rules, if that isn't the name the plugin has for itself.
+    pub alias: Option<Vec<u8>>,
+    pub at: usize,
+}
+
+/// Parses `plugins`. An entry is a path or the name of a package, or `{ name = "..", specifier = ".." }`, as in oxlint's
+/// `jsPlugins`.
+fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal> {
+    let Data::EArray(items) = &value.data else {
+        return expected("array", value);
+    };
+    let (mut specifiers, mut places) = (Vec::new(), Vec::new());
+    for item in items.slice() {
+        let text = |value: &Expr| match json_of(value)?.as_str() {
+            Some(text) => Ok(text.to_vec()),
+            None => expected("string", value),
+        };
+        let (mut specifier, mut alias) = (None, None);
+        match &item.data {
+            Data::EObject(_) => {
+                for (key, value) in entries(item)? {
+                    match &key.name[..] {
+                        b"specifier" => specifier = Some(text(value)?),
+                        b"name" => {
+                            let name = text(value)?;
+                            if name.is_empty() {
+                                return refuse(value.loc, &[b"A plugin's name can't be empty"]);
+                            }
+                            alias = Some(name);
+                        }
+                        _ => {
+                            let known = [b"name".to_vec(), b"specifier".to_vec()];
+                            return unknown_key(
+                                &key.name,
+                                key.at,
+                                b"lint.plugins",
+                                known.into_iter(),
+                            );
+                        }
+                    }
+                }
+            }
+            _ => specifier = Some(text(item)?),
+        }
+        let Some(specifier) = specifier else {
+            return refuse(
+                item.loc,
+                &[b"A plugin needs a specifier\n  A path, or the name of a package"],
+            );
+        };
+        specifiers.push(specifier);
+        places.push(PluginOfBunfig {
+            alias,
+            at: item.loc.start.max(0) as usize,
+        });
+    }
+    Ok((specifiers, places))
 }
 
 /// One entry of `[lint.rules]` or of an override's `rules`.
@@ -1039,6 +1101,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                     set(flag, Some(&name.name), true).map_err(at(value))?;
                 }
             }
+            b"plugins" => (options.plugin, options.plugins_of_bunfig) = plugins(value)?,
             b"rules" => (options.rule, options.rules_of_bunfig) = rules(value)?,
             b"settings" => options.settings = settings(value)?,
             b"overrides" => options.overrides = overrides_of_lint(value)?,

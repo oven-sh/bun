@@ -258,6 +258,13 @@ pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Ve
     }
 }
 
+impl js_plugin::Rule {
+    /// Checks `options` against `meta.schema`, as ESLint does. `Err`: ESLint's lines about what is wrong with them.
+    pub fn validate(&self, options: &[Json]) -> Result<(), Vec<u8>> {
+        validate_js(self, options).map(drop)
+    }
+}
+
 /// `options` with the default options of a rule of a JavaScript plugin: what ESLint has for a rule that it does not validate.
 pub(crate) fn with_js_defaults(rule: &js_plugin::Rule, options: &[Json]) -> Vec<Json> {
     deep_merge_arrays(&rule.default_options, options)

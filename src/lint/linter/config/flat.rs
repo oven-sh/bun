@@ -14,6 +14,31 @@ use crate::rule::{Kind, Plugin, minor_of};
 use crate::runner::RuleEntry;
 use std::sync::Arc;
 
+/// A JavaScript plugin that is loaded already, and what `$jsPlugins` would have for it: `{ module, export }`. These come from
+/// `plugins` in bunfig.toml and from `--plugin`.
+pub type NamedPlugin = (Arc<js_plugin::Plugin>, Json);
+
+/// `/a/node_modules/@b/c` of `/a/node_modules/@b/c/dist/index.js`: the directory of the package that `file` is in, if it is an
+/// installed one.
+fn installed_package(file: &[u8]) -> Option<&[u8]> {
+    let is_separator = |it: &u8| matches!(*it, b'/' | b'\\');
+    let mut end = 0;
+    let mut found = None;
+    let mut parts = file.split(is_separator).peekable();
+    while let Some(part) = parts.next() {
+        end += part.len() + 1;
+        if part == b"node_modules" {
+            let name = parts.peek()?;
+            let scoped = name.starts_with(b"@");
+            let mut rest = parts.clone();
+            let first = rest.next()?.len();
+            let second = if scoped { rest.next()?.len() + 1 } else { 0 };
+            found = file.get(..end + first + second);
+        }
+    }
+    found
+}
+
 /// Why a configuration cannot be used. The text is ESLint's where ESLint has one.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConfigError {
@@ -63,6 +88,8 @@ pub(super) struct Reader<'r> {
     pub(super) defaults: usize,
     /// The names of the plugins of the configuration that are not [built in](is_built_in).
     pub(super) foreign_prefixes: Vec<Box<[u8]>>,
+    /// How many of `js_plugins` and of `js_locations`, from the first, are [`NamedPlugin`]s.
+    pub(super) named: usize,
     /// [`names_unknown_resolver`] somewhere.
     pub(super) has_unknown_resolver: bool,
     /// The names of the plugins of which a rule is on that is answered for here and can hand a file back.
@@ -301,7 +328,7 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
             b"$changesLinter" | b"$defaultOptions" | b"$forReact" | b"$globsOfBun" | b"$ignorePatterns"
-            | b"$jsPlugins" | b"$parser" | b"$processor" | b"$severityByKind" | b"$source"
+            | b"$jsPlugins" | b"$otherPlugins" | b"$parser" | b"$processor" | b"$severityByKind" | b"$source"
             | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
             b"rules" => (value.as_object().unwrap_or_default().iter())
@@ -446,8 +473,11 @@ impl Reader<'_> {
             };
             let is_about_layout = self.formatting_rule(id).is_some();
             if !is_about_layout && let Some(found) = find_js_rule(&self.js_plugins, id) {
-                // Also for a rule that is off, as in oxlint.
+                // Also for a rule that is off, as in oxlint. ESLint does not look at such a rule.
                 let Some(rule) = found else {
+                    if !self.prefers_typescript_rules && setting.severity == Severity::Off {
+                        continue;
+                    }
                     return Err(ConfigError::new(&[
                         b"Rule '",
                         name,
@@ -663,11 +693,16 @@ impl Reader<'_> {
                 });
             }
         }
+        let others = json.get(b"$otherPlugins").and_then(Json::as_object);
+        for (prefix, location) in others.unwrap_or_default() {
+            self.refuse_second(prefix, location)?;
+        }
         for (prefix, location) in json
             .get(b"$jsPlugins")
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
+            self.refuse_second(prefix, location)?;
             // `twin`: which of the plugins that objects have under that name.
             let is_it = |it: &(Box<[u8]>, Json)| {
                 *it.0 == prefix[..] && it.1.get(b"twin") == location.get(b"twin")
@@ -856,7 +891,7 @@ impl Config {
         base_path: &[u8],
         json: &Json,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, None, false)
+        Self::from_flat(registry, base_path, json, None, Vec::new(), false)
     }
 
     /// The same, with the plugins that are not implemented here. An object has beside `plugins` the key `$jsPlugins`, with
@@ -867,8 +902,9 @@ impl Config {
         base_path: &[u8],
         json: &Json,
         load_plugin: &mut LoadLocatedPlugin<'_>,
+        named: Vec<NamedPlugin>,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, Some(load_plugin), false)
+        Self::from_flat(registry, base_path, json, Some(load_plugin), named, false)
     }
 
     /// Builds the config for projects with no ESLint or oxlint config. `json` has the shape of a flat config, but doesn't
@@ -877,8 +913,9 @@ impl Config {
         registry: &Registry,
         base_path: &[u8],
         json: &Json,
+        named: Vec<NamedPlugin>,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, None, true)
+        Self::from_flat(registry, base_path, json, None, named, true)
     }
 
     fn from_flat(
@@ -886,6 +923,7 @@ impl Config {
         base_path: &[u8],
         json: &Json,
         load_plugin: Option<&mut LoadLocatedPlugin<'_>>,
+        named: Vec<NamedPlugin>,
         has_every_rule: bool,
     ) -> Result<Config, ConfigError> {
         let mut reader = Reader {
@@ -902,9 +940,11 @@ impl Config {
             js_locations: Vec::new(),
             defaults: 0,
             foreign_prefixes: Vec::new(),
+            named: 0,
             has_unknown_resolver: has_unknown_resolver(json),
             handing_back: Vec::new(),
         };
+        reader.add_named(named);
         add_foreign_prefixes(registry, json, &mut reader.foreign_prefixes);
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
         for object in defaults.as_array().unwrap_or_default() {
@@ -932,6 +972,50 @@ impl Config {
 }
 
 impl Reader<'_> {
+    /// ESLint's `Cannot redefine plugin`, for a plugin that the configuration has as `prefix` and a [`NamedPlugin`]. `location`:
+    /// where the former is, which is `null` for one that no module exports. The configuration can have imported the same
+    /// package: then it is one plugin, for ESLint too.
+    pub(super) fn refuse_second(&self, prefix: &[u8], location: &Json) -> Result<(), ConfigError> {
+        // `[]` and `["default"]` are the same for what has no `default`.
+        let is_whole = |it: &Json| {
+            let path = it.get(b"export").and_then(Json::as_array);
+            path.is_some_and(|it| {
+                it.len() <= 1 && it.iter().all(|it| it.as_str() == Some(b"default"))
+            })
+        };
+        // The main module of a package often has what another module of it exports, and either can be where the plugin was found.
+        let place = |it: &Json| {
+            let file = it.get(b"module")?.as_str()?;
+            Some(installed_package(file).unwrap_or(file).to_vec())
+        };
+        let is_same = |it: &Json| {
+            place(it).is_some_and(|it| Some(it) == place(location))
+                && is_whole(location)
+                && is_whole(it)
+        };
+        let mut named = self.js_locations.iter().take(self.named);
+        match named.any(|it| *it.0 == *prefix && !is_same(&it.1)) {
+            true => Err(ConfigError::new(&[
+                b"The plugin \"",
+                prefix,
+                b"\" is loaded twice: here, and by plugins in bunfig.toml or --plugin",
+            ])),
+            false => Ok(()),
+        }
+    }
+
+    /// Before anything is read.
+    pub(super) fn add_named(&mut self, named: Vec<NamedPlugin>) {
+        self.named = named.len();
+        for (plugin, location) in named {
+            self.js_plugin_places.push(self.js_locations.len() as u32);
+            self.js_locations.push((plugin.name.clone(), location));
+            // It is asked for by name, so nothing here stands in for it: `@stylistic` is not left to `bun fmt`.
+            self.foreign_prefixes.push(plugin.name.clone());
+            self.js_plugins.push(plugin);
+        }
+    }
+
     /// Loads the plugins of which a rule is enabled that does not exist here, and takes note of those that the configuration has
     /// described, for which nothing is loaded: a comment can name a rule of them, and whether there is such a rule is to be known.
     pub(super) fn load_js_plugins(
@@ -939,6 +1023,10 @@ impl Reader<'_> {
         load: &mut LoadLocatedPlugin<'_>,
     ) -> Result<(), ConfigError> {
         for (place, (prefix, location)) in self.js_locations.iter_mut().enumerate() {
+            // A `NamedPlugin`.
+            if self.js_plugin_places.contains(&(place as u32)) {
+                continue;
+            }
             let mut unknown = self.unknown_rules.iter();
             // A rule of `--rulesdir`, which has no prefix, can have the name of a rule that exists here.
             if prefix.is_empty()

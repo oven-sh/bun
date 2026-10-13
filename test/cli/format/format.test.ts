@@ -35,10 +35,32 @@ import { inputs as lineEndingInputs } from "./line-endings.cases.ts";
 afterAll(endChildren);
 
 const command = [bunExe(), "fmt"];
-/** Matches the start of an error line: Prettier's `[error]` or Bun's `error:`. */
-const anError = /^(?:\[error\]|error:) /m;
+/** Matches the start of an error. */
+const anError = /^error: /m;
 
 const env = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined };
+
+/**
+ * How `bun fmt` says why a file can't be formatted, with any configuration. It is how Bun prints every error: the line,
+ * a caret under the place, the message, and where it is. Without `at` the error is about the whole file. The white space
+ * at the end of the line is not shown, and neither is a line without anything else. The caret is right if every
+ * character before it is one column wide. A blank line follows, which is not in here.
+ */
+function problem(file: string, message: string, at?: [line: number, column: number, text: string]) {
+  if (!at) return `error: ${message}\n    at ${file}`;
+  const [line, column] = at;
+  const text = at[2].trimEnd();
+  const shown = text && `${line} | ${text}\n${Buffer.alloc(`${line} | `.length + column - 1, " ").toString()}^\n`;
+  return `${shown}error: ${message}\n    at ${file}:${line}:${column}`;
+}
+
+/** Matches a syntax error in `file`, whatever it says: an error with a line and a column. */
+const syntaxErrorIn = (file: string) =>
+  new RegExp(`^error: .+\\n    at ${file.replaceAll(".", "\\.")}:[0-9]+:[0-9]+$`, "m");
+
+/** What is said about an end tag in HTML that closes nothing, in the words of Prettier. */
+const closingTag = (name: string) =>
+  `Unexpected closing tag "${name}". It may happen when the tag has already been closed by another tag. For more info see https://www.w3.org/TR/html5/syntax.html#closing-elements-that-have-implied-end-tags`;
 
 const ugly = `const a = {b:1,  c:"two"}\nfunction f(x){return [x,\n'y']}\n`;
 const formatted = `const a = { b: 1, c: "two" };\nfunction f(x) {\n  return [x, "y"];\n}\n`;
@@ -112,13 +134,13 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // By runs of Prettier 3.9.9 and oxfmt 0.72.0, which says "Error: " where "[error] " is here. Both say it before they look at
-  // the files, the patterns or the configuration.
+  // By runs of Prettier 3.9.9 and oxfmt 0.72.0, which start with "[error] " and "Error: ". Both say it before they look at the
+  // files, the patterns or the configuration.
   describe("flags that say what the run does, and exclude each other", () => {
-    const together = "[error] Cannot use --check and --list-different together.";
-    const twice = (flag: string) => `[error] argument \`${flag}\` cannot be used multiple times in this context`;
+    const together = "error: Cannot use --check and --list-different together.";
+    const twice = (flag: string) => `error: argument \`${flag}\` cannot be used multiple times in this context`;
     const second = (flag: string, first: string) =>
-      `[error] \`${flag}\` cannot be used at the same time as \`${first}\``;
+      `error: \`${flag}\` cannot be used at the same time as \`${first}\``;
     const [prettier, oxfmt] = [{ ".prettierrc": "{}" }, { ".oxfmtrc.json": "{}" }];
     test.each<[string, Record<string, string>, string[], string]>([
       ["Prettier", prettier, ["-l", "--check", "."], together],
@@ -136,9 +158,9 @@ describe.concurrent("bun fmt", () => {
         "Prettier",
         prettier,
         ["-l", "--check", "--no-config", "--config", "x", "."],
-        "[error] Cannot use --no-config and --config together.",
+        "error: Cannot use --no-config and --config together.",
       ],
-      ["no configuration", {}, ["-l", "--check", "."], together.replace("[error]", "error:")],
+      ["no configuration", {}, ["-l", "--check", "."], together],
       ["oxfmt", oxfmt, ["--list-different", "--check", "."], second("--check", "--list-different")],
       ["oxfmt", oxfmt, ["--check", "--list-different", "."], second("--list-different", "--check")],
       ["oxfmt", oxfmt, ["--list-different", "--write", "."], second("--write", "--list-different")],
@@ -248,9 +270,19 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
+    test.each<[Record<string, string>, string[]]>([
+      [{}, ["--tab-width=4294967295"]],
+      [{ ".prettierrc": '{"tabWidth": 1e20}' }, []],
+    ])("a tabWidth that makes the code too long for a string is an error: %j %j", async (configuration, args) => {
+      const result = await format(configuration, [...args, "--stdin-filepath", "a.js"], { stdin: text });
+      expect({ stdout: result.raw, stderr: result.stderr, exitCode: result.exitCode }).toEqual({
+        stdout: "",
+        stderr: problem("a.js", "The formatted code is too long for a string"),
+        exitCode: 2,
+      });
+    });
+
     test.each<[Record<string, string>, string[], string, number]>([
-      [{}, ["--tab-width=4294967295"], "error: a.js: RangeError: Invalid string length", 2],
-      [{ ".prettierrc": '{"tabWidth": 1e20}' }, [], "[error] a.js: RangeError: Invalid string length", 2],
       [{}, ["--print-width", "1.5"], "error: Invalid --print-width value. Expected an integer, but received 1.5.", 1],
       [{}, ["--print-width=abc"], "error: Invalid --print-width value. Expected an integer, but received null.", 1],
       [{}, ["--print-width", "1e-1"], "error: Invalid --print-width value. Expected an integer, but received 0.1.", 1],
@@ -260,61 +292,61 @@ describe.concurrent("bun fmt", () => {
       [
         { ".prettierrc": '{"printWidth": 1.5}' },
         [],
-        "[error] Invalid printWidth value. Expected an integer, but received 1.5.",
+        "error: Invalid printWidth value. Expected an integer, but received 1.5.",
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": "5"}' },
         [],
-        '[error] Invalid printWidth value. Expected an integer, but received "5".',
+        'error: Invalid printWidth value. Expected an integer, but received "5".',
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": true}' },
         [],
-        "[error] Invalid printWidth value. Expected an integer, but received true.",
+        "error: Invalid printWidth value. Expected an integer, but received true.",
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": null}' },
         [],
-        "[error] Invalid printWidth value. Expected an integer, but received null.",
+        "error: Invalid printWidth value. Expected an integer, but received null.",
         1,
       ],
       [
         { ".prettierrc.yaml": "tabWidth: abc\n" },
         [],
-        '[error] Invalid tabWidth value. Expected an integer, but received "abc".',
+        'error: Invalid tabWidth value. Expected an integer, but received "abc".',
         1,
       ],
       [
         { "prettier.config.mjs": "export default { tabWidth: NaN };" },
         [],
-        "[error] Invalid tabWidth value. Expected an integer, but received null.",
+        "error: Invalid tabWidth value. Expected an integer, but received null.",
         1,
       ],
       [
         { ".prettierrc": '{"overrides": [{"files": "*.js", "options": {"tabWidth": 0.5}}]}' },
         [],
-        "[error] Invalid tabWidth value. Expected an integer, but received 0.5.",
+        "error: Invalid tabWidth value. Expected an integer, but received 0.5.",
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": 1.5}' },
         ["--print-width", "1.5"],
-        "[error] Invalid --print-width value. Expected an integer, but received 1.5.",
+        "error: Invalid --print-width value. Expected an integer, but received 1.5.",
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": 1.5}' },
         ["--print-width", "80"],
-        "[error] Invalid printWidth value. Expected an integer, but received 1.5.",
+        "error: Invalid printWidth value. Expected an integer, but received 1.5.",
         1,
       ],
       [
         { ".prettierrc": "{}" },
         ["--print-width", "2.5", "--config-precedence", "prefer-file"],
-        "[error] Invalid --print-width value. Expected an integer, but received 2.5.",
+        "error: Invalid --print-width value. Expected an integer, but received 2.5.",
         1,
       ],
     ])("are refused in the words of Prettier: %j %j", async (configuration, args, stderr, exitCode) => {
@@ -331,7 +363,7 @@ describe.concurrent("bun fmt", () => {
       const files = { ".prettierrc": `{ "printWidth": 1.5 }`, "a.js": ugly, "b.js": ugly };
       const result = await format(files, ["--check", "a.js", "b.js"]);
       expect(result.stdout).toBe("Checking formatting...");
-      expect(result.stderr).toBe("[error] Invalid printWidth value. Expected an integer, but received 1.5.");
+      expect(result.stderr).toBe("error: Invalid printWidth value. Expected an integer, but received 1.5.");
       expect(result.exitCode).toBe(1);
     });
   });
@@ -563,135 +595,140 @@ describe.concurrent("bun fmt", () => {
   test("a syntax error is reported, the other files are formatted, and the exit code is 2", async () => {
     const result = await format({ "a.js": "const = 1;\n", "b.js": ugly }, [], { reads: ["a.js", "b.js"] });
     expect(result.files).toEqual({ "a.js": "const = 1;\n", "b.js": formatted });
-    expect(result.stderr).toContain("error: a.js: SyntaxError:");
-    expect(result.stderr).toContain("(1:7)");
+    expect(result.stderr).toStartWith(problem("a.js", "Variable declaration expected.", [1, 7, "const = 1;"]) + "\n\n");
     expect(result.exitCode).toBe(2);
   });
 
   test("a syntax error says what is wrong and where, in every language", async () => {
-    // One for each language and kind of refusal: the file, and what is said about it.
-    const cases: [string, string, string][] = [
-      ["string.css", 'a {\n  b: "x\n}\n', "Unclosed string (2:6)"],
-      ["block.css", "a {\n  b: c;\n", "Unclosed block (1:1)"],
-      ["brace.css", "a {\n}\n}\n", 'Unexpected "}" (3:1)'],
-      ["comment.css", "a {\n  /* b\n}\n", "Unclosed comment (2:3)"],
-      ["bracket.css", "a {\n  b: c(1;\n}\n", "Unclosed bracket (2:7)"],
-      ["url.css", "a {\n  b: url(c;\n}\n", "Unclosed bracket (2:9)"],
-      ["word.css", "a {\n  b c;\n}\n", "Expected a declaration or a rule (2:3)"],
-      ["at.css", "@ a;\n", 'Expected a name after "@" (1:1)'],
-      ["colon.css", "a {\n  b: c: d;\n}\n", 'Unexpected ":" (2:7)'],
-      ["first-colon.css", "a {\n  : b;\n  c: d:\n}\n", 'Unexpected ":" (3:7)'],
-      ["no-name.css", "a {\n  (): ;\n}\n", "Expected a property name (2:3)"],
-      ["two-words.css", "a {\n  b c: d;\n}\n", 'Expected ":" (2:5)'],
-      ["selector.css", "{\n  a: b;\n}\n", "Expected a selector (1:1)"],
-      ["custom-selector.css", "@custom-selector a;\n", "Invalid at-rule parameters (1:1)"],
-      ["value.css", "a {\n  b: c);\n}\n", "Invalid value (2:6)"],
-      ["interpolation.scss", "a {\n  b: #{$c;\n", "Unclosed interpolation (2:6)"],
-      ["string.scss", 'a {\n  b: "x;\n}\n', "Unclosed string (2:6)"],
-      ["nested.scss", "a {\n  b: c: {\n    d: e;\n  }\n}\n", 'Unexpected ":" (2:7)'],
-      ["mixin.less", "a {\n  .b(;\n}\n", "Unclosed bracket (2:5)"],
-      ["each.less", "each(@a, {\n", "Unclosed bracket (1:5)"],
-      ["word.less", "a {\n  b c;\n}\n", "Expected a declaration or a rule (2:3)"],
-      ["end.graphql", "query {\n  a\n", "Unexpected end of file (3:1)"],
-      ["name.graphql", "query {\n}\n", "Expected a name (2:1)"],
-      ["value.graphql", "query { a(b: ) }\n", "Expected a value (1:14)"],
-      ["string.graphql", 'query { a(b: "x) }\n', "Unclosed string (1:14)"],
-      ["block-string.graphql", '"""\na\n', "Unclosed string (1:1)"],
-      ["escape.graphql", 'query { a(b: "\\x") }\n', "Invalid escape sequence (1:15)"],
-      ["definition.graphql", "foo A { b }\n", "Expected a definition (1:1)"],
-      ["colon.graphql", "query ($a) { b }\n", 'Expected ":" (1:10)'],
-      ["character.graphql", "query { a ? }\n", "Unexpected character (1:11)"],
-      ["number.graphql", "query { a(b: 01) }\n", "Invalid number (1:14)"],
-      ["digit.graphql", "query { a(b: 1.) }\n", "Expected a digit (1:16)"],
-      ["extension.graphql", "extend type A\n", "This extension is empty (1:14)"],
-      ["location.graphql", "directive @a on B\n", "Expected a directive location (1:17)"],
-      ["brace.graphql", "fragment A on B\n@c d\n", 'Expected "{" (2:4)'],
-      ["parenthesis.graphql", "query { a(b: 1 }\n", "Expected a name (1:16)"],
-      ["bracket.graphql", "type A { b: [C }\n", 'Expected "]" (1:16)'],
-      ["closing-brace.graphql", "schema { query: A ]\n", "Expected a name (1:19)"],
-      ["block.hbs", "<div>\n  {{#if a}}\n</div>\n", "Unclosed block (2:3)"],
-      ["mustache.hbs", "<div>\n  {{a\n</div>\n", "Unexpected character (3:1)"],
-      ["end.hbs", "{{a", "Unexpected end of file (1:4)"],
-      ["end-tag.hbs", "<div>\n<p>\n</div>\n", "This end tag does not match the open element (3:1)"],
-      ["name.hbs", "{{#if a}}b{{/each}}\n", "This name does not match the open block (1:11)"],
-      ["no-start.hbs", "</div>\n", "This end tag has no start tag (1:1)"],
-      ["hash.hbs", "{{a b=}}\n", "Unexpected token (1:6)"],
-      ["in-tag.hbs", "<div {{#if a}}b{{/if}}></div>\n", "A block can only be inside an element or another block (1:6)"],
-      ["partial.hbs", "{{> a}}\n", "Partials, decorators and raw blocks are not supported (1:1)"],
-      ["void.hbs", "<input></input>\n", "This element cannot have an end tag (1:8)"],
-      ["element.hbs", "{{#if a}}<div>{{/if}}\n", "Unclosed element (1:10)"],
-      ["comment.hbs", "{{!-- a\n", "Unclosed comment (1:1)"],
-      ["short-comment.hbs", "{{! a\n", "Unclosed comment (1:1)"],
-      ["string.hbs", '{{a "b}}\n', "Unclosed string (1:5)"],
-      ["segment.hbs", "{{a [b}}\n", "Unclosed bracket (1:5)"],
-      ["path.hbs", "{{a/../b}}\n", '"..", "." and "this" can only be at the start of a path (1:8)'],
-      ["params.hbs", "{{#each a as ||}}{{/each}}\n", "Expected a name (1:15)"],
-      ["tag-params.hbs", "<A as |b>\n</A>\n", "Invalid block parameters (1:9)"],
-      ["attribute.hbs", '<div></div a="b">\n', "An end tag cannot have attributes (1:12)"],
-      ["self-closing.hbs", "<div></div/>\n", "An end tag cannot be self-closing (1:6)"],
+    // One for each language and kind of refusal: the file, what is said about it, and the line and the column.
+    const cases: [string, string, string, number, number][] = [
+      ["string.css", 'a {\n  b: "x\n}\n', "Unclosed string", 2, 6],
+      ["block.css", "a {\n  b: c;\n", "Unclosed block", 1, 1],
+      ["brace.css", "a {\n}\n}\n", 'Unexpected "}"', 3, 1],
+      ["comment.css", "a {\n  /* b\n}\n", "Unclosed comment", 2, 3],
+      ["bracket.css", "a {\n  b: c(1;\n}\n", "Unclosed bracket", 2, 7],
+      ["url.css", "a {\n  b: url(c;\n}\n", "Unclosed bracket", 2, 9],
+      ["word.css", "a {\n  b c;\n}\n", "Expected a declaration or a rule", 2, 3],
+      ["at.css", "@ a;\n", 'Expected a name after "@"', 1, 1],
+      ["colon.css", "a {\n  b: c: d;\n}\n", 'Unexpected ":"', 2, 7],
+      ["first-colon.css", "a {\n  : b;\n  c: d:\n}\n", 'Unexpected ":"', 3, 7],
+      ["no-name.css", "a {\n  (): ;\n}\n", "Expected a property name", 2, 3],
+      ["two-words.css", "a {\n  b c: d;\n}\n", 'Expected ":"', 2, 5],
+      ["selector.css", "{\n  a: b;\n}\n", "Expected a selector", 1, 1],
+      ["custom-selector.css", "@custom-selector a;\n", "Invalid at-rule parameters", 1, 1],
+      ["value.css", "a {\n  b: c);\n}\n", "Invalid value", 2, 6],
+      ["interpolation.scss", "a {\n  b: #{$c;\n", "Unclosed interpolation", 2, 6],
+      ["string.scss", 'a {\n  b: "x;\n}\n', "Unclosed string", 2, 6],
+      ["nested.scss", "a {\n  b: c: {\n    d: e;\n  }\n}\n", 'Unexpected ":"', 2, 7],
+      ["mixin.less", "a {\n  .b(;\n}\n", "Unclosed bracket", 2, 5],
+      ["each.less", "each(@a, {\n", "Unclosed bracket", 1, 5],
+      ["word.less", "a {\n  b c;\n}\n", "Expected a declaration or a rule", 2, 3],
+      ["end.graphql", "query {\n  a\n", "Unexpected end of file", 3, 1],
+      ["name.graphql", "query {\n}\n", "Expected a name", 2, 1],
+      ["value.graphql", "query { a(b: ) }\n", "Expected a value", 1, 14],
+      ["string.graphql", 'query { a(b: "x) }\n', "Unclosed string", 1, 14],
+      ["block-string.graphql", '"""\na\n', "Unclosed string", 1, 1],
+      ["escape.graphql", 'query { a(b: "\\x") }\n', "Invalid escape sequence", 1, 15],
+      ["definition.graphql", "foo A { b }\n", "Expected a definition", 1, 1],
+      ["colon.graphql", "query ($a) { b }\n", 'Expected ":"', 1, 10],
+      ["character.graphql", "query { a ? }\n", "Unexpected character", 1, 11],
+      ["number.graphql", "query { a(b: 01) }\n", "Invalid number", 1, 14],
+      ["digit.graphql", "query { a(b: 1.) }\n", "Expected a digit", 1, 16],
+      ["extension.graphql", "extend type A\n", "This extension is empty", 1, 14],
+      ["location.graphql", "directive @a on B\n", "Expected a directive location", 1, 17],
+      ["brace.graphql", "fragment A on B\n@c d\n", 'Expected "{"', 2, 4],
+      ["parenthesis.graphql", "query { a(b: 1 }\n", "Expected a name", 1, 16],
+      ["bracket.graphql", "type A { b: [C }\n", 'Expected "]"', 1, 16],
+      ["closing-brace.graphql", "schema { query: A ]\n", "Expected a name", 1, 19],
+      ["block.hbs", "<div>\n  {{#if a}}\n</div>\n", "Unclosed block", 2, 3],
+      ["mustache.hbs", "<div>\n  {{a\n</div>\n", "Unexpected character", 3, 1],
+      ["end.hbs", "{{a", "Unexpected end of file", 1, 4],
+      ["end-tag.hbs", "<div>\n<p>\n</div>\n", "This end tag does not match the open element", 3, 1],
+      ["name.hbs", "{{#if a}}b{{/each}}\n", "This name does not match the open block", 1, 11],
+      ["no-start.hbs", "</div>\n", "This end tag has no start tag", 1, 1],
+      ["hash.hbs", "{{a b=}}\n", "Unexpected token", 1, 6],
+      ["in-tag.hbs", "<div {{#if a}}b{{/if}}></div>\n", "A block can only be inside an element or another block", 1, 6],
+      ["partial.hbs", "{{> a}}\n", "Partials, decorators and raw blocks are not supported", 1, 1],
+      ["void.hbs", "<input></input>\n", "This element cannot have an end tag", 1, 8],
+      ["element.hbs", "{{#if a}}<div>{{/if}}\n", "Unclosed element", 1, 10],
+      ["comment.hbs", "{{!-- a\n", "Unclosed comment", 1, 1],
+      ["short-comment.hbs", "{{! a\n", "Unclosed comment", 1, 1],
+      ["string.hbs", '{{a "b}}\n', "Unclosed string", 1, 5],
+      ["segment.hbs", "{{a [b}}\n", "Unclosed bracket", 1, 5],
+      ["path.hbs", "{{a/../b}}\n", '"..", "." and "this" can only be at the start of a path', 1, 8],
+      ["params.hbs", "{{#each a as ||}}{{/each}}\n", "Expected a name", 1, 15],
+      ["tag-params.hbs", "<A as |b>\n</A>\n", "Invalid block parameters", 1, 9],
+      ["attribute.hbs", '<div></div a="b">\n', "An end tag cannot have attributes", 1, 12],
+      ["self-closing.hbs", "<div></div/>\n", "An end tag cannot be self-closing", 1, 6],
       [
         "unquoted.hbs",
         "<div a=b{{c}}></div>\n",
-        "An attribute value that mixes text and a mustache needs quotes (1:8)",
+        "An attribute value that mixes text and a mustache needs quotes",
+        1,
+        8,
       ],
-      ["tag-name.hbs", "<{{a}}></a>\n", "A mustache is not allowed here (1:2)"],
-      ["equals.hbs", "<div =a></div>\n", "Unexpected character (1:6)"],
-      ["sexpr.hbs", "{{a (b}}\n", 'Expected ")" (1:7)'],
-      ["doctype.hbs", "<!DOCTYPE a PUBLIC b>\n", "Invalid doctype (1:20)"],
-      ["close.hbs", "{{a b=c d}}\n", 'Expected "}}" (1:9)'],
-      ["mustache-comment.hbs", "<div a={{! b }}></div>\n", "A comment is not allowed here (1:8)"],
-      ["raw.hbs", "{{{{a}}}} b\n", "Unclosed block (1:10)"],
-      ["colon.hbs", "<:></:>\n", "Invalid element name (1:1)"],
-      ["mapping.yaml", "a: b: c\n", "Unexpected token (1:5)"],
-      ["flow.yaml", "a: [1, 2\nb: 3\n", "Unexpected token (2:1)"],
-      ["string.yaml", 'a: "x\n', "Unexpected character (2:1)"],
-      ["single.yaml", "a: 'x\n", "Unexpected character (2:1)"],
-      ["tab.yaml", "\ta: 1\n", "Tabs cannot be used for indentation (1:3)"],
-      ["anchors.yaml", "a: &x &y 1\n", "A node can have at most one anchor and one tag (1:7)"],
-      ["token.yaml", "- a\nb: 1\n", "Unexpected token (2:1)"],
-      ["directive.yaml", "%YAML 1.2\na: 1\n", "Unexpected token (2:1)"],
-      ["directive-end.yaml", "%YAML 1.2\n", "Unexpected token (2:1)"],
-      ["bad-directive.yaml", "%YAML a b\n---\n", "Unexpected character (1:7)"],
-      ["header.yaml", "a: |x\n  b\n", "Unexpected character (1:5)"],
-      ["tag.yaml", "a: !b!c d\n", "This tag cannot be resolved (1:5)"],
-      ["alias.yaml", "a: &b *c\n", "Unexpected token (1:7)"],
-      ["anchor.yaml", "a: & b\n", "Unexpected character (1:5)"],
-      ["plain.yaml", "a: @b\n", "Unexpected token (1:4)"],
-      ["escape.yaml", 'a: "\\q"\n', "Unexpected character (1:6)"],
-      ["comma.yaml", "a: [b c: d e]\n[a b]\n", "Unexpected token (3:1)"],
-      ["missing-comma.yaml", "[a: b c: d]\n", "Unexpected token (1:8)"],
-      ["comment.yaml", 'a: "b"#c\n', "Unexpected character (1:7)"],
-      ["key.yaml", "[a\nb: c]\n", 'A key without "?" must be on one line (2:2)'],
-      ["colon.yaml", "a: 1\nb\n", "Unexpected token (3:1)"],
-      ["indent.yaml", "a:\n  - b\n - c\n", "Unexpected token (3:2)"],
-      ["block-in-flow.yaml", "[a: |\n  b\n]\n", "Unexpected token (1:5)"],
-      ["seq-prop.yaml", "a: &b - c\n", "Unexpected token (1:7)"],
-      ["doc-start.yaml", "--- a: b\n", "Unexpected token (1:6)"],
-      ["indicator.yaml", "&a ? b\n: c\n", "This cannot be formatted (1:1)"],
-      ["scalar-indent.yaml", "a: |2\n b\n", "Unexpected token (2:2)"],
-      ["no-comma.yaml", "[: ? 1]\n", "Unexpected token (1:4)"],
-      ["comma-or-colon.yaml", '["a" "b"]\n', "Unexpected token (1:7)"],
-      ["set.yaml", "{!!set}\n", "This cannot be formatted (1:2)"],
-      ["token.json", '{"a": }\n', "Unexpected token (1:7)"],
-      ["end.json", '{"a": 1\n', "Unexpected end of file (2:1)"],
-      ["string.json", '{"a": "x\n}\n', "Unclosed string (1:7)"],
-      ["escape.json", '{"a": "\\x"}\n', "Invalid escape sequence (1:7)"],
-      ["comment.json", '{"a": 1} /* b\n', "Unclosed comment (1:10)"],
-      ["more.json", '{"a": 1} 2\n', "Expected end of file (1:10)"],
-      ["only-comments.json", "// a\n", "Unexpected end of file (2:1)"],
-      ["word.json", "nul\n", "Unexpected token (1:1)"],
-      ["sign-before-a-string.json", "+''\n", "Unexpected token (1:2)"],
-      ["sign-before-a-word.json5", "-null\n", "Unexpected token (1:2)"],
+      ["tag-name.hbs", "<{{a}}></a>\n", "A mustache is not allowed here", 1, 2],
+      ["equals.hbs", "<div =a></div>\n", "Unexpected character", 1, 6],
+      ["sexpr.hbs", "{{a (b}}\n", 'Expected ")"', 1, 7],
+      ["doctype.hbs", "<!DOCTYPE a PUBLIC b>\n", "Invalid doctype", 1, 20],
+      ["close.hbs", "{{a b=c d}}\n", 'Expected "}}"', 1, 9],
+      ["mustache-comment.hbs", "<div a={{! b }}></div>\n", "A comment is not allowed here", 1, 8],
+      ["raw.hbs", "{{{{a}}}} b\n", "Unclosed block", 1, 10],
+      ["colon.hbs", "<:></:>\n", "Invalid element name", 1, 1],
+      ["mapping.yaml", "a: b: c\n", "Unexpected token", 1, 5],
+      ["flow.yaml", "a: [1, 2\nb: 3\n", "Unexpected token", 2, 1],
+      ["string.yaml", 'a: "x\n', "Unexpected character", 2, 1],
+      ["single.yaml", "a: 'x\n", "Unexpected character", 2, 1],
+      ["tab.yaml", "\ta: 1\n", "Tabs cannot be used for indentation", 1, 3],
+      ["anchors.yaml", "a: &x &y 1\n", "A node can have at most one anchor and one tag", 1, 7],
+      ["token.yaml", "- a\nb: 1\n", "Unexpected token", 2, 1],
+      ["directive.yaml", "%YAML 1.2\na: 1\n", "Unexpected token", 2, 1],
+      ["directive-end.yaml", "%YAML 1.2\n", "Unexpected token", 2, 1],
+      ["bad-directive.yaml", "%YAML a b\n---\n", "Unexpected character", 1, 7],
+      ["header.yaml", "a: |x\n  b\n", "Unexpected character", 1, 5],
+      ["tag.yaml", "a: !b!c d\n", "This tag cannot be resolved", 1, 5],
+      ["alias.yaml", "a: &b *c\n", "Unexpected token", 1, 7],
+      ["anchor.yaml", "a: & b\n", "Unexpected character", 1, 5],
+      ["plain.yaml", "a: @b\n", "Unexpected token", 1, 4],
+      ["escape.yaml", 'a: "\\q"\n', "Unexpected character", 1, 6],
+      ["comma.yaml", "a: [b c: d e]\n[a b]\n", "Unexpected token", 3, 1],
+      ["missing-comma.yaml", "[a: b c: d]\n", "Unexpected token", 1, 8],
+      ["comment.yaml", 'a: "b"#c\n', "Unexpected character", 1, 7],
+      ["key.yaml", "[a\nb: c]\n", 'A key without "?" must be on one line', 2, 2],
+      ["colon.yaml", "a: 1\nb\n", "Unexpected token", 3, 1],
+      ["indent.yaml", "a:\n  - b\n - c\n", "Unexpected token", 3, 2],
+      ["block-in-flow.yaml", "[a: |\n  b\n]\n", "Unexpected token", 1, 5],
+      ["seq-prop.yaml", "a: &b - c\n", "Unexpected token", 1, 7],
+      ["doc-start.yaml", "--- a: b\n", "Unexpected token", 1, 6],
+      ["indicator.yaml", "&a ? b\n: c\n", "This cannot be formatted", 1, 1],
+      ["scalar-indent.yaml", "a: |2\n b\n", "Unexpected token", 2, 2],
+      ["no-comma.yaml", "[: ? 1]\n", "Unexpected token", 1, 4],
+      ["comma-or-colon.yaml", '["a" "b"]\n', "Unexpected token", 1, 7],
+      ["set.yaml", "{!!set}\n", "This cannot be formatted", 1, 2],
+      ["token.json", '{"a": }\n', "Unexpected token", 1, 7],
+      ["end.json", '{"a": 1\n', "Unexpected end of file", 2, 1],
+      ["string.json", '{"a": "x\n}\n', "Unclosed string", 1, 7],
+      ["escape.json", '{"a": "\\x"}\n', "Invalid escape sequence", 1, 7],
+      ["comment.json", '{"a": 1} /* b\n', "Unclosed comment", 1, 10],
+      ["more.json", '{"a": 1} 2\n', "Expected end of file", 1, 10],
+      ["only-comments.json", "// a\n", "Unexpected end of file", 2, 1],
+      ["word.json", "nul\n", "Unexpected token", 1, 1],
+      ["sign-before-a-string.json", "+''\n", "Unexpected token", 1, 2],
+      ["sign-before-a-word.json5", "-null\n", "Unexpected token", 1, 2],
     ];
     const result = await format(Object.fromEntries(cases.map(([name, text]) => [name, text])), []);
-    const said = [...result.stderr.matchAll(/^error: ([^:\n]+): SyntaxError: (.+)$/gm)].map(it => [it[1], it[2]]);
-    expect(Object.fromEntries(said)).toEqual(Object.fromEntries(cases.map(([name, , message]) => [name, message])));
+    // `format` makes a `/` of every backslash in what is printed.
+    const expected = cases.map(([name, text, message, line, column]) =>
+      problem(name, message, [line, column, text.split("\n")[line - 1].replaceAll("\\", "/")]),
+    );
+    expect(result.stderr.split("\n\n").sort()).toEqual([...expected, "Formatted 0 files, 0 unchanged"].sort());
     expect(result.exitCode).toBe(2);
   });
 
-  test("under a syntax error are the lines around it, as Prettier shows them", async () => {
+  test("a syntax error is printed as Bun prints every error: the line, a caret, the message, and where it is", async () => {
     const files = {
       // A byte order mark does not count, `\r\n` is one line break, and a column is a UTF-16 code unit.
+      // The caret is as far to the right as the characters before it are wide. A tab counts as one column.
       "a.css": '\uFEFFa {\r\n  /* é😀 */ b: "x\r\n}\r\n',
       "b.css": 'a {\n  b: c;\n}\n\n\nd {\n  e: "f\n}\n\ng {\n  h: i;\n}\nj {\n}\n',
       "c.js": "const a = ;\n",
@@ -699,54 +736,72 @@ describe.concurrent("bun fmt", () => {
     };
     const result = await format(files, []);
     expect(result.stderr).toMatchInlineSnapshot(`
-      "error: a.css: SyntaxError: Unclosed string (2:16)
-        1 | a {
-      > 2 |   /* é😀 */ b: "x
-          |                ^
-        3 | }
-        4 |
-      error: b.css: SyntaxError: Unclosed string (7:6)
-         5 |
-         6 | d {
-      >  7 |   e: "f
-           |      ^
-         8 | }
-         9 |
-        10 | g {
-      error: c.js: SyntaxError: Expression expected. (1:11)
-      > 1 | const a = ;
-          |           ^
-        2 |
-      error: d.yaml: SyntaxError: Tabs cannot be used for indentation (2:2)
-        1 | a:
-      > 2 | 	- b
-          | 	^
-        3 |
+      "2 |   /* é😀 */ b: "x
+                         ^
+      error: Unclosed string
+          at a.css:2:16
+
+      7 |   e: "f
+               ^
+      error: Unclosed string
+          at b.css:7:6
+
+      1 | const a = ;
+                    ^
+      error: Expression expected.
+          at c.js:1:11
+
+      2 | 	- b
+           ^
+      error: Tabs cannot be used for indentation
+          at d.yaml:2:2
+
       Formatted 0 files, 0 unchanged"
     `);
     expect(result.exitCode).toBe(2);
     const stdin = await format({}, ["--stdin-filepath", "a.css"], { stdin: "a {\n" });
     expect(stdin.stderr).toMatchInlineSnapshot(`
-      "error: a.css: SyntaxError: Unclosed block (1:1)
-      > 1 | a {
-          | ^
-        2 |"
+      "1 | a {
+          ^
+      error: Unclosed block
+          at a.css:1:1"
     `);
     expect(stdin.exitCode).toBe(2);
+    // The configuration of another tool makes no difference.
+    for (const configuration of [{ ".prettierrc": "{}\n" }, { ".oxfmtrc.json": "{}\n" }]) {
+      const result = await format({ ...configuration, "b.css": files["b.css"] }, ["b.css"]);
+      expect(result.stderr).toStartWith(problem("b.css", "Unclosed string", [7, 6, '  e: "f']) + "\n\n");
+      expect(result.exitCode).toBe(2);
+    }
+  });
+
+  // `bun lint` and `bun build` count the lines like this too, and don't count the mark either.
+  test.each<[string, string, number, number, string]>([
+    ["\\r\\n is one line break", "let b;\r\nlet c;\r\nconst a = ; let d;\r\n", 3, 11, "const a = ; let d;"],
+    ["\\r is a line break", "let b;\rlet c;\rconst a = ; let d;\r", 3, 11, "const a = ; let d;"],
+    ["a byte order mark does not count", "\uFEFFconst a = ; let d;\n", 1, 11, "const a = ; let d;"],
+    ["nor on a later line", "\uFEFFlet b;\r\nconst a = ; let d;\r\n", 2, 11, "const a = ; let d;"],
+    ["U+2028 is a line break", "let b;\u2028let c;\u2028const a = ; let d;\n", 3, 11, "const a = ; let d;"],
+    ["U+2029 is a line break", "let b;\u2029const a = ; let d;\n", 2, 11, "const a = ; let d;"],
+  ])("where a syntax error in JavaScript is: %s", async (_, text, line, column, shown) => {
+    for (const name of ["a.js", "a.ts"]) {
+      const result = await format({}, ["--stdin-filepath", name], { stdin: text });
+      expect(result.stderr).toBe(problem(name, "Expression expected.", [line, column, shown]));
+      expect(result.exitCode).toBe(2);
+    }
   });
 
   test("a syntax error in TOML is in the words of Bun's parser, and a warning: oxfmt passes over such a file", async () => {
     const files = { "a.toml": 'a = 1\nb = "c\n', ".oxfmtrc.json": "{}\n" };
     const warning = [
-      "[warn] a.toml: SyntaxError: Unterminated string; newlines must be escaped in basic strings (2:5)",
-      "[warn]   1 | a = 1",
-      '[warn] > 2 | b = "c',
-      "[warn]     |     ^",
-      "[warn]   3 |",
+      '2 | b = "c',
+      "        ^",
+      "warn: Unterminated string; newlines must be escaped in basic strings",
+      "   at a.toml:2:5",
     ].join("\n");
     for (const flags of [[], ["--check"], ["-l"]]) {
       const result = await format(files, flags, { reads: ["a.toml"] });
-      expect(result.stderr).toContain(warning);
+      expect(result.stderr).toBe(warning);
       expect(result.files["a.toml"]).toBe(files["a.toml"]);
       expect(result.exitCode).toBe(0);
     }
@@ -1264,7 +1319,7 @@ describe.concurrent("bun fmt", () => {
       reads: ["a.html", "b.html"],
     });
     expect(result.files).toEqual({ "a.html": "<div></span>\n", "b.html": "<p>a</p>\n" });
-    expect(result.stderr).toContain("error: a.html: SyntaxError:");
+    expect(result.stderr).toStartWith(problem("a.html", closingTag("span"), [1, 6, "<div></span>"]) + "\n\n");
     expect(result.exitCode).toBe(2);
   });
 
@@ -1341,8 +1396,8 @@ describe.concurrent("bun fmt", () => {
   // What Prettier 3.9.9 does with the flag. oxfmt 0.72 does not have it. The comparison is Bun's own.
   describe.each([
     ["no config", {}, "error: "],
-    [".prettierrc", { ".prettierrc": "{}\n" }, "[error] "],
-    [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }, "[error] "],
+    [".prettierrc", { ".prettierrc": "{}\n" }, "error: "],
+    [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }, "error: "],
   ])("--debug-check with %s", (_, config: Record<string, string>, prefix) => {
     const files = { "a.js": formatted, "b.js": ugly };
     const names = Object.keys(files);
@@ -1364,7 +1419,7 @@ describe.concurrent("bun fmt", () => {
         reads: ["a.ts", "b.js"],
       });
       expect(result.files).toEqual(all);
-      expect(result.stderr.trim()).toBe(`${prefix}a.ts: formatting would change what the code does.`);
+      expect(result.stderr).toBe(problem("a.ts", "Not formatted, because formatting would change what the code does"));
       expect(result.stdout).toBe("b.js");
       expect(result.exitCode).toBe(2);
     });
@@ -1405,7 +1460,7 @@ describe.concurrent("bun fmt", () => {
       expect(looks.raw).toBe(".oxfmtrc.json" in config ? "" : "(stdin)\n");
       expect(looks.exitCode).toBe(1);
       expect(lost.raw).toBe("");
-      expect(lost.stderr.trim()).toBe(`${prefix}x.ts: formatting would change what the code does.`);
+      expect(lost.stderr).toBe(problem("x.ts", "Not formatted, because formatting would change what the code does"));
       expect(lost.exitCode).toBe(2);
     });
   });
@@ -1511,16 +1566,16 @@ describe.concurrent("bun fmt", () => {
     const result = await format(files, [], { reads });
     expect(result.files).toEqual({ ...left, "c.js": formatted });
     expect(result.stderr.trimEnd().split("\n").slice(-2)).toEqual([
-      `[error] ${text}`,
-      "[error]   Use --allow-unsupported to make this a warning.",
+      `error: ${text}`,
+      "  Use --allow-unsupported to make this a warning.",
     ]);
     expect(result.exitCode).toBe(2);
     const checked = await format({ ...files, "c.js": formatted }, ["--check"], { reads });
-    expect(checked.stderr).toContain(`[error] ${text}`);
+    expect(checked.stderr).toContain(`error: ${text}`);
     expect(checked.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads });
     expect(allowed.files).toEqual({ ...left, "c.js": formatted });
-    expect(allowed.stderr.split("\n")).toContain(`[warn] ${text}`);
+    expect(allowed.stderr.split("\n")).toContain(`warn: ${text}`);
     expect(allowed.exitCode).toBe(0);
   });
 
@@ -1595,7 +1650,7 @@ exports.format = async (text, options) => {
           "d.js": "d;\n",
         });
         expect(result.stderr).toContain("Used your installed Prettier for 2 files");
-        expect(result.stderr).not.toContain("[warn]");
+        expect(result.stderr).not.toContain("warn:");
         expect(result.exitCode).toBe(0);
         // The flag is for what cannot be done, and this can.
         const withFlag = await format(project, ["--allow-unsupported"], { reads: names });
@@ -1609,13 +1664,13 @@ exports.format = async (text, options) => {
         expect(left.files).toEqual({ "package.json": text, "d.js": "d;\n" });
         expect(left.stderr).toContain(`Not installed: prettier, ${plugin}`);
         expect(left.stderr).toContain(
-          `[error] 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: ${plugin}\n[error]   Use --allow-unsupported to format it without the plugins.\n`,
+          `error: 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: ${plugin}\n  Use --allow-unsupported to format it without the plugins.\n`,
         );
         expect(left.stderr).not.toContain("language");
         expect(left.exitCode).toBe(2);
         const allowed = await format(alone, ["--allow-unsupported"], { reads: ["package.json"] });
         expect(allowed.files).toEqual({ "package.json": '{\n  "a": 1\n}\n' });
-        expect(allowed.stderr).toContain(`[warn] Not installed: prettier, ${plugin}`);
+        expect(allowed.stderr).toContain(`warn: Not installed: prettier, ${plugin}`);
         expect(allowed.exitCode).toBe(0);
       },
       timeout,
@@ -1705,8 +1760,8 @@ exports.format = async (text, options) => {
     );
 
     test.each<[string[], string, number]>([
-      [[], "[error] stdin: SyntaxError: Unexpected token (1:2)", 2],
-      [["--check"], "[error] Unexpected token (1:2)", 0],
+      [[], "error: stdin: SyntaxError: Unexpected token (1:2)", 2],
+      [["--check"], "error: Unexpected token (1:2)", 0],
     ])(
       "--parser with the plugin's parser, and the code doesn't parse: %j",
       async (flags, stderr, exitCode) => {
@@ -1729,7 +1784,7 @@ exports.format = async (text, { parser }) => {
 `;
         const project = { ...files, "node_modules/prettier/index.cjs": prettier };
         const result = await format(project, ["--parser", "nonsense"], { stdin: "a\n" });
-        expect(result).toMatchObject({ raw: "", stderr: `[error] Couldn't resolve parser "nonsense".`, exitCode: 1 });
+        expect(result).toMatchObject({ raw: "", stderr: `error: Couldn't resolve parser "nonsense".`, exitCode: 1 });
       },
       timeout,
     );
@@ -1740,19 +1795,19 @@ exports.format = async (text, { parser }) => {
       });
       expect(result.raw).toBe("");
       expect(result.stderr.split("\n")).toEqual([
-        "[warn] Not installed: prettier, prettier-plugin-svelte",
-        "[warn]   Install prettier and every plugin in your config, and bun fmt will use them for these files.",
-        "[error] 1 file was not formatted because bun fmt does not support its language yet: 1 svelte",
-        "[error]   Use --allow-unsupported to make this a warning.",
+        "warn: Not installed: prettier, prettier-plugin-svelte",
+        "  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+        "error: 1 file was not formatted because bun fmt does not support its language yet: 1 svelte",
+        "  Use --allow-unsupported to make this a warning.",
       ]);
       expect(result.exitCode).toBe(2);
     });
 
     // As Prettier 3.9.9 with a plugin that throws this.
     test.each<[string[], string, number]>([
-      [[], "[error] c.svelte: SyntaxError: Unexpected token (1:2)", 2],
-      [["--check"], "[error] Unexpected token (1:2)", 0],
-      [["--list-different"], "[error] Unexpected token (1:2)", 0],
+      [[], "error: c.svelte: SyntaxError: Unexpected token (1:2)", 2],
+      [["--check"], "error: Unexpected token (1:2)", 0],
+      [["--list-different"], "error: Unexpected token (1:2)", 0],
     ])(
       "from standard input, and it does not parse: %j",
       async (flags, stderr, exitCode) => {
@@ -1779,10 +1834,10 @@ exports.format = async (text, { parser }) => {
         const result = await format(project, [...flags, "--stdin-filepath", "c.svelte"], { stdin });
         expect(result.raw).toBe("");
         expect(result.stderr.split("\n")).toEqual([
-          `[warn] Not installed: ${missing}`,
-          "[warn]   Install prettier and every plugin in your config, and bun fmt will use them for these files.",
-          `[error] ${unsupported}`,
-          "[error]   Use --allow-unsupported to make this a warning.",
+          `warn: Not installed: ${missing}`,
+          "  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+          `error: ${unsupported}`,
+          "  Use --allow-unsupported to make this a warning.",
         ]);
         expect(result.exitCode).toBe(2);
       });
@@ -1794,7 +1849,7 @@ exports.format = async (text, { parser }) => {
         const args = ["--allow-unsupported", ...flags, "--stdin-filepath", "c.svelte"];
         const result = await format(project, args, { stdin });
         expect(result.raw).toBe(raw);
-        expect(result.stderr.split("\n").at(-1)).toBe(`[warn] ${unsupported}`);
+        expect(result.stderr.split("\n").at(-1)).toBe(`warn: ${unsupported}`);
         expect(result.exitCode).toBe(0);
       });
     });
@@ -1888,7 +1943,7 @@ exports.format = async (text, { parser }) => {
           { reads: ["a.svelte", "c.svelte"] },
         );
         expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.svelte": "<p   >waits</p>\n" });
-        expect(result.stderr).toContain("[error] c.svelte: A promise never settled, and nothing is left to wait for.");
+        expect(result.stderr).toContain("error: c.svelte: A promise never settled, and nothing is left to wait for.");
         expect(result.exitCode).toBe(2);
       },
       timeout,
@@ -1912,7 +1967,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       async () => {
         const result = await format({ ...files, "a.svelte": "broken\n" }, [], { reads });
         expect(result.files["a.svelte"]).toBe("broken\n");
-        expect(result.stderr).toContain("[error] a.svelte: SyntaxError: Unexpected token (1:2)");
+        expect(result.stderr).toContain("error: a.svelte: SyntaxError: Unexpected token (1:2)");
         expect(result.exitCode).toBe(2);
       },
       timeout,
@@ -1925,7 +1980,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         const result = await format(others, [], { reads: ["a.svelte"] });
         expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
         expect(result.stderr).toContain(
-          "[warn] Not installed: prettier-plugin-svelte\n[warn]   Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+          "warn: Not installed: prettier-plugin-svelte\n  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
         );
         expect(result.stderr).toContain("does not support its language yet: 1 .svelte\n");
         expect(result.exitCode).toBe(2);
@@ -1966,7 +2021,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     expect(await different(files, [])).toEqual(["b.toml", "c.js", "Pipfile"]);
     const broken = await format({ "b.toml": "a = = 1\n", ".oxfmtrc.json": "{}\n" }, [], { reads: ["b.toml"] });
     expect(broken.files["b.toml"]).toBe("a = = 1\n");
-    expect(broken.stderr).toMatch(/b\.toml: SyntaxError: .+ \(1:\d+\)/);
+    expect(broken.stderr).toBe("1 | a = = 1\n        ^\nwarn: Expected a value but found '='\n   at b.toml:1:5");
     expect(broken.exitCode).toBe(0);
   });
 
@@ -2106,9 +2161,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const unknown = '"nonsense": 1, "other": [1, "a"], "tailwindConfig": "x", "$schema": "y"';
     const result = await format({ ".prettierrc": `{ ${unknown} }`, "a.js": ugly }, ["a.js"], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe(formatted);
-    expect(result.stderr).toContain("[warn] Ignored unknown option { nonsense: 1 }.");
-    expect(result.stderr).toContain('[warn] Ignored unknown option { other: [1, "a"] }.');
-    expect(result.stderr).toContain('[warn] Ignored unknown option { tailwindConfig: "x" }.');
+    expect(result.stderr).toContain("warn: Ignored unknown option { nonsense: 1 }.");
+    expect(result.stderr).toContain('warn: Ignored unknown option { other: [1, "a"] }.');
+    expect(result.stderr).toContain('warn: Ignored unknown option { tailwindConfig: "x" }.');
     expect(result.stderr).not.toContain("$schema");
     expect(result.exitCode).toBe(0);
     const withPlugin = await format(
@@ -2140,16 +2195,16 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const result = await format(files, [], { reads });
     expect(result.files).toEqual({ "a.js": ugly, "b.astro": files["b.astro"], "other/c.js": formatted });
     expect(result.stderr).toContain(
-      "[error] 2 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style, ./own.js\n[error]   Use --allow-unsupported to format them without the plugins.",
+      "error: 2 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style, ./own.js\n  Use --allow-unsupported to format them without the plugins.",
     );
     expect(result.stderr).toContain(
-      "[error] 1 file was not formatted because bun fmt does not support its language yet",
+      "error: 1 file was not formatted because bun fmt does not support its language yet",
     );
     expect(result.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads });
     expect(allowed.files).toEqual({ "a.js": formatted, "b.astro": files["b.astro"], "other/c.js": formatted });
     expect(allowed.stderr).toMatch(
-      /\[warn\] prettier-plugin-brace-style, \.\/own\.js in \S+\.prettierrc have no effect because bun fmt does not include those plugins\n/,
+      /warn: prettier-plugin-brace-style, \.\/own\.js in \S+\.prettierrc have no effect because bun fmt does not include those plugins\n/,
     );
     expect(allowed.exitCode).toBe(0);
     const flag = await format({ "a.js": ugly }, ["--plugin", "prettier-plugin-brace-style"], { reads: ["a.js"] });
@@ -2160,7 +2215,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       const piped = await format(files, [...flags, "--stdin-filepath", "d.js"], { stdin: ugly });
       expect(piped.raw).toBe("");
       expect(piped.stderr).toBe(
-        "[error] 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style, ./own.js\n[error]   Use --allow-unsupported to format it without the plugins.",
+        "error: 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style, ./own.js\n  Use --allow-unsupported to format it without the plugins.",
       );
       expect(piped.exitCode).toBe(2);
     }
@@ -2174,7 +2229,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const result = await format(files, [], { reads: ["a.js", "legacy/b.js"] });
     expect(result.files).toEqual({ "a.js": formatted, "legacy/b.js": ugly });
     expect(result.stderr).toContain(
-      "[error] 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style\n",
+      "error: 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style\n",
     );
     expect(result.exitCode).toBe(2);
     // An override that empties the list takes its files out.
@@ -2510,7 +2565,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       });
       expect(result.raw).toBe("");
       expect(result.stderr).toBe(
-        "[error] 1 file was not formatted because bun fmt does not support its language yet: 1 .astro\n[error]   Use --allow-unsupported to make this a warning.",
+        "error: 1 file was not formatted because bun fmt does not support its language yet: 1 .astro\n  Use --allow-unsupported to make this a warning.",
       );
       expect(result.exitCode).toBe(2);
     });
@@ -2545,7 +2600,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const files = { "ok.json": make(512), "huge.json": make(200_000) };
     const [ok, huge] = await Promise.all(Object.keys(files).map(name => format(files, ["--check", name])));
     expect(ok.stderr).not.toContain("error:");
-    expect(huge.stderr).toContain("error: huge.json:");
+    expect(huge.stderr).toMatch(/^error: .+\n    at huge\.json$/m);
     expect(huge.exitCode).toBe(2);
   });
 
@@ -2675,7 +2730,8 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         "YAML: 40 mappings with a comment behind the key",
         "a.yaml",
         {},
-        Array.from({ length: 40 }, (_, i) => `${" ".repeat(i)}a: # c\n`).join("") + `${" ".repeat(40)}b: c\n`,
+        Array.from({ length: 40 }, (_, i) => `${Buffer.alloc(i, " ").toString()}a: # c\n`).join("") +
+          `${Buffer.alloc(40, " ").toString()}b: c\n`,
         "ed218e0b39393da450552421d2345f583eb8689a",
       ],
       [
@@ -2802,9 +2858,11 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       const files = { ".oxfmtrc.json": `{ "jsdoc": {} }`, [name]: text };
       const result = await format(files, [name], { reads: [name] });
       expect(result.files[name]).toBe(text);
-      expect(result.stderr).toMatch(
-        /^\[error\] \S+: RangeError: (?:The code is nested too deeply\.|Invalid string length)$/m,
-      );
+      const summary = "\n\nError occurred when checking code style in the above files.";
+      expect(result.stderr).toBeOneOf([
+        problem(name, "The code is nested too deeply") + summary,
+        problem(name, "The formatted code is too long for a string") + summary,
+      ]);
       expect(result.exitCode).toBe(2);
     });
 
@@ -2824,7 +2882,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
           stderr: "pipe",
         });
         const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        expect(stderr).toBeOneOf(["", "error: a.js: RangeError: The code is nested too deeply.\n"]);
+        expect(stderr).toBeOneOf(["", problem("a.js", "The code is nested too deeply") + "\n\n"]);
         expect({ exitCode, signalCode: proc.signalCode }).toEqual({
           exitCode: stderr === "" ? 0 : 2,
           signalCode: null,
@@ -2832,23 +2890,19 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       },
     );
 
-    test("a text that is longer than a string of JavaScript can be is refused in the words of Prettier", async () => {
+    test("a text that is longer than a string of JavaScript can be is refused", async () => {
       // 560 MB. Prettier prints 490 MB.
       const text = `<img srcset="${"u".repeat(70_000)} 1w${", a 2w".repeat(8_000)}">\n`;
       const result = await format({ "a.html": text }, ["a.html"], { reads: ["a.html"] });
       expect(result.files["a.html"]).toBe(text);
-      expect(result.stderr).toContain("error: a.html: RangeError: Invalid string length");
+      expect(result.stderr).toStartWith(problem("a.html", "The formatted code is too long for a string") + "\n\n");
       expect(result.exitCode).toBe(2);
     });
 
-    test("under a syntax error are the lines around it, however long they are", async () => {
-      const result = await format({ "a.css": `a{${"b:c;".repeat(250)}}}` }, ["a.css"]);
-      // As Prettier shows them.
-      expect(result.stderr.split("\n").slice(0, 3)).toEqual([
-        `error: a.css: SyntaxError: Unexpected "}" (1:1004)`,
-        `> 1 | a{${"b:c;".repeat(250)}}}`,
-        `    | ${" ".repeat(1_003)}^`,
-      ]);
+    test("the line of a syntax error is shown, however long it is", async () => {
+      const text = `a{${Buffer.alloc(1000, "b:c;").toString()}}}`;
+      const result = await format({ "a.css": text }, ["a.css"]);
+      expect(result.stderr).toStartWith(problem("a.css", 'Unexpected "}"', [1, 1_004, text]) + "\n\n");
       expect(result.exitCode).toBe(2);
     });
 
@@ -2873,7 +2927,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     async word => {
       const text = word === "@" ? word.repeat(100_000) : `// @flow\ntype A = ${word.repeat(100_000)}x;`;
       const result = await format({ "deep.js": text + "\n" }, ["--check", "deep.js"]);
-      expect(result.stdout + "\n" + result.stderr).toMatch(/^(?:error: deep\.js:|deep\.js$)/m);
+      expect(result.stdout + "\n" + result.stderr).toMatch(/^(?:error: .+\n    at deep\.js\b|deep\.js$)/m);
       expect(result.exitCode).toBe(result.stderr.includes("error:") ? 2 : 1);
     },
   );
@@ -2898,7 +2952,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const files = { "a.js": code + "\n", "b.mjs": code + "\n", "c.jsx": code + "\n" };
     const result = await format(files, [], { reads: Object.keys(files) });
     expect(result.files).toEqual(files);
-    for (const name of Object.keys(files)) expect(result.stderr).toContain(`error: ${name}: SyntaxError: `);
+    for (const name of Object.keys(files)) expect(result.stderr).toMatch(syntaxErrorIn(name));
     expect(result.exitCode).toBe(2);
   });
 
@@ -2929,7 +2983,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
   ])("what only TypeScript's parser reads is a syntax error in JavaScript: %j", async code => {
     const result = await format({ "a.js": code + "\n" }, ["a.js"], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": code + "\n" });
-    expect(result.stderr).toContain("error: a.js: SyntaxError: ");
+    expect(result.stderr).toMatch(syntaxErrorIn("a.js"));
     expect(result.exitCode).toBe(2);
   });
 
@@ -2943,7 +2997,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const files = { "a.js": `// @flow\n${code}\n` };
     const result = await format(files, ["a.js"], { reads: ["a.js"] });
     expect(result.files).toEqual(files);
-    expect(result.stderr).toContain("error: a.js: SyntaxError: ");
+    expect(result.stderr).toMatch(syntaxErrorIn("a.js"));
     expect(result.exitCode).toBe(2);
   });
 
@@ -2997,7 +3051,7 @@ declare export function h(): void;
     const files = { [name]: code + "\n" };
     const result = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [name], { reads: [name] });
     expect(result.files).toEqual(files);
-    expect(result.stderr).toContain(`[error] ${name}: SyntaxError: `);
+    expect(result.stderr).toMatch(syntaxErrorIn(name));
     expect(result.exitCode).toBe(2);
   });
 
@@ -3180,7 +3234,7 @@ try {
       };
       const result = await format(files, ["bin/a", "bin/b"], { reads: ["bin/a", "bin/b"] });
       expect(result.files).toEqual({ ...files, "bin/a": `#!/usr/bin/env ${interpreter}\na;\n` });
-      expect(result.stderr).toContain("error: bin/b: SyntaxError:");
+      expect(result.stderr).toMatch(syntaxErrorIn("bin/b"));
       expect(result.exitCode).toBe(2);
     },
   );
@@ -3238,50 +3292,43 @@ try {
     expect(result.exitCode).toBe(exitCode);
   });
 
-  // By runs of Prettier 3.9.9, whose `listDifferent` says `error.message` and leaves the exit code as it is, and of oxfmt 0.72.0.
-  test.each<[Record<string, string>, string[], number, string]>([
-    [{}, [], 2, "a.ts: SyntaxError: "],
-    [{}, ["--write"], 2, "a.ts: SyntaxError: "],
-    [{}, ["--check"], 0, ""],
-    [{}, ["--list-different"], 0, ""],
-    [{}, ["--check", "--write"], 0, ""],
-    [{}, ["-l", "--write"], 0, ""],
-    [{ ".prettierrc": "{}" }, ["--check"], 0, ""],
-    [{ ".oxfmtrc.json": "{}" }, [], 2, "a.ts: SyntaxError: "],
-  ])("standard input that does not parse: %j %j", async (configuration, flags, exitCode, before) => {
+  // The exit codes of Prettier 3.9.9, whose `listDifferent` leaves the exit code as it is, and of oxfmt 0.72.0.
+  test.each<[Record<string, string>, string[], number]>([
+    [{}, [], 2],
+    [{}, ["--write"], 2],
+    [{}, ["--check"], 0],
+    [{}, ["--list-different"], 0],
+    [{}, ["--check", "--write"], 0],
+    [{}, ["-l", "--write"], 0],
+    [{ ".prettierrc": "{}" }, ["--check"], 0],
+    [{ ".oxfmtrc.json": "{}" }, [], 2],
+  ])("standard input that does not parse: %j %j", async (configuration, flags, exitCode) => {
     const result = await format(configuration, [...flags, "--stdin-filepath", "a.ts"], { stdin: "let a: = 1;\n" });
     expect(result.raw).toBe("");
-    const [first, other] = Object.keys(configuration).length === 0 ? ["error: ", ""] : ["[error] ", "[error] "];
     // The words of the parser of each tool.
     const why = ".oxfmtrc.json" in configuration ? "Unexpected token" : "Type expected.";
-    expect(result.stderr.split("\n")).toEqual([
-      `${first}${before}${why} (1:8)`,
-      `${other}> 1 | let a: = 1;`,
-      `${other}    |        ^`,
-      `${other}  2 |`,
-    ]);
+    expect(result.stderr).toBe(problem("a.ts", why, [1, 8, "let a: = 1;"]));
     expect(result.exitCode).toBe(exitCode);
   });
 
-  test.each([
-    ["a.css", "a {\n"],
-    ["a.json", '{ "a": \n'],
-    ["a.yaml", "a: [\n"],
-    ["a.html", "<div></p>\n"],
-    ["a.vue", "<template><div></template>\n"],
-    ["a.graphql", "query {\n"],
-    ["a.hbs", "{{#if a}}\n"],
-  ])("standard input that does not parse, with --check: %s", async (name, stdin) => {
+  test.each<[string, string, string, number, number]>([
+    ["a.css", "a {\n", "Unclosed block", 1, 1],
+    ["a.json", '{ "a": \n', "Unexpected end of file", 2, 1],
+    ["a.yaml", "a: [\n", "Unexpected token", 2, 1],
+    ["a.html", "<div></p>\n", closingTag("p"), 1, 6],
+    ["a.vue", "<template><div></template>\n", closingTag("template"), 1, 16],
+    ["a.graphql", "query {\n", "Unexpected end of file", 2, 1],
+    ["a.hbs", "{{#if a}}\n", "Unclosed block", 1, 1],
+  ])("standard input that does not parse, with --check: %s", async (name, stdin, message, line, column) => {
     const result = await format({}, ["--check", "--stdin-filepath", name], { stdin });
     expect(result.raw).toBe("");
-    expect(result.stderr).toStartWith("error: ");
-    expect(result.stderr).not.toContain(name);
+    expect(result.stderr).toBe(problem(name, message, [line, column, stdin.split("\n")[line - 1]]));
     expect(result.exitCode).toBe(0);
   });
 
   test.each(["--check", "--list-different"])("a file that does not parse, with %s", async flag => {
     const result = await format({ "a.ts": "let a: = 1;\n" }, [flag, "a.ts"]);
-    expect(result.stderr).toStartWith("error: a.ts: SyntaxError: Type expected. (1:8)\n");
+    expect(result.stderr).toStartWith(problem("a.ts", "Type expected.", [1, 8, "let a: = 1;"]));
     expect(result.exitCode).toBe(2);
   });
 
@@ -3315,7 +3362,7 @@ try {
       [],
       { reads: ["b.yaml"] },
     );
-    expect(result.stderr).toContain("a.yaml: SyntaxError");
+    expect(result.stderr).toMatch(syntaxErrorIn("a.yaml"));
     expect(result.files["b.yaml"]).toBe(`[\n${Buffer.alloc(7_007, '  "a",\n').toString()}]\n`);
     expect(result.exitCode).toBe(2);
   });
@@ -3621,77 +3668,99 @@ try {
     120_000,
   );
 
-  test("a syntax error in HTML is what Prettier says it is, with its place", async () => {
-    const cases = [
+  test("a syntax error in HTML is in the words of Prettier, at the place it gives", async () => {
+    const cases: [string, string, string, number, number][] = [
       [
         ".html",
         "<div>\n  <p></div>\n</span>\n",
-        'Unexpected closing tag "span". It may happen when the tag has already been closed by another tag. For more info see https://www.w3.org/TR/html5/syntax.html#closing-elements-that-have-implied-end-tags (3:1)',
+        'Unexpected closing tag "span". It may happen when the tag has already been closed by another tag. For more info see https://www.w3.org/TR/html5/syntax.html#closing-elements-that-have-implied-end-tags',
+        3,
+        1,
       ],
-      [".html", "<div>\n<span", 'Opening tag "span" not terminated. (2:1)'],
-      [".html", "<a b='c>", 'Unexpected character "EOF" (1:9)'],
-      [".html", "<p>&nope;</p>\n", 'Unknown entity "nope" - use the "&#<decimal>;" or  "&#x<hex>;" syntax (1:4)'],
+      [".html", "<div>\n<span", 'Opening tag "span" not terminated.', 2, 1],
+      [".html", "<a b='c>", 'Unexpected character "EOF"', 1, 9],
+      [".html", "<p>&nope;</p>\n", 'Unknown entity "nope" - use the "&#<decimal>;" or  "&#x<hex>;" syntax', 1, 4],
       [
         ".html",
         "<p>\u00e9&#12 </p>\n",
-        'Unable to parse entity "&#12 " - decimal character reference entities must end with ";" (1:10)',
+        'Unable to parse entity "&#12 " - decimal character reference entities must end with ";"',
+        1,
+        10,
       ],
       [
         ".html",
         "<p>&#x110000000;</p>\n",
-        'Unknown entity "&#x110000000;" - use the "&#<decimal>;" or  "&#x<hex>;" syntax (1:17)',
+        'Unknown entity "&#x110000000;" - use the "&#<decimal>;" or  "&#x<hex>;" syntax',
+        1,
+        17,
       ],
-      [".html", "<br></br>\n", 'Void elements do not have end tags "br" (1:5)'],
-      [".html", "<svg><rect", 'Opening tag ":svg:rect" not terminated. (1:6)'],
+      [".html", "<br></br>\n", 'Void elements do not have end tags "br"', 1, 5],
+      [".html", "<svg><rect", 'Opening tag ":svg:rect" not terminated.', 1, 6],
       [
         ".vue",
         "<template>\n  <div></template>\n",
-        'Unexpected closing tag "template". It may happen when the tag has already been closed by another tag. For more info see https://www.w3.org/TR/html5/syntax.html#closing-elements-that-have-implied-end-tags (2:8)',
+        'Unexpected closing tag "template". It may happen when the tag has already been closed by another tag. For more info see https://www.w3.org/TR/html5/syntax.html#closing-elements-that-have-implied-end-tags',
+        2,
+        8,
       ],
       [
         ".vue",
         "<script>\n</script>\n<template>\n  <a>&nope;</a>\n</template>\n",
-        'Unknown entity "nope" - use the "&#<decimal>;" or  "&#x<hex>;" syntax (4:6)',
+        'Unknown entity "nope" - use the "&#<decimal>;" or  "&#x<hex>;" syntax',
+        4,
+        6,
       ],
-      [".component.html", "@if (a) {\n  <b></b>\n", 'Unclosed block "if" (1:1)'],
+      [".component.html", "@if (a) {\n  <b></b>\n", 'Unclosed block "if"', 1, 1],
       [
         ".component.html",
         "<div>@if (a {</div>\n",
-        'Incomplete block "if". If you meant to write the @ character, you should use the "&#64;" HTML entity instead. (1:6)',
+        'Incomplete block "if". If you meant to write the @ character, you should use the "&#64;" HTML entity instead.',
+        1,
+        6,
       ],
       [
         ".component.html",
         "<b>}</b>\n",
-        'Unexpected closing block. The block may have been closed earlier. If you meant to write the `}` character, you should use the "&#125;" HTML entity instead. (1:4)',
+        'Unexpected closing block. The block may have been closed earlier. If you meant to write the `}` character, you should use the "&#125;" HTML entity instead.',
+        1,
+        4,
       ],
       [
         ".component.html",
         "@if (a) {<b>}</b>\n",
-        'Unexpected closing block. The block may have been closed earlier. Did you forget to close the <b> element? If you meant to write the `}` character, you should use the "&#125;" HTML entity instead. (1:13)',
+        'Unexpected closing block. The block may have been closed earlier. Did you forget to close the <b> element? If you meant to write the `}` character, you should use the "&#125;" HTML entity instead.',
+        1,
+        13,
       ],
       [
         ".component.html",
         "@let a;\n",
-        'Incomplete @let declaration "a". @let declarations must be written as `@let <name> = <value>;` (1:1)',
+        'Incomplete @let declaration "a". @let declarations must be written as `@let <name> = <value>;`',
+        1,
+        1,
       ],
       [
         ".component.html",
         "@let \n",
-        "Incomplete @let declaration. @let declarations must be written as `@let <name> = <value>;` (1:1)",
+        "Incomplete @let declaration. @let declarations must be written as `@let <name> = <value>;`",
+        1,
+        1,
       ],
-      [".component.html", "{a, plural, =0 {b}\n", "Invalid ICU message. Missing '}'. (2:1)"],
+      [".component.html", "{a, plural, =0 {b}\n", "Invalid ICU message. Missing '}'.", 2, 1],
       [
         ".component.html",
         "{a, plural, =0 b}}\n",
-        'Unexpected character "EOF" (Do you have an unescaped "{" in your template? Use "{{ \'{\' }}") to escape it.) (2:1)',
+        'Unexpected character "EOF" (Do you have an unescaped "{" in your template? Use "{{ \'{\' }}") to escape it.)',
+        2,
+        1,
       ],
     ];
     const files = Object.fromEntries(cases.map(([ending, text], index) => [`${index}${ending}`, text]));
     const result = await format(files, ["--check"]);
-    const errors = result.stderr.split("\n").filter(line => /^error: \d+\./.test(line));
-    expect(errors.sort()).toEqual(
-      cases.map(([ending, , message], index) => `error: ${index}${ending}: SyntaxError: ${message}`).sort(),
+    const errors = cases.map(([ending, text, message, line, column], index) =>
+      problem(`${index}${ending}`, message, [line, column, text.split("\n")[line - 1]]),
     );
+    expect(result.stderr.split("\n\n").sort()).toEqual([...errors, `Could not check ${cases.length} files.`].sort());
     expect(result.exitCode).toBe(2);
   });
 
@@ -4637,14 +4706,14 @@ try {
       expect(result).toMatchObject({ raw: expected, stderr: "", exitCode: 0 });
     });
 
-    test.each([
-      ["const a = <div>x</div>\nlet b: = 1\n", "(2:8)"],
-      ["const a = <T>x\nlet b: = 1\n", "(2:8)"],
-    ])("typescript reports the error of the syntax the code looks like: %j", async (stdin, position) => {
-      const result = await format(prettier, ["--parser", "typescript"], { stdin });
-      expect(result.stderr.split("\n")[0]).toBe(`[error] stdin: SyntaxError: Type expected. ${position}`);
-      expect(result.exitCode).toBe(2);
-    });
+    test.each(["const a = <div>x</div>\nlet b: = 1\n", "const a = <T>x\nlet b: = 1\n"])(
+      "typescript reports the error of the syntax the code looks like: %j",
+      async stdin => {
+        const result = await format(prettier, ["--parser", "typescript"], { stdin });
+        expect(result.stderr).toBe(problem("stdin", "Type expected.", [2, 8, "let b: = 1"]));
+        expect(result.exitCode).toBe(2);
+      },
+    );
 
     test("prints nothing for empty input", async () => {
       // `stdin: "ignore"`, like `< /dev/null`.
@@ -4736,46 +4805,40 @@ try {
       }
     });
 
-    test.each<[Record<string, string>, string[], string, number]>([
-      [prettier, [], "[error] stdin: SyntaxError: ", 2],
-      [prettier, ["--write"], "[error] stdin: SyntaxError: ", 2],
-      [prettier, ["--check"], "[error] ", 0],
-      [prettier, ["--list-different"], "[error] ", 0],
-      [{}, [], "error: stdin: SyntaxError: ", 2],
-      [{ ".oxfmtrc.json": "{}" }, [], "[error] stdin: SyntaxError: ", 2],
-    ])("a syntax error: %j %j", async (config, flags, before, exitCode) => {
+    test.each<[Record<string, string>, string[], number]>([
+      [prettier, [], 2],
+      [prettier, ["--write"], 2],
+      [prettier, ["--check"], 0],
+      [prettier, ["--list-different"], 0],
+      [{}, [], 2],
+      [{ ".oxfmtrc.json": "{}" }, [], 2],
+    ])("a syntax error: %j %j", async (config, flags, exitCode) => {
       const result = await format(config, ["--parser", "typescript", ...flags], { stdin: "let a: = 1;\n" });
-      const margin = before.startsWith("[") ? "[error] " : "";
       const why = ".oxfmtrc.json" in config ? "Unexpected token" : "Type expected.";
       expect(result.raw).toBe("");
-      expect(result.stderr.split("\n")).toEqual([
-        `${before}${why} (1:8)`,
-        `${margin}> 1 | let a: = 1;`,
-        `${margin}    |        ^`,
-        `${margin}  2 |`,
-      ]);
+      expect(result.stderr).toBe(problem("stdin", why, [1, 8, "let a: = 1;"]));
       expect(result.exitCode).toBe(exitCode);
     });
 
-    test.each<[Record<string, string>, string[], string, number]>([
-      [prettier, [], "[error] ", 1],
-      [prettier, ["--check"], "[error] ", 0],
-      [prettier, ["--list-different"], "[error] ", 0],
-      [prettier, ["--ignore-unknown"], "[error] ", 1],
-      [{}, [], "error: ", 2],
-      [{}, ["--check"], "error: ", 2],
-    ])("a parser nobody has: %j %j", async (config, flags, before, exitCode) => {
+    test.each<[Record<string, string>, string[], number]>([
+      [prettier, [], 1],
+      [prettier, ["--check"], 0],
+      [prettier, ["--list-different"], 0],
+      [prettier, ["--ignore-unknown"], 1],
+      [{}, [], 2],
+      [{}, ["--check"], 2],
+    ])("a parser nobody has: %j %j", async (config, flags, exitCode) => {
       const result = await format({ ...files, ...config }, ["--parser", "nonsense", ...flags], { stdin: js, reads });
       expect(result).toMatchObject({
         raw: "",
-        stderr: `${before}Couldn't resolve parser "nonsense".`,
+        stderr: `error: Couldn't resolve parser "nonsense".`,
         exitCode,
         files,
       });
     });
 
     test("--config-precedence", async () => {
-      const none = "[error] No parser and no file path given, couldn't infer a parser.";
+      const none = "error: No parser and no file path given, couldn't infer a parser.";
       const prefer = ["--config-precedence", "prefer-file"];
       const override = ["--config-precedence", "file-override"];
       const json = { ".prettierrc": `{ "parser": "json" }` };
@@ -4819,7 +4882,7 @@ try {
         const result = await format({ ".prettierrc": `{ "nope": 1 }` }, args, { stdin: js });
         expect(result).toMatchObject({
           raw: printed,
-          stderr: "[warn] Ignored unknown option { nope: 1 }.",
+          stderr: "warn: Ignored unknown option { nope: 1 }.",
           exitCode: 0,
         });
       },
@@ -4931,8 +4994,8 @@ try {
       expect(result.files).toEqual(files);
       expect(result.raw).toBe("");
       expect(result.stderr.split("\n")).toEqual([
-        `[error] --parser markdown would read every file in "." as markdown`,
-        `[error]   Name the files, or use a glob: bun fmt --parser markdown "**/*.md"`,
+        `error: --parser markdown would read every file in "." as markdown`,
+        `  Name the files, or use a glob: bun fmt --parser markdown "**/*.md"`,
       ]);
       expect(result.exitCode).toBe(2);
     });
@@ -5228,7 +5291,11 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     return {
-      errors: stderr.split(/\r?\n/).filter(line => line.startsWith("error: ")),
+      // All that is printed about each error. A blank line follows it.
+      errors: stderr
+        .replaceAll("\r\n", "\n")
+        .split("\n\n")
+        .filter(part => /^error: /m.test(part)),
       exitCode,
       files: Object.fromEntries(
         Object.keys(files).map(name => [name, readFileSync(join(String(dir), name)).toString("latin1")]),
@@ -5262,9 +5329,9 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     expect(result.files).toEqual(
       Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, bytes.toString("latin1")])),
     );
-    expect(result.errors.map(line => line.split(":").slice(0, 2).join(":")).sort()).toEqual(
+    expect(result.errors.sort()).toEqual(
       Object.keys(files)
-        .map(name => `error: ${name}`)
+        .map(name => problem(name, "This file is UTF-16. bun fmt only reads UTF-8"))
         .sort(),
     );
     expect(result.exitCode).toBe(2);
@@ -5279,10 +5346,12 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     };
     const result = await bytesAfter(files);
     expect(result.files).toEqual(files);
-    expect(result.errors.sort()).toEqual([
-      "error: a.html: SyntaxError: Unexpected NUL character (2:5)",
-      "error: a.vue: SyntaxError: Unexpected NUL character (2:5)",
-    ]);
+    expect(result.errors.sort()).toEqual(
+      [
+        problem("a.html", "Unexpected NUL character", [2, 5, "<p>c\0d</p>"]),
+        problem("a.vue", "Unexpected NUL character", [2, 5, "<p>b\0c</p>"]),
+      ].sort(),
+    );
     expect(result.exitCode).toBe(2);
   });
 
@@ -5293,7 +5362,7 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     ["the value of an attribute without quotes", "<p   title=a\0b>x</p>\n", "p"],
   ])("a NUL in %s", async (_, text, name) => {
     expect(await bytesAfter({ "a.html": text })).toEqual({
-      errors: [`error: a.html: SyntaxError: Opening tag "${name}" not terminated. (1:1)`],
+      errors: [problem("a.html", `Opening tag "${name}" not terminated.`, [1, 1, text])],
       exitCode: 2,
       files: { "a.html": text },
     });
@@ -5918,7 +5987,10 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     const result = await format(files, reads, { reads });
     expect(result.files).toEqual(
       Object.fromEntries(
-        directories.map(i => [`d${i}/a.js`, `if (a) {\n${" ".repeat((i % 4) + 1)}b${i % 2 === 0 ? ";" : ""}\n}\n`]),
+        directories.map(i => [
+          `d${i}/a.js`,
+          `if (a) {\n${Buffer.alloc((i % 4) + 1, " ").toString()}b${i % 2 === 0 ? ";" : ""}\n}\n`,
+        ]),
       ),
     );
     expect(result.exitCode).toBe(0);
@@ -5930,7 +6002,7 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     async open => {
       const result = await format({}, ["--stdin-filepath", "deep.jsx"], { stdin: open.repeat(100_000) + "\n" });
       expect(result.raw).toBe("");
-      expect(result.stderr).toStartWith("error: deep.jsx:");
+      expect(result.stderr).toMatch(/^error: .+\n    at deep\.jsx\b/m);
       expect(result.exitCode).toBe(2);
     },
   );
@@ -6054,7 +6126,9 @@ describe("bun fmt on Windows, macOS and Linux", () => {
         "a.js\nsrc/deep/b.ts\n",
       ]);
       for (const { stderr } of results) {
-        expect(stderr).toContain("error: src/broken.js: SyntaxError: ");
+        expect(stderr).toStartWith(
+          problem("src/broken.js", "Variable declaration expected.", [1, 7, "const = 1;"]) + "\n\n",
+        );
         expect(stderr).not.toContain("\r");
       }
     });
@@ -6508,7 +6582,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
         const result = await format(dir, ["--check", "a.js"]);
         // What it prints is seen only if it fails.
         expect(result.stdout + result.stderr).not.toMatch(/\bout\b|\berr\b/);
-        if (!isLoaded) expect(result.stderr).toMatch(/prettier\.config\.mjs:\r?\n\[error\] ./);
+        if (!isLoaded) expect(result.stderr).toMatch(/prettier\.config\.mjs:\r?\n./);
         expect(everythingIn(dir)).toEqual(["a.js", "node_modules", "node_modules/.keep", "prettier.config.mjs"]);
         expect(result.exitCode).toBe(exitCode);
       },

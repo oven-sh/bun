@@ -121,8 +121,8 @@ Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-s
 With any other plugin, Bun skips the files that config covers and exits with code `2`. A plugin could print them differently, and Bun won't guess. Pass `--allow-unsupported` to format them without the plugin.
 
 ```txt
-[error] 3 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style
-[error]   Use --allow-unsupported to format them without the plugins.
+error: 3 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style
+  Use --allow-unsupported to format them without the plugins.
 ```
 
 ---

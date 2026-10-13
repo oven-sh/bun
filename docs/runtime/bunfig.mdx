@@ -420,7 +420,7 @@ error: Unknown rule "no-vra"
 
 ### `lint.rules`
 
-Set a rule to `"off"`, `"warn"`, or `"error"`. To pass options, use an array. Every rule in `bun lint --rules` works, and there are no plugins to list.
+Set a rule to `"off"`, `"warn"`, or `"error"`. To pass options, use an array. Every rule in `bun lint --rules` works, with nothing to install.
 
 ```toml title="bunfig.toml" icon="settings"
 [lint.rules]
@@ -433,6 +433,19 @@ Set a rule to `"off"`, `"warn"`, or `"error"`. To pass options, use an array. Ev
 Some ESLint rules have a typescript-eslint version, such as `no-unused-vars` and `@typescript-eslint/no-unused-vars`. Setting either name sets both. The ESLint rule runs on JavaScript files and the typescript-eslint rule on TypeScript files, so a problem is never reported twice. If you set both names, each one applies to its own kind of file.
 
 A few typescript-eslint versions need type information, such as `@typescript-eslint/require-await`. Setting that name type checks your TypeScript files, like any other [type-aware rule](/lint#type-aware-rules). Setting only `require-await` doesn't start a type check. It uses the typescript-eslint version if the run has types anyway, and the ESLint rule otherwise.
+
+### `lint.plugins`
+
+Load [ESLint plugins](/lint/plugins): paths, relative to `bunfig.toml`, or package names. Their rules are added to the built-in ones.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+plugins = ["./lint/plugin.js", "eslint-plugin-perfectionist"]
+
+[lint.rules]
+"local/no-todo" = "warn"
+"perfectionist/sort-imports" = "error"
+```
 
 ### `lint.categories`
 
@@ -535,6 +548,7 @@ Every flag that makes sense as a default is also a key, in camelCase: `--max-war
 | Key                             | Value                                 | Flag                                                |
 | ------------------------------- | ------------------------------------- | --------------------------------------------------- |
 | `rules`                         | table                                 | `--rule`                                            |
+| `plugins`                       | array                                 | `--plugin`                                          |
 | `categories`                    | table                                 | `-A`, `-W`, `-D`                                    |
 | `overrides`                     | array of tables                       |                                                     |
 | `globals`                       | table                                 | `--global`                                          |

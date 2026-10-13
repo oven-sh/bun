@@ -25,9 +25,9 @@ use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::language::InferGlobals;
 use bun_lint::linter::config::json_for_oxlint;
 use bun_lint::linter::{
-    Config, FileConfig, InJavaScript, LegacyFile, LegacyOptions, Registry, ResolvedConfig,
-    formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
-    plugin_of_oxlint,
+    Config, FileConfig, InJavaScript, LegacyFile, LegacyOptions, NamedPlugin, Registry,
+    ResolvedConfig, formatting_rules, is_plugin_of_oxlint, oxlint_category_of_key,
+    oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::{Plugin, minor_of};
@@ -239,7 +239,7 @@ fn built_in_json(with_types: bool, project: &[u8]) -> Json {
 
 /// [`BUILT_IN`] on its own: the rules that are on when nothing is configured.
 pub(crate) fn defaults(registry: &Registry) -> Option<Config> {
-    Config::without_a_file(registry, b"/", &built_in_json(false, b"/")).ok()
+    Config::without_a_file(registry, b"/", &built_in_json(false, b"/"), Vec::new()).ok()
 }
 
 /// The files whose `lint` and `fmt` are the configurations of oxlint and oxfmt in a project of Vite+, by priority.
@@ -410,6 +410,9 @@ pub(crate) struct Loader<'l> {
     refused: OnceLock<Vec<u8>>,
     /// [`Loader::mistake`]
     mistake: OnceLock<Vec<u8>>,
+    /// The [built-in plugins](Loader::built_in_plugins) whose package is installed too, and what `$jsPlugins` has for that: it
+    /// has the rules that are not here, and those that leave a file to it.
+    packages_of_built_in: Guarded<Vec<(Vec<u8>, Json)>>,
     /// `options.typeAware` of the configuration of the working directory, if that is one of oxlint.
     wants_types: OnceLock<Option<bool>>,
     /// The project is one of Vite+ without a configuration file of a linter: [`NAMES_OF_VITE`] are the files that count.
@@ -432,6 +435,25 @@ pub(crate) fn severity_name(severity: Severity) -> Json {
         Severity::Warn => b"warn".to_vec(),
         Severity::Error => b"error".to_vec(),
     })
+}
+
+/// `normalizePackageName(name, "eslint-plugin")`, if that is another name.
+fn plugin_longhand(name: &[u8]) -> Option<Vec<u8>> {
+    let long = match name {
+        [b'@', scoped @ ..] => match strings::index_of_char_usize(scoped, b'/') {
+            None => [name, b"/eslint-plugin"].concat(),
+            Some(slash) if scoped[slash + 1..].starts_with(b"eslint-plugin") => return None,
+            Some(slash) => [&name[..=slash + 1], b"eslint-plugin-", &scoped[slash + 1..]].concat(),
+        },
+        _ if name.starts_with(b"eslint-plugin-") => return None,
+        _ => [b"eslint-plugin-", name].concat(),
+    };
+    Some(long)
+}
+
+/// Whether an entry of `plugins` in bunfig.toml, or `--plugin`, is a path and not the name of a package.
+fn is_path_of_plugin(specifier: &[u8]) -> bool {
+    specifier.starts_with(b".") || paths::is_absolute(specifier)
 }
 
 /// `getShorthandName(name, "eslint-plugin")`
@@ -712,6 +734,7 @@ impl<'l> Loader<'l> {
             named: Default::default(),
             refused: OnceLock::new(),
             mistake: OnceLock::new(),
+            packages_of_built_in: Guarded::new(Vec::new()),
             wants_types: OnceLock::new(),
             is_of_vite: OnceLock::new(),
             searched_from: Default::default(),
@@ -998,11 +1021,16 @@ impl<'l> Loader<'l> {
             first.push((b"linterOptions", object(linter_options)));
         }
         if !options.plugin.is_empty() {
-            let plugins = options
-                .plugin
-                .iter()
-                .map(|name| (plugin_shorthand(name), Json::String(name.clone())));
+            // The others are `named_plugins`. By the name of the package, which is how the rules here know that it is theirs.
+            let plugins = self.built_in_plugins(Flavor::Eslint).map(|name| {
+                let long = plugin_longhand(name).unwrap_or_else(|| name.clone());
+                (plugin_shorthand(name), Json::String(long))
+            });
             first.push((b"plugins", Json::Object(plugins.collect())));
+            let packages = self.packages_of_built_in.lock().clone();
+            if !packages.is_empty() {
+                first.push((b"$jsPlugins", Json::Object(packages)));
+            }
         }
         let mut all = vec![object(first)];
         all.extend(self.overrides(Shape::Flat, base_path));
@@ -1034,7 +1062,12 @@ impl<'l> Loader<'l> {
     }
 
     /// `file`: the configuration file, if there is one, and what it says. `None`: the package `eslint` is not installed.
-    fn for_eslint(&self, file: Option<(&[u8], &Config)>, base_path: &[u8]) -> Option<ForEslint> {
+    fn for_eslint(
+        &self,
+        file: Option<(&[u8], &Config)>,
+        base_path: &[u8],
+        named: &[NamedPlugin],
+    ) -> Option<ForEslint> {
         let has_eslint =
             |it: &[u8]| fs::is_file(&paths::join(it, b"node_modules/eslint/package.json"));
         let is_found_from = |from: &&[u8]| {
@@ -1053,6 +1086,8 @@ impl<'l> Loader<'l> {
         let native = |path: &[u8]| Json::String(paths::to_native(path.to_vec()));
         let only_errors = options.quiet && options.max_warnings == -1;
         let about_layout = formatting_rules().map(|it| Json::String(it.into()));
+        let mut added: Vec<Json> = Self::object_of_named(named).into_iter().collect();
+        added.extend(self.added(base_path));
         let mut run = Vec::new();
         bun_lint::linter::write_json(
             &mut run,
@@ -1064,7 +1099,7 @@ impl<'l> Loader<'l> {
                 (b"aboutLayout", Json::Array(about_layout.collect())),
                 (b"file", file.map_or(Json::Null, native)),
                 (b"ignores", Json::Bool(options.ignore)),
-                (b"added", Json::Array(self.added(base_path))),
+                (b"added", Json::Array(added)),
             ]),
         );
         Some(ForEslint {
@@ -1085,16 +1120,18 @@ impl<'l> Loader<'l> {
     }
 
     /// ESLint's `calculateConfigArray`. `file_config` is what the config file exports. `is_of_eslint` is false if that's
-    /// Bun's built-in config instead.
+    /// Bun's built-in config instead. `named`: [`Loader::named_plugins`].
     fn flat(
         &self,
         base_path: &[u8],
         file_config: Json,
         is_of_eslint: bool,
+        named: Vec<NamedPlugin>,
     ) -> Result<Config, Fatal> {
         let mut all = vec![file_config];
         // `built_in` has already added these.
         if is_of_eslint {
+            all.extend(Self::object_of_named(&named));
             all.extend(self.added(base_path));
         }
         let mut all = Json::Array(all);
@@ -1105,10 +1142,14 @@ impl<'l> Loader<'l> {
             |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
         let registry = self.linter.registry();
         let mut config = match is_of_eslint {
-            true => {
-                Config::from_flat_json_with_plugins(registry, base_path, &all, &mut load_plugin)
-            }
-            false => Config::without_a_file(registry, base_path, &all),
+            true => Config::from_flat_json_with_plugins(
+                registry,
+                base_path,
+                &all,
+                &mut load_plugin,
+                named,
+            ),
+            false => Config::without_a_file(registry, base_path, &all, named),
         }
         .map_err(|error| Fatal(error.message))?;
         let installed = installed_version(base_path, b"eslint");
@@ -1192,7 +1233,13 @@ impl<'l> Loader<'l> {
                 );
             }
             apply_filters(entries, &options.filters, &inherited);
-            if !options.plugins.is_empty() {
+            let turned_on = self
+                .built_in_plugins(Flavor::Oxlint)
+                .map(|it| (plugin_shorthand(it), true));
+            // A flag counts for more.
+            let of_flags = options.plugins.iter().map(|it| (it.0.to_vec(), it.1));
+            let switches: Vec<(Vec<u8>, bool)> = turned_on.chain(of_flags).collect();
+            if !switches.is_empty() {
                 let mut plugins: Vec<Json> = match entries.iter().find(|it| it.0 == b"plugins") {
                     Some((_, Json::Array(plugins))) => plugins.clone(),
                     _ => [&b"unicorn"[..], b"typescript", b"oxc"]
@@ -1200,12 +1247,12 @@ impl<'l> Loader<'l> {
                         .map(|it| Json::String(it.to_vec()))
                         .collect(),
                 };
-                for (name, is_on) in &options.plugins {
+                for (name, is_on) in &switches {
                     plugins.retain(|it| {
                         it.as_str().map(plugin_of_oxlint) != Some(plugin_of_oxlint(name))
                     });
                     if *is_on {
-                        plugins.push(Json::String(name.to_vec()));
+                        plugins.push(Json::String(name.clone()));
                     }
                 }
                 entries.retain(|it| it.0 != b"plugins");
@@ -1234,13 +1281,39 @@ impl<'l> Loader<'l> {
                 ));
             }
         }
+        let named = self.named_plugins(Flavor::Oxlint)?;
+        if let (Json::Object(entries), false) = (&mut json, named.is_empty()) {
+            let added = named.iter().map(|(plugin, location)| {
+                object(vec![
+                    (b"name", Json::String(plugin.name.to_vec())),
+                    (
+                        b"specifier",
+                        location.get(b"module").cloned().unwrap_or(Json::Null),
+                    ),
+                ])
+            });
+            match entries.iter_mut().find(|it| it.0 == b"jsPlugins") {
+                Some((_, Json::Array(items))) => items.extend(added),
+                _ => entries.push((b"jsPlugins".to_vec(), Json::Array(added.collect()))),
+            }
+        }
         let mut sources = Vec::new();
         let mut load_plugin = |directory: &[u8], specifier: &[u8], alias: Option<&[u8]>| {
-            let loaded = self.js_plugins.load(directory, specifier, alias);
-            if let Ok(loaded) = &loaded {
-                sources.push((loaded.name.clone(), directory.to_vec(), specifier.to_vec()));
+            let is_it = |it: &&NamedPlugin| {
+                alias == Some(&it.0.name[..])
+                    && it.1.get(b"module").and_then(Json::as_str) == Some(specifier)
+            };
+            if let Some(known) = named.iter().find(is_it) {
+                return Ok(Arc::clone(&known.0));
             }
-            loaded
+            let loaded = self.js_plugins.load(directory, specifier, alias)?;
+            if (named.iter()).any(|it| it.0.name == loaded.name && it.0.location != loaded.location)
+            {
+                let twice = b"\" is loaded twice: here, and by plugins in bunfig.toml or --plugin";
+                return Err([b"The plugin \"", &loaded.name[..], twice].concat());
+            }
+            sources.push((loaded.name.clone(), directory.to_vec(), specifier.to_vec()));
+            Ok(loaded)
         };
         // The patterns are from the directory of the file.
         let mut config = Config::from_rc_json_with_plugins(
@@ -1266,6 +1339,268 @@ impl<'l> Loader<'l> {
         Ok(config)
     }
 
+    /// Loads what `plugins` in bunfig.toml and `--plugin` name. They add to whatever the configuration is.
+    fn named_plugins(&self, flavor: Flavor) -> Result<Vec<NamedPlugin>, Fatal> {
+        let checked = self.load_named_plugins(flavor).and_then(|plugins| {
+            // What is wrong with their rules in bunfig.toml is said of bunfig.toml. ESLint 8 takes more than the others: any options
+            // for a rule without a schema, and a rule that does not exist is a finding.
+            if matches!(flavor, Flavor::Eslint | Flavor::Oxlint) {
+                let is_eslint = flavor == Flavor::Eslint;
+                native::check_rules(self.linter, self.options, &plugins, Some(is_eslint))?;
+            }
+            Ok(plugins)
+        });
+        checked.map_err(|it| self.fatal(it))
+    }
+
+    fn load_named_plugins(&self, flavor: Flavor) -> Result<Vec<NamedPlugin>, native::Mistake> {
+        let options = self.options;
+        let mut plugins: Vec<NamedPlugin> = Vec::new();
+        for (at, specifier) in options.plugin.iter().enumerate() {
+            let written = options.plugins_of_bunfig.get(at);
+            // ESLint 8 has `--plugin` itself, for names.
+            if flavor == Flavor::EslintRc && written.is_none() && !is_path_of_plugin(specifier) {
+                continue;
+            }
+            let mistake = |message: Vec<u8>| native::Mistake::new(message, written.map(|it| it.at));
+            let is_built_in = |name: &[u8]| self.is_built_in(flavor, name);
+            // `a/b/rule` would be the rule `b/rule` of `a`.
+            let is_name = |name: &[u8]| {
+                let slashes = strings::count_char(name, b'/');
+                !name.is_empty()
+                    && slashes <= usize::from(name.starts_with(b"@"))
+                    && !strings::contains_char(name, b':')
+            };
+            let is_path = is_path_of_plugin(specifier);
+            // As with ESLint, `perfectionist` is eslint-plugin-perfectionist.
+            let long = plugin_longhand(specifier).filter(|_| !is_path);
+            let package = long.as_deref().unwrap_or(specifier);
+            let built_in = |name: &[u8]| {
+                let why: &[u8] = match flavor {
+                    Flavor::BuiltIn => b"\" is built in\n  Its rules work without it, so remove it from plugins\n  To run the package as well, give it another name: { name = \"",
+                    Flavor::Oxlint if Plugin::spelled(name).all(|it| it.has_no_rules()) => b"\" needs another name\n  oxlint keeps that one for its own rules, which bun lint doesn't have: { name = \"",
+                    _ => b"\" needs another name\n  That one is a built-in plugin's: { name = \"",
+                };
+                let parts: [&[u8]; 7] = [
+                    b"The plugin \"",
+                    name,
+                    why,
+                    name,
+                    b"-js\", specifier = \"",
+                    package,
+                    b"\" }",
+                ];
+                mistake(parts.concat())
+            };
+            let alias = written.and_then(|it| it.alias.as_deref());
+            let short = plugin_shorthand(specifier);
+            if specifier.is_empty() || short.is_empty() {
+                let message = b"A plugin needs a specifier\n  A path, or the name of a package";
+                return Err(mistake(message.to_vec()));
+            }
+            // A path in bunfig.toml is relative to that file.
+            let bunfig = paths::resolve(self.cwd(), &options.bunfig);
+            let directory = written.map_or_else(|| self.cwd(), |_| paths::dirname(&bunfig));
+            // Not a package that it needs.
+            let is_missing = |why: &[u8], name: &[u8]| {
+                strings::contains(why, &[b"Cannot find module '", name, b"'"].concat())
+            };
+            let cannot_load = |why: Vec<u8>| {
+                let why = why.strip_prefix(b"ResolveMessage: ").unwrap_or(&why);
+                let why = why.strip_suffix(b" imported from .").unwrap_or(why);
+                mistake([b"Cannot load the plugin \"", &specifier[..], b"\"\n  ", why].concat())
+            };
+            // By its name, before anything is looked for: `plugins = ["react"]` is what turns it on in oxlint.
+            if !is_path && is_built_in(alias.unwrap_or(&short)) {
+                let has_rules = Plugin::spelled(&short).any(|it| !it.has_no_rules());
+                match (flavor, alias) {
+                    (_, Some(alias)) => return Err(built_in(alias)),
+                    // All its rules are there anyway. A configuration file further down may need it.
+                    (Flavor::BuiltIn, None) => continue,
+                    (Flavor::Oxlint, None) if !has_rules => return Err(built_in(&short)),
+                    // It turns the plugin on, as in the file: see `built_in_plugins`.
+                    (Flavor::Eslint, None) => {
+                        // It is loaded when a rule is asked of it.
+                        match self.js_plugins.resolve(directory, package) {
+                            Ok(file) => {
+                                let mut packages = self.packages_of_built_in.lock();
+                                if !packages.iter().any(|it| it.0 == short) {
+                                    let location = object(vec![
+                                        (b"module", Json::String(file)),
+                                        (b"export", strings_of(&[b"default".to_vec()])),
+                                    ]);
+                                    packages.push((short, location));
+                                }
+                            }
+                            // The rule leaves many a file to the package.
+                            Err(why) if is_missing(&why, package) && short == b"prettier" => {
+                                let hint = b" is not installed\n  Without Prettier, turn on bun/format instead of prettier/prettier";
+                                let start = b"Cannot load the plugin \"";
+                                return Err(mistake(
+                                    [start, &specifier[..], b"\"\n  ", package, hint].concat(),
+                                ));
+                            }
+                            Err(why) if is_missing(&why, package) => {}
+                            Err(why) => return Err(cannot_load(why)),
+                        }
+                        continue;
+                    }
+                    _ => continue,
+                }
+            }
+            let file = is_path.then(|| paths::resolve(directory, specifier));
+            // ESLint calls a plugin what its flag calls it.
+            let of_flag =
+                (flavor == Flavor::Eslint && written.is_none() && !is_path && is_name(&short))
+                    .then_some(&short[..]);
+            let load = |name: &[u8]| self.js_plugins.load(directory, name, alias.or(of_flag));
+            // The long name first: `vue` is not eslint-plugin-vue. One that is there and fails is not passed over.
+            let (loaded, found_as) = match (&file, &long) {
+                (Some(file), _) => (load(file), &file[..]),
+                (None, None) => (load(specifier), &specifier[..]),
+                (None, Some(long)) => match load(long) {
+                    Err(why) if is_missing(&why, long) => match load(specifier) {
+                        // Its rules are there with every configuration, unless a package of the project hides them.
+                        Err(why)
+                            if is_missing(&why, specifier)
+                                && Plugin::spelled(&short).any(Plugin::is_always_there) =>
+                        {
+                            continue;
+                        }
+                        Err(why) if is_missing(&why, specifier) => {
+                            let parts: [&[u8]; 7] = [
+                                b"Cannot load the plugin \"",
+                                specifier,
+                                b"\"\n  Neither ",
+                                long,
+                                b" nor ",
+                                specifier,
+                                b" is installed",
+                            ];
+                            return Err(mistake(parts.concat()));
+                        }
+                        Ok(other) if other.has_nothing => {
+                            let parts: [&[u8]; 7] = [
+                                b"Cannot load the plugin \"",
+                                specifier,
+                                b"\"\n  ",
+                                long,
+                                b" is not installed, and the package ",
+                                specifier,
+                                b" is not an ESLint plugin",
+                            ];
+                            return Err(mistake(parts.concat()));
+                        }
+                        loaded => (loaded, &specifier[..]),
+                    },
+                    loaded => (loaded, &long[..]),
+                },
+            };
+            let plugin = loaded.map_err(cannot_load)?;
+            let name = &plugin.name[..];
+            if !is_name(name) {
+                let parts: [&[u8]; 5] = [
+                    b"\"",
+                    name,
+                    b"\" can't be the name of a plugin\n  Give it another: { name = \"..\", specifier = \"",
+                    specifier,
+                    b"\" }",
+                ];
+                return Err(mistake(parts.concat()));
+            }
+            if is_built_in(name) {
+                return Err(built_in(name));
+            }
+            // As for a plugin that a configuration file has imported.
+            let location = plugin.location.clone().unwrap_or_else(|| {
+                object(vec![
+                    (b"module", Json::String(found_as.to_vec())),
+                    (b"export", Json::Array(Vec::new())),
+                ])
+            });
+            match plugins.iter().find(|it| it.0.name == plugin.name) {
+                None => plugins.push((plugin, location)),
+                // Named twice, by `--plugin` too.
+                Some(other) if other.1 == location => {}
+                Some(_) => {
+                    let parts: [&[u8]; 7] = [
+                        b"Two plugins are called \"",
+                        &plugin.name,
+                        b"\"\n  Give this one another name: { name = \"",
+                        &plugin.name,
+                        b"-2\", specifier = \"",
+                        specifier,
+                        b"\" }",
+                    ];
+                    return Err(mistake(parts.concat()));
+                }
+            }
+        }
+        Ok(plugins)
+    }
+
+    /// Whether, with such a configuration, the rules here are those of the plugin called `name`, so that no package is loaded.
+    fn is_built_in(&self, flavor: Flavor, name: &[u8]) -> bool {
+        match flavor {
+            // The others are packages there, like any other. So are these under `--no-native-plugin-rules`.
+            Flavor::Eslint | Flavor::EslintRc => {
+                Plugin::is_native_under_eslint(name) && self.linter.registry().answers_for(name)
+            }
+            // It keeps the names jsdoc and vue to itself, though there are no such rules here.
+            Flavor::Oxlint => is_plugin_of_oxlint(name),
+            Flavor::BuiltIn => Plugin::spelled(name).any(|it| !it.has_no_rules()),
+        }
+    }
+
+    /// The entries of `plugins` in bunfig.toml and of `--plugin` that are [built in](Loader::is_built_in): they are not loaded.
+    /// With a configuration file they say what `plugins` in the file says.
+    fn built_in_plugins(&self, flavor: Flavor) -> impl Iterator<Item = &Vec<u8>> {
+        let is_built_in = move |name: &[u8]| self.is_built_in(flavor, name);
+        let options = self.options;
+        let aliased = |at: usize| {
+            options
+                .plugins_of_bunfig
+                .get(at)
+                .is_some_and(|it| it.alias.is_some())
+        };
+        (options.plugin.iter().enumerate())
+            .filter(move |it| !aliased(it.0) && is_built_in(&plugin_shorthand(it.1)))
+            .map(|it| it.1)
+    }
+
+    /// The object that has `named`, for a configuration of ESLint: there a rule is of a plugin that an object has.
+    fn object_of_named(named: &[NamedPlugin]) -> Option<Json> {
+        let entries = |of: &dyn Fn(&NamedPlugin) -> Json| {
+            Json::Object(
+                named
+                    .iter()
+                    .map(|it| (it.0.name.to_vec(), of(it)))
+                    .collect(),
+            )
+        };
+        (!named.is_empty()).then(|| {
+            object(vec![
+                (
+                    b"plugins",
+                    entries(&|it| {
+                        it.0.id
+                            .as_ref()
+                            .map_or(Json::Null, |it| Json::String(it.to_vec()))
+                    }),
+                ),
+                (b"$jsPlugins", entries(&|it| it.1.clone())),
+            ])
+        })
+    }
+
+    /// Keeps `mistake` as it is printed, with the line of bunfig.toml that it is about.
+    fn fatal(&self, mistake: native::Mistake) -> Fatal {
+        let colors = self.environment.stderr.colors;
+        let printed = mistake.print(self.cwd(), &self.options.bunfig, colors);
+        let _ = self.mistake.set(printed);
+        Fatal(mistake.message)
+    }
+
     fn built_in(&self) -> Found {
         // What oxlint does without a file.
         if self.has_defaults_of_oxlint() {
@@ -1284,12 +1619,9 @@ impl<'l> Loader<'l> {
             }));
         }
         self.check_flags(Flavor::BuiltIn, None)?;
-        if let Err(mistake) = native::check_rules(self.linter, self.options) {
-            let colors = self.environment.stderr.colors;
-            let printed = mistake.print(self.cwd(), &self.options.bunfig, colors);
-            let _ = self.mistake.set(printed);
-            return Err(Fatal(mistake.message));
-        }
+        let plugins = self.named_plugins(Flavor::BuiltIn)?;
+        native::check_rules(self.linter, self.options, &plugins, None)
+            .map_err(|it| self.fatal(it))?;
         // The repository first, so that a file gets the same answer from every directory in it, even from a `test` folder that
         // has a package.json of its own.
         let has_package = |it: &&[u8]| fs::is_file(&paths::join(it, b"package.json"));
@@ -1305,7 +1637,7 @@ impl<'l> Loader<'l> {
         let mut of_user = native::categories(self.linter.registry(), self.options);
         of_user.extend(self.added(b"/"));
         objects.extend(self.split_pairs(of_user));
-        let mut config = self.flat(b"/", Json::Array(objects), false)?;
+        let mut config = self.flat(b"/", Json::Array(objects), false, plugins)?;
         // Without a word: where the run has types, which then cost nothing more.
         config.infer_globals(match self.options.infer_globals {
             Some(true) => InferGlobals::Instead,
@@ -1418,6 +1750,11 @@ impl<'l> Loader<'l> {
                 ));
             }
         }
+        let named = match flavor {
+            // `rc` loads them.
+            Flavor::Oxlint => Vec::new(),
+            _ => self.named_plugins(Flavor::Eslint)?,
+        };
         let config = match flavor {
             Flavor::Eslint | Flavor::BuiltIn | Flavor::EslintRc => {
                 // ESLint throws.
@@ -1446,6 +1783,7 @@ impl<'l> Loader<'l> {
                         json
                     },
                     true,
+                    named.clone(),
                 )
                 .map_err(|Fatal(why)| Fatal(self.name_place(Some(path), &why)))?
             }
@@ -1474,7 +1812,7 @@ impl<'l> Loader<'l> {
             option(b"respectEslintDisableDirectives").and_then(Json::as_bool) != Some(false);
         let checks_types = is_on(b"typeCheck");
         let for_eslint = match flavor {
-            Flavor::Eslint => self.for_eslint(Some((path, &config)), base_path),
+            Flavor::Eslint => self.for_eslint(Some((path, &config)), base_path, &named),
             _ => None,
         };
         Ok(Arc::new(Loaded {
@@ -1538,8 +1876,9 @@ impl<'l> Loader<'l> {
         slot.get_or_init(|| match path {
             b"" if !self.options.config_lookup => {
                 self.check_flags(Flavor::Eslint, None)?;
+                let named = self.named_plugins(Flavor::Eslint)?;
                 Ok(Arc::new(Loaded {
-                    config: self.flat(base_path, Json::Array(Vec::new()), true)?,
+                    config: self.flat(base_path, Json::Array(Vec::new()), true, named.clone())?,
                     flavor: Flavor::Eslint,
                     file: None,
                     wants_types: None,
@@ -1547,7 +1886,7 @@ impl<'l> Loader<'l> {
                     max_warnings: None,
                     respects_eslint_comments: true,
                     checks_types: false,
-                    for_eslint: self.for_eslint(None, base_path),
+                    for_eslint: self.for_eslint(None, base_path, &named),
                 }))
             }
             b"" => self.built_in(),
@@ -1839,8 +2178,16 @@ impl<'l> Loader<'l> {
             let parser_options = Json::Object(options.parser_options.clone());
             entries.push((b"parserOptions", parser_options));
         }
-        if !options.plugin.is_empty() {
-            entries.push((b"plugins", strings_of(&options.plugin)));
+        // The others of bunfig.toml are `named_plugins`.
+        let count = options.plugins_of_bunfig.len();
+        let of_bunfig = self.built_in_plugins(Flavor::EslintRc);
+        let of_bunfig = of_bunfig.filter(|it| options.plugin[..count].contains(it));
+        let of_flag = options.plugin[count..]
+            .iter()
+            .filter(|it| !is_path_of_plugin(it));
+        let names: Vec<Vec<u8>> = of_bunfig.chain(of_flag).cloned().collect();
+        if !names.is_empty() {
+            entries.push((b"plugins", strings_of(&names)));
         }
         if !options.settings.is_empty() {
             entries.push((b"settings", Json::Object(options.settings.clone())));
@@ -1927,6 +2274,7 @@ impl<'l> Loader<'l> {
         };
         let mut load_plugin =
             |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
+        let named = self.named_plugins(Flavor::EslintRc)?;
         let mut config = Config::from_legacy(
             self.linter.registry(),
             &LegacyOptions {
@@ -1937,6 +2285,7 @@ impl<'l> Loader<'l> {
                 rules,
                 plugins_from: plugins_from.as_deref(),
                 cascade,
+                named: &named,
             },
             &mut files,
             &mut load,

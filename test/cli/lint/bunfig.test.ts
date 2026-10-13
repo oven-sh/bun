@@ -1,7 +1,7 @@
 // Tests for the `[lint]` section of bunfig.toml.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -537,8 +537,8 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     [`rule = "a"`, `Unknown key "rule" in [lint]\n  Did you mean "rules"?`],
     [`global = "a"`, `Unknown key "global" in [lint]\n  Did you mean "globals"?`],
     [`deny = "style"`, `Unknown key "deny" in [lint]\n  Did you mean "categories"?`],
+    [`plugin = ["a"]`, `Unknown key "plugin" in [lint]\n  Did you mean "plugins"?`],
     // No similar key, so no suggestion.
-    [`plugins = ["import"]`, `Unknown key "plugins" in [lint]\n    at`],
     [`extends = ["a"]`, `Unknown key "extends" in [lint]\n    at`],
     ["cache = true", `Unknown key "cache" in [lint]\n    at`],
     [`env = ["node"]`, `Unknown key "env" in [lint]\n    at`],
@@ -557,6 +557,7 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     const renamed: Record<string, string> = {
       "ignore-pattern": "ignorePatterns",
       "report-unused-disable-directives-severity": "reportUnusedDisableDirectives",
+      plugin: "plugins",
       rule: "rules",
       global: "globals",
       allow: "categories",
@@ -599,7 +600,6 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       "no-eslintrc",
       "node-plugin",
       "parser",
-      "plugin",
       "promise-plugin",
       "react-perf-plugin",
       "react-plugin",
@@ -952,5 +952,961 @@ describe.concurrent("type information without a config file", () => {
     const reported = ["a.ts typescript/TS2322 error"];
     expect(await run("[lint]\ntypeCheck = true\n")).toEqual([reported, false]);
     expect(await run("", ["--type-check"])).toEqual([reported, false]);
+  });
+});
+
+// `plugins` loads ESLint plugins. It's the key for `--plugin`.
+describe.concurrent("plugins in [lint]", () => {
+  const local = `
+const noTodo = {
+  meta: { messages: { todo: "No TODO." }, schema: [] },
+  create(context) {
+    return {
+      Program() {
+        for (const comment of context.sourceCode.getAllComments())
+          if (comment.value.includes("TODO")) context.report({ loc: comment.loc, messageId: "todo" });
+      },
+    };
+  },
+};
+export default { meta: { name: "local" }, rules: { "no-todo": noTodo } };
+`;
+  const packaged = (name: string, meta = name) => ({
+    [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", main: "index.js" }),
+    [`node_modules/${name}/index.js`]: `
+module.exports = {
+  meta: { name: ${JSON.stringify(meta)} },
+  rules: {
+    "no-foo": {
+      meta: { schema: [{ type: "object", properties: { name: { type: "string" } }, additionalProperties: false }] },
+      create(context) {
+        const name = context.options[0]?.name ?? "foo";
+        return { VariableDeclarator(node) { if (node.id.name === name) context.report({ node: node.id, message: "No " + name + "." }); } };
+      },
+    },
+  },
+};
+`,
+  });
+  const project = {
+    "package.json": "{}",
+    "lint/plugin.js": local,
+    ...packaged("eslint-plugin-demo"),
+    "src/a.js": "// TODO: later\nexport const foo = 1;\ndebugger;\n",
+  };
+  const bunfig = (plugins: string, rules: Record<string, unknown>) => ({
+    "bunfig.toml": `[lint]\nplugins = ${plugins}\n\n[lint.rules]\n${Object.entries(rules)
+      .map(([id, setting]) => `${JSON.stringify(id)} = ${JSON.stringify(setting).replaceAll('":', '" =')}`)
+      .join("\n")}\n`,
+  });
+  /** `line:column rule`, in the order of the report. oxlint writes `plugin(rule)`. */
+  async function found(files: Record<string, string>, args: string[] = []) {
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", ...args, "src"]);
+    const lines = [...stdout.matchAll(/:(\d+:\d+): .* \[\w+\/(.+)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
+    return {
+      found: lines.sort(),
+      stderr: stderr.replace(/^(Linted \d+ files?|✓ No problems in \d+ files?).*$/m, "").trim(),
+      exitCode,
+    };
+  }
+  const both = bunfig(`["./lint/plugin.js", "eslint-plugin-demo"]`, {
+    "local/no-todo": "warn",
+    "demo/no-foo": "error",
+  });
+
+  test("they add to Bun's defaults", async () => {
+    expect(await found({ ...project, ...both })).toEqual({
+      found: ["1:1 local/no-todo", "2:14 demo/no-foo", "3:1 no-debugger"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test("they add to an ESLint config and to an oxlint config", async () => {
+    const [eslint, oxlint] = await Promise.all([
+      found({ ...project, ...both, "eslint.config.js": `export default [{ rules: { "no-debugger": "warn" } }];\n` }),
+      found({ ...project, ...both, ".oxlintrc.json": `{ "rules": { "no-debugger": "warn" } }` }),
+    ]);
+    expect(eslint).toEqual({
+      found: ["1:1 local/no-todo", "2:14 demo/no-foo", "3:1 no-debugger"],
+      stderr: "",
+      exitCode: 1,
+    });
+    expect(oxlint).toEqual({
+      found: ["1:1 local(no-todo)", "2:14 demo(no-foo)", "3:1 eslint(no-debugger)"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test.each([
+    ["the name of the package", `["eslint-plugin-demo"]`, "demo/no-foo"],
+    ["ESLint's short name", `["demo"]`, "demo/no-foo"],
+    ["another prefix", `[{ name = "mine", specifier = "eslint-plugin-demo" }]`, "mine/no-foo"],
+    [
+      "another prefix for a path",
+      `[{ name = "mine", specifier = "./node_modules/eslint-plugin-demo/index.js" }]`,
+      "mine/no-foo",
+    ],
+  ])("%s", async (_, plugins, rule) => {
+    expect(await found({ ...project, ...bunfig(plugins, { [rule]: "error" }) })).toEqual({
+      found: [`2:14 ${rule}`, "3:1 no-debugger"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test("a scoped package by its short name", async () => {
+    const files = {
+      ...project,
+      ...packaged("@acme/eslint-plugin", "@acme"),
+      ...packaged("@acme/eslint-plugin-more", "@acme/more"),
+    };
+    const rules = { "@acme/no-foo": "error", "@acme/more/no-foo": "warn" };
+    expect((await found({ ...files, ...bunfig(`["@acme", "@acme/more"]`, rules) })).found).toEqual([
+      "2:14 @acme/more/no-foo",
+      "2:14 @acme/no-foo",
+      "3:1 no-debugger",
+    ]);
+  });
+
+  test("a plugin that Bun only knows the name of, and one whose rules are otherwise left to bun fmt", async () => {
+    const files = {
+      ...project,
+      ...packaged("eslint-plugin-jsdoc", "jsdoc"),
+      ...packaged("@stylistic/eslint-plugin", "@stylistic"),
+    };
+    const rules = { "jsdoc/no-foo": "error", "@stylistic/no-foo": "warn" };
+    expect(await found({ ...files, ...bunfig(`["jsdoc", "@stylistic"]`, rules) })).toEqual({
+      found: ["2:14 @stylistic/no-foo", "2:14 jsdoc/no-foo", "3:1 no-debugger"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test("options go to the rule", async () => {
+    const files = { ...project, "src/a.js": "export const foo = 1, bar = 2;\n" };
+    const rules = { "demo/no-foo": ["error", { name: "bar" }] };
+    expect((await found({ ...files, ...bunfig(`["demo"]`, rules) })).found).toEqual(["1:23 demo/no-foo"]);
+  });
+
+  test("--plugin does the same, from the working directory", async () => {
+    const flags = [
+      "--plugin",
+      "./lint/plugin.js",
+      "--plugin",
+      "demo",
+      "--rule",
+      "local/no-todo: warn",
+      "--rule",
+      "demo/no-foo: error",
+    ];
+    expect(await found(project, flags)).toEqual({
+      found: ["1:1 local/no-todo", "2:14 demo/no-foo", "3:1 no-debugger"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test("--plugin loads a package next to an eslint.config.js, as in ESLint", async () => {
+    const files = { ...project, "eslint.config.js": `export default [{ rules: { "no-debugger": "warn" } }];\n` };
+    expect(await found(files, ["--plugin", "demo", "--rule", "demo/no-foo: error"])).toEqual({
+      found: ["2:14 demo/no-foo", "3:1 no-debugger"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test("[[lint.overrides]] can turn their rules on", async () => {
+    const files = {
+      ...project,
+      "src/b.test.js": "// TODO: later\n",
+      "bunfig.toml": `[lint]\nplugins = ["./lint/plugin.js"]\n\n[[lint.overrides]]\nfiles = ["*.test.js"]\nrules = { "local/no-todo" = "error" }\n`,
+    };
+    const { stdout } = await lint(files, ["-f", "unix", "src"]);
+    expect(
+      [...stdout.matchAll(/(\w+(?:\.\w+)+):\d+:\d+: .*\/(.+)\]$/gm)].map(it => `${it[1]} ${it[2]}`).sort(),
+    ).toEqual(["a.js no-debugger", "b.test.js no-todo"]);
+  });
+
+  test.each([
+    ["eslint-disable", "/* eslint-disable local/no-todo */\n// TODO: a\n", []],
+    [
+      "eslint-disable-next-line",
+      "// TODO: a\n// eslint-disable-next-line local/no-todo\n// TODO: b\n",
+      ["1:1 local/no-todo"],
+    ],
+    ["turned off", "/* eslint local/no-todo: off */\n// TODO: a\n", []],
+    [
+      "options",
+      `/* eslint demo/no-foo: [error, { name: "bar" }] */\nexport const foo = 1, bar = 2;\n`,
+      ["2:23 demo/no-foo"],
+    ],
+  ])("a comment names their rules: %s", async (_, code, expected) => {
+    expect(await found({ ...project, ...both, "src/a.js": code })).toEqual({
+      found: expected,
+      stderr: "",
+      exitCode: expected.some(it => it.includes("demo")) ? 1 : 0,
+    });
+  });
+
+  test("a disable comment for a rule of theirs that reports nothing is unused", async () => {
+    const files = { ...project, ...both, "src/a.js": "// eslint-disable-next-line local/no-todo\nexport {};\n" };
+    const { stdout } = await lint(files, ["-f", "unix", "--report-unused-disable-directives", "src"]);
+    expect(stdout).toContain("Unused eslint-disable directive (no problems were reported from 'local/no-todo')");
+  });
+
+  test("--doctor counts their rules", async () => {
+    const { stdout } = await lint({ ...project, ...both }, ["--doctor", "src"]);
+    expect(stdout).toContain("2 rules run in JavaScript");
+  });
+
+  // Each mistake points at the entry in bunfig.toml.
+  test.each([
+    [`plugins = ["./lint/plugn.js"]`, `Cannot load the plugin "./lint/plugn.js"\n  Cannot find module`, "2:12"],
+    [
+      `plugins = ["nope"]`,
+      `Cannot load the plugin "nope"\n  Neither eslint-plugin-nope nor nope is installed\n`,
+      "2:12",
+    ],
+    [`plugins = ["eslint-plugin-nope"]`, `Cannot load the plugin "eslint-plugin-nope"\n  Cannot find module`, "2:12"],
+    // The package is there and fails. That is what's said, not that there's no package "boom".
+    [`plugins = ["boom"]`, `Cannot load the plugin "boom"\n  Error: inside the plugin`, "2:12"],
+    [
+      `plugins = ["vue"]`,
+      `Cannot load the plugin "vue"\n  eslint-plugin-vue is not installed, and the package vue is not an ESLint plugin\n`,
+      "2:12",
+    ],
+    [`plugins = [""]`, "A plugin needs a specifier\n  A path, or the name of a package\n", "2:12"],
+    [`plugins = ["eslint-plugin-"]`, "A plugin needs a specifier\n", "2:12"],
+    [`plugins = [{ name = "x", specifier = "" }]`, "A plugin needs a specifier\n", "2:12"],
+    [
+      `plugins = ["./lint/no-name.js"]`,
+      `"" can't be the name of a plugin\n  Give it another: { name = "..", specifier = "./lint/no-name.js" }\n`,
+      "2:12",
+    ],
+    [`plugins = [{ name = "a/b", specifier = "demo" }]`, `"a/b" can't be the name of a plugin\n`, "2:12"],
+    // Columns are counted as everywhere, not in bytes.
+    [`plugins = ["./lint/ünï✓.js", "nope"]`, `Cannot load the plugin "nope"`, "2:30"],
+    // So is a package that the plugin needs: it isn't the plugin that is missing.
+    [`plugins = ["needs"]`, `Cannot load the plugin "needs"\n  Cannot find module 'not-installed'`, "2:12"],
+    [
+      `plugins = ["./lint/plugin.js", "./lint/same-name.js"]`,
+      `Two plugins are called "local"\n  Give this one another name: { name = "local-2", specifier = "./lint/same-name.js" }\n`,
+      "2:32",
+    ],
+    [`plugins = ["./lint/throws.js"]`, `Cannot load the plugin "./lint/throws.js"\n  Error: boom`, "2:12"],
+    [
+      `plugins = ["./lint/nameless.js"]`,
+      `Cannot load the plugin "./lint/nameless.js"\n  Error: Plugin must either define \`meta.name\``,
+      "2:12",
+    ],
+    [
+      `plugins = ["./lint/react.js"]`,
+      `The plugin "react" is built in\n  Its rules work without it, so remove it from plugins\n  To run the package as well, give it another name: { name = "react-js", specifier = "./lint/react.js" }\n`,
+      "2:12",
+    ],
+    [`plugins = [{ name = "react", specifier = "demo" }]`, `The plugin "react" is built in`, "2:12"],
+    [`plugins = "demo"`, "expected array but received string", "2:11"],
+    [`plugins = [1]`, "expected string but received number", "2:12"],
+    [
+      `plugins = [{ nme = "a", specifier = "demo" }]`,
+      `Unknown key "nme" in [lint.plugins]\n  Did you mean "name"?`,
+      "2:14",
+    ],
+    [`plugins = [{ name = "a" }]`, "A plugin needs a specifier\n  A path, or the name of a package", "2:12"],
+    [`plugins = [{ name = "", specifier = "demo" }]`, "A plugin's name can't be empty", "2:21"],
+    [
+      `plugins = ["demo"]\n[lint.rules]\n"demo/no-fo" = "error"`,
+      `Unknown rule "demo/no-fo"\n  Did you mean "demo/no-foo"?`,
+      "4:1",
+    ],
+    [
+      `plugins = ["demo"]\n[lint.rules]\n"demo/other" = "error"`,
+      `Unknown rule "demo/other"\n  The plugin "demo" has no rule by that name`,
+      "4:1",
+    ],
+    [
+      `plugins = ["demo"]\n[lint.rules]\n"demo/no-foo" = "loud"`,
+      `"loud" is not a valid severity for demo/no-foo`,
+      "4:17",
+    ],
+    [
+      `plugins = ["demo"]\n[lint.rules]\n"demo/no-foo" = ["error", { nam = "x" }]`,
+      `Invalid options for demo/no-foo\n  Value {"nam":"x"} should NOT have additional properties.\n    Unexpected property "nam". Expected properties: "name".\n`,
+      "4:27",
+    ],
+  ])("%s is rejected", async (lines, message, at) => {
+    const files = {
+      ...project,
+      "lint/throws.js": `throw new Error("boom");\n`,
+      "lint/same-name.js": `export default { meta: { name: "local" }, rules: {} };\n`,
+      "lint/no-name.js": `export default { meta: { name: "" }, rules: {} };\n`,
+      "lint/ünï✓.js": `export default { meta: { name: "odd" }, rules: {} };\n`,
+      "node_modules/vue/package.json": `{ "name": "vue", "main": "index.js" }`,
+      "node_modules/vue/index.js": "module.exports = { createApp() {} };\n",
+      "node_modules/eslint-plugin-boom/package.json": `{ "name": "eslint-plugin-boom", "main": "index.js" }`,
+      "node_modules/eslint-plugin-boom/index.js": `throw new Error("inside the plugin");\n`,
+      "node_modules/eslint-plugin-needs/package.json": `{ "name": "eslint-plugin-needs", "main": "index.js" }`,
+      "node_modules/eslint-plugin-needs/index.js": `require("not-installed");\n`,
+      "lint/nameless.js": `export default { rules: {} };\n`,
+      "lint/react.js": `export default { meta: { name: "eslint-plugin-react" }, rules: {} };\n`,
+      "bunfig.toml": `[lint]\n${lines}\n`,
+    };
+    const { stdout, stderr, exitCode } = await lint(files, ["src"]);
+    expect(stderr).toContain(`error: ${message}`);
+    expect(stderr).toEndWith(`\n    at bunfig.toml:${at}`);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+  });
+
+  test("the name of a built-in plugin does nothing without a config file, and turns it on for one further down", async () => {
+    const files = {
+      ...project,
+      ...bunfig(`["react", "eslint-plugin-import", "@typescript-eslint"]`, { "react/jsx-key": "error" }),
+      "src/a.js": "export const a = [1].map(x => <b>{x}</b>);\n",
+      "src/app/a.js": "export const a = [1].map(x => <b>{x}</b>);\n",
+      "src/app/eslint.config.js": `export default [{ languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`,
+    };
+    expect(await found(files)).toEqual({
+      found: ["1:31 react/jsx-key", "1:31 react/jsx-key"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test.each(["eslint.config.js", ".eslintrc.json", ".oxlintrc.json"])(
+    "a plugin whose rules are there with every config needs no package: %s",
+    async name => {
+      const config =
+        name === "eslint.config.js"
+          ? "export default [{}];\n"
+          : `{ "root": true }`.replace(name === ".oxlintrc.json" ? `"root": true` : "\0", "");
+      const files = { ...project, [name]: config, "src/a.js": "export const a = Array.from(b.split(',')).length;\n" };
+      const { stderr } = await lint({ ...files, ...bunfig(`["bun"]`, {}) }, ["src"]);
+      expect(stderr).not.toContain("error:");
+    },
+  );
+
+  test("a short name is the ESLint plugin, not another package of that name", async () => {
+    const files = {
+      ...project,
+      ...packaged("eslint-plugin-vue", "vue"),
+      "node_modules/vue/package.json": `{ "name": "vue", "main": "index.js" }`,
+      "node_modules/vue/index.js": "module.exports = { createApp() {} };\n",
+    };
+    expect(await found({ ...files, ...bunfig(`["vue"]`, { "vue/no-foo": "warn" }) })).toEqual({
+      found: ["2:14 vue/no-foo", "3:1 no-debugger"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test("a package that isn't called eslint-plugin-*", async () => {
+    const files = { ...project, ...packaged("acme-lint", "acme") };
+    expect((await found({ ...files, ...bunfig(`["acme-lint"]`, { "acme/no-foo": "warn" }) })).found).toEqual([
+      "2:14 acme/no-foo",
+      "3:1 no-debugger",
+    ]);
+  });
+
+  test("a package that can only be imported", async () => {
+    const files = {
+      ...project,
+      "node_modules/eslint-plugin-esm/package.json": `{ "name": "eslint-plugin-esm", "type": "module", "exports": { ".": { "import": "./index.mjs" } } }`,
+      "node_modules/eslint-plugin-esm/index.mjs": local.replace(`"local"`, `"esm"`),
+    };
+    const expected = { found: ["1:1 esm/no-todo", "3:1 no-debugger"], stderr: "", exitCode: 1 };
+    expect(await found({ ...files, ...bunfig(`["esm"]`, { "esm/no-todo": "warn" }) })).toEqual(expected);
+    const oxlint = {
+      ".oxlintrc.json": `{ "jsPlugins": ["eslint-plugin-esm"], "rules": { "esm/no-todo": "warn", "no-debugger": "off" } }`,
+    };
+    expect(await found({ ...files, ...oxlint })).toEqual({ found: ["1:1 esm(no-todo)"], stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    ["without the ending", `["./lint/plugin.js", "./lint/plugin"]`],
+    ["the directory of a package", `["demo", "./node_modules/eslint-plugin-demo"]`],
+    ["the file of a package", `["demo", "./node_modules/eslint-plugin-demo/index.js"]`],
+    ["through a link", `["./lint/plugin.js", "./lint/link.js"]`],
+  ])("one file is one plugin, however it is written: %s", async (_, plugins) => {
+    using dir = tempDir("bun-lint", { ...project, ...bunfig(plugins, {}) });
+    symlinkSync("plugin.js", join(String(dir), "lint/link.js"));
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "unix", "src"],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("[Error/no-debugger]");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--explain doesn't say to add a plugin", async () => {
+    const { stderr, exitCode } = await lint({ ...project, ...both }, ["--explain", "demo/no-foo"]);
+    expect(stderr).toBe(
+      `error: Unknown rule "demo/no-foo"\n  --explain has the built-in rules. For a rule from a plugin, see the plugin's docs`,
+    );
+    expect(exitCode).toBe(2);
+  });
+
+  test("a path that starts with a dot and not with ./", async () => {
+    const files = { ...project, ".config/lint.js": local };
+    expect((await found({ ...files, ...bunfig(`[".config/lint.js"]`, { "local/no-todo": "warn" }) })).found).toEqual([
+      "1:1 local/no-todo",
+      "3:1 no-debugger",
+    ]);
+  });
+
+  test("the same plugin in bunfig.toml and by --plugin counts once", async () => {
+    const files = { ...project, ...bunfig(`["./lint/plugin.js"]`, { "local/no-todo": "warn" }) };
+    expect(await found(files, ["--plugin", "./lint/plugin.js"])).toEqual({
+      found: ["1:1 local/no-todo", "3:1 no-debugger"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  describe("next to an eslint.config.js", () => {
+    const config = { "eslint.config.js": `export default [{ rules: { "no-debugger": "warn" } }];\n` };
+
+    test("a plugin that is only built in without a config file is loaded from its package", async () => {
+      const files = { ...project, ...config, ...packaged("eslint-plugin-unicorn", "unicorn") };
+      expect(await found({ ...files, ...bunfig(`["unicorn"]`, { "unicorn/no-foo": "error" }) })).toEqual({
+        found: ["2:14 unicorn/no-foo", "3:1 no-debugger"],
+        stderr: "",
+        exitCode: 1,
+      });
+    });
+
+    test.each([`["react"]`, `["eslint-plugin-react"]`])("a plugin that is built in there too: %s", async plugins => {
+      const files = {
+        ...project,
+        "eslint.config.js": `export default [{ languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`,
+        "src/a.js": "export const a = [1].map(x => <b>{x}</b>);\n",
+      };
+      expect(await found({ ...files, ...bunfig(plugins, { "react/jsx-key": "error" }) })).toEqual({
+        found: ["1:31 react/jsx-key"],
+        stderr: "",
+        exitCode: 1,
+      });
+    });
+
+    test("--no-native-plugin-rules runs the package of a plugin that is named here, too", async () => {
+      const files = {
+        ...project,
+        "eslint.config.js": `export default [{ languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`,
+        "src/a.js": "export const a = [1].map(x => <b>{x}</b>);\n",
+        "node_modules/eslint-plugin-react/package.json": `{ "name": "eslint-plugin-react", "version": "7.37.5", "main": "index.js" }`,
+        "node_modules/eslint-plugin-react/index.js": `
+          module.exports = { rules: { "jsx-key": { create: context => ({ JSXElement(node) { context.report({ node, message: "of the package" }); } }) } } };\n`,
+        ...bunfig(`["react"]`, { "react/jsx-key": "error" }),
+      };
+      const [native, ofPackage] = await Promise.all([
+        lint(files, ["-f", "unix", "src"]),
+        lint(files, ["-f", "unix", "--no-native-plugin-rules", "src"]),
+      ]);
+      expect(native.stdout).toContain(`Missing "key" prop for element in iterator [Error/react/jsx-key]`);
+      expect(ofPackage.stdout).toContain("of the package [Error/react/jsx-key]");
+    });
+
+    test("a rule of a built-in plugin that only the package has runs from there", async () => {
+      const files = { ...project, ...config, ...packaged("eslint-plugin-react", "react") };
+      expect(await found({ ...files, ...bunfig(`["react"]`, { "react/no-foo": "error" }) })).toEqual({
+        found: ["2:14 react/no-foo", "3:1 no-debugger"],
+        stderr: "",
+        exitCode: 1,
+      });
+    });
+
+    test("prettier needs its package, as in ESLint", async () => {
+      const files = { ...project, ...config, ...bunfig(`["prettier"]`, { "prettier/prettier": "error" }) };
+      const { stdout, stderr, exitCode } = await lint(files, ["src"]);
+      expect(stderr).toContain(
+        `error: Cannot load the plugin "prettier"\n  eslint-plugin-prettier is not installed\n  Without Prettier, turn on bun/format instead of prettier/prettier\n    at bunfig.toml:2:12`,
+      );
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    test("--plugin calls a plugin what the flag calls it, as ESLint does", async () => {
+      const files = { ...project, ...config, ...packaged("@vt/eslint-plugin", "vt") };
+      expect(await found(files, ["--plugin", "@vt", "--rule", "@vt/no-foo: error"])).toEqual({
+        found: ["2:14 @vt/no-foo", "3:1 no-debugger"],
+        stderr: "",
+        exitCode: 1,
+      });
+    });
+
+    test("a plugin without rules that the file has under the same name is an error too", async () => {
+      const files = {
+        ...project,
+        "eslint.config.js": `const demo = { processors: {} };\nexport default [{ plugins: { demo } }];\n`,
+      };
+      const { stdout, stderr, exitCode } = await lint(files, ["--plugin", "demo", "src"]);
+      expect(stderr).toContain(`The plugin "demo" is loaded twice: here, and by plugins in bunfig.toml or --plugin`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    test.each([
+      [`"demo/no-fo" = "error"`, `Unknown rule "demo/no-fo"\n  Did you mean "demo/no-foo"?`, "4:1"],
+      [`"demo/no-foo" = ["error", { nam = "x" }]`, "Invalid options for demo/no-foo\n", "4:27"],
+    ])("a mistake in a rule of theirs is a mistake in bunfig.toml: %s", async (rule, message, at) => {
+      const bunfig = { "bunfig.toml": `[lint]\nplugins = ["demo"]\n[lint.rules]\n${rule}\n` };
+      for (const file of [config, { ".oxlintrc.json": "{}" }]) {
+        const { stdout, stderr, exitCode } = await lint({ ...project, ...file, ...bunfig }, ["src"]);
+        expect(stderr).toContain(`error: ${message}`);
+        expect(stderr).toEndWith(`\n    at bunfig.toml:${at}`);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+      }
+    });
+
+    test("a rule that is off isn't looked at, as in ESLint: it needn't exist", async () => {
+      const files = {
+        ...project,
+        "eslint.config.js": `
+          import demo from "eslint-plugin-demo";
+          export default [{ plugins: { demo }, rules: { "demo/removed": "off", "demo/no-foo": "warn" } }];\n`,
+      };
+      const expected = { found: ["2:14 demo/no-foo"], stderr: "", exitCode: 0 };
+      expect(await found({ ...files, ...bunfig(`["demo"]`, { "demo/gone": "off" }) })).toEqual(expected);
+      expect(await found(files, ["--plugin", "demo", "--rule", "demo/nope: off"])).toEqual(expected);
+    });
+
+    test.each([
+      ["only configs", `{ meta: { name: "cfg" }, configs: { all: { rules: { "no-debugger": "warn" } } } }`],
+      ["only processors", `{ meta: { name: "cfg" }, processors: {} }`],
+      ["no rules", `{ meta: { name: "cfg" }, rules: {} }`],
+    ])("a plugin without rules that the file imports too is one plugin: %s", async (_, plugin) => {
+      const files = {
+        ...project,
+        "node_modules/eslint-plugin-cfg/package.json": `{ "name": "eslint-plugin-cfg", "main": "index.js" }`,
+        "node_modules/eslint-plugin-cfg/index.js": `module.exports = ${plugin};\n`,
+        "eslint.config.js": `import cfg from "eslint-plugin-cfg";\nexport default [{ plugins: { cfg }, rules: { "no-debugger": "warn" } }];\n`,
+      };
+      const expected = { found: ["3:1 no-debugger"], stderr: "", exitCode: 0 };
+      expect(await found(files, ["--plugin", "cfg"])).toEqual(expected);
+      expect(await found({ ...files, ...bunfig(`["cfg"]`, {}) })).toEqual(expected);
+    });
+
+    test("--print-config calls them what ESLint calls them", async () => {
+      const files = {
+        ...project,
+        ...config,
+        "node_modules/eslint-plugin-demo/index.js": project["node_modules/eslint-plugin-demo/index.js"].replace(
+          `name: "eslint-plugin-demo"`,
+          `name: "eslint-plugin-demo", version: "1.2.3"`,
+        ),
+      };
+      const { stdout } = await lint({ ...files, ...bunfig(`["demo", "./lint/plugin.js"]`, {}) }, [
+        "--print-config",
+        "src/a.js",
+      ]);
+      expect(JSON.parse(stdout).plugins).toEqual(
+        expect.arrayContaining(["demo:eslint-plugin-demo@1.2.3", "local:local"]),
+      );
+    });
+
+    test("the package of a built-in plugin isn't loaded if no rule is asked of it", async () => {
+      const files = {
+        ...project,
+        "eslint.config.js": `export default [{ languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`,
+        "src/a.js": "export const a = [1].map(x => <b>{x}</b>);\n",
+        "node_modules/eslint-plugin-react/package.json": `{ "name": "eslint-plugin-react", "version": "7.37.5", "main": "index.js" }`,
+        "node_modules/eslint-plugin-react/index.js": `throw new Error("it was loaded");\n`,
+      };
+      expect(await found({ ...files, ...bunfig(`["react"]`, { "react/jsx-key": "error" }) })).toEqual({
+        found: ["1:31 react/jsx-key"],
+        stderr: "",
+        exitCode: 1,
+      });
+    });
+
+    test.each(["eslint-plugin-demo/index.js", "./node_modules/eslint-plugin-demo/index.js"])(
+      "--plugin with what is no name has the name of the plugin: %s",
+      async plugin => {
+        expect(await found({ ...project, ...config }, ["--plugin", plugin, "--rule", "demo/no-foo: error"])).toEqual({
+          found: ["2:14 demo/no-foo", "3:1 no-debugger"],
+          stderr: "",
+          exitCode: 1,
+        });
+      },
+    );
+
+    test("another plugin can't take the name of one that is built in there", async () => {
+      const plugins = `[{ name = "react", specifier = "demo" }]`;
+      const { stdout, stderr, exitCode } = await lint({ ...project, ...config, ...bunfig(plugins, {}) }, ["src"]);
+      expect(stderr).toContain(`error: The plugin "react" needs another name\n`);
+      expect(stderr).toEndWith("\n    at bunfig.toml:2:12");
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    test("a plugin that the file has under the same name is an error, as two are in ESLint", async () => {
+      const files = {
+        ...project,
+        "eslint.config.js": `
+          const demo = { rules: { "no-foo": { create: context => ({ Program(node) { context.report({ node, message: "of the file" }); } }) } } };
+          export default [{ plugins: { demo }, rules: { "demo/no-foo": "error" } }];\n`,
+      };
+      const { stdout, stderr, exitCode } = await lint({ ...files, ...bunfig(`["demo"]`, {}) }, ["src"]);
+      expect(stderr).toContain(`The plugin "demo" is loaded twice: here, and by plugins in bunfig.toml or --plugin`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    test.each<[string, Record<string, string>, string[]]>([
+      ["plugins", bunfig(`["demo"]`, {}), []],
+      ["--plugin", {}, ["--plugin", "demo"]],
+    ])("the package that the file imports too is one plugin, as in ESLint: %s", async (_, config, flags) => {
+      const files = {
+        ...project,
+        "eslint.config.js": `
+          import demo from "eslint-plugin-demo";
+          export default [{ plugins: { demo }, rules: { "demo/no-foo": "error" } }];\n`,
+      };
+      expect(await found({ ...files, ...config }, flags)).toEqual({
+        found: ["2:14 demo/no-foo"],
+        stderr: "",
+        exitCode: 1,
+      });
+    });
+
+    test("so is a package whose main module has what another module of it exports", async () => {
+      const files = {
+        ...project,
+        "node_modules/eslint-plugin-demo/dist/a.js": project["node_modules/eslint-plugin-demo/index.js"],
+        "node_modules/eslint-plugin-demo/index.js": `module.exports = require("./dist/a.js");\n`,
+        "eslint.config.js": `
+          import demo from "eslint-plugin-demo";
+          export default [{ plugins: { demo }, rules: { "demo/no-foo": "error" } }];\n`,
+      };
+      const expected = { found: ["2:14 demo/no-foo"], stderr: "", exitCode: 1 };
+      expect(await found({ ...files, ...bunfig(`["demo"]`, {}) })).toEqual(expected);
+      expect(await found(files, ["--plugin", "demo"])).toEqual(expected);
+    });
+
+    test("two files of the project under one name are two plugins", async () => {
+      const files = {
+        ...project,
+        "lint/other.js": local.replace("No TODO.", "Another."),
+        "eslint.config.js": `
+          import local from "./lint/other.js";
+          export default [{ plugins: { local }, rules: { "local/no-todo": "error" } }];\n`,
+      };
+      const { stdout, stderr, exitCode } = await lint({ ...files, ...bunfig(`["./lint/plugin.js"]`, {}) }, ["src"]);
+      expect(stderr).toContain(`The plugin "local" is loaded twice: here, and by plugins in bunfig.toml or --plugin`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
+    // Enough of the package `eslint`: it says which rules it would run, and of which plugins it has them.
+    const eslint = {
+      "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0", main: "index.js" }),
+      "node_modules/eslint/index.js": `
+        exports.Linter = class Linter {
+          verify(text, configs) {
+            const plugins = Object.assign({}, ...configs.map(it => it.plugins));
+            const rules = Object.assign({}, ...configs.map(it => it.rules));
+            return Object.keys(rules).map(ruleId => {
+              const [prefix, name] = ruleId.split("/");
+              const message = typeof plugins[prefix]?.rules[name]?.create === "function" ? "has it" : "does not have it";
+              return { ruleId, severity: 2, message, line: 1, column: 1 };
+            }).concat(
+              // What a comment in the file can ask for: all of the plugin, not only the rules that are on.
+              Object.entries(plugins).map(([prefix, plugin]) => ({
+                ruleId: null,
+                severity: 1,
+                message: prefix + " is " + plugin.meta?.name + " with " + Object.keys(plugin.rules ?? {}).length + " listed",
+                line: 1,
+                column: 1,
+              })),
+            );
+          }
+          getSuppressedMessages() {
+            return [];
+          }
+        };`,
+      "eslint.config.js": `
+        const parser = { parseForESLint: () => ({ ast: { type: "Program", body: [], tokens: [], comments: [], range: [0, 0], loc: {} } }) };
+        export default [{ files: ["**/*.foo"], languageOptions: { parser } }];\n`,
+      "src/a.foo": "anything\n",
+    };
+    test("a file that goes to the installed ESLint has the same plugin as the others, whatever is called default", async () => {
+      const files = {
+        ...project,
+        ...eslint,
+        "node_modules/eslint-plugin-demo/index.js": project["node_modules/eslint-plugin-demo/index.js"].replace(
+          "rules: {",
+          `default: { meta: { name: "another" }, rules: {} },\n  rules: {`,
+        ),
+      };
+      const { stdout, stderr } = await lint({ ...files, ...both }, ["-f", "unix", "src/a.foo"]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("has it [Error/demo/no-foo]");
+      expect(stdout).toContain("demo is eslint-plugin-demo with ");
+    });
+
+    test("a file that goes to the installed ESLint needs the package of a built-in plugin", async () => {
+      const files = { ...project, ...eslint, ...bunfig(`["react"]`, { "react/jsx-key": "error" }) };
+      const { stderr, exitCode } = await lint(files, ["src/a.foo"]);
+      expect(stderr).toContain("eslint-plugin-react is not installed\n");
+      expect(stderr).toContain("some of your files go to the installed ESLint, which needs the package");
+      expect(exitCode).toBe(2);
+    });
+
+    test.each<[string, Record<string, string>, string[]]>([
+      ["plugins", both, []],
+      ["--plugin", {}, ["--plugin", "demo", "--rule", "demo/no-foo: error"]],
+    ])("a file that goes to the installed ESLint has them too: %s", async (_, config, flags) => {
+      const { stdout, stderr } = await lint({ ...project, ...eslint, ...config }, [
+        "-f",
+        "unix",
+        ...flags,
+        "src/a.foo",
+      ]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("has it [Error/demo/no-foo]");
+      expect(stdout).not.toContain("does not have it");
+      expect(stdout).toContain("demo is eslint-plugin-demo with ");
+    });
+  });
+
+  test.each<[string, Record<string, string>]>([
+    [".oxlintrc.json", { ".oxlintrc.json": `{ "jsPlugins": ["./lint/other.js"] }` }],
+    [
+      ".eslintrc.json",
+      { ".eslintrc.json": `{ "root": true, "plugins": ["local"] }`, ...packaged("eslint-plugin-local", "local") },
+    ],
+  ])("another plugin that an %s has under the same name is an error", async (_, config) => {
+    const files = { ...project, ...config, "lint/other.js": local.replace("No TODO.", "Another.") };
+    const { stdout, stderr, exitCode } = await lint({ ...files, ...bunfig(`["./lint/plugin.js"]`, {}) }, ["src"]);
+    expect(stdout + stderr).toContain(
+      `The plugin "local" is loaded twice: here, and by plugins in bunfig.toml or --plugin`,
+    );
+    expect(exitCode).not.toBe(0);
+  });
+
+  describe("next to an .eslintrc.json", () => {
+    const parserOptions = `"parserOptions": { "sourceType": "module", "ecmaVersion": 2022 }`;
+    const expected = { found: ["2:14 demo/no-foo"], stderr: "", exitCode: 0 };
+
+    test.each<[string, string, string, string[]]>([
+      ["the file and bunfig.toml", `"plugins": ["demo"], `, `["demo"]`, []],
+      ["the long name", `"plugins": ["demo"], `, `["eslint-plugin-demo"]`, []],
+      ["bunfig.toml and --plugin", "", `["demo"]`, ["--plugin", "demo"]],
+      ["the file and a path", `"plugins": ["demo"], `, `["./node_modules/eslint-plugin-demo/index.js"]`, []],
+    ])("the same package named twice is one plugin: %s", async (_, inFile, plugins, flags) => {
+      const files = {
+        ...project,
+        ".eslintrc.json": `{ "root": true, ${parserOptions}, ${inFile}"rules": { "demo/no-foo": "warn" } }`,
+      };
+      expect(await found({ ...files, ...bunfig(plugins, {}) }, flags)).toEqual(expected);
+    });
+
+    test("a config of the plugin that the file extends brings the same plugin", async () => {
+      const files = {
+        ...project,
+        "node_modules/eslint-plugin-demo/index.js": project["node_modules/eslint-plugin-demo/index.js"].replace(
+          "rules: {",
+          `configs: { rec: { plugins: ["demo"], rules: { "demo/no-foo": "warn" } } },\n  rules: {`,
+        ),
+        ".eslintrc.json": `{ "root": true, ${parserOptions}, "extends": ["plugin:demo/rec"] }`,
+      };
+      expect(await found({ ...files, ...bunfig(`["demo"]`, {}) })).toEqual(expected);
+    });
+
+    test("ESLint 8 takes any options for a rule without a schema, and a rule that is off needn't exist", async () => {
+      const files = {
+        ...project,
+        ".eslintrc.json": `{ "root": true, ${parserOptions} }`,
+        "lint/x.js": `
+          export default { meta: { name: "x" }, rules: { opt: { create(context) {
+            return { Program(node) { context.report({ node, message: JSON.stringify(context.options) }); } };
+          } } } };\n`,
+      };
+      const { stdout, stderr, exitCode } = await lint(
+        { ...files, ...bunfig(`["./lint/x.js"]`, { "x/opt": ["warn", "always"], "x/nope": "off" }) },
+        ["-f", "unix", "src"],
+      );
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain(`["always"] [Warning/x/opt]`);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("a module of Node.js is no plugin", async () => {
+    const { stderr, exitCode } = await lint({ ...project, ...bunfig(`["fs"]`, {}) }, ["src"]);
+    expect(stderr).toContain(
+      `error: Cannot load the plugin "fs"\n  Neither eslint-plugin-fs nor fs is installed\n    at bunfig.toml:2:12`,
+    );
+    expect(exitCode).toBe(2);
+  });
+
+  test("--plugin with a path next to an .eslintrc.json", async () => {
+    const files = {
+      ...project,
+      ".eslintrc.json": `{ "root": true, "parserOptions": { "sourceType": "module", "ecmaVersion": 2022 } }`,
+    };
+    expect(await found(files, ["--plugin", "./lint/plugin.js", "--rule", "local/no-todo: warn"])).toEqual({
+      found: ["1:1 local/no-todo"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("next to an .eslintrc.json, which has no word for a path or another prefix", async () => {
+    const files = {
+      ...project,
+      ".eslintrc.json": `{ "root": true, "parserOptions": { "sourceType": "module", "ecmaVersion": 2022 }, "rules": { "no-debugger": "warn" } }`,
+    };
+    const plugins = `["./lint/plugin.js", { name = "mine", specifier = "eslint-plugin-demo" }]`;
+    expect(await found({ ...files, ...bunfig(plugins, { "local/no-todo": "warn", "mine/no-foo": "error" }) })).toEqual({
+      found: ["1:1 local/no-todo", "2:14 mine/no-foo", "3:1 no-debugger"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test("a severity that isn't one, by a flag", async () => {
+    const { stdout, stderr, exitCode } = await lint(project, [
+      "--plugin",
+      "demo",
+      "--rule",
+      "demo/no-foo: loud",
+      "src",
+    ]);
+    expect(stderr).toStartWith(`error: "loud" is not a valid severity for demo/no-foo\n`);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+  });
+
+  test("a built-in plugin's name turns it on, as `plugins` in an .oxlintrc.json or an .eslintrc.json does", async () => {
+    const files = { ...project, "src/a.js": "export const a = [1].map(x => <b>{x}</b>);\n" };
+    const react = bunfig(`["react"]`, { "react/jsx-key": "error" });
+    const [oxlint, without, eslintrc] = await Promise.all([
+      found({ ...files, ...react, ".oxlintrc.json": "{}" }),
+      found({ ...files, ".oxlintrc.json": `{ "rules": { "react/jsx-key": "error" } }` }),
+      found({
+        ...files,
+        ...react,
+        // ESLint 8 looks for the package. The rule that runs is Bun's.
+        "node_modules/eslint-plugin-react/package.json": `{ "name": "eslint-plugin-react", "version": "7.37.5", "main": "index.js" }`,
+        "node_modules/eslint-plugin-react/index.js": `module.exports = { rules: { "jsx-key": { create: () => ({}) } } };\n`,
+        ".eslintrc.json": `{ "root": true, "parserOptions": { "sourceType": "module", "ecmaVersion": 2022, "ecmaFeatures": { "jsx": true } } }`,
+      }),
+    ]);
+    expect(oxlint).toEqual({ found: ["1:22 react(jsx-key)"], stderr: "", exitCode: 1 });
+    // The control: that is what the plugin is needed for.
+    expect(without).toEqual({ found: [], stderr: "", exitCode: 0 });
+    expect(eslintrc).toEqual({ found: ["1:31 react/jsx-key"], stderr: "", exitCode: 1 });
+  });
+
+  test("next to an .oxlintrc.json the names are oxlint's: node is built in, and n and prettier are packages", async () => {
+    const files = { ...project, ".oxlintrc.json": "{}", "src/a.js": "export const foo = 1;\nprocess.exit(1);\n" };
+    const [node, n, prettier, missing] = await Promise.all([
+      found({ ...files, ...bunfig(`["node"]`, { "node/no-process-exit": "error" }) }),
+      found({ ...files, ...packaged("eslint-plugin-n", "n"), ...bunfig(`["n"]`, { "n/no-foo": "error" }) }),
+      found({
+        ...files,
+        ...packaged("eslint-plugin-prettier", "prettier"),
+        ...bunfig(`["prettier"]`, { "prettier/no-foo": "error" }),
+      }),
+      lint({ ...files, ...bunfig(`["n"]`, {}) }, ["src"]),
+    ]);
+    expect(node).toEqual({ found: ["2:1 node(no-process-exit)"], stderr: "", exitCode: 1 });
+    expect(n).toEqual({ found: ["1:14 n(no-foo)"], stderr: "", exitCode: 1 });
+    expect(prettier).toEqual({ found: ["1:14 prettier(no-foo)"], stderr: "", exitCode: 1 });
+    expect(missing.stderr).toContain(
+      `Cannot load the plugin "n"\n  Neither eslint-plugin-n nor n is installed\n    at bunfig.toml:2:12`,
+    );
+    expect({ stdout: missing.stdout, exitCode: missing.exitCode }).toEqual({ stdout: "", exitCode: 2 });
+  });
+
+  test("--plugin next to an .oxlintrc.json", async () => {
+    const files = { ...project, ".oxlintrc.json": `{ "rules": { "no-debugger": "off" } }` };
+    expect(await found(files, ["--plugin", "demo", "--rule", "demo/no-foo: error"])).toEqual({
+      found: ["2:14 demo(no-foo)"],
+      stderr: "",
+      exitCode: 1,
+    });
+  });
+
+  test("next to an .oxlintrc.json a flag counts for more than bunfig.toml", async () => {
+    const files = { ...project, ".oxlintrc.json": `{ "plugins": [] }`, "src/a.js": "export const a = null;\n" };
+    const unicorn = bunfig(`["unicorn"]`, { "unicorn/no-null": "error" });
+    expect(await found({ ...files, ...unicorn })).toEqual({
+      found: ["1:18 unicorn(no-null)"],
+      stderr: "",
+      exitCode: 1,
+    });
+    expect(await found({ ...files, ...unicorn }, ["--disable-unicorn-plugin"])).toEqual({
+      found: [],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("another plugin can't take a built-in plugin's name next to an .oxlintrc.json", async () => {
+    const plugins = `[{ name = "react", specifier = "demo" }]`;
+    const { stderr, exitCode } = await lint({ ...project, ...bunfig(plugins, {}), ".oxlintrc.json": "{}" }, ["src"]);
+    expect(stderr).toContain(
+      `error: The plugin "react" needs another name\n  That one is a built-in plugin's: { name = "react-js", specifier = "eslint-plugin-demo" }\n`,
+    );
+    expect(exitCode).toBe(2);
+  });
+
+  test("a name that oxlint keeps for rules that bun lint doesn't have", async () => {
+    const files = { ...project, ...packaged("eslint-plugin-jsdoc", "jsdoc"), ".oxlintrc.json": "{}" };
+    const refused = await lint({ ...files, ...bunfig(`["jsdoc"]`, {}) }, ["src"]);
+    expect(refused.stderr).toContain(
+      `error: The plugin "jsdoc" needs another name\n  oxlint keeps that one for its own rules, which bun lint doesn't have: { name = "jsdoc-js", specifier = "eslint-plugin-jsdoc" }\n`,
+    );
+    expect(refused.exitCode).toBe(2);
+    const renamed = bunfig(`[{ name = "jsdoc-js", specifier = "eslint-plugin-jsdoc" }]`, {
+      "jsdoc-js/no-foo": "error",
+    });
+    expect((await found({ ...files, ...renamed })).found).toContain("2:14 jsdoc-js(no-foo)");
+  });
+
+  test("a rule that is off doesn't have its options checked", async () => {
+    const rules = { "demo/no-foo": ["off", { nam: "x" }] };
+    expect((await found({ ...project, ...bunfig(`["demo"]`, rules) })).found).toEqual(["3:1 no-debugger"]);
+  });
+
+  test("the same package in a bunfig.toml elsewhere and by --plugin counts once", async () => {
+    using dir = tempDir("bun-lint", {
+      ...project,
+      "config/bunfig.toml": `[lint]\nplugins = ["demo"]\n[lint.rules]\n"demo/no-foo" = "warn"\n`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--config=config/bunfig.toml", "lint", "-f", "unix", "--plugin", "demo", "src"],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("[Warning/demo/no-foo]");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a path is relative to the bunfig.toml that has it", async () => {
+    using dir = tempDir("bun-lint", {
+      ...project,
+      "config/bunfig.toml": `[lint]\nplugins = ["../lint/plugin.js"]\n[lint.rules]\n"local/no-todo" = "warn"\n`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--config=config/bunfig.toml", "lint", "-f", "unix", "src"],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("[Warning/local/no-todo]");
+    expect(exitCode).toBe(1);
   });
 });

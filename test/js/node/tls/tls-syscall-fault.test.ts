@@ -243,16 +243,17 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
   // The engine takes 128 KB of a write at a time. The rest waits as plaintext, and the write is still pending.
   describe.each(["client", "server"] as const)("send → ECONNRESET for the rest of the %s's write", side => {
     test.each([
-      ["fails the write", false, false],
-      ["first delivers what the peer sent before", true, true],
-    ])("%s", async (_name, peerWroteFirst, peerAnswers) => {
+      ["fails the write", false],
+      ["first delivers what the peer sent before", true],
+    ])("%s", async (_name, peerWroteFirst) => {
       using p = await connectedTLSPair();
       const [writer, peer] = side === "client" ? [p.client, p.serverSock] : [p.serverSock, p.client];
       const seen = observe(writer);
       const received = collect(writer);
-      // Only the sends fail here. A peer that does not read up to the FIN leaves it to the writer to end its reads.
-      if (peerAnswers) peer.resume();
       if (peerWroteFirst) {
+        // Only the sends fail here, so the reads of the writer end once the peer has read up to its FIN and answers.
+        // Without this the peer stays silent, and with nothing to read first the writer closes on its own.
+        peer.resume();
         writer.pause();
         await new Promise<void>(resolve => peer.write("late", () => resolve()));
       }
@@ -350,11 +351,16 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     p.client.write("hello");
     fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd: fdOf(p.client) });
     handle.resume();
-    // The stream has all of it by now, and the end.
-    for (let turn = 0; turn < 3; turn++) await new Promise(setImmediate);
+    // Until the stream holds all of it, and the end.
+    while (!(p.client as any)._readableState.ended && !p.client.destroyed) await new Promise(setImmediate);
+    const held = p.client.readableLength;
     p.client.resume();
     await seen.closed;
-    expect({ received: received().length, events: seen.events }).toEqual({ received: 70_000, events: CLEAN_CLOSE });
+    expect({ held, received: received().length, events: seen.events }).toEqual({
+      held: 70_000,
+      received: 70_000,
+      events: CLEAN_CLOSE,
+    });
   });
 
   // The write fails with the close of the engine, which reads first. A reader that stopped may be waiting for the write.

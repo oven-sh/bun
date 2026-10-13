@@ -2806,6 +2806,86 @@ const kind: number = Shape.kind;
       `);
     });
 
+    test("recursive mapped type identities preserve assertion overlap", async () => {
+      using dir = project({
+        "a.ts": `
+type Raw = { kind: "read"; database: {}; value: string };
+type Current = Omit<Raw, "kind"> & { kind: "current"; source?: string };
+type Prepared<I> = I extends unknown ? Omit<I, "database"> : never;
+type Input = Prepared<Extract<Current, { database: unknown }>>;
+function repro<K extends Input["kind"], I extends object>(kind: K, input: I) {
+  return { kind, ...input } as Extract<Input, { kind: K }>;
+}
+function incompatible<K extends Input["kind"]>(kind: K) {
+  // @ts-expect-error: the payload remains incompatible after mapped-type normalization.
+  return { kind, value: 1 } as Extract<Input, { kind: K }>;
+}
+declare const wrong: { kind: "wrong"; value: number };
+// @ts-expect-error: unrelated discriminants and payloads do not overlap.
+const rejected = wrong as Input;
+type Wrapper<T> = { [P in keyof T]: T[P] };
+type Indexed<T> = Wrapper<Wrapper<T>>[keyof T];
+declare const nested: Indexed<{ value: Current }>;
+const nestedValue: string = nested.value;
+// @ts-expect-error: resolving an indexed homomorphic type preserves the payload.
+const badNestedValue: number = nested.value;
+`,
+      });
+      expect(await check(dir)).toEqual({
+        stdout: "",
+        stderr: "✓ No type errors in 1 file [time]",
+        exitCode: 0,
+      });
+    });
+
+    test("recursive mapped aliases terminate", async () => {
+      using dir = project({
+        "a.ts": `
+// @ts-expect-error: the mutually mapped aliases have a circular key constraint.
+type Left<T> = { [K in keyof Right<T>]: Right<T>[K] };
+// @ts-expect-error: the mutually mapped aliases have a circular key constraint.
+type Right<T> = { [K in keyof Left<T>]: Left<T>[K] };
+// @ts-expect-error: the invalid alias is not a usable generic.
+declare const circular: Left<{ value: string }>;
+// @ts-expect-error: the invalid alias is not a usable generic.
+const projected: Right<{ value: string }> = circular;
+type Recursive<T> = { [K in keyof T]: Recursive<T[K]> };
+interface Self { name: string; next?: Self; }
+declare const recursive: Recursive<Self>;
+const compatible: Recursive<Recursive<Self>> = recursive;
+export {};
+`,
+      });
+      expect(await check(dir)).toEqual({
+        stdout: "",
+        stderr: "✓ No type errors in 1 file [time]",
+        exitCode: 0,
+      });
+    });
+
+    test("recursive relation depth preserves compatible cycles", async () => {
+      let source = "";
+      for (const prefix of ["A", "B", "C"]) {
+        for (let i = 0; i < 40; i++) {
+          const name = prefix === "C" && i === 1 ? "number" : "string";
+          source += `interface ${prefix}${i} { name: ${name}; next?: ${prefix}${(i + 1) % 40}[]; }\n`;
+        }
+      }
+      using dir = project({
+        "a.ts": source + `
+declare const a: A0;
+const accepted: B0 = a;
+// @ts-expect-error: the recursive shape differs near the root.
+const rejected: C0 = a;
+`,
+      });
+      expect(await check(dir)).toEqual({
+        stdout: "",
+        stderr: "✓ No type errors in 1 file [time]",
+        exitCode: 0,
+      });
+    });
+
     test("uniform union literals keep narrowing in mutable locations", async () => {
       using dir = project({
         "a.ts": `
@@ -2893,7 +2973,11 @@ function distinctEnums(value: N1.E | N2.E) {
 }
 `,
       });
-      expect(await check(dir)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      expect(await check(dir)).toEqual({
+        stdout: "",
+        stderr: "✓ No type errors in 1 file [time]",
+        exitCode: 0,
+      });
     });
 
     test("generics, overloads, narrowing and conditional types", async () => {
@@ -6120,7 +6204,7 @@ a[k] += "s";
       expect(exitCode).toBe(1);
     });
 
-    test("a comparison without an error node that exceeds the depth limit is reported at the type reference", async () => {
+    test("recursive mapped constraints do not fail at the relation depth limit", async () => {
       using dir = project({
         "a.ts": `type UnionToIntersect<U> = (U extends unknown ? (arg: U) => 0 : never) extends (arg: infer I) => 0 ? I : never;
 type UnionLast<U> = UnionToIntersect<U extends unknown ? (x: U) => 0 : never> extends (x: infer L) => 0 ? L : never;
@@ -6132,11 +6216,11 @@ type Wrap<T extends Schema[]> = T extends [] ? never : T;
 export type Result<T extends string> = Wrap<Assert<UnionToTuple<{ [K in T]: Literal<K> }[T]>, Schema[]>>;
 `,
       });
-      const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(
-        `"a.ts(8,40): error TS2321: Excessive stack depth comparing types 'UnionToTuple<{ [K in T]: Literal<K>; }[T], UnionLast<{ [K in T]: Literal<K>; }[T]>>' and 'Schema[]'."`,
-      );
-      expect(exitCode).toBe(1);
+      expect(await check(dir)).toEqual({
+        stdout: "",
+        stderr: "✓ No type errors in 1 file [time]",
+        exitCode: 0,
+      });
     });
 
     test("a call of a variable without an annotation, in a loop that assigns the result to it", async () => {
@@ -8087,7 +8171,7 @@ export declare const o: { readonly L: unique symbol };
 
     // 200 comparisons deep. The stack frames of a debug build are several times larger, and it runs out of stack first.
     test.skipIf(isDebug || isASAN)(
-      "a comparison that exceeds the depth limit while its error is elaborated",
+      "deep relation elaboration preserves an incompatible payload",
       async () => {
         using dir = project({
           "a.ts": `interface T0<A> { a: A; next: T1<A[]> | null; take(x: T1<A>): void }
@@ -8146,11 +8230,8 @@ export const v: T0<string> = null! as T0<unknown>;
         });
         const { stdout, exitCode } = await check(dir);
         expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(51,14): error TS2321: Excessive stack depth comparing types 'T0<string>' and 'T0<unknown>'.
-        a.ts(51,14): error TS2321: Excessive stack depth comparing types 'T49<?>' and 'T49<?>'.
-        a.ts(52,14): error TS2322: Type 'T0<unknown>' is not assignable to type 'T0<string>'.
-          Types of property 'a' are incompatible.
-            Type 'unknown' is not assignable to type 'string'."
+        "a.ts(52,14): error TS2322: Type 'T0<unknown>' is not assignable to type 'T0<string>'.
+          Type 'unknown' is not assignable to type 'string'."
       `);
         expect(exitCode).toBe(1);
       },
@@ -17708,11 +17789,9 @@ describe.concurrent("--check", () => {
       expect(exitCode).toBe(0);
     });
 
-    // The limit of 5,000,000 instantiations is for one statement or expression. Under `exactOptionalPropertyTypes` one of
-    // these comparisons takes about 45,000. After 110 of them every instantiation in the file gave the error type, to
-    // which anything is assignable.
+    // The instantiation limit is per statement; repeated deep comparisons must not hide a later payload error.
     test.skipIf(isDebug || isASAN).each([130])(
-      "%i comparisons that reach the depth limit do not hide the next error",
+      "%i deep comparisons do not hide the next error",
       async n => {
         using dir = project({
           "tsconfig.json": JSON.stringify({
@@ -17731,7 +17810,7 @@ describe.concurrent("--check", () => {
         const errors = stdout
           .split("\n")
           .flatMap(line => /^index\.ts\((\d+),\d+\): error (TS\d+)/.exec(line)?.slice(1, 3).join(" ") ?? []);
-        expect(errors).toEqual([...range(n).map(i => `${i + 2} TS2321`), `${n + 2} TS2322`]);
+        expect(errors).toEqual([...range(n).map(i => `${i + 2} TS2322`), `${n + 2} TS2322`]);
         expect(exitCode).toBe(1);
       },
     );

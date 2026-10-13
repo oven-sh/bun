@@ -96,8 +96,6 @@ pub(super) const FAILED: u8 = 2;
 const REPORTS_UNMEASURABLE: u8 = 8;
 const REPORTS_UNRELIABLE: u8 = 16;
 pub(super) const COMPLEXITY_OVERFLOW: u8 = 32;
-pub(super) const STACK_DEPTH_OVERFLOW: u8 = 64;
-const OVERFLOW: u8 = COMPLEXITY_OVERFLOW | STACK_DEPTH_OVERFLOW;
 
 // VarianceFlags
 pub(super) const INVARIANT: u8 = 0;
@@ -229,8 +227,6 @@ pub(super) struct Relater {
     pub(super) overflow: bool,
     /// A cached `COMPLEXITY_OVERFLOW` entry answered one of the comparisons.
     hit_cached_overflow: bool,
-    /// `len(r.sourceStack)` or `len(r.targetStack)` reached 100, which is why `overflow` is set.
-    is_too_deep: bool,
     /// `related` has already applied its own rules to `top_source` and `top_target`: no simple rule
     /// relates them, and they are not an object type and a primitive. Consumed by the first
     /// comparison.
@@ -275,7 +271,6 @@ impl Relater {
             expanding: 0,
             overflow: false,
             hit_cached_overflow: false,
-            is_too_deep: false,
             is_from_related: false,
             top_key: None,
             relation_count: 2_000_000,
@@ -1079,10 +1074,9 @@ impl<'p, 's> Checker<'p, 's> {
         r.caches_failures = is_trial;
         let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, STATE_NONE);
         let overflow = r.overflow;
-        // `relationCount <= 0`. Running out of nesting depth or native stack is not a complexity overflow.
+        // `relationCount <= 0`. Running out of native stack is not a complexity overflow.
         let is_too_complex = overflow && r.relation_count <= 0 && self.cycles == r.cycles;
         let hit_cached_overflow = r.hit_cached_overflow;
-        let is_too_deep = overflow && std::mem::take(&mut r.is_too_deep) && !is_trial;
         r.is_from_related = false;
         r.top_key = None;
         r.maybe_keys.clear();
@@ -1098,17 +1092,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.free_relaters.push(r);
         self.end_comparison(is_outermost);
-        self.relation_too_deep = is_too_deep;
-        if is_too_complex || is_too_deep {
-            let (code, kind) = match is_too_complex {
-                true => (2859, COMPLEXITY_OVERFLOW),
-                false => (2321, STACK_DEPTH_OVERFLOW),
-            };
-            self.set_relation_overflow(source, target, relation, kind);
+        if is_too_complex {
+            self.set_relation_overflow(source, target, relation, COMPLEXITY_OVERFLOW);
             self.relation_too_complex |= is_too_complex;
             if !is_trial {
                 let types = [Arg::Type(source), Arg::Type(target)];
-                self.error_about_comparison_at_current_node(code, &types);
+                self.error_about_comparison_at_current_node(2859, &types);
             }
         } else if hit_cached_overflow && !overflow && !result.holds() {
             // `reportRelationError`: the overflow replaces the relation error only if it was recorded for `source` and `target`.
@@ -3750,16 +3739,11 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if let Some(entry) = cached
             // A cached failure is recomputed to produce its error elaboration.
-            && !(REPORT && entry & FAILED != 0 && entry & OVERFLOW == 0)
+            && !(REPORT && entry & FAILED != 0 && entry & COMPLEXITY_OVERFLOW == 0)
         {
             self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
-            if REPORT && entry & OVERFLOW != 0 {
-                let code = if entry & COMPLEXITY_OVERFLOW != 0 {
-                    2859
-                } else {
-                    2321
-                };
-                self.report_error(r, code, &[Arg::Type(source), Arg::Type(target)]);
+            if REPORT && entry & COMPLEXITY_OVERFLOW != 0 {
+                self.report_error(r, 2859, &[Arg::Type(source), Arg::Type(target)]);
             }
             if entry & COMPLEXITY_OVERFLOW != 0 {
                 // The comparison was aborted when it ran.
@@ -3787,9 +3771,12 @@ impl<'p, 's> Checker<'p, 's> {
                 return Ternary::MAYBE;
             }
         }
-        let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
-        if is_too_deep || self.is_stack_low() {
-            r.is_too_deep |= is_too_deep;
+        if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
+            // The relation depth limit is indeterminate, not proof that the types differ.
+            r.maybe_keys_set.remove(&key);
+            return Ternary::MAYBE;
+        }
+        if self.is_stack_low() {
             r.maybe_keys_set.remove(&key);
             r.overflow = true;
             return Ternary::FALSE;
@@ -3850,7 +3837,7 @@ impl<'p, 's> Checker<'p, 's> {
             // A result that is false under assumptions is false without them, and so is one that
             // an overflow has cut off. Not so where the native stack ran low, which is no overflow
             // in typescript-go.
-            let is_cut_short = r.overflow && !r.is_too_deep && r.relation_count > 0;
+            let is_cut_short = r.overflow && r.relation_count > 0;
             if r.caches_failures {
                 if !is_cut_short {
                     r.failed.insert(key);
@@ -3877,13 +3864,11 @@ impl<'p, 's> Checker<'p, 's> {
         source: TypeId,
         target: TypeId,
     ) -> Option<u32> {
-        let (code, kind) = match () {
-            _ if r.relation_count <= 0 => (2859, COMPLEXITY_OVERFLOW),
-            _ if r.is_too_deep => (2321, STACK_DEPTH_OVERFLOW),
-            _ => return None,
-        };
-        self.set_relation_overflow(source, target, r.relation, kind);
-        Some(code)
+        if r.relation_count > 0 {
+            return None;
+        }
+        self.set_relation_overflow(source, target, r.relation, COMPLEXITY_OVERFLOW);
+        Some(2859)
     }
 
     /// `relation.set(id, RelationComparisonResultFailed|kind)` of `checkTypeRelatedToEx`. It
@@ -3964,13 +3949,11 @@ impl<'p, 's> Checker<'p, 's> {
         if stack.len() < max_depth {
             return false;
         }
-        let (t, data) = self.mapped_target_with_symbol(t);
-        if let TypeData::Intersection(parts) = data
-            && parts
+        let (t, data) = self.recursion_identity_target(t);
+        if let TypeData::Intersection(parts) = data {
+            return parts
                 .iter()
-                .any(|&p| self.is_deeply_nested_type(p, stack, max_depth))
-        {
-            return true;
+                .any(|&p| self.is_deeply_nested_type(p, stack, max_depth));
         }
         let identity = self.recursion_identity_as(t, data);
         let mut count = 0;
@@ -4038,11 +4021,15 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// `recursion_identity`. `NOT_PLAIN` for a mapped type, which uses the type it is applied to,
-    /// and for an intersection, which uses its members.
+    /// `recursion_identity`. Mapped types and indexed accesses use their target; intersections use their members.
     fn plain_recursion_identity(&self, t: TypeId) -> RecursionId {
         let data = self.data(t);
-        if is_mapped_kind(data) || matches!(data, TypeData::Intersection(_)) {
+        if is_mapped_kind(data)
+            || matches!(
+                data,
+                TypeData::Intersection(_) | TypeData::IndexedAccess { .. }
+            )
+        {
             NOT_PLAIN
         } else {
             self.recursion_identity_as(t, data)
@@ -4060,18 +4047,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getMappedTargetWithSymbol`: the type a homomorphic mapped type is applied to, through any
-    /// number of nested ones, provided that type has a symbol. `Id<{ x: .. }>` is then
-    /// distinguished by the type literal it is applied to. Returned with its `TypeData`.
+    /// `getRecursionIdentityTarget`: indexed accesses and mapped types share their target's identity.
     #[inline]
-    fn mapped_target_with_symbol(&mut self, t: TypeId) -> (TypeId, &'p TypeData<'p>) {
-        let data = self.data(t);
-        if is_mapped_kind(data) {
-            let t = self.target_with_symbol_of_mapped(t);
-            (t, self.data(t))
-        } else {
-            (t, data)
+    fn recursion_identity_target(&mut self, mut t: TypeId) -> (TypeId, &'p TypeData<'p>) {
+        while let TypeData::IndexedAccess { obj, .. } = self.data(t) {
+            t = *obj;
         }
+        if is_mapped_kind(self.data(t)) {
+            // This walk cannot return an indexed access; do not restart its circular-alias limit.
+            t = self.target_with_symbol_of_mapped(t);
+        }
+        (t, self.data(t))
     }
 
     fn target_with_symbol_of_mapped(&mut self, of: TypeId) -> TypeId {
@@ -4118,7 +4104,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `hasMatchingRecursionIdentity`
     fn has_matching_recursion_identity(&mut self, t: TypeId, identity: RecursionId) -> bool {
-        let (t, data) = self.mapped_target_with_symbol(t);
+        let (t, data) = self.recursion_identity_target(t);
         match data {
             TypeData::Intersection(parts) => parts
                 .iter()
@@ -4163,8 +4149,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getRecursionIdentity`
-    pub(super) fn recursion_identity(&self, t: TypeId) -> RecursionId {
-        self.recursion_identity_as(t, self.data(t))
+    pub(super) fn recursion_identity(&mut self, t: TypeId) -> RecursionId {
+        let (t, data) = self.recursion_identity_target(t);
+        self.recursion_identity_as(t, data)
     }
 
     /// `data`: the `TypeData` of `t`.
@@ -4214,14 +4201,6 @@ impl<'p, 's> Checker<'p, 's> {
                 (5, flags.len() as u32, hasher.finish() as u32)
             }
             TypeData::Cond { file, node, .. } => (2, file.0, node.0),
-            TypeData::IndexedAccess { obj, .. } => {
-                // The leftmost object type: `A` in `A[P1][P2][P3]`.
-                let mut of = *obj;
-                while let TypeData::IndexedAccess { obj, .. } = self.data(of) {
-                    of = *obj;
-                }
-                (0, of.0, 0)
-            }
             _ => (0, t.0, 0),
         }
     }

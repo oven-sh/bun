@@ -5,7 +5,7 @@ use crate::stack::Stack;
 use bun_lint::ast::{Expr, ExprKind, File, Key, KeyKind, Pat, PatKind, PropKind, StmtKind};
 
 /// What it throws for: `unknown node type`.
-pub(crate) struct Unknown;
+struct Unknown;
 
 struct Expander<'f, 's> {
     file: &'f File<'f>,
@@ -59,7 +59,7 @@ impl<'f> Expander<'f, '_> {
         self.pattern(pattern)?;
         if let Some(default) = default {
             self.push(b" =");
-            self.expression(default)?;
+            self.expression(default);
         }
         Ok(())
     }
@@ -124,8 +124,18 @@ impl<'f> Expander<'f, '_> {
         }
     }
 
-    /// A default value. Only names, literals, arrays and objects are known.
-    fn expression(&mut self, e: Expr<'f>) -> Result<(), Unknown> {
+    /// A default value. The plugin knows names, literals, arrays and objects, and throws for `a = -1`. Here that is as it is
+    /// written.
+    fn expression(&mut self, e: Expr<'f>) {
+        let start = self.out.len();
+        if self.known_expression(e).is_err() {
+            self.out.truncate(start);
+            self.push(b" ");
+            self.push(self.file.slice(e.outer_span()));
+        }
+    }
+
+    fn known_expression(&mut self, e: Expr<'f>) -> Result<(), Unknown> {
         if !self.stack.has_room() {
             return Ok(());
         }
@@ -150,7 +160,10 @@ impl<'f> Expander<'f, '_> {
                         it.push(b" ");
                         Ok(())
                     }
-                    _ => it.expression(element),
+                    _ => {
+                        it.expression(element);
+                        Ok(())
+                    }
                 })?;
                 self.remove_first_from(start);
                 self.push(b"]");
@@ -166,7 +179,8 @@ impl<'f> Expander<'f, '_> {
                         return Err(Unknown);
                     }
                     it.key(key);
-                    it.expression(value)
+                    it.expression(value);
+                    Ok(())
                 })?;
                 self.push(b" }");
                 Ok(())
@@ -182,10 +196,11 @@ pub(crate) fn expand(
     pattern: &[u8],
     is_typescript: bool,
     stack: &Stack,
-) -> Result<Vec<u8>, Unknown> {
+) -> Vec<u8> {
+    let as_written = || [b" ", pattern].concat();
     // Most are a name.
     if bun_lint::utils::text::is_identifier_name(pattern) {
-        return Ok([b" ", pattern].concat());
+        return as_written();
     }
     let program = [b"function _(", pattern, b"\n) {}"].concat();
     let path: &[u8] = if is_typescript {
@@ -206,7 +221,6 @@ pub(crate) fn expand(
         };
         // The plugin loses them.
         if file.comments().into_iter().next().is_some() {
-            expanded = Some([b" ", pattern].concat());
             return;
         }
         let mut expander = Expander {
@@ -218,5 +232,5 @@ pub(crate) fn expand(
             expanded = Some(expander.out);
         }
     });
-    expanded.ok_or(Unknown)
+    expanded.unwrap_or_else(as_written)
 }

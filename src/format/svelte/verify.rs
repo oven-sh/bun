@@ -10,15 +10,13 @@
 //! - There are as many comments: in the markup, between attributes, and around expressions.
 
 use super::Parsers;
-use super::ast::{Expression, FragmentId, Id, Kind, Pattern, Span, Tree, Value};
-use super::snip::{self, ATTRIBUTE};
+use super::ast::{Expression, ExpressionKind, FragmentId, Id, Kind, Pattern, Span, Tree, Value};
 use crate::html::verify::{Reader, Signature};
 use bun_core::strings;
 
 struct Check<'t, 'a> {
     tree: &'t Tree<'a>,
     text: &'a [u8],
-    contents: &'a [Vec<u8>],
     reader: Reader,
     comments: u32,
 }
@@ -34,9 +32,7 @@ enum Next {
 impl Check<'_, '_> {
     #[optimize(size)]
     fn span(&mut self, span: Span) {
-        // There can be a `<script>` in a string.
-        let text = snip::unsnip(span.of(self.text), self.contents);
-        self.reader.count(&text);
+        self.reader.count(span.of(self.text));
     }
 
     /// Counts the comments from `start` to `end`, where no `/` is anything else than part of one.
@@ -92,6 +88,11 @@ impl Check<'_, '_> {
         }
     }
 
+    #[optimize(size)]
+    fn is_name(&self, expression: Expression, name: &[u8]) -> bool {
+        expression.kind == ExpressionKind::Identifier && expression.span.of(self.text) == name
+    }
+
     /// The expression of a tag that is all there is to a value.
     #[optimize(size)]
     fn lone_expression(&self, value: &Value) -> Option<Expression> {
@@ -127,27 +128,10 @@ impl Check<'_, '_> {
 
     #[optimize(size)]
     fn attributes(&mut self, attributes: &[Id]) {
-        let (tree, contents) = (self.tree, self.contents);
+        let tree = self.tree;
         for &id in attributes {
             let node = &tree[id];
             match &node.kind {
-                // What has been in the element.
-                Kind::Attribute { name, value } if *name == ATTRIBUTE => {
-                    let index = match value {
-                        Value::Parts(parts) => match parts[..] {
-                            [part] => match &tree[part].kind {
-                                Kind::Text { raw } => std::str::from_utf8(raw).ok(),
-                                _ => None,
-                            },
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    let content = index
-                        .and_then(|it| it.parse::<usize>().ok())
-                        .and_then(|it| contents.get(it));
-                    self.reader.count(content.map_or(&b""[..], |it| &it[..]));
-                }
                 Kind::Attribute { name, value } => {
                     self.reader.mark(2);
                     self.reader.name(b"", name);
@@ -164,12 +148,12 @@ impl Check<'_, '_> {
                     for modifier in modifiers {
                         self.reader.name(b"|", modifier);
                     }
-                    // `let:a={a}` is `let:a`.
+                    // `let:a={a}` is `let:a`. `class:a-b={a-b}` is not `class:a-b`.
                     match *expression {
-                        Some(expression) if expression.span.of(self.text) != *name => {
-                            self.expression(expression);
+                        Some(expression) if self.is_name(expression, name) => {
+                            self.comments_around(expression);
                         }
-                        Some(expression) => self.comments_around(expression),
+                        Some(expression) => self.expression(expression),
                         None => {}
                     }
                 }
@@ -185,7 +169,7 @@ impl Check<'_, '_> {
                     }
                     // `style:color={color}` is `style:color`.
                     match self.lone_expression(value) {
-                        Some(expression) if expression.span.of(self.text) == *name => {
+                        Some(expression) if self.is_name(expression, name) => {
                             self.comments_around(expression);
                         }
                         _ => self.value(value),
@@ -234,8 +218,10 @@ impl Check<'_, '_> {
             Kind::Element(element) => {
                 self.reader.mark(10 + element.kind as u8);
                 self.reader.name(b"", element.name);
-                if let Some(this) = element.this {
-                    self.expression(this);
+                match (element.this_with_more, element.this) {
+                    (Some(written), _) => self.span(written),
+                    (None, Some(this)) => self.expression(this),
+                    (None, None) => {}
                 }
                 self.attributes(&element.attributes);
                 fragments[0] = Some(Some(element.fragment));
@@ -243,13 +229,19 @@ impl Check<'_, '_> {
             Kind::Script {
                 is_module,
                 attributes,
+                content,
             } => {
                 self.reader.mark(40 + u8::from(*is_module));
                 self.attributes(attributes);
+                self.span(*content);
             }
-            Kind::StyleSheet { attributes } => {
+            Kind::StyleSheet {
+                attributes,
+                content,
+            } => {
                 self.reader.mark(42);
                 self.attributes(attributes);
+                self.span(*content);
             }
             Kind::IfBlock {
                 is_else_if,
@@ -288,12 +280,12 @@ impl Check<'_, '_> {
             } => {
                 self.reader.mark(46);
                 self.expression(*expression);
-                // `{#await a}{:then b}` is `{#await a then b}`, and `{#await a then b}{/await}` is `{#await a}{/await}`.
-                let [pending, then, catch] =
-                    [pending, then, catch].map(|it| it.filter(|&it| !self.is_blank(it)));
+                // `{#await a}{:then b}` is `{#await a then b}`, and `{#await a then b}{/await}` is `{#await a}{/await}`. A
+                // `{:catch}` with nothing in it is not nothing.
+                let [pending, then] = [pending, then].map(|it| it.filter(|&it| !self.is_blank(it)));
                 self.pattern(value.filter(|_| then.is_some()));
                 self.pattern(error.filter(|_| catch.is_some()));
-                fragments = [Some(pending), Some(then), Some(catch)];
+                fragments = [Some(pending), Some(then), Some(*catch)];
             }
             Kind::KeyBlock {
                 expression,
@@ -336,12 +328,11 @@ impl Check<'_, '_> {
 
 #[optimize(size)]
 fn signature(text: &[u8], parsers: Parsers<'_>) -> Option<(Signature, u32)> {
-    let snipped = snip::snip(text);
-    let tree = parsers.tree_of(&snipped.text).ok()?;
+    let text = super::trimmed(text);
+    let tree = parsers.tree_of(text).ok()?;
     let mut check = Check {
         tree: &tree,
-        text: &snipped.text,
-        contents: &snipped.contents,
+        text,
         reader: Reader::default(),
         comments: 0,
     };

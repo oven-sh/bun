@@ -848,7 +848,7 @@ impl<'a> Parser<'a, '_> {
             attributes.push(attribute);
             self.allow_whitespace();
         }
-        let mut this = None;
+        let (mut this, mut this_with_more) = (None, None);
         if matches!(
             kind,
             ElementKind::SvelteComponent | ElementKind::SvelteElement
@@ -876,6 +876,12 @@ impl<'a> Parser<'a, '_> {
                     [] => return fail(Message::MissingThis, at),
                 },
             };
+            if !first.1 {
+                this_with_more = Some(Span {
+                    start: self.tree[definition].start,
+                    end: self.tree[definition].end,
+                });
+            }
             this = Some(match (&self.tree[first.0].kind, first.1) {
                 (Kind::ExpressionTag(expression), true) => *expression,
                 _ if is_component => return fail(Message::InvalidThis, at),
@@ -888,6 +894,16 @@ impl<'a> Parser<'a, '_> {
                     },
                     ExpressionKind::StringLiteral,
                 ),
+            });
+        }
+        if matches!(name, b"script" | b"style") {
+            // `/\slang=["']?ts["']?/`
+            self.tree.says_typescript |= attributes.iter().any(|&it| match &self.tree[it].kind {
+                Kind::Attribute {
+                    name: b"lang",
+                    value,
+                } => (self.text_of_attribute(value)).is_some_and(|it| it.starts_with(b"ts")),
+                _ => false,
             });
         }
         if is_top_level_script_or_style {
@@ -904,6 +920,8 @@ impl<'a> Parser<'a, '_> {
             attributes,
             fragment,
             this,
+            this_with_more,
+            start_tag_end: self.index as u32,
         };
         let id = self
             .tree
@@ -1235,21 +1253,26 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// `read_script`. What is in it has been snipped: it is `{}`.
-    fn read_script(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
-        // `/<\/script\s*>/`
-        let mut search = self.index;
-        let end = loop {
-            let Some(found) = strings::index_of(&self.text[search..self.len], b"</script") else {
-                return fail(Message::UnclosedElement, self.len);
+    /// Goes on behind `/<\/script\s*>/`, or the same for `</style`. Returns what is before it. `start`: of the element.
+    fn read_raw_content(&mut self, end_tag: &[u8], start: usize) -> Result<Span> {
+        let (from, mut search) = (self.index, self.index);
+        loop {
+            let Some(found) = strings::index_of(&self.text[search..self.len], end_tag) else {
+                return fail(Message::UnclosedElement, start);
             };
-            search += found + 8;
+            let content_end = search + found;
+            search = content_end + end_tag.len();
             let behind = strings::trim_js_whitespace_start(&self.text[search..self.len]);
             if behind.first() == Some(&b'>') {
-                break self.len - behind.len() + 1;
+                self.index = self.len - behind.len() + 1;
+                return Ok(Span::new(from, content_end));
             }
-        };
-        self.index = end;
+        }
+    }
+
+    /// `read_script`. What is in it is not parsed.
+    fn read_script(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
+        let content = self.read_raw_content(b"</script", start)?;
         let mut is_module = false;
         for &attribute in &attributes {
             let at = self.tree[attribute].start as usize;
@@ -1278,6 +1301,7 @@ impl<'a> Parser<'a, '_> {
         let kind = Kind::Script {
             is_module,
             attributes,
+            content,
         };
         let script = self.tree.add(kind, start, self.index);
         let slot = match is_module {
@@ -1290,13 +1314,14 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
-    /// `read_style`. What is in it has been snipped: nothing is.
+    /// `read_style`. What is in it is not parsed: it ends where it ends in HTML.
     fn read_style(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
-        self.allow_whitespace();
-        self.expect_end(b"</style", Message::UnclosedElement, start)?;
-        self.allow_whitespace();
-        self.eat(b">");
-        let style = (self.tree).add(Kind::StyleSheet { attributes }, start, self.index);
+        let content = self.read_raw_content(b"</style", start)?;
+        let kind = Kind::StyleSheet {
+            attributes,
+            content,
+        };
+        let style = self.tree.add(kind, start, self.index);
         if self.tree.css.replace(style).is_some() {
             return fail(Message::RepeatedElement, start);
         }
@@ -1959,6 +1984,8 @@ impl<'a> Parser<'a, '_> {
 /// before it.
 fn is_typescript(text: &[u8]) -> bool {
     let (mut at, mut has_comment_end) = (0, true);
+    // A `<script` before this has some of the attributes of one before it, and none of those is it.
+    let mut checked_until = 0;
     while let Some(found) = strings::index_of_char_usize(&text[at..], b'<') {
         at += found + 1;
         let rest = &text[at..];
@@ -1969,13 +1996,14 @@ fn is_typescript(text: &[u8]) -> bool {
             }
             continue;
         }
-        let Some(attributes) =
-            (rest.strip_prefix(b"script")).filter(|it| strings::js_whitespace_len(it) > 0)
+        let Some(attributes) = (rest.strip_prefix(b"script"))
+            .filter(|it| at >= checked_until && strings::js_whitespace_len(it) > 0)
         else {
             continue;
         };
+        // No tag ends from here on.
         let Some(end) = strings::index_of_char_usize(attributes, b'>') else {
-            continue;
+            return false;
         };
         let attributes = &attributes[..end];
         // The last `lang=` that has a value.
@@ -1995,13 +2023,15 @@ fn is_typescript(text: &[u8]) -> bool {
                 return &value[..len] == b"ts";
             }
         }
+        checked_until = at + 6 + end;
     }
     false
 }
 
 /// `parse(text, { modern: true })`
 pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
-    let text = strings::trim_js_whitespace_end(text);
+    // Svelte has `trimEnd()`, which takes a no-break space too.
+    let text = text.trim_ascii_end();
     js.start(is_typescript(text));
     let mut tree = Tree::default();
     // The first, which is what `tree.fragment` says.

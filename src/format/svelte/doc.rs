@@ -11,11 +11,11 @@ use std::borrow::Cow;
 pub(crate) enum Code<'a> {
     /// What `embed` makes of a node with `isJS`.
     Js(Js<'a>),
-    /// `textToDoc(content, { parser })`, without the line breaks at its end. `index`: which of what has been snipped it is.
+    /// `textToDoc(content, { parser })`, without the line breaks at its end. `start`: where it starts in the component.
     Body {
         content: &'a [u8],
         parser: Parser,
-        index: usize,
+        start: u32,
     },
 }
 
@@ -40,6 +40,14 @@ pub(crate) enum JsKind {
     Function,
 }
 
+/// The `{` of a tag.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Brace {
+    InMarkup,
+    /// In the value of an attribute, or in a `<textarea>`.
+    InValue,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Js<'a> {
     /// `getText(node, options, true)`
@@ -51,6 +59,8 @@ pub(crate) struct Js<'a> {
     pub(crate) is_on_one_line: bool,
     /// `removeParentheses`
     pub(crate) is_without_parentheses: bool,
+    /// It is right behind a `{`.
+    pub(crate) follows: Option<Brace>,
 }
 
 #[derive(Debug, Clone)]

@@ -145,6 +145,10 @@ pub(crate) struct Element<'a> {
     pub(crate) fragment: FragmentId,
     /// `expression` of `<svelte:component this={..}>`, `tag` of `<svelte:element this={..}>`.
     pub(crate) this: Option<Expression>,
+    /// The attribute `this`, if `this` is the first part of its value and there are more: `this="h{level}"`.
+    pub(crate) this_with_more: Option<Span>,
+    /// Where the `>` or the `/>` of the start tag is.
+    pub(crate) start_tag_end: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -218,9 +222,12 @@ pub(crate) enum Kind<'a> {
     Script {
         is_module: bool,
         attributes: Vec<Id>,
+        /// What is in it.
+        content: Span,
     },
     StyleSheet {
         attributes: Vec<Id>,
+        content: Span,
     },
 }
 
@@ -251,6 +258,8 @@ pub(crate) struct Tree<'a> {
     pub(crate) css: Option<Id>,
     /// Those between attributes.
     pub(crate) comments: Vec<Comment>,
+    /// `_svelte_ts` of the plugin: a `<script>` or a `<style>` says `lang="ts"`.
+    pub(crate) says_typescript: bool,
 }
 
 impl<'a> Tree<'a> {

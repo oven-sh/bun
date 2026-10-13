@@ -7,7 +7,6 @@ mod js;
 mod parser;
 mod pattern;
 mod print;
-mod snip;
 mod tailwind;
 mod verify;
 
@@ -64,7 +63,7 @@ impl<'p> Parsers<'p> {
         })
     }
 
-    /// The tree of `text`, which has been snipped.
+    /// The tree of `text`.
     fn tree_of<'a>(self, text: &'a [u8]) -> Result<ast::Tree<'a>, SyntaxError> {
         let mut tree = Err(SyntaxError(Message::UnexpectedToken, 0));
         (self.parts)(text, &mut |parse_part| {
@@ -99,14 +98,15 @@ pub fn format(
         out.extend_from_slice(original);
         return Ok(());
     }
-    let text = bun_core::strings::crlf_as_lf(without_mark);
-    let snipped = snip::snip(&text);
-    // `at`: in the snipped text.
-    let refuse = |SyntaxError(message, at): SyntaxError| {
-        let error = SyntaxError(message, snipped.place_in_source(at));
-        FormatError::SyntaxErrorAt(error.before_normalizing_end_of_line(without_mark))
+    let normalized = bun_core::strings::crlf_as_lf(without_mark);
+    let text = trimmed(&normalized);
+    // Where the byte at `at` of `text` is in the file.
+    let in_file = |SyntaxError(message, at): SyntaxError| {
+        let before = (normalized.len() - trimmed_start(&normalized).len()) as u32;
+        SyntaxError(message, before + at).before_normalizing_end_of_line(without_mark)
     };
-    let mut tree = parsers.tree_of(&snipped.text).map_err(refuse)?;
+    let refuse = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
+    let mut tree = parsers.tree_of(text).map_err(refuse)?;
     let host = FormatOptions {
         line_ending: options.line_ending.resolve(original),
         filepath: Some(options.filepath.clone().unwrap_or_else(|| path.into())),
@@ -114,26 +114,19 @@ pub fn format(
         ..options.clone()
     };
     let svelte = options.svelte;
-    let how = (parsers.program, snipped.is_typescript);
-    let sorted = (options.tailwind.as_deref())
-        .and_then(|it| tailwind::sort(&mut tree, &snipped.text, it, how));
-    let text = sorted.as_deref().unwrap_or(&snipped.text);
+    let is_typescript = tree.says_typescript;
+    let how = (parsers.program, is_typescript);
+    let sorted =
+        (options.tailwind.as_deref()).and_then(|it| tailwind::sort(&mut tree, text, it, how));
+    let text = sorted.as_deref().unwrap_or(text);
     let stack = Stack::for_tree();
     let mut expand =
-        |pattern: &[u8]| pattern::expand(parsers.program, pattern, snipped.is_typescript, &stack);
-    let printer = print::Printer::new(
-        tree,
-        (text, &snipped.contents[..]),
-        (&host, svelte),
-        &mut expand,
-        &stack,
-    );
-    let document = printer.print_root();
+        |pattern: &[u8]| pattern::expand(parsers.program, pattern, is_typescript, &stack);
+    let printer = print::Printer::new(tree, text, (&host, svelte), &mut expand, &stack);
+    let mut document = printer.print_root();
     if stack.ran_out() {
         return Err(FormatError::NestedTooDeeply);
     }
-    let mut document = document
-        .map_err(|print::Thrown(at)| refuse(SyntaxError(Message::CannotBeFormatted, at)))?;
     // Without `embed` the plugin knows names and nothing else of JavaScript, and throws for a script and for a style sheet.
     if options.embedded_language_formatting == EmbeddedLanguageFormatting::Off
         && !document.replace_code_by_names()
@@ -144,7 +137,7 @@ pub fn format(
     let (stack, unformatted) = (Stack::new(), Default::default());
     let how = code::How {
         options: &host,
-        is_typescript: snipped.is_typescript,
+        is_typescript,
         indents_script_and_style: svelte.indents_script_and_style,
         script_flavor: options.flavor,
         stack: &stack,
@@ -165,12 +158,9 @@ pub fn format(
     if stack.ran_out() {
         return Err(FormatError::NestedTooDeeply);
     }
-    for (index, message, at) in unformatted.take() {
-        if let Some(start) = snipped.start_of_content(index) {
-            let place = SyntaxError(Message::UnexpectedToken, start + at);
-            let at = place.before_normalizing_end_of_line(without_mark).1;
-            scratch.unformatted.push(Unformatted { message, at });
-        }
+    for (message, at) in unformatted.take() {
+        let at = in_file(SyntaxError(Message::UnexpectedToken, at)).1;
+        scratch.unformatted.push(Unformatted { message, at });
     }
     // Scripts are written first, wherever they are.
     crate::sort::sort_by_key(&mut scratch.unformatted, |it| it.at);
@@ -178,6 +168,16 @@ pub fn format(
         out.extend_from_slice(crate::text::BOM);
     }
     crate::ir::run::print(root, text, &host, &mut scratch.document, out)
+}
+
+/// Without the white space of HTML at its start. The plugin takes all that is white space to JavaScript off both ends, a
+/// no-break space too, which is text.
+fn trimmed_start(text: &[u8]) -> &[u8] {
+    text.trim_ascii_start()
+}
+
+fn trimmed(text: &[u8]) -> &[u8] {
+    trimmed_start(text).trim_ascii_end()
 }
 
 fn prepared(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {

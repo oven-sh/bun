@@ -1,10 +1,11 @@
 //! The code in a component: the plugin's `embed.ts`, from `textToDoc` on.
 
-use super::doc::{self, Code, Js, JsKind, Parser};
+use super::doc::{self, Brace, Code, Js, JsKind, Parser};
 use super::print::preformatted_body;
 use crate::html::js::{self, Hug, Parse, Piece, SourceType, Syntax};
 use crate::html::writer::Writer;
 use crate::js::format::{ExprOptions, write_expression};
+use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::print::function::{FormatFunctionOptions, write_function};
 use crate::options::{Flavor, HtmlRoot, InHtml};
 use crate::prelude::*;
@@ -26,9 +27,44 @@ pub(crate) struct How<'o> {
     pub(crate) stack: &'o Stack,
     /// Parses a program.
     pub(crate) parse: Parse<'o>,
-    /// What has stayed as it is because it cannot be parsed: which of what has been snipped, what is wrong with it, and where
-    /// in it.
-    pub(crate) unformatted: &'o RefCell<Vec<(usize, Vec<u8>, u32)>>,
+    /// What has stayed as it is because it cannot be parsed: what is wrong with it, and where in the component.
+    pub(crate) unformatted: &'o RefCell<Vec<(Vec<u8>, u32)>>,
+}
+
+/// Whether what `e` is printed as starts with what is something else to Svelte behind `brace`: `{/a/.test(b)}` ends a block,
+/// `{#a in b}` starts one, `{@a class {}}` is a tag, `{let[0]}` a declaration. The plugin prints these.
+fn starts_like_a_tag<'a>(mut e: Expr<'a>, brace: Brace, f: &Formatter<'a>) -> bool {
+    loop {
+        if needs_parentheses(e, f) {
+            return false;
+        }
+        e = match e.kind() {
+            ExprKind::Regex(_) => return brace == Brace::InMarkup,
+            ExprKind::Ident(name) => {
+                return brace == Brace::InMarkup && name.is_any(&["let", "interface"]);
+            }
+            ExprKind::PrivateIdentifier(_) => return true,
+            ExprKind::Class(class) => return class.decorators().next().is_some(),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => call.callee(),
+            ExprKind::Binary { left, .. } => left,
+            ExprKind::Assign { target, .. } => target,
+            ExprKind::Cond { test, .. } => test,
+            ExprKind::Unary {
+                op: UnOp::PostInc | UnOp::PostDec,
+                operand,
+            } => operand,
+            ExprKind::As { expr, .. } | ExprKind::AsConst(expr)
+                if !e.is_angle_bracket_assertion() =>
+            {
+                expr
+            }
+            ExprKind::Satisfies { expr, .. }
+            | ExprKind::NonNull(expr)
+            | ExprKind::Instantiation { expr, .. } => expr,
+            _ => return false,
+        };
+    }
 }
 
 /// `textToDoc(forceIntoExpression(text), ..)`, and what is done to the document. Returns whether a `//` comment is the last
@@ -63,7 +99,14 @@ fn write_js_expression(
             let comments = f.comments().unprinted_comments();
             ends_with_line_comment =
                 (comments.last()).is_some_and(|it| it.is_line() && it.span.start >= e.span().end);
+            let is_in_parentheses =
+                (js.follows).is_some_and(|brace| starts_like_a_tag(e, brace, f));
             let content = format_with(|f| {
+                if is_in_parentheses {
+                    write!(f, ["(", e, ")"]);
+                    let rest = f.comments().unprinted_comments();
+                    return write!(f, FormatTrailingComments::Comments(rest));
+                }
                 match js.is_without_parentheses {
                     // `removeParentheses` takes a block comment at the start for one that never ends, and leaves the
                     // parentheses, which Svelte refuses around the two functions of a `bind:`.
@@ -233,7 +276,7 @@ fn in_words(SyntaxError(message, at): SyntaxError) -> (Vec<u8>, u32) {
 
 /// `formatBodyContent`
 fn write_body(
-    (content, index): (&[u8], usize),
+    (content, start): (&[u8], u32),
     parser: Parser,
     out: &mut Writer<'_, '_>,
     how: &How<'_>,
@@ -280,7 +323,7 @@ fn write_body(
     // The plugin writes the error to stderr, and leaves what is in the tag as it is.
     let is_written = written == Ok(true);
     if let Err((message, at)) = written {
-        how.unformatted.borrow_mut().push((index, message, at));
+        how.unformatted.borrow_mut().push((message, start + at));
     }
     if !out.end_attempt(attempt, is_written) {
         let mut write = doc::Write {
@@ -297,7 +340,7 @@ pub(crate) fn write_code(code: &Code<'_>, out: &mut Writer<'_, '_>, how: &How<'_
         Code::Body {
             content,
             parser,
-            index,
-        } => write_body((content, *index), *parser, out, how),
+            start,
+        } => write_body((content, *start), *parser, out, how),
     }
 }

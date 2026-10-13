@@ -50,7 +50,7 @@ function problem(file: string, message: string, at?: [line: number, column: numb
   if (!at) return `error: ${message}\n    at ${file}`;
   const [line, column] = at;
   const text = at[2].trimEnd();
-  const shown = text && `${line} | ${text}\n${" ".repeat(`${line} | `.length + column - 1)}^\n`;
+  const shown = text && `${line} | ${text}\n${Buffer.alloc(`${line} | `.length + column - 1, " ").toString()}^\n`;
   return `${shown}error: ${message}\n    at ${file}:${line}:${column}`;
 }
 
@@ -2730,7 +2730,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         "YAML: 40 mappings with a comment behind the key",
         "a.yaml",
         {},
-        Array.from({ length: 40 }, (_, i) => `${" ".repeat(i)}a: # c\n`).join("") + `${" ".repeat(40)}b: c\n`,
+        Array.from({ length: 40 }, (_, i) => `${Buffer.alloc(i, " ").toString()}a: # c\n`).join("") + `${Buffer.alloc(40, " ").toString()}b: c\n`,
         "ed218e0b39393da450552421d2345f583eb8689a",
       ],
       [
@@ -2899,7 +2899,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     });
 
     test("the line of a syntax error is shown, however long it is", async () => {
-      const text = `a{${"b:c;".repeat(250)}}}`;
+      const text = `a{${Buffer.alloc(1000, "b:c;").toString()}}}`;
       const result = await format({ "a.css": text }, ["a.css"]);
       expect(result.stderr).toStartWith(problem("a.css", 'Unexpected "}"', [1, 1_004, text]) + "\n\n");
       expect(result.exitCode).toBe(2);
@@ -5986,7 +5986,7 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     const result = await format(files, reads, { reads });
     expect(result.files).toEqual(
       Object.fromEntries(
-        directories.map(i => [`d${i}/a.js`, `if (a) {\n${" ".repeat((i % 4) + 1)}b${i % 2 === 0 ? ";" : ""}\n}\n`]),
+        directories.map(i => [`d${i}/a.js`, `if (a) {\n${Buffer.alloc((i % 4) + 1, " ").toString()}b${i % 2 === 0 ? ";" : ""}\n}\n`]),
       ),
     );
     expect(result.exitCode).toBe(0);

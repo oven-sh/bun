@@ -13,7 +13,8 @@
 //! - All that is text has the same letters as often: comments, scripts, style sheets.
 //! - There are as many comments: in the markup, between attributes, and in and around the code in the markup, where
 //!   `prettier-plugin-svelte` loses them: `{a /* b */}`.
-//! - The value of an attribute is the same byte for byte, that of `class` word for word.
+//! - The value of an attribute is the same byte for byte. That of `class` and of a `style:` directive is the same word for
+//!   word: it is broken into lines like text.
 //! - The text of the markup has the same words in the same order, with white space between the same of them, and between
 //!   them and what is next to them. White space is nothing next to a block element, and at the ends of the markup, of a
 //!   block element and of a component, also where it is in an inline element that is the first or the last thing there. In
@@ -176,14 +177,14 @@ impl Check<'_, '_> {
         }
     }
 
-    /// `is_class`: the white space in it is free to change.
+    /// `is_in_words`: the white space in it is free to change.
     #[optimize(size)]
-    fn value(&mut self, value: &Value, is_class: bool) {
+    fn value(&mut self, value: &Value, is_in_words: bool) {
         let tree = self.tree;
         for &part in value.parts() {
             let node = &tree[part];
             match &node.kind {
-                Kind::Text { raw } if is_class => (strings::split_any(raw, b" \t\n\r\x0C"))
+                Kind::Text { raw } if is_in_words => (strings::split_any(raw, b" \t\n\r\x0C"))
                     .filter(|it| !it.is_empty())
                     .for_each(|it| self.reader.exact(it)),
                 Kind::Text { raw } => self.reader.exact(raw),
@@ -248,7 +249,7 @@ impl Check<'_, '_> {
                         Some(expression) if self.is_name(expression, name) => {
                             self.comments_around(expression);
                         }
-                        _ => self.value(value, false),
+                        _ => self.value(value, true),
                     }
                 }
                 Kind::SpreadAttribute(expression) => {

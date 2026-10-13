@@ -3,7 +3,7 @@ use bun_lint::types::tsutils::{
     is_intersection_type, is_literal_type, is_object_flag_set, is_object_type, is_type_flag_set,
 };
 use bun_lint::types::utils::type_is_or_has_base_type;
-use bun_lint::types::{IdMap, IdSet, ObjectFlags, Type, TypeFlags};
+use bun_lint::types::{IdMap, IdSet, NameOf, ObjectFlags, Type, TypeFlags};
 use bun_lint::utils::eslint_utils::find_variable;
 use bun_lint::utils::ts_scope::is_type_definition;
 use bun_lint::utils::ts_utils::{
@@ -427,7 +427,14 @@ fn get_type_annotation<'a>(member: Member<'a>, key: Key<'a>) -> Option<Vec<u8>> 
     if is_type_flag_set(initializer_type, TypeFlags::ENUM_LITERAL) {
         let variable = find_variable(Node::Member(member).scope(), &annotation)?;
         let definition = variable.declarations().find(|it| is_type_definition(*it))?;
-        if definition.node()?.ty() != violating_type {
+        let definition_type = match definition {
+            // tsgolint resolves the name through the import to the enum.
+            Declaration::ImportSpec(specifier) if member.file().language().is_oxlint => {
+                NameOf(specifier).ts_symbol()?.skip_alias().get_declared_type()
+            }
+            _ => definition.node()?.ty(),
+        };
+        if definition_type != violating_type {
             return None;
         }
     }
@@ -461,14 +468,13 @@ fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
     };
     let name_node = key.inner_span(file);
     let is_property_definition = !member.flags().contains(Flags::ABSTRACT);
-    let mut loc = match is_property_definition {
-        true => get_member_head_loc(member),
-        false => member.span(),
+    let is_oxlint = cx.language().is_oxlint;
+    let loc = match (is_oxlint, is_property_definition) {
+        // tsgolint has every property from its decorators to the end of its name.
+        (true, _) => Span::new(member.span().start, key.span(file).end),
+        (false, true) => get_member_head_loc(member),
+        (false, false) => member.span(),
     };
-    // oxlint points at the decorators.
-    if cx.language().is_oxlint {
-        loc.start = member.span().start;
-    }
     let has_constructor_modifications = violating.has_constructor_modifications;
     cx.report(loc, PREFER_READONLY)
         .data("name", file.slice(name_node))
@@ -478,12 +484,21 @@ fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
                 false => name_node,
             };
             let mut fixes = vec![fixer.insert_before(readonly_insertion_target, "readonly ")];
-            if is_property_definition
+            // tsgolint annotates an abstract property as well.
+            if (is_property_definition || is_oxlint)
                 && has_constructor_modifications
                 && let Some(type_annotation) = get_type_annotation(member, key)
             {
+                // tsgolint writes the type before the `?` of `x? = 1`, which cannot be parsed.
+                let question_or_exclamation = is_oxlint
+                    .then(|| skip_trivia(file.text(), name_node.end))
+                    .filter(|&at| matches!(file.text().get(at as usize), Some(b'?' | b'!')));
+                let annotated = match question_or_exclamation {
+                    Some(at) => Span::new(at, at + 1),
+                    None => name_node,
+                };
                 fixes.push(
-                    fixer.insert_after(name_node, [&b": "[..], &type_annotation[..]].concat()),
+                    fixer.insert_after(annotated, [&b": "[..], &type_annotation[..]].concat()),
                 );
             }
             fixes
@@ -594,13 +609,18 @@ impl Rule for PreferReadonly {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // tsgolint reports the statics of a class after its other members.
+        let passes: &[Option<bool>] = match cx.language().is_oxlint {
+            true => &[Some(false), Some(true)],
+            false => &[None],
+        };
         for class_scope in utils::sort::in_order_of(&cx.state.scopes, |it| it.class.span().start) {
-            for violating in class_scope
-                .private_modifiables
-                .iter()
-                .filter(|it| !it.is_modified)
-            {
-                report(cx, violating);
+            for &statics in passes {
+                for violating in class_scope.private_modifiables.iter().filter(|it| {
+                    !it.is_modified && statics.is_none_or(|statics| it.is_static == statics)
+                }) {
+                    report(cx, violating);
+                }
             }
         }
     }

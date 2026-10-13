@@ -41,7 +41,7 @@ fn use_splice<'a>(fixer: Fixer<'a>, node: Expr<'a>, object: Expr<'a>, key: Span,
 
 /// What tsgolint suggests: the `delete` goes, the `[` becomes `.splice(` and the `]` becomes `, 1)`.
 /// For `a?.[b]` tsgolint puts `.splice(` over the `?.` and keeps the `[`, which does not parse: here
-/// the `[` goes too. Nor does tsgolint add the `;` without which a `(` or `[` continues the line before.
+/// the `[` goes and the `?.` stays. Nor does tsgolint add the `;` without which a `(` or `[` continues the line before.
 fn use_splice_as_tsgolint<'a>(
     fixer: Fixer<'a>,
     node: Expr<'a>,
@@ -56,12 +56,14 @@ fn use_splice_as_tsgolint<'a>(
         && needs_preceding_semicolon(node);
     let open = file.token_after(object.outer_span())?;
     let close = file.last_token(argument)?;
+    let is_optional = open.is_punctuator("?.");
+    let call = if is_optional { "?.splice(" } else { ".splice(" };
     let mut changes = vec![
         fixer.replace(keyword, if add_semi_colon { ";" } else { "" }),
-        fixer.replace(open, ".splice("),
+        fixer.replace(open, call),
         fixer.replace(close, ", 1)"),
     ];
-    if open.is_punctuator("?.") {
+    if is_optional {
         changes.push(fixer.remove(file.token_after(open)?));
     }
     Some(changes)
@@ -89,7 +91,9 @@ impl Rule for NoArrayDelete {
             ExprKind::Dot { .. } if is_oxlint => return,
             ExprKind::Dot { obj, name, .. } => (obj, name.span(), false),
             ExprKind::Index { obj, index, .. } => {
-                (obj, index.span(), matches!(index.kind(), ExprKind::Binary { op: BinOp::Comma, .. }))
+                let is_sequence = matches!(index.kind(), ExprKind::Binary { op: BinOp::Comma, .. });
+                // The parentheses of `a[(b, c)]` stay in what tsgolint writes.
+                (obj, index.span(), is_sequence && !(is_oxlint && index.is_parenthesized()))
             }
             _ => return,
         };

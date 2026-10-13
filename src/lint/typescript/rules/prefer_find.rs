@@ -287,6 +287,23 @@ fn tsgolint_is_treated_as_zero_by_member_access(value: TsgolintStaticValue) -> b
     }
 }
 
+/// `delete filtered[0]`, also with `!`, `as`, `<T>` or `satisfies` between.
+fn is_operand_of_delete(e: Expr) -> bool {
+    let mut node = e;
+    loop {
+        let Node::Expr(parent) = node.parent() else {
+            return false;
+        };
+        match parent.kind() {
+            ExprKind::Unary { op: UnOp::Delete, .. } => return true,
+            ExprKind::NonNull(_) | ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => {
+                node = parent;
+            }
+            _ => return false,
+        }
+    }
+}
+
 impl PreferFind {
     /// `whole`: `object[0]`, `object.at(0)`
     fn report<'a>(
@@ -297,8 +314,8 @@ impl PreferFind {
     ) {
         let is_oxlint = cx.language().is_oxlint;
         cx.report(whole, PREFER_FIND).suggest(PREFER_FIND_SUGGESTION, |fixer| {
-            // tsgolint also suggests `a.find(f) = 1` and `a.find(f)++`, which do not parse.
-            if is_oxlint && (is_assignee(whole) || is_assignment_target(whole)) {
+            // tsgolint also suggests `a.find(f) = 1` and `a.find(f)++`, which do not parse. `delete a.find(f)` does.
+            if is_oxlint && (is_assignee(whole) || is_assignment_target(whole)) && !is_operand_of_delete(whole) {
                 return None;
             }
             // The `.` of `(..).at(0)`, the `[` of `(..)[0]` or `(..)["at"](0)`, the `?.` of `(..)?.at(0)`.

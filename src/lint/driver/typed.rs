@@ -655,6 +655,8 @@ struct Fixing {
     last_pass: Option<(Vec<RuleId>, bool, usize)>,
     /// With oxlint: `current` has the fixes of oxlint's own rules, and tsgolint's are next.
     is_after_own_fixes: bool,
+    /// What oxlint's own rules reported and did not fix, where it was before their fixes.
+    own_left: Vec<LintMessage>,
 }
 
 /// Whether tsgolint has the rule of the message.
@@ -682,6 +684,17 @@ pub(crate) fn lint(
             .zip(files)
             .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
         let linted = check_and_lint(context, environment, files, &pending, changed.collect());
+        // tsgolint lints every file after oxlint has written what its own rules fix in any of them.
+        let has_own_fix =
+            |it: &LintMessage| it.fix.is_some() && !is_of_tsgolint(it) && context.should_fix(it);
+        let is_before_own_fixes = pending.iter().zip(&linted).any(|(&index, linted)| {
+            let (file, state) = (&files[index], &states[index]);
+            file.config.language.is_oxlint
+                && !state.is_after_own_fixes
+                && !state.is_over
+                && context.fixes_file(file.path)
+                && matches!(linted, Some((result, Some(_))) if result.messages.iter().any(has_own_fix))
+        });
         let mut next = Vec::new();
         for (index, linted) in pending.iter().copied().zip(linted) {
             let (file, state) = (&files[index], &mut states[index]);
@@ -726,9 +739,30 @@ pub(crate) fn lint(
                 result.fixes = if is_fixed { fixes } else { 0 };
                 done[index] = Some(result);
             };
+            let is_oxlint = file.config.language.is_oxlint;
+            if is_oxlint && state.is_after_own_fixes {
+                // Only tsgolint has linted again.
+                result.messages.retain(is_of_tsgolint);
+                let own_left = std::mem::take(&mut state.own_left);
+                for it in &mut result.messages {
+                    it.reported += own_left.len() as u32;
+                }
+                result.messages.splice(0..0, own_left);
+            }
+            let waits_for_own_fixes =
+                is_oxlint && is_before_own_fixes && !state.is_after_own_fixes && !state.is_over;
             let has_fixes = context.fixes_file(file.path)
                 && !state.is_over
                 && result.messages.iter().any(|it| it.fix.is_some());
+            if waits_for_own_fixes
+                && !(has_fixes && text.is_some() && result.messages.iter().any(has_own_fix))
+            {
+                result.messages.retain(|it| !is_of_tsgolint(it));
+                state.own_left = result.messages;
+                state.is_after_own_fixes = true;
+                next.push(index);
+                continue;
+            }
             let (true, Some(text)) = (has_fixes, &text) else {
                 let text = state.current.take().or(text);
                 finish(result, text, (state.is_fixed, state.fixes));
@@ -740,10 +774,6 @@ pub(crate) fn lint(
             }
             let was_refused = result.messages.iter().any(|it| it.is_fatal);
             // oxlint applies the fixes of its own rules and writes the file, and tsgolint lints what is written.
-            let is_oxlint = file.config.language.is_oxlint;
-            let has_own_fix = |it: &LintMessage| {
-                it.fix.is_some() && !is_of_tsgolint(it) && context.should_fix(it)
-            };
             let fixes_of_tsgolint =
                 is_oxlint && (state.is_after_own_fixes || !result.messages.iter().any(has_own_fix));
             let fixed = apply_fixes(text, std::mem::take(&mut result.messages), &|message| {
@@ -754,6 +784,13 @@ pub(crate) fn lint(
             if file.config.language.is_oxlint {
                 // They are by place now.
                 bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| it.reported);
+            }
+            if !fixed.is_fixed && waits_for_own_fixes {
+                result.messages.retain(|it| !is_of_tsgolint(it));
+                state.own_left = result.messages;
+                state.is_after_own_fixes = true;
+                next.push(index);
+                continue;
             }
             if !fixed.is_fixed {
                 let text = state.current.take().or(Some(fixed.output));
@@ -781,6 +818,8 @@ pub(crate) fn lint(
                     continue;
                 }
                 if !fixes_of_tsgolint {
+                    result.messages.retain(|it| !is_of_tsgolint(it));
+                    state.own_left = result.messages;
                     state.current = Some(fixed.output);
                     state.is_fixed = true;
                     state.fixes += fixed.count;

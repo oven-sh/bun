@@ -1,10 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{is_intersection_type, is_object_type, is_union_type};
-use bun_lint::types::utils::{
-    ReadonlynessOptions, is_type_branded_literal_like, is_type_readonly, type_matches_some_specifier,
-};
+use bun_lint::types::utils::{self, ReadonlynessOptions, is_type_readonly, type_matches_some_specifier};
 use bun_lint::types::{
-    CheckFlags, IdMap, IdSet, ModifierFlags, NodeFlags, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type,
+    CheckFlags, IdMap, IdSet, ModifierFlags, NodeFlags, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags,
 };
 
 /// Require function parameters to be typed as `readonly` to prevent accidental mutation of inputs.
@@ -142,6 +140,41 @@ impl<'a> Recurser<'_, 'a> {
     }
 }
 
+/// tsgolint's `isLiteralOrTaggablePrimitiveLike`. Its `TypeFlagsLiteral` has `true` and `false`; `type.isLiteral()` has not.
+fn is_literal_or_taggable_primitive_like(ty: Type<'_>) -> bool {
+    ty.has_flags(TypeFlags::LITERAL)
+        || ty.has_flags(TypeFlags::BIG_INT | TypeFlags::NUMBER | TypeFlags::STRING | TypeFlags::TEMPLATE_LITERAL)
+}
+
+/// tsgolint's `isTypeBrandedLiteral`
+fn is_type_branded_literal(ty: Type<'_>) -> bool {
+    if !is_intersection_type(ty) {
+        return false;
+    }
+    let (mut had_object_like, mut had_primitive_like) = (false, false);
+    for constituent in ty.types() {
+        if is_object_type(constituent)
+            && constituent.get_call_signatures().is_empty()
+            && constituent.get_construct_signatures().is_empty()
+        {
+            had_object_like = true;
+        } else if is_literal_or_taggable_primitive_like(constituent) {
+            had_primitive_like = true;
+        } else {
+            return false;
+        }
+    }
+    had_object_like && had_primitive_like
+}
+
+/// tsgolint's `isTypeBrandedLiteralLike`
+fn is_type_branded_literal_like(ty: Type<'_>) -> bool {
+    match is_union_type(ty) {
+        true => ty.types().iter().all(is_type_branded_literal),
+        false => is_type_branded_literal(ty),
+    }
+}
+
 impl Rule for PreferReadonlyParameterTypes {
     const META: Meta = Meta::typescript("prefer-readonly-parameter-types", Kind::Suggestion).requires_types();
     const ON: On = On::new().funcs();
@@ -187,7 +220,11 @@ impl Rule for PreferReadonlyParameterTypes {
                         .is_type_readonly_recurser(ty),
                     false => is_type_readonly(ty, &self.readonlyness),
                 };
-                !is_readonly && !is_type_branded_literal_like(ty)
+                !is_readonly
+                    && !match is_oxlint {
+                        true => is_type_branded_literal_like(ty),
+                        false => utils::is_type_branded_literal_like(ty),
+                    }
             });
             if is_mutable {
                 // oxlint points at the decorators of what is no parameter property.

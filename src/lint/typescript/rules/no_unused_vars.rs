@@ -4,6 +4,7 @@ use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
 use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint::utils::oxlint::AmbientAncestors;
 use bun_lint::utils::ts_scope::{
     SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_unused_variables, collect_variables,
     has_rest_sibling, is_defined_in_array_pattern, is_referenced_in_array_pattern,
@@ -109,6 +110,11 @@ fn oxlint_counts_as_used<'a>(
             if is_type_only_reference(variable.symbol(), it) {
                 return !reports_vars_only_used_as_types
                     && oxlint_counts_type_query_as_use(variable, it);
+            }
+            if oxlint_is_in_what_declares(variable, it)
+                && oxlint_is_read_for_a_type(variable.symbol().file(), it)
+            {
+                return false;
             }
             it.is_read()
             && !(is_variable && oxlint_is_self_reassignment(variable, it, walks))
@@ -348,6 +354,40 @@ fn oxlint_counts_type_query_as_use(variable: Variable, reference: Reference) -> 
     is_type_only_reference(variable.symbol(), reference)
         && reference.expr().is_some()
         && !oxlint_is_in_what_declares(variable, reference)
+}
+
+/// The first identifier of an expression that is evaluated for no value: of the computed name of a member of an interface or
+/// a type literal, of an `abstract` or `declare` member of a class and of a member of a class that is declared, and of
+/// what such a class extends. For oxlint that is no use of the variable from its own declaration, as a type there is none.
+fn oxlint_is_read_for_a_type<'a>(file: &'a File<'a>, reference: Reference<'a>) -> bool {
+    let Some(name) = reference.expr() else {
+        return false;
+    };
+    // oxc's `in_ambient_context`
+    let is_ambient = |class: Class<'a>| {
+        file.is_declaration_file()
+            || class.flags().contains(Flags::AMBIENT)
+            || AmbientAncestors::default().has_ambient_typescript_ancestor(Node::Class(class))
+    };
+    let owner = Node::Expr(name)
+        .ancestors()
+        .find(|it| matches!(it, Node::Member(_) | Node::Class(_) | Node::Stmt(_)));
+    let evaluated = match owner {
+        Some(Node::Member(member)) => member.computed_key().filter(|_| {
+            member.is_signature()
+                || member.flags().intersects(Flags::ABSTRACT | Flags::AMBIENT)
+                || matches!(member.parent(), Node::Class(class) if is_ambient(class))
+        }),
+        Some(Node::Class(class)) => class.extends().filter(|_| is_ambient(class)),
+        _ => None,
+    };
+    evaluated.is_some_and(|e| {
+        let (start, at) = (e.span().start, name.span().start);
+        e.span().contains(name.span())
+            && !file
+                .references_within(Span::new(start, at))
+                .any(|it| it.expr().is_some())
+    })
 }
 
 /// Whether `reference` is in the first declaration of `variable`, which for a parameter is the parameter.

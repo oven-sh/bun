@@ -146,7 +146,10 @@ fn remove_await<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Vec<Fix> {
 }
 
 fn insert_await<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Vec<Fix> {
-    match is_higher_precedence_than_await(node) {
+    // tsgolint has the precedences of typescript-go, where `f<T>` is a member expression.
+    let is_instantiation =
+        node.file().language().is_oxlint && matches!(node.kind(), ExprKind::Instantiation { .. });
+    match is_instantiation || is_higher_precedence_than_await(node) {
         true => vec![fixer.insert_before(node, "await ")],
         false => vec![fixer.insert_before(node, "await ("), fixer.insert_after(node, ")")],
     }

@@ -633,7 +633,11 @@ impl NoBaseToString {
             return;
         };
         let expressions = template.exprs();
-        if expressions.is_empty() || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate) {
+        // tsgolint asks the parent, which is the ParenthesizedExpression of a tag in parentheses.
+        if expressions.is_empty()
+            || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate)
+                && !(cx.language().is_oxlint && node.is_parenthesized())
+        {
             return;
         }
         for expression in expressions {

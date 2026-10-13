@@ -116,26 +116,49 @@ fn awaits_in_key_or_decorator(func: Func) -> bool {
         .any(|it| span.contains(it.span()) && Node::from(it).enclosing_function() == Some(func))
 }
 
-/// tsgolint's `needsPrecedingSemicolon` for a member of a class: by the last character before it that is no white
-/// space, which can be the end of a comment.
-fn tsgolint_needs_preceding_semicolon(member: Member) -> bool {
-    let text = member.file().text();
+/// Whether `e` is the start of an expression statement in a list of statements, where a `;` before it is a statement
+/// of its own: not of one that is the body of an `if`, a loop or a `with`.
+fn starts_statement_in_list(e: Expr) -> bool {
+    let start = e.span().start;
+    Node::from(e)
+        .ancestors()
+        .take_while(|it| !matches!(it, Node::File(_)) && it.span().start == start)
+        .find_map(|it| it.as_stmt().filter(|statement| statement.tag() == StmtTag::Expr))
+        .is_some_and(|statement| {
+            !matches!(
+                statement.parent(),
+                Node::Stmt(parent)
+                    if parent.is_loop() || matches!(parent.kind(), StmtKind::If { .. } | StmtKind::With { .. })
+            )
+        })
+}
+
+/// tsgolint's `needsPrecedingSemicolon` for what starts at `start`: by the last character before it that is no white
+/// space, which can be the end of a comment. `None`: that is a `}`, where it depends on what the `}` ends.
+fn tsgolint_semicolon_by_last_character(text: &[u8], start: u32) -> Option<bool> {
     let before = text
-        .get(..member.span().start as usize)
+        .get(..start as usize)
         .unwrap_or_default()
         .trim_ascii_end();
     let Some(&last) = before.last() else {
-        return false;
+        return Some(false);
     };
     if matches!(last, b';' | b':' | b'{' | b',' | b'(' | b'[')
         || before.ends_with(b"=>")
         || before.ends_with(b"++")
         || before.ends_with(b"--")
     {
-        return false;
+        return Some(false);
     }
-    if last != b'}' {
-        return true;
+    (last != b'}').then_some(true)
+}
+
+/// tsgolint's `needsPrecedingSemicolon` for a member of a class.
+fn tsgolint_needs_preceding_semicolon(member: Member) -> bool {
+    let by_last_character =
+        tsgolint_semicolon_by_last_character(member.file().text(), member.span().start);
+    if let Some(needs_semicolon) = by_last_character {
+        return needs_semicolon;
     }
     // The `}` of the method, the accessor or the constructor before it.
     let Node::Class(class) = member.parent() else {
@@ -179,6 +202,18 @@ fn remove_async<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Option<Vec<Fix>> {
                 && ast_utils::can_continue_expression_in_class_body(&next_token)
                 && (ast_utils::needs_preceding_semicolon(node)
                     || next_token.is_punctuator("[") && tsgolint_needs_preceding_semicolon(member))
+        }
+        // tsgolint goes by the last character before an arrow function too, also where the function is the body of an
+        // `if`, a loop or a `with`, which its `;` then is. It writes none before `<`, where the type parameters are
+        // then read as type arguments of the line before.
+        Node::Expr(e) if is_oxlint => {
+            starts_statement_in_list(e)
+                && if next_token.is_punctuator("(") {
+                    tsgolint_semicolon_by_last_character(file.text(), async_token.start())
+                        .unwrap_or(true)
+                } else {
+                    next_token.is_punctuator("<") && needs_preceding_semicolon(node)
+                }
         }
         _ => {
             (next_token.is_punctuator("[") || next_token.is_punctuator("("))

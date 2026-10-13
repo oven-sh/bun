@@ -4872,6 +4872,57 @@ describe.concurrent("bun lint", () => {
         );
       });
 
+      // oxlint writes what its own rules fix, and tsgolint then lints every file as it is written. What oxlint's own rules
+      // do not fix is reported where it was before.
+      test("the rules that need types lint what the fixes of the others wrote", async () => {
+        const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
+        const config = (rules: object) =>
+          JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules });
+        const places = (raw: string) =>
+          JSON.parse(raw)
+            .diagnostics.map(
+              (it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
+            )
+            .sort();
+        const inOneFile = await lint(
+          {
+            ".oxlintrc.json": config({
+              "no-var": "error",
+              "no-debugger": "error",
+              "typescript/await-thenable": "error",
+            }),
+            "tsconfig.json": tsconfig,
+            // `var` becomes `const`, two columns more: the `debugger` is still reported at 15.
+            "a.ts": "var a = 1; a; debugger;\nexport async function f() { await 1; }\n",
+          },
+          ["--fix", "--type-aware", "-f", "json"],
+          { reads: ["a.ts"] },
+        );
+        expect(inOneFile.files).toEqual({
+          "a.ts": "const a = 1; a; debugger;\nexport async function f() { await 1; }\n",
+        });
+        expect(places(inOneFile.raw)).toEqual([
+          "a.ts:1:15 eslint(no-debugger)",
+          "a.ts:2:35 typescript(await-thenable)",
+        ]);
+        const inAnImport = await lint(
+          {
+            ".oxlintrc.json": config({
+              "typescript/no-inferrable-types": "error",
+              "typescript/no-unnecessary-condition": "error",
+            }),
+            "tsconfig.json": tsconfig,
+            "a.ts": "export const n: number = 0;\n",
+            // `n` is `0` once a.ts is fixed.
+            "c.ts": 'import { n } from "./a";\nif (n > 0) {\n  console.log(n);\n}\n',
+          },
+          ["--fix-dangerously", "--type-aware", "-f", "json"],
+          { reads: ["a.ts"] },
+        );
+        expect(inAnImport.files).toEqual({ "a.ts": "export const n = 0;\n" });
+        expect(places(inAnImport.raw)).toEqual(["c.ts:2:5 typescript(no-unnecessary-condition)"]);
+      });
+
       test("the options that oxlint accepts are accepted", async () => {
         // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has
         // options for many rules.

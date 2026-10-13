@@ -264,7 +264,8 @@ fn check_array_destructure<'a>(
                 }
                 // tsgolint checks the `OmittedExpression` that a hole of an array literal is.
                 (None, Node::Expr(hole)) if cx.language().is_oxlint => parts.push(Destructured {
-                    span: receiver_span.of_comments,
+                    // tsgolint's range of it starts at the `,` after it and ends before the space in front of that `,`.
+                    span: Span::empty(hole.span().start),
                     has_default: false,
                     target: Target::Expr(hole),
                     sender,
@@ -358,7 +359,7 @@ fn report_any_assignment<'a>(
     };
     // oxlint points at what is assigned, or at the `this`.
     let place = match cx.language().is_oxlint {
-        true => any_this.map_or_else(|| sender_span(sender_node), |this| this.outer_span()),
+        true => any_this.map_or_else(|| sender_span(sender_node), |this| this.span()),
         false => reporting_node,
     };
     cx.report(place, message)

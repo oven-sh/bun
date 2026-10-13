@@ -167,7 +167,7 @@ fn is_in_unvisited_computed_name(node: Node) -> bool {
 }
 
 /// Whether an `await` at `node` is a syntax error: the innermost function around it is not `async`, or it is in the
-/// initializer of a class member or in a parameter.
+/// initializer of a class member or of an enum member, in a parameter, or in a namespace.
 fn is_outside_await_context(node: Node) -> bool {
     let mut below = node;
     for above in node.ancestors() {
@@ -175,6 +175,8 @@ fn is_outside_await_context(node: Node) -> bool {
             Node::Param(_) => return true,
             Node::Func(func) => return !func.is_async(),
             Node::Member(member) if member.init().map(Node::Expr) == Some(below) => return true,
+            Node::EnumMember(_) => return true,
+            Node::Stmt(stmt) if stmt.as_module().is_some() => return true,
             _ => {}
         }
         below = above;

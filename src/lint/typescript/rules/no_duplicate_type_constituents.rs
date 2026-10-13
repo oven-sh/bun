@@ -214,6 +214,24 @@ fn is_repeated_by<'a>(earlier: TypeNode<'a>, later: TypeNode<'a>) -> bool {
     !earlier.span().contains(later.span()) && is_same_ast_node(earlier, later)
 }
 
+/// Whether tsgolint's scanner sees no `|` or `&` in `before_constituent`: from the start of the union or intersection to
+/// a constituent. The `}` that ends a substitution of a template type is a brace for it, so the `` ` `` that ends the
+/// template starts a string, to the next `` ` ``.
+fn is_separator_before_unseen<'a>(file: &'a File<'a>, before_constituent: Span) -> bool {
+    let mut is_in_string = false;
+    for token in file.tokens_in(before_constituent) {
+        match token.kind() {
+            TokenKind::Template => {
+                let text = token.text();
+                is_in_string = text.ends_with(b"`") && text.starts_with(b"`") == is_in_string;
+            }
+            TokenKind::Punctuator if !is_in_string && (token.is("|") || token.is("&")) => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 /// `previous`: for [`DUPLICATE`], `Union` or `Intersection` and the constituent that it repeats.
 fn report<'a>(
     cx: &Cx<'a, NoDuplicateTypeConstituents>,
@@ -234,10 +252,18 @@ fn report<'a>(
         true => constituent_node.outer_span(),
         false => constituent_node.span(),
     });
-    let before_union_or_intersection_token = file
-        .tokens_before(constituent_node)
-        .take_while(|token| token.start() >= parent.start)
-        .find(is_union_or_intersection_token);
+    // tsgolint removes the `|` or `&` after the constituent where its scanner sees none before it.
+    let outer = constituent_node.outer_span();
+    let is_before_unseen = is_oxlint
+        && is_separator_before_unseen(file, Span::new(parent.start, outer.start))
+        && file.token_after(outer).is_some_and(|token| is_union_or_intersection_token(&token));
+    let before_union_or_intersection_token = match is_before_unseen {
+        true => None,
+        false => file
+            .tokens_before(constituent_node)
+            .take_while(|token| token.start() >= parent.start)
+            .find(is_union_or_intersection_token),
+    };
     let (bracket_before_tokens, bracket_after_tokens) = match before_union_or_intersection_token {
         Some(before) => {
             removed.push(before.span());

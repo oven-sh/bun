@@ -1,7 +1,9 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_reference;
 use bun_lint::types::{IdMap, IdSet, Signature, SyntaxKind, TsNode, Type, TypeFlags, TypeStructure};
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 /// Disallow type parameters that aren't used multiple times.
@@ -74,9 +76,10 @@ fn is_type_parameter_repeated_in_ast<'a>(
     references: impl Iterator<Item = Reference<'a>>,
     start_of_body: u32,
     is_oxlint: bool,
+    found_in_jsdoc: u32,
 ) -> bool {
     let definition = node.span();
-    let mut total = 0;
+    let mut total = found_in_jsdoc;
     for reference in references {
         let identifier = reference.span();
         // What is inside the definition of the type parameter does not count, nor what is outside
@@ -103,6 +106,163 @@ fn is_type_parameter_repeated_in_ast<'a>(
         }
     }
     false
+}
+
+/// The name of a type parameter in the type of a JSDoc tag. tsgo reads these types in a TypeScript file too, and tsgolint
+/// walks with `ForEachChildAndJSDoc`: they are references.
+#[derive(Copy, Clone)]
+struct JsdocReference {
+    identifier: Span,
+    is_weak_precedence_type_parent: bool,
+}
+
+type JsdocReferences = SmallVec<[JsdocReference; 2]>;
+
+fn collect_jsdoc_references<'a>(
+    file: &'a File<'a>,
+    comment: Token<'a>,
+    name: &[u8],
+    references: &mut JsdocReferences,
+) {
+    if comment.kind() != TokenKind::Block || !strings::contains(comment.comment_value(), name) {
+        return;
+    }
+    let Some(jsdoc) = file.jsdoc().at(comment.start()) else {
+        return;
+    };
+    let is_identifier_part = |byte: u8| !byte.is_ascii() || bun_core::lexer::is_identifier_part(u32::from(byte));
+    for tag in jsdoc.tags() {
+        // The tags whose type tsgo reads. Not `@see`, `@enum`, a `@property` without a `@typedef`, or a tag it does not know.
+        let has_type_expression = matches!(
+            tag.kind.parsed(),
+            b"param"
+                | b"arg"
+                | b"argument"
+                | b"returns"
+                | b"return"
+                | b"type"
+                | b"throws"
+                | b"exception"
+                | b"this"
+                | b"satisfies"
+                | b"typedef"
+                | b"template"
+                | b"implements"
+                | b"extends"
+                | b"augments"
+        );
+        let (Some(type_part), _) = tag.type_comment() else {
+            continue;
+        };
+        let type_text = type_part.raw();
+        // It finds none in a type that goes over a line, and a name in quotes is no type.
+        if !has_type_expression || strings::index_of_any(type_text, b"\n\r\"'`").is_some() {
+            continue;
+        }
+        let mut from = 0;
+        while let Some(found) = type_text.get(from..).and_then(|rest| strings::index_of(rest, name)) {
+            let (start, end) = (from + found, from + found + name.len());
+            from = end;
+            let (Some(before), Some(after)) = (type_text.get(..start), type_text.get(end..)) else {
+                break;
+            };
+            let (previous, next) = (before.trim_ascii_end(), after.trim_ascii_start());
+            // Not a part of a longer name, of `a.T`, `T.a` or `typeof T`, and not the name of a property or of a parameter.
+            if before.last().is_some_and(|&byte| is_identifier_part(byte))
+                || after.first().is_some_and(|&byte| is_identifier_part(byte))
+                || (previous.ends_with(b".") && !previous.ends_with(b"..."))
+                || previous.ends_with(b"typeof")
+                || next.starts_with(b".")
+                || next.starts_with(b":")
+                || next.starts_with(b"?:")
+            {
+                continue;
+            }
+            let is_weak_precedence_type_parent = matches!(next.first(), Some(b'[' | b'|' | b'&'))
+                || matches!(previous.last(), Some(b'|' | b'&'))
+                || previous.ends_with(b"keyof")
+                || previous.ends_with(b"readonly");
+            let start_of_type = type_part.span.start;
+            references.push(JsdocReference {
+                identifier: Span::new(start_of_type + start as u32, start_of_type + end as u32),
+                is_weak_precedence_type_parent,
+            });
+        }
+    }
+}
+
+/// The JSDoc comments that tsgo attaches to what starts at `start`: TypeScript's `getJSDocCommentRanges`. Those behind
+/// the first line break after the token before, and for a parameter, a function expression and an arrow function also
+/// those on the line of that token.
+fn collect_jsdoc_references_before<'a>(
+    file: &'a File<'a>,
+    start: u32,
+    name: &[u8],
+    takes_comments_of_the_line: bool,
+    references: &mut JsdocReferences,
+) {
+    let mut is_collecting = takes_comments_of_the_line;
+    let mut end_of_previous = None;
+    for comment in file.comments_before(Span::empty(start)) {
+        let after = end_of_previous.unwrap_or_else(|| {
+            let before = file.text().get(..comment.start() as usize).unwrap_or_default();
+            before.trim_ascii_end().len() as u32
+        });
+        is_collecting = is_collecting
+            || after == 0
+            || strings::contains_js_line_break(file.slice(Span::new(after, comment.start())));
+        if is_collecting {
+            collect_jsdoc_references(file, comment, name, references);
+        }
+        end_of_previous = Some(comment.end());
+    }
+}
+
+/// Where tsgo's node of a function or of a class starts: with `export` and the decorators.
+fn start_of_declaration(owner: Node<'_>, span: Span) -> u32 {
+    match owner {
+        Node::Stmt(statement) => statement.span().start.min(span.start),
+        _ => span.start,
+    }
+}
+
+/// What tsgolint finds before the body: in the JSDoc comments of the node and in those of its parameters.
+fn collect_jsdoc_references_of_signature(node: Node<'_>, name: &[u8], references: &mut JsdocReferences) {
+    let file = node.file();
+    match node {
+        Node::Func(func) => {
+            // tsgo attaches no JSDoc comment to a function type.
+            if !matches!(func.owner(), Node::Type(_)) {
+                let start = start_of_declaration(func.owner(), func.span());
+                let is_expression = matches!(func.kind(), FnKind::Expr | FnKind::Arrow);
+                collect_jsdoc_references_before(file, start, name, is_expression, references);
+            }
+            for parameter in func.params() {
+                collect_jsdoc_references_before(file, parameter.span().start, name, true, references);
+            }
+        }
+        Node::Class(class) => {
+            let start = start_of_declaration(class.owner(), class.span());
+            collect_jsdoc_references_before(file, start, name, false, references);
+        }
+        _ => {}
+    }
+}
+
+/// Whether something inside `scope` and around `at` declares a type of the name: there a name in a JSDoc comment is not
+/// the type parameter.
+fn is_shadowed<'a>(scope: Scope<'a>, name: Name<'a>, at: u32) -> bool {
+    scope.children().any(|child| {
+        let node = child.node();
+        let start = match node {
+            Node::Func(func) => start_of_declaration(func.owner(), func.span()),
+            Node::Class(class) => start_of_declaration(class.owner(), class.span()),
+            _ => node.span().start,
+        };
+        start <= at
+            && at < node.span().end
+            && (child.get_name(name).is_some_and(|symbol| symbol.is_type_variable()) || is_shadowed(child, name, at))
+    })
 }
 
 /// By the declaration of the type parameter.
@@ -361,6 +521,7 @@ fn replace_usages_with_constraint<'a>(
     type_parameters: List<'a, TypeParam<'a>>,
     es_type_parameter: TypeParam<'a>,
     variable: Symbol<'a>,
+    jsdoc_references: &[JsdocReference],
 ) -> Option<Vec<Fix>> {
     let file = fixer.file();
     let constraint = es_type_parameter.constraint();
@@ -434,12 +595,22 @@ fn replace_usages_with_constraint<'a>(
         });
     }
 
+    // A constraint with a `*/` in it would end the comment.
+    let fits_in_a_comment = !strings::contains(constraint_text, b"*/");
+    for reference in jsdoc_references.iter().filter(|_| fits_in_a_comment) {
+        fixes.push(match is_weak_precedence_constraint && reference.is_weak_precedence_type_parent {
+            true => fixer.replace(reference.identifier, [&b"("[..], constraint_text, b")"].concat()),
+            false => fixer.replace(reference.identifier, constraint_text),
+        });
+    }
+
     fixes.push(fixer.remove(removed));
     Some(fixes)
 }
 
 fn check_node<'a>(
     cx: &mut Cx<'a, NoUnnecessaryTypeParameters>,
+    node: Node<'a>,
     type_parameters: List<'a, TypeParam<'a>>,
     start_of_body: u32,
     descriptor: &'static str,
@@ -452,8 +623,21 @@ fn check_node<'a>(
         };
         // If it is written several times, the types need not be asked.
         let is_oxlint = cx.language().is_oxlint;
-        if is_type_parameter_repeated_in_ast(type_parameter, variable.references(), start_of_body, is_oxlint) {
+        if is_type_parameter_repeated_in_ast(type_parameter, variable.references(), start_of_body, is_oxlint, 0) {
             continue;
+        }
+        let name = type_parameter.name();
+        let mut jsdoc_references = JsdocReferences::new();
+        if is_oxlint {
+            collect_jsdoc_references_of_signature(node, name.bytes(), &mut jsdoc_references);
+            let found_in_jsdoc = jsdoc_references.len() as u32;
+            let references = variable.references();
+            if found_in_jsdoc >= 2
+                || (found_in_jsdoc == 1
+                    && is_type_parameter_repeated_in_ast(type_parameter, references, start_of_body, is_oxlint, 1))
+            {
+                continue;
+            }
         }
         // Inferred types take the type checker.
         let counts = counts.get_or_insert_with(|| count_type_parameter_usage(&mut cx.state));
@@ -470,12 +654,31 @@ fn check_node<'a>(
             Some(2) => "used only once",
             _ => continue,
         };
-        // oxlint points at where it is used.
+        // tsgolint walks the body too: what it finds in a JSDoc comment there is no use of the signature, but can be
+        // the first reference, and the suggestion replaces it.
+        if is_oxlint {
+            let (file, end_of_node) = (node.file(), node.span().end);
+            let body = Span::new(start_of_body.min(end_of_node), end_of_node);
+            for comment in file.comments_in(body) {
+                let known = jsdoc_references.len();
+                collect_jsdoc_references(file, comment, name.bytes(), &mut jsdoc_references);
+                let documented = skip_trivia(file.text(), comment.end());
+                if jsdoc_references.len() > known && is_shadowed(variable.scope(), name.name(), documented) {
+                    jsdoc_references.truncate(known);
+                }
+            }
+        }
+        // oxlint points at where it is used first.
         let place = match is_oxlint {
-            true => match variable.references().find(|&reference| is_identifier_of_type_node(reference)) {
-                Some(reference) => reference.span(),
-                None => type_parameter.name().span(),
-            },
+            true => {
+                let in_ast = variable.references().find(|&reference| is_identifier_of_type_node(reference));
+                match (in_ast.map(|reference| reference.span()), jsdoc_references.first()) {
+                    (Some(in_ast), Some(in_jsdoc)) if in_jsdoc.identifier.start < in_ast.start => in_jsdoc.identifier,
+                    (Some(in_ast), _) => in_ast,
+                    (None, Some(in_jsdoc)) => in_jsdoc.identifier,
+                    (None, None) => name.span(),
+                }
+            }
             false => type_parameter.span(),
         };
         cx.report(place, SOLE)
@@ -489,7 +692,7 @@ fn check_node<'a>(
                 labels.push(type_parameter.span(), "");
             })
             .suggest(REPLACE_USAGES_WITH_CONSTRAINT, |fixer| {
-                replace_usages_with_constraint(fixer, type_parameters, type_parameter, variable)
+                replace_usages_with_constraint(fixer, type_parameters, type_parameter, variable, &jsdoc_references)
             });
     }
 }
@@ -523,7 +726,7 @@ impl Rule for NoUnnecessaryTypeParameters {
             FnBody::Expr(body) => Some(body.span().start),
             FnBody::None => node.return_type().map(|return_type| return_type.annotation_span().end),
         };
-        check_node(cx, type_parameters, start_of_body.unwrap_or(u32::MAX), "function", |known| {
+        check_node(cx, Node::Func(node), type_parameters, start_of_body.unwrap_or(u32::MAX), "function", |known| {
             let ts_node = node.ts_node();
             let State { counts_by_type, without_type_parameters } = known;
             let mut count = || {
@@ -548,7 +751,7 @@ impl Rule for NoUnnecessaryTypeParameters {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        check_node(cx, type_parameters, node.body_span().start, "class", |known| {
+        check_node(cx, Node::Class(node), type_parameters, node.body_span().start, "class", |known| {
             let (mut counts, known) = (Counts::default(), &mut known.without_type_parameters);
             for type_parameter in type_parameters {
                 collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true, known);

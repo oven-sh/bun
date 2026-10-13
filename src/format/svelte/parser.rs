@@ -1760,7 +1760,9 @@ impl<'a> Parser<'a, '_> {
             }
         ) {
             self.tree[block].end = self.index as u32;
+            // It has taken the place of a fragment, so there is none to end.
             self.stack.pop();
+            self.is_in.pop();
             match self.current() {
                 Some(outer) => block = outer,
                 None => break,

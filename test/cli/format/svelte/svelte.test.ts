@@ -1119,6 +1119,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect(result).toMatchObject({ files: Object.values(files), exitCode: 2 });
   });
 
+  test.each(["{:else}c", "{:else if d}c", "{:else if d}c{:else if e}f{:else}g"])(
+    "a <title> behind a <svelte:head> is not in it, whatever the head has: {#if a}b%s{/if}",
+    async rest => {
+      const head = `<svelte:head\n  >{#if a}b${rest}{/if}</svelte:head\n>\n`;
+      const result = await format({ "a.svelte": `${head}<title>  h  i  </title>\n` }, ["a.svelte"]);
+      expect(result).toMatchObject({ stderr: "", files: [`${head}<title> h i </title>\n`], exitCode: 0 });
+    },
+  );
+
   test("a no-break space at the end of a component is nothing to Svelte, and would be text before a <style>", async () => {
     const result = await format({ "a.svelte": "<style></style>\n<p>b</p>\u00A0\n" }, ["a.svelte"]);
     expect(result).toMatchObject({ stderr: "", files: ["<p>b</p>\n\n<style></style>\n"], exitCode: 0 });

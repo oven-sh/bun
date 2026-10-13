@@ -13,7 +13,7 @@ use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
-use crate::bunfig::Bunfig;
+use crate::bunfig::{Bunfig, Counts};
 
 /// Reads what a bunfig has for `bun lint` or `bun fmt`, which know their flags. It is called with the whole file.
 /// `Err`: what is wrong, and where.
@@ -77,7 +77,7 @@ fn load_bunfig(
     config_path: &ZStr,
     ctx: Context<'_>,
     tool: Option<&mut ToolReader<'_>>,
-    is_only_for_tool: bool,
+    counts: Counts,
 ) -> Result<(), crate::Error> {
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
@@ -105,7 +105,7 @@ fn load_bunfig(
         unsafe { (*log_ptr).level = lvl };
     });
     ctx.debug.loaded_bunfig = true;
-    Bunfig::parse(cmd, &source, ctx, tool, is_only_for_tool)
+    Bunfig::parse(cmd, &source, ctx, tool, counts)
 }
 
 fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
@@ -116,7 +116,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
 
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        load_bunfig(cmd, true, path, ctx, None, false)?;
+        load_bunfig(cmd, true, path, ctx, None, Counts::Everything)?;
     }
     Ok(())
 }
@@ -156,7 +156,7 @@ fn load_config_path_for_tool(
         }
     }
 
-    load_bunfig(cmd, auto_loaded, config_path, ctx, tool, false)
+    load_bunfig(cmd, auto_loaded, config_path, ctx, tool, Counts::Everything)
 }
 
 #[cold]
@@ -342,7 +342,8 @@ pub fn load_config_above_for_tool(
         };
         // SAFETY: process-global Log; see `load_bunfig` note.
         let said = unsafe { &*ctx.log }.msgs.len();
-        if let Err(err) = load_bunfig(cmd, true, path, &mut *ctx, Some(read), true) {
+        let counts = Counts::OnlyForTheTool;
+        if let Err(err) = load_bunfig(cmd, true, path, &mut *ctx, Some(read), counts) {
             if !is_optional {
                 report_bunfig_load_failure_as(cmd, ctx.log, err, Some(&shown));
             }

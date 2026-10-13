@@ -152,8 +152,15 @@ struct Parser<'a, 'tool> {
     bump: &'a Bump,
     /// Reads `[lint]` and `[fmt]`.
     tool: Option<&'a mut crate::ToolReader<'tool>>,
-    /// Nothing else in the file counts: it is above the working directory.
-    is_only_for_tool: bool,
+    counts: Counts,
+}
+
+/// What of a bunfig.toml counts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Counts {
+    Everything,
+    /// `[lint]` and `[fmt]`: the file is above the working directory.
+    OnlyForTheTool,
 }
 
 impl<'a> Parser<'a, '_> {
@@ -368,7 +375,7 @@ impl<'a> Parser<'a, '_> {
             self.add_error(json.loc, b"bunfig expects an object { } at the root")?;
         }
 
-        if self.is_only_for_tool {
+        if self.counts == Counts::OnlyForTheTool {
             return self.read_for_tool(&json);
         }
 
@@ -1117,7 +1124,7 @@ impl Bunfig {
         source: &bun_ast::Source,
         ctx: &mut ContextData,
         tool: Option<&mut crate::ToolReader<'_>>,
-        is_only_for_tool: bool,
+        counts: Counts,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
@@ -1190,7 +1197,7 @@ impl Bunfig {
             ctx,
             bump: &bump,
             tool,
-            is_only_for_tool,
+            counts,
         };
         parser.parse(cmd)
     }

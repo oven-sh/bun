@@ -1362,17 +1362,21 @@ impl StandaloneModuleGraph {
         (file.contents.len() == contents.len()).then_some(file)
     }
 
-    /// Takes the process's write access to the serialized graph away. Nothing writes to it: a PE section is mapped read-only to begin with.
+    /// Maps the payload read-only. Nothing writes to it, whatever `File::bytecode` being `*mut` allows: a PE section is read-only to begin with.
     #[cfg(unix)]
     pub fn make_read_only(&self) -> Result<(), E> {
-        // Every executable format starts a page with the graph's length and pads the graph's last page.
+        #[cfg(target_os = "macos")]
+        let alignment = bun_macho::PAYLOAD_ALIGNMENT as usize;
+        #[cfg(not(target_os = "macos"))]
+        let alignment = bun_elf::NATIVE_PAYLOAD_ALIGNMENT as usize;
+        // The payload is the graph between its length and `Offsets` + `TRAILER`. It starts a page and is padded to `alignment`.
         let start = self.bytes.cast::<u8>().addr() - size_of::<u64>();
-        let page = bun_alloc::page_size();
-        if !start.is_multiple_of(page) {
+        if !start.is_multiple_of(bun_alloc::page_size()) {
             return Err(E::EINVAL);
         }
-        let len = (size_of::<u64>() + self.bytes.len()).next_multiple_of(page);
-        // SAFETY: `[start, start + len)` is whole pages of the executable's image that hold nothing but the graph.
+        let len = (size_of::<u64>() + self.bytes.len() + size_of::<Offsets>() + TRAILER.len())
+            .next_multiple_of(alignment);
+        // SAFETY: `[start, start + len)` is whole pages of the executable's image that hold nothing but the payload.
         let rc = unsafe { libc::mprotect(start as *mut core::ffi::c_void, len, libc::PROT_READ) };
         if rc != 0 {
             return Err(bun_sys::get_errno(rc));

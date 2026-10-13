@@ -573,12 +573,25 @@ impl ElfFile {
     }
 
     fn page_size(ehdr: Elf64_Ehdr) -> u64 {
-        match ehdr.e_machine {
-            EM_AARCH64 | EM_PPC64 => 0x10000, // 64KB
-            _ => 0x1000,                      // 4KB
-        }
+        page_size_of(ehdr.e_machine)
     }
 }
+
+const fn page_size_of(e_machine: u16) -> u64 {
+    match e_machine {
+        EM_AARCH64 | EM_PPC64 => 0x10000, // 64KB
+        _ => 0x1000,                      // 4KB
+    }
+}
+
+/// What `write_bun_section` aligns and pads the payload to in an executable for the architecture this is compiled for.
+pub const NATIVE_PAYLOAD_ALIGNMENT: u64 = page_size_of(if cfg!(target_arch = "aarch64") {
+    EM_AARCH64
+} else if cfg!(target_arch = "powerpc64") {
+    EM_PPC64
+} else {
+    0
+});
 
 struct BunSectionInfo {
     /// File offset of the .bun section's data (sh_offset).

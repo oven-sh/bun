@@ -50,7 +50,8 @@ extern "C" void JSC__runOnlyEmbeddedCode()
     JSC::Options::refuseUntrustedCode() = true;
 }
 
+// Not Options::refuseUntrustedCode(), which asserts that JSC is set up: `bun build` asks for a macro before it is.
 extern "C" bool JSC__runsOnlyEmbeddedCode()
 {
-    return JSC::Options::refuseUntrustedCode();
+    return g_jscConfig.options.refuseUntrustedCode;
 }

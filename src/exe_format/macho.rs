@@ -10,6 +10,8 @@ use bun_core::env_var::feature_flag;
 
 const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+/// What `write_section` pads the payload and its segment to.
+pub const PAYLOAD_ALIGNMENT: u64 = 16 * 1024;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum MachoError {
@@ -89,7 +91,7 @@ impl MachoFile {
     }
 
     pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {
-        let blob_alignment: u64 = 16 * 1024;
+        let blob_alignment: u64 = PAYLOAD_ALIGNMENT;
         const PAGE_SIZE: u64 = 1 << 12;
         const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
 

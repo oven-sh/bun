@@ -17,7 +17,9 @@ use super::Parsers;
 use super::ast::{
     ElementKind, Expression, ExpressionKind, FragmentId, Id, Kind, Pattern, Span, Tree, Value,
 };
+use super::pattern::repeated_keys;
 use super::print::is_block_element_name;
+use crate::html::js::Parse;
 use crate::html::verify::{Reader, Signature};
 use crate::options::HtmlWhitespaceSensitivity;
 use bun_core::strings;
@@ -26,6 +28,8 @@ use std::borrow::Cow;
 struct Check<'t, 'a> {
     tree: &'t Tree<'a>,
     text: &'a [u8],
+    /// Parses a program.
+    parse: Parse<'t>,
     reader: Reader,
     comments: u32,
     sensitivity: HtmlWhitespaceSensitivity,
@@ -104,7 +108,20 @@ impl Check<'_, '_> {
     fn pattern(&mut self, pattern: Option<Pattern>) {
         self.reader.mark(u8::from(pattern.is_some()));
         if let Some(pattern) = pattern {
-            (self.reader).count(&without_repeated_keys(pattern.span.of(self.text)));
+            // `{ a: a }` is `{ a }`.
+            let (written, mut counted) = (pattern.span.of(self.text), 0);
+            let mut keys = match strings::contains_char(written, b':') {
+                true => repeated_keys(self.parse, written, self.tree.says_typescript),
+                false => Vec::new(),
+            };
+            crate::sort::sort_by_key(&mut keys, |it| it.0);
+            for (start, end) in keys {
+                self.reader
+                    .count(written.get(counted..start).unwrap_or_default());
+                counted = end;
+            }
+            self.reader
+                .count(written.get(counted..).unwrap_or_default());
             // The span of a name does not have it.
             match pattern.annotation {
                 Some(annotation) if annotation.end > pattern.span.end => self.span(annotation),
@@ -486,30 +503,6 @@ impl Check<'_, '_> {
     }
 }
 
-/// `pattern` without the keys that are the names behind them: `{ a: a }` is `{ a }`.
-#[optimize(size)]
-fn without_repeated_keys(pattern: &[u8]) -> Cow<'_, [u8]> {
-    let is_in_name = |it: &u8| strings::is_regexp_word_byte(*it) || *it == b'$' || !it.is_ascii();
-    let (mut out, mut copied, mut from) = (Vec::new(), 0, 0);
-    while let Some(found) = strings::index_of_char_usize(&pattern[from..], b':') {
-        let colon = from + found;
-        from = colon + 1;
-        let before = pattern[copied..colon].trim_ascii_end();
-        let key = before.len() - before.iter().rev().take_while(|it| is_in_name(it)).count();
-        let behind = pattern[from..].trim_ascii_start();
-        let name = &behind[..behind.iter().take_while(|it| is_in_name(it)).count()];
-        if !name.is_empty() && &before[key..] == name {
-            out.extend_from_slice(&before[..key]);
-            copied = from;
-        }
-    }
-    if copied == 0 {
-        return Cow::Borrowed(pattern);
-    }
-    out.extend_from_slice(&pattern[copied..]);
-    Cow::Owned(out)
-}
-
 /// `text` with the characters in the place of `&nbsp;` and of `&#xA0;` and the like, if they are white space to JavaScript.
 #[optimize(size)]
 fn with_white_space_decoded(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
@@ -555,6 +548,7 @@ fn signature(
     let mut check = Check {
         tree: &tree,
         text,
+        parse: parsers.program,
         reader: Reader::default(),
         comments: 0,
         sensitivity,

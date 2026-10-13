@@ -190,6 +190,62 @@ impl<'f> Expander<'f, '_> {
     }
 }
 
+const BEFORE_PATTERN: &[u8] = b"function _(";
+
+fn path_of(is_typescript: bool) -> &'static [u8] {
+    match is_typescript {
+        true => b"dummy.ts",
+        false => b"dummy.js",
+    }
+}
+
+/// Where the keys are in `pattern` that are the names behind them, which `expand` leaves out: the first `a` of `{ a: a }`.
+#[optimize(size)]
+pub(crate) fn repeated_keys(
+    parse: Parse<'_>,
+    pattern: &[u8],
+    is_typescript: bool,
+) -> Vec<(usize, usize)> {
+    let mut keys = Vec::new();
+    let program = [BEFORE_PATTERN, pattern, b"\n) {}"].concat();
+    parse.call(path_of(is_typescript), &program, false, &mut |file| {
+        let Some(StmtKind::Fn(function)) = file.body().iter().next().map(|it| it.kind()) else {
+            return;
+        };
+        let mut patterns: Vec<Pat<'_>> = function.params().iter().map(|it| it.pat()).collect();
+        while let Some(pattern) = patterns.pop() {
+            match pattern.kind() {
+                PatKind::Array(elements) => {
+                    patterns.extend(elements.iter().filter_map(|it| it.pat()))
+                }
+                PatKind::Object(properties) => {
+                    for property in properties.iter() {
+                        let value = property.value();
+                        patterns.push(value);
+                        if let Some(key) = property.key()
+                            && let (KeyKind::Ident(key_name), PatKind::Ident(name)) =
+                                (key.kind(), value.kind())
+                            && key_name.bytes() == name.bytes()
+                            && !key.is_computed()
+                        {
+                            let span = key.inner_span(file);
+                            if span.end <= value.span().start {
+                                let before = BEFORE_PATTERN.len();
+                                keys.push((
+                                    span.start as usize - before,
+                                    span.end as usize - before,
+                                ));
+                            }
+                        }
+                    }
+                }
+                PatKind::Ident(_) | PatKind::Missing => {}
+            }
+        }
+    });
+    keys
+}
+
 /// `_expandNode(pattern)`
 pub(crate) fn expand(
     parse: Parse<'_>,
@@ -202,14 +258,9 @@ pub(crate) fn expand(
     if bun_lint::utils::text::is_identifier_name(pattern) {
         return as_written();
     }
-    let program = [b"function _(", pattern, b"\n) {}"].concat();
-    let path: &[u8] = if is_typescript {
-        b"dummy.ts"
-    } else {
-        b"dummy.js"
-    };
+    let program = [BEFORE_PATTERN, pattern, b"\n) {}"].concat();
     let mut expanded = None;
-    parse.call(path, &program, false, &mut |file| {
+    parse.call(path_of(is_typescript), &program, false, &mut |file| {
         if file.has_parse_errors() {
             return;
         }

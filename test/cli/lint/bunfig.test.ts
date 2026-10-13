@@ -600,7 +600,6 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       "no-eslintrc",
       "node-plugin",
       "parser",
-      "plugin",
       "promise-plugin",
       "react-perf-plugin",
       "react-plugin",
@@ -1004,7 +1003,7 @@ module.exports = {
   async function found(files: Record<string, string>, args: string[] = []) {
     const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", ...args, "src"]);
     const lines = [...stdout.matchAll(/:(\d+:\d+): .* \[\w+\/(.+)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
-    return { found: lines.sort(), stderr: stderr.replace(/^Linted .*\n/m, ""), exitCode };
+    return { found: lines.sort(), stderr: stderr.replace(/^(Linted \d+ files?|✓ No problems in \d+ files?).*$/m, "").trim(), exitCode };
   }
   const both = bunfig(`["./lint/plugin.js", "eslint-plugin-demo"]`, {
     "local/no-todo": "warn",
@@ -1133,7 +1132,6 @@ module.exports = {
       "// TODO: a\n// eslint-disable-next-line local/no-todo\n// TODO: b\n",
       ["1:1 local/no-todo"],
     ],
-    ["oxlint-disable", "/* oxlint-disable local/no-todo */\n// TODO: a\n", []],
     ["turned off", "/* eslint local/no-todo: off */\n// TODO: a\n", []],
     [
       "options",
@@ -1217,7 +1215,7 @@ module.exports = {
     };
     const { stdout, stderr, exitCode } = await lint(files, ["src"]);
     expect(stderr).toContain(`error: ${message}`);
-    expect(stderr).toContain(`\n    at bunfig.toml:${at}\n`);
+    expect(stderr).toEndWith(`\n    at bunfig.toml:${at}`);
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
   });
 

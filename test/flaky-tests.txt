@@ -51,7 +51,7 @@ test/js/bun/http/bun-serve-routes.test.ts  # 1 of 80 builds; parallel batch; dec
 test/js/bun/http/proxy-stress-concurrent.test.ts  # 1 of 80 builds; mac
 test/js/bun/http/proxy.test.ts  # 1 of 80 builds; parallel batch; https target (CONNECT): expect(received).toBe(expected)
 test/js/bun/http/request-smuggling.test.ts  # 3 of 80 builds; mac
-test/js/bun/http/serve-http2-lifecycle.test.ts  # stop with a stream open on each: test timed out (17 of the last 20 failures), HTTP3HandshakeFailed (2 of 20); PING frames do not keep a connection alive: no GOAWAY before the close (1 of 20)
+test/js/bun/http/serve-http2-lifecycle.test.ts  # 8 sightings in 650 builds; mac, windows; PING frames do not keep a connection alive: no GOAWAY before the close; a paused request body does not idle out the connection; http1: false with both h2 and h3: HTTP3HandshakeFailed
 test/js/bun/http/serve-http2.test.ts  # 4 of 80 builds; parallel batch; 2 MB request body streamed to the handler (WINDOW_UPDATE path): expect(received).toBe(...
 test/js/bun/http/serve-http3.test.ts  # 3 of 80 builds; mac, windows
 test/js/bun/http/serve-stream-body-error.test.ts  # 1 of 80 builds; start-async-reject: the rejection is handled and the error is still reported: expect(r...

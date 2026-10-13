@@ -58,16 +58,32 @@ impl PackageManager {
 enum Step {
     /// `git fetch` in this cached bare repository (clone task).
     Fetch(bun_sys::Dir),
+    /// After the fetch, which prunes the branch HEAD names here once upstream renames it (clone task).
+    Head(HeadRepair, bun_sys::Dir),
     /// `git clone --bare <url> <tmp>` (clone task).
     Clone,
     /// `git log -1 <committish>` (commit task).
     Log,
-    /// `git ls-remote origin HEAD`, after `git log -1` found no commit at the local HEAD (commit task).
-    RemoteHead,
     /// `git clone --no-checkout <bare repository> <tmp>` (checkout task).
     CheckoutClone,
     /// `git checkout <resolved>` in `<tmp>` (checkout task).
     Checkout,
+}
+
+/// `refs/heads/main` of `ref: refs/heads/main\tHEAD`, the first line `git ls-remote --symref` prints.
+fn remote_default_branch(stdout: &[u8]) -> Option<&[u8]> {
+    let (branch, _) = strings::split_once_char(stdout.strip_prefix(b"ref: ")?, b'\t')?;
+    branch.starts_with(b"refs/heads/").then_some(branch)
+}
+
+#[derive(Clone, Copy)]
+enum HeadRepair {
+    /// `git rev-parse --verify HEAD`
+    Verify,
+    /// `git ls-remote --symref origin HEAD`
+    AskRemote,
+    /// `git symbolic-ref HEAD <the remote's default branch>`
+    Set,
 }
 
 /// The filesystem tail of a clone or checkout task; `Task::callback` runs it on a pool worker.
@@ -559,6 +575,9 @@ impl GitSubprocess {
                     &[
                         b"-C",
                         &path,
+                        // No ref keeps a commit that bun.lock pins and upstream rebased away.
+                        b"-c",
+                        b"gc.auto=0",
                         b"fetch",
                         b"--quiet",
                         b"--prune",
@@ -582,6 +601,29 @@ impl GitSubprocess {
                 Self::spawn_clone(this)
             }
             Err(err) => Err(err.into()),
+        }
+    }
+
+    /// Named refs resolve in the refreshed repository whether or not this works. May free `this`.
+    fn spawn_head_repair(
+        this: ThisPtr<Self>,
+        stage: HeadRepair,
+        dir: bun_sys::Dir,
+        command: &[&[u8]],
+    ) {
+        let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+            &this.manager().cache_directory_path,
+            &[&bare_repo_folder_name(this.task().id)],
+        )
+        .to_vec();
+        let mut args: Vec<&[u8]> = vec![b"-C", &path];
+        args.extend_from_slice(command);
+        this.step.set(Step::Head(stage, dir));
+        this.reset_polls();
+        if Self::spawn(this, &args).is_err()
+            && let Step::Head(_, dir) = this.step.replace(Step::Clone)
+        {
+            Self::finish_on_pool(this, Finalize::Repo(dir.into_raw()));
         }
     }
 
@@ -615,8 +657,13 @@ impl GitSubprocess {
 
     /// May free `this` on `Ok`.
     fn begin_commit(this: ThisPtr<Self>) -> Result<(), Error> {
-        let committish = this.task().request_git_commit().committish.slice().to_vec();
-        let path = this.commit_repo_path();
+        let req = this.task().request_git_commit();
+        let committish = req.committish.slice().to_vec();
+        let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+            &this.manager().cache_directory_path,
+            &[&bare_repo_folder_name(req.clone_id)],
+        )
+        .to_vec();
         this.step.set(Step::Log);
         if committish.is_empty() {
             Self::spawn(this, &[b"-C", &path, b"log", b"--format=%H", b"-1"])
@@ -634,28 +681,6 @@ impl GitSubprocess {
                 ],
             )
         }
-    }
-
-    /// The bare repository of a commit task.
-    fn commit_repo_path(&self) -> Vec<u8> {
-        Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            &self.manager().cache_directory_path,
-            &[&bare_repo_folder_name(
-                self.task().request_git_commit().clone_id,
-            )],
-        )
-        .to_vec()
-    }
-
-    /// Whether to ask the remote: upstream renamed its default branch, and the refresh pruned the one HEAD names here.
-    fn asks_remote_head(&self) -> bool {
-        self.task()
-            .request_git_commit()
-            .committish
-            .slice()
-            .is_empty()
-            && self.manager().options.offline
-                != crate::package_manager_real::options::OfflineMode::Offline
     }
 
     // ── checkout ────────────────────────────────────────────────────────────
@@ -894,23 +919,15 @@ impl GitSubprocess {
                 && strings::contains(stderr, b"not")
                 && strings::contains(stderr, b"found"))
                 || strings::contains(stderr, b"does not exist"));
-        if !ok && matches!(step, Step::Log) && this.asks_remote_head() {
-            let path = this.commit_repo_path();
-            this.step.set(Step::RemoteHead);
-            this.reset_polls();
-            if let Err(err) = Self::spawn(this, &[b"-C", &path, b"ls-remote", b"origin", b"HEAD"]) {
-                Self::finish_commit(this, Err(err));
-            }
-            return;
-        }
-        if !ok && !not_found {
+        if !ok && !not_found && !matches!(step, Step::Head(..)) {
             this.report_failure(status, stderr);
         }
         let name = for_terminal(BStr::new(&this.name));
         match step {
             Step::Fetch(dir) => {
                 if ok {
-                    Self::finish_on_pool(this, Finalize::Repo(dir.into_raw()));
+                    let verify: &[&[u8]] = &[b"rev-parse", b"--verify", b"--quiet", b"HEAD"];
+                    Self::spawn_head_repair(this, HeadRepair::Verify, dir, verify);
                 } else {
                     this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
                     Self::fail(this, Error::InstallFailed);
@@ -950,16 +967,18 @@ impl GitSubprocess {
                 };
                 Self::finish_commit(this, result);
             }
-            Step::RemoteHead => {
-                // `<commit>\tHEAD`, or nothing when the remote HEAD names no branch.
-                let commit = strings::split_once_char(stdout, b'\t').filter(|_| ok);
-                Self::finish_commit(
-                    this,
-                    commit
-                        .map(|(commit, _)| commit.to_vec())
-                        .ok_or(Error::InstallFailed),
-                );
+            Step::Head(HeadRepair::Verify, dir) if !ok => {
+                let ask: &[&[u8]] = &[b"ls-remote", b"--symref", b"origin", b"HEAD"];
+                Self::spawn_head_repair(this, HeadRepair::AskRemote, dir, ask);
             }
+            Step::Head(HeadRepair::AskRemote, dir) if ok => match remote_default_branch(stdout) {
+                Some(branch) => {
+                    let set: &[&[u8]] = &[b"symbolic-ref", b"HEAD", branch];
+                    Self::spawn_head_repair(this, HeadRepair::Set, dir, set);
+                }
+                None => Self::finish_on_pool(this, Finalize::Repo(dir.into_raw())),
+            },
+            Step::Head(_, dir) => Self::finish_on_pool(this, Finalize::Repo(dir.into_raw())),
             Step::CheckoutClone => {
                 if ok {
                     let tmp_path = this

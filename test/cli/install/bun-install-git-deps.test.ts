@@ -3252,14 +3252,54 @@ test.concurrent("bun update follows a default branch that was renamed upstream",
   await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
   await moveBranch(bare, "main", "main-v2");
 
-  for (const command of ["update", "update"]) {
-    const { stderr, exitCode } = await runBun(project, cache, {}, command);
-    expect(stderr).not.toContain("error:");
+  // The second update finds HEAD repaired. So does a resolve that cannot ask upstream.
+  for (const command of [["update"], ["update"], ["install", "--offline"]]) {
+    if (command.includes("--offline")) {
+      rmSync(join(project, "bun.lock"));
+      rmSync(join(project, "node_modules"), { recursive: true });
+    }
+    const { stderr, exitCode } = await runBun(project, cache, {}, ...command);
+    expect({ command, stderr }).toEqual({ command, stderr: expect.not.stringContaining("error:") });
     expect(stderr).not.toContain("fatal:");
     expect(await installedVersionOf(project, "dep")).toBe("main-v2");
     expect(await Bun.file(join(project, "bun.lock")).text()).toContain(branchCommits(bare).main);
     expect(exitCode).toBe(0);
   }
+});
+
+// The refresh moves every branch, so no ref keeps the old commit. git collects garbage after a fetch.
+test.concurrent("a commit that bun.lock pins survives a refresh after upstream rebased the branch", async () => {
+  using dir = tempDir("git-dep-pinned-gc", {
+    // Collects at once what git would collect after two weeks and some fifty fetches.
+    gitconfig: `[gc]
+\tautoPackLimit = 1
+\tautoDetach = false
+\tpruneExpire = now
+\treflogExpire = now
+\treflogExpireUnreachable = now
+[maintenance]
+\tautoDetach = false
+[fetch]
+\tunpackLimit = 1
+`,
+  });
+  const root = String(dir);
+  const env = { GIT_CONFIG_GLOBAL: join(root, "gitconfig") };
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "feature" }]);
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#feature` });
+  const cache = join(root, "cache");
+  expect((await runInstall(project, cache, env)).exitCode).toBe(0);
+  const lockfile = await Bun.file(join(project, "bun.lock")).text();
+
+  await git(bare, "update-ref", "-d", "refs/heads/feature");
+  await commitTo(bare, [{ ref: "refs/heads/feature", message: "rebased", files: packageFiles("dep", "rebased") }]);
+  dropCheckouts(project, cache);
+
+  const { stderr, exitCode } = await runInstall(project, cache, env);
+  expect(stderr).not.toContain("error:");
+  expect(await installedVersionOf(project, "dep")).toBe("feature");
+  expect(await Bun.file(join(project, "bun.lock")).text()).toBe(lockfile);
+  expect(exitCode).toBe(0);
 });
 
 // `git init --bare` on a server, then a push of another branch than its HEAD names.

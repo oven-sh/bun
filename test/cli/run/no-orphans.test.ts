@@ -692,13 +692,13 @@ test.concurrent.skipIf(!isLinux)(
         return "X";
       }
     };
-    const waitState = async (pid: number, want: (s: string) => boolean, ms: number) => {
+    const waitState = async (pid: number, want: (s: string) => boolean, ms: number, inARow = 1) => {
       const deadline = Date.now() + ms;
-      while (Date.now() < deadline) {
-        if (want(procState(pid))) return true;
-        await sleep(10);
+      for (let seen = 0; ; await sleep(10)) {
+        seen = want(procState(pid)) ? seen + 1 : 0;
+        if (seen === inARow) return true;
+        if (Date.now() >= deadline) return false;
       }
-      return want(procState(pid));
     };
     const statOnceItMatches = async (pid: number, want: RegExp, ms: number) => {
       const deadline = Date.now() + ms;
@@ -760,13 +760,14 @@ test.concurrent.skipIf(!isLinux)(
           round: i,
           resumed,
           scriptState: procState(scriptPid),
-          runState: procState(runPid),
+          // Neither stopped nor spinning. It can take a moment to be back in poll(), and one that spins there
+          // still reads "S" in 4 of 200 samples.
+          runBlocked: await waitState(runPid, st => st === "S", 3000, 5),
         }).toEqual({
           round: i,
           resumed: true,
           scriptState: expect.stringMatching(/[SR]/),
-          // Not stopped. It can still be on its way back to poll().
-          runState: expect.stringMatching(/[SR]/),
+          runBlocked: true,
         });
       }
 
@@ -817,20 +818,18 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 
     // Minimal interactive-shell stand-in. SIGTTOU ignored so `tcsetpgrp` from
     // the background succeeds instead of EIO (session-leader pgroup is
-    // orphaned). BUN_PGID is printed *before* handing off the foreground so
-    // ordering vs. READY is deterministic. `${^CHILD_ERROR_NATIVE}` — not
-    // `$?` — carries the raw WIFSTOPPED bits on a WUNTRACED return.
+    // orphaned). `${^CHILD_ERROR_NATIVE}` — not `$?` — carries the raw
+    // WIFSTOPPED bits on a WUNTRACED return.
     const shellSim =
       `use POSIX qw(:sys_wait_h setpgid tcsetpgrp WIFSTOPPED);` +
       `$|=1; $SIG{TTOU}="IGNORE"; ` +
       `my $bun = fork(); ` +
       // Child sets its own pgroup AND makes itself foreground *before* exec
-      // so `JobControl.give()`'s `tcgetpgrp(0)==getpgrp()` gate is satisfied
-      // regardless of whether the parent's tcsetpgrp won the fork race.
+      // so `JobControl.give()`'s `tcgetpgrp(0)==getpgrp()` gate is satisfied.
+      // The parent does not: late, it would take the terminal back from the script.
       `if ($bun == 0) { setpgid(0,0); tcsetpgrp(0,$$); ` +
       `  exec($ENV{BUN_EXE}, "run", "--no-orphans", "--silent", "dev") or die $!; } ` +
       `setpgid($bun, $bun); ` +
-      `tcsetpgrp(0, $bun); ` +
       `print "BUN_PGID $bun\\n"; ` +
       `while (1) { ` +
       `  my $w = waitpid($bun, WUNTRACED); last if $w <= 0; ` +

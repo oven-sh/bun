@@ -1809,6 +1809,7 @@ fn enqueue_git_clone(
             git_clone: ManuallyDrop::new(crate::package_manager_task::GitCloneRequest {
                 name: stored_string(name),
                 url: stored_string(this.lockfile.str(&repository.repo)),
+                is_fresh: core::cell::Cell::new(false),
             }),
         },
         id: task_id,
@@ -1836,6 +1837,7 @@ fn enqueue_git_commit(
                 name: stored_string(name),
                 url: stored_string(url),
                 committish: stored_string(committish),
+                asks_upstream: !this.fresh_git_clones.contains(&clone_id),
             }),
         },
         id: task_id,
@@ -1870,6 +1872,8 @@ pub fn enqueue_git_checkout(
                 .patchfile_hash()?,
         ))
     });
+    let clone_id = Task::Id::for_git_clone(this.lockfile.str(&resolution.git().repo));
+    let asks_upstream = !this.fresh_git_clones.contains(&clone_id);
     // SAFETY: `this` is a live `&mut PackageManager`.
     let task_value = unsafe {
         Task::Task {
@@ -1886,6 +1890,7 @@ pub fn enqueue_git_checkout(
                     name: stored_string(name),
                     url: stored_string(this.lockfile.str(&resolution.git().repo)),
                     resolved: stored_string(resolved),
+                    asks_upstream,
                 }),
             },
             apply_patch_task: if let Some((pkg_id, h, patch_hash)) = patch {

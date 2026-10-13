@@ -1399,6 +1399,9 @@ fn run_tasks_erased(
                 }
 
                 manager.git_repositories.insert(task.id, repo_fd);
+                if clone.is_fresh.get() {
+                    manager.fresh_git_clones.push(task.id);
+                }
 
                 // `bun pm fetch` has no installer, and parks its checkouts on the clone like one.
                 let has_checkout_waiters = cb.has_on_extract

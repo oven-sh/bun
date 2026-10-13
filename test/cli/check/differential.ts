@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { longLimit, spawn } from "../children";
 
@@ -22,10 +22,13 @@ function nativeTypeScript(packageName = "typescript7", expectedVersion?: string)
       const { version } = JSON.parse(readFileSync(nativePackagePath, "utf8"));
       if (version !== expectedVersion) throw new Error(`Expected ${packageName} ${expectedVersion}, got ${version}`);
     }
-    return join(dirname(nativePackagePath), "lib", isWindows ? "tsc.exe" : "tsc");
+    const executable = join(dirname(nativePackagePath), "lib", isWindows ? "tsc.exe" : "tsc");
+    if (expectedVersion && !statSync(executable).isFile())
+      throw new Error(`Not a TypeScript executable: ${executable}`);
+    return executable;
   } catch (error) {
-    if (expectedVersion) throw error;
-    // There is none for this system.
+    if (expectedVersion && (error as NodeJS.ErrnoException).code !== "MODULE_NOT_FOUND") throw error;
+    // An optional compiler package may not be installed, including with `--omit=optional`.
   }
 }
 export const tsc = process.env.TSC || nativeTypeScript();
@@ -100,20 +103,27 @@ type Case = { files: Record<string, string>; build?: true; deep?: true; oracle?:
  */
 export function programsThatOnceDiffered(part: number, parts: number) {
   const tests = 4;
+  const all: Record<string, Case> = JSON.parse(readFileSync(join(import.meta.dir, "differential-cases.json"), "utf8"));
   for (let nth = 0; nth < tests; nth++) {
+    const selected = Object.entries(all)
+      .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
+      // A debug build checks a sample. It is always the same sample.
+      .filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0)
+      .filter((_, index) => index % (parts * tests) === part * tests + nth)
+      // Windows cannot create a directory named `c:` or `w*d`.
+      .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)));
+    // Report omitted backport coverage while still running the baseline cases in this partition.
+    for (const [name, it] of selected) {
+      if (it.oracle === "post4913" && !post4913Tsc) {
+        test.skip(`${name}: pinned TypeScript oracle is not installed for this platform`, () => {});
+      }
+    }
     test.skipIf(!tsc)(
       `programs about which the two once differed, ${part * tests + nth + 1} of ${parts * tests}`,
       async () => {
-        const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
         using dir = tempDir("bun-check-differential", {});
         const root = String(dir);
-        const cases = Object.entries(all)
-          .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
-          // A debug build checks a sample. It is always the same sample.
-          .filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0)
-          .filter((_, index) => index % (parts * tests) === part * tests + nth)
-          // Windows cannot create a directory named `c:` or `w*d`.
-          .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)))
+        const cases = selected
           // Only the selected backport cases need a nightly published for this platform.
           .filter(([, it]) => it.oracle !== "post4913" || post4913Tsc !== undefined)
           .filter(([name, it]) => {

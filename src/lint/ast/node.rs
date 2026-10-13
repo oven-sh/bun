@@ -1,8 +1,8 @@
 //! Any node, and the way up from it.
 
 use super::{
-    Case, Class, EnumMember, ExportSpec, Expr, File, Func, ImportSpec, Member, Param, Pat, PatElem,
-    PatProp, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
+    Case, Class, EnumMember, ExportSpec, Expr, File, Func, ImportAttributes, ImportSpec, Member,
+    Param, Pat, PatElem, PatProp, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
 };
 use crate::span::{Span, Spanned};
 use bun_sema::bind::{MemberOwner, Parent, PatParent};
@@ -50,6 +50,18 @@ macro_rules! conversions {
             fn from(it: $handle<'a>) -> Node<'a> {
                 Node::$variant(it)
             }
+        }
+
+        impl Spanned for $handle<'_> {
+            #[inline]
+            fn span(&self) -> Span {
+                $handle::span(*self)
+            }
+
+            #[inline]
+            fn packed_node(&self) -> Option<Packed> {
+                Some(Packed { tag: Tag::$variant, id: self.id().0 })
+            }
         })*
 
         impl<'a> Node<'a> {
@@ -72,7 +84,7 @@ macro_rules! conversions {
 
             /// Which vector of the HIR it is in, and where.
             #[inline]
-            fn packed(self) -> Packed {
+            pub(crate) fn packed(self) -> Packed {
                 match self {
                     Node::File(_) => Packed::FILE,
                     $(Node::$variant(it) => Packed { tag: Tag::$variant, id: it.id().0 },)*
@@ -86,7 +98,7 @@ macro_rules! conversions {
 
         impl Packed {
             #[inline]
-            fn unpack<'a>(self, file: &'a File<'a>) -> Node<'a> {
+            pub(crate) fn unpack<'a>(self, file: &'a File<'a>) -> Node<'a> {
                 match self.tag {
                     Tag::File => Node::File(file),
                     $(Tag::$variant => Node::$variant(<$handle as super::Handle>::from_raw(file, self.id)),)*
@@ -106,7 +118,7 @@ impl<'a> From<&'a File<'a>> for Node<'a> {
 
 /// A [`Node`] without the reference to the file.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-struct Packed {
+pub struct Packed {
     tag: Tag,
     id: u32,
 }
@@ -141,6 +153,18 @@ impl Spanned for Node<'_> {
     #[inline]
     fn span(&self) -> Span {
         Node::span(*self)
+    }
+
+    #[inline]
+    fn packed_node(&self) -> Option<Packed> {
+        Some(self.packed())
+    }
+}
+
+impl Spanned for super::Modifier<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        super::Modifier::span(*self)
     }
 }
 
@@ -576,37 +600,34 @@ impl Parents {
 
     /// The import, the export or the import type that the attribute `prop` belongs to.
     fn of_import_attribute<'a>(&self, file: &'a File<'a>, prop: hir::PropId) -> Node<'a> {
-        let at = file.hir.props.get(prop.idx()).map_or(0, |it| it.pos);
-        let after = file.hir.import_attributes.partition_point(|it| it.0 <= at);
-        let owner = after
-            .checked_sub(1)
+        // By its `{ .. }`, not by its position: an entry can follow a clause that is nested in the entry before it.
+        let object = file.bound.prop_owner.get(prop.idx());
+        let owner = object
+            .and_then(|&it| file.index_of_import_attributes(it))
             .and_then(|it| self.import_attributes.get(it));
         owner.map_or(Node::File(file), |it| it.unpack(file))
     }
 
-    /// What each of `Hir::import_attributes`, which are in the order of the source, belongs to: the first import type around
-    /// it, or else the first import or export.
+    /// The owner of each entry of `Hir::import_attributes`. Clauses nest, so an owner takes only its own, which is the
+    /// one `import_attributes()` returns for it.
     fn owners_of_import_attributes(hir: &super::Hir) -> Box<[Packed]> {
-        let all = hir.import_attributes;
-        let mut owners = vec![Packed::FILE; all.len()].into_boxed_slice();
-        if all.is_empty() {
+        let mut owners = vec![Packed::FILE; hir.import_attributes.len()].into_boxed_slice();
+        if owners.is_empty() {
             return owners;
         }
-        let mut own = |start: u32, end: u32, owner: Packed| {
-            let first = all.partition_point(|it| it.0 < start);
-            let within = all[first..].partition_point(|it| it.0 < end);
-            for it in owners[first..first + within]
-                .iter_mut()
-                .filter(|it| matches!(it.tag, Tag::File))
+        // The first owner wins: a type in a JSDoc comment is parsed once for each node that it annotates.
+        let mut own = |within: Span, owner: Packed| {
+            if let Some(it) =
+                ImportAttributes::index_within(hir, within).and_then(|it| owners.get_mut(it))
+                && matches!(it.tag, Tag::File)
             {
                 *it = owner;
             }
         };
         for (i, it) in hir.types.iter().enumerate() {
-            if matches!(it.kind, hir::TypeNodeKind::Import { .. }) {
+            if let Some(within) = ImportAttributes::search_span_of_type(hir, it) {
                 own(
-                    it.pos,
-                    it.end,
+                    within,
                     Packed {
                         tag: Tag::Type,
                         id: i as u32,
@@ -618,8 +639,7 @@ impl Parents {
             use hir::StmtKind::{ExportNamed, ExportStar, Import};
             if matches!(it.kind, Import(_) | ExportNamed(_) | ExportStar { .. }) {
                 own(
-                    it.start,
-                    it.loc.end,
+                    Span::new(it.start, it.loc.end),
                     Packed {
                         tag: Tag::Stmt,
                         id: i as u32,

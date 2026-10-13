@@ -310,6 +310,97 @@ export const cases: Case[] = [
     reports: { "func-names": 60_000 },
     exitCode: 1,
   },
+  // ── the order of oxlint: the node of each of many problems is found again ──
+  {
+    name: "60,000 comparisons in a row, each with its sign reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `x = ${rep("a == ", 60_000)}a;\n`,
+    rules: { "eqeqeq": "error" },
+    reports: { "eqeqeq": 60_000 },
+    exitCode: 1,
+  },
+  {
+    name: "a sum of 60,001 numbers that are all reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `x = ${rep("2 + ", 60_000)}2;\n`,
+    rules: { "no-magic-numbers": "error" },
+    reports: { "no-magic-numbers": 60_001 },
+    exitCode: 1,
+  },
+  {
+    name: "60,000 functions between commas, each with its name reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `${rep("(function a() {}), ", 60_000)}a;\n`,
+    rules: { "id-length": "error" },
+    reports: { "id-length": 60_000 },
+    exitCode: 1,
+  },
+  {
+    name: "a chain of 60,000 calls, each with an argument that is reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `x${rep(".b(2)", 60_000)};\n`,
+    rules: { "no-magic-numbers": "error" },
+    reports: { "no-magic-numbers": 60_000 },
+    exitCode: 1,
+  },
+  {
+    name: "a chain of 60,000 members that are all reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `a${rep("._b", 60_000)};\n`,
+    rules: { "no-underscore-dangle": "error" },
+    reports: { "no-underscore-dangle": 60_000 },
+    exitCode: 1,
+  },
+  {
+    name: "an array of 60,000 comparisons, each with its sign reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `x = [${rep("a == a, ", 60_000)}];\n`,
+    rules: { "eqeqeq": "error" },
+    reports: { "eqeqeq": 60_000 },
+    exitCode: 1,
+  },
+  {
+    name: "10,000 assignments that pass a value on, all but the first reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `${rep("a = ", 10_000)}2;\n`,
+    rules: { "no-multi-assign": "error" },
+    reports: { "no-multi-assign": 9_999 },
+    exitCode: 1,
+  },
+  {
+    name: "10,000 conditional expressions in each other, each with a number that is reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `x = ${rep("a ? 2 : ", 10_000)}2;\n`,
+    rules: { "no-magic-numbers": "error" },
+    reports: { "no-magic-numbers": 10_001 },
+    exitCode: 1,
+  },
+  {
+    name: "10,000 arrow functions in each other, each with its parameter reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `x = ${rep("a => ", 10_000)}a;\n`,
+    rules: { "id-length": "error" },
+    reports: { "id-length": 10_000 },
+    exitCode: 1,
+  },
+  {
+    name: "a chain of 10,000 else if, each with a body that is reported",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `if (a) b;${rep(" else if (a) b;", 10_000)}\n`,
+    rules: { "curly": "error" },
+    reports: { "curly": 10_001 },
+    exitCode: 1,
+  },
 
   // ── regular expressions ──
   {
@@ -386,7 +477,7 @@ export const cases: Case[] = [
     const three = "await b;\nx = b as number;\np;\n";
     const conditions = (n: number, name = "x") => rep(`if (a) { ${name} = 1; }\n`, n);
     const warning =
-      /This file is too large for control flow analysis\. What rules that need types say about it may be wrong or incomplete\./;
+      /This file is too large for control flow analysis\. Reports from rules that need type information may be wrong or incomplete\./;
     const [awaited, asserted, floating] = ["await-thenable", "no-unnecessary-type-assertion", "no-floating-promises"];
     const common = {
       file: "a.ts",
@@ -783,22 +874,23 @@ export const cases: Case[] = [
   },
   // ── a number in the options that is the length of a text ──
   {
-    name: "2 ** 53 empty lines after an import",
+    // The largest that oxlint takes: the option is a `u32`.
+    name: "2 ** 32 - 1 empty lines after an import",
     file: "a.js",
     text: () => 'import "a";\nfoo();\n',
-    rules: { "import/newline-after-import": ["error", { count: 2 ** 53 }] },
+    rules: { "import/newline-after-import": ["error", { count: 2 ** 32 - 1 }] },
     args: ["--fix", "-f", "unix"],
     reports: { "import/newline-after-import": 1 },
     length: "as before",
     exitCode: 1,
   },
   {
-    name: "2 ** 53 empty lines after an import, in the format for a person, which reads the fixes",
+    name: "2 ** 32 - 1 empty lines after an import, in the format for a person, which reads the fixes",
     file: "a.js",
     text: () => 'import "a";\nfoo();\n',
-    rules: { "import/newline-after-import": ["error", { count: 2 ** 53 }] },
+    rules: { "import/newline-after-import": ["error", { count: 2 ** 32 - 1 }] },
     args: [],
-    matches: /Expected 9007199254740992 empty lines after import statement/,
+    matches: /Expected 4294967295 empty lines after import statement/,
     exitCode: 1,
   },
   // ── eslint-plugin-react: what many components share, and what is asked once for each of them ──

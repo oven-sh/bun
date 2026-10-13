@@ -262,18 +262,29 @@ pub(crate) mod valid_title {
         must_match_patterns: MatcherPatterns,
     }
 
-    /// `pattern`: `/pattern/flags`, of which the flags are ignored, or a pattern.
+    /// `pattern` is `/pattern/flags` or a bare pattern. oxlint ignores the flags. For `bun:test` the `i` flag works.
     fn compile_matcher_pattern(
         pattern: &Json,
         message: Option<&Json>,
+        runner: Runner,
     ) -> Option<CompiledMatcherAndMessage> {
         let pattern = std::str::from_utf8(pattern.as_str()?).ok()?;
         let literal = pattern
             .strip_prefix('/')
-            .and_then(|it| it.get(..strings::last_index_of_char(it.as_bytes(), b'/')?));
+            .and_then(|it| it.split_at_checked(strings::last_index_of_char(it.as_bytes(), b'/')?));
+        let (ignores_case, raw_pattern) = match runner {
+            Runner::Jest | Runner::Vitest => (
+                false,
+                literal.map_or_else(|| format!("(?u){pattern}"), |it| it.0.to_owned()),
+            ),
+            Runner::Bun => (
+                literal.is_some_and(|it| strings::contains_char(it.1.as_bytes(), b'i')),
+                pattern.to_owned(),
+            ),
+        };
         Some(CompiledMatcherAndMessage {
-            regex: rust_regex(literal.unwrap_or(pattern), false)?,
-            raw_pattern: literal.map_or_else(|| format!("(?u){pattern}"), str::to_owned),
+            regex: rust_regex(literal.map_or(pattern, |it| it.0), ignores_case)?,
+            raw_pattern,
             message: message
                 .and_then(Json::as_str)
                 .and_then(|it| std::str::from_utf8(it).ok())
@@ -282,16 +293,17 @@ pub(crate) mod valid_title {
     }
 
     /// `["/pattern/", "message"]`, `"/pattern/"` or `{ "describe": "/pattern/" }`
-    fn compile_matcher_patterns(matcher_patterns: Option<&Json>) -> MatcherPatterns {
+    fn compile_matcher_patterns(
+        matcher_patterns: Option<&Json>,
+        runner: Runner,
+    ) -> MatcherPatterns {
         let for_all = |pattern: Option<&Json>, message: Option<&Json>| {
-            [(); 3].map(|()| pattern.and_then(|pattern| compile_matcher_pattern(pattern, message)))
+            [(); 3].map(|()| compile_matcher_pattern(pattern?, message, runner))
         };
         match matcher_patterns {
             Some(Json::Array(value)) => for_all(value.first(), value.get(1)),
             Some(Json::Object(_)) => ["describe", "it", "test"].map(|key| {
-                matcher_patterns
-                    .and_then(|it| it.get(key.as_bytes()))
-                    .and_then(|it| compile_matcher_pattern(it, None))
+                compile_matcher_pattern(matcher_patterns?.get(key.as_bytes())?, None, runner)
             }),
             _ => for_all(matcher_patterns, None),
         }
@@ -320,8 +332,11 @@ pub(crate) mod valid_title {
                 allow_arguments: config.bool_or("allowArguments", false),
                 disallowed_words_reg: disallowed_words_reg.flatten(),
                 ignore_spaces: config.bool_or("ignoreSpaces", false),
-                must_not_match_patterns: compile_matcher_patterns(config.get("mustNotMatch")),
-                must_match_patterns: compile_matcher_patterns(config.get("mustMatch")),
+                must_not_match_patterns: compile_matcher_patterns(
+                    config.get("mustNotMatch"),
+                    runner,
+                ),
+                must_match_patterns: compile_matcher_patterns(config.get("mustMatch"), runner),
             }
         }
 
@@ -349,7 +364,7 @@ pub(crate) mod valid_title {
                         .settings()
                         .get(b"vitest")
                         .and_then(|it| it.get(b"typecheck"));
-                    if settings.and_then(Json::as_bool) == Some(true) {
+                    if settings.and_then(Json::as_bool) == Some(true) && ctx.runner != Runner::Bun {
                         return;
                     }
                     !self.ignore_type_of_describe_name
@@ -881,7 +896,10 @@ pub(crate) mod no_identical_title {
         // between `it('a')` and `test('a')` then keeps these two apart. It starts from the order of its list, and the sort is not
         // stable for more than 20: the same sort of as large elements in the same order does the same.
         let mut order = None;
-        for calls in title_to_calls.values_mut().filter(|it| it.len() > 1) {
+        let several = title_to_calls.values_mut().filter(|it| it.len() > 1);
+        let first =
+            |it: &&mut SmallVec<[Titled<'a>; 1]>| it.first().map(|it| it.argument.span().start);
+        for calls in utils::sort::in_order_of(several, first) {
             let order = order.get_or_insert_with(|| OxlintOrder::new(ctx.file));
             utils::sort::sort_by_cached_key(calls, |it| order.key(it.possible_jest_node));
             let mut kind_and_spans: Vec<(Span, bool, u32)> = calls

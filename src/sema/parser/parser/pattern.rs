@@ -165,6 +165,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let bigint = (self.token() == T::BigInt).then(|| self.lx.text());
         let name_end = self.lx.end;
         let (mut key, mut name_kind, key_pos) = self.property_name();
+        if matches!(key, PropKey::Private(_)) {
+            self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
+        }
         // In a type nothing asks whether the name is in quotes.
         if name_kind == NameKind::StringLiteral && self.has_context(ctx::TYPE) {
             name_kind = NameKind::Identifier;

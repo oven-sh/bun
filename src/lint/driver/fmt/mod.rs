@@ -1,19 +1,21 @@
-//! `bun format`: the command line of Prettier, on all threads.
+//! `bun fmt`: the command line of Prettier, on all threads.
 //!
 //! - [`cli`]: the flags.
-//! - [`run`]: `bun format`, given the flags and an [`Environment`].
-//! - [`ForRules`]: `bun format` for the rules of `bun lint` that hold a file against its formatted text.
+//! - [`run`]: `bun fmt`, given the flags and an [`Environment`].
+//! - [`ForRules`]: `bun fmt` for the rules of `bun lint` that hold a file against its formatted text.
 
 pub mod cli;
 mod config;
+mod doctor;
 mod editorconfig;
 mod files;
 mod for_rules;
 mod prettier;
 mod tailwind;
 
+use crate::doctor::{Modules, watching};
 use crate::run::{Environment, Fatal, Outcome, Pool};
-use crate::{fs, paths};
+use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
@@ -24,7 +26,7 @@ use bun_format::tailwind::Tailwind;
 use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
-use bun_lint::js_plugin::Unformatted;
+use bun_lint::js_plugin::{HEAVY, Unformatted};
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_lint::utils::code_frame::{self, Frame, Lines, Place, Version};
@@ -37,6 +39,7 @@ use bun_sema::session::Session;
 use bun_sema_parser::Summary;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
+pub(crate) use config::duplicated_mapping_key;
 use config::{Configs, Flavor, Resolved};
 use files::{Expanded, Ignored, Kind, Language, Target};
 pub use for_rules::ForRules;
@@ -54,15 +57,16 @@ macro_rules! pretty {
 const NESTED_TOO_DEEPLY: &[u8] = b"RangeError: The code is nested too deeply.";
 /// In the words of Prettier.
 const TOO_LONG: &[u8] = b"RangeError: Invalid string length";
+const MAKE_IT_A_WARNING: &[u8] = b"\n  Use --allow-unsupported to make this a warning.";
 
 /// Why a file is left as it is.
 enum Failure {
     /// `SyntaxError: ';' expected. (1:7)`
     Syntax(Vec<u8>),
-    /// A bug in the formatter.
-    Bug(&'static str),
-    /// What Prettier prints does not say what the file says.
-    Loss(&'static str),
+    /// A bug in the formatter: it could not print the file.
+    Bug,
+    /// `--debug-check`: what would be written does not say what the file says.
+    Changed(&'static str),
     /// TOML that cannot be read, with what is wrong with it. oxfmt passes over such a file without a word, so it is no
     /// error.
     Unread(Vec<u8>),
@@ -77,12 +81,12 @@ fn message_of(error: &[u8]) -> &[u8] {
 
 /// Tailwind has been asked, and the order of the classes in the file that is shown as `shown` is still not known.
 fn has_classes_without_order(shown: &[u8]) -> Vec<u8> {
-    let what = b": sortTailwindcss: The order of some classes cannot be found.";
+    let what = b": sortTailwindcss could not find the order of some classes.";
     [shown, what].concat()
 }
 
 /// `.svelte` of `src/a.svelte`. The name of a file that has no ending.
-fn ending_of(path: &[u8]) -> &[u8] {
+pub(crate) fn ending_of(path: &[u8]) -> &[u8] {
     let name = paths::basename(path);
     strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..])
 }
@@ -90,6 +94,64 @@ fn ending_of(path: &[u8]) -> &[u8] {
 /// Prettier's message for a parser that it does not have.
 fn cannot_resolve_parser(parser: &[u8]) -> Vec<u8> {
     [b"Couldn't resolve parser \"", parser, b"\"."].concat()
+}
+
+/// The error for `--parser` with the directory `written` as an argument.
+fn cannot_force_parser_on(written: &[u8], parser: &[u8]) -> Vec<u8> {
+    let extension: Option<&[u8]> = match parser {
+        b"typescript" | b"babel-ts" | b"oxc-ts" => Some(b"ts"),
+        b"markdown" | b"remark" => Some(b"md"),
+        b"glimmer" => Some(b"hbs"),
+        b"json-stringify" => Some(b"json"),
+        b"angular" | b"lwc" => Some(b"html"),
+        _ if parser.starts_with(b"__") => None,
+        _ if Kind::of_parser(parser) == Some(Kind::Script) => Some(b"js"),
+        // The others are named like their files: css, json5, yaml, vue, graphql.
+        _ => Some(parser),
+    };
+    let mut text = [b"--parser ", parser, b" would read every file in \""].concat();
+    text.extend_from_slice(&[written, b"\" as ", parser].concat());
+    let Some(extension) = extension else {
+        text.extend_from_slice(b"\n  Name the files, or use a glob.");
+        return text;
+    };
+    let directory = paths::from_native(written);
+    let directory = directory.strip_suffix(b"/").unwrap_or(&directory);
+    let base = match directory {
+        b"." | b"" => Vec::new(),
+        _ => [directory, b"/"].concat(),
+    };
+    text.extend_from_slice(b"\n  Name the files, or use a glob: bun fmt --parser ");
+    text.extend_from_slice(&[parser, b" \"", &base, b"**/*.", extension, b"\""].concat());
+    text
+}
+
+/// All of standard input, or the error to print.
+fn read_stdin() -> Result<Vec<u8>, Vec<u8>> {
+    fs::read_stdin()
+        .map_err(|error| [&b"Cannot read standard input: "[..], &fs::describe(&error)].concat())
+}
+
+/// Code from standard input.
+struct Piped<'p> {
+    text: Vec<u8>,
+    /// Its name in error messages.
+    shown: &'p [u8],
+    /// The file names to parse it as. The first one that parses wins.
+    paths: &'p [&'p [u8]],
+}
+
+/// [`Piped::paths`] for code that has no file name. These only tell the parser which syntax to expect. No config ever sees
+/// them. Prettier's TypeScript parsers go by the extension to allow JSX or not. Without one they try both.
+fn syntaxes_to_try(parser: &[u8], text: &[u8]) -> &'static [&'static [u8]] {
+    match parser {
+        b"typescript" | b"oxc-ts" if !bun_format::html::is_probably_jsx(text) => {
+            &[b"stdin.ts", b"stdin.tsx"]
+        }
+        b"typescript" | b"oxc-ts" | b"babel-ts" => &[b"stdin.tsx", b"stdin.ts"],
+        _ if Kind::of_parser(parser) == Some(Kind::Script) => &[b"stdin.js"],
+        _ => &[b""],
+    }
 }
 
 /// What the file at `path` is parsed as, one after the other until there is no error: whether as
@@ -124,7 +186,10 @@ impl How<'_> {
         let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
             .iter()
             .any(|it| ends_in(path, it));
+        let is_oxfmt = self.resolved.options.flavor.is_oxfmt();
         let language = LanguageOptions {
+            // oxfmt has oxc's parser, like oxlint.
+            refuses_what_parser_refuses: !is_oxfmt,
             parser: if is_typescript {
                 Parser::TypeScript
             } else {
@@ -137,14 +202,15 @@ impl How<'_> {
             },
             ..LanguageOptions::default()
         };
+        let options = language.parse_options(path);
         let dialect = match self.is_flow {
             true if bun_format::flow::goes_to_babel(&self.resolved.options, path) => {
                 Dialect::flow(self.is_script)
             }
             true => Dialect::flow_parser(self.is_script),
+            false if is_oxfmt => options.dialect,
             false => Dialect::babel(self.is_script),
         };
-        let options = language.parse_options(path);
         (language, dialect, options)
     }
 }
@@ -170,11 +236,11 @@ fn with_tree<'h, R>(
     )
 }
 
-/// Parses `text` and calls `then` with the file, with its tree, and with the first error in it.
+/// Parses `text` and calls `then` with the file, with its tree if `how.verifies`, and with the first error in it.
 fn with_file<R>(
     how: &How,
     text: &[u8],
-    then: impl for<'a> FnOnce(&'a File<'a>, &Program<'a>, Refused<'a>) -> R,
+    then: impl for<'a> FnOnce(&'a File<'a>, Option<&Program<'a>>, Refused<'a>) -> R,
 ) -> R {
     let (path, session) = (how.path, how.memory);
     let arena = session.arena();
@@ -193,9 +259,10 @@ fn with_file<R>(
             && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
         {
             let file = File::new(path, &**hir, bound, atoms, language, None).with_text(text);
+            let program = how.verifies.then(|| Program::new(&**hir, text, atoms));
             return then(
                 &file,
-                &Program::new(&**hir, text, atoms),
+                program.as_ref(),
                 Refused {
                     first_error: hir.diagnostics.first(),
                     is_nested_too_deeply: hir.ran_out_of_stack,
@@ -209,11 +276,12 @@ fn with_file<R>(
             before_es2020: false,
             before_es2017: false,
         };
+        let program = how.verifies.then(|| Program::new(&hir, text, atoms));
         if needs_symbols {
             let bound = bind(&hir, bind_options, atoms, arena);
             return then(
                 &File::new(path, &hir, &bound, atoms, language, None),
-                &Program::new(&hir, text, atoms),
+                program.as_ref(),
                 Refused {
                     first_error: hir.diagnostics.first(),
                     is_nested_too_deeply: hir.ran_out_of_stack || bound.ran_out_of_stack,
@@ -223,7 +291,7 @@ fn with_file<R>(
         let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
         then(
             &File::new(path, &hir, bound, atoms, language, None),
-            &Program::new(&hir, text, atoms),
+            program.as_ref(),
             Refused {
                 first_error: hir.diagnostics.first(),
                 is_nested_too_deeply: hir.ran_out_of_stack || bound.ran_out_of_stack,
@@ -253,7 +321,7 @@ fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
     out
 }
 
-/// `SyntaxError: This string is not closed (3:6)`, of a file that is not a script.
+/// `SyntaxError: Unclosed string (3:6)`, for code that isn't JavaScript or TypeScript.
 #[cold]
 fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Vec<u8> {
     syntax_error_in_words(text, message.text().as_bytes(), offset)
@@ -330,40 +398,12 @@ fn without_final_newline(out: &mut Vec<u8>) {
     out.truncate(end);
 }
 
-/// What formats a block of code in Markdown. `verifies`: a block that would not be the same program afterwards stays
-/// as it is.
-fn format_javascript(verifies: bool) -> bun_format::options::FormatJavaScript {
-    fn verified(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
-        format_block(path, code, options, out, true)
-    }
-    fn unverified(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
-        format_block(path, code, options, out, false)
-    }
-    match verifies {
-        true => verified,
-        false => unverified,
-    }
-}
-
-/// Appends `code` formatted as the file at `path`. `false`: it cannot be, and stays as it is.
-fn format_block(
-    path: &[u8],
-    code: &[u8],
-    options: &FormatOptions,
-    out: &mut Vec<u8>,
-    verifies: bool,
-) -> bool {
+/// For a block of code in Markdown. Appends `code` formatted as the file at `path`. `false`: it cannot be, and stays as
+/// it is.
+fn format_block(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
     let names = Session::new();
     let names = (&Interner::new_in(&names) as &dyn Intern, &names);
-    format_block_in(
-        path,
-        code,
-        options,
-        out,
-        verifies,
-        names,
-        &mut Scratches::default(),
-    )
+    format_block_in(path, code, options, out, names, &mut Scratches::default())
 }
 
 /// The same with what the caller keeps from one block to the next.
@@ -372,7 +412,6 @@ fn format_block_in(
     code: &[u8],
     options: &FormatOptions,
     out: &mut Vec<u8>,
-    verifies: bool,
     names: (&dyn Intern, &Session),
     scratch: &mut Scratches,
 ) -> bool {
@@ -384,15 +423,7 @@ fn format_block_in(
         },
         ..Resolved::default()
     };
-    let formatted = format(
-        path,
-        code,
-        &resolved,
-        names,
-        scratch,
-        // Of JSX in MDX, which comes in a fragment, what is in the fragment is printed. That is no program.
-        verifies && !options.is_mdx_jsx,
-    );
+    let formatted = format(path, code, &resolved, names, scratch, false);
     formatted
         .map(|(formatted, _)| out.extend_from_slice(&formatted))
         .is_ok()
@@ -448,7 +479,7 @@ fn format(
     // What `>` of Windows PowerShell writes. Some parsers take it for UTF-8 with a NUL next to every letter.
     if matches!(text, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
         return Err(Failure::Syntax(
-            b"SyntaxError: It is encoded as UTF-16. Only UTF-8 is read.".to_vec(),
+            b"SyntaxError: This file is UTF-16. bun fmt only reads UTF-8.".to_vec(),
         ));
     }
     // The name says what kind of file it is. Whether it is TypeScript is up to `path`.
@@ -466,14 +497,14 @@ fn format(
             Ok((out, cursor))
         }
         Err(FormatError::SyntaxError) => Err(Failure::Syntax(
-            format!("SyntaxError: It is not {what}.").into_bytes(),
+            format!("SyntaxError: This is not valid {what}.").into_bytes(),
         )),
         Err(FormatError::SyntaxErrorAt(error)) => {
             Err(Failure::Syntax(syntax_error_at(text, error)))
         }
         Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
         Err(FormatError::TooLong) => Err(Failure::Syntax(TOO_LONG.to_vec())),
-        Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
+        Err(FormatError::InvalidDocument) => Err(Failure::Bug),
     };
     let mut out = Vec::new();
     let kind = Kind::with_options(name, options);
@@ -498,7 +529,7 @@ fn format(
         }
         Some(Kind::Css(parser)) => {
             let done = bun_format::css::format(text, parser, options, &mut scratch.css, &mut out);
-            return finish(done, out, "a style sheet");
+            return finish(done, out, "CSS");
         }
         Some(Kind::Yaml) => {
             let done = bun_format::yaml::format(text, options, &mut scratch.yaml, &mut out);
@@ -509,7 +540,7 @@ fn format(
             let mut format_block =
                 |path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>| {
                     let names = (atoms, memory);
-                    format_block_in(path, code, options, out, verifies, names, &mut blocks)
+                    format_block_in(path, code, options, out, names, &mut blocks)
                 };
             let format_block: Option<&mut bun_format::markdown::FormatBlock<'_>> =
                 Some(&mut format_block);
@@ -548,24 +579,28 @@ fn format(
             if done == Err(FormatError::SyntaxError)
                 && let Some((message, offset)) = bun_format::toml::syntax_error(text)
             {
-                return Err(Failure::Unread(syntax_error_in_words(
-                    text, &message, offset,
-                )));
+                let error = syntax_error_in_words(text, &message, offset);
+                return Err(match options.flavor.is_oxfmt() {
+                    true => Failure::Unread(error),
+                    false => Failure::Syntax(error),
+                });
             }
             if verifies && done.is_ok() && out != text && !is_same_toml(text, &out) {
-                return Err(Failure::Loss(
-                    "formatting it the way oxfmt does would change what is in it",
-                ));
+                return Err(Failure::Changed("formatting would change its contents"));
             }
             return finish(done, out, "TOML");
         }
         Some(Kind::Handlebars) => {
             let done =
                 bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
-            if verifies && done.is_ok() && scratch.handlebars.is_damaged() {
-                return Err(Failure::Loss(
-                    "formatting it the way Prettier does would change what it means",
-                ));
+            if verifies && done.is_ok() && out != text {
+                match bun_format::handlebars::says_the_same(text, &out, options) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(Failure::Changed("formatting would change its meaning"));
+                    }
+                    Err(error) => return finish(Err(error), out, "Handlebars"),
+                }
             }
             return finish(done, out, "Handlebars");
         }
@@ -588,8 +623,8 @@ fn format(
                 && out != text
                 && !bun_format::html::has_same_content(text, &out, parser, options)
             {
-                return Err(Failure::Loss(
-                    "formatting it the way Prettier does would change what is in it",
+                return Err(Failure::Changed(
+                    "formatting like Prettier would change its contents",
                 ));
             }
             if matches!(done, Err(FormatError::SyntaxError))
@@ -655,11 +690,11 @@ fn format(
             done => return done,
         }
     }
-    Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
+    Err(first_failure.unwrap_or(Failure::Bug))
 }
 
 fn print<'a>(
-    (file, program): (&'a File<'a>, &Program<'a>),
+    (file, program): (&'a File<'a>, Option<&Program<'a>>),
     refused: Refused<'_>,
     how: &How,
     scratch: &mut Scratches,
@@ -678,7 +713,8 @@ fn print<'a>(
         false => TypesInJavaScript::Refused,
     };
     let refusal = match options.flavor.is_oxfmt() {
-        true => bun_lint::linter::refusal_of_oxfmt(file, types),
+        true if how.resolved.formats_what_has_errors && !file.has_parse_errors() => None,
+        true => bun_lint::linter::refusal_of_oxfmt(file),
         false => bun_lint::linter::refusal_of_prettier(file, types),
     };
     if let Some(why) = refusal {
@@ -715,12 +751,14 @@ fn print<'a>(
             return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
         }
         Err(FormatError::TooLong) => return Err(Failure::Syntax(TOO_LONG.to_vec())),
-        Err(FormatError::InvalidDocument) => return Err(Failure::Bug("the formatter failed")),
+        Err(FormatError::InvalidDocument) => return Err(Failure::Bug),
     };
     if how.resolved.omits_final_newline {
         without_final_newline(&mut out);
     }
-    if how.verifies && out != file.text() {
+    if let Some(program) = program
+        && out != file.text()
+    {
         let is_same = with_tree(how, &out, |after, atoms, _| {
             let after = match &after {
                 Summary::InPlace(hir) => Program::new(&**hir, &out, atoms),
@@ -729,7 +767,9 @@ fn print<'a>(
             bun_format::verify::compare(file, program, &after, options, &mut scratch.verify).is_ok()
         });
         if !is_same {
-            return Err(Failure::Bug("formatting would change what the code means"));
+            return Err(Failure::Changed(
+                "formatting would change what the code does",
+            ));
         }
     }
     Ok((out, cursor))
@@ -743,40 +783,42 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatte
         // A file whose imports move is parsed again.
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
         match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-            Some(sorted) => with_file(how, &sorted, |file, program, refused| {
-                print((file, program), refused, how, scratch)
+            Some(sorted) => with_file(how, &sorted, |after, program, refused| {
+                if how.verifies && !how_to_sort.is_some_and(|it| it.keeps_imports(file, after)) {
+                    return Err(Failure::Changed(
+                        "sorting imports would change what the code does",
+                    ));
+                }
+                print((after, program), refused, how, scratch)
             }),
             None => print((file, program), refused, how, scratch),
         }
     })
 }
 
-/// Why `bun format` leaves a file as it is.
+/// Why `bun fmt` leaves a file as it is.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Refusal {
     /// It has a syntax error or is nested too deeply.
     Syntax,
     /// A bug in the formatter, which it has noticed itself.
-    Bug(&'static str),
-    /// What Prettier prints does not say what the file says.
-    Loss(&'static str),
+    Bug,
 }
 
-/// The text of the file at `path` formatted with `options`, the way `bun format` does it, and where
-/// the cursor ends up. `verifies`: with the checks that `bun format` makes on what it has printed.
-/// For the tests of the formatter.
+/// The text of the file at `path` formatted with `options`, the way `bun fmt` does it, and where
+/// the cursor ends up. For the tests of the formatter.
 pub fn format_for_tests(
     path: &[u8],
     text: &[u8],
     options: &FormatOptions,
-    verifies: bool,
 ) -> Result<(Vec<u8>, Option<u32>), Refusal> {
     let resolved = Resolved {
         options: FormatOptions {
-            format_javascript: Some(format_javascript(verifies)),
+            format_javascript: Some(format_block),
             parse_javascript: Some(parse_javascript),
             ..options.clone()
         },
+        formats_what_has_errors: true,
         ..Resolved::default()
     };
     let names = Session::new();
@@ -786,12 +828,11 @@ pub fn format_for_tests(
         &resolved,
         (&Interner::new_in(&names), &names),
         &mut Scratches::default(),
-        verifies,
+        false,
     )
     .map_err(|failure| match failure {
         Failure::Syntax(_) | Failure::Unread(_) => Refusal::Syntax,
-        Failure::Bug(what) => Refusal::Bug(what),
-        Failure::Loss(what) => Refusal::Loss(what),
+        Failure::Bug | Failure::Changed(_) => Refusal::Bug,
     })
 }
 
@@ -800,6 +841,8 @@ enum Done {
     Unchanged,
     /// It is not formatted. With `--write`, it was not. And how long that took to find out.
     Different(Duration),
+    /// Skipped: neither formatted nor written. See [`git::Files::is_partly_staged`].
+    PartlyStaged,
     /// It has classes of Tailwind CSS whose order is not known yet.
     PutAside,
     /// For the user. The exit code is 2.
@@ -813,6 +856,12 @@ struct Run<'r> {
     environment: &'r Environment<'r>,
     out: Outcome,
     began: Instant,
+    /// `--doctor`
+    modules: Option<&'r Modules>,
+    /// [`Configs::is_native`], once that's known. If true, messages use Bun's own wording.
+    is_native: bool,
+    /// Some of the files that were found have not been looked at, so nothing can be said about all of them.
+    has_left_files: bool,
 }
 
 /// What the file at `path`, which has `scope`, is to the tool that the run stands in for.
@@ -826,6 +875,10 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
         }
         None => match files::language_of(path) {
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
+            Language::Supported if configs.is_read_by_plugin(scope, path) => Language::Other,
+            Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
+                Language::Supported
+            }
             Language::Unknown if files::parser_by_interpreter(path).is_some() => {
                 Language::Supported
             }
@@ -879,7 +932,9 @@ impl Run<'_> {
         } else if self.options.list_different {
             return;
         } else if self.options.check && different == 0 {
-            self.log(b"All matched files use the correct format.");
+            if !self.has_left_files {
+                self.log(b"All matched files use the correct format.");
+            }
         } else if self.options.check {
             self.log(b"");
             let text = format!(
@@ -892,9 +947,55 @@ impl Run<'_> {
         self.log(text.as_bytes());
     }
 
+    /// Prints the `--check` summary. The counts are files that need formatting, files that are already formatted, and
+    /// files that couldn't be checked.
+    fn sum_up_check(&mut self, [different, unchanged, failed]: [usize; 3]) {
+        let (colors, level) = (self.colors(), self.options.log_level);
+        let out = &mut self.out.stderr;
+        let files = |n: usize| if n == 1 { "file" } else { "files" };
+        if different > 0 && level >= LogLevel::Warn {
+            let (needs, them) = if different == 1 {
+                ("needs", "it")
+            } else {
+                ("need", "them")
+            };
+            pretty!(
+                out,
+                colors,
+                "<b>{} {} {} formatting.<r><d> Run <r><cyan>bun fmt<r><d> to fix {}.<r>\n",
+                different,
+                files(different),
+                needs,
+                them
+            );
+        }
+        if failed > 0 && level >= LogLevel::Error {
+            let _ = writeln!(out, "Could not check {failed} {}.", files(failed));
+        }
+        // If not every file is formatted, the reason has already been printed.
+        let is_all = different + failed == 0 && self.out.exit_code == 0 && !self.has_left_files;
+        if !is_all || level < LogLevel::Log {
+            return;
+        }
+        match unchanged {
+            0 => {}
+            1 => out.extend_from_slice(b"1 file is formatted.\n"),
+            all => {
+                let _ = writeln!(out, "All {all} files are formatted.");
+            }
+        }
+    }
+
     /// Prettier's `logger.warn`
     fn warn(&mut self, text: &[u8]) {
-        if self.options.log_level >= LogLevel::Warn {
+        if self.options.log_level >= LogLevel::Warn && self.is_native {
+            pretty!(
+                &mut self.out.stderr,
+                self.colors(),
+                "<yellow>warn<r><d>:<r> {}\n",
+                BStr::new(text)
+            );
+        } else if self.options.log_level >= LogLevel::Warn {
             for line in strings::split(text, b"\n") {
                 pretty!(
                     &mut self.out.stderr,
@@ -908,7 +1009,14 @@ impl Run<'_> {
 
     /// Prettier's `logger.error`
     fn error(&mut self, text: &[u8]) {
-        if self.options.log_level >= LogLevel::Error {
+        if self.options.log_level >= LogLevel::Error && self.is_native {
+            pretty!(
+                &mut self.out.stderr,
+                self.colors(),
+                "<red>error<r><d>:<r> {}\n",
+                BStr::new(text)
+            );
+        } else if self.options.log_level >= LogLevel::Error {
             for line in strings::split(text, b"\n") {
                 pretty!(
                     &mut self.out.stderr,
@@ -942,27 +1050,26 @@ impl Run<'_> {
     fn describe(shown: &[u8], failure: Failure) -> Vec<u8> {
         match failure {
             Failure::Syntax(error) | Failure::Unread(error) => [shown, b": ", &error].concat(),
-            Failure::Bug(what) => [
+            Failure::Bug => [
                 shown,
-                b": ",
-                what.as_bytes(),
-                b". It is left as it is. This is a bug in Bun.",
+                b": the formatter failed. It was not formatted. This is a bug in Bun.",
             ]
             .concat(),
-            Failure::Loss(what) => {
-                [shown, b": ", what.as_bytes(), b". It is left as it is."].concat()
-            }
+            Failure::Changed(what) => [shown, b": ", what.as_bytes(), b"."].concat(),
         }
+    }
+
+    /// What Prettier's `--debug-check` prints in place of the formatted text of standard input. `path`: of
+    /// `--stdin-filepath`.
+    fn name_of_stdin(path: Option<&[u8]>) -> Vec<u8> {
+        path.map_or_else(|| b"(stdin)\n".to_vec(), |it| paths::to_native(it.to_vec()))
     }
 
     /// Prettier's `formatStdin`
     fn format_stdin(mut self, configs: &Configs, ignored: &Ignored, name: &[u8]) -> Outcome {
-        let text = match fs::read_stdin() {
+        let text = match read_stdin() {
             Ok(text) => text,
-            Err(error) => {
-                return self
-                    .fail(&[&b"Cannot read standard input: "[..], &fs::describe(&error)].concat());
-            }
+            Err(error) => return self.fail(&error),
         };
         let path = paths::resolve(&self.environment.cwd, &paths::from_native(name));
         let only_looks = self.options.check || self.options.list_different;
@@ -982,40 +1089,14 @@ impl Run<'_> {
         };
         let language = language_of(configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.ignores_of(&scope));
-        // What has to be installed for the text to go to the project's own Prettier, and is not.
-        let mut not_installed: Vec<&[u8]> = Vec::new();
         let is_of_plugin = configs.plugin_that_reads(&scope, &path).is_some();
-        if language == Language::Other && is_of_plugin {
-            for package in [&b"prettier"[..]]
-                .into_iter()
-                .chain(configs.packages_of_plugins(&scope, &path))
-            {
-                if !prettier::is_installed(&self.environment.cwd, package)
-                    && !not_installed.contains(&package)
-                {
-                    not_installed.push(package);
-                }
-            }
-        }
-        // The language of a plugin: see `prettier.rs`.
+        let not_installed = match language == Language::Other && is_of_plugin {
+            true => self.not_installed(configs, &scope, Some(&path)),
+            false => Vec::new(),
+        };
         if language == Language::Other && !is_ignored && is_of_plugin && not_installed.is_empty() {
-            let size = (1, text.len() as u64);
-            let bridge = prettier::Prettier::new(self.environment, self.options, size);
-            match bridge.format(&path, configs.path_of_config(&scope), &text) {
-                Err(Unformatted::Message(message)) if forgives => {
-                    self.error(&message);
-                    self.out.exit_code = 0;
-                }
-                Err(why) => self.error(&[name, b": ", &prettier::describe(why)].concat()),
-                Ok(formatted) if only_looks => {
-                    if formatted != text && !self.options.write {
-                        self.log(b"(stdin)");
-                        self.out.exit_code = 1;
-                    }
-                }
-                Ok(formatted) => self.out.stdout = formatted,
-            }
-            return self.out;
+            let config = configs.path_of_config(&scope);
+            return self.format_stdin_with_prettier((Some(&path), config), (name, &text));
         }
         let mut options = match configs.options_for(&scope, &path) {
             Ok(options) => options,
@@ -1031,14 +1112,23 @@ impl Run<'_> {
         }
         // As for a file. Who gets the text back with 0 takes it for formatted.
         let allows = self.options.allow_unsupported;
-        if language == Language::Other {
+        // It is the plugin that is missing, not the language.
+        let plugin = (configs.plugin_that_reads(&scope, &path))
+            .filter(|_| files::language_of(&path) == Language::Supported);
+        if let (Language::Other, Some(plugin)) = (language, plugin) {
+            self.say_not_installed(&not_installed);
+            if !allows {
+                self.say_left_for_plugins(1, &[plugin]);
+                return self.out;
+            }
+        } else if language == Language::Other {
             self.say_unsupported(&mut [(ending_of(&path), 1)], &not_installed);
             if allows && !only_looks {
                 self.out.stdout = text;
             }
             return self.out;
         }
-        let missing_plugins = configs.missing_plugins(&scope, &path);
+        let missing_plugins = configs.missing_plugins(&scope, Some(&path));
         if language == Language::Supported && !allows && !missing_plugins.is_empty() {
             let names: Vec<&[u8]> = missing_plugins.iter().map(|it| &it[..]).collect();
             self.say_left_for_plugins(1, &names);
@@ -1065,17 +1155,171 @@ impl Run<'_> {
         }
         let kind = Kind::with_options(&path, &options.options);
         tailwind::only_where_sorted(&mut options.options, kind);
+        let piped = Piped {
+            text,
+            shown: name,
+            paths: &[&path],
+        };
+        self.print_stdin(configs, piped, options)
+    }
+
+    /// `prettier --parser x < file`: Prettier's `formatStdin` without `--stdin-filepath`. Whatever goes by a file name doesn't
+    /// apply: ignore files, overrides, `.editorconfig`.
+    fn format_unnamed_stdin(mut self, configs: &Configs) -> Outcome {
+        // Prettier prints its usage. `bun_sys::isatty` is also true for `NUL` on Windows.
+        if bun_core::Output::is_stdin_tty() {
+            return self.fail(
+                b"--parser without files formats standard input, and nothing is piped in\n  Pipe the code in, or name the files to format.",
+            );
+        }
+        let text = match read_stdin() {
+            Ok(text) => text,
+            Err(error) => return self.fail(&error),
+        };
+        let only_looks = self.options.check || self.options.list_different;
+        let forgives = configs.flavor == Flavor::Prettier && only_looks;
+        let scope = configs.for_directory(&self.environment.cwd);
+        let found = scope.and_then(|scope| Ok((configs.options_without_name(&scope)?, scope)));
+        let (mut options, scope) = match found {
+            Ok(found) => found,
+            Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
+        };
+        // `--config-precedence` can make a config file without `parser` win over the flag.
+        let Some(parser) = options.options.parser.clone() else {
+            if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !only_looks {
+                return self.out;
+            }
+            self.error(b"No parser and no file path given, couldn't infer a parser.");
+            if forgives {
+                self.out.exit_code = 0;
+            }
+            return self.out;
+        };
+        let Some(kind) = Kind::of_parser(&parser) else {
+            if !configs.names_other_plugins(&scope, None) {
+                self.error(&cannot_resolve_parser(&parser));
+                self.out.exit_code = match (self.is_native, forgives) {
+                    (true, _) => 2,
+                    (false, true) => 0,
+                    (false, false) => 1,
+                };
+                return self.out;
+            }
+            // It can only be a plugin's.
+            let not_installed = self.not_installed(configs, &scope, None);
+            if not_installed.is_empty() {
+                let config = configs.path_of_config(&scope);
+                return self.format_stdin_with_prettier((None, config), (b"stdin", &text));
+            }
+            self.say_unsupported(&mut [(&parser, 1)], &not_installed);
+            if self.options.allow_unsupported && !only_looks {
+                self.out.stdout = text;
+            }
+            return self.out;
+        };
+        let missing_plugins = configs.missing_plugins(&scope, None);
+        if !self.options.allow_unsupported && !missing_plugins.is_empty() {
+            let names: Vec<&[u8]> = missing_plugins.iter().map(|it| &it[..]).collect();
+            self.say_left_for_plugins(1, &names);
+            return self.out;
+        }
+        tailwind::only_where_sorted(&mut options.options, Some(kind));
+        let paths = syntaxes_to_try(&parser, &text);
+        let piped = Piped {
+            text,
+            shown: b"stdin",
+            paths,
+        };
+        self.print_stdin(configs, piped, options)
+    }
+
+    /// The packages that aren't installed, of those it takes to hand the file at `path` to the project's own Prettier.
+    fn not_installed<'s>(
+        &self,
+        configs: &'s Configs,
+        scope: &'s config::Scope,
+        path: Option<&[u8]>,
+    ) -> Vec<&'s [u8]> {
+        let mut missing: Vec<&[u8]> = Vec::new();
+        for package in [&b"prettier"[..]]
+            .into_iter()
+            .chain(configs.packages_of_plugins(scope, path))
+        {
+            if !prettier::is_installed(&self.environment.cwd, package)
+                && !missing.contains(&package)
+            {
+                missing.push(package);
+            }
+        }
+        missing
+    }
+
+    /// Standard input in the language of a plugin: see `prettier.rs`. `shown` is its name in error messages.
+    fn format_stdin_with_prettier(
+        mut self,
+        (path, config): (Option<&[u8]>, Option<&[u8]>),
+        (shown, text): (&[u8], &[u8]),
+    ) -> Outcome {
+        let only_looks = self.options.check || self.options.list_different;
+        let size = (1, text.len() as u64);
+        let bridge = prettier::Prettier::new(self.environment, self.options, size, 1);
+        match bridge.format(path, config, text) {
+            // Prettier's `listDifferent` prints `error.message` of what `check` throws, and that is all.
+            Err(Unformatted::Message(message)) if only_looks => {
+                self.error(&message);
+                self.out.exit_code = 0;
+            }
+            // Prettier's `handleError` prints only `error.message` of a `ConfigError`, like a parser that no plugin has.
+            Err(Unformatted::Thrown(why)) if why.starts_with(b"ConfigError: ") => {
+                let message = &why[b"ConfigError: ".len()..];
+                let end = strings::index_of(message, b"\n    at ").unwrap_or(message.len());
+                self.error(&message[..end]);
+                self.out.exit_code = 1;
+            }
+            Err(why) => self.error(&[shown, b": ", &prettier::describe(why)].concat()),
+            Ok(formatted) if only_looks => {
+                if formatted != text && !self.options.write {
+                    self.log(b"(stdin)");
+                    self.out.exit_code = 1;
+                }
+            }
+            Ok(_) if self.options.debug_check => self.out.stdout = Self::name_of_stdin(path),
+            Ok(formatted) => self.out.stdout = formatted,
+        }
+        self.out
+    }
+
+    /// Formats what came from standard input, then prints the result, or what `--check` says about it.
+    fn print_stdin(mut self, configs: &Configs, piped: Piped, mut options: Resolved) -> Outcome {
+        let Piped {
+            text,
+            shown: name,
+            paths,
+        } = piped;
+        let only_looks = self.options.check || self.options.list_different;
+        let forgives = configs.flavor == Flavor::Prettier && only_looks;
+        for warning in std::mem::take(&mut *configs.warnings.lock()) {
+            self.warn(&warning);
+        }
         let names = Session::new();
-        let verifies = self.options.verify;
+        // Prettier's `listDifferent` comes first, and that is all.
+        let verifies = self.options.debug_check && !only_looks;
         let format_text = |options: &Resolved| {
-            format(
-                &path,
-                &text,
-                options,
-                (&Interner::new_in(&names), &names),
-                &mut Scratches::default(),
-                verifies,
-            )
+            let mut first_failure = None;
+            for path in paths {
+                match format(
+                    path,
+                    &text,
+                    options,
+                    (&Interner::new_in(&names), &names),
+                    &mut Scratches::default(),
+                    verifies,
+                ) {
+                    Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
+                    done => return done,
+                }
+            }
+            Err(first_failure.unwrap_or(Failure::Bug))
         };
         let mut formatted = format_text(&options);
         if let Some(tailwind) = options
@@ -1117,6 +1361,11 @@ impl Run<'_> {
                     self.out.exit_code = 1;
                 }
             }
+            Ok(_) if verifies => {
+                let is_named = !self.options.formats_unnamed_stdin();
+                let path = paths.first().filter(|_| is_named);
+                self.out.stdout = Self::name_of_stdin(path.copied());
+            }
             Ok((formatted, cursor)) => {
                 self.out.stdout = formatted;
                 // As Prettier: where the cursor is now.
@@ -1132,9 +1381,20 @@ impl Run<'_> {
     fn format_files(mut self, configs: &Configs, ignored: &mut Ignored) -> Outcome {
         let (options, cwd) = (self.options, &self.environment.cwd);
         // Files are written unless a flag says otherwise.
-        let only_looks = (options.check || options.list_different) && !options.write;
+        let asks_for_different = (options.check || options.list_different) && !options.write;
+        let only_looks = asks_for_different || options.debug_check;
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
-        if options.check {
+        let only =
+            (options.only.as_ref()).map(|it| git::Files::read(it, !only_looks, self.environment));
+        let only = match only.transpose() {
+            Ok(only) => only,
+            Err(Fatal(error)) => return self.fail(&error),
+        };
+        let is_partly_staged = |target: &Target| {
+            only.as_ref()
+                .is_some_and(|it| it.is_partly_staged(&target.path))
+        };
+        if options.check && !self.is_native {
             self.log(b"Checking formatting...");
             if is_oxfmt {
                 self.log(b"");
@@ -1152,7 +1412,7 @@ impl Run<'_> {
             Flavor::Prettier => files::expand,
             Flavor::Oxfmt => files::expand_as_oxfmt,
         };
-        let expanded = match expand(
+        let mut expanded = match expand(
             configs,
             &pool,
             ignored,
@@ -1162,15 +1422,28 @@ impl Run<'_> {
             Ok(expanded) => expanded,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
+        if let Some(only) = &only {
+            expanded.retain(|it| match it {
+                Expanded::File(target) => only.has(&target.path),
+                Expanded::Error(_) => true,
+            });
+            if expanded.is_empty() {
+                if options.log_level >= LogLevel::Log {
+                    let _ = writeln!(self.out.stderr, "{}", only.nothing_left("format"));
+                }
+                return self.out;
+            }
+        }
         let finding = started.elapsed();
 
         // What is not to be formatted after all.
         let mut others: Vec<(&[u8], usize)> = Vec::new();
         // How many files are left alone because of plugins that are not there, and which.
         let mut left_for_plugins: (usize, Vec<&[u8]>) = (0, Vec::new());
-        let is_wanted = |target: &Target| {
-            let of_config = configs.ignores_of(&target.scope);
-            !target.is_named || !ignored.ignores_file(&target.path, of_config)
+        let is_wanted = |target: &Target| match target.is_named {
+            true => !ignored.ignores_file(&target.path, configs.ignores_of(&target.scope)),
+            // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
+            false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
         };
         let mut work: Vec<(usize, &Target)> = Vec::new();
         // What goes to the project's own Prettier, and the plugins that would have to be installed for more to go there.
@@ -1192,7 +1465,7 @@ impl Run<'_> {
             };
             let missing_plugins = match options.allow_unsupported {
                 true => &[][..],
-                false => configs.missing_plugins(&target.scope, &target.path),
+                false => configs.missing_plugins(&target.scope, Some(&target.path)),
             };
             match language_of(configs, &target.scope, &target.path) {
                 _ if !is_wanted(target) => {}
@@ -1209,24 +1482,36 @@ impl Run<'_> {
                     if (configs.plugin_that_reads(&target.scope, &target.path)).is_some()
                         && [&b"prettier"[..]]
                             .into_iter()
-                            .chain(configs.packages_of_plugins(&target.scope, &target.path))
+                            .chain(configs.packages_of_plugins(&target.scope, Some(&target.path)))
                             .all(&mut has_package) =>
                 {
                     handed_over.push((index, target));
                 }
                 Language::Other => {
-                    if configs
-                        .plugin_that_reads(&target.scope, &target.path)
-                        .is_some()
-                    {
+                    let plugin = configs.plugin_that_reads(&target.scope, &target.path);
+                    if plugin.is_some() {
                         for package in [&b"prettier"[..]]
                             .into_iter()
-                            .chain(configs.packages_of_plugins(&target.scope, &target.path))
+                            .chain(configs.packages_of_plugins(&target.scope, Some(&target.path)))
                         {
                             if !has_package(package) && !not_installed.contains(&package) {
                                 not_installed.push(package);
                             }
                         }
+                    }
+                    // It is the plugin that is missing, not the language.
+                    if let Some(plugin) = plugin
+                        && files::language_of(&target.path) == Language::Supported
+                    {
+                        if options.allow_unsupported {
+                            work.push((index, target));
+                        } else {
+                            left_for_plugins.0 += 1;
+                            if !left_for_plugins.1.contains(&plugin) {
+                                left_for_plugins.1.push(plugin);
+                            }
+                        }
+                        continue;
                     }
                     let kind = ending_of(&target.path);
                     match others.iter_mut().find(|it| it.0 == kind) {
@@ -1247,6 +1532,27 @@ impl Run<'_> {
                 }
             }
         }
+        if let Some(modules) = self.modules {
+            let sorted = doctor::Sorted {
+                found: &expanded,
+                formatted: &work,
+                handed_over: &handed_over,
+                others: &others,
+                left_for_plugins: left_for_plugins.0,
+                not_installed: &not_installed,
+            };
+            let how = crate::doctor::How {
+                as_json: options.as_json,
+                colors: (options.color).unwrap_or(self.environment.stdout.colors),
+            };
+            return match doctor::report((configs, cwd), &pool, &sorted, modules, how) {
+                Ok(report) => {
+                    self.out.stdout = report;
+                    self.out
+                }
+                Err(Fatal(error)) => self.fail_to_start(configs.flavor, &error),
+            };
+        }
         if options.list_files {
             for (_, target) in work.iter().chain(&handed_over) {
                 self.out
@@ -1259,14 +1565,13 @@ impl Run<'_> {
         // The largest first, so that no thread begins it when the others are nearly done.
         sort_slice_by(&mut work[..], |a, b| b.1.size.cmp(&a.1.size));
         let started = Instant::now();
-        // Before any other thread runs: this starts JavaScriptCore, and so would the first pattern of a configuration that one
-        // of them compiles. The thread that starts it is its main thread.
-        // Its threads have the stack for what walks a tree that is as deep as a parser lets it be. And those that hand files over
-        // wait for a VM, which loads its modules and reads files on Bun's pool: with all of that pool's threads waiting, for ever.
+        // Has to come before the first parallel region. The pool's threads have enough stack to walk a tree as deep as a parser
+        // allows.
         bun_sema_driver::use_a_pool_of_their_own("Bun Format");
         let bridge = (!handed_over.is_empty()).then(|| {
             let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
-            prettier::Prettier::new(self.environment, options, (handed_over.len(), size))
+            let size = (handed_over.len(), size);
+            prettier::Prettier::new(self.environment, options, size, pool.threads())
         });
         let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
         let names: Vec<Session> = (0..pool.threads().max(1)).map(|_| Session::new()).collect();
@@ -1275,6 +1580,7 @@ impl Run<'_> {
         let mut results = Guarded::new(done);
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
+        let once = fs::Written::default();
         let format_at = |at: usize| {
             let (index, target) = work[at];
             let began = Instant::now();
@@ -1298,21 +1604,13 @@ impl Run<'_> {
                 })?;
                 let kind = Kind::with_options(&target.path, &options.options);
                 tailwind::only_where_sorted(&mut options.options, kind);
-                // What a template would lose is known without a second look, and the second look at HTML is a short
-                // one, which only a file that changes gets.
-                let is_free = || {
-                    matches!(
-                        Kind::with_options(&target.path, &options.options),
-                        Some(Kind::Handlebars | Kind::Html(_))
-                    )
-                };
                 let formatted = match format(
                     &target.path,
                     &text,
                     &options,
                     (&atoms, &memory),
                     &mut scratch,
-                    self.options.verify && (!only_looks || is_free()),
+                    self.options.debug_check,
                 ) {
                     Ok((formatted, _)) => formatted,
                     Err(failure @ Failure::Unread(_)) => {
@@ -1331,8 +1629,11 @@ impl Run<'_> {
                 if formatted == text {
                     return Ok(Done::Unchanged);
                 }
+                if !only_looks && is_partly_staged(target) {
+                    return Ok(Done::PartlyStaged);
+                }
                 if !only_looks {
-                    fs::write_atomically(cwd, &target.path, &formatted).map_err(|why| {
+                    fs::write_atomically(&once, cwd, &target.path, &formatted).map_err(|why| {
                         [b"Unable to write file \"", &shown[..], b"\":\n", &why].concat()
                     })?;
                 }
@@ -1355,13 +1656,14 @@ impl Run<'_> {
                 let left: Vec<usize> = (put_aside.iter().copied())
                     .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::PutAside)))
                     .collect();
-                let files = if left.len() == 1 { "file" } else { "files" };
-                let what = match (options.allow_unsupported, left.len()) {
-                    (true, _) => "The classes are not sorted in",
-                    (false, 1) => "Left as it is:",
-                    (false, _) => "Left as they are:",
+                let count = left.len();
+                let said = match (options.allow_unsupported, count) {
+                    (true, 1) => "\nClasses were not sorted in 1 file.".to_owned(),
+                    (true, _) => format!("\nClasses were not sorted in {count} files."),
+                    (false, 1) => "\n1 file with classes was not formatted.".to_owned(),
+                    (false, _) => format!("\n{count} files with classes were not formatted."),
                 };
-                error.extend_from_slice(format!("\n{what} {} {files}.", left.len()).as_bytes());
+                error.extend_from_slice(said.as_bytes());
                 if options.allow_unsupported {
                     leaves_classes.store(true, Ordering::Relaxed);
                     pool.for_each(left.len(), 1, &|at| format_at(left[at]));
@@ -1369,13 +1671,16 @@ impl Run<'_> {
             }
         }
         if let Some(bridge) = &bridge {
-            pool.for_each(handed_over.len(), 1, &|at| {
+            let is_heavy = |at: usize| handed_over[at].1.size >= HEAVY as u64;
+            bridge.for_each(handed_over.len(), &is_heavy, &|at| {
                 let (index, target) = handed_over[at];
                 let began = Instant::now();
                 let shown = paths::relative(cwd, &target.path);
                 let config = configs.path_of_config(&target.scope);
                 let file = (&target.path[..], &shown[..]);
-                results.lock()[index] = Some(match bridge.format_file(file, config, !only_looks) {
+                let writes = !only_looks && !is_partly_staged(target);
+                results.lock()[index] = Some(match bridge.format_file(file, config, writes) {
+                    Ok(true) if !only_looks && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),
                     Ok(false) => Done::Unchanged,
                     Err(error) => Done::Failed(error),
@@ -1385,6 +1690,7 @@ impl Run<'_> {
         let formatting = started.elapsed();
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
+        let (mut written, mut partly_staged) = (Vec::new(), Vec::new());
         for (it, done) in expanded.iter().zip(std::mem::take(results.get_mut())) {
             let target = match it {
                 Expanded::Error(error) => {
@@ -1396,7 +1702,12 @@ impl Run<'_> {
             let shown = paths::relative(cwd, &target.path);
             match done {
                 None => {}
-                Some(Done::Unchanged) => unchanged += 1,
+                Some(Done::Unchanged) => {
+                    unchanged += 1;
+                    if options.debug_check {
+                        self.log(&shown);
+                    }
+                }
                 Some(Done::Unread(warning)) => {
                     unchanged += 1;
                     self.warn(&warning);
@@ -1414,18 +1725,43 @@ impl Run<'_> {
                 Some(Done::PutAside) => {
                     failed += 1;
                     let text = has_classes_without_order(&shown);
-                    self.error(&[&text[..], b" It is left as it is."].concat());
+                    self.error(&[&text[..], b" It was not formatted."].concat());
+                }
+                Some(Done::PartlyStaged) => {
+                    failed += 1;
+                    partly_staged.push(target.path.clone());
                 }
                 Some(Done::Different(took)) => {
                     different += 1;
+                    if !only_looks && only.is_some() {
+                        written.push(target.path.clone());
+                    }
                     match (is_oxfmt, options.check) {
                         (true, true) => self.log_with_time(&shown, took),
                         // oxfmt does not name the files that it writes.
                         (true, false) if !options.list_different => {}
-                        (false, true) => self.warn(&shown),
-                        (_, false) => self.log(&shown),
+                        (false, true) if !self.is_native => self.warn(&shown),
+                        // The list of files is what `--check` was asked for, so it goes to stdout.
+                        (false, true) if options.log_level >= LogLevel::Warn => {
+                            self.out.stdout.extend_from_slice(&shown);
+                            self.out.stdout.push(b'\n');
+                        }
+                        // Every file that passes is named below.
+                        (false, false) if options.debug_check && !options.list_different => {}
+                        _ => self.log(&shown),
+                    }
+                    if options.debug_check {
+                        self.log(&shown);
                     }
                 }
+            }
+        }
+        if let Some(only) = &only {
+            if !partly_staged.is_empty() {
+                self.error(&only.refusal_to_write(&mut partly_staged, "formatted"));
+            }
+            if let Err(Fatal(error)) = only.stage(&written) {
+                self.error(&error);
             }
         }
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
@@ -1438,8 +1774,17 @@ impl Run<'_> {
                 format!("{n} files")
             }
         };
-        if is_oxfmt {
+        // Why is said at the end.
+        self.has_left_files = left_for_plugins.0 > 0
+            || !others.is_empty()
+            || (classes_are_unknown.is_some() && !options.allow_unsupported);
+        // oxfmt has no `--debug-check`, so there it is as without a config.
+        if is_oxfmt && (options.check || !options.debug_check) {
             self.sum_up_as_oxfmt([different, unchanged, failed], pool.threads());
+        } else if self.is_native {
+            if options.check && only_looks {
+                self.sum_up_check([different, unchanged, failed]);
+            }
         } else if options.check {
             if failed > 0 {
                 self.log(
@@ -1450,11 +1795,13 @@ impl Run<'_> {
                     .as_bytes(),
                 );
             } else if different == 0 {
-                self.log(b"All matched files use Prettier code style!");
+                if !self.has_left_files {
+                    self.log(b"All matched files use Prettier code style!");
+                }
             } else if only_looks {
                 self.warn(
                     format!(
-                        "Code style issues found in {}. Run bun format to fix.",
+                        "Code style issues found in {}. Run bun fmt to fix.",
                         count(different)
                     )
                     .as_bytes(),
@@ -1463,10 +1810,13 @@ impl Run<'_> {
                 self.warn(format!("Code style issues fixed in {}.", count(different)).as_bytes());
             }
         }
-        if only_looks && different > 0 && self.out.exit_code == 0 {
+        if asks_for_different && different > 0 && self.out.exit_code == 0 {
             self.out.exit_code = 1;
         }
-        let sums_up = !is_oxfmt && !options.check && !options.list_different;
+        let sums_up = match self.is_native {
+            true => !only_looks,
+            false => !is_oxfmt && !options.check && !options.list_different && !only_looks,
+        };
         if options.log_level >= LogLevel::Log && sums_up {
             let colors = self.colors();
             let took = bun_core::output::Elapsed {
@@ -1486,20 +1836,20 @@ impl Run<'_> {
         }
         if options.log_level >= LogLevel::Log && !handed_over.is_empty() {
             let noun = if handed_over.len() == 1 {
-                "file was"
+                "file"
             } else {
-                "files were"
+                "files"
             };
             let _ = writeln!(
                 self.out.stderr,
-                "{} {noun} handed to the Prettier of the project, for a language that only a plugin reads.",
+                "Used your installed Prettier for {} {noun} in a language that needs a plugin",
                 handed_over.len(),
             );
         }
         if options.timing {
             let _ = writeln!(
                 self.out.stderr,
-                "  wall: {:.1}ms finding files and configurations, {:.1}ms formatting, {:.1}ms in all, on {} threads",
+                "  wall: {:.1}ms finding files and configs, {:.1}ms formatting, {:.1}ms total, {} threads",
                 finding.as_secs_f64() * 1e3,
                 formatting.as_secs_f64() * 1e3,
                 self.began.elapsed().as_secs_f64() * 1e3,
@@ -1510,16 +1860,15 @@ impl Run<'_> {
         if !unsupported_options.is_empty() {
             let text = [
                 &unsupported_options.join(&b", "[..])[..],
-                b" is not supported yet, and has no effect",
+                match unsupported_options.len() {
+                    1 => &b" is not supported yet and has no effect"[..],
+                    _ => b" are not supported yet and have no effect",
+                },
             ]
             .concat();
             match options.allow_unsupported {
-                true => self.warn(&[&text[..], b"."].concat()),
-                false => {
-                    self.error(
-                        &[&text[..], b". With --allow-unsupported this is a warning."].concat(),
-                    );
-                }
+                true => self.warn(&text),
+                false => self.error(&[&text[..], MAKE_IT_A_WARNING].concat()),
             }
         }
         match classes_are_unknown {
@@ -1533,21 +1882,38 @@ impl Run<'_> {
         // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
         if !others.is_empty() {
             self.say_unsupported(&mut others, &not_installed);
+        } else {
+            self.say_not_installed(&not_installed);
         }
         self.out
     }
 
     /// So many files are left alone because of plugins that are not there: `names`.
     fn say_left_for_plugins(&mut self, count: usize, names: &[&[u8]]) {
-        let (noun, it_is, it) = match count {
-            1 => ("file is", "it is", "it"),
-            _ => ("files are", "they are", "them"),
+        let (noun, it) = match count {
+            1 => ("file was", "it"),
+            _ => ("files were", "them"),
         };
         let text = format!(
-            "{count} {noun} left as {it_is}: the configuration names plugins that bun format does not have, and that may print {it} in another way: "
+            "{count} {noun} not formatted because the Prettier config uses plugins that bun fmt does not include: "
         );
-        let end = format!(". With --allow-unsupported {it_is} formatted without.");
+        let end = format!("\n  Use --allow-unsupported to format {it} without the plugins.");
         self.error(&[text.as_bytes(), &names.join(&b", "[..]), end.as_bytes()].concat());
+    }
+
+    /// The packages that would have to be installed for more files to go to the project's own Prettier.
+    fn say_not_installed(&mut self, not_installed: &[&[u8]]) {
+        if !not_installed.is_empty() {
+            let plugins = not_installed.join(&b", "[..]);
+            self.warn(
+                &[
+                    &b"Not installed: "[..],
+                    &plugins,
+                    b"\n  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+                ]
+                .concat(),
+            );
+        }
     }
 
     /// `others`: the endings of the files in another language, and how many have each. `not_installed`: the packages that would
@@ -1555,64 +1921,36 @@ impl Run<'_> {
     fn say_unsupported(&mut self, others: &mut [(&[u8], usize)], not_installed: &[&[u8]]) {
         sort_slice_by(others, |a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
         let count: usize = others.iter().map(|it| it.1).sum();
-        let (noun, it_is) = match count {
-            1 => ("file is", "it is"),
-            _ => ("files are", "they are"),
+        let (noun, its) = match count {
+            1 => ("file was", "its"),
+            _ => ("files were", "their"),
         };
         let kinds: Vec<Vec<u8>> = others
             .iter()
             .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
             .collect();
         let text = format!(
-            "{count} {noun} in a language that bun format does not support yet, and left as {it_is}: "
+            "{count} {noun} not formatted because bun fmt does not support {its} language yet: "
         );
         let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
-        if !not_installed.is_empty() {
-            let plugins = not_installed.join(&b", "[..]);
-            self.warn(
-                &[
-                    &b"Not installed: "[..],
-                    &plugins,
-                    b". With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
-                ]
-                .concat(),
-            );
-        }
+        self.say_not_installed(not_installed);
         match self.options.allow_unsupported {
             true => self.warn(&text),
             false => {
-                self.error(&[&text[..], b". With --allow-unsupported this is a warning."].concat());
+                self.error(&[&text[..], MAKE_IT_A_WARNING].concat());
             }
         }
     }
 
-    /// `oxfmt --init`
-    fn init(mut self) -> Outcome {
-        let environment = self.environment;
-        let cwd = &environment.cwd;
-        if config::has_configuration_of_oxfmt(cwd) {
-            let mut out = self.fail(b"A configuration file of oxfmt already exists.");
-            out.exit_code = 1;
-            return out;
-        }
-        let schema = &b"node_modules/oxfmt/configuration_schema.json"[..];
-        let text = match fs::is_file(&paths::join(cwd, schema)) {
-            true => [
-                b"{\n  \"$schema\": \"./",
-                schema,
-                b"\",\n  \"ignorePatterns\": []\n}\n",
-            ]
-            .concat(),
-            false => b"{\n  \"ignorePatterns\": []\n}\n".to_vec(),
-        };
-        match fs::write_new(&paths::join(cwd, b".oxfmtrc.json"), &text) {
-            Ok(()) => {
-                self.out.stdout = b"Created `.oxfmtrc.json`.\n".to_vec();
-                self.out
+    fn init(self, configs: &Configs) -> Outcome {
+        let scope = configs.for_directory(&self.environment.cwd);
+        match scope.as_ref().map(|scope| configs.config_of(scope)) {
+            Ok(Ok(other)) => {
+                let other = other.map(|it| &it.path[..]);
+                crate::init::FORMAT.add(other, self.environment)
             }
-            Err(error) => {
-                self.fail(&[&b"Cannot write .oxfmtrc.json: "[..], &fs::describe(&error)].concat())
-            }
+            Ok(Err(Fatal(error))) => self.fail_to_start(configs.flavor, &error),
+            Err(Fatal(error)) => self.fail_to_start(configs.flavor, error),
         }
     }
 
@@ -1622,36 +1960,44 @@ impl Run<'_> {
             self.out.stdout = [environment.version, b"\n"].concat();
             return self.out;
         }
+        let configs = Configs::new(options, environment);
+        self.is_native = configs.is_native();
         if let Some(name) = (options.plugins.iter()).find(|it| config::is_missing_plugin(it))
             && !options.allow_unsupported
         {
             return self.fail(
                 &[
-                    b"bun format does not have the plugin ",
+                    b"bun fmt does not include the plugin ",
                     &name[..],
-                    b", which may print files in another way. With --allow-unsupported they are formatted without.",
+                    b"\n  Use --allow-unsupported to format without it.",
                 ]
                 .concat(),
             );
         }
         if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
-            self.warn(b"Plugins are not supported: --plugin has no effect.");
+            self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
         }
         if options.config.is_some() && !options.config_lookup {
             let mut out = self.fail(b"Cannot use --no-config and --config together.");
             out.exit_code = 1;
             return out;
         }
-        let configs = Configs::new(options, environment);
-        // Both say it before they look at the files, the patterns or the configuration. `--init` is a flag of oxfmt.
-        let is_oxfmt = configs.flavor == Flavor::Oxfmt || options.init;
+        if let Some(only) = (options.only.as_ref()).filter(|_| options.stdin_filepath.is_some()) {
+            return self.fail(&only.refusal_of_stdin("--stdin-filepath"));
+        }
+        let is_unnamed = options.formats_unnamed_stdin();
+        if let Some(only) = options.only.as_ref().filter(|_| is_unnamed) {
+            return self.fail(&only.refusal_of_stdin("--parser without files"));
+        }
+        // Prettier and oxfmt both report this before they look at files, patterns or config.
+        let is_oxfmt = configs.flavor == Flavor::Oxfmt;
         if let Some(refusal) = options.refusal_of_modes(is_oxfmt) {
             let mut out = self.fail(&refusal);
             out.exit_code = 1;
             return out;
         }
         if options.init {
-            return self.init();
+            return self.init(&configs);
         }
         if let Some(file) = &options.find_config_path {
             let path = paths::resolve(&environment.cwd, &paths::from_native(file));
@@ -1678,22 +2024,61 @@ impl Run<'_> {
             return self.fail_to_start(configs.flavor, &error);
         }
         let from_flag = options.format.iter().rfind(|it| it.0 == b"parser");
-        if let Some((_, parser)) = from_flag.filter(|it| Kind::of_parser(&it.1).is_none()) {
+        let is_unknown = |it: &&(&[u8], Vec<u8>)| Kind::of_parser(&it.1).is_none();
+        if let Some((_, parser)) = from_flag.filter(is_unknown).filter(|_| !is_unnamed) {
             return self.fail(&cannot_resolve_parser(parser));
         }
-        let mut ignored = match Ignored::new(options, &environment.cwd, configs.flavor) {
-            Ok(ignored) => ignored,
-            Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
+        // Prettier reads everything in the directory with that parser: lock files, dotfiles, LICENSE. A Prettier config gets that.
+        // oxfmt has no `--parser`.
+        let is_directory = |written: &&Vec<u8>| {
+            let path = paths::resolve(&environment.cwd, &paths::from_native(written));
+            matches!(
+                fs::link_kind_and_size(&path),
+                Some((fs::LinkKind::Directory, _))
+            )
         };
-        match &options.stdin_filepath {
-            Some(name) => self.format_stdin(&configs, &ignored, name),
-            None => self.format_files(&configs, &mut ignored),
+        if (self.is_native || is_oxfmt)
+            && !options.doctor
+            && !options.list_files
+            && let Some((_, parser)) = from_flag
+            && let Some(directory) = options.patterns.iter().find(is_directory)
+        {
+            return self.fail(&cannot_force_parser_on(directory, parser));
         }
+        // `--doctor` already lists it with its own notes.
+        let is_said = options.log_level >= LogLevel::Warn && !options.doctor;
+        let colors = self.colors();
+        let mut out = if is_unnamed {
+            self.format_unnamed_stdin(&configs)
+        } else {
+            let mut ignored = match Ignored::new(options, &environment.cwd, configs.flavor) {
+                Ok(ignored) => ignored,
+                Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
+            };
+            match &options.stdin_filepath {
+                Some(name) => self.format_stdin(&configs, &ignored, name),
+                None => self.format_files(&configs, &mut ignored),
+            }
+        };
+        if let Some(note) = configs.note().filter(|_| is_said) {
+            let note = BStr::new(note);
+            pretty!(&mut out.stderr, colors, "<blue>note<r><d>:<r> {}\n", note);
+        }
+        out
     }
 }
 
-/// Does what `bun format` does. `options.help` and `options.cwd` are for the caller to see to.
+/// Does what `bun fmt` does. `options.help` and `options.cwd` are for the caller to see to.
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
+    match options.doctor {
+        true => watching(environment, |environment, modules| {
+            run_in(options, environment, Some(modules))
+        }),
+        false => run_in(options, environment, None),
+    }
+}
+
+fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules>) -> Outcome {
     let as_oxfmt = options
         .as_oxfmt_reads_it()
         .filter(|_| Configs::new(options, environment).flavor == Flavor::Oxfmt);
@@ -1703,6 +2088,9 @@ pub fn run(options: &Options, environment: &Environment) -> Outcome {
         environment,
         out: Outcome::default(),
         began: Instant::now(),
+        modules,
+        is_native: false,
+        has_left_files: false,
     };
     run.execute()
 }

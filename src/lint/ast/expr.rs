@@ -284,24 +284,8 @@ impl<'a> Expr<'a> {
     /// what `&amp;` and the like stand for. `None` if it is not [JSX text](Expr::is_jsx_text).
     /// espree has `\n` for each `\r\n` in it.
     pub fn jsx_text_value(self) -> Option<std::borrow::Cow<'a, [u8]>> {
-        use bun_core::strings;
-        if !self.is_jsx_text() {
-            return None;
-        }
-        let written = self.text();
         let is_espree = self.file.language().parser == Parser::Espree;
-        if !is_espree || !strings::contains(written, b"\r\n") {
-            return Some(super::entities::unescape(written, is_espree));
-        }
-        let mut normalized = Vec::with_capacity(written.len());
-        for (at, line) in strings::split(written, b"\r\n").enumerate() {
-            if at > 0 {
-                normalized.push(b'\n');
-            }
-            normalized.extend_from_slice(line);
-        }
-        let value = super::entities::unescape(&normalized, is_espree);
-        Some(value.into_owned().into())
+        (self.is_jsx_text()).then(|| jsx_text_value_of(self.text(), is_espree))
     }
 
     /// It is the name in a tag of a JSX element, or a part of it: the `a`, the `a.b` and the `a.b.c`
@@ -1692,4 +1676,21 @@ impl<'a> Jsx<'a> {
         let jsx = self.raw()?;
         (jsx.close_pos != u32::MAX).then(|| Span::new(jsx.close_pos, jsx.end))
     }
+}
+
+/// [`Expr::jsx_text_value`] for the source text `written`.
+pub(crate) fn jsx_text_value_of(written: &[u8], is_espree: bool) -> std::borrow::Cow<'_, [u8]> {
+    use bun_core::strings;
+    if !is_espree || !strings::contains(written, b"\r\n") {
+        return super::entities::unescape(written, is_espree);
+    }
+    let mut normalized = Vec::with_capacity(written.len());
+    for (at, line) in strings::split(written, b"\r\n").enumerate() {
+        if at > 0 {
+            normalized.push(b'\n');
+        }
+        normalized.extend_from_slice(line);
+    }
+    let value = super::entities::unescape(&normalized, is_espree);
+    value.into_owned().into()
 }

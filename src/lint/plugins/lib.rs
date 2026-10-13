@@ -11,6 +11,7 @@
 //! And the rules of `bun`, which are Bun's own.
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 mod bun;
 mod import_export_map;

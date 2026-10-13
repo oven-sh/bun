@@ -75,7 +75,11 @@ impl NoPrototypeBuiltins {
         };
         // oxlint points at what is called.
         let place = if cx.language().is_oxlint { callee.span() } else { property };
-        cx.report(place, PROTOTYPE_BUILD_IN).data("prop", prop).suggest_with(
+        let hint = || match prop {
+            "hasOwnProperty" => Some("Use Object.hasOwn(object, key) instead.".to_owned()),
+            _ => Some(format!("Use Object.prototype.{prop}.call(object, value) instead.")),
+        };
+        cx.report(place, PROTOTYPE_BUILD_IN).data("prop", prop).hint_with(hint).suggest_with(
             CALL_OBJECT_PROTOTYPE,
             &[("prop", prop.as_bytes())],
             |fixer| {
@@ -119,7 +123,8 @@ impl NoPrototypeBuiltins {
 impl Rule for NoPrototypeBuiltins {
     const META: Meta = Meta::eslint("no-prototype-builtins", Kind::Problem)
         .recommended()
-        .has_suggestions();
+        .has_suggestions()
+        .hints();
     const ON: On = On::new().method_calls(&["hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"]);
     type State<'a> = ();
 

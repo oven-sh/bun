@@ -5,7 +5,7 @@ use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::json::{self, Notation};
-use bun_lint::linter::{LegacyFailure, LegacyFile, LegacyKind, write_json};
+use bun_lint::linter::{LegacyFailure, LegacyFile, LegacyKind, json_parse, write_json};
 use bun_lint::options::Json;
 
 /// By priority: of several in a directory the first counts.
@@ -149,7 +149,7 @@ fn error_of(found: &Json) -> Option<&[u8]> {
 }
 
 /// The script has said nothing about what it was asked for.
-const NOT_LOADED: &[u8] = b"It was not loaded.";
+const NOT_LOADED: &[u8] = b"The file could not be loaded.";
 
 /// `loadConfigFile`: what the file at `path` says. `None`: a `package.json` without `eslintConfig`, a program that exports
 /// nothing.
@@ -167,15 +167,24 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
         };
     }
     let text = fs::read(path).map_err(|error| cannot_read(path, &fs::describe(&error)))?;
-    let json = || json::parse(&text).ok_or_else(|| cannot_read(path, b"It is not valid JSON."));
+    let json = || json::parse(&text).ok_or_else(|| cannot_read(path, b"Invalid JSON."));
+    // js-yaml throws.
+    let repeated = || crate::fmt::duplicated_mapping_key(&text).map(|why| cannot_read(path, &why));
     // `yaml.load(text) || {}`
     let yaml = || match json::parse_as(Notation::Yaml, &text) {
+        _ if let Some(why) = repeated() => Err(why),
         Ok(Json::Null) => Ok(Json::Object(Vec::new())),
         Ok(value) => Ok(value),
         Err(why) => Err(cannot_read(path, &why)),
     };
     if name == b"package.json" {
-        return Ok(json()?.get(b"eslintConfig").cloned());
+        let has_no_config = |it: Json| it.get(b"eslintConfig").is_none();
+        return match json::parse(&text) {
+            Some(package) => Ok(package.get(b"eslintConfig").cloned()),
+            // It's nested deeper than a config can be, which only matters if there is a config in it.
+            None if json_parse(&text).is_ok_and(has_no_config) => Ok(None),
+            None => Err(cannot_read(path, b"Invalid JSON.")),
+        };
     }
     Ok(Some(if name.ends_with(b".json") {
         json()?
@@ -184,6 +193,7 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
     } else {
         // YAML, which JSON is a part of, with the comments of JavaScript.
         match json::parse(&text) {
+            Some(_) if let Some(why) = repeated() => return Err(why),
             Some(value) => value,
             None => yaml()?,
         }

@@ -31,6 +31,8 @@ mod verify;
 mod vue;
 mod writer;
 
+pub use js::is_probably_jsx;
+
 use crate::cursor::Region;
 use crate::ir::formatter::Formatter;
 use crate::js::context::JsFormatContext;
@@ -375,6 +377,9 @@ fn write_document_with_cursor(
     if !preprocess::preprocess(&mut tree, &options) {
         return Err(FormatError::NestedTooDeeply);
     }
+    if options.format.html_template_depth > 0 && in_js::would_repeat_substitution(&tree) {
+        return Err(FormatError::SyntaxError);
+    }
     let mut printer = printer::Printer {
         tree: &tree,
         options: &options,
@@ -512,7 +517,8 @@ pub fn format_with(
     if has_bom {
         out.extend_from_slice(BOM);
     }
-    if strings::trim_js_whitespace(&text).is_empty() {
+    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    if text.trim_ascii().is_empty() {
         return Ok(None);
     }
     // Prettier's `isSourceElement`: nothing can be formatted on its own, except that in Vue everything can. It does not

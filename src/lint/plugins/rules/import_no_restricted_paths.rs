@@ -1,7 +1,7 @@
+use crate::import_minimatch::Glob;
 use crate::import_resolve::{Resolved, Resolvers};
 use crate::module_visitor::{self, Systems};
 use bun_glob::scan::is_glob;
-use bun_glob::{Options as GlobOptions, Pattern};
 use bun_lint::context::interpolate_text;
 use bun_lint::paths;
 use bun_lint::prelude::*;
@@ -37,7 +37,7 @@ const EXCEPTION_IS_NO_GLOB: Message =
     Message::new("", "Restricted path exceptions must be glob patterns when `from` contains glob patterns");
 
 enum Place {
-    Glob(Pattern),
+    Glob(Glob),
     /// It, and all that is in it.
     Path(Vec<u8>),
 }
@@ -47,7 +47,7 @@ enum Validators {
     /// `computeMixedGlobAndAbsolutePathValidator`
     Mixed,
     /// `computeGlobPatternPathValidator`, for each. The exceptions are the same for all. `None`: one is no pattern.
-    Globs(Vec<Pattern>, Option<Vec<Pattern>>),
+    Globs(Vec<Glob>, Option<Vec<Glob>>),
     /// `computeAbsolutePathValidator`: each with its exceptions. `None`: one of them is not in it.
     Paths(Vec<(Vec<u8>, Option<Vec<Vec<u8>>>)>),
 }
@@ -57,10 +57,6 @@ struct Zone {
     from: Validators,
     /// After a blank. It is a part of the message that ESLint fills in.
     message: Box<str>,
-}
-
-fn minimatch(pattern: &[u8]) -> Pattern {
-    Pattern::new(pattern, GlobOptions::MINIMATCH_3)
 }
 
 /// `containsPath`. Both are absolute and resolved.
@@ -100,14 +96,14 @@ impl Zone {
             Validators::Paths(written.from.iter().map(|it| with_exceptions(it)).collect())
         } else if globs == written.from.len() {
             let are_valid = written.except.iter().all(|it| is_glob(it));
-            let exceptions = || written.except.iter().map(|it| minimatch(it)).collect::<Vec<Pattern>>();
-            let from = written.from.iter().map(|it| minimatch(&absolute(it))).collect();
+            let exceptions = || written.except.iter().map(|it| Glob::new(it)).collect::<Vec<Glob>>();
+            let from = written.from.iter().map(|it| Glob::new(&absolute(it))).collect();
             Validators::Globs(from, are_valid.then(exceptions))
         } else {
             Validators::Mixed
         };
         let place = |it: &[u8]| match absolute(it) {
-            target if is_glob(&target) => Place::Glob(minimatch(&target)),
+            target if is_glob(&target) => Place::Glob(Glob::new(&target)),
             target => Place::Path(target),
         };
         Zone { target: written.target.iter().map(|it| place(it)).collect(), from, message: written.message.clone() }

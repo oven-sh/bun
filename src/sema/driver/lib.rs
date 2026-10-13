@@ -3151,14 +3151,14 @@ impl Redirects {
             sources.retain(|it| it.2.is_empty() || !is_among(named, &it.0));
         }
         // `maps.Copy`: of the projects that have a file, the last one has the entry.
-        sources.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.3.cmp(&a.3)));
+        sources.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.3.cmp(&a.3)));
         sources.dedup_by(|a, b| a.0 == b.0);
         let mut output_dts: Vec<(Vec<u8>, u32)> = (sources.iter().enumerate())
             .filter(|(_, it)| !it.2.is_empty())
             .map(|(index, it)| (to_path(&it.2, is_case_sensitive).into_owned(), index as u32))
             .collect();
         let walked = |it: &(Vec<u8>, u32)| sources[it.1 as usize].3;
-        output_dts.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(walked(b).cmp(&walked(a))));
+        output_dts.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0).then(walked(b).cmp(&walked(a))));
         output_dts.dedup_by(|a, b| a.0 == b.0);
         Redirects {
             is_referenced,
@@ -3558,7 +3558,7 @@ fn check_with_references(
         !reads_sources
             && built_at_once > large_at_once
             && built_at_once >= host.threads()
-            && roots[index].len() <= request.plan_options.files_of_a_small_project
+            && root_paths[index].len() <= request.plan_options.files_of_a_small_project
     };
     // `is_built`: by project, now. `Err`: the projects that have to be built first, besides those
     // that it references.

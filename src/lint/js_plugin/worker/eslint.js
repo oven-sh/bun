@@ -117,7 +117,7 @@ function movedPattern(pattern, from, to) {
 async function reviveOverride(object, arrayBase) {
   const resolve = createRequire(nodePath.join(cwd, "noop.js")).resolve;
   const importFrom = async name => load(pathToFileURL(resolve(name)).href);
-  const { $globsOfBun: isOfBunfig, basePath = arrayBase, ...revived } = object;
+  const { $globsOfBun: isOfBunfig, $jsPlugins: located = {}, basePath = arrayBase, ...revived } = object;
   if (isOfBunfig) {
     revived.files = [bunfigMatcher(object.files, basePath)];
     if (object.ignores !== undefined) revived.ignores = [bunfigMatcher(object.ignores, basePath)];
@@ -127,6 +127,10 @@ async function reviveOverride(object, arrayBase) {
   if (object.plugins !== undefined) {
     revived.plugins = {};
     for (const [prefix, name] of Object.entries(object.plugins)) {
+      if (located[prefix] !== undefined) {
+        revived.plugins[prefix] = await locatedPlugin(located[prefix], prefix);
+        continue;
+      }
       const module = await importFrom(longPluginName(name));
       if (!("default" in module)) {
         throw new Error(

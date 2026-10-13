@@ -83,6 +83,8 @@ pub struct LegacyOptions<'o> {
     pub plugins_from: Option<&'o [u8]>,
     /// How many of the files, from the first, are those of the directories. What one of them extends can have `root`, too.
     pub cascade: usize,
+    /// What `plugins` in bunfig.toml names. ESLint 8 has no word for a path or for another prefix.
+    pub named: &'o [super::NamedPlugin],
 }
 
 /// `DotPatterns` of `IgnorePattern`. For ESLint these are lines of a `.gitignore`.
@@ -2233,6 +2235,7 @@ impl Config {
                 js_locations: Vec::new(),
                 defaults: 0,
                 foreign_prefixes: Vec::new(),
+                named: 0,
                 has_unknown_resolver: false,
                 handing_back: Vec::new(),
             },
@@ -2244,6 +2247,7 @@ impl Config {
             ignored: Vec::new(),
             typescript_eslint: None,
         };
+        legacy.reader.add_named(options.named.to_vec());
         // What ESLint lints of a directory. An override adds its patterns.
         let extensions: Vec<Json> = match options.extensions {
             None => vec![text(b"**/*.js")],

@@ -1241,7 +1241,8 @@ module.exports = {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
     expect(stdout).toContain("[Warning/local/no-todo]");
     expect(exitCode).toBe(1);
   });

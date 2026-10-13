@@ -1206,6 +1206,7 @@ impl Config {
                 js_locations: Vec::new(),
                 defaults: 0,
                 foreign_prefixes: Vec::new(),
+                named: 0,
                 has_unknown_resolver: false,
                 handing_back: Vec::new(),
             },

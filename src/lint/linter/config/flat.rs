@@ -67,6 +67,8 @@ pub(super) struct Reader<'r> {
     pub(super) defaults: usize,
     /// The names of the plugins of the configuration that are not [built in](is_built_in).
     pub(super) foreign_prefixes: Vec<Box<[u8]>>,
+    /// How many of `js_plugins` and of `js_locations`, from the first, are [`NamedPlugin`]s.
+    pub(super) named: usize,
     /// [`names_unknown_resolver`] somewhere.
     pub(super) has_unknown_resolver: bool,
     /// The names of the plugins of which a rule is on that is answered for here and can hand a file back.
@@ -672,6 +674,15 @@ impl Reader<'_> {
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
+            // ESLint's `Cannot redefine plugin`, for one of the file and a `NamedPlugin`. Those come first.
+            let mut named = self.js_locations.iter().take(self.named);
+            if named.any(|it| *it.0 == prefix[..] && it.1 != *location) {
+                return Err(ConfigError::new(&[
+                    b"The plugin \"",
+                    prefix,
+                    b"\" is loaded twice: here, and by plugins in bunfig.toml or --plugin",
+                ]));
+            }
             // `twin`: which of the plugins that objects have under that name.
             let is_it = |it: &(Box<[u8]>, Json)| {
                 *it.0 == prefix[..] && it.1.get(b"twin") == location.get(b"twin")
@@ -909,18 +920,11 @@ impl Config {
             js_locations: Vec::new(),
             defaults: 0,
             foreign_prefixes: Vec::new(),
+            named: 0,
             has_unknown_resolver: has_unknown_resolver(json),
             handing_back: Vec::new(),
         };
-        for (plugin, location) in named {
-            reader
-                .js_plugin_places
-                .push(reader.js_locations.len() as u32);
-            reader.js_locations.push((plugin.name.clone(), location));
-            // It is asked for by name, so nothing here stands in for it: `@stylistic` is not left to `bun fmt`.
-            reader.foreign_prefixes.push(plugin.name.clone());
-            reader.js_plugins.push(plugin);
-        }
+        reader.add_named(named);
         add_foreign_prefixes(registry, json, &mut reader.foreign_prefixes);
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
         for object in defaults.as_array().unwrap_or_default() {
@@ -948,6 +952,18 @@ impl Config {
 }
 
 impl Reader<'_> {
+    /// Before anything is read.
+    pub(super) fn add_named(&mut self, named: Vec<NamedPlugin>) {
+        self.named = named.len();
+        for (plugin, location) in named {
+            self.js_plugin_places.push(self.js_locations.len() as u32);
+            self.js_locations.push((plugin.name.clone(), location));
+            // It is asked for by name, so nothing here stands in for it: `@stylistic` is not left to `bun fmt`.
+            self.foreign_prefixes.push(plugin.name.clone());
+            self.js_plugins.push(plugin);
+        }
+    }
+
     /// Loads the plugins of which a rule is enabled that does not exist here, and takes note of those that the configuration has
     /// described, for which nothing is loaded: a comment can name a rule of them, and whether there is such a rule is to be known.
     pub(super) fn load_js_plugins(

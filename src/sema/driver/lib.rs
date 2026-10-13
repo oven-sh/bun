@@ -3234,18 +3234,25 @@ fn check_with_references(
         true => (host.threads().min(count)).min(large_at_once * 4),
         false => large_at_once,
     };
+    // The thread that builds a small project parses and checks it, so it needs the stack of a
+    // worker: the calling thread has the stack it was given, and only waits then.
+    let has_small = (0..count).any(is_small);
     std::thread::scope(|scope| {
-        for _ in 1..at_once {
+        let mut started = 0;
+        for _ in usize::from(!has_small)..at_once {
             // Without the thread, the others build its share.
-            let _ = std::thread::Builder::new()
+            let builder = std::thread::Builder::new()
                 .stack_size(STACK_OF_A_WORKER as usize)
                 .spawn_scoped(scope, || {
                     // As a thread of the pool does when it starts: the parsers check the stack.
                     bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
                     build_what_is_ready();
                 });
+            started += usize::from(builder.is_ok());
         }
-        build_what_is_ready();
+        if !has_small || started == 0 {
+            build_what_is_ready();
+        }
     });
     // `BuildTask.report`: project by project, in build order. What two projects say about a file
     // that both include is there twice.

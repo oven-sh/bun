@@ -219,12 +219,9 @@ const PLUGIN_NAMES: [&[u8]; 23] = [
     b"vue",
 ];
 
-/// What oxlint calls the built-in plugin that `name` is a name of anywhere: `node` for `n`. `None`: it has no such plugin.
-pub fn oxlint_plugin_name(name: &[u8]) -> Option<&'static [u8]> {
-    let spellings = Plugin::spelled(name).flat_map(|it| it.spellings());
-    let mut known =
-        spellings.filter_map(|it| PLUGIN_NAMES.iter().find(|name| **name == it.as_bytes()));
-    known.next().copied()
+/// Whether oxlint keeps `name` for a plugin of its own. `n` is a package to it: its own is `node`.
+pub fn is_plugin_of_oxlint(name: &[u8]) -> bool {
+    PLUGIN_NAMES.contains(&name)
 }
 
 /// The files that are linted if nothing else says so. Of the last three the scripts.

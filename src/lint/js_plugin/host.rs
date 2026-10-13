@@ -375,6 +375,22 @@ impl<'e> Host<'e> {
         self.load_from(location)
     }
 
+    /// The file that [`Host::load`] would load, as Node.js writes the path. Nothing is loaded.
+    pub fn resolve(&self, directory: &[u8], specifier: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
+        let mut message = b"[[".to_vec();
+        json_stringify(directory, &mut message);
+        message.push(b',');
+        json_stringify(specifier, &mut message);
+        // `ONLY_RESOLVE`
+        message.extend_from_slice(b",null],-1,null]");
+        let mut found = Err(OUT_OF_STEP.to_vec());
+        self.engine
+            .with_vm(0, &mut |vm| found = self.ask_to_load(vm, &message))?;
+        let found = crate::json::parse(&found?);
+        let file = found.as_ref().and_then(|it| it.get(b"file")?.as_str());
+        file.map(<[u8]>::to_vec).ok_or_else(|| OUT_OF_STEP.to_vec())
+    }
+
     /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location`: what the script that
     /// evaluates such a file says about where the plugin is, in `$jsPlugins`.
     /// With `described`, which is what the plugin consists of as JSON in a string, nothing is loaded yet.
@@ -449,8 +465,11 @@ impl<'e> Host<'e> {
             || "null,null".to_owned(),
             |(position, first_rule)| format!("{position},{first_rule}"),
         );
-        let message = [b"[", location, b",", place.as_bytes(), b"]"].concat();
-        let returned = vm.call(call::LOAD, &message, &mut |asked, details, out| {
+        self.ask_to_load(vm, &[b"[", location, b",", place.as_bytes(), b"]"].concat())
+    }
+
+    fn ask_to_load(&self, vm: &mut dyn Vm, message: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
+        let returned = vm.call(call::LOAD, message, &mut |asked, details, out| {
             self.serve_any(asked, details, out);
         })?;
         match returned.split_first() {
@@ -762,7 +781,7 @@ fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
     source_type | (u32::from(has_no_jsx) << 2)
 }
 
-/// `{ name, isAlias, file, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
+/// `{ name, isAlias, id, file, export, hasNothing, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
 /// numbered from `first`, in that order. `position`: that of the plugin. `needs_the_configuration`: no module exports it.
 fn plugin_of(
     described: &Json,
@@ -829,10 +848,18 @@ fn plugin_of(
     crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
     Plugin {
         name: name.into(),
-        file: described
-            .get(b"file")
-            .and_then(Json::as_str)
-            .map(Into::into),
+        location: described.get(b"file").map(|file| {
+            let exported = described.get(b"export").cloned();
+            Json::Object(vec![
+                (b"module".to_vec(), file.clone()),
+                (
+                    b"export".to_vec(),
+                    exported.unwrap_or(Json::Array(Vec::new())),
+                ),
+            ])
+        }),
+        id: (described.get(b"id").and_then(Json::as_str)).map(Into::into),
+        has_nothing: described.get(b"hasNothing").and_then(Json::as_bool) == Some(true),
         rules,
     }
 }

@@ -799,7 +799,11 @@ pub(crate) fn lint(
             }
             // oxlint fixes once, and so does tsgolint after it.
             if file.config.language.is_oxlint {
-                if !was_refused && !context.parses(file.path, &fixed.output, file.config) {
+                // A file that oxc refuses keeps what tsgolint fixes in it.
+                if !was_refused
+                    && !context.parses(file.path, &fixed.output, file.config)
+                    && context.parses(file.path, text, file.config)
+                {
                     context.note_broken_fixes(file.path, fixed.applied);
                     // What oxlint's own rules fixed is written before tsgolint lints.
                     let (is_fixed, fixes) = (state.is_after_own_fixes, state.fixes);

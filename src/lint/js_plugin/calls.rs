@@ -15,6 +15,7 @@ use crate::ast::File;
 use crate::code_path::estree::{self, Tree};
 use crate::estree::{Dialect, NodeType};
 use crate::selector::Selector;
+use crate::utils::sort;
 use bun_core::strings::Utf16OffsetTable;
 
 const NONE: u32 = u32::MAX;
@@ -103,7 +104,7 @@ impl Phase {
 fn write(tree: Tree, keys: &[Key], events: &[u32], wants_all_events: bool, out: &mut Vec<u32>) {
     // Where each group comes among those that match the same node.
     let mut sorted: Vec<u32> = (0..keys.len() as u32).collect();
-    sorted.sort_by_cached_key(|&it| keys[it as usize].specificity());
+    sort::sort_by_cached_key(&mut sorted, |&it| keys[it as usize].specificity());
     let mut ranks = vec![0; keys.len()];
     for (&group, rank) in sorted.iter().zip(0..) {
         ranks[group as usize] = rank;

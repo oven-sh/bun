@@ -222,6 +222,11 @@ pub(super) fn source_type<'a>(file: &'a File<'a>) -> &'static str {
     }
 }
 
+/// Whether the values in the nodes are typescript-estree's where it goes its own way. oxlint has its fields, and the values of ECMAScript.
+fn is_typescript_estree(file: &File) -> bool {
+    Dialect::of(file) == Dialect::TypeScript && !file.language().is_oxlint
+}
+
 /// It has the modifier `declare`.
 pub(super) fn is_declared(statement: Stmt) -> bool {
     statement.flags().contains(Flags::AMBIENT)
@@ -243,7 +248,7 @@ pub(super) fn directive<'a>(statement: Stmt<'a>) -> Option<&'a [u8]> {
     let Node::Func(block) = statement.parent() else {
         return None;
     };
-    if block.kind() != FnKind::StaticBlock || Dialect::of(statement.file()) != Dialect::TypeScript {
+    if block.kind() != FnKind::StaticBlock || !is_typescript_estree(statement.file()) {
         return None;
     }
     let text = |it: Stmt<'a>| match it.kind() {
@@ -483,20 +488,21 @@ pub(super) fn quasi<'a>(v: VNode<'a>) -> Option<Quasi<'a>> {
                 return None;
             };
             let i = i as usize;
-            let cooked = match Dialect::of(e.file()) {
+            let is_typescript_estree = is_typescript_estree(e.file());
+            let cooked = match is_typescript_estree {
                 // It only looks for `\u` and `\x`, also after a `\`.
-                Dialect::TypeScript => {
+                true => {
                     let is_tagged =
                         matches!(e.parent(), Node::Expr(it) if it.tag() == ExprTag::TaggedTemplate);
                     template
                         .text_of_scanner(i)
                         .filter(|_| !is_tagged || has_valid_escapes(template.raw(i)))
                 }
-                Dialect::Espree => template.cooked(i),
+                false => template.cooked(i),
             };
             // In the raw text of ECMAScript every line break is a line feed.
-            let raw = match (Dialect::of(e.file()), template.raw(i)) {
-                (Dialect::Espree, raw) if bun_core::strings::contains_char(raw, b'\r') => {
+            let raw = match (is_typescript_estree, template.raw(i)) {
+                (false, raw) if bun_core::strings::contains_char(raw, b'\r') => {
                     let mut text = Vec::with_capacity(raw.len());
                     for (at, &byte) in raw.iter().enumerate() {
                         match byte {

@@ -13,11 +13,19 @@
 
 namespace Bun {
 
+// Whose objects the scopes of a file are. oxlint has those of typescript-eslint for every file, and adds the globals in its own way.
+enum class LintScopeFlavor : uint8_t {
+    TypeScript,
+    EslintScope,
+    Oxlint,
+};
+
 // How the objects of `eslint-scope`, or of `@typescript-eslint/scope-manager`, are laid out. It's the same for all files. A template is
 // made when the first object needs it.
 struct LintScopeLayout {
-    // 18 kinds of scopes, 16 shapes of variables, 11 kinds of definitions, 2 shapes of references, and `globalScope.implicit`.
-    static constexpr size_t templateCount = 18 + 16 + 11 + 2 + 1;
+    // 18 kinds of scopes, 16 shapes of variables, 11 kinds of definitions, 2 shapes of references, `globalScope.implicit`, and
+    // `reference.maybeImplicitGlobal`.
+    static constexpr size_t templateCount = 18 + 16 + 11 + 2 + 1 + 1;
 
     // From src/lint/js_plugin/worker/scope.js: see `scopes` in LintScopes.cpp.
     JSC::WriteBarrier<JSC::JSArray> classes;
@@ -71,8 +79,9 @@ struct LintScopeState {
         }
     }
 
-    // For typescript-eslint and for eslint-scope.
-    std::array<LintScopeLayout, 2> layouts;
+    // By `LintScopeFlavor`.
+    std::array<LintScopeLayout, 3> layouts;
+    LintScopeLayout& layoutOf(LintScopeFlavor flavor) { return layouts[static_cast<size_t>(flavor)]; }
     // `arguments`, the three settings of a global, the five kinds of a declaration.
     JSC::WriteBarrier<JSC::JSArray> strings;
 

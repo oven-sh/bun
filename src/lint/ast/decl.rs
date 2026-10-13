@@ -789,11 +789,15 @@ impl File<'_> {
 fn jsx_identifier_end(text: &[u8], at: u32) -> u32 {
     let mut rest = text.get(at as usize..).unwrap_or_default();
     let mut end = at;
+    // Once oxc's lexer is past a `-`, an escape ends the name.
+    let mut is_past_dash = false;
     while let [b, after @ ..] = rest
+        && !(*b == b'\\' && is_past_dash)
         && (b.is_ascii_alphanumeric()
             || matches!(b, b'_' | b'$' | b'-' | b'\\')
             || (*b >= 0x80 && bun_core::strings::js_whitespace_len(rest) == 0))
     {
+        is_past_dash |= *b == b'-';
         // `\u{61}`. Only oxc takes an escape here.
         let in_braces = match (b, after) {
             (b'\\', [b'u', b'{', ..]) => {

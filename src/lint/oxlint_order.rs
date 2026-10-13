@@ -1,9 +1,12 @@
-//! In which order oxlint has what several rules report at one start.
+//! In which order oxlint prints what its rules report about a file.
 //!
-//! It sorts by the start alone, which leaves what starts at one place in the order in which it was reported, and
-//! this is how it runs (`execute_rules`): first `run_once` of each rule, by the number of the rule; then the nodes,
-//! the outer before the inner, each with the rules by their numbers; then the calls of Jest, each with the rules by
-//! their numbers. What tsgolint reports comes last.
+//! It sorts nothing: what is reported first is printed first. This is how it runs (`execute_rules`): first `run_once` of
+//! each rule, by the number of the rule; then the nodes, the outer before the inner, each with the rules by their
+//! numbers; then the calls of Jest, each with the rules by their numbers. What tsgolint reports comes last.
+//!
+//! The rules here run in another way, so what they report is put in that order afterwards. `Linter::lint` has the four
+//! parts one after the other, and the rules of the first by their numbers. In the others the start of what is reported
+//! stands in for the node that oxlint's rule is called with, and [`of`] decides about what starts at one place.
 //!
 //! A rule may report an inner node while it is called with an outer one. So the kinds of node that it is called with
 //! count before its number.
@@ -26,6 +29,12 @@ pub(crate) fn of(rule: &Meta) -> (When, u16) {
         Some(found) => (found.1, found.2),
         None => (Entering, u16::MAX),
     }
+}
+
+/// Whether what `rule` reports stays in the order in which the rule here reports it. oxlint's goes through a hash table of oxc,
+/// and the rule here follows it.
+pub(crate) fn keeps_its_order(rule: &Meta) -> bool {
+    rule.plugin == Plugin::Eslint && rule.name == "no-undef"
 }
 
 fn key(plugin: Plugin, name: &[u8]) -> u32 {

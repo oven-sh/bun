@@ -121,7 +121,7 @@ const eslintScopeLayout = once(() => {
         impliedStrict: parserOptions.ecmaFeatures?.impliedStrict,
         sourceType,
         ecmaVersion,
-        childVisitorKeys: native.visitorKeys(true),
+        childVisitorKeys: native.visitorKeys(1),
         fallback: node =>
           Object.keys(node).filter(key => key !== "parent" && key !== "leadingComments" && key !== "trailingComments"),
         ignoreEval: true,
@@ -362,16 +362,35 @@ const typescriptLayout = once(() => {
   return {
     ScopeManager,
     forNative: [types, Variable, ImplicitLibVariable, definitionClasses, Reference, new GlobalSet()],
+    // oxlint has no libraries, so nothing is made on demand.
+    forOxlint: [types, Variable, ImplicitLibVariable, definitionClasses, Reference, new Map()],
   };
 });
 
+// oxlint's `sourceCode.scopeManager`: one object for all files, which analyzes the file being linted when something is asked of it.
+const oxlintScopeManager = Object.freeze({
+  get scopes() {
+    return scopeManager().scopes;
+  },
+  get globalScope() {
+    return scopeManager().globalScope;
+  },
+  getDeclaredVariables(node) {
+    return scopeManager().getDeclaredVariables(node);
+  },
+  acquire(node, inner) {
+    return scopeManager().acquire(node, inner);
+  },
+});
+
+// Analyzes the file, if nothing has yet. With oxlint, rules get `oxlintScopeManager` in the place of what it returns.
 function scopeManager() {
   if (scopeData !== null) return scopeData.manager;
   program();
   const layout = fileDialect === 1 ? eslintScopeLayout() : typescriptLayout();
   const names =
     globalNames.get(fileSettings) ?? globalNames.set(fileSettings, Object.keys(fileSettings.globals)).get(fileSettings);
-  const made = native.scopes(layout.forNative, names, fileDialect === 0);
+  const made = native.scopes(fileSettings.freezes ? layout.forOxlint : layout.forNative, names, fileDialect === 0);
   const { 0: listed, 1: nodeToScope, 2: declaredVariables, 3: referenceFlags, 4: explicitGlobals } = made;
   scopeData = { manager: new layout.ScopeManager(listed, nodeToScope, declaredVariables), referenceFlags };
   native.setScopeManager(scopeData.manager);

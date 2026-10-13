@@ -28,6 +28,10 @@ async function lint(files: Record<string, string>, args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
+const couldNotBeParsed = "The package.json file could not be parsed: ";
+/** What the rule says is wrong with the text. It also reports the imports, since it knows no dependencies then. */
+const syntaxErrors = (messages: string[]) => messages.filter(it => it.startsWith(couldNotBeParsed));
+
 /**
  * Runs `import/no-extraneous-dependencies` once per text, with that text as the package.json it reads.
  * Returns the rule's messages for each text.
@@ -150,8 +154,9 @@ describe.concurrent("JSON files that rules read", () => {
 
   test("syntax errors have V8's messages and positions", async () => {
     const said = await readAsPackageJson(invalid.map(it => it[0]));
-    const parsed = "The package.json file could not be parsed: ";
-    expect(said.map((it, i) => [invalid[i][0], it[0]])).toEqual(invalid.map(it => [it[0], parsed + it[1]]));
+    expect(said.map((it, i) => [invalid[i][0], syntaxErrors(it)])).toEqual(
+      invalid.map(it => [it[0], [couldNotBeParsed + it[1]]]),
+    );
   });
 
   test.each(Object.entries(nested))("deeply nested %s are read", async (_, value) => {
@@ -207,7 +212,7 @@ describe.concurrent("JSON files that rules read", () => {
       ],
     ];
     const said = await readAsPackageJson(texts.map(it => it[0]));
-    expect(said.map(it => it[0])).toEqual(texts.map(it => "The package.json file could not be parsed: " + it[1]));
+    expect(said.map(syntaxErrors)).toEqual(texts.map(it => [couldNotBeParsed + it[1]]));
   });
 });
 

@@ -4,6 +4,9 @@
 //! `@typescript-eslint/scope-manager` report under ESLint, in their order, with ESTree nodes by number.
 //! `src/jsc/bindings/LintScopes.cpp` only builds objects from the arrays.
 //!
+//! oxlint analyzes every file with typescript-eslint's scope manager, without the libraries of TypeScript, and adds the globals
+//! itself: [`Builder::add_globals_of_oxlint`].
+//!
 //! # The message
 //!
 //! [`HEADER`] words, then the parts in this order. A list is stored as its offset into the last part,
@@ -16,7 +19,7 @@
 //! | scopes | 9 each: [`ScopeKind`] with flags from bit 8 on, block, upper scope, variable scope, then the lists of the variables in `taints`, `childScopes`, `variables`, `references`, `through` |
 //! | variables | 8 each: name, scope, flags, the lists `defs`, `references` and `identifiers`, what ESLint sets on a global with the shape above bit 8, the list of where the `/* global */` comments start |
 //! | definitions | 7 each: [`DeclarationKind`], name, node, parent, index, flags, `kind` |
-//! | references | 5 each: identifier, flags, written expression, resolved variable, scope |
+//! | references | 6 each: identifier, flags, written expression, resolved variable, scope, `maybeImplicitGlobal.node` |
 //! | implicit globals | 1 each: a list of pairs, identifier and assigning node |
 //! | lists | |
 //!
@@ -33,6 +36,7 @@ use crate::estree::{Dialect, Field, NodeType, VNode, Value};
 use crate::language::{Global, SourceType};
 use crate::semantic::{Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind};
 use crate::span::Span;
+use crate::utils::sort;
 use bun_core::strings::Utf16OffsetTable;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -70,6 +74,8 @@ const TO_GLOBAL: u32 = 1 << 8;
 const IS_PARTIAL: u32 = 1 << 9;
 /// `reference.tainted` of `eslint-scope`.
 const IS_TAINTED: u32 = 1 << 10;
+/// `reference.maybeImplicitGlobal` of typescript-eslint is `null`. Without a node and without this it's `undefined`.
+const HAS_NULL_IMPLICIT_GLOBAL: u32 = 1 << 11;
 
 /// In the flags of a definition. `definition.rest`.
 const IS_REST: u32 = 1 << 0;
@@ -250,6 +256,8 @@ struct ReferenceRecord<'t> {
     written: u32,
     variable: u32,
     from: u32,
+    /// `maybeImplicitGlobal.node` of typescript-eslint.
+    assigning: u32,
     name: &'t [u8],
 }
 
@@ -261,6 +269,13 @@ struct Tree<'t, 'a> {
     /// The last node inside each node, or the node itself.
     last: Vec<u32>,
 }
+
+/// What assigns to a name without declaring it.
+const ASSIGNING_TYPES: &[NodeType] = &[
+    NodeType::AssignmentExpression,
+    NodeType::ForInStatement,
+    NodeType::ForOfStatement,
+];
 
 const FUNCTION_TYPES: &[NodeType] = &[
     NodeType::FunctionDeclaration,
@@ -818,7 +833,9 @@ fn group(keys: &[u32], values: &[u32], count: usize, lists: &mut Vec<u32>) -> Ve
 /// Everything about the scopes of a file, while it's put together.
 struct Builder<'t, 'a> {
     tree: Tree<'t, 'a>,
+    /// The scopes are those of `eslint-scope`. If not, of typescript-eslint.
     is_espree: bool,
+    is_oxlint: bool,
     scopes: Vec<ScopeRecord>,
     /// How many of `variables` the file declares.
     declared: u32,
@@ -1006,7 +1023,11 @@ impl<'t, 'a> Builder<'t, 'a> {
             while let Some(it) = late.pop_front_if(|it| it.made_at < identifier) {
                 self.add_late(it, &mut is_first_to_const);
             }
-            let global = reference.global();
+            // oxlint goes by the names: `add_globals_of_oxlint`.
+            let global = match self.is_oxlint {
+                true => None,
+                false => reference.global(),
+            };
             if let Some(global) = global
                 && seen.insert(reference.name().atom())
             {
@@ -1022,6 +1043,9 @@ impl<'t, 'a> Builder<'t, 'a> {
             let is_partial = self.is_espree
                 && reference.flags().contains(ReferenceFlags::WRITE)
                 && self.tree.is_partial_write(identifier, written);
+            let from = place(reference.scope());
+            let (assigning, implicit_global) =
+                self.maybe_implicit_global(identifier, reference.flags(), from);
             let record = ReferenceRecord {
                 identifier,
                 made_at: match reference.is_jsx_pragma() {
@@ -1030,7 +1054,8 @@ impl<'t, 'a> Builder<'t, 'a> {
                 },
                 flags: u32::from(reference.flags().bits())
                     | (u32::from(global.is_some()) * TO_GLOBAL)
-                    | (u32::from(is_partial) * IS_PARTIAL),
+                    | (u32::from(is_partial) * IS_PARTIAL)
+                    | implicit_global,
                 written,
                 variable: match reference.symbol() {
                     Some(it) => index_of.get(it.key()).copied().unwrap_or(NONE),
@@ -1038,7 +1063,8 @@ impl<'t, 'a> Builder<'t, 'a> {
                     None if reference.name().bytes() == b"arguments" => arguments_of_file,
                     None => NONE,
                 },
-                from: place(reference.scope()),
+                from,
+                assigning,
                 name: reference.name().bytes(),
             };
             match record.made_at == identifier {
@@ -1054,6 +1080,29 @@ impl<'t, 'a> Builder<'t, 'a> {
         for it in late {
             self.add_late(it, &mut is_first_to_const);
         }
+    }
+
+    /// typescript-eslint's `reference.maybeImplicitGlobal`: its `node`, or else what to add to the flags. It's an object where a plain
+    /// assignment outside strict code can create a variable, `null` for the other plain writes and for what can refer to a type.
+    fn maybe_implicit_global(
+        &self,
+        identifier: u32,
+        flags: ReferenceFlags,
+        from: u32,
+    ) -> (u32, u32) {
+        if self.is_espree {
+            return (NONE, 0);
+        }
+        if flags.contains(ReferenceFlags::TYPE) {
+            return (NONE, HAS_NULL_IMPLICIT_GLOBAL);
+        }
+        if !flags.contains(ReferenceFlags::WRITE) || flags.contains(ReferenceFlags::READ) {
+            return (NONE, 0);
+        }
+        if flags.contains(ReferenceFlags::INIT) || self.scopes[from as usize].is_strict() {
+            return (NONE, HAS_NULL_IMPLICIT_GLOBAL);
+        }
+        (self.tree.closest(identifier, ASSIGNING_TYPES), 0)
     }
 
     /// For typescript-eslint the `const` of `x as const` is a reference to a type that is called `const`, which it defines
@@ -1083,10 +1132,13 @@ impl<'t, 'a> Builder<'t, 'a> {
             found.push(ReferenceRecord {
                 identifier,
                 made_at: identifier,
-                flags: u32::from((ReferenceFlags::READ | ReferenceFlags::TYPE).bits()) | TO_GLOBAL,
+                flags: u32::from((ReferenceFlags::READ | ReferenceFlags::TYPE).bits())
+                    | TO_GLOBAL
+                    | HAS_NULL_IMPLICIT_GLOBAL,
                 written: NONE,
                 variable: NONE,
                 from: by_block.get(&node).copied().unwrap_or(0),
+                assigning: NONE,
                 name: b"const",
             });
         }
@@ -1130,6 +1182,11 @@ impl<'t, 'a> Builder<'t, 'a> {
             }
         }
         scopes.order
+    }
+
+    /// The variables below this are what the file declares.
+    fn declared_until(&self) -> u32 {
+        self.declared + self.inner_class_names.len() as u32
     }
 
     fn contains(&self, scope: u32, inner: u32) -> bool {
@@ -1238,6 +1295,14 @@ impl<'t, 'a> Builder<'t, 'a> {
         let inner = self.inner_class_names.get(&scope).copied();
         variables.clear();
         variables.extend(inner.into_iter().chain(record.first_variable..end));
+        // A function has its `arguments` before anything is declared in it, and for oxlint a CommonJS file is one.
+        let is_arguments = |it: &u32| self.variables[*it as usize].text == b"arguments";
+        if self.is_oxlint
+            && record.block == 0
+            && let Some(at) = variables.iter().position(is_arguments)
+        {
+            variables[..=at].rotate_right(1);
+        }
         // typescript-eslint comes to the type parameters of a function after its parameters.
         let has_type_parameters = !self.is_espree
             && record.is(ScopeKind::Function)
@@ -1246,7 +1311,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             return;
         }
         let type_parameters = self.type_parameters_of(record.block);
-        variables.sort_by_cached_key(|&it| {
+        sort::sort_by_cached_key(variables, |&it| {
             let variable = &self.variables[it as usize];
             let first = self.definitions.get(variable.first_definition as usize);
             let is = |kind: DeclarationKind| first.is_some_and(|it| it.kind == kind as u32);
@@ -1369,6 +1434,9 @@ impl<'t, 'a> Builder<'t, 'a> {
         configured: &'t ConfiguredGlobals,
         variables: &mut Vec<u32>,
     ) {
+        if self.is_oxlint {
+            return self.add_globals_of_oxlint(configured, variables);
+        }
         // The variable of each name so far. Configured names are found by their index, so that a file only hashes the names
         // that it mentions.
         let mut named = GlobalNames {
@@ -1510,6 +1578,70 @@ impl<'t, 'a> Builder<'t, 'a> {
         }
     }
 
+    /// oxlint's `addGlobals`. typescript-eslint knows no library there, so all that it has defined by itself is `const`, before what
+    /// the file declares. oxlint defines what `configured` has, which no comment changes. Then it resolves what is left over in
+    /// the global scope by the name alone: a type can resolve to a value.
+    fn add_globals_of_oxlint(
+        &mut self,
+        configured: &'t ConfiguredGlobals,
+        variables: &mut Vec<u32>,
+    ) {
+        let mut named = GlobalNames {
+            configured,
+            of_configured: vec![NONE; configured.list.len()],
+            others: FxHashMap::default(),
+        };
+        for &variable in variables.iter() {
+            *named.slot(self.variables[variable as usize].text) = variable;
+        }
+        let end_definition = self.definitions.len() as u32;
+        let global = |name: Name, text: &'t [u8], flags: u32| VariableRecord {
+            name,
+            text,
+            scope: 0,
+            flags,
+            first_definition: end_definition,
+            end_definition,
+            settings: 0,
+            comments: 0,
+        };
+
+        let units = b"const".map(u32::from);
+        let name = Name::Units(push_list(&mut self.lists, &units));
+        let for_const = self.variables.len() as u32;
+        let mut record = global(name, b"const", IS_TYPE | IS_IN_LIB);
+        record.settings = setting_bits(Global::Readonly) | HAS_SETTING;
+        self.variables.push(record);
+        variables.insert(0, for_const);
+        *named.slot(b"const") = for_const;
+
+        for (index, (name, setting)) in configured.list.iter().enumerate() {
+            if *setting == Global::Off {
+                continue;
+            }
+            let slot = &mut named.of_configured[index];
+            if *slot == NONE {
+                *slot = self.variables.len() as u32;
+                variables.push(*slot);
+                self.variables
+                    .push(global(Name::Configured(index as u32), name, 0));
+            }
+            self.variables[*slot as usize].settings = setting_bits(*setting)
+                | IS_NAMED
+                | HAS_SETTING
+                | (u32::from(*setting == Global::Writable) * IS_WRITEABLE);
+        }
+
+        for reference in &mut self.references {
+            if reference.variable == NONE
+                && let Some(variable) = named.get(reference.name).filter(|&it| it != NONE)
+            {
+                reference.variable = variable;
+                reference.flags |= TO_GLOBAL;
+            }
+        }
+    }
+
     /// typescript-eslint's `variable.isTypeVariable` or `isValueVariable` of a variable without definitions.
     fn accepts(&self, variable: u32, flag: u32) -> bool {
         let flags = self.variables[variable as usize].flags;
@@ -1518,8 +1650,12 @@ impl<'t, 'a> Builder<'t, 'a> {
 
     /// `variable.references` of every variable.
     fn references_by_variable(&mut self) -> Vec<u32> {
-        // A reference that only resolves to a declared variable by its name isn't among the references of that variable.
-        let declared_until = self.declared + self.inner_class_names.len() as u32;
+        // A reference that only resolves to a declared variable by its name isn't among the references of that variable. With
+        // oxlint it is.
+        let declared_until = match self.is_oxlint {
+            true => 0,
+            false => self.declared_until(),
+        };
         let keys: Vec<u32> = (self.references.iter())
             .map(
                 |it| match it.flags & TO_GLOBAL != 0 && it.variable < declared_until {
@@ -1568,18 +1704,20 @@ impl<'t, 'a> Builder<'t, 'a> {
                 }
                 2 * it
             };
-            crate::utils::sort::sort_indices(&mut values, &mut |a, b| time_of(a).cmp(&time_of(b)));
+            sort::sort_indices(&mut values, &mut |a, b| time_of(a).cmp(&time_of(b)));
         }
         if !self.is_espree {
             // typescript-eslint resolves what the libraries say a name can be. `Promise` is only a type in the first library
-            // that has it. ESLint resolves the rest afterwards.
+            // that has it. ESLint resolves the rest afterwards. oxlint has no libraries.
             let (first, rest): (Vec<u32>, Vec<u32>) = values.iter().partition(|&&it| {
                 let reference = &self.references[it as usize];
                 let is = |flag: ReferenceFlags| reference.flags & u32::from(flag.bits()) != 0;
-                reference.flags & TO_GLOBAL == 0
-                    || reference.variable == NONE
-                    || is(ReferenceFlags::TYPE) && self.accepts(reference.variable, IS_TYPE)
-                    || is(ReferenceFlags::VALUE) && self.accepts(reference.variable, IS_VALUE)
+                let is_known_to_libraries = || {
+                    reference.variable == NONE
+                        || is(ReferenceFlags::TYPE) && self.accepts(reference.variable, IS_TYPE)
+                        || is(ReferenceFlags::VALUE) && self.accepts(reference.variable, IS_VALUE)
+                };
+                reference.flags & TO_GLOBAL == 0 || !self.is_oxlint && is_known_to_libraries()
             });
             values = [first, rest].concat();
         }
@@ -1644,8 +1782,16 @@ impl<'t, 'a> Builder<'t, 'a> {
         let kept = self.implicit_globals_among(through.into_iter());
         // `eslint-scope` has made one for a global of the configuration too. ESLint takes it out of `globalScope.implicit`
         // again, and `getDeclaredVariables()` still finds it.
+        // typescript-eslint makes none for a name that the file declares in the global scope.
+        let declared_until = match self.is_oxlint {
+            true => self.declared_until(),
+            false => 0,
+        };
         let to_globals = (0..self.references.len() as u32)
-            .filter(|&it| self.references[it as usize].flags & TO_GLOBAL != 0)
+            .filter(|&it| {
+                let reference = &self.references[it as usize];
+                reference.flags & TO_GLOBAL != 0 && reference.variable >= declared_until
+            })
             .collect::<Vec<u32>>();
         let removed = self.implicit_globals_among(to_globals.into_iter());
         ImplicitGlobals {
@@ -1667,14 +1813,9 @@ impl<'t, 'a> Builder<'t, 'a> {
                 variables.push(Vec::new());
                 variables.len() - 1
             });
-            let assigning = &[
-                NodeType::AssignmentExpression,
-                NodeType::ForInStatement,
-                NodeType::ForOfStatement,
-            ];
             variables[at].extend_from_slice(&[
                 reference.identifier,
-                self.tree.closest(reference.identifier, assigning),
+                self.tree.closest(reference.identifier, ASSIGNING_TYPES),
             ]);
         }
         (variables.iter())
@@ -1832,6 +1973,7 @@ pub(super) fn write<'t, 'a>(
     let mut builder = Builder {
         tree: Tree::new(numbered),
         is_espree: Dialect::of(file) == Dialect::Espree,
+        is_oxlint: file.language().is_oxlint,
         scopes: Vec::new(),
         declared: 0,
         variables: Vec::new(),
@@ -1889,7 +2031,7 @@ pub(super) fn write<'t, 'a>(
         9 * scope_count
             + 8 * builder.variables.len()
             + 7 * builder.definitions.len()
-            + 5 * builder.references.len()
+            + 6 * builder.references.len()
             + implicit.lists.len(),
     );
     for (scope, at) in builder.scopes.iter().zip(0..) {
@@ -1938,7 +2080,14 @@ pub(super) fn write<'t, 'a>(
         ]);
     }
     for it in &builder.references {
-        words.extend_from_slice(&[it.identifier, it.flags, it.written, it.variable, it.from]);
+        words.extend_from_slice(&[
+            it.identifier,
+            it.flags,
+            it.written,
+            it.variable,
+            it.from,
+            it.assigning,
+        ]);
     }
     words.extend_from_slice(&implicit.lists);
 

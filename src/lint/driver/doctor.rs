@@ -70,7 +70,7 @@ pub(crate) fn watching<R>(
 }
 
 pub(crate) fn sorted(mut names: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
-    names.sort_unstable();
+    bun_lint::utils::sort::sort_unstable(&mut names);
     names.dedup();
     names
 }

@@ -15,7 +15,7 @@
 use super::wire;
 use crate::ast::File;
 use crate::code_path;
-use crate::estree::{Dialect, Nodes, Object, Sink, VNode, Value};
+use crate::estree::{Dialect, NodeType, Nodes, Object, Sink, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
 use bun_core::strings::Utf16OffsetTable;
@@ -190,6 +190,7 @@ struct Pending<'a> {
 pub(super) struct Writer<'a, 's> {
     text: &'a [u8],
     dialect: Dialect,
+    shortens_identifiers: bool,
     offsets: &'s Utf16OffsetTable,
     selectors: &'s [Option<&'s Selector>],
     /// The nodes that match each of `selectors`.
@@ -246,7 +247,7 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
         self.put(word);
     }
 
-    #[inline]
+    #[inline(never)]
     fn node(&mut self, node: VNode<'a>) {
         let at = self.writer.tree.fields.len() as u32;
         self.put(UNDEFINED);
@@ -341,10 +342,12 @@ impl<'a> Writer<'a, '_> {
         self.tree.starts.push(self.offsets.to_utf16(span.start));
         self.tree.ends.push(self.offsets.to_utf16(span.end));
         self.tree.parents.push(parent);
-        let (open_before, is_espree) = (self.open.len(), self.dialect == Dialect::Espree);
+        let open_before = self.open.len();
+        let without_typescript = self.dialect == Dialect::Espree
+            || (self.shortens_identifiers && node_type == NodeType::Identifier);
         node_type.emit_fields(
             node,
-            is_espree,
+            without_typescript,
             &mut Fields {
                 writer: self,
                 id,
@@ -492,6 +495,12 @@ impl<'a> Writer<'a, '_> {
     }
 }
 
+/// Whether only the `name` of an `Identifier` is written. With oxlint it also has `decorators`, `optional` and `typeAnnotation`. In a
+/// JavaScript file, where to write one of these is a syntax error, they are `[]`, `false` and `null`, which `layouts.rs` says once.
+pub(super) fn shortens_identifiers(file: &File) -> bool {
+    file.language().is_oxlint && file.is_javascript()
+}
+
 /// Goes through the tree of `file`, numbers the nodes, and notes which match `selectors`.
 pub(super) fn walk<'a, 's>(
     file: &'a File<'a>,
@@ -501,6 +510,7 @@ pub(super) fn walk<'a, 's>(
     let mut writer = Writer {
         text: file.text(),
         dialect: Dialect::of(file),
+        shortens_identifiers: shortens_identifiers(file),
         offsets,
         selectors,
         matches: vec![Vec::new(); selectors.len()],

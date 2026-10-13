@@ -23,6 +23,7 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::language::InferGlobals;
+use bun_lint::linter::config::json_for_oxlint;
 use bun_lint::linter::{
     Config, FileConfig, InJavaScript, LegacyFile, LegacyOptions, Registry, ResolvedConfig,
     formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
@@ -831,8 +832,14 @@ impl<'l> Loader<'l> {
                 1 => " for the other rule.".to_owned(),
                 _ => format!(" for the other {others} rules."),
             };
-            line.extend_from_slice(&match others {
-                0 => [
+            let the_others: &[u8] = match others {
+                1 => b"the other rule",
+                _ => b"the other rules",
+            };
+            // `plugins` takes no name of a plugin that is always there.
+            line.extend_from_slice(&match (others, plugin.is_always_there()) {
+                (0, true) => [b"remove ", &specifier[..], b" from \"jsPlugins\"."].concat(),
+                (0, false) => [
                     b"remove ",
                     &specifier[..],
                     b" from \"jsPlugins\" and add \"",
@@ -840,7 +847,19 @@ impl<'l> Loader<'l> {
                     b"\" to \"plugins\".",
                 ]
                 .concat(),
-                _ => [
+                (_, true) => [
+                    b"give the plugin another name: \"jsPlugins\": [{ \"name\": \"",
+                    prefix,
+                    b"-js\", \"specifier\": \"",
+                    &specifier[..],
+                    b"\" }]. Then rename ",
+                    the_others,
+                    b" to \"",
+                    prefix,
+                    b"-js/..\".",
+                ]
+                .concat(),
+                (_, false) => [
                     b"rename ",
                     them,
                     b" to \"",
@@ -1338,13 +1357,19 @@ impl<'l> Loader<'l> {
                         .concat(),
                     )
                 })?;
-                let json = match known.is_none_or(|it| it.0 == Flavor::Oxlint) {
+                let for_oxlint = || {
+                    json_for_oxlint(path, &text).map_err(|why| {
+                        Fatal([b"Cannot use the configuration file ", path, b":\n", &why].concat())
+                    })
+                };
+                let json = match known.map(|it| it.0) {
+                    Some(Flavor::Oxlint) => bun_lint::json::parse(&for_oxlint()?),
+                    Some(_) => bun_lint::json::parse(&text),
                     // A file by another name is oxlint's if it's an object.
-                    true => bun_lint::json::parse_like_oxlint(&text).or_else(|| {
-                        let other = bun_lint::json::parse(&text);
-                        other.filter(|it| known.is_none() && it.as_object().is_none())
-                    }),
-                    false => bun_lint::json::parse(&text),
+                    None => match bun_lint::json::parse(&text) {
+                        Some(other) if other.as_object().is_none() => Some(other),
+                        _ => bun_lint::json::parse(&for_oxlint()?),
+                    },
                 };
                 json.ok_or_else(|| {
                     Fatal([b"The configuration file ", path, b" is not valid JSON."].concat())
@@ -1369,6 +1394,13 @@ impl<'l> Loader<'l> {
             };
             if syntax == Syntax::Program {
                 check_extends_of_program(&json).map_err(|why| cannot_use(&why))?;
+            } else if json.as_object().is_none() {
+                let why: [&[u8]; 3] = [
+                    b"Failed to parse oxlint config ",
+                    path,
+                    b".\nExpected a JSON object.",
+                ];
+                return Err(cannot_use(&why.concat()));
             }
             Config::check_shape_for_oxlint(&json).map_err(|error| cannot_use(&error.message))?;
             let is_nested = self.options.config.is_none()

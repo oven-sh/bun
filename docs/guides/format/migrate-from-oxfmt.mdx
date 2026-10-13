@@ -108,7 +108,6 @@ If `bun format` and oxfmt 0.72 print different code, that's a bug. [Open an issu
 - **Errors and warnings are worded differently.**
 - **An invalid TOML file is left alone**, with a warning. oxfmt rewrites the parts it can read.
 - **A file that isn't valid UTF-8 is still formatted**, and the invalid bytes are kept. oxfmt exits with code `2`.
-- **A file is verified before it's written.** If the result isn't the same program or document, Bun leaves the file alone and reports it.
 
 ---
 

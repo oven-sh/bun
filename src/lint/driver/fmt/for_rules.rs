@@ -272,10 +272,9 @@ impl<'e> ForRules<'e> {
             resolved.options.tailwind = None;
         }
         let mut scratch = self.scratches.lock().pop().unwrap_or_default();
-        let verifies = true;
         let names = Session::new();
         let names = (&Interner::new_in(&names) as &dyn Intern, &names);
-        let formatted = format(path, request.text, &resolved, names, &mut scratch, verifies);
+        let formatted = format(path, request.text, &resolved, names, &mut scratch, false);
         self.scratches.lock().push(scratch);
         // Tailwind is asked in a process of its own, which takes about a second. `bun format` asks once, about all
         // files. Here it would be once for each file that has a class that no file before it has.
@@ -286,7 +285,7 @@ impl<'e> ForRules<'e> {
             Ok((text, _)) if text == request.text => Ok(Formatted::Same),
             Ok((text, _)) => Ok(Formatted::Text(text)),
             Err(Failure::Syntax(_)) => Err(Reason::SyntaxError),
-            Err(Failure::Bug(_) | Failure::Loss(_) | Failure::Unread(_)) => Err(Reason::Refused),
+            Err(Failure::Bug | Failure::Changed(_) | Failure::Unread(_)) => Err(Reason::Refused),
         }
     }
 }

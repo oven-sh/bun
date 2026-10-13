@@ -19,10 +19,9 @@ use bun_lint_oxlint::ast_util::{
     scope_made_by, static_property_info, static_property_name, static_string,
 };
 use bun_lint_oxlint::codegen::Codegen;
-use bun_lint_oxlint::hash_order::HashOrder;
+use bun_lint_oxlint::hash_order::UnresolvedOrder;
 use bun_lint_oxlint::import::{common_js_require, import_entries};
 use bun_lint_oxlint::regex_flags::rust_regex;
-use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::cell::OnceCell;
 
@@ -1815,71 +1814,15 @@ pub(crate) fn convert_pattern(pattern: &str, runner: Runner) -> Option<Regex> {
 
 // ───────────────────────────── the order of hash tables ─────────────────────────────
 
-/// How oxc hashes the name of an identifier: `IdentHasher`, after `ident_hash`.
-fn ident_hash(name: &[u8]) -> u64 {
-    const SEED1: u32 = 0x9E37_79B9;
-    const SEED2: u32 = 0x85EB_CA6B;
-    let byte = |i: usize| name.get(i).map_or(0, |it| u32::from(*it));
-    let read_u32 =
-        |i: usize| byte(i) | (byte(i + 1) << 8) | (byte(i + 2) << 16) | (byte(i + 3) << 24);
-    let mix = |a: u32, b: u32| {
-        let m = u64::from(a) * u64::from(b);
-        (m as u32) ^ ((m >> 32) as u32)
-    };
-    let len = name.len();
-    let hash = match len {
-        0 => 0,
-        1..=3 => {
-            let packed = (byte(0) << 16) | (byte(len >> 1) << 8) | byte(len - 1);
-            mix(packed ^ SEED1, packed ^ SEED2)
-        }
-        4..=8 => mix(read_u32(0) ^ SEED1, read_u32(len - 4) ^ SEED2),
-        9..=16 => mix(
-            read_u32(0) ^ read_u32((len >> 1) - 2) ^ SEED1,
-            read_u32(len - 4) ^ SEED2,
-        ),
-        _ => mix(
-            read_u32(0) ^ read_u32(len / 3) ^ SEED1,
-            read_u32(2 * len / 3) ^ read_u32(len - 4) ^ SEED2,
-        ),
-    };
-    u64::from(hash ^ (len as u32).rotate_left(16)) | (u64::from(hash) << 32)
-}
-
-/// The order of `scoping.root_unresolved_references()`, which is a hash table of all the names that the file refers to and does not
-/// declare, and with it the order of oxlint's `collect_possible_jest_call_node`.
+/// The order of oxlint's `collect_possible_jest_call_node`, which goes through `scoping.root_unresolved_references()`.
 pub(crate) struct OxlintOrder<'a> {
-    /// The place of each name in the table.
-    ranks: FxHashMap<Name<'a>, u32>,
+    names: UnresolvedOrder<'a>,
 }
 
 impl<'a> OxlintOrder<'a> {
     pub(crate) fn new(file: &'a File<'a>) -> Self {
-        // The names, where each is first referred to: they get into the table in this order.
-        let mut seen = FxHashSet::default();
-        let mut names: Vec<(u32, Name<'a>)> = (file.unresolved_references())
-            .filter(|it| seen.insert(it.name()))
-            .map(|it| (it.span().start, it.name()))
-            .collect();
-        // For oxc nothing declares the `arguments` of a function.
-        let arguments = file.name_of("arguments");
-        if file.mentions("arguments") && !seen.contains(&arguments) {
-            let is_arguments =
-                |it: &Expr<'a>| it.as_ident() == Some(arguments) && it.symbol().is_none();
-            let first = file
-                .exprs_of_kind(ExprTag::Ident)
-                .filter(is_arguments)
-                .map(|it| it.span().start)
-                .min();
-            names.extend(first.map(|start| (start, arguments)));
-            utils::sort::sort_unstable_by_key(&mut names, |it| it.0);
-        }
-        let mut table = HashOrder::new();
-        names
-            .iter()
-            .for_each(|it| table.insert(ident_hash(it.1.bytes()), it.1));
         OxlintOrder {
-            ranks: table.iter().zip(0..).collect(),
+            names: UnresolvedOrder::new(file),
         }
     }
 
@@ -1907,7 +1850,7 @@ impl<'a> OxlintOrder<'a> {
 
     /// The place of `name` in the table.
     pub(crate) fn rank(&self, name: Name<'a>) -> u32 {
-        self.ranks.get(&name).copied().unwrap_or(u32::MAX)
+        self.names.rank(name)
     }
 
     /// What is less for what oxlint has earlier in its list of possible nodes. First what is imported, in the order of the imports,

@@ -1,12 +1,13 @@
 //! Names that are keywords in some places, `eval` and `arguments`: oxc's `check_identifier`, `check_binding_identifier` and
-//! `check_identifier_reference`, which the pass that builds its scopes runs on every identifier.
+//! `check_identifier_reference`, which the pass that builds its scopes runs on every identifier, and what its parser says
+//! about such a name.
 //!
 //! The parser notes where such a name is an identifier. Few files have one, and no other file is looked at.
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
     Class, Expr, ExprKind, File, Flags, FnKind, Func, Handle, MemberKind, Node, Pat, Stmt,
-    StmtKind, TypeKind, TypeNode, TypeParam, UnOp, VarDecl, VarKind,
+    StmtKind, StmtTag, TypeKind, TypeNode, TypeParam, UnOp, VarDecl, VarKind,
 };
 use crate::language::SourceType;
 use crate::span::Span;
@@ -14,6 +15,7 @@ use crate::tokens::{skip_trivia, token_len};
 use crate::utils::oxlint::{is_either, source_type};
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{self, DiagnosticKind, PatKind, TypeNodeKind};
+use smallvec::SmallVec;
 
 /// oxc's `BindingIdentifier`, `IdentifierReference` and `LabelIdentifier`
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -26,6 +28,14 @@ enum Role {
 struct Checks<'a> {
     file: &'a File<'a>,
     is_module: bool,
+    /// Only oxc's parser has something to say about the names in a declaration file.
+    is_declaration_file: bool,
+    /// Where the parser has noted such a name, sorted, and whether what is there has been looked at.
+    noted: SmallVec<[(u32, bool); 8]>,
+    /// How many of `noted` have not been looked at.
+    left: usize,
+    /// The names that oxc's parser has an error about. It has one at most about a name.
+    settled: SmallVec<[u32; 4]>,
     errors: Vec<SyntaxError>,
 }
 
@@ -48,6 +58,256 @@ impl<'a> Checks<'a> {
     fn error(&self, at: u32, message: Vec<u8>) -> SyntaxError {
         let rest = self.file.text().get(at as usize..).unwrap_or_default();
         SyntaxError::of_oxc(Span::new(at, at + token_len(rest) as u32), message)
+    }
+
+    /// What is at `at` has been looked at.
+    fn look_at(&mut self, at: u32) {
+        if let Ok(index) = self.noted.binary_search_by_key(&at, |it| it.0)
+            && let Some(it) = self.noted.get_mut(index)
+            && !it.1
+        {
+            it.1 = true;
+            self.left -= 1;
+        }
+    }
+
+    /// The token after `at`: where it starts, its text, which is empty at the end of the file, and whether it is on the line
+    /// of `at`.
+    fn token_after(&self, at: u32) -> (u32, &'a [u8], bool) {
+        let file = self.file;
+        let next = skip_trivia(file.text(), at);
+        let rest = file.text().get(next as usize..).unwrap_or_default();
+        let between = file.slice(Span::new(at, next));
+        (
+            next,
+            rest.get(..token_len(rest)).unwrap_or_default(),
+            !bun_core::strings::contains_js_line_break(between),
+        )
+    }
+
+    /// oxc's `Kind::is_after_await_or_yield` of the token after `end`, if that is on the same line: it is a name, a keyword or a
+    /// literal, and no operator.
+    fn has_operand_after(&self, end: u32) -> bool {
+        let (_, token, is_on_line) = self.token_after(end);
+        is_on_line
+            && match token {
+                b"in" | b"instanceof" => false,
+                [b'"' | b'\'' | b'.' | b'0'..=b'9', ..] => token != b"." && token != b"...",
+                [first, ..] => {
+                    first.is_ascii_alphabetic() || matches!(first, b'_' | b'$' | b'\\' | 0x80..)
+                }
+                [] => false,
+            }
+    }
+
+    /// Whether oxc's parser has taken the file for a module when it is at `at`, which is in no function. By its name, or from
+    /// the first statement on that only a module has. It knows that after the statement, but for an `export`.
+    fn is_module_at(&self, at: u32) -> bool {
+        if !self.is_module || !is_either(self.file) {
+            return self.is_module;
+        }
+        let file = self.file;
+        let is_export = |it: Stmt<'a>| {
+            matches!(
+                it.tag(),
+                StmtTag::ExportNamed
+                    | StmtTag::ExportStar
+                    | StmtTag::ExportDefault
+                    | StmtTag::ExportAssign
+                    | StmtTag::ExportAsNamespace
+            )
+        };
+        let mut start = at;
+        for it in file.body() {
+            let span = it.span();
+            if span.end <= at {
+                if it.tag() == StmtTag::Import || is_export(it) || it.is_exported() {
+                    return true;
+                }
+                continue;
+            }
+            let is_after_export = match it.export_span() {
+                Some(export) => export.start <= at,
+                None => is_export(it),
+            };
+            if is_after_export {
+                return true;
+            }
+            start = span.start.min(at);
+            break;
+        }
+        // `import.meta`, and an `await` that can be nothing but the operator.
+        file.hir.exprs.iter().enumerate().any(|(i, raw)| {
+            raw.pos < start
+                && match raw.kind {
+                    hir::ExprKind::ImportMeta => true,
+                    hir::ExprKind::Await(_) => {
+                        self.has_operand_after(raw.pos + 5)
+                            && !matches!(self.token_after(raw.pos + 5).1, b"of" | b"using")
+                            && Node::Expr(Expr::from_raw(file, i as u32))
+                                .enclosing_function()
+                                .is_none()
+                    }
+                    _ => false,
+                }
+                && file.expr_in_tree(i).is_some()
+        })
+    }
+
+    /// Whether oxc's parser is in the await context at `node`, which is at `at`.
+    fn is_in_async(&self, node: Node<'a>, at: u32) -> bool {
+        Self::is_in_async_function(node).unwrap_or_else(|| self.is_module_at(at))
+    }
+
+    /// The same. `None`: `node` is in no function, and it depends on what the file is.
+    fn is_in_async_function(node: Node<'a>) -> Option<bool> {
+        let mut below = node;
+        for above in node.ancestors() {
+            match above {
+                // The head of an arrow function is in the context of what is around, too.
+                Node::Func(func) if func.kind() == FnKind::Arrow => {
+                    let is_head = matches!(below, Node::Param(_) | Node::TypeParam(_));
+                    if func.is_async() || !is_head {
+                        return Some(func.is_async());
+                    }
+                }
+                Node::Func(func) => {
+                    let is_block = func.kind() == FnKind::StaticBlock;
+                    return Some(has_own_context(func) && (func.is_async() || is_block));
+                }
+                Node::Type(_) => return Some(false),
+                Node::Member(member) if member.init().map(Node::Expr) == Some(below) => {
+                    return Some(false);
+                }
+                Node::Stmt(it)
+                    if it.tag() == StmtTag::Module || it.flags().contains(Flags::AMBIENT) =>
+                {
+                    return Some(false);
+                }
+                _ => {}
+            }
+            below = above;
+        }
+        None
+    }
+
+    /// `async await => 1`, at the name. oxc reads what is after `async` as an expression, so in the await context it looks for an
+    /// operand and finds the `=>`. A statement in no function is read again that way once the file turns out to be a module.
+    /// Returns whether it gives up there.
+    fn await_before_arrow(&mut self, func: Func<'a>, at: u32) -> bool {
+        let (arrow, token, _) = self.token_after(at + 5);
+        let is_keyword = || Self::is_in_async_function(Node::Func(func)).unwrap_or(self.is_module);
+        if token != b"=>" || !is_keyword() {
+            return false;
+        }
+        self.settled.push(at);
+        let error = SyntaxError::of_oxc(Span::new(arrow, arrow + 2), "Unexpected token");
+        self.errors.push(error.stage(Stage::Fatal));
+        true
+    }
+
+    /// `check_identifier` of oxc's parser: `await` or `yield` is a name where it is a keyword. The parser goes on.
+    fn keyword_in_its_context(&mut self, name: Atom, at: u32) {
+        if self.settled.contains(&at) {
+            return;
+        }
+        self.settled.push(at);
+        let error = match name == known::r#yield {
+            true => {
+                let message = b"Cannot use `yield` as an identifier in a generator context";
+                let rest = self.file.text().get(at as usize..).unwrap_or_default();
+                let error = self.error(at, message.to_vec());
+                match self.has_operand_after(at + token_len(rest) as u32) {
+                    true => error.help(
+                        "Wrap this in parentheses if you want to use a `yield` expression here",
+                    ),
+                    false => error,
+                }
+            }
+            false => {
+                let message = b"Cannot use `await` as an identifier in an async context";
+                self.error(at, message.to_vec())
+            }
+        };
+        self.errors.push(error.stage(Stage::Parser));
+    }
+
+    /// The local name of an import specifier is any word to oxc's parser, which then looks at what it has got.
+    fn reserved_word_in_import(&mut self, name: Atom, at: u32) {
+        self.look_at(at);
+        self.settled.push(at);
+        let word = match name == known::r#yield {
+            true => "yield",
+            false => "await",
+        };
+        let message =
+            format!("Identifier expected. '{word}' is a reserved word that cannot be used here.");
+        let error = self.error(at, message.into_bytes());
+        self.errors.push(error.stage(Stage::Parser));
+    }
+
+    /// oxc's `parse_let`, for the statements that start at one of `lets`, where the word is a name here.
+    fn statements_that_start_with_let(&mut self, lets: &[u32]) {
+        let file = self.file;
+        for tag in [StmtTag::Expr, StmtTag::Labeled] {
+            for it in file.stmts_of_kind(tag) {
+                let start = it.span().start;
+                if lets.contains(&start) {
+                    self.statement_that_starts_with_let(it, start + 3);
+                }
+            }
+        }
+    }
+
+    /// At the start of a statement `let` begins a declaration whatever comes next, unless that is an operator between two
+    /// operands, a `.`, a `(` or a `;`. `after`: the end of the word.
+    fn statement_that_starts_with_let(&mut self, statement: Stmt<'a>, after: u32) {
+        let (next, token, is_on_line) = self.token_after(after);
+        let goes_on = match token {
+            b"=>" | b"++" | b"--" | b"||" | b"&&" | b"??" | b"?" | b"!" | b"..." => false,
+            b"in" | b"instanceof" | b"." | b"(" | b";" => true,
+            [first, ..] => bun_core::strings::contains_char(b"=+-*/%<>|&^!?", *first),
+            [] => false,
+        };
+        if goes_on {
+            return;
+        }
+        // Where there can be one statement and no declaration, the word is a name, and the statement is over after it.
+        let is_alone = matches!(statement.parent(), Node::Stmt(it) if matches!(
+            it.kind(),
+            StmtKind::If { .. }
+                | StmtKind::For { .. }
+                | StmtKind::ForIn { .. }
+                | StmtKind::ForOf { .. }
+                | StmtKind::While { .. }
+                | StmtKind::DoWhile { .. }
+                | StmtKind::With { .. }
+                | StmtKind::Labeled { .. }
+        ));
+        let error = match is_alone {
+            true if !is_on_line || matches!(token, b"" | b"}") => return,
+            true => {
+                let message = "Expected a semicolon or an implicit semicolon after a statement, but found none";
+                SyntaxError::of_oxc(Span::empty(after), message)
+                    .help("Try inserting a semicolon here")
+            }
+            false => {
+                let label = Span::new(next, next + token.len() as u32);
+                match is_reserved_word(token) {
+                    true => SyntaxError::of_oxc(
+                        label,
+                        [
+                            b"Identifier expected. '",
+                            token,
+                            b"' is a reserved word that cannot be used here.",
+                        ]
+                        .concat(),
+                    ),
+                    false => SyntaxError::of_oxc(label, "Unexpected token"),
+                }
+            }
+        };
+        self.errors.push(error.stage(Stage::Fatal));
     }
 
     /// `ScopeFlags::is_strict_mode` where the name at `at` is, which is `node` or is in it. The decorators of a class are
@@ -209,6 +469,7 @@ impl<'a> Checks<'a> {
 
     /// `export { static }`, which oxc's parser reports.
     fn exported_without_from(&mut self, spec: &hir::ExportSpec) {
+        self.look_at(spec.local_pos);
         let local = self
             .file
             .text()
@@ -233,6 +494,10 @@ impl<'a> Checks<'a> {
         if self.file.is_in_jsdoc(at) {
             return;
         }
+        self.look_at(at);
+        if self.is_declaration_file {
+            return;
+        }
         self.identifier(name, at, node);
         match role {
             Role::Binding => self.binding(name, at, node),
@@ -240,6 +505,49 @@ impl<'a> Checks<'a> {
             Role::Label => {}
         }
     }
+}
+
+/// oxc's `Kind::is_reserved_keyword`, but for `await` and `yield`, which can be names.
+fn is_reserved_word(word: &[u8]) -> bool {
+    matches!(
+        word,
+        b"break"
+            | b"case"
+            | b"catch"
+            | b"class"
+            | b"const"
+            | b"continue"
+            | b"debugger"
+            | b"default"
+            | b"delete"
+            | b"do"
+            | b"else"
+            | b"enum"
+            | b"export"
+            | b"extends"
+            | b"false"
+            | b"finally"
+            | b"for"
+            | b"function"
+            | b"if"
+            | b"import"
+            | b"in"
+            | b"instanceof"
+            | b"new"
+            | b"null"
+            | b"return"
+            | b"super"
+            | b"switch"
+            | b"this"
+            | b"throw"
+            | b"true"
+            | b"try"
+            | b"typeof"
+            | b"var"
+            | b"void"
+            | b"while"
+            | b"with"
+    )
 }
 
 /// The `e` of `catch (e)` is a declaration here, and none to oxc.
@@ -270,6 +578,55 @@ fn is_directly_in_static_block<'a>(node: Node<'a>) -> bool {
     };
     let scope = std::iter::once(node).chain(node.ancestors()).find(is_scope);
     matches!(scope, Some(Node::Func(func)) if func.kind() == FnKind::StaticBlock)
+}
+
+/// Whether oxc's parser sets the await and the yield context anew for `func`, which is no arrow function. Not for what is only
+/// a type: a function type, a signature in an interface or in a type literal.
+fn has_own_context(func: Func) -> bool {
+    match func.kind() {
+        FnKind::CallSignature
+        | FnKind::ConstructSignature
+        | FnKind::FunctionType
+        | FnKind::ConstructorType
+        | FnKind::IndexSignature => false,
+        FnKind::Method | FnKind::Getter | FnKind::Setter => !matches!(
+            Node::Func(func).parent(),
+            Node::Member(it) if !matches!(Node::Member(it).parent(), Node::Class(_))
+        ),
+        _ => true,
+    }
+}
+
+/// Whether oxc's parser is in the yield context at `node`. Unlike the await context, that goes on in types.
+fn is_in_generator(node: Node) -> bool {
+    let mut below = node;
+    for above in node.ancestors() {
+        match above {
+            // The head of an arrow function is in the context of what is around.
+            Node::Func(func)
+                if func.kind() == FnKind::Arrow
+                    && matches!(below, Node::Param(_) | Node::Type(_) | Node::TypeParam(_)) => {}
+            Node::Func(func) if has_own_context(func) => return func.is_generator(),
+            Node::Member(member) if member.init().map(Node::Expr) == Some(below) => return false,
+            _ => {}
+        }
+        below = above;
+    }
+    false
+}
+
+/// The function one of whose parameters binds `name`, and whether the name is all of the pattern of the parameter.
+fn function_of_parameter<'a>(name: Node<'a>) -> Option<(Func<'a>, bool)> {
+    let mut is_all = true;
+    for above in name.ancestors() {
+        match above {
+            Node::Param(_) => {}
+            Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_) => is_all = false,
+            Node::Func(func) => return Some((func, is_all)),
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// oxc goes up from the name, past functions too, until it meets a member expression: a pattern that is assigned to or a `++`
@@ -303,150 +660,223 @@ fn is_assigned_to(it: Expr, name: Atom) -> bool {
 
 pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let hir = &file.hir;
-    if hir.keyword_identifier_positions.is_empty() || file.is_declaration_file() {
+    if hir.keyword_identifier_positions.is_empty() {
         return Vec::new();
     }
+    let positions = hir.keyword_identifier_positions.iter();
+    let mut noted: SmallVec<[(u32, bool); 8]> = positions.map(|&at| (at, false)).collect();
+    noted.sort_unstable();
+    noted.dedup();
     let mut checks = Checks {
         file,
         is_module: source_type(file) == SourceType::Module,
+        is_declaration_file: file.is_declaration_file(),
+        left: noted.len(),
+        noted,
+        settled: SmallVec::new(),
         errors: Vec::new(),
     };
     let is_keyword = |name: Atom| name.is_keyword_identifier();
-    for (i, raw) in hir.exprs.iter().enumerate() {
-        if let hir::ExprKind::Ident(name) = raw.kind
-            && is_keyword(name)
-            && file.expr_in_tree(i).is_some()
-        {
-            let it = Expr::from_raw(file, i as u32);
-            if !it.is_jsx_tag_name() {
-                checks.check(Role::Reference, name, raw.pos, Node::Expr(it));
+    let is_reserved = |name: Atom| name == known::r#await || name == known::r#yield;
+    let statement = |id: hir::StmtId| Node::Stmt(Stmt::new(file, id));
+    // It is over as soon as all that the parser has noted is found.
+    'all: {
+        for (i, raw) in hir.exprs.iter().enumerate() {
+            if let hir::ExprKind::Ident(name) = raw.kind
+                && is_keyword(name)
+                && file.expr_in_tree(i).is_some()
+            {
+                let it = Expr::from_raw(file, i as u32);
+                if !it.is_jsx_tag_name() {
+                    checks.check(Role::Reference, name, raw.pos, Node::Expr(it));
+                    if checks.left == 0 {
+                        break 'all;
+                    }
+                }
             }
         }
-    }
-    for (i, raw) in hir.pats.iter().enumerate() {
-        if let PatKind::Ident(name) = raw.kind
-            && is_keyword(name)
-            && file.pat_in_tree(i).is_some()
-        {
-            let node = Node::Pat(Pat::from_raw(file, i as u32));
-            // The key of an index signature is no binding to oxc.
-            let owner = node.ancestors().nth(1);
-            if !matches!(owner, Some(Node::Func(it)) if it.kind() == FnKind::IndexSignature) {
+        for (i, raw) in hir.pats.iter().enumerate() {
+            if let PatKind::Ident(name) = raw.kind
+                && is_keyword(name)
+                && file.pat_in_tree(i).is_some()
+            {
+                let node = Node::Pat(Pat::from_raw(file, i as u32));
+                // The key of an index signature is no binding to oxc.
+                let owner = node.ancestors().nth(1);
+                if matches!(owner, Some(Node::Func(it)) if it.kind() == FnKind::IndexSignature) {
+                    continue;
+                }
+                // The parser here reads the head of an arrow function outside the context around it, and knows late that one is
+                // async.
+                let is_keyword_here = match function_of_parameter(node) {
+                    Some((func, true))
+                        if name == known::r#await
+                            && func.kind() == FnKind::Arrow
+                            && func.is_async()
+                            && checks.await_before_arrow(func, raw.pos) =>
+                    {
+                        false
+                    }
+                    Some((func, _)) if name == known::r#await => {
+                        func.is_async()
+                            || func.kind() == FnKind::Arrow
+                                && checks.is_in_async(Node::Func(func), raw.pos)
+                    }
+                    Some((func, is_all)) if name == known::r#yield => {
+                        (func.kind() == FnKind::Arrow || is_all && !has_own_context(func))
+                            && is_in_generator(Node::Func(func))
+                    }
+                    _ => false,
+                };
+                if is_keyword_here {
+                    checks.keyword_in_its_context(name, raw.pos);
+                }
                 checks.check(Role::Binding, name, raw.pos, node);
             }
         }
-    }
-    for (i, raw) in hir.fns.iter().enumerate() {
-        let func = Func::from_raw(file, i as u32);
-        if is_keyword(raw.name)
-            && matches!(raw.kind, FnKind::Decl | FnKind::Expr)
-            && func.is_in_tree()
-        {
-            checks.check(Role::Binding, raw.name, raw.name_pos, Node::Func(func));
+        if checks.left == 0 {
+            break 'all;
         }
-    }
-    for (i, raw) in hir.classes.iter().enumerate() {
-        if is_keyword(raw.name) {
-            let node = Node::Class(Class::from_raw(file, i as u32));
-            checks.check(Role::Binding, raw.name, raw.name_pos, node);
-        }
-    }
-    for (i, raw) in hir.type_params.iter().enumerate() {
-        if is_keyword(raw.name) {
-            let node = Node::TypeParam(TypeParam::from_raw(file, i as u32));
-            checks.check(Role::Binding, raw.name, raw.pos, node);
-        }
-    }
-    for (i, raw) in hir.types.iter().enumerate() {
-        if let TypeNodeKind::Ref { name, .. } = raw.kind
-            && let Some(first) = hir.names.get(name.start as usize)
-            && is_keyword(first.text)
-        {
-            let node = Node::Type(TypeNode::from_raw(file, i as u32));
-            checks.check(Role::Reference, first.text, first.pos(), node);
-        }
-    }
-    let statement = |id: hir::StmtId| Node::Stmt(Stmt::new(file, id));
-    for raw in hir.imports {
-        for (name, at) in [
-            (raw.default, raw.default_pos),
-            (raw.namespace, raw.namespace_pos),
-        ] {
-            if is_keyword(name) {
-                checks.check(Role::Binding, name, at, statement(raw.stmt));
-            }
-        }
-        for spec in hir.import_specs.get(raw.named.range()).unwrap_or_default() {
-            if is_keyword(spec.local) {
-                checks.check(Role::Binding, spec.local, spec.pos, statement(raw.stmt));
-            }
-        }
-    }
-    for raw in hir.exports.iter().filter(|it| !it.has_module_specifier) {
-        for spec in hir.export_specs.get(raw.items.range()).unwrap_or_default() {
-            if spec.local == known::let_ {
-                checks.check(Role::Label, spec.local, spec.local_pos, statement(raw.stmt));
-            } else if is_keyword(spec.local)
-                && spec.local != known::eval
-                && spec.local != known::arguments
+        for (i, raw) in hir.fns.iter().enumerate() {
+            let func = Func::from_raw(file, i as u32);
+            if is_keyword(raw.name)
+                && matches!(raw.kind, FnKind::Decl | FnKind::Expr)
+                && func.is_in_tree()
             {
-                checks.exported_without_from(spec);
+                checks.check(Role::Binding, raw.name, raw.name_pos, Node::Func(func));
             }
         }
-    }
-    let named = (hir
-        .import_equals
-        .iter()
-        .map(|it| (it.name, it.name_pos, it.stmt)))
-    .chain(hir.aliases.iter().map(|it| (it.name, it.name_pos, it.stmt)))
-    .chain(
-        hir.interfaces
+        for (i, raw) in hir.classes.iter().enumerate() {
+            if is_keyword(raw.name) {
+                let node = Node::Class(Class::from_raw(file, i as u32));
+                checks.check(Role::Binding, raw.name, raw.name_pos, node);
+            }
+        }
+        if checks.left == 0 {
+            break 'all;
+        }
+        for (i, raw) in hir.type_params.iter().enumerate() {
+            if is_keyword(raw.name) {
+                let node = Node::TypeParam(TypeParam::from_raw(file, i as u32));
+                checks.check(Role::Binding, raw.name, raw.pos, node);
+            }
+        }
+        for (i, raw) in hir.types.iter().enumerate() {
+            if let TypeNodeKind::Ref { name, .. } = raw.kind
+                && let Some(first) = hir.names.get(name.start as usize)
+                && is_keyword(first.text)
+            {
+                let node = Node::Type(TypeNode::from_raw(file, i as u32));
+                checks.check(Role::Reference, first.text, first.pos(), node);
+            }
+        }
+        if checks.left == 0 {
+            break 'all;
+        }
+        for raw in hir.imports {
+            for (name, at) in [
+                (raw.default, raw.default_pos),
+                (raw.namespace, raw.namespace_pos),
+            ] {
+                if is_keyword(name) {
+                    checks.check(Role::Binding, name, at, statement(raw.stmt));
+                }
+            }
+            for spec in hir.import_specs.get(raw.named.range()).unwrap_or_default() {
+                if is_reserved(spec.local) {
+                    checks.reserved_word_in_import(spec.local, spec.pos);
+                } else if is_keyword(spec.local) {
+                    checks.check(Role::Binding, spec.local, spec.pos, statement(raw.stmt));
+                }
+            }
+        }
+        for raw in hir.exports.iter().filter(|it| !it.has_module_specifier) {
+            for spec in hir.export_specs.get(raw.items.range()).unwrap_or_default() {
+                if spec.local == known::let_ {
+                    checks.check(Role::Label, spec.local, spec.local_pos, statement(raw.stmt));
+                } else if is_keyword(spec.local)
+                    && spec.local != known::eval
+                    && spec.local != known::arguments
+                {
+                    checks.exported_without_from(spec);
+                }
+            }
+        }
+        // The parser here leaves the await context of the top level for the whole of `import a = b`.
+        for raw in hir.import_equals.iter() {
+            if raw.name == known::r#await
+                && matches!(statement(raw.stmt).parent(), Node::File(_))
+                && checks.is_module_at(raw.name_pos)
+            {
+                checks.keyword_in_its_context(raw.name, raw.name_pos);
+            }
+        }
+        let named = (hir
+            .import_equals
             .iter()
-            .map(|it| (it.name, it.name_pos, it.stmt)),
-    )
-    .chain(hir.enums.iter().map(|it| (it.name, it.name_pos, it.stmt)))
-    .chain(hir.modules.iter().filter_map(|it| match it.name {
-        hir::ModuleName::Ident(name) => Some((name, it.name_pos, it.stmt)),
-        _ => None,
-    }));
-    for (name, at, id) in named {
-        if is_keyword(name) {
-            checks.check(Role::Binding, name, at, statement(id));
-        }
-    }
-    for (i, raw) in hir.stmts.iter().enumerate() {
-        let (label, at) = match raw.kind {
-            hir::StmtKind::Labeled { label, .. } => (label, raw.start),
-            hir::StmtKind::Break(label) | hir::StmtKind::Continue(label) => {
-                let keyword = file.text().get(raw.start as usize..).unwrap_or_default();
-                let after = raw.start + token_len(keyword) as u32;
-                (label, skip_trivia(file.text(), after))
+            .map(|it| (it.name, it.name_pos, it.stmt)))
+        .chain(hir.aliases.iter().map(|it| (it.name, it.name_pos, it.stmt)))
+        .chain(
+            hir.interfaces
+                .iter()
+                .map(|it| (it.name, it.name_pos, it.stmt)),
+        )
+        .chain(hir.enums.iter().map(|it| (it.name, it.name_pos, it.stmt)))
+        .chain(hir.modules.iter().filter_map(|it| match it.name {
+            hir::ModuleName::Ident(name) => Some((name, it.name_pos, it.stmt)),
+            _ => None,
+        }));
+        for (name, at, id) in named {
+            if is_keyword(name) {
+                checks.check(Role::Binding, name, at, statement(id));
             }
-            _ => continue,
-        };
-        if label.is_some() && is_keyword(label) {
-            checks.check(Role::Label, label, at, statement(hir::StmtId(i as u32)));
+        }
+        if checks.left == 0 {
+            break 'all;
+        }
+        for (i, raw) in hir.stmts.iter().enumerate() {
+            let (label, at) = match raw.kind {
+                hir::StmtKind::Labeled { label, .. } => (label, raw.start),
+                hir::StmtKind::Break(label) | hir::StmtKind::Continue(label) => {
+                    let keyword = file.text().get(raw.start as usize..).unwrap_or_default();
+                    let after = raw.start + token_len(keyword) as u32;
+                    (label, skip_trivia(file.text(), after))
+                }
+                _ => continue,
+            };
+            if label.is_some() && is_keyword(label) {
+                checks.check(Role::Label, label, at, statement(hir::StmtId(i as u32)));
+            }
         }
     }
-    // What the parser has noted: see `note_keyword_identifier`.
-    let is_module_by_name = checks.is_module && !is_either(file);
-    for it in hir.diagnostics.iter() {
-        let is_in_context = match it.code {
-            1359 => true,
-            // At the top level, after and before the first `import` or `export`.
-            1262 => checks.is_module,
-            1214 => is_module_by_name,
-            _ => false,
-        };
-        if it.kind != DiagnosticKind::Grammar || !is_in_context {
-            continue;
+    let is_let = |at: &u32| {
+        let rest = file.text().get(*at as usize..).unwrap_or_default();
+        rest.starts_with(b"let") && token_len(rest) == 3
+    };
+    let positions = hir.keyword_identifier_positions.iter();
+    let lets: SmallVec<[u32; 4]> = positions.copied().filter(is_let).collect();
+    if !lets.is_empty() {
+        checks.statements_that_start_with_let(&lets);
+    }
+    // The `a` of `export * as a from "b"` is noted like a name that is declared. To oxc it is any word.
+    for it in file.stmts_of_kind(StmtTag::ExportStar) {
+        if let StmtKind::ExportStar {
+            alias: Some(alias), ..
+        } = it.kind()
+        {
+            checks.settled.push(alias.span().start);
         }
-        let message: &[u8] = match file.text().get(it.start as usize) {
-            Some(b'y') => b"Cannot use `yield` as an identifier in a generator context",
-            _ => b"Cannot use `await` as an identifier in an async context",
-        };
-        let error = SyntaxError::of_oxc(Span::new(it.start, it.end), message.to_vec());
-        checks.errors.push(error.stage(Stage::Parser));
+    }
+    // What the parser has noted: see `note_keyword_identifier`. 1262 and 1214 are at the top level.
+    for it in hir.diagnostics.iter() {
+        let is_noted = it.kind == DiagnosticKind::Grammar && matches!(it.code, 1359 | 1262 | 1214);
+        if is_noted && (it.code == 1359 || checks.is_module_at(it.start)) {
+            let name = match file.text().get(it.start as usize) {
+                Some(b'y') => known::r#yield,
+                _ => known::r#await,
+            };
+            checks.keyword_in_its_context(name, it.start);
+        }
     }
     checks.errors
 }

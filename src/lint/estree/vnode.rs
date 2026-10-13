@@ -1025,8 +1025,6 @@ impl<'a> VNode<'a> {
         let through = |i: u32| Some(self.name_part_span(0)?.to(self.name_part_span(i)?));
         match (self.base, self.part) {
             (Node::File(file), _) => Some(match Dialect::of(file) {
-                // oxlint's starts at the first token, in JavaScript too.
-                _ if file.language().is_oxlint => file.program_span(),
                 Dialect::TypeScript => file.program_span(),
                 // ESLint takes a byte order mark off the text.
                 Dialect::Espree => {

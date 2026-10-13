@@ -228,4 +228,125 @@ describe.concurrent("scanner", () => {
     expect(stdout.split("\n").filter(line => line.includes("error TS"))).toEqual(expected);
     expect(exitCode).toBe(1);
   });
+
+  // The tokens that rules and plugins ask for are scanned a second time, from the same bitmaps.
+  const PLUGIN = `export default { meta: { name: "pl" }, rules: { tokens: { create(context) { return { Program(node) {
+    const all = [...context.sourceCode.ast.tokens, ...context.sourceCode.getAllComments()].sort((a, b) => a.range[0] - b.range[0]);
+    context.report({ loc: { line: 1, column: 0 }, message: JSON.stringify(all.map(it => [it.type, it.value, ...it.range])) });
+  } }; } } } };`;
+
+  /** `[type, value, start, end]` of each token and comment of each file, under a configuration of oxlint. */
+  async function tokensOf(files: Record<string, string>): Promise<Record<string, [string, string, number, number][]>> {
+    const { stdout } = await run(["lint", "-f", "json", "."], {
+      ...files,
+      "plugin.mjs": PLUGIN,
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        jsPlugins: ["./plugin.mjs"],
+        rules: { "pl/tokens": "error" },
+        ignorePatterns: ["plugin.mjs"],
+      }),
+    });
+    const { diagnostics }: { diagnostics: { message: string; filename: string }[] } = JSON.parse(stdout);
+    return Object.fromEntries(
+      diagnostics.map(({ message, filename }) => [
+        filename.replaceAll("\\", "/").split("/").pop()!,
+        JSON.parse(message),
+      ]),
+    );
+  }
+
+  test("tokens: words, blanks, strings and templates of every length", async () => {
+    const files: Record<string, string> = {};
+    const expected: Record<string, [string, string, number, number][]> = {};
+    for (const length of LENGTHS) {
+      const name = nameOf(length);
+      const blanks = " \t".repeat(length).slice(0, length);
+      let text = "";
+      const tokens: [string, string, number, number][] = [];
+      const add = (type: string, written: string, value = written) => {
+        tokens.push([type, value, text.length, text.length + written.length]);
+        text += written;
+      };
+      for (const between of [blanks, "\n" + blanks, "\n\n" + blanks + "\n", blanks + "\f\v" + blanks]) {
+        add("Identifier", name + "_");
+        text += between;
+        add("Punctuator", ";");
+        text += between;
+        add("String", `"${name}'$\`` + "`" + `${name}"`);
+        add("Punctuator", ";");
+        add("String", `'${name}\\'${name}é${name}'`);
+        add("Punctuator", ";");
+        add("Template", "`" + name + "$" + name + "\\`" + name + "${");
+        add("Identifier", name + "_");
+        add("Template", "}" + name + "é\"'" + name + "`");
+        add("Punctuator", ";");
+        text += between;
+      }
+      add("Identifier", name + "_");
+      files[`t${length}.js`] = text;
+      expected[`t${length}.js`] = tokens;
+    }
+    expect(await tokensOf(files)).toEqual(expected);
+  });
+
+  test("tokens: under a configuration of oxlint they are oxlint's, in every language", async () => {
+    // What oxlint 1.87 hands to a plugin, without the punctuators.
+    const cases: [extensions: string[], code: string, tokens: string][] = [
+      [
+        ["js", "ts"],
+        "x.static; x.let; x.yield; ({ static: 1, let: 2, yield: 3 }); var static, let, yield; class A { static static; static let() {} }",
+        "Identifier:x Keyword:static Identifier:x Keyword:let Identifier:x Keyword:yield Keyword:static Numeric:1 Keyword:let Numeric:2 Keyword:yield Numeric:3 Keyword:var Keyword:static Keyword:let Keyword:yield Keyword:class Identifier:A Keyword:static Keyword:static Keyword:static Keyword:let",
+      ],
+      [
+        ["js", "ts"],
+        "x.implements; x.private; x.enum; ({ interface: 2, public: 6, enum: 7 });",
+        "Identifier:x Identifier:implements Identifier:x Identifier:private Identifier:x Identifier:enum Identifier:interface Numeric:2 Identifier:public Numeric:6 Identifier:enum Numeric:7",
+      ],
+      [
+        ["ts"],
+        "class A { static static: number; private private; public static; } function f(this: A) {} let y = 1 as const;",
+        "Keyword:class Identifier:A Keyword:static Keyword:static Identifier:number Keyword:private Identifier:private Keyword:public Keyword:static Keyword:function Identifier:f Identifier:this Identifier:A Keyword:let Identifier:y Numeric:1 Identifier:as Identifier:const",
+      ],
+      [
+        ["js", "ts"],
+        "var abc = 1; a\\u{62}c; ({ \\u0061: 1 }); x.\\u0061; x.st\\u0061tic; x.i\\u0066;",
+        "Keyword:var Identifier:abc Numeric:1 Identifier:abc Identifier:a Numeric:1 Identifier:x Identifier:a Identifier:x Keyword:static Identifier:x Identifier:if",
+      ],
+      [["js", "ts"], "#!\na;", "Shebang: Identifier:a"],
+      [
+        ["jsx", "tsx"],
+        "<a>{b.c}{d.e.f()}<g h={i.j} /></a>;",
+        "JSXIdentifier:a Identifier:b Identifier:c Identifier:d Identifier:e Identifier:f JSXIdentifier:g JSXIdentifier:h Identifier:i Identifier:j JSXIdentifier:a",
+      ],
+      [["jsx", "tsx"], "<b>{this.c}</b>;", "JSXIdentifier:b Keyword:this Identifier:c JSXIdentifier:b"],
+      [
+        ["jsx", "tsx"],
+        '<a:b c:d="e" />;',
+        'JSXIdentifier:a JSXIdentifier:b JSXIdentifier:c JSXIdentifier:d JSXText:"e"',
+      ],
+      [
+        ["jsx", "tsx"],
+        '<this.a />; <a.this />; <a this="x" />; <this />;',
+        'Keyword:this JSXIdentifier:a JSXIdentifier:a JSXIdentifier:this JSXIdentifier:a JSXIdentifier:this JSXText:"x" Keyword:this',
+      ],
+    ];
+    const files: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    cases.forEach(([extensions, code, tokens], i) => {
+      for (const extension of extensions) {
+        files[`c${i}.${extension}`] = code;
+        expected[`c${i}.${extension}`] = tokens;
+      }
+    });
+    const found = await tokensOf(files);
+    const withoutPunctuators = Object.entries(found).map(([file, tokens]) => [
+      file,
+      tokens
+        .filter(([type]) => type !== "Punctuator")
+        .map(([type, value]) => `${type}:${value}`)
+        .join(" "),
+    ]);
+    expect(Object.fromEntries(withoutPunctuators)).toEqual(expected);
+  });
 });

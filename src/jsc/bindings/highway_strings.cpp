@@ -893,6 +893,65 @@ void ScannerRunStopsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint
     }
 }
 
+// What the formatter in src/format takes a closer look at: everything but the printable characters of
+// ASCII other than the backslash, and tab, line feed and carriage return.
+static constexpr ScannerNibbles kOddByte = [] {
+    ScannerNibbles nibbles;
+    nibbles.add(0, 0xFF02, 0xFFFF); // 0x10 to 0x1F, and what is not ASCII
+    nibbles.add(1, 1 << 0, 0xFFFF & ~((1 << 9) | (1 << 10) | (1 << 13))); // 0x00 to 0x0F
+    nibbles.add(2, 1 << 5, 1 << 12); // backslash
+    nibbles.add(3, 1 << 7, 1 << 15); // 0x7F
+    return nibbles;
+}();
+static_assert([] {
+    for (unsigned b = 0; b < 256; ++b) {
+        const bool is_plain = (b >= 0x20 && b <= 0x7E && b != '\\') || b == '\t' || b == '\n' || b == '\r';
+        if ((kOddByte.of(b) == 0) != is_plain) return false;
+    }
+    return true;
+}());
+
+static HWY_INLINE bool HasOddByte(const uint8_t* HWY_RESTRICT block)
+{
+    const hn::CappedTag<uint8_t, 64> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto by_upper = hn::LoadDup128(d, kOddByte.upper);
+    const auto by_lower = hn::LoadDup128(d, kOddByte.lower);
+    const auto vec_low_half = hn::Set(d, uint8_t { 0x0F });
+
+    auto odd = hn::Zero(d);
+    for (size_t i = 0; i < 64; i += N) {
+        const auto vec = hn::LoadU(d, block + i);
+        odd = hn::Or(odd, hn::And(hn::TableLookupBytes(by_upper, hn::ShiftRight<4>(vec)), hn::TableLookupBytes(by_lower, hn::And(vec, vec_low_half))));
+    }
+    return !hn::AllTrue(d, hn::Eq(odd, hn::Zero(d)));
+}
+
+// One bit for every 64 bytes of `text`, the lowest bit of `out[0]` first: whether one of them is odd.
+// `out` gets ceil(text_len / 4096) words. The bits past the end of the text are clear.
+void OddBlocksImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint64_t* HWY_RESTRICT out)
+{
+    const size_t whole_blocks = text_len / 64;
+    uint64_t marks = 0;
+    for (size_t i = 0; i < whole_blocks; ++i) {
+        marks |= uint64_t { HasOddByte(text + 64 * i) } << (i % 64);
+        if (i % 64 == 63) {
+            out[i / 64] = marks;
+            marks = 0;
+        }
+    }
+    if (const size_t rest = text_len % 64) {
+        uint8_t last_block[64];
+        std::memset(last_block, ' ', sizeof(last_block));
+        std::memcpy(last_block, text + 64 * whole_blocks, rest);
+        marks |= uint64_t { HasOddByte(last_block) } << (whole_blocks % 64);
+    }
+    if (text_len % 4096 != 0) {
+        out[text_len / 4096] = marks;
+    }
+}
+
 size_t IndexOfNewlineOrNonASCIIOrHashOrAtImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
     ASSERT(search_len > 0);
@@ -2472,6 +2531,7 @@ HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(MemRMemImpl);
 HWY_EXPORT(MemMem16Impl);
 HWY_EXPORT(MemRMem16Impl);
+HWY_EXPORT(OddBlocksImpl);
 HWY_EXPORT(ScannerRunStopsImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
 HWY_EXPORT(VisibleLatin1WidthImpl);
@@ -2635,6 +2695,11 @@ size_t highway_index_of_interesting_character_in_multiline_comment(const uint8_t
 void highway_scanner_run_stops(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
 {
     BUN_HWY_DISPATCH(ScannerRunStopsImpl)(text, text_len, out, plane_len);
+}
+
+void highway_odd_blocks(const uint8_t* HWY_RESTRICT text, size_t text_len, uint64_t* HWY_RESTRICT out)
+{
+    BUN_HWY_DISPATCH(OddBlocksImpl)(text, text_len, out);
 }
 
 size_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)

@@ -20,10 +20,12 @@ async function run(cwd: string, args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-/** Formats `files` twice. The formatter's own verify step is on, so a run fails if sorting changes what a file imports. */
+/** Formats `files` twice. `--debug-check` comes first, which fails if sorting changes what a file imports. */
 async function format(files: Record<string, string>, args: string[] = []) {
   using dir = tempDir("bun-format-sort-imports", files);
-  const first = await run(String(dir), [...args, "."]);
+  const checked = await run(String(dir), [...args, "--debug-check", "."]);
+  const written = await run(String(dir), [...args, "."]);
+  const first = checked.exitCode === 0 ? written : checked;
   const read = () =>
     Object.fromEntries(Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]));
   const after = read();

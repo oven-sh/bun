@@ -783,22 +783,23 @@ export const cases: Case[] = [
   },
   // ── a number in the options that is the length of a text ──
   {
-    name: "2 ** 53 empty lines after an import",
+    // The largest that oxlint takes: the option is a `u32`.
+    name: "2 ** 32 - 1 empty lines after an import",
     file: "a.js",
     text: () => 'import "a";\nfoo();\n',
-    rules: { "import/newline-after-import": ["error", { count: 2 ** 53 }] },
+    rules: { "import/newline-after-import": ["error", { count: 2 ** 32 - 1 }] },
     args: ["--fix", "-f", "unix"],
     reports: { "import/newline-after-import": 1 },
     length: "as before",
     exitCode: 1,
   },
   {
-    name: "2 ** 53 empty lines after an import, in the format for a person, which reads the fixes",
+    name: "2 ** 32 - 1 empty lines after an import, in the format for a person, which reads the fixes",
     file: "a.js",
     text: () => 'import "a";\nfoo();\n',
-    rules: { "import/newline-after-import": ["error", { count: 2 ** 53 }] },
+    rules: { "import/newline-after-import": ["error", { count: 2 ** 32 - 1 }] },
     args: [],
-    matches: /Expected 9007199254740992 empty lines after import statement/,
+    matches: /Expected 4294967295 empty lines after import statement/,
     exitCode: 1,
   },
   // ── eslint-plugin-react: what many components share, and what is asked once for each of them ──

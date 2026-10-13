@@ -1,6 +1,6 @@
 //! JSX.
 
-use super::{ListKind, Parser, take_span};
+use super::{ListKind, Parser, oxc, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_core::lexer::{
@@ -485,9 +485,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let mut text = self.lx.text_of(self.lx.atom).to_vec();
         let mut end = from;
+        // Once oxc's lexer is past a `-`, an escape ends the name.
+        let mut is_past_dash = false;
         loop {
             let (c, len) = match src.get(end) {
-                Some(b'-') => (i32::from(b'-'), 1),
+                Some(b'-') => {
+                    is_past_dash = true;
+                    (i32::from(b'-'), 1)
+                }
+                Some(b'\\') if is_as_written && is_past_dash => break,
                 Some(b'\\') => match peek_unicode_escape(src, end) {
                     Some(escaped) if is_type_script_identifier_part(escaped.0) => {
                         self.lx.has_escape = true;
@@ -614,6 +620,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true if name == known::empty => {
                 self.add_expr(ExprKind::Missing, start, self.full_start())
             }
+            // oxc takes `a-b.c`.
+            true if self.token() == T::Dot
+                && self.options.dialect.oxc
+                && !bun_core::strings::contains_char(self.lx.text_of(name), b':') =>
+            {
+                self.finish_expr(ExprKind::Ident(name), start)
+            }
             true => return self.finish_expr(ExprKind::String(name), start),
             false if name == known::this => self.finish_expr(ExprKind::This, start),
             false => self.finish_expr(ExprKind::Ident(name), start),
@@ -667,6 +680,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         if self.lx.has_escape && !self.options.dialect.oxc {
             self.error_at_token(17021, &[]);
+        }
+        if self.is_before(b"-") && self.is_for_oxc() {
+            self.scan_jsx_identifier();
+            let at = (self.lx.start, self.lx.end);
+            oxc::hyphen_in_jsx_member_name(&mut self.f.diagnostics, at);
         }
         let name = (self.lx.atom, self.pos());
         self.next();
@@ -792,6 +810,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !self.recovers() {
             self.refuse(Refusal::Reported);
             return ExprId::NONE;
+        }
+        if self.is_for_oxc() {
+            let braces = (open, self.lx.end);
+            oxc::empty_jsx_attribute_value(&mut self.f.diagnostics, braces);
         }
         self.add_expr(ExprKind::Missing, open, open)
     }

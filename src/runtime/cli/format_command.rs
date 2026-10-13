@@ -41,14 +41,16 @@ impl FormatCommand {
                 &rest,
                 run,
                 &|path, text, options| {
-                    bun_lint_driver::fmt::format_for_tests(path, text, options, false).map_err(
-                        |refusal| match refusal {
+                    bun_lint_driver::fmt::format_for_tests(path, text, options).map_err(|refusal| {
+                        match refusal {
                             bun_lint_driver::fmt::Refusal::Syntax => {
                                 bun_format_conformance::Failure::SyntaxError
                             }
-                            _ => bun_format_conformance::Failure::Other,
-                        },
-                    )
+                            bun_lint_driver::fmt::Refusal::Bug => {
+                                bun_format_conformance::Failure::Other
+                            }
+                        }
+                    })
                 },
             );
             Global::exit(u32::from(!ran));

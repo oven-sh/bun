@@ -314,6 +314,7 @@ impl<T> Default for Fixed<'_, T> {
 }
 
 impl<'s, T: Copy> Fixed<'s, T> {
+    #[inline(never)]
     pub(crate) fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
         Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
     }
@@ -1054,6 +1055,11 @@ pub mod rare {
     pub const TYPE_PREDICATE: u32 = 1 << 10;
     /// A declaration in the head of a `for-in` or a `for-of` has an initializer or a type.
     pub const ODD_LOOP_HEAD: u32 = 1 << 11;
+    /// `export = a`
+    pub const EXPORT_ASSIGNMENT: u32 = 1 << 12;
+    /// An `import` or an `export` of a JavaScript file may be in a block, in a function or the body of a statement. Only set for
+    /// oxc's dialect.
+    pub const NESTED_MODULE_SYNTAX: u32 = 1 << 13;
     /// Something other than a plain name or member is assigned to, incremented or decremented (`[a] = b`, `a?.b = 1`,
     /// `a()++`), or the head of a `for-in` / `for-of` is an expression.
     pub const ODD_TARGET: u32 = 1 << 16;
@@ -1062,6 +1068,15 @@ pub mod rare {
     /// A JavaScript file may export a name twice, or have `export { a }` and not declare `a` at its top level. Only set for
     /// oxc's dialect.
     pub const ODD_EXPORT: u32 = 1 << 18;
+    /// `new.target`, or `new.` and another name.
+    pub const NEW_TARGET: u32 = 1 << 19;
+    /// `for await`
+    pub const FOR_AWAIT: u32 = 1 << 20;
+    /// A statement has a label, a `break` or a `continue` names one, a `break` is in no loop and no `switch` of its function, or
+    /// a `continue` is in no loop of it.
+    pub const ODD_JUMP: u32 = 1 << 21;
+    /// A statement in the body of a function or of a namespace starts with `declare`.
+    pub const NESTED_DECLARE: u32 = 1 << 22;
     /// An `await`, a `yield` or an `await using` is in a static block, or in a function in one.
     pub const SUSPENDS_IN_STATIC_BLOCK: u32 = 1 << 24;
     /// `await using a = b`

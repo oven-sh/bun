@@ -538,16 +538,16 @@ impl<'a> Lexer<'a> {
                 First::Colon => self.set(T::Colon, pos, next),
                 First::Tilde => self.set(T::Tilde, pos, next),
                 First::At => self.set(T::At, pos, next),
-                First::Dot => match (at(next), at(next + 1)) {
-                    (b'0'..=b'9', _) => return self.number(pos),
-                    (b'.', b'.') => self.set(T::DotDotDot, pos, pos + 3),
+                First::Dot => match at(next) {
+                    b'0'..=b'9' => return self.number(pos),
+                    b'.' if at(next + 1) == b'.' => self.set(T::DotDotDot, pos, pos + 3),
                     _ => self.set(T::Dot, pos, next),
                 },
-                First::Equals => match (at(next), at(next + 1)) {
-                    (b'=', b'=') if at(pos + 3) == b'=' => return self.same_four_times(pos),
-                    (b'=', b'=') => self.set(T::EqualsEqualsEquals, pos, pos + 3),
-                    (b'=', _) => self.set(T::EqualsEquals, pos, pos + 2),
-                    (b'>', _) => self.set(T::EqualsGreaterThan, pos, pos + 2),
+                First::Equals => match at(next) {
+                    b'=' if at(next + 1) != b'=' => self.set(T::EqualsEquals, pos, pos + 2),
+                    b'=' if at(pos + 3) == b'=' => return self.same_four_times(pos),
+                    b'=' => self.set(T::EqualsEqualsEquals, pos, pos + 3),
+                    b'>' => self.set(T::EqualsGreaterThan, pos, pos + 2),
                     _ => self.set(T::Equals, pos, next),
                 },
                 First::Quote => return self.string(pos, byte),
@@ -637,13 +637,7 @@ impl<'a> Lexer<'a> {
                     _ => self.set(T::Caret, pos, next),
                 },
                 First::Backtick => return self.template(pos, true),
-                First::Hash => {
-                    let is_first = pos == 0 || pos == 3 && src.starts_with(b"\xEF\xBB\xBF");
-                    if is_first && at(next) == b'!' {
-                        return self.scan_after_comments(pos);
-                    }
-                    return self.private_name(pos);
-                }
+                First::Hash => return self.hash(pos),
                 First::Backslash => return self.name_slowly(pos, pos),
                 First::NotAscii => return self.scan_after_comments(pos),
                 First::Invalid => return self.invalid_character(Refusal::UnexpectedCharacter, pos),
@@ -653,19 +647,18 @@ impl<'a> Lexer<'a> {
     }
 
     /// Scans the token after the line feed before `pos`, and after the indentation and the empty lines there. How far a
-    /// line is indented is hard to guess, so it is not asked byte by byte. With this loop inside `scan`, `bun lint` runs 0.8%
-    /// more instructions.
+    /// line is indented is hard to guess, so it is not asked byte by byte.
     #[inline(never)]
     fn scan_after_line_feed(&mut self, mut pos: usize) {
-        if self.is_too_deep() {
-            return;
-        }
         self.newline_before = true;
         loop {
             pos = self.stops.after_blanks.next(pos);
-            match self.src.get(pos) {
-                Some(b'\n' | b'\r' | 0x0B | 0x0C) => pos += 1,
-                _ => return self.scan(pos),
+            match FIRST[usize::from(self.at(pos))] {
+                // What most lines start with.
+                First::Name => return self.name(pos),
+                First::CloseBrace => return self.set(T::CloseBrace, pos, pos + 1),
+                First::LineFeed | First::CarriageReturn | First::Blank => pos += 1,
+                _ => return self.scan_after_comments(pos),
             }
         }
     }
@@ -868,8 +861,8 @@ impl<'a> Lexer<'a> {
     // ───────────────────────────── names ─────────────────────────────
 
     /// A name or a keyword that starts at `start` with an ASCII letter, `_` or `$`. It is a part of
-    /// `scan`, and like it saves no register.
-    #[inline]
+    /// `scan` and of `scan_after_line_feed`, and like them saves no register.
+    #[inline(always)]
     fn name(&mut self, start: usize) {
         self.has_escape = false;
         let Some(chunk) = self
@@ -905,12 +898,10 @@ impl<'a> Lexer<'a> {
         let Some(chunk) = src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
             return self.name_of_any_length(start);
         };
-        let end = start + len as usize;
         let words = crate::names::short_words(chunk, len);
-        let text = Text::of_source(src, start, end);
-        let (atom, kind) = self.names.short_elsewhere(words, text, self.atoms);
+        let (atom, kind) = (self.names).short_name_elsewhere(words, src, (start, len), self.atoms);
         self.atom = atom;
-        self.set(kind, start, end);
+        self.set(kind, start, start + len as usize);
     }
 
     /// The same for a name of 16 bytes or more.
@@ -1077,6 +1068,16 @@ impl<'a> Lexer<'a> {
         Some((c, pos + 5))
     }
 
+    /// At a `#`.
+    #[inline(never)]
+    fn hash(&mut self, pos: usize) {
+        let is_first = pos == 0 || pos == 3 && self.src.starts_with(b"\xEF\xBB\xBF");
+        if is_first && self.at(pos + 1) == b'!' {
+            return self.scan_after_comments(pos);
+        }
+        self.private_name(pos)
+    }
+
     /// `#name` at `start`. Its text has the `#`.
     #[inline(never)]
     fn private_name(&mut self, start: usize) {
@@ -1131,17 +1132,34 @@ impl<'a> Lexer<'a> {
     // ───────────────────────────── comments ─────────────────────────────
 
     /// The position of the line break that ends the line of `pos`, or the end of the text.
-    fn end_of_line(&self, pos: usize) -> usize {
+    #[inline]
+    fn end_of_line(&self, mut pos: usize) -> usize {
         let src = self.src;
-        let mut pos = self.end_of_run_before(pos, *b"\n\r\xE2\xE2");
-        while pos < src.len() {
+        loop {
+            pos = self.stops.in_string.next(pos);
+            match src.get(pos) {
+                None => return src.len(),
+                Some(b'\n' | b'\r') => return pos,
+                Some(0x80..) => return self.end_of_line_that_is_not_ascii(pos),
+                Some(_) => pos += 1,
+            }
+        }
+    }
+
+    /// The same. Every byte of such a text is one of `ScannerStops::in_string`.
+    #[cold]
+    #[inline(never)]
+    fn end_of_line_that_is_not_ascii(&self, mut pos: usize) -> usize {
+        let src = self.src;
+        while let Some(len) = strings::index_of_any(src.get(pos..).unwrap_or_default(), b"\n\r\xE2")
+        {
+            pos += len;
             if src[pos] != 0xE2 || matches!(src.get(pos..pos + 3), Some([_, 0x80, 0xA8 | 0xA9])) {
                 return pos;
             }
-            let rest = &src[pos + 1..];
-            pos += 1 + strings::index_of_any(rest, b"\n\r\xE2").unwrap_or(rest.len());
+            pos += 1;
         }
-        pos
+        src.len()
     }
 
     /// Notes the `//` comment at `start`. Returns its end.
@@ -1683,6 +1701,12 @@ impl<'a> Lexer<'a> {
             self.number = value as f64;
             return self.set(T::Number, start, pos);
         }
+        self.number_in_general(start)
+    }
+
+    /// The same for all but a few digits.
+    #[inline(never)]
+    fn number_in_general(&mut self, start: usize) {
         match self.unusual_number(start) {
             Some((token, end)) => self.set(token, start, end),
             None => self.invalid_number(start),

@@ -187,7 +187,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             _ => {
                 // Flow has a function without a body only where it is declared.
-                if self.is_flow && !self.has_context(ctx::AMBIENT) {
+                if self.is_flow() && !self.has_context(ctx::AMBIENT) {
                     self.fail();
                 }
                 self.semicolon();
@@ -226,6 +226,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     pub(crate) fn function_block(&mut self, context: u32) -> (FnBody, u32) {
         let open = self.pos();
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR | ctx::CLASS_MEMBER;
+        let cleared = cleared | ctx::IN_LOOP | ctx::IN_SWITCH;
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
         // Only a block whose `{` is put up with has none.
@@ -262,7 +263,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.token() != T::LessThan {
             return Span::EMPTY;
         }
-        if self.is_flow {
+        if self.is_flow() {
             return self.flow_type_parameters();
         }
         let less_than = self.pos();
@@ -343,7 +344,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         {
             self.js_error((first.start, last.end), 8004, b"");
         } else if self.is_ecmascript {
-            self.report();
+            match self.is_for_oxc() {
+                // As for a list that is not empty: it is at what follows the `<`.
+                true => self.js_error((less_than + 1, Diagnostic::NO_LENGTH), 8004, b""),
+                false => self.report(),
+            }
         }
         self.expect(T::GreaterThan);
         take_span!(self, type_params, base)
@@ -477,7 +482,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         ambiguity: Ambiguity,
     ) -> Option<Span<ParamId>> {
         let outer_await = self.context & ctx::AWAIT;
-        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
+        // oxc reads the parameters of a signature in a type in the context around the type.
+        let cleared = match self.has_context(ctx::TYPE) {
+            true => self.cleared_in_types | ctx::TOP_LEVEL,
+            false => ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL,
+        };
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
         let suspensions = self.suspensions;
@@ -835,7 +844,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.next();
             match self.token() {
                 // `(a: T)` can be a cast.
-                T::Colon if self.is_flow => Tristate::Unknown,
+                T::Colon if self.is_flow() => Tristate::Unknown,
                 // "If we have something like '(a:', then we must have a type-annotated parameter"
                 T::Colon => Tristate::True,
                 T::Question => {
@@ -857,7 +866,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if !self.is_identifier() && self.token() != T::Const {
                 return Tristate::False;
             }
-            if !self.options.is_jsx || self.is_flow {
+            if !self.options.is_jsx || self.is_flow() {
                 return Tristate::Unknown;
             }
             // "JSX overrides"
@@ -916,7 +925,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let errors = self.f.diagnostics.len();
         let has_return_colon = self.token() == T::Colon;
         let ret = match has_return_colon {
-            true if self.is_flow => {
+            true if self.is_flow() => {
                 self.next();
                 self.flow_return_type_of_arrow_function()
             }

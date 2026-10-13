@@ -20,7 +20,7 @@ use bun_lint::semantic::Declaration;
 use bun_lint::span::Span;
 use bun_lint::utils::get_node_by_range_index;
 use bun_react_compiler::diagnostics::ErrorCategory;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::fmt::Write;
 
@@ -198,6 +198,9 @@ fn is_said_once(finding: &Finding) -> bool {
 struct Memo<'a> {
     /// Every `x.current`, in the order of the source.
     currents: Option<Vec<Expr<'a>>>,
+    /// [`first_ref_access`] of the function that is written from the one place to the other. `None` also while it is being found
+    /// out: functions that name each other in a circle access nothing by that.
+    accesses: FxHashMap<(u32, u32), Option<Span>>,
 }
 
 fn render<'a>(file: &'a File<'a>, finding: &Finding, memo: &mut Memo<'a>) -> Rendered {
@@ -441,9 +444,14 @@ fn function_of_value<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
     let Some(mut reference) = file.reference_at(span.start).filter(|it| it.span() == span) else {
         return function_at(file, span);
     };
-    // Names that stand for each other do not end.
-    for _ in 0..8 {
-        let declaration = reference.symbol()?.declarations().next()?;
+    // Names that stand for each other in a circle do not end.
+    let mut seen = FxHashSet::default();
+    loop {
+        let symbol = reference.symbol()?;
+        if !seen.insert(symbol.key()) {
+            return None;
+        }
+        let declaration = symbol.declarations().next()?;
         if let Declaration::Fn(func) = declaration {
             return Some(func);
         }
@@ -459,7 +467,6 @@ fn function_of_value<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
         }
         reference = value.reference()?;
     }
-    None
 }
 
 /// The name of what is called: `name(..)`, `object.name(..)`.
@@ -952,9 +959,42 @@ fn refs<'a>(file: &'a File<'a>, out: &mut Rendered, memo: &mut Memo<'a>) {
 }
 
 /// Where oxc has the first error in `func`, which it keeps with the type of the function (`RefFnType::ref_access_span`), as far as
-/// the syntax tells: the first `ref.current` that is written in it, with all that is read of it but for a method that is called.
-/// What is assigned to is marked as [`ref_update`] does it.
+/// the syntax tells: [`written_ref_access`], or before oxc comes to that a function from outside that accesses a ref itself. That
+/// is an error where `func` names it, to call it or to hand it on.
 fn first_ref_access<'a>(file: &'a File<'a>, func: Func<'a>, memo: &mut Memo<'a>) -> Option<Span> {
+    let whole = func.span();
+    if let Some(known) = memo.accesses.get(&(whole.start, whole.end)) {
+        return *known;
+    }
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return None;
+    }
+    memo.accesses.insert((whole.start, whole.end), None);
+    let written = written_ref_access(file, func, memo);
+    let until = written.map_or(whole.end, |it| it.0);
+    let is_before = |e: &Expr| whole.contains(e.span()) && e.span().start < until;
+    let mut names: Vec<Expr<'a>> = file
+        .exprs_of_kind(ExprTag::Ident)
+        .filter(is_before)
+        .collect();
+    bun_lint::utils::sort::sort_unstable_by_key(&mut names, |e| e.span());
+    let named = names.into_iter().find(|e| {
+        let is_outside = |it: &Func| !whole.contains(it.span()) && !it.span().contains(whole);
+        let other = function_of_value(file, e.span()).filter(is_outside);
+        other.is_some_and(|it| first_ref_access(file, it, memo).is_some())
+    });
+    let first = named.map(|e| e.span()).or_else(|| written.map(|it| it.1));
+    memo.accesses.insert((whole.start, whole.end), first);
+    first
+}
+
+/// The first `ref.current` that is written in `func`, with all that is read of it but for a method that is called: where oxc comes
+/// to the error about it, and what it marks. What is assigned to is marked as [`ref_update`] does it.
+fn written_ref_access<'a>(
+    file: &'a File<'a>,
+    func: Func<'a>,
+    memo: &mut Memo<'a>,
+) -> Option<(u32, Span)> {
     let currents = memo.currents.get_or_insert_with(|| {
         let is_current = |e: &Expr| {
             e.member_name()
@@ -982,10 +1022,21 @@ fn first_ref_access<'a>(file: &'a File<'a>, func: Func<'a>, memo: &mut Memo<'a>)
         read.parent().as_expr().map(Expr::kind),
         Some(ExprKind::Assign { op: None, target, .. }) if target == read
     );
-    Some(match is_assigned {
-        true => Span::new(access.object()?.span().end, access.span().end),
-        false => read.span(),
-    })
+    // A value that a variable keeps is an error where the variable is used first.
+    let kept_in = match read.parent() {
+        Node::VarDecl(it) => it.pat().symbol(),
+        _ => None,
+    };
+    let uses = kept_in.into_iter().flat_map(|it| it.references());
+    let uses = uses.filter(|it| it.is_read()).map(|it| it.span().start);
+    let at = uses.min().unwrap_or(read.span().start);
+    Some((
+        at,
+        match is_assigned {
+            true => Span::new(access.object()?.span().end, access.span().end),
+            false => read.span(),
+        },
+    ))
 }
 
 /// It is called `ref` or `..Ref`, which the compiler takes for a ref, or it is declared with `useRef()`.

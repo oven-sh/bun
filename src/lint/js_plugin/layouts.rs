@@ -4,7 +4,8 @@
 //! - espree: `type`, `start`, `end`, `loc`, `range`, the fields in the order in which acorn sets them, `parent`.
 //! - typescript-estree: `type`, the fields by their names, the deprecated ones, `range`, `loc`, `parent`. Where its converter works
 //!   out the range itself, `range` comes right after `type`: see [`alternates`].
-//! - oxlint: `type`, the fields in the order of oxc's structs, `start`, `end`, `range`, `parent`. `loc` is inherited.
+//! - oxlint: `type`, the fields in the order of oxc's structs, `start`, `end`, `range`, `parent`. `loc` is inherited. A JavaScript
+//!   file has the same nodes as a TypeScript file, and what isn't there is `null`.
 //!
 //! The orders were read off the nodes that espree 11, typescript-estree 8.71.1 and oxlint 1.87 make of 63,000 files.
 
@@ -12,6 +13,7 @@ use super::ast::STRINGS;
 use super::wire;
 use crate::code_path::estree::Tree;
 use crate::estree::{Field, NodeType, Value};
+use crate::utils::sort;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 
@@ -28,6 +30,9 @@ const COMMENTS: u32 = 0xF7;
 const TOKENS: u32 = 0xF8;
 /// A getter and a setter from `worker/ast.js`, which aren't enumerable.
 const DEPRECATED: u32 = 0xF9;
+const FALSE: u32 = 0xFA;
+/// An array of its own for each node.
+const EMPTY_LIST: u32 = 0xFB;
 
 /// The types whose fields aren't in the order that the rule for the tool gives, each with its fields.
 const TYPESCRIPT: &[u8] = b"\
@@ -102,8 +107,9 @@ enum Layout {
     TypeScript,
     Espree,
     Oxlint,
-    /// The order of oxlint for the tree of espree, which a JavaScript file has with its configuration too.
-    OxlintEspree,
+    /// The same nodes, in a JavaScript file. More than a third of them are `Identifier`s, and only TypeScript can give one a decorator,
+    /// a `?` or a type. So `ast.rs` writes nothing about these: [`super::ast::shortens_identifiers`].
+    OxlintJavaScript,
 }
 
 impl Layout {
@@ -111,19 +117,23 @@ impl Layout {
         Layout::TypeScript,
         Layout::Espree,
         Layout::Oxlint,
-        Layout::OxlintEspree,
+        Layout::OxlintJavaScript,
     ];
 
     /// The tree is that of espree.
     fn is_espree(self) -> bool {
-        matches!(self, Layout::Espree | Layout::OxlintEspree)
+        self == Layout::Espree
+    }
+
+    fn is_oxlint(self) -> bool {
+        matches!(self, Layout::Oxlint | Layout::OxlintJavaScript)
     }
 
     fn exceptions(self) -> &'static [u8] {
         match self {
             Layout::TypeScript => TYPESCRIPT,
             Layout::Espree => ESPREE,
-            Layout::Oxlint | Layout::OxlintEspree => OXLINT,
+            Layout::Oxlint | Layout::OxlintJavaScript => OXLINT,
         }
     }
 }
@@ -168,12 +178,14 @@ fn can_be_left_out(node_type: NodeType, field: Field, is_espree: bool) -> bool {
 }
 
 /// The properties between `type` and what all nodes end with: a name and what is in it for each. `fields`: the names of the fields
-/// that `ast.rs` writes, in its order. `hidden`: those of the deprecated ones.
+/// that `ast.rs` writes, in its order. `hidden`: those of the deprecated ones. `is_short`: it's the `Identifier` of
+/// [`Layout::OxlintJavaScript`].
 fn fields_in_order(
     layout: Layout,
     listed: Option<&'static [u8]>,
     fields: &[&'static [u8]],
     hidden: &[&'static [u8]],
+    is_short: bool,
 ) -> Vec<Property> {
     let what = |name: &'static [u8]| match fields.iter().position(|it| *it == name) {
         Some(field) if !hidden.contains(&name) => field as u32,
@@ -181,41 +193,93 @@ fn fields_in_order(
         None if name == b"comments" => COMMENTS,
         None if name == b"tokens" => TOKENS,
         None if hidden.contains(&name) => DEPRECATED,
+        None if is_short && name == b"decorators" => EMPTY_LIST,
+        None if is_short && name == b"optional" => FALSE,
         None => UNDEFINED,
     };
     if let Some(listed) = listed {
         let names = strings::split(listed, b",").filter(|it| !it.is_empty());
-        let listed = names.map(|it| (it, what(it)));
-        // What only the tree of typescript-estree has.
-        return listed
-            .filter(|it| layout != Layout::OxlintEspree || it.1 != UNDEFINED)
-            .collect();
+        return names.map(|it| (it, what(it))).collect();
     }
     let mut names = fields.to_vec();
     names.retain(|it| !hidden.contains(it));
     if layout == Layout::TypeScript {
-        names.sort_by_cached_key(|it| it.to_ascii_lowercase());
+        sort::sort_by_cached_key(&mut names, |it| it.to_ascii_lowercase());
         names.extend_from_slice(hidden);
     }
     names.into_iter().map(|it| (it, what(it))).collect()
 }
 
+/// In the place of the number of a type that nothing here makes: `u32::MAX` less what its visitor keys are. The order is that of
+/// `keysOfOtherTypes` in src/jsc/bindings/LintNodes.cpp.
+const ARGUMENT: u32 = 0;
+const NO_KEYS: u32 = 1;
+const EXPRESSION: u32 = 2;
+const TYPE_ANNOTATION: u32 = 3;
+const NAME_AND_ARGUMENTS: u32 = 4;
+
 /// The types in the order of `sourceCode.visitorKeys`, each with its number. eslint-visitor-keys has its types by their names.
 /// typescript-eslint adds its own to these, by their names without regard to case. Both still have two types that nothing makes
-/// any more, which have the number `u32::MAX`.
-fn visitor_key_order(is_espree: bool) -> Vec<(&'static [u8], u32)> {
+/// any more.
+fn visitor_key_order(layout: Layout) -> Vec<(&'static [u8], u32)> {
     let all = (NodeType::ALL.iter().enumerate()).map(|(i, it)| (it.name().as_bytes(), i as u32));
+    if layout == Layout::Oxlint {
+        return visitor_key_order_of_oxlint(all.collect());
+    }
     let (mut typescript, mut espree): (Vec<_>, Vec<_>) = all.partition(|(name, _)| {
         name.starts_with(b"TS") || *name == b"AccessorProperty" || *name == b"Decorator"
     });
-    espree.push((b"ExperimentalRestProperty", u32::MAX));
-    espree.push((b"ExperimentalSpreadProperty", u32::MAX));
+    espree.push((b"ExperimentalRestProperty", u32::MAX - ARGUMENT));
+    espree.push((b"ExperimentalSpreadProperty", u32::MAX - ARGUMENT));
     espree.sort_unstable();
-    if !is_espree {
-        typescript.sort_by_cached_key(|(name, _)| name.to_ascii_lowercase());
+    if layout == Layout::TypeScript {
+        sort::sort_by_cached_key(&mut typescript, |(name, _)| name.to_ascii_lowercase());
         espree.append(&mut typescript);
     }
     espree
+}
+
+/// oxlint has the types without keys first. Then come those of JavaScript, of JSX and of TypeScript, by their names. It lacks the
+/// keywords that typescript-estree no longer makes nodes of, and has six types that it makes no nodes of.
+fn visitor_key_order_of_oxlint(mut all: Vec<(&'static [u8], u32)>) -> Vec<(&'static [u8], u32)> {
+    all.retain(|(name, _)| {
+        !matches!(
+            *name,
+            b"TSAbstractKeyword"
+                | b"TSAsyncKeyword"
+                | b"TSDeclareKeyword"
+                | b"TSExportKeyword"
+                | b"TSPrivateKeyword"
+                | b"TSProtectedKeyword"
+                | b"TSPublicKeyword"
+                | b"TSReadonlyKeyword"
+                | b"TSStaticKeyword"
+        )
+    });
+    all.extend_from_slice(&[
+        (&b"ParenthesizedExpression"[..], u32::MAX - EXPRESSION),
+        (&b"TSJSDocNonNullableType"[..], u32::MAX - TYPE_ANNOTATION),
+        (&b"TSJSDocNullableType"[..], u32::MAX - TYPE_ANNOTATION),
+        (&b"TSJSDocUnknownType"[..], u32::MAX - NO_KEYS),
+        (&b"TSParenthesizedType"[..], u32::MAX - TYPE_ANNOTATION),
+        (&b"V8IntrinsicExpression"[..], u32::MAX - NAME_AND_ARGUMENTS),
+    ]);
+    let has_keys = |number: u32| match NodeType::ALL.get(number as usize) {
+        Some(it) => {
+            let mut fields = it.fields().iter();
+            fields.any(|it| it.is_child && !it.is_hidden && !it.is_espree_only)
+        }
+        None => number != u32::MAX - NO_KEYS,
+    };
+    sort::sort_by_cached_key(&mut all, |&(name, number)| {
+        let group = match name {
+            [b'J', b'S', b'X', ..] => 1,
+            [b'T', b'S', ..] => 2,
+            _ => 0,
+        };
+        (has_keys(number), group, name)
+    });
+    all
 }
 
 /// For src/jsc/bindings/LintNodes.cpp.
@@ -224,8 +288,8 @@ fn visitor_key_order(is_espree: bool) -> Vec<(&'static [u8], u32)> {
 /// many words [`visitor_key_order`] takes. Then
 /// for each type its name, and for each layout: how many fields `ast.rs` writes for a node, a bit for each field that is a visitor
 /// key, a bit for each field that can be left out, how many properties there are, how many in the other order that [`alternates`] is
-/// about, then a name and what is in it for each property, in both orders. Then [`STRINGS`]. Then for typescript-estree and for
-/// espree what [`visitor_key_order`] returns, behind its length. Then the bytes of the names. A name is where it starts in these,
+/// about, then a name and what is in it for each property, in both orders. Then [`STRINGS`]. Then for each of the first three layouts
+/// what [`visitor_key_order`] returns, behind its length. Then the bytes of the names. A name is where it starts in these,
 /// above its length in the low 8 bits.
 pub(super) fn write(out: &mut Vec<u8>) {
     let mut names = Names::default();
@@ -245,6 +309,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
         words.push(names.add(node_type.name().as_bytes()));
         for (layout, exceptions) in Layout::ALL.into_iter().zip(&exceptions) {
             let is_espree = layout.is_espree();
+            let is_short = layout == Layout::OxlintJavaScript && node_type == NodeType::Identifier;
             let (mut fields, mut hidden) = (Vec::new(), Vec::new());
             let (mut children, mut left_out) = (0, 0);
             for it in node_type.fields() {
@@ -252,7 +317,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
                     hidden.push(it.field.name().as_bytes());
                 }
                 let is_written = !it.is_hidden
-                    && !(if is_espree {
+                    && !(if is_espree || is_short {
                         it.is_typescript_only
                     } else {
                         it.is_espree_only
@@ -265,11 +330,11 @@ pub(super) fn write(out: &mut Vec<u8>) {
                 }
             }
             // Only oxlint has it as a plain property.
-            if node_type == NodeType::TSEnumMember && layout != Layout::Oxlint {
+            if node_type == NodeType::TSEnumMember && !layout.is_oxlint() {
                 hidden.push(Field::Computed.name().as_bytes());
             }
             let listed = exceptions.get(node_type.name().as_bytes()).copied();
-            let middle = fields_in_order(layout, listed, &fields, &hidden);
+            let middle = fields_in_order(layout, listed, &fields, &hidden, is_short);
             let around: (&[Property], &[Property]) = match layout {
                 Layout::Espree => (
                     &[
@@ -285,7 +350,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
                     &[TYPE_PROPERTY],
                     &[RANGE_PROPERTY, LOC_PROPERTY, PARENT_PROPERTY],
                 ),
-                Layout::Oxlint | Layout::OxlintEspree => (
+                Layout::Oxlint | Layout::OxlintJavaScript => (
                     &[TYPE_PROPERTY],
                     &[
                         START_PROPERTY,
@@ -299,7 +364,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
             let alternate: Vec<Property> = match (layout, node_type) {
                 (Layout::TypeScript, NodeType::TSModuleDeclaration) => {
                     let order = b"kind,body,declare,global,id";
-                    let middle = fields_in_order(layout, Some(order), &fields, &hidden);
+                    let middle = fields_in_order(layout, Some(order), &fields, &hidden, false);
                     [around.0, &middle[..], around.1].concat()
                 }
                 // `convertTypeAnnotation` and `convertTSTypeParametersToTypeParametersDeclaration` work out both.
@@ -334,8 +399,8 @@ pub(super) fn write(out: &mut Vec<u8>) {
     }
     words.extend(STRINGS.iter().map(|it| names.add(it.as_bytes())));
     let before = words.len();
-    for is_espree in [false, true] {
-        let order = visitor_key_order(is_espree);
+    for layout in [Layout::TypeScript, Layout::Espree, Layout::Oxlint] {
+        let order = visitor_key_order(layout);
         words.push(order.len() as u32);
         for (name, node_type) in order {
             words.extend_from_slice(&[names.add(name), node_type]);

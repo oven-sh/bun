@@ -3,7 +3,7 @@
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
-use super::{calls, directives, layouts, reports, schema, scopes, tokens};
+use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
 use crate::code_path;
 use crate::estree::Dialect;
@@ -578,7 +578,8 @@ impl<'e> Host<'e> {
             | (u32::from(is_espree) << 2)
             | (u32::from(settings.sources.is_some()) << 3)
             | (u32::from(file.language().is_oxlint) << 4)
-            | (source_type_for_oxlint(file) << 5);
+            | (source_type_for_oxlint(file) << 5)
+            | (u32::from(ast::shortens_identifiers(file)) << 8);
         wire::words(
             &mut message,
             &[

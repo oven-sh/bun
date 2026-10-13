@@ -355,7 +355,7 @@ complete -c bun -n "__fish_seen_subcommand_from format" -l "color" -d "Always us
 complete -c bun -n "__fish_seen_subcommand_from format" -l "no-color" -d "Never use colors"
 complete -c bun -n "__fish_seen_subcommand_from format" -l "timing" -d "Print how long each phase took"
 complete -c bun -n "__fish_seen_subcommand_from format" -l "threads" -r -d "Number of threads (default: one per CPU core)"
-complete -c bun -n "__fish_seen_subcommand_from format" -l "no-verify" -d "Skip the check that formatted code still means the same"
+complete -c bun -n "__fish_seen_subcommand_from format" -l "debug-check" -d "Do not write. Fail if formatting a file would change what it means"
 complete -c bun -n "__fish_seen_subcommand_from format" -l "all" -d "With --help, print every flag"
 complete -c bun -n "__fish_seen_subcommand_from format" -l "help-all" -d "The same as --help --all"
 complete -c bun -n "__fish_seen_subcommand_from format" -s "w" -l "write" -d "Write the files. This is the default"

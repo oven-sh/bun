@@ -161,6 +161,49 @@ fn error_of_parser<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> {
     }
 }
 
+/// The errors of TypeScript's parser that count, in the words of oxc, up to the first at which oxc's parser gives up. Which of
+/// the diagnostics of the file that one is, and the token at which TypeScript's parser has it.
+fn errors_of_parser_for_oxc<'a>(file: &'a File<'a>) -> (Vec<SyntaxError>, Option<(usize, u32)>) {
+    if !file.has_parse_errors() {
+        return (Vec::new(), None);
+    }
+    let of_parser = file.hir.diagnostics.iter().enumerate();
+    let mut of_parser = of_parser.filter(|it| it.1.kind == DiagnosticKind::Parse);
+    let mut all = Vec::new();
+    for (place, it) in of_parser.clone().filter(|it| !is_tolerated(file, it.1)) {
+        let mut errors = oxc::of_typescript(file, it);
+        if errors.is_empty() {
+            let mut message = Vec::new();
+            match bun_sema::messages::message(it.code) {
+                Some((_, text)) => bun_sema::messages::format(&mut message, text, &it.args),
+                None => message.extend_from_slice(b"Unexpected token"),
+            }
+            let error = SyntaxError {
+                at: it.start,
+                end: it.end,
+                message,
+                ..SyntaxError::default()
+            };
+            errors.push(error.stage(Stage::Fatal));
+        }
+        // Nothing follows a comment that is not closed.
+        let is_last = it.code == 1010 || errors.iter().any(|it| it.of_oxc.stage == Stage::Fatal);
+        all.append(&mut errors);
+        if is_last {
+            return (all, Some((place, it.start)));
+        }
+    }
+    // It gave up without saying why.
+    if all.is_empty() && of_parser.next().is_none() {
+        let error = SyntaxError {
+            message: b"Unexpected token".to_vec(),
+            ..SyntaxError::default()
+        };
+        all.push(error.stage(Stage::Fatal));
+    }
+    (all, None)
+}
+
 /// Whether the parser of the configuration, which is neither espree nor that of typescript-eslint, may read what is a syntax error
 /// here. The tree has holes then, which no rule expects.
 pub fn may_be_misread<'a>(file: &'a File<'a>) -> bool {
@@ -193,6 +236,13 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
         };
         return (vec![refused], true);
     }
+    if !file.language().refuses_what_parser_refuses {
+        let (of_parser, stop) = errors_of_parser_for_oxc(file);
+        let all = oxc::errors(file, of_parser, stop.map(|it| it.0), false);
+        let is_of_parser = all.iter().any(|it| it.of_oxc.stage != Stage::Semantic);
+        let messages = all.into_iter().map(|it| message_of(file, it)).collect();
+        return (messages, is_of_parser);
+    }
     let of_parser = error_of_parser(file).map(|diagnostic| {
         let mut message = Vec::new();
         match diagnostic.and_then(|it| Some((it, bun_sema::messages::message(it.code)?.1))) {
@@ -210,32 +260,7 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
         )
     });
     let one = |it: Option<SyntaxError>| it.into_iter().collect::<Vec<_>>();
-    let mut is_of_parser = true;
     let errors = match (parser, of_parser) {
-        (_, of_parser) if !file.language().refuses_what_parser_refuses => {
-            let of_oxlint = || match file.path() {
-                _ if file.is_javascript()
-                    && let Some(it) = espree::typescript_in_javascript(file) =>
-                {
-                    Some(it)
-                }
-                [.., b'.', b'c', b'j', b's'] => espree::module_syntax_in_commonjs(file, false),
-                [.., b'.', b'c', b't', b's'] => espree::module_syntax_in_commonjs(file, true),
-                _ => None,
-            };
-            let of_parser = of_parser.map(|(diagnostic, error)| match diagnostic {
-                Some(it) => oxc::of_typescript(file, it).unwrap_or(error),
-                None => error,
-            });
-            match of_parser.or_else(of_oxlint) {
-                Some(only) => vec![only],
-                None => {
-                    let all = oxc::errors(file);
-                    is_of_parser = all.iter().any(|it| it.of_oxc.stage != Stage::Semantic);
-                    all
-                }
-            }
-        }
         // It converts a tree only if the parser has nothing to say.
         (Parser::TypeScript, None) => one(typescript_estree::first_error(file, false)),
         (Parser::Espree, of_parser) => one(espree::first_error(
@@ -247,7 +272,7 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
     let messages = (errors.into_iter())
         .map(|it| message_of(file, it))
         .collect();
-    (messages, is_of_parser)
+    (messages, true)
 }
 
 fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
@@ -324,9 +349,11 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
     if !bun_core::strings::contains(file.slice(first), b"@flow") {
         return false;
     }
-    let gives_up_at = match error_of_parser(file) {
-        Some(error) => error.map(|it| it.start),
-        None => espree::typescript_in_javascript(file).map(|it| it.at),
+    // It goes on after some errors, to the end of the file.
+    let gives_up_at = match errors_of_parser_for_oxc(file) {
+        (_, Some((_, at))) => Some(at),
+        (of_parser, None) if !of_parser.is_empty() => None,
+        _ => espree::typescript_in_javascript(file).map(|it| it.at),
     };
     gives_up_at.is_none_or(|at| first.start < at)
 }
@@ -387,14 +414,14 @@ pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> 
     refusal(file, types, true)
 }
 
-/// Why oxfmt refuses to format a file, which was parsed in the dialect of Babel: what Prettier refuses, and what OXC's parser
-/// does besides. Nothing is asked of the scopes of the file.
-pub fn refusal_of_oxfmt<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
-    refusal_of_prettier(file, types).or_else(|| {
-        oxc::first_error_of_parser(file).map(|it| Refusal {
-            message: it.message,
-            at: it.at,
-        })
+/// Why oxfmt refuses to format a file, which was parsed as for oxlint: what oxc's parser reports. The pass that builds the scopes
+/// does not run, and no regular expression is parsed.
+pub fn refusal_of_oxfmt<'a>(file: &'a File<'a>) -> Option<Refusal> {
+    let (of_parser, stop) = errors_of_parser_for_oxc(file);
+    let all = oxc::errors(file, of_parser, stop.map(|it| it.0), true);
+    all.into_iter().next().map(|it| Refusal {
+        message: it.message,
+        at: it.at,
     })
 }
 

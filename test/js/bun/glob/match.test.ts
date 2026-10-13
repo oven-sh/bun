@@ -2291,6 +2291,316 @@ describe("Glob.match", () => {
     expect(others.filter(path => glob.match(path))).toEqual([]);
   });
 
+  const a30 = Buffer.alloc(30, "a").toString();
+  const e28 = Buffer.alloc(28, "e").toString();
+  test.each([
+    [
+      "*{[mM]odel,[cC]ontroller}*.ts",
+      ["explorerViewModel.ts", "model.ts", "aController.ts", "Modelcontroller.x.ts"],
+      ["views", "explorerView.ts", "odel.ts", "Model.tsx", "a/Model.ts"],
+    ],
+    [
+      "src/vs/{base,platform,workbench}/**/{test,browser}/**/*{[mM]odel,[cC]ontroller}*.ts",
+      [
+        "src/vs/workbench/contrib/files/browser/views/explorerViewModel.ts",
+        "src/vs/base/test/model.ts",
+        "src/vs/base/a/browser/b/c/xController.spec.ts",
+      ],
+      [
+        "src/vs/workbench/contrib/files/browser/views/explorerView.ts",
+        "src/vs/editor/browser/model.ts",
+        "src/vs/base/common/model.ts",
+        "src/vs/base/browser/model/a.ts",
+      ],
+    ],
+    ["{a,bc}d", ["ad", "bcd"], ["abcd", "d", "bd", "acd"]],
+    ["x{a,bc}*", ["xa", "xbc", "xab", "xbcd"], ["x", "xb", "a", "xa/b"]],
+    ["*{a,bc}d", ["ad", "bcd", "xad", "abcd", "aad"], ["d", "bd", "ada"]],
+    ["{,a}b", ["b", "ab"], ["", "a", "aab"]],
+    ["a{,b}c{d,e}", ["acd", "abce"], ["ac", "abcf"]],
+    ["{ab,cd}x{e,fg}h", ["abxeh", "cdxfgh"], ["abxh", "adxeh"]],
+    // A `*` in the group next to a `*` outside it isn't a `**`.
+    ["*{*a,b}c", ["ac", "bc", "xac", "xbc"], ["c", "a/ac", "x/bc"]],
+    ["{a*,b}*c", ["ac", "bc", "axc", "bxc"], ["c", "a/c", "ax/c"]],
+    ["*{,a}*", ["", "a", "xay"], ["a/b", "/"]],
+    ["a/*{,b}*/c", ["a/x/c", "a/b/c", "a//c"], ["a/x/y/c", "a/c"]],
+    ["{?,ab}c", ["xc", "abc", "éc"], ["c", "xyc", "/c"]],
+    ["{[a-c],de}f", ["af", "cf", "def"], ["df", "ef", "adef"]],
+    ["{[a,b],c}d", ["ad", ",d", "bd", "cd"], ["[ad", "a,bd"]],
+    ["{[!a],bc}d", ["xd", "bcd"], ["ad"]],
+    ["{a,b,c,dd}e", ["ae", "dde"], ["de", "e"]],
+    ["{a,b,c,d,ee}f", ["af", "eef"], ["ef", "f"]],
+    ["{a,bc}é", ["aé", "bcé"], ["é", "abé"]],
+    ["{a,b+}c", ["ac", "b+c"], ["bc", "bbc"]],
+    ["{a,bc}}", ["a}", "bc}"], ["a", "abc}"]],
+    ["{a,bc},", ["a,", "bc,"], ["a"]],
+    ["{a,bc}(d)", ["a(d)", "bc(d)"], ["ad"]],
+    ["!{a,bc}d", ["d", "abcd"], ["ad", "bcd"]],
+    ["!!{a,bc}d", ["ad", "bcd"], ["d"]],
+    ["x/!{a,bc}d", ["x/!ad", "x/!bcd"], ["x/ad", "x/d"]],
+    ["{1..3}{a,bc}d", ["1ad", "3bcd"], ["4ad", "ad"]],
+    ["{a,bc}{1..3}", ["a1", "bc3"], ["a4", "a"]],
+    ["**/{a,bc}d/**/*.ts", ["ad/x.ts", "x/bcd/y/z.ts"], ["abcd/x.ts", "x/d/y.ts"]],
+    ["**/*{a,bc}d", ["ad", "x/ybcd", "x/y/ad"], ["x/d", "ad/x"]],
+    // 64 and 65 bytes
+    [`${a30}{b,cd}${e28}`, [`${a30}b${e28}`, `${a30}cd${e28}`], [`${a30}${e28}`, `${a30}bcd${e28}`]],
+    [`${a30}{b,cd}${e28}e`, [`${a30}b${e28}e`, `${a30}cd${e28}e`], [`${a30}${e28}e`, `${a30}bcd${e28}e`]],
+  ])("a group whose alternatives differ in length: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 2; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["{x,}c*{,a}*{,a}*{,b}", ["c", "xc"], ["", "x", "xxc"]],
+    ["{x,y*}c*{,a}", ["xc", "yc"], ["", "x"]],
+    ["@(x|)c*(a|b)", ["c", "xc"], ["", "x"]],
+    ["+(x|y)c*(a|b)", ["xc", "xyc"], ["", "xy", "c"]],
+    ["?(x)c*(a|b)", ["c", "xc"], ["", "x"]],
+    ["q/{x,}c*{,a}*{,b}", ["q/c", "q/xc"], ["q/", "q/x", "c"]],
+  ])("%s on a long path that differs only at its start", (pattern, matches, others) => {
+    const rest = Buffer.alloc(65536, "ab").toString();
+    const glob = new Glob(pattern);
+    expect(matches.filter(start => !glob.match(start + rest))).toEqual([]);
+    expect(others.filter(start => glob.match(start + rest))).toEqual([]);
+  });
+
+  test.each([
+    ["\\*.ts", ["*.ts"], ["a.ts", ".ts", "\\*.ts"]],
+    ["a\\*b", ["a*b"], ["ab", "axb", "a\\*b"]],
+    ["foo\\[1\\].ts", ["foo[1].ts"], ["foo1.ts", "foo\\[1\\].ts"]],
+    ["\\a\\b\\n\\r\\t", ["a\b\n\r\t"], ["abnrt"]],
+    ["\\?x", ["?x"], ["ax"]],
+    ["\\{a,b\\}", ["{a,b}"], ["a", "b"]],
+    ["\\{a,b}", ["{a,b}"], ["a", "b"]],
+    ["\\a{b,c}", ["ab", "ac"], ["a", "a{b,c}"]],
+    ["\\a{b,cd}e", ["abe", "acde"], ["ae"]],
+    ["\\a*{b,cd}", ["ab", "axcd"], ["a", "axc"]],
+    ["\\é", ["é"], ["e", "\\é"]],
+    ["a\\/b", ["a/b"], ["a\\/b", "ab"]],
+    ["a\\", ["a\\"], ["a"]],
+    ["\\!a", ["!a"], ["a", "b"]],
+    ["\\\\a", ["\\a"], ["a", "\\\\a"]],
+  ])("a pattern that starts with an escape: %j", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["*/*/*/*", ["a/b/c/d", "ab/cd/ef/gh", "///", "a///"], ["a/b/c", "a/b/c/d/e", "abc"]],
+    ["*/", ["a/", "/", "abc/"], ["a", "a/b", "a//"]],
+    ["a*/b", ["a/b", "axy/b"], ["a/x/b", "b/b", "a"]],
+    ["**/*/x", ["a/x", "a/b/x", "/x"], ["x", "a/b"]],
+    ["**/*/**/*", ["a/b", "a/b/c/d"], ["a"]],
+    ["*/é", ["a/é", "日本/é"], ["a/e"]],
+  ])("a `*` before a `/`: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["*[a-z].ts", ["index.ts", "a.ts", "1a.ts"], [".ts", "A.ts", "a1.ts", "a/b.ts"]],
+    ["*[0-9]*", ["component12.ts", "1", "a1"], ["componentxx.ts", "", "a/1"]],
+    ["*[!a-z]*", ["component.ts", "A", "é"], ["component", ""]],
+    ["*[é日]x", ["aéx", "日x", "é日x"], ["ax", "éy"]],
+    ["*[/]b", ["a/b", "/b"], ["ab"]],
+    ["*[!x]b", ["ab", "a/b", "xab"], ["xb", "b"]],
+    ["*[a", ["x[a", "[a"], ["a", "xa"]],
+    ["*[]]", ["x]", "]"], ["x"]],
+    ["**/*[A-Z]*.ts", ["src/components/button/indexView.ts", "A.ts"], ["src/components/button/indexview.ts", "A/b.ts"]],
+    ["*[ab]*[cd]", ["ac", "xaxd", "bbcc"], ["a", "ca", "a/c"]],
+  ])("a `*` before a class: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["**/é*/*.ts", ["src/école/a.ts", "é/a.ts", "a/b/éc/d.ts"], ["src/ecole/a.ts", "src/aé/a.ts"]],
+    ["**/日本", ["日本", "a/日本", "a/b/日本"], ["a/日", "a/日本語"]],
+  ])("text that isn't ASCII after `**/`: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["{src/**,lib/**}", ["src/a", "lib/a/b.ts", "src/"], ["src", "test/a", "a/src/b"]],
+    ["{**/*.ts,**/*.js}", ["a.ts", "src/a/b.js"], ["a.css", "src/a.tsx"]],
+    ["{a/b,c}/d", ["a/b/d", "c/d"], ["a/d", "b/d", "a/b/c/d"]],
+    ["x/{a/b,c}", ["x/a/b", "x/c"], ["x/a", "a/b", "x/a/b/c"]],
+    ["x{a/b,c}d", ["xa/bd", "xcd"], ["xd", "xa/d"]],
+    ["{a,b/**}", ["a", "b/", "b/c/d"], ["b", "a/c"]],
+    ["{**,a}/b", ["b", "a/b", "x/y/b"], ["a", "x/y"]],
+    ["{a/**,b}/c", ["a/c", "a/x/c", "b/c"], ["a", "b/x/c"]],
+    ["{a/**/*,b}", ["a/x", "a/x/y", "b"], ["a", "c"]],
+    ["{a/**,b}/*", ["a/x", "a/x/y", "b/x"], ["b", "b/x/y"]],
+    ["{a/,b}**", ["a/x", "bx", "b", "a/"], ["c"]],
+    ["{a/**,b**}", ["a/x/y", "bx", "b"], ["c", "a"]],
+    ["a{**/b,c}", ["ac"], ["b"]],
+    ["{a/*,b}/{c/d,e}", ["a/x/c/d", "b/e", "a/x/e"], ["a/c/d", "b/c"]],
+    ["!{src/**,lib/**}", ["test/a", "src"], ["src/a", "lib/a/b"]],
+    ["*/{a/b,c}", ["x/a/b", "x/c"], ["x/a", "a/b"]],
+    ["**/{a/b,c}/d", ["a/b/d", "x/c/d", "x/y/a/b/d"], ["x/a/d"]],
+  ])("a group with a `/` or a `**`: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["{a,bb}{c,dd}", ["ac", "add", "bbc", "bbdd"], ["a", "abb", "bc"]],
+    ["{a,bb}{c,dd}{e,ff}", ["ace", "bbddff"], ["ac", "bbdde f"]],
+    ["{a,bb}{c,dd}{e,ff}{g,hh}", ["aceg", "bbddffhh"], ["ace"]],
+    ["{a,{b,c}}", ["a", "b", "c"], ["d", "ab", ""]],
+    ["{a,{b,{c,d}}}x", ["ax", "bx", "cx", "dx"], ["x", "abx"]],
+    ["{a,{b,cc}d}e", ["ae", "bde", "ccde"], ["be", "de"]],
+    ["{a,{b}}c", ["ac", "bc"], ["c", "{b}c"]],
+    ["{a,{1..3}}c", ["ac", "2c"], ["4c", "1..3c"]],
+    ["{*.ts,*.js}", ["index.js", "a.ts", ".ts"], ["index.css", "a/b.ts"]],
+    ["{foo,bar,bazz}.ts", ["foo.ts", "bazz.ts"], ["baz.ts", ".ts"]],
+    ["a{,b}c", ["ac", "abc"], ["a", "abbc"]],
+    ["{,a}*", ["", "a", "abc", "x"], ["a/b"]],
+  ])("several groups, and groups in groups: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["[abc]", ["a", "b", "c"], ["d", "", "ab", "/", "é"]],
+    ["[!abc]", ["d", "é", "/"], ["a", "", "de"]],
+    ["[^abc]x", ["dx", "éx"], ["ax", "x"]],
+    ["[a-z][0-9]", ["k7", "a0"], ["7k", "k", "k77", "K7"]],
+    ["[a-c]*[x-z]", ["abcxyz", "ax", "bz"], ["a", "dx", "ab", "a/x"]],
+    ["[[:alpha:]]*", ["a]", ":]x", "[]"], ["hello", "a", "]"]],
+    ["[]a]b", ["]b", "ab"], ["b", "[]a]b"]],
+    ["[a-]b", ["ab", "-b"], ["bb"]],
+    ["[\\]]a", ["]a"], ["\\a", "a"]],
+    ["[é]a", ["éa"], ["ea", "a"]],
+    ["[a", ["[a"], ["a", ""]],
+    ["a[", ["a["], ["a"]],
+    ["[/]a", ["/a"], ["a", "//a"]],
+    ["a[b/]c", ["abc", "a/c"], ["ac"]],
+    ["[ab]{c,d}", ["ac", "bd"], ["cc", "a"]],
+    ["[ab]{c,de}f", ["acf", "bdef"], ["af"]],
+  ])("a pattern that starts with a class: %j", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["!!a", ["a"], ["b", "", "!a"]],
+    ["!a", ["b", "", "ab"], ["a"]],
+    ["!!!a", ["b"], ["a"]],
+    ["!*.ts", ["a.js", "a/b.ts", ""], ["a.ts", ".ts"]],
+    ["!**/*.ts", ["a.js", "a/b.js"], ["a.ts", "a/b.ts"]],
+    ["!a/**", ["b/c", "a"], ["a/", "a/b"]],
+    ["!", ["a"], [""]],
+    ["!!", [""], ["a"]],
+    ["![a]", ["b", ""], ["a"]],
+    ["!?", ["", "ab"], ["a"]],
+  ])("a pattern that starts with `!`: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["*", ["", "a", "abc", "é"], ["a/b", "/"]],
+    ["a*", ["a", "abc"], ["b", "a/b", ""]],
+    ["?*", ["a", "ab", "éb"], ["", "/a", "a/b"]],
+    ["*?", ["a", "ab", "é", "aé"], ["", "a/", "/", "a/b"]],
+    ["*??", ["ab", "abc", "éé"], ["a", "é", "a/b"]],
+    ["*?.ts", ["index.ts", "a.ts", "é.ts"], [".ts", "a/.ts", "index.tsx"]],
+    ["*.ts", ["a.ts", ".ts", "a.b.ts", "é.ts"], ["a.js", "ts", "a/b.ts", "a.ts/"]],
+    ["*.[jt]s", ["a.ts", "a.js", ".js", "é.js"], ["a.cs", "a.tsx", "a/b.ts"]],
+    ["*.[jt]sx", ["a.tsx"], ["a.ts", "a.csx"]],
+    ["*[0-9].log", ["server12.log", "1.log"], ["server.log", ".log", "a/1.log"]],
+    ["*[a-z]?", ["ab", "xa1", "aé"], ["a", "1", "A1"]],
+    ["*[!a]", ["b", "ab", "é"], ["a", "", "ba"]],
+    ["*(", ["(", "a("], ["a", ""]],
+    ["*()", [""], ["a", "()"]],
+    ["*)", [")", "a)"], ["a"]],
+    ["*a|b", ["a|b", "xa|b"], ["a", "b"]],
+    ["src/*.ts", ["src/a.ts", "src/.ts"], ["src/a/b.ts", "a.ts", "src/a.js"]],
+    ["日本/*.ts", ["日本/a.ts", "日本/語.ts"], ["日/a.ts", "日本/a.js", "日本語/a.ts"]],
+  ])("a `*` and then only single characters: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["**", ["", "a", "a/b", "/", ".a/.b"], []],
+    ["a/**", ["a/", "a/b", "a/b/c"], ["a", "b/a", "ab/"]],
+    ["a/**/**", ["a/", "a/b/c"], ["a"]],
+    ["**/**", ["", "a", "a/b"], []],
+    ["a/**/b", ["a/b", "a/x/b", "a/x/y/b", "a//b"], ["a/xb", "ab", "a/b/", "a/b/c", "b"]],
+    ["**/b", ["b", "a/b", "/b"], ["ab", "b/", "b/a"]],
+    ["**/a/b", ["a/b", "x/a/b"], ["xa/b", "a/b/c", "a/xb"]],
+    ["**/?", ["a", "x/a", "x/é"], ["", "ab", "x/", "x/ab"]],
+    ["**/[ab]/c", ["a/c", "x/b/c"], ["c/c", "xa/c"]],
+    ["**/*.ts", ["a.ts", "a/b.ts", ".ts", "a/.ts", "ソース/ボタン.ts"], ["a.js", "a.ts/b", "ts"]],
+    ["**/**/*.ts", ["a.ts", "a/b/c.ts"], ["a.js"]],
+    [
+      "src/**/*.test.ts",
+      ["src/a.test.ts", "src/a/b/c.test.ts", "src/.test.ts"],
+      ["lib/a.test.ts", "src/a.ts", "src.test.ts"],
+    ],
+    ["**/*?", ["a", "x/a", "x/é"], ["", "x/"]],
+    ["**/*[ab]", ["a", "x/yb"], ["c", "x/", "a/c"]],
+    ["**/*", ["a", "a/b", "a/b/c"], [""]],
+    ["**/", ["", "a/", "a/b/"], ["a", "a/b"]],
+    ["**/*.*", ["a.b", "a/b/c.d", "."], ["a", "a.b/c"]],
+    ["a**", ["a", "ab"], ["a/b", "b"]],
+    ["**a", ["a", "ba"], ["b/a", "b"]],
+    ["***", ["", "a"], ["a/b"]],
+    ["**(a)", ["", "a", "xa", "aa"], ["a/a"]],
+  ])("`**` and what follows it: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
+    ["*語*", ["日本語テキスト", "語", "a語"], ["日本テキスト", "", "語/a"]],
+    ["*é*", ["café noir", "é"], ["cafe noir", "a/é"]],
+    ["*é", ["é", "aé", "éé"], ["éa", "e"]],
+    ["a*日本/*", ["a日本/x", "axx日本/"], ["a日/x", "a/日本/x"]],
+  ])("text that isn't ASCII after a `*`: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
   test("a group can be anywhere in a long pattern", () => {
     for (let before = 50; before <= 270; before++) {
       const any = Buffer.alloc(before, "?").toString();
@@ -2393,6 +2703,54 @@ describe("Glob.match", () => {
         expect(paths.filter(path => glob.match(path))).toEqual(matches);
       }
     });
+  });
+});
+
+describe("a Glob outlives the string that it was made from", () => {
+  const files = { "a.ts": "", "ab.ts": "", "a.js": "", "café.txt": "", "a日本b.txt": "" };
+  const ext = ["t", "s"].join("");
+  const long = Buffer.alloc(1000, "x").toString() + "a?*.ts" + Buffer.alloc(1000, "y").toString();
+
+  function collect() {
+    Bun.gc(true);
+    const garbage: string[] = [];
+    for (let i = 0; i < 2000; i++) garbage.push(Buffer.alloc(16 + (i % 64), String(i)).toString());
+    Bun.gc(true);
+    return garbage.length;
+  }
+
+  test.each([
+    ["a rope", () => new Glob("*" + "." + ext), ["a.ts", "ab.ts"]],
+    ["a substring of a long string", () => new Glob((long + ext).slice(1000, 1006)), ["ab.ts"]],
+    ["Latin-1 text that isn't ASCII", () => new Glob(["*", String.fromCharCode(0xe9), "*"].join("")), ["café.txt"]],
+    ["UTF-16 text", () => new Glob(["*", String.fromCharCode(0x65e5, 0x672c), "*"].join("")), ["a日本b.txt"]],
+    ["an empty string", () => new Glob(ext.slice(2)), []],
+  ])("%s", (_, make, expected) => {
+    using dir = tempDir("glob-pattern-lifetime", files);
+    const glob = make();
+    for (let round = 0; round < 2; round++) {
+      expect(collect()).toBe(2000);
+      expect(Object.keys(files).filter(name => glob.match(name))).toEqual(expected);
+      expect([...glob.scanSync({ cwd: String(dir) })].sort()).toEqual(expected);
+    }
+    expect(glob.match("")).toBe(expected.length === 0);
+  });
+
+  test("two Globs made from one string", () => {
+    const make = () => {
+      const text = ["*", ext].join(".");
+      return [new Glob(text), new Glob(text)];
+    };
+    const globs = make();
+    expect(collect()).toBe(2000);
+    expect(globs.map(glob => Object.keys(files).filter(name => glob.match(name)))).toEqual([
+      ["a.ts", "ab.ts"],
+      ["a.ts", "ab.ts"],
+    ]);
+    globs.pop();
+    expect(collect()).toBe(2000);
+    expect(globs[0].match("a.ts")).toBeTrue();
+    expect(globs[0].match("a.js")).toBeFalse();
   });
 });
 

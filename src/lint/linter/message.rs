@@ -200,9 +200,10 @@ pub struct LintMessage {
     pub details: Option<Box<Details>>,
     /// [`Diagnostic::constant_help`](crate::context::Diagnostic::constant_help)
     pub constant_help: Option<Help>,
-    /// For oxlint, which prints what its own rules report about a file, by place, then what the rules of JavaScript plugins
-    /// report, in the order in which they report it, then what it says about comments. 0: of a rule that is built in.
-    /// `u32::MAX`: about a comment. Else the how manieth report of a plugin it is.
+    /// For oxlint, which sorts nothing: it prints what its own rules report about a file in the order in which it runs them
+    /// (see `oxlint_order`), then what the rules of JavaScript plugins report, in the order in which they report it, then what
+    /// it says about comments. The how manyth of all that the message is, from 1. 0: it is of no rule, and comes first.
+    /// `u32::MAX`: about a comment.
     pub reported: u32,
 }
 

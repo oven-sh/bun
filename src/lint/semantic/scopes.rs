@@ -136,10 +136,13 @@ fn rank_of(kind: ScopeKind, block: Block) -> u8 {
 }
 
 /// Whether the file is analyzed as `eslint-scope` does it. Otherwise as
-/// `@typescript-eslint/scope-manager` does.
+/// `@typescript-eslint/scope-manager` does, which is what oxlint hands its JavaScript plugins for every file.
 #[inline]
 pub(crate) fn is_javascript_mode(file: &File) -> bool {
-    file.is_javascript() && file.language().parser != Parser::TypeScript
+    let language = file.language();
+    file.is_javascript()
+        && language.parser != Parser::TypeScript
+        && (!language.is_oxlint || language.has_scopes_of_oxc)
 }
 
 /// ESLint's `scopeManager.isGlobalReturn()`.

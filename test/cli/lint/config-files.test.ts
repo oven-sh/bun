@@ -1593,6 +1593,302 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(exitCode).toBe(name ? 1 : 0);
   });
 
+  // Each row is what oxlint 1.87 says about the options of a rule: the lines below "Invalid configuration for rule", or `null` if it
+  // takes them. It says everything at once, in the order of the texts.
+  describe("the options of the rules of oxlint", () => {
+    // prettier-ignore
+    const rows: [rule: string, options: unknown[], refusal: string | null][] = [
+      ["eqeqeq", ["sometimes"], "  unknown variant `sometimes`, expected `always` or `smart`, received `[ \"sometimes\" ]`"],
+      ["eqeqeq", ["always", {"null": "x"}], "  unknown variant `x`, expected one of `always`, `never`, `ignore`, received `[ \"always\", { \"null\": \"x\" } ]`"],
+      ["eqeqeq", ["always", {}, 1], "  invalid length 3, expected fewer elements in array, received `[ \"always\", {}, 1 ]`"],
+      ["eqeqeq", [1], "  invalid type: integer `1`, expected string or map, received `[ 1 ]`"],
+      ["eqeqeq", [{"always": 1}], "  invalid type: integer `1`, expected unit, received `[ { \"always\": 1 } ]`"],
+      ["eqeqeq", [{}], "  invalid value: map, expected map with a single key, received `[ {} ]`"],
+      ["max-lines", [-1], "  invalid type: integer `-1`, expected struct MaxLinesConfig\n  received config: `-1`"],
+      ["max-lines", [{"max": -1}], "  invalid value: integer `-1`, expected u32\n  received config: `{ \"max\": -1 }`"],
+      ["max-lines", [{"max": 1.5}], "  invalid type: floating point `1.5`, expected u32\n  received config: `{ \"max\": 1.5 }`"],
+      ["max-lines", [{"max": 4294967296}], "  invalid value: integer `4294967296`, expected u32\n  received config: `{ \"max\": 4294967296 }`"],
+      ["max-lines", ["300"], "  invalid type: string \"300\", expected struct MaxLinesConfig\n  received config: `\"300\"`"],
+      ["max-lines", [{"max": "300"}], "  invalid type: string \"300\", expected u32\n  received config: `{ \"max\": \"300\" }`"],
+      ["max-lines", [{"maxx": 1}], "  unknown field `maxx`, expected one of `max`, `skipBlankLines`, `skipComments`\n  received config: `{ \"maxx\": 1 }`"],
+      ["max-lines", [[1, true, true, 1]], "  invalid length 4, expected fewer elements in array\n  received config: `[ 1, true, true, 1 ]`"],
+      ["curly", ["nope"], "  unknown variant `nope`, expected one of `all`, `multi`, `multi-line`, `multi-or-nest`, received `[ \"nope\" ]`"],
+      ["curly", ["all", "x"], "  unknown variant `x`, expected `consistent`, received `[ \"all\", \"x\" ]`"],
+      ["no-debugger", [{}], "  This rule does not accept configuration options."],
+      ["no-unused-vars", [{"varsIgnorePattern": "("}], "  Invalid 'varsIgnorePattern' option for no-unused-vars: regex parse error:\n    (\n    ^\nerror: unclosed group"],
+      ["no-unused-vars", [{"vars": "x"}], "  Invalid 'vars' option for no-unused-vars: Expected  or all or local, got x"],
+      ["no-unused-vars", [{"args": 1}], "  Invalid 'args' option for no-unused-vars: Expected a string, got 1"],
+      ["no-unused-vars", [{"fix": {"imports": true}}], "  Invalid 'fix.imports' option for no-unused-vars: Expected a boolean or string, got true"],
+      ["no-unused-vars", [[1, {"a": null}]], "  Invalid 'vars' option for no-unused-vars: Expected a string or an object, got [1,{\"a\":null}]"],
+      ["no-unused-vars", [{"argsIgnorePattern": "(?=a)", "args": "all"}], "  Invalid 'argsIgnorePattern' option for no-unused-vars: regex parse error:\n    (?=a)\n    ^^^\nerror: look-around, including look-ahead and look-behind, is not supported"],
+      ["getter-return", [{"allowImplicit": "yes"}], "  invalid type: string \"yes\", expected a boolean\n  received config: `{ \"allowImplicit\": \"yes\" }`"],
+      ["getter-return", [null], "  invalid type: null, expected struct GetterReturn\n  received config: `null`"],
+      ["getter-return", [[1]], "  invalid type: integer `1`, expected a boolean\n  received config: `[ 1 ]`"],
+      ["getter-return", [{"zz": "a  b\u00a0c"}], "  unknown field `zz`, expected `allowImplicit`\n  received config: `{ \"zz\": \"a b c\" }`"],
+      ["getter-return", [1e+21], "  invalid type: floating point `1e+21`, expected struct GetterReturn\n  received config: `1e+21`"],
+      ["getter-return", [1.5e-07], "  invalid type: floating point `1.5e-7`, expected struct GetterReturn\n  received config: `1.5e-7`"],
+      ["getter-return", [1e-05], "  invalid type: floating point `0.00001`, expected struct GetterReturn\n  received config: `0.00001`"],
+      ["getter-return", [10000000000000000], "  invalid type: integer `10000000000000000`, expected struct GetterReturn\n  received config: `10000000000000000`"],
+      ["getter-return", [123456789012], "  invalid type: integer `123456789012`, expected struct GetterReturn\n  received config: `123456789012`"],
+      ["getter-return", ["a\n\"b\\\u0001\u00e9\u200b"], "  invalid type: string \"a\\n\\\"b\\\\\\u{1}\u00e9\\u{200b}\", expected struct GetterReturn\n  received config: `\"a\\n\\\"b\\\\\\u0001\u00e9\u200b\"`"],
+      ["getter-return", [[true, 1]], "  invalid length 2, expected fewer elements in array\n  received config: `[ true, 1 ]`"],
+      ["yoda", ["never", {"exceptRange": 1}], "  invalid type: integer `1`, expected a boolean, received `[ \"never\", { \"exceptRange\": 1 } ]`"],
+      ["id-length", [{"min": -1}], "  invalid value: integer `-1`, expected u64\n  received config: `{ \"min\": -1 }`"],
+      ["id-length", [{"exceptionPatterns": ["["]}], "  regex parse error:\n    [\n    ^\nerror: unclosed character class\n  received config: `{ \"exceptionPatterns\": [ \"[\" ] }`"],
+      ["id-length", [{"properties": "sometimes"}], "  unknown variant `sometimes`, expected `always` or `never`\n  received config: `{ \"properties\": \"sometimes\" }`"],
+      ["id-match", ["(?<n>a)(?<n>b)"], "  regex parse error:\n    (?<n>a)(?<n>b)\n       ^      ^\nerror: duplicate capture group name, received `[ \"(?<n>a)(?<n>b)\" ]`"],
+      ["id-match", ["a{2,1}"], "  regex parse error:\n    a{2,1}\n     ^^^^^\nerror: invalid repetition count range, the start must be <= the end, received `[ \"a{2,1}\" ]`"],
+      ["id-match", ["\\1"], "  regex parse error:\n    \\1\n    ^^\nerror: backreferences are not supported, received `[ \"\\\\1\" ]`"],
+      ["id-match", ["[z-a]"], "  regex parse error:\n    [z-a]\n     ^^^\nerror: invalid character class range, the start must be <= the end, received `[ \"[z-a]\" ]`"],
+      ["id-match", ["(?i-i)"], "  regex parse error:\n    (?i-i)\n      ^ ^\nerror: duplicate flag, received `[ \"(?i-i)\" ]`"],
+      ["id-match", ["a\nb("], "  regex parse error:\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n1: a\n2: b(\n    ^\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\nerror: unclosed group, received `[ \"a\\nb(\" ]`"],
+      ["id-match", ["\\x{110000}"], "  regex parse error:\n    \\x{110000}\n       ^^^^^^\nerror: hexadecimal literal is not a Unicode scalar value, received `[ \"\\\\x{110000}\" ]`"],
+      ["id-match", ["\u65e5\u672c("], "  regex parse error:\n    \u65e5\u672c(\n      ^\nerror: unclosed group, received `[ \"\u65e5\u672c(\" ]`"],
+      ["id-denylist", ["a", 1], "  invalid type: integer `1`, expected a string, received `[ \"a\", 1 ]`"],
+      ["func-names", ["always", {"generators": "x"}], "  unknown variant `x`, expected one of `always`, `as-needed`, `never`, received `[ \"always\", { \"generators\": \"x\" } ]`"],
+      ["func-name-matching", ["x"], "  Expected configuration to match either the first or second tuple type"],
+      ["func-name-matching", ["always", {"zz": 1}], "  Error deserializing second tuple element: unknown field `zz`, expected `considerPropertyDescriptor` or `includeCommonJSModuleExports`"],
+      ["func-name-matching", ["always", {}, 1], "  Expected at most 2 elements in the configuration array"],
+      ["func-name-matching", [{}, {}], "  Error deserializing first tuple element: invalid value: map, expected map with a single key"],
+      ["logical-assignment-operators", ["never", {}], "  options object is only valid with \"always\", received `[ \"never\", {} ]`"],
+      ["logical-assignment-operators", ["x"], "  unknown variant `x`, expected `always` or `never`, received `[ \"x\" ]`"],
+      ["logical-assignment-operators", [1], "  expected [], [\"always\"], [\"never\"], or [\"always\", options], received `[ 1 ]`"],
+      ["logical-assignment-operators", ["always", {"enforceForIfStatements": 1}], "  invalid type: integer `1`, expected a boolean, received `[ \"always\", { \"enforceForIfStatements\": 1 } ]`"],
+      ["no-restricted-properties", [{}], "  expected either `object` or `property`"],
+      ["no-restricted-properties", [{"object": "a", "allowObjects": ["b"]}], "  `allowObjects` requires `property`"],
+      ["no-restricted-properties", [{"object": 1}], "  invalid type: integer `1`, expected a string"],
+      ["no-restricted-properties", [{"object": "a"}, {"object": "a", "property": "b", "allowProperties": ["c"]}], "  `allowProperties` cannot be used with `property`"],
+      ["sort-imports", [{"memberSyntaxSortOrder": ["none", "all"]}], "  memberSyntaxSortOrder must contain exactly 4 kinds, got 2\n  received config: `{ \"memberSyntaxSortOrder\": [ \"none\", \"all\" ] }`"],
+      ["sort-imports", [{"memberSyntaxSortOrder": ["none", "all", "multiple", "multiple"]}], "  memberSyntaxSortOrder must contain 4 unique kinds, but duplicates were found\n  received config: `{ \"memberSyntaxSortOrder\": [ \"none\", \"all\", \"multiple\", \"multiple\" ] }`"],
+      ["no-implicit-coercion", [{"allow": ["x"]}], "  Invalid operator 'x' in allow list. Valid values are: \"!!\", \"~\", \"+\", \"- -\", \"-\", \"*\"\n  received config: `{ \"allow\": [ \"x\" ] }`"],
+      ["no-implicit-coercion", [{"allow": "!!"}], "  invalid type: string \"!!\", expected a sequence of operator strings\n  received config: `{ \"allow\": \"!!\" }`"],
+      ["typescript/ban-ts-comment", [{"ts-check": "x"}], "  expected a boolean, `allow-with-description`, or a descriptionFormat object\n  received config: `{ \"ts-check\": \"x\" }`"],
+      ["typescript/ban-ts-comment", [{"ts-check": {"descriptionFormat": "("}}], "  regex parse error:\n    (\n    ^\nerror: unclosed group\n  received config: `{ \"ts-check\": { \"descriptionFormat\": \"(\" } }`"],
+      ["typescript/ban-ts-comment", [{"minimumDescriptionLength": -1}], "  invalid value: integer `-1`, expected u64\n  received config: `{ \"minimumDescriptionLength\": -1 }`"],
+      ["typescript/ban-ts-comment", [{"ts-ignore": {"zz": 1}}], "  unknown field `zz`, expected `descriptionFormat`\n  received config: `{ \"ts-ignore\": { \"zz\": 1 } }`"],
+      ["typescript/no-floating-promises", [{"allowForKnownSafeCalls": [{"from": "package", "name": "a"}]}], "  data did not match any variant of untagged enum TypeOrValueSpecifier\n  received config: `{ \"allowForKnownSafeCalls\": [ { \"from\": \"package\", \"name\": \"a\" } ] }`"],
+      ["typescript/no-restricted-types", [{"types": {"k": false}}], "  data did not match any variant of untagged enum BanConfigValue\n  received config: `{ \"types\": { \"k\": false } }`"],
+      ["typescript/array-type", [{"default": "x"}], "  unknown variant `x`, expected one of `array`, `array-simple`, `generic`\n  received config: `{ \"default\": \"x\" }`"],
+      ["typescript/no-this-alias", [{"allowNames": [], "allowedNames": []}], "  duplicate field `allowedNames`\n  received config: `{ \"allowNames\": [], \"allowedNames\": [] }`"],
+      ["unicorn/filename-case", [{"case": "x"}], "  unknown variant `x`, expected one of `kebabCase`, `camelCase`, `snakeCase`, `pascalCase`, `lowercase`, `screamingSnakeCase`\n  received config: `{ \"case\": \"x\" }`"],
+      ["unicorn/import-style", [{"styles": {"k": true}}], "  module style override boolean must be `false`\n  received config: `{ \"styles\": { \"k\": true } }`"],
+      ["react/jsx-no-literals", [{"zz": 1}], "  unknown field `zz`\n  received config: `{ \"zz\": 1 }`"],
+      ["react/jsx-no-literals", [{"noStrings": 1, "elementOverrides": 1}], "  invalid type: integer `1`, expected a map\n  received config: `{ \"noStrings\": 1, \"elementOverrides\": 1 }`"],
+      ["react/jsx-no-literals", [[]], "  invalid type: sequence, expected struct JsxNoLiteralsConfig\n  received config: `[]`"],
+      ["react/jsx-no-script-url", [{"zz": 1}], "  Expected configuration to match either the first or second tuple type"],
+      ["react/jsx-no-script-url", [[], null], "  Error deserializing second tuple element: invalid type: null, expected struct JsxNoScriptUrlOptions"],
+      ["react/forbid-component-props", [{"forbid": [{"message": "a"}]}], "  data did not match any variant of untagged enum ForbidItem\n  received config: `{ \"forbid\": [ { \"message\": \"a\" } ] }`"],
+      ["jsx-a11y/aria-role", [{"ignoreNonDOM": 1}], "  invalid type: integer `1`, expected a boolean\n  received config: `{ \"ignoreNonDOM\": 1 }`"],
+      ["react-perf/jsx-no-new-object-as-prop", [{"nativeAllowList": "x"}], "  data did not match any variant of untagged enum NativeAllowList\n  received config: `{ \"nativeAllowList\": \"x\" }`"],
+      ["jest/no-restricted-matchers", [{"toBe": 1}], "  invalid type: integer `1`, expected a string\n  received config: `{ \"toBe\": 1 }`"],
+      ["jest/no-restricted-matchers", [[]], "  invalid type: sequence, expected struct NoRestrictedMatchersConfig\n  received config: `[]`"],
+      ["jest/max-expects", [{"max": "x"}], "  invalid type: string \"x\", expected u32\n  received config: `{ \"max\": \"x\" }`"],
+      ["vitest/max-expects", [{"max": -1}], "  invalid value: integer `-1`, expected u32\n  received config: `{ \"max\": -1 }`"],
+      ["import/no-cycle", [{"maxDepth": -1}], "  invalid value: integer `-1`, expected u32\n  received config: `{ \"maxDepth\": -1 }`"],
+      ["import/first", ["x"], "  unknown variant `x`, expected `absolute-first` or `disable-absolute-first`\n  received config: `\"x\"`"],
+      ["import/no-nodejs-modules", [{}], "  missing field `allow`\n  received config: `{}`"],
+      ["import/no-nodejs-modules", [[]], "  invalid length 0, expected struct NoNodejsModulesConfig with 1 element\n  received config: `[]`"],
+      ["no-invalid-regexp", [{"allowConstructorFlags": ["ab"]}], "  invalid value: string \"ab\", expected a character\n  received config: `{ \"allowConstructorFlags\": [ \"ab\" ] }`"],
+      ["no-invalid-regexp", [{"allowConstructorFlags": [1]}], "  invalid type: integer `1`, expected a character\n  received config: `{ \"allowConstructorFlags\": [ 1 ] }`"],
+      ["no-fallthrough", [{"commentPattern": "("}], "  regex parse error:\n    (?iu)(\n         ^\nerror: unclosed group\n  received config: `{ \"commentPattern\": \"(\" }`"],
+      ["capitalized-comments", ["always", {"ignorePattern": "("}], "  regex parse error:\n    ^\\s*(?:()\n        ^\nerror: unclosed group"],
+      ["capitalized-comments", ["always", 1], "  invalid type: integer `1`, expected struct OptionsJson"],
+      ["capitalized-comments", ["always", {"line": {"zz": 1}}], "  unknown field `zz`, expected one of `ignorePattern`, `ignoreInlineComments`, `ignoreConsecutiveComments`"],
+      ["promise/param-names", [{"resolvePattern": "["}], "  regex parse error:\n    [\n    ^\nerror: unclosed character class\n  received config: `{ \"resolvePattern\": \"[\" }`"],
+      ["one-var", [1], "  data did not match any variant of untagged enum OneVarConfig\n  received config: `1`"],
+      ["prefer-destructuring", [{"zz": 1}], "  data did not match any variant of untagged enum PreferDestructuringOption, received `[ { \"zz\": 1 } ]`"],
+      ["complexity", [{"max": 1, "maximum": 2}], "  duplicate field `max`\n  received config: `{ \"max\": 1, \"maximum\": 2 }`"],
+      ["complexity", ["x"], "  invalid type: string \"x\", expected struct ComplexityConfig\n  received config: `\"x\"`"],
+      ["jsdoc/require-param", [1], "  invalid type: integer `1`, expected struct RequireParamConfig"],
+      ["vue/max-props", [{"maxProps": -1}], "  invalid value: integer `-1`, expected u32\n  received config: `{ \"maxProps\": -1 }`"],
+      ["jsdoc/require-param-name", [1], "  This rule does not accept configuration options."],
+      ["no-empty-function", [{"allow": ["x"]}], "  unknown variant `x`, expected one of `function`, `functions`, `arrow-functions`, `arrowFunctions`, `generator-functions`, `generatorFunctions`, `method`, `methods`, `generator-methods`, `generatorMethods`, `getter`, `getters`, `setter`, `setters`, `constructor`, `constructors`, `async-functions`, `asyncFunctions`, `async-methods`, `asyncMethods`, `private-constructors`, `privateConstructors`, `protected-constructors`, `protectedConstructors`, `decorated-functions`, `decoratedFunctions`, `override-methods`, `overrideMethods`\n  received config: `{ \"allow\": [ \"x\" ] }`"],
+      ["node/no-new-require", [1], "  This rule does not accept configuration options."],
+      ["nextjs/no-img-element", [null], "  This rule does not accept configuration options."],
+      ["oxc/no-barrel-file", [{"threshold": "x"}], "  invalid type: string \"x\", expected u32\n  received config: `{ \"threshold\": \"x\" }`"],
+      ["vue/no-reserved-props", [{"vueVersion": 4}], "  vueVersion must be either 2 or 3\n  received config: `{ \"vueVersion\": 4 }`"],
+      ["vue/no-reserved-props", [{"vueVersion": 256}], "  invalid value: integer `256`, expected u8\n  received config: `{ \"vueVersion\": 256 }`"],
+      ["vue/no-reserved-props", [[1, 1]], "  vueVersion must be either 2 or 3\n  received config: `[ 1, 1 ]`"],
+      ["jsx-a11y/control-has-associated-label", [{"depth": 26, "labelAttributes": 1}], "  depth must be less than or equal to 25\n  received config: `{ \"depth\": 26, \"labelAttributes\": 1 }`"],
+      ["jsx-a11y/control-has-associated-label", [{"labelAttributes": 1, "depth": 26}], "  invalid type: integer `1`, expected a sequence\n  received config: `{ \"labelAttributes\": 1, \"depth\": 26 }`"],
+      ["jest/expect-expect", [{"assertFunctionNames": [1, "a.(.b"]}], "  invalid assert function pattern `a.(.b`: regex parse error:\n    (?ui)^a\\.(\\.b(\\.|$)\n             ^\nerror: unclosed group"],
+      ["jest/expect-expect", [{"assertFunctionNames": ["**("]}], "  invalid assert function pattern `**(`: regex parse error:\n    (?ui)^[a-z\\d]*[a-z\\d]*((\\.|$)\n                          ^\nerror: unclosed group"],
+      ["vitest/expect-expect", [{"assertFunctionNames": ["["]}], "  invalid assert function pattern `[`: regex parse error:\n    (?ui)^[(\\.|$)\n          ^\nerror: unclosed character class"],
+      ["jest/prefer-ending-with-an-expect", [{"assertFunctionNames": ["a", "["]}], "  regex parse error:\n    (?ui)^[(\\.|$)\n          ^\nerror: unclosed character class\n  received config: `{ \"assertFunctionNames\": [ \"a\", \"[\" ] }`"],
+      ["jest/prefer-ending-with-an-expect", [{"assertFunctionNames": ["(", 1]}], "  invalid type: integer `1`, expected a string\n  received config: `{ \"assertFunctionNames\": [ \"(\", 1 ] }`"],
+      ["jest/prefer-ending-with-an-expect", [{"assertFunctionNames": ["("], "zz": 1}], "  regex parse error:\n    (?ui)^((\\.|$)\n          ^\nerror: unclosed group\n  received config: `{ \"assertFunctionNames\": [ \"(\" ], \"zz\": 1 }`"],
+      ["no-restricted-globals", ["a", {"globals": 1}], "  Expected 'object' property to be an array"],
+      ["no-restricted-globals", [{"globals": ["a", 1]}], "  Expected 'globals' array to contain either strings or objects"],
+      ["one-var", [[null, null]], "  data did not match any variant of untagged enum OneVarConfig\n  received config: `[ null, null ]`"],
+      ["react/forbid-elements", [{"forbid": [["x", null]]}], "  data did not match any variant of untagged enum ForbidItem\n  received config: `{ \"forbid\": [ [ \"x\", null ] ] }`"],
+      ["react/forbid-dom-props", [{"forbid": [[null, null, null, "x"]]}], "  data did not match any variant of untagged enum ForbidDomPropsItem\n  received config: `{ \"forbid\": [ [ null, null, null, \"x\" ] ] }`"],
+      ["typescript/no-restricted-types", [{"types": {"k": [null, null, null]}}], "  data did not match any variant of untagged enum BanConfigValue\n  received config: `{ \"types\": { \"k\": [ null, null, null ] } }`"],
+      ["capitalized-comments", ["always", {"line": []}], "  invalid length 1, expected struct CommentConfigJson with 3 elements"],
+      ["capitalized-comments", ["always", {"block": ["a", true]}], "  invalid length 2, expected struct CommentConfigJson with 3 elements"],
+      ["react/jsx-fragments", [{"mode": "x"}], "  data did not match any variant of untagged enum JsxFragments\n  received config: `{ \"mode\": \"x\" }`"],
+      ["react/jsx-fragments", [["syntax"]], "  data did not match any variant of untagged enum JsxFragments\n  received config: `[ \"syntax\" ]`"],
+      ["id-match", ["(?-u)\\xFF"], "  regex parse error:\n    (?-u)\\xFF\n         ^^^^\nerror: pattern can match invalid UTF-8, received `[ \"(?-u)\\\\xFF\" ]`"],
+      ["id-match", ["(?-u:[^a])"], "  regex parse error:\n    (?-u:[^a])\n         ^^^^\nerror: pattern can match invalid UTF-8, received `[ \"(?-u:[^a])\" ]`"],
+      ["id-match", ["(?-u)[\u00e9]"], "  regex parse error:\n    (?-u)[\u00e9]\n          ^\nerror: Unicode not allowed here, received `[ \"(?-u)[\u00e9]\" ]`"],
+      ["id-match", ["a\\pXb"], "  regex parse error:\n    a\\pXb\n     ^^^\nerror: Unicode property not found, received `[ \"a\\\\pXb\" ]`"],
+      ["vue/no-reserved-props", [{"vueVersion": 2}], null],
+      ["jsx-a11y/control-has-associated-label", [{"depth": 25}], null],
+      ["jest/expect-expect", [{"assertFunctionNames": ["a.*.b", "**", "x*", "+"], "additionalTestBlockFunctions": ["("]}], null],
+      ["jest/expect-expect", ["("], null],
+      ["jest/expect-expect", [{"assertFunctionNames": "("}], null],
+      ["jest/prefer-ending-with-an-expect", [{"assertFunctionNames": ["a.*.b", "**"], "additionalTestBlockFunctions": ["("]}], null],
+      ["no-restricted-globals", ["a", {"name": "b", "message": "m"}, 1], null],
+      ["no-restricted-globals", [{"globals": ["a", {"name": 1}], "checkGlobalObject": 1}], null],
+      ["one-var", [[null, true]], null],
+      ["react/forbid-dom-props", [{"forbid": [["x", null, null, null]]}], null],
+      ["capitalized-comments", ["always", {"line": [null, null, null]}], null],
+      ["react/jsx-fragments", [{"mode": "element", "zz": 1}], null],
+      ["id-match", ["(?-u)\u00e9\\x{FF}\\B((?u).)"], null],
+      ["id-match", ["\\pl\\p{Greek}"], null],
+      ["no-use-before-define", ["x"], "  invalid type: string \"x\", expected struct NoUseBeforeDefineConfig\n  received config: `\"x\"`"],
+      ["no-use-before-define", ["nofunc"], null],
+      ["eqeqeq", ["always", {"null": "ignore"}], null],
+      ["eqeqeq", ["smart"], null],
+      ["eqeqeq", [{"always": null}], null],
+      ["eqeqeq", [], null],
+      ["max-lines", [300], null],
+      ["max-lines", [{"max": 300, "skipComments": true}], null],
+      ["max-lines", [0], null],
+      ["max-lines", [1, 2], null],
+      ["max-lines", [[1, true]], null],
+      ["curly", ["multi", "consistent"], null],
+      ["curly", ["all", null], null],
+      ["getter-return", [{}], null],
+      ["getter-return", [{}, {"zz": 1}], null],
+      ["getter-return", [[]], null],
+      ["getter-return", [[true]], null],
+      ["no-unused-vars", [{"zz": 1}], null],
+      ["no-unused-vars", [null], null],
+      ["no-unused-vars", [{"varsIgnorePattern": "^_"}], null],
+      ["no-unused-vars", [{"caughtErrors": true}], null],
+      ["no-unused-vars", [{"varsIgnorePattern": 1}], null],
+      ["no-unused-vars", ["local"], null],
+      ["id-match", ["^[a-z]+$", {"properties": true}], null],
+      ["id-match", ["(?x) a # c"], null],
+      ["id-match", ["[[:alpha:]&&[^a]]\\b{start}\\p{Greek}\\x{41}"], null],
+      ["func-name-matching", [{}], null],
+      ["func-name-matching", ["never"], null],
+      ["func-name-matching", ["always", {}], null],
+      ["logical-assignment-operators", ["always", {"enforceForIfStatements": true}], null],
+      ["logical-assignment-operators", ["never"], null],
+      ["no-restricted-properties", [{"object": "a"}, {"property": "b", "allowObjects": ["c"]}], null],
+      ["typescript/ban-ts-comment", [{"ts-check": {"descriptionFormat": "^: .+$"}, "ts-ignore": "allow-with-description", "ts-nocheck": true}], null],
+      ["typescript/no-floating-promises", [{"allowForKnownSafeCalls": ["a", {"from": "file", "name": ["a"], "path": null}, {"from": "package", "name": "a", "package": "p"}]}], null],
+      ["typescript/no-restricted-types", [{"types": {"a": true, "b": "m", "c": {"message": null, "fixWith": "d"}}}], null],
+      ["radix", ["x"], null],
+      ["max-statements", ["x"], null],
+      ["no-restricted-imports", [{"paths": 1}], null],
+      ["react/jsx-no-literals", [{"elementOverrides": {"a": {"allowElement": true, "noStrings": true}}, "noStrings": true}], null],
+      ["react/forbid-component-props", [{"forbid": ["a", {"propName": "b", "message": null}, {"propNamePattern": "c"}]}], null],
+      ["sort-imports", [{"memberSyntaxSortOrder": ["single", "multiple", "all", "none"]}], null],
+      ["unicorn/import-style", [{"styles": {"k": false, "l": {"named": true}}}], null],
+      ["jest/no-restricted-matchers", [{"toBe": "m", "toEqual": null}], null],
+      ["capitalized-comments", ["x", {"zz": 1, "ignorePattern": "a", "line": {"ignoreInlineComments": true}}, 1], null],
+      ["complexity", [20], null],
+      ["complexity", [{"maximum": 2, "variant": "modified"}], null],
+      ["no-invalid-regexp", [{"allowConstructorFlags": ["a", "\u00e9"]}], null],
+    ];
+    const plugins = [...new Set(rows.flatMap(([rule]) => (rule.includes("/") ? [rule.split("/")[0]] : [])))];
+    // A rule is once in a file.
+    const rounds: (typeof rows)[] = [];
+    for (const row of rows) {
+      const round = rounds.find(it => it.every(other => other[0] !== row[0]));
+      if (round) round.push(row);
+      else rounds.push([row]);
+    }
+
+    test.each(rounds.map((round, at) => [at, round] as const))("file %i", async (_, round) => {
+      const rules = Object.fromEntries(round.map(([rule, options]) => [rule, ["off", ...options]]));
+      const files = {
+        ".oxlintrc.json": JSON.stringify({ plugins, categories: { correctness: "off" }, rules }),
+        "a.js": "export {};\n",
+      };
+      const { raw, exitCode } = await lint(files, ["a.js"]);
+      const expected = round
+        .filter(it => it[2] !== null)
+        .map(([rule, , refusal]) => {
+          const name = rule.replace(/^(jsx|react)-(a11y|perf)\//, "$1_$2/");
+          return `Invalid configuration for rule \`${name}\`:\n${refusal}`;
+        })
+        .sort();
+      const at = raw.indexOf("Invalid configuration");
+      expect(at < 0 ? "" : raw.slice(at).trimEnd()).toBe(expected.join("\n\n"));
+      expect(exitCode).toBe(expected.length > 0 ? 1 : 0);
+    });
+
+    const bad = (word: string) => ["error", word];
+    const said = async (config: object, extended: object = {}, flags: string[] = []) => {
+      const files = {
+        ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, ...config }),
+        "extended.json": JSON.stringify(extended),
+        "a.js": "export {};\n",
+      };
+      const { raw, exitCode } = await lint(files, [...flags, "a.js"]);
+      return [[...raw.matchAll(/Invalid configuration for rule `([^`]+)`/g)].map(it => it[1]), exitCode];
+    };
+    const forJs = (rules: object, more: object = {}) => ({ files: ["*.js"], rules, ...more });
+    const key = { "react/jsx-key": ["error", 1] };
+    const extending = { extends: ["./extended.json"] };
+
+    const looks: [name: string, rules: string[], config: object, extended?: object, flags?: string[]][] = [
+      [
+        "the file before its overrides",
+        ["eqeqeq"],
+        { rules: { eqeqeq: bad("x") }, overrides: [forJs({ curly: bad("x") })] },
+      ],
+      [
+        "one override after the other",
+        ["curly", "yoda"],
+        { overrides: [forJs({ yoda: bad("x"), curly: bad("x") }), forJs({ eqeqeq: bad("x") })] },
+      ],
+      [
+        "with what it extends",
+        ["curly", "yoda"],
+        { ...extending, rules: { yoda: bad("x") } },
+        { rules: { curly: bad("x") } },
+      ],
+      ["not what it says otherwise", [], { ...extending, rules: { curly: "off" } }, { rules: { curly: bad("x") } }],
+      [
+        "the overrides of what it extends first",
+        ["curly"],
+        { ...extending, overrides: [forJs({ yoda: bad("x") })] },
+        { overrides: [forJs({ curly: bad("x") })] },
+      ],
+      ["a plugin of what it extends", ["react/jsx-key"], extending, { plugins: ["react"], rules: key }],
+      [
+        "a plugin of what it extends, for its own rules",
+        ["react/jsx-key"],
+        { ...extending, rules: key },
+        { plugins: ["react"] },
+      ],
+      ["its plugin, for what it extends", ["react/jsx-key"], { ...extending, plugins: ["react"] }, { rules: key }],
+      ["both have plugins", ["react/jsx-key"], { ...extending, plugins: [] }, { plugins: ["react"], rules: key }],
+      ["a plugin of a flag, for what it extends", ["react/jsx-key"], extending, { rules: key }, ["--react-plugin"]],
+      [
+        "a plugin of an override that it extends",
+        ["react/jsx-key"],
+        extending,
+        { overrides: [forJs(key, { plugins: ["react"] })] },
+      ],
+      ["an override that it extends, without the plugin", [], extending, { overrides: [forJs(key)] }],
+      [
+        "an override that it extends, with the plugin of that file",
+        ["react/jsx-key"],
+        extending,
+        { plugins: ["react"], overrides: [forJs(key)] },
+      ],
+    ];
+    test.each(looks.map(it => [it[0], it] as const))("what is looked at: %s", async (_, row) => {
+      const [, rules, config, extended, flags] = row;
+      expect(await said(config, extended, flags)).toEqual([rules, rules.length > 0 ? 1 : 0]);
+    });
+  });
+
   // oxlint 1.87 takes each, and each is valid by its own configuration_schema.json. The schemas of ESLint's rules refuse them.
   test("options that oxlint takes and the schema of ESLint's rule does not", async () => {
     const sets: [rule: string, options: unknown[]][] = [
@@ -2133,11 +2429,123 @@ describe.concurrent("an .oxlintrc.json", () => {
     [{ rules: [] }, "invalid type: sequence, expected Record<string, SeverityConf"],
     [{ settings: 1 }, "invalid type: integer `1`, expected struct WellKnownOxlintSettings"],
     [{ $schema: 1 }, "invalid type: integer `1`, expected a string"],
+    [{ settings: [1] }, "invalid type: integer `1`, expected struct JSXA11yPluginSettings"],
+    [{ settings: [{}, {}, 1] }, "invalid type: integer `1`, expected struct ReactPluginSettings"],
+    [{ settings: [{}, {}, {}, {}, {}, {}, {}] }, "invalid length 7, expected fewer elements in array"],
+    [{ settings: { react: null } }, "invalid type: null, expected struct ReactPluginSettings"],
+    [{ settings: { react: [1] } }, "invalid type: integer `1`, expected a sequence"],
+    [{ settings: { react: { linkComponents: {} } } }, "invalid type: map, expected a sequence"],
+    [{ settings: { react: { componentWrapperFunctions: [1] } } }, "invalid type: integer `1`, expected a string"],
+    [
+      { settings: { react: { formComponents: [{ name: "a" }] } } },
+      "data did not match any variant of untagged enum CustomComponent",
+    ],
+    [{ settings: { "jsx-a11y": { components: { a: 1 } } } }, "invalid type: integer `1`, expected a string"],
+    [{ settings: { "jsx-a11y": { attributes: { a: "b" } } } }, 'invalid type: string \\"b\\", expected a sequence'],
+    [{ settings: { next: { rootDir: 1 } } }, "data did not match any variant of untagged enum OneOrMany"],
+    [{ settings: { jsdoc: { ignorePrivate: 1 } } }, "invalid type: integer `1`, expected a boolean"],
+    [
+      { settings: { jsdoc: { tagNamePreference: { a: 1 } } } },
+      "data did not match any variant of untagged enum TagNamePreference",
+    ],
+    [{ settings: { vitest: { typecheck: 1 } } }, "invalid type: integer `1`, expected a boolean"],
+    [{ settings: { jest: null } }, "invalid type: null, expected struct JestPluginSettings"],
+    [{ options: [1] }, "invalid type: integer `1`, expected a boolean"],
+    [{ options: [null, null, null, -1] }, "invalid value: integer `-1`, expected usize"],
+    [{ options: [null, null, null, null, null, null, null] }, "invalid length 7, expected fewer elements in array"],
+    [{ options: { maxWarnings: 1.5 } }, "invalid type: floating point `1.5`, expected usize"],
+    [
+      { options: { reportUnusedDisableDirectives: "x" } },
+      'invalid value: string \\"x\\", expected `allow`, `off`, `warn`, `deny` or `error`',
+    ],
+    [{ options: { reportUnusedDisableDirectives: 3 } }, "invalid value: integer `3`, expected `0`, `1` or `2`"],
+    [{ options: { reportUnusedDisableDirectives: true } }, "data did not match any variant of untagged enum Repr"],
+    [{ categories: { correctness: null } }, "data did not match any variant of untagged enum Repr"],
+    [{ categories: { correctness: -1 } }, "data did not match any variant of untagged enum Repr"],
+    [{ categories: { correctness: 3 } }, "invalid value: integer `3`, expected `0`, `1` or `2`"],
+    [
+      { categories: { correctness: "x" } },
+      'invalid value: string \\"x\\", expected `allow`, `off`, `warn`, `deny` or `error`',
+    ],
+    [
+      { rules: { "no-debugger": "Error" } },
+      'Failed to parse rule severity, expected one of \\"allow\\", \\"off\\", \\"deny\\", \\"error\\" or \\"warn\\", but got \\"Error\\"',
+    ],
+    [{ rules: { "no-debugger": ["2"] } }, 'or \\"warn\\", but got \\"2\\"'],
+    [{ rules: { "no-debugger": 3 } }, "Failed to parse rule severity, expected one of `0`, `1` or `2`, but got 3"],
+    [{ rules: { "no-debugger": [1.5] } }, "expected one of `0`, `1` or `2`, but got 1.5"],
+    [{ rules: { "no-debugger": -1 } }, "expected one of `0`, `1` or `2`, but got a negative number"],
+    [
+      { rules: { "no-debugger": [null, 1] } },
+      "Failed to parse rule severity, expected a string or a number, but got Null",
+    ],
+    [
+      { rules: { "no-debugger": [{ a: [1, "x", null, true, 1.5] }] } },
+      'but got Object {\\"a\\": Array [Number(1), String(\\"x\\"), Null, Bool(true), Number(1.5)]}',
+    ],
+    [
+      { rules: { "no-debugger": [] } },
+      'Failed to rule value \\"[]\\" with error \\"Type should be `[SeverityConf, ...any[]`\\"',
+    ],
+    [
+      { rules: { "no-debugger": { a: 1 } } },
+      'Failed to rule value \\"{\\\\\\"a\\\\\\":1}\\" with error \\"Type should be `SeverityConf | [SeverityConf, ...any[]]`\\"',
+    ],
+    [
+      { overrides: [{ files: ["*.js"], rules: { "no-debugger": true } }] },
+      'Failed to rule value \\"true\\" with error',
+    ],
+    [{ settings: { "jsx-a11y": [] } }, "invalid length 0, expected struct JSXA11yPluginSettings with 3 elements"],
+    [{ settings: { jest: { version: "latest" } } }, 'Invalid Jest version string: \\"latest\\"'],
+    [{ settings: { jest: { version: "^29.0.0" } } }, 'Invalid Jest version string: \\"^29.0.0\\"'],
+    [{ settings: { jest: { version: "" } } }, 'Invalid Jest version string: \\"\\"'],
+    [{ settings: { jest: { version: -1 } } }, "Jest version cannot be negative: -1"],
+    [
+      { settings: { jest: { version: 29.5 } } },
+      "invalid type: floating point `29.5`, expected Expected Jest version as a number or string",
+    ],
+    [
+      { settings: { jest: { version: 1e21 } } },
+      "invalid type: floating point `1e+21`, expected Expected Jest version as a number or string",
+    ],
+    [
+      { settings: { react: { version: 18 } } },
+      'invalid type: integer `18`, expected a version string like \\"18.2.0\\" or \\"17.0\\"',
+    ],
+    [
+      { settings: { react: { linkComponents: [{ name: "a", attribute: "x", linkAttribute: "to" }] } } },
+      "data did not match any variant of untagged enum CustomComponent",
+    ],
+    [
+      { settings: { react: { linkComponents: [["a", "b"]] } } },
+      "data did not match any variant of untagged enum CustomComponent",
+    ],
+    [
+      { settings: { jsdoc: { tagNamePreference: { a: ["m"] } } } },
+      "data did not match any variant of untagged enum TagNamePreference",
+    ],
+    [{ overrides: [[]] }, "invalid length 0, expected struct OxlintOverride with 7 elements"],
+    [{ overrides: [[["*.js"]]] }, "invalid length 2, expected struct OxlintOverride with 7 elements"],
+    [{ overrides: [[["*.js"], [], null]] }, "invalid length 3, expected struct OxlintOverride with 7 elements"],
+    [
+      { overrides: [[["*.js"], [], null, null, null, null, {}, 1]] },
+      "invalid length 8, expected fewer elements in array",
+    ],
+    [{ overrides: [[["*.js"], 1]] }, "invalid type: integer `1`, expected a sequence"],
+    [{ overrides: [[["*.js"], [], 1]] }, "invalid type: integer `1`, expected a map"],
+    [{ overrides: [[["*.js"], [], null, null, null, null, null]] }, "invalid type: null, expected Record<string"],
+    [{ overrides: [[["{"]]] }, "Invalid glob pattern `{`: unclosed brace expansion at byte 0;"],
+    [
+      { overrides: [[["*.js"], [], null, null, null, null, { eqeqeq: ["error", "x"] }]] },
+      "Invalid configuration for rule `eqeqeq`:\n  unknown variant `x`, expected `always` or `smart`",
+    ],
   ])("%j is refused, as by oxlint", async (config, why) => {
-    const { problems, stdout, exitCode } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.js": code });
+    const files = { ".oxlintrc.json": JSON.stringify(config), "a.js": code };
+    const { problems, raw, stdout, exitCode } = await lint(files);
     expect(problems).toEqual([]);
     expect(stdout).toContain("Cannot use the configuration file <dir>/.oxlintrc.json:\n");
-    expect(stdout).toContain(why);
+    // As it was printed: it has backslashes.
+    expect(raw).toContain(why);
     expect(exitCode).toBe(1);
   });
 
@@ -2162,6 +2570,37 @@ describe.concurrent("an .oxlintrc.json", () => {
     ]);
     expect(byAlias.stdout).toContain(`"jsPlugins": [{ "name": "react-js", "specifier": "eslint-plugin-react" }]`);
     expect(byAlias.exitCode).toBe(1);
+  });
+
+  // `plugins` refuses "bun", so the note must not ask for it. oxlint 1.87 takes a `name` in `jsPlugins`.
+  test("the note about a plugin in JavaScript that is called like Bun's own gives advice that the config takes", async () => {
+    const rule = `{ create: () => ({}) }`;
+    const files = {
+      "bun.js": `export default { meta: { name: "bun" }, rules: { "no-array-just-to-count": ${rule}, own: ${rule}, other: ${rule} } };`,
+      "a.js": "export {};\n",
+    };
+    const advice = async (config: object) => {
+      const all = { categories: { correctness: "off" }, ...config };
+      const result = await lint({ ...files, ".oxlintrc.json": JSON.stringify(all) }, ["-f", "stylish", "a.js"]);
+      expect(result.exitCode).toBe(0);
+      return result.stderr.split("\n").filter(it => it.startsWith("  To use "));
+    };
+    const builtIn = { "bun/no-array-just-to-count": "error" };
+    expect(await advice({ jsPlugins: ["./bun.js"], rules: builtIn })).toEqual([
+      `  To use the built-in rule, remove ./bun.js from "jsPlugins".`,
+    ]);
+    expect(await advice({ jsPlugins: ["./bun.js"], rules: { ...builtIn, "bun/own": "error" } })).toEqual([
+      `  To use the built-in rule, give the plugin another name: "jsPlugins": [{ "name": "bun-js", "specifier": "./bun.js" }]. Then rename the other rule to "bun-js/..".`,
+    ]);
+    expect(
+      await advice({ jsPlugins: ["./bun.js"], rules: { ...builtIn, "bun/own": "error", "bun/other": "warn" } }),
+    ).toEqual([
+      `  To use the built-in rule, give the plugin another name: "jsPlugins": [{ "name": "bun-js", "specifier": "./bun.js" }]. Then rename the other rules to "bun-js/..".`,
+    ]);
+    // What the notes ask for.
+    expect(await advice({ rules: builtIn })).toEqual([]);
+    const jsPlugins = [{ name: "bun-js", specifier: "./bun.js" }];
+    expect(await advice({ jsPlugins, rules: { ...builtIn, "bun-js/own": "error" } })).toEqual([]);
   });
 
   test("oxlint.config.mts is read, and two files of oxlint in one directory are refused", async () => {
@@ -3015,6 +3454,7 @@ describe.concurrent("an .oxlintrc.json", () => {
       '{"settings":[1]}',
       '{"settings":[{},{},{},{},{},{},{},{}]}',
       '{"options":[1]}',
+      '{"rules":{"eqeqeq":"off","eqeqeq":["error","x"]}}',
       "{'rules':{}}",
       '{"rules":{"no-debugger":\'error\'}}',
       '\ufeff{"rules":{"no-debugger":"error"}}',
@@ -3039,6 +3479,33 @@ describe.concurrent("an .oxlintrc.json", () => {
       '{"options":[]}',
       '{"options":[null]}',
       '{"options":{"typeAware":null}}',
+      '{"options":[false]}',
+      '{"options":[null,null,null,1]}',
+      '{"settings":[{},{},{},{},{},{}]}',
+      '{"settings":{"zz":1}}',
+      '{"settings":{"react":[]}}',
+      '{"settings":{"react":{"zz":1,"version":null}}}',
+      '{"settings":{"react":{"formComponents":["a",{"name":"a","attribute":"b","zz":1}]}}}',
+      '{"settings":{"jsx-a11y":[null,{},{}]}}',
+      '{"settings":{"next":{"rootDir":["a"]}}}',
+      '{"settings":{"jsdoc":{"tagNamePreference":{"a":false,"b":"c","d":{"message":"m"}}}}}',
+      '{"settings":{"jest":[1]}}',
+      '{"settings":{"jsx-a11y":[null]}}',
+      '{"settings":{"jest":{"version":"v29.7.0-beta.1"}}}',
+      '{"settings":{"jest":{"version":"29.x"}}}',
+      '{"settings":{"jest":{"version":29}}}',
+      '{"settings":{"jest":{"version":null}}}',
+      '{"settings":{"react":{"linkComponents":[{"name":"a","linkAttribute":"to"},{"name":"b","linkAttribute":["to"]}]}}}',
+      '{"settings":{"react":{"formComponents":[{"name":"a","formAttribute":"to"},{"name":"b","linkAttribute":"to"}]}}}',
+      '{"settings":{"react":{"linkComponents":[{"name":"a","attribute":"x","linkAttribute":["to"]}]}}}',
+      '{"overrides":[[["*.js"],[],null,null]]}',
+      "{,}",
+      "{}/",
+      "/**/{}",
+      "{}#x",
+      '{"rules":{"eqeqeq":["error","x"],"eqeqeq":"off"}}',
+      '{"rules":{"no-var":"nonsense","no-var":"off"}}',
+      '{"categories":{"correctness":"x","correctness":"warn"}}',
       '#!x\n{"rules":{"no-debugger":"error"}}',
       '{"rules":{"no-debugger":"error"}} # c',
       '{"rules":{"no-debugger":"error"}} // c',
@@ -3055,6 +3522,100 @@ describe.concurrent("an .oxlintrc.json", () => {
       ...rejected.map(config => [config, "rejected"]),
       ...accepted.map(config => [config, "a.js:1:1 no-debugger"]),
     ]);
+  });
+
+  // What oxlint 1.87 prints below "Failed to parse oxlint config <path>.", or in place of that. It makes blanks of the comments, of
+  // the line breaks in `/* */` too, and of a comma before a `}` or `]`, and has serde_json read the rest. Columns are in bytes.
+  test("an .oxlintrc.json that is no JSON is refused in the words of oxlint", async () => {
+    // prettier-ignore
+    const rows: [text: string, why: string][] = [
+      ["{\n  \"rules\": {\n    \"no-debugger\": \"error\"\n    \"no-var\": \"off\"\n  }\n}\n", "expected `,` or `}` at line 4 column 5"],
+      ["{\n  // c\n  \"rules\": { /* a\n b */ no-debugger: 1 }\n}\n", "key must be a string at line 3 column 25"],
+      ["", "EOF while parsing a value at line 1 column 0"],
+      ["\n", "EOF while parsing a value at line 2 column 0"],
+      ["{", "EOF while parsing an object at line 1 column 1"],
+      ["[1,", "EOF while parsing a value at line 1 column 3"],
+      ["{\"a\"", "EOF while parsing an object at line 1 column 4"],
+      ["{\"a\":", "EOF while parsing a value at line 1 column 5"],
+      ["{\"a\":1", "EOF while parsing an object at line 1 column 6"],
+      ["{\"a\" 1}", "expected `:` at line 1 column 6"],
+      ["{\"a\":}", "expected value at line 1 column 6"],
+      ["{\"a\":1 \"b\":2}", "expected `,` or `}` at line 1 column 8"],
+      ["[1 2]", "expected `,` or `]` at line 1 column 4"],
+      ["{a:1}", "key must be a string at line 1 column 2"],
+      ["{\"a\":1,,}", "key must be a string at line 1 column 8"],
+      ["[1, ,]", "expected value at line 1 column 5"],
+      ["{\"a\":1,]", "expected `,` or `}` at line 1 column 8"],
+      ["[1,]]", "trailing characters at line 1 column 5"],
+      ["tru", "EOF while parsing a value at line 1 column 3"],
+      ["truex", "trailing characters at line 1 column 5"],
+      ["-", "EOF while parsing a value at line 1 column 1"],
+      ["-a", "invalid number at line 1 column 2"],
+      ["01", "invalid number at line 1 column 2"],
+      ["1.", "EOF while parsing a value at line 1 column 2"],
+      ["1.a", "invalid number at line 1 column 3"],
+      ["1e+", "EOF while parsing a value at line 1 column 3"],
+      ["1ea", "invalid number at line 1 column 3"],
+      ["0x10", "trailing characters at line 1 column 2"],
+      ["+1", "expected value at line 1 column 1"],
+      [".5", "expected value at line 1 column 1"],
+      ["1e400", "number out of range at line 1 column 5"],
+      ["NaN", "expected value at line 1 column 1"],
+      ["\"a", "EOF while parsing a string at line 1 column 2"],
+      ["\"\\x\"", "invalid escape at line 1 column 3"],
+      ["\"\\u12\"", "EOF while parsing a string at line 1 column 6"],
+      ["\"\\uzzzz\"", "invalid escape at line 1 column 7"],
+      ["\"\\ud800\"", "unexpected end of hex escape at line 1 column 8"],
+      ["\"\\ud800\\n\"", "unexpected end of hex escape at line 1 column 9"],
+      ["\"\\ud800\\u0041\"", "lone leading surrogate in hex escape at line 1 column 13"],
+      ["\"\\udc00\"", "lone leading surrogate in hex escape at line 1 column 7"],
+      ["\"a\tb\"", "control character (\\u0000-\\u001F) found while parsing a string at line 1 column 3"],
+      ["\"a\nb\"", "control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0"],
+      ["{}\n\n  x", "trailing characters at line 3 column 3"],
+      ["{},", "trailing characters at line 1 column 3"],
+      ["/* a", "EOF while parsing a value at line 1 column 4"],
+      ["/*\n\n*/x", "expected value at line 1 column 7"],
+      ["/*\n\n*/{\n x}", "key must be a string at line 2 column 2"],
+      ["// a\nx", "expected value at line 2 column 1"],
+      ["# a\nx", "expected value at line 2 column 1"],
+      ["{\"a\": /* c\n */ x}", "expected value at line 1 column 16"],
+      ["{\"//\": x}", "expected value at line 1 column 8"],
+      ["{'a':1}", "key must be a string at line 1 column 2"],
+      ["\ufeff{}", "expected value at line 1 column 1"],
+      ["\u00a0{}", "expected value at line 1 column 1"],
+      ["\r\n{\r\n x}", "key must be a string at line 3 column 2"],
+      ["\r{\r x}", "key must be a string at line 1 column 5"],
+      ["{\"\u65e5\u672c\": x}", "expected value at line 1 column 12"],
+      ["[1,2,3\n,4\n,x]", "expected value at line 3 column 2"],
+      ["{} / x", "Failed to parse jsonc file <dir>/.oxlintrc.json: Kind(InvalidData)"],
+      ["/x", "Failed to parse jsonc file <dir>/.oxlintrc.json: Kind(InvalidData)"],
+      ["[]", "Expected a JSON object."],
+      ["null", "Expected a JSON object."],
+      ["[1,]", "Expected a JSON object."],
+      ["[,]", "Expected a JSON object."],
+      [Buffer.alloc(127, "[").toString() + "x", "expected value at line 1 column 128"],
+      [Buffer.alloc(128, "[").toString() + "x", "recursion limit exceeded at line 1 column 128"],
+    ];
+    const run = async ([text]: [string, string]) => {
+      const { stdout, exitCode } = await lint({ ".oxlintrc.json": text, "a.js": "debugger;\n" }, ["a.js"]);
+      const start = "error: Cannot use the configuration file <dir>/.oxlintrc.json:\n";
+      const said = stdout.startsWith(start) ? stdout.slice(start.length).trimEnd() : stdout;
+      return [text, said.replace("Failed to parse oxlint config <dir>/.oxlintrc.json.\n", ""), exitCode];
+    };
+    // `stdout` has a slash for every backslash.
+    expect(await Promise.all(rows.map(run))).toEqual(rows.map(([text, why]) => [text, why.replaceAll("\\", "/"), 1]));
+  });
+
+  // What oxlint 1.87 reports.
+  test("an override of an .oxlintrc.json that is a list has the fields in their order", async () => {
+    const found = async (...fields: unknown[]) => {
+      const config = { categories: { correctness: "off" }, overrides: [fields] };
+      return (await lint({ ".oxlintrc.json": JSON.stringify(config), "a.js": "debugger;\n" }, ["a.js"])).problems;
+    };
+    const rules = { "no-debugger": "error" };
+    expect(await found(["*.js"], [], null, null, null, null, rules)).toEqual(["a.js:1:1 no-debugger"]);
+    expect(await found(["*.ts"], [], null, null, null, null, rules)).toEqual([]);
+    expect(await found(["*.js"], ["a.js"], null, null, null, null, rules)).toEqual([]);
   });
 
   // Each row is what oxlint 1.87 reports. As for `JSON.parse`, the last of two values with one key counts.
@@ -5222,8 +5783,7 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
     const rules = {
       ...quiet.rules,
       "jsdoc/require-param": "error",
-      // Nothing looks at the options.
-      "vue/no-dupe-keys": ["warn", { nothing: 1 }],
+      "vue/no-dupe-keys": ["warn", { groups: ["a"] }],
       "vue/max-props": "deny",
     };
     expect(await run({ ...quiet, plugins: ["jsdoc", "vue"], rules })).toEqual({

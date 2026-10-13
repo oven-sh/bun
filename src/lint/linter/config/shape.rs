@@ -2,9 +2,13 @@
 //! another kind than it expects. The words are those of its reader.
 
 use super::flat::ConfigError;
+use super::oxlint_options::{
+    check_as, compact, is_integer, unique, write_debug, write_number, wrong_type,
+};
 use crate::options::Json;
 use bun_core::strings as bytes;
 use bun_glob::pattern::{Unclosed, UnclosedKind, unclosed};
+use std::borrow::Cow;
 
 const KEYS: &[&str] = &[
     "$schema",
@@ -32,14 +36,25 @@ const KEYS_OF_OVERRIDES: &[&str] = &[
 /// The keys for which `null` is as good as nothing. For every other key it's a value of the wrong kind.
 const NULLABLE: &[&str] = &["$schema", "plugins", "jsPlugins"];
 const NULLABLE_IN_OVERRIDES: &[&str] = &["env", "globals", "plugins", "jsPlugins"];
-const OPTIONS: &[&str] = &[
-    "typeAware",
-    "typeCheck",
-    "denyWarnings",
-    "maxWarnings",
-    "reportUnusedDisableDirectives",
-    "respectEslintDisableDirectives",
-];
+/// `options` and `settings`, in the notation of `oxlint_fields.rs`. What is in `version` is looked at below.
+const OPTIONS: &[u8] = b"(OxlintOptions typeAware:?b typeCheck:?b denyWarnings:?b maxWarnings:?n4 \
+    reportUnusedDisableDirectives:?A respectEslintDisableDirectives:?b)";
+const SETTINGS: &[u8] = b"(WellKnownOxlintSettings~ \
+    jsx-a11y:(JSXA11yPluginSettings~ polymorphicPropName+:?s components:{s} attributes:{[s]}) \
+    next:(NextPluginSettings~ rootDir:|OneOrMany s[s];) \
+    react:(ReactPluginSettings~ \
+    formComponents:[|CustomComponent s\
+    (C~^ name!:s attribute!:s formAttribute@:s linkAttribute@@:s)\
+    (C~^ name!:s attributes!:[s] formAttribute@:[s] linkAttribute@@:[s]);] \
+    linkComponents:[|CustomComponent s\
+    (C~^ name!:s attribute!:s formAttribute@:s linkAttribute@@:s)\
+    (C~^ name!:s attributes!:[s] formAttribute@:[s] linkAttribute@@:[s]);] \
+    version:* componentWrapperFunctions:[s]) \
+    jsdoc:(JSDocPluginSettings~ ignorePrivate:b ignoreInternal:b ignoreReplacesDocs:b overrideReplacesDocs:b \
+    augmentsExtendsReplacesDocs:b implementsReplacesDocs:b exemptDestructuredRootsFromChecks:b \
+    tagNamePreference:{|TagNamePreference s(T~^ message!:s replacement!:s)(T~^ message!:s)b;}) \
+    vitest:(VitestPluginSettings~ typecheck:b) \
+    jest:(JestPluginSettings~ version:*))";
 const CATEGORIES: &[&str] = &[
     "correctness",
     "suspicious",
@@ -58,22 +73,16 @@ fn refusal(parts: &[&[u8]]) -> ConfigError {
     ])
 }
 
+/// The same for a text that is not yet written like a string of Rust.
+fn refusal_in_words(text: &[u8]) -> ConfigError {
+    let mut message = b"Failed to parse config with error Error(".to_vec();
+    write_debug(&mut message, text);
+    message.extend_from_slice(b", line: 0, column: 0)");
+    ConfigError { message }
+}
+
 fn wrong_kind(found: &Json, expected: &str) -> ConfigError {
-    let found = match found {
-        Json::Null => b"null".to_vec(),
-        Json::Bool(it) => format!("boolean `{it}`").into_bytes(),
-        Json::Number(it) if it.fract() == 0.0 => format!("integer `{}`", *it as i64).into_bytes(),
-        Json::Number(it) => format!("floating point `{it}`").into_bytes(),
-        Json::String(it) => [b"string \\\"", &it[..], b"\\\""].concat(),
-        Json::Array(_) => b"sequence".to_vec(),
-        Json::Object(_) => b"map".to_vec(),
-    };
-    refusal(&[
-        b"invalid type: ",
-        &found,
-        b", expected ",
-        expected.as_bytes(),
-    ])
+    refusal_in_words(&wrong_type(found, expected.as_bytes()))
 }
 
 type Entries = [(Vec<u8>, Json)];
@@ -95,12 +104,6 @@ fn strings(json: &Json) -> Result<(), ConfigError> {
 
 fn says_something(entry: &(Vec<u8>, Json), nullable: &[&str]) -> bool {
     entry.1 != Json::Null || !nullable.iter().any(|it| it.as_bytes() == entry.0)
-}
-
-/// oxlint's reader takes a list for a struct, each item for the field at that place. Here only a list of `nothing`, which
-/// says as much as an empty struct.
-fn is_empty_struct(json: &Json, nothing: &Json) -> bool {
-    (json.as_array()).is_some_and(|it| it.len() <= 6 && it.iter().all(|it| it == nothing))
 }
 
 fn global(json: &Json) -> Result<(), ConfigError> {
@@ -176,7 +179,7 @@ fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
         b"jsPlugins" => sequence(json).map(|_| ()),
         b"rules" => {
             let expected = "Record<string, SeverityConf | [SeverityConf, ...any[]]>";
-            map(json, expected).map(|_| ())
+            (unique(map(json, expected)?).iter()).try_for_each(|it| rule(it.1))
         }
         b"globals" => map(json, "a map")?.iter().try_for_each(|it| global(&it.1)),
         b"env" => map(json, "a map")?.iter().try_for_each(|it| boolean(&it.1)),
@@ -184,49 +187,130 @@ fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
     }
 }
 
-fn options(json: &Json) -> Result<(), ConfigError> {
-    if is_empty_struct(json, &Json::Null) {
-        return Ok(());
+/// `{:?}` of a `serde_json::Value`
+fn write_debug_of_value(out: &mut Vec<u8>, json: &Json) {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return;
     }
-    let entries = map(json, "struct OxlintOptions")?;
-    known_keys(entries, OPTIONS, "field")?;
-    for (key, json) in entries.iter().filter(|it| it.1 != Json::Null) {
-        match (&key[..], json) {
-            (b"maxWarnings", Json::Number(count)) if *count < 0.0 && count.fract() == 0.0 => {
-                let count = format!("`{}`", *count as i64);
-                let count = count.as_bytes();
-                return Err(refusal(&[
-                    b"invalid value: integer ",
-                    count,
-                    b", expected usize",
-                ]));
+    let comma = |at: usize| -> &'static [u8] { if at == 0 { b"" } else { b", " } };
+    match json {
+        Json::Null => out.extend_from_slice(b"Null"),
+        Json::Bool(true) => out.extend_from_slice(b"Bool(true)"),
+        Json::Bool(false) => out.extend_from_slice(b"Bool(false)"),
+        Json::Number(it) => {
+            out.extend_from_slice(b"Number(");
+            write_number(out, *it);
+            out.push(b')');
+        }
+        Json::String(it) => {
+            out.extend_from_slice(b"String(");
+            write_debug(out, it);
+            out.push(b')');
+        }
+        Json::Array(items) => {
+            out.extend_from_slice(b"Array [");
+            for (at, item) in items.iter().enumerate() {
+                out.extend_from_slice(comma(at));
+                write_debug_of_value(out, item);
             }
-            (b"maxWarnings", Json::Number(count)) if count.fract() == 0.0 => {}
-            (b"maxWarnings", _) => return Err(wrong_kind(json, "usize")),
-            (b"reportUnusedDisableDirectives", Json::String(_) | Json::Number(_)) => {}
-            (b"reportUnusedDisableDirectives", _) => {
-                return Err(refusal(&[
-                    b"data did not match any variant of untagged enum Repr",
-                ]));
+            out.push(b']');
+        }
+        Json::Object(entries) => {
+            out.extend_from_slice(b"Object {");
+            for (at, (key, item)) in unique(entries).into_iter().enumerate() {
+                out.extend_from_slice(comma(at));
+                write_debug(out, key);
+                out.extend_from_slice(b": ");
+                write_debug_of_value(out, item);
             }
-            _ => boolean(json)?,
+            out.push(b'}');
         }
     }
-    Ok(())
 }
 
-/// `settings.react.version` is the one setting whose text oxlint parses: up to three numbers with dots between them.
-fn settings(json: &Json) -> Result<(), ConfigError> {
-    if is_empty_struct(json, &Json::Object(Vec::new())) {
-        return Ok(());
+/// The severity of a rule.
+fn severity(json: &Json) -> Result<(), ConfigError> {
+    let mut text = b"Failed to parse rule severity, expected ".to_vec();
+    match json {
+        Json::String(it) if matches!(&it[..], b"allow" | b"off" | b"deny" | b"error" | b"warn") => {
+            return Ok(());
+        }
+        Json::Number(it) if [0.0, 1.0, 2.0].contains(it) && is_integer(*it) => return Ok(()),
+        Json::String(it) => {
+            let known = br#"one of "allow", "off", "deny", "error" or "warn", but got "#;
+            text.extend_from_slice(known);
+            write_debug(&mut text, it);
+        }
+        Json::Number(it) => {
+            text.extend_from_slice(b"one of `0`, `1` or `2`, but got ");
+            match is_integer(*it) && *it < 0.0 {
+                true => text.extend_from_slice(b"a negative number"),
+                false => write_number(&mut text, *it),
+            }
+        }
+        other => {
+            text.extend_from_slice(b"a string or a number, but got ");
+            write_debug_of_value(&mut text, other);
+        }
     }
-    map(json, "struct WellKnownOxlintSettings")?;
+    Err(refusal_in_words(&text))
+}
+
+/// What is said about a rule: a severity, or a list that starts with one.
+fn rule(json: &Json) -> Result<(), ConfigError> {
+    let expected: &[u8] = match json {
+        Json::String(_) | Json::Number(_) => return severity(json),
+        Json::Array(items) => match items.first() {
+            Some(first) => return severity(first),
+            None => b"[SeverityConf, ...any[]",
+        },
+        _ => b"SeverityConf | [SeverityConf, ...any[]]",
+    };
+    let mut text = b"Failed to rule value ".to_vec();
+    write_debug(&mut text, &compact(json));
+    text.extend_from_slice(&[b" with error \"Type should be `", expected, b"`\""].concat());
+    Err(refusal_in_words(&text))
+}
+
+/// `settings.jest.version`: a number, or a text that starts with one.
+fn jest_version(version: &Json) -> Result<(), ConfigError> {
+    let mut why = Vec::new();
+    match version {
+        Json::Null => return Ok(()),
+        Json::Number(it) if is_integer(*it) && *it >= 0.0 => return Ok(()),
+        Json::Number(it) if is_integer(*it) => {
+            why.extend_from_slice(b"Jest version cannot be negative: ");
+            write_number(&mut why, *it);
+        }
+        Json::String(text) => {
+            let numbers = text.strip_prefix(b"v").unwrap_or(text);
+            let major = bytes::split(numbers, b".").next().unwrap_or_default();
+            if std::str::from_utf8(major).is_ok_and(|it| it.parse::<u64>().is_ok()) {
+                return Ok(());
+            }
+            why.extend_from_slice(b"Invalid Jest version string: ");
+            write_debug(&mut why, text);
+        }
+        _ => {
+            let expected = "Expected Jest version as a number or string";
+            return Err(wrong_kind(version, expected));
+        }
+    }
+    Err(refusal_in_words(&why))
+}
+
+/// `settings.react.version` is up to three numbers with dots between them.
+fn settings(json: &Json) -> Result<(), ConfigError> {
+    check_as(SETTINGS, json).map_err(|why| refusal_in_words(&why))?;
+    if let Some(version) = json.get(b"jest").and_then(|it| it.get(b"version")) {
+        jest_version(version)?;
+    }
     let version = json.get(b"react").and_then(|it| it.get(b"version"));
     let Some(version) = version.filter(|it| **it != Json::Null) else {
         return Ok(());
     };
     let Some(text) = version.as_str() else {
-        let expected = "a version string like \\\"18.2.0\\\" or \\\"17.0\\\"";
+        let expected = r#"a version string like "18.2.0" or "17.0""#;
         return Err(wrong_kind(version, expected));
     };
     if text.is_empty() {
@@ -254,6 +338,40 @@ fn settings(json: &Json) -> Result<(), ConfigError> {
     }
 }
 
+/// oxlint's reader takes a list for a struct, with the fields in their order. Some of an override can be left out at the end.
+fn override_in_a_list(items: &[Json]) -> Result<(), ConfigError> {
+    for (at, key) in KEYS_OF_OVERRIDES.iter().enumerate() {
+        match items.get(at) {
+            Some(Json::Null) if NULLABLE_IN_OVERRIDES.contains(key) => {}
+            Some(item) => value(key.as_bytes(), item)?,
+            None if matches!(*key, "files" | "env" | "globals") => {
+                let why =
+                    format!("invalid length {at}, expected struct OxlintOverride with 7 elements");
+                return Err(refusal_in_words(why.as_bytes()));
+            }
+            None => {}
+        }
+    }
+    if items.len() > KEYS_OF_OVERRIDES.len() {
+        let why = format!(
+            "invalid length {}, expected fewer elements in array",
+            items.len()
+        );
+        return Err(refusal_in_words(why.as_bytes()));
+    }
+    Ok(())
+}
+
+/// `item` of `overrides` with its keys, if it is a list.
+pub(super) fn override_with_keys(item: &Json) -> Cow<'_, Json> {
+    let Json::Array(items) = item else {
+        return Cow::Borrowed(item);
+    };
+    let entries = (KEYS_OF_OVERRIDES.iter().zip(items)).filter(|it| *it.1 != Json::Null);
+    let entries = entries.map(|(key, item)| (key.as_bytes().to_vec(), item.clone()));
+    Cow::Owned(Json::Object(entries.collect()))
+}
+
 /// `json` is a whole file.
 pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
     let Some(entries) = json.as_object() else {
@@ -263,9 +381,18 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
     for (key, json) in entries.iter().filter(|it| says_something(it, NULLABLE)) {
         match &key[..] {
             b"$schema" if json.as_str().is_none() => return Err(wrong_kind(json, "a string")),
-            b"categories" => known_keys(map(json, "a map")?, CATEGORIES, "variant")?,
+            b"categories" => {
+                let entries = map(json, "a map")?;
+                for (at, entry) in entries.iter().enumerate() {
+                    known_keys(std::slice::from_ref(entry), CATEGORIES, "variant")?;
+                    // Of two entries with one key the last counts.
+                    if !entries[at + 1..].iter().any(|later| later.0 == entry.0) {
+                        check_as(b"A", &entry.1).map_err(|why| refusal_in_words(&why))?;
+                    }
+                }
+            }
             b"settings" => settings(json)?,
-            b"options" => options(json)?,
+            b"options" => check_as(OPTIONS, json).map_err(|why| refusal_in_words(&why))?,
             b"extends" => {
                 let is_known = |it: &&Json| it.as_str().is_some() || it.as_object().is_some();
                 if let Some(other) = sequence(json)?.iter().find(|it| !is_known(it)) {
@@ -274,6 +401,10 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
             }
             b"overrides" => {
                 for item in sequence(json)? {
+                    if let Json::Array(items) = item {
+                        override_in_a_list(items)?;
+                        continue;
+                    }
                     let entries = map(item, "struct OxlintOverride")?;
                     known_keys(entries, KEYS_OF_OVERRIDES, "field")?;
                     if item.get(b"files").is_none() {

@@ -68,9 +68,8 @@ JSC_DEFINE_HOST_FUNCTION(jsLintAskWords, (JSGlobalObject * globalObject, CallFra
 // Adds what the program in src/lint/js_plugin/worker calls to its `native` object.
 void addLintAskFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
-    VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "askText"_s), JSFunction::create(vm, globalObject, 4, "askText"_s, jsLintAskText, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "askWords"_s), JSFunction::create(vm, globalObject, 3, "askWords"_s, jsLintAskWords, ImplementationVisibility::Public));
+    addLintFunction(globalObject, native, "askText"_s, 4, jsLintAskText);
+    addLintFunction(globalObject, native, "askWords"_s, 3, jsLintAskWords);
 }
 
 } // namespace Bun

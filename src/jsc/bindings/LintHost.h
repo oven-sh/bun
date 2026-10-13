@@ -63,6 +63,8 @@ public:
     bool isEspree() const { return m_flags & 4; }
     // The configuration is oxlint's, so plugins get what oxlint would give them.
     bool isOxlint() const { return m_flags & 16; }
+    // See `shortens_identifiers` in src/lint/js_plugin/ast.rs.
+    bool shortensIdentifiers() const { return m_flags & 256; }
 
     // The index where each line starts. The first is 0.
     const WTF::Vector<uint32_t>& lineStarts()
@@ -183,5 +185,7 @@ JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
 
 // Adds what the program in src/lint/js_plugin/worker calls to its `native` object.
 void addLintHostFunctions(JSC::JSGlobalObject*, JSC::JSObject* native);
+// `object[name] = function`
+void addLintFunction(JSC::JSGlobalObject*, JSC::JSObject*, ASCIILiteral name, unsigned length, JSC::NativeFunction);
 
 } // namespace Bun

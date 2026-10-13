@@ -323,11 +323,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeTokensAndComments, (JSGlobalObject * gl
 JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     LintHost* host = LintHost::from(globalObject);
-    return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->isEspree()));
+    return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->nodes.kindFor(host->isEspree(), host->isOxlint(), host->shortensIdentifiers())));
 }
 
 // What typescript-eslint's parser gives without type information. Rules take the maps for a sign of TypeScript. There are no
-// nodes of TypeScript's own tree to put in them.
+// nodes of TypeScript's own tree to put in them. oxlint has none for any file.
 JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     VM& vm = globalObject->vm();
@@ -337,7 +337,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject * globa
     if (JSObject* services = state.parserServices.get())
         return JSValue::encode(services);
     JSObject* services;
-    if (host->isEspree())
+    if (host->isOxlint()) {
+        services = constructEmptyObject(globalObject);
+        objectConstructorFreeze(globalObject, services);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (host->isEspree())
         services = constructEmptyObject(globalObject);
     else {
         JSValue options = callHook(globalObject, state.parserOptions);
@@ -360,6 +364,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject * globa
 JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeScopeManager, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     LintHost* host = LintHost::from(globalObject);
+    if (host->isOxlint())
+        return JSValue::encode(host->sourceCode.scopeManagerOfOxlint.get());
     if (JSObject* manager = host->scopes.manager.get()) [[likely]]
         return JSValue::encode(manager);
     return JSValue::encode(callHook(globalObject, host->sourceCode.scopeManager));
@@ -1344,7 +1350,8 @@ const Member members[] = {
 
 } // namespace
 
-// `sourceCode(TokenStore, hooks)` returns the class. `hooks` is `[program, scopeManager, parserOptions]`.
+// `sourceCode(TokenStore, hooks)` returns the class. `hooks` is `[program, scopeManager, parserOptions, scopeManagerOfOxlint]`, three
+// functions and an object.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintSourceCode, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1363,6 +1370,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintSourceCode, __attribute__((minsiz
             return throwVMTypeError(globalObject, scope, "Expected a function"_s);
         hook->set(vm, host, asObject(function));
     }
+    JSValue scopeManagerOfOxlint = hooks->getIndex(globalObject, at);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!scopeManagerOfOxlint.isObject())
+        return throwVMTypeError(globalObject, scope, "Expected an object"_s);
+    state.scopeManagerOfOxlint.set(vm, host, asObject(scopeManagerOfOxlint));
 
     JSValue parent = tokenStore->get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1449,7 +1461,7 @@ void LintSourceCodeState::endFile()
 void addLintSourceCodeFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "sourceCode"_s), JSFunction::create(vm, globalObject, 2, "sourceCode"_s, jsLintSourceCode, ImplementationVisibility::Public));
+    addLintFunction(globalObject, native, "sourceCode"_s, 2, jsLintSourceCode);
     LintHost* host = LintHost::from(globalObject);
     host->sourceCode.locGetter.set(vm, host, JSFunction::create(vm, globalObject, 0, "get loc"_s, jsLintLocGetter, ImplementationVisibility::Public));
     host->sourceCode.lazyLocOfNode.set(vm, host, CustomGetterSetter::create(vm, lintLazyLocOfNode, nullptr));

@@ -24,9 +24,11 @@ struct LintNodeState {
         TypeScript,
         Espree,
         Oxlint,
-        OxlintEspree,
+        OxlintJavaScript,
     };
     static constexpr size_t layoutKinds = 4;
+    // The last has those of `Oxlint`.
+    static constexpr size_t visitorKeyKinds = 3;
     // What is in a property, if it isn't the field with that number.
     enum What : uint32_t {
         Type = 0xF0,
@@ -39,6 +41,8 @@ struct LintNodeState {
         Comments,
         Tokens,
         Deprecated,
+        False,
+        EmptyList,
     };
 
     // The nodes of a type.
@@ -60,10 +64,10 @@ struct LintNodeState {
     // Asks Rust. Something has to be handled at the time. Returns false if the answer isn't as expected.
     bool load(JSC::JSGlobalObject*, LintHost*);
 
-    LayoutKind kindFor(bool isEspree, bool isOxlint) const
+    LayoutKind kindFor(bool isEspree, bool isOxlint, bool shortensIdentifiers) const
     {
         if (isOxlint)
-            return isEspree ? OxlintEspree : Oxlint;
+            return shortensIdentifiers ? OxlintJavaScript : Oxlint;
         return isEspree ? Espree : TypeScript;
     }
 
@@ -84,8 +88,8 @@ struct LintNodeState {
     JSC::JSString* knownString(JSC::VM&, LintHost*, uint32_t index);
     // What the nodes inherit from.
     JSC::JSObject* prototype(JSC::VM&, JSC::JSGlobalObject*, LintHost*, LayoutKind);
-    // ESLint's `visitorKeys`
-    JSC::JSObject* visitorKeys(JSC::JSGlobalObject*, LintHost*, bool isEspree);
+    // `sourceCode.visitorKeys`
+    JSC::JSObject* visitorKeys(JSC::JSGlobalObject*, LintHost*, LayoutKind);
     std::optional<uint8_t> typeNamed(const WTF::String&) const;
 
     // The caller holds the host's cell lock: `load` changes the sizes.
@@ -118,17 +122,17 @@ private:
     std::span<const uint32_t> m_knownStringNames;
     WTF::Vector<uint32_t> m_typeNameReferences;
     std::array<WTF::Vector<Layout>, layoutKinds> m_layouts;
-    // The types in the order of `visitorKeys`, for typescript-estree and for espree: a name and the number of the type for each, or
-    // `noType` for a type of old that nothing makes, whose only key is `argument`.
-    std::array<std::span<const uint32_t>, 2> m_visitorKeyOrders;
-    static constexpr uint32_t noType = UINT32_MAX;
+    // By `LayoutKind`: the types in the order of `visitorKeys`, a name and the number of the type for each. For a type that nothing makes
+    // it's `UINT32_MAX` less an index in `keysOfOtherTypes`.
+    std::array<std::span<const uint32_t>, visitorKeyKinds> m_visitorKeyOrders;
+    static constexpr std::array<ASCIILiteral, 5> keysOfOtherTypes { "argument"_s, ""_s, "expression"_s, "typeAnnotation"_s, "name arguments"_s };
     // Empty until they are needed.
     WTF::Vector<JSC::WriteBarrier<JSC::JSObject>> m_templates;
     WTF::Vector<JSC::WriteBarrier<JSC::JSString>> m_typeNames;
     WTF::Vector<JSC::WriteBarrier<JSC::JSString>> m_knownStrings;
     // By `LayoutKind`
     std::array<JSC::WriteBarrier<JSC::JSObject>, layoutKinds> m_sharedPrototypes;
-    std::array<JSC::WriteBarrier<JSC::JSObject>, 2> m_visitorKeys;
+    std::array<JSC::WriteBarrier<JSC::JSObject>, visitorKeyKinds> m_visitorKeys;
 };
 
 // An array of `length` times `undefined`, or null if there's no memory. `setIndexQuickly` is safe for all its indices.

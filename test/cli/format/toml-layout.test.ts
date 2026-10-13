@@ -486,21 +486,33 @@ describe("TOML layout", () => {
   });
 });
 
-describe.concurrent("--check agrees with bun format", () => {
-  // oxfmt joins these lines, which comments out the second entry. Bun refuses to write that.
+describe.concurrent("a table with a comment that oxfmt joins", () => {
+  // oxfmt 0.72 joins these lines, which comments out the second entry.
   const commented = `a = ["x", {\n  b = 1, # c\n  d = 2,\n}]\n`;
-  const refusal = "a.toml: formatting would change its contents";
+  const joined = `a = [\n  "x",\n  { b = 1 # c, d = 2 },\n]\n`;
 
-  test.each([["--check"], ["--list-different"]])("%s reports the error that bun format would report", async flag => {
+  test("with an oxfmt config Bun writes what oxfmt writes", async () => {
     using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": commented });
-    const [looks, writes] = [await run(String(dir), [flag, "."]), await run(String(dir), ["."])];
-    expect(writes.stderr).toContain(refusal);
-    expect(writes.exitCode).toBe(2);
-    expect(looks.stderr).toContain(refusal);
-    expect(looks.exitCode).toBe(2);
-    // It isn't listed as a file that `bun format` can fix.
-    expect(looks.stdout).not.toContain("a.toml");
+    const result = await run(String(dir), ["."]);
+    expect(result.stderr).toBe("");
+    expect(readFileSync(join(String(dir), "a.toml"), "utf8")).toBe(joined);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.each([["--check"], ["--list-different"]])("%s says that it needs formatting", async flag => {
+    using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": commented });
+    const result = await run(String(dir), [flag, "."]);
+    expect(result.stderr).toBe("");
     expect(readFileSync(join(String(dir), "a.toml"), "utf8")).toBe(commented);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("--debug-check reports it and writes nothing", async () => {
+    using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": commented });
+    const result = await run(String(dir), ["--debug-check", "."]);
+    expect(result.stderr).toContain("a.toml: formatting would change its contents.");
+    expect(readFileSync(join(String(dir), "a.toml"), "utf8")).toBe(commented);
+    expect(result.exitCode).toBe(2);
   });
 
   test("without an oxfmt config the same file is already formatted", async () => {

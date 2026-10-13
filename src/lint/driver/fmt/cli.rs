@@ -108,7 +108,7 @@ const OTHER: &[Param] = &[
         "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
     ),
     clap::param!(
-        "--no-verify                     Skip the check that formatted code still means the same"
+        "--debug-check                   Do not write. Fail if formatting a file would change what it means"
     ),
     clap::param!("-v, --version                   Print the version of Bun"),
     clap::param!(
@@ -175,7 +175,6 @@ const OPPOSITES: &[Param] = &[
     clap::param!("--bracket-spacing"),
     clap::param!("--error-on-unmatched-pattern"),
     clap::param!("--insert-final-newline"),
-    clap::param!("--verify"),
 ];
 
 pub const HELP: Help = Help {
@@ -337,8 +336,8 @@ pub struct Options {
     pub threads: usize,
     pub timing: bool,
     pub cwd: Option<Vec<u8>>,
-    /// Before a file is written, what is written is parsed and compared with what was there.
-    pub verify: bool,
+    /// Nothing is written. What would be written is parsed and compared with what is there.
+    pub debug_check: bool,
     /// Prints the files that would be formatted, and formats nothing.
     pub list_files: bool,
 }
@@ -381,7 +380,7 @@ impl Default for Options {
             threads: 0,
             timing: false,
             cwd: None,
-            verify: true,
+            debug_check: false,
             list_files: false,
         }
     }
@@ -531,7 +530,7 @@ impl Options {
             },
             b"timing" => self.timing = is_on,
             b"cwd" => self.cwd = owned(),
-            b"verify" => self.verify = is_on,
+            b"debug-check" => self.debug_check = is_on,
             _ => {}
         }
         Ok(())
@@ -566,13 +565,18 @@ impl Options {
 
     /// Why the tool refuses the flags that say what the run does, in its words.
     pub(crate) fn refusal_of_modes(&self, is_oxfmt: bool) -> Option<Vec<u8>> {
+        let of_debug_check = || {
+            (self.write && self.debug_check)
+                .then(|| b"Cannot use --write and --debug-check together.".to_vec())
+        };
         if !is_oxfmt {
             return (self.check && self.list_different)
-                .then(|| b"Cannot use --check and --list-different together.".to_vec());
+                .then(|| b"Cannot use --check and --list-different together.".to_vec())
+                .or_else(of_debug_check);
         }
         // The second is what oxfmt stops at, whatever follows.
         let &[first, second, ..] = &self.modes[..] else {
-            return None;
+            return of_debug_check();
         };
         Some(match first == second {
             true => [

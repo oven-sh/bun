@@ -141,7 +141,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return ExprId::NONE;
         }
         let end = self.full_start();
-        self.error(1109, (end, Diagnostic::NO_LENGTH), &[]);
+        let at = match self.is_for_oxc() {
+            true => self.range_of_token(),
+            false => (end, Diagnostic::NO_LENGTH),
+        };
+        self.error(1109, at, &[]);
         self.note_stray_decorators(base, end);
         self.add_expr(ExprKind::Missing, start, start)
     }
@@ -190,12 +194,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if !is_extends && !has_implements {
                 first_implements = keyword;
             }
-            if misplaced != 0 && self.reports_like_oxc() {
+            if misplaced != 0 && self.is_for_oxc() {
                 let errors = &mut self.f.diagnostics;
                 oxc::misplaced_clause(errors, misplaced, first_implements, keyword);
             }
             if misplaced != 0 && !heritage.has_error {
                 match self.is_ecmascript {
+                    true if self.is_for_oxc() => {}
                     true => self.report(),
                     false => self.flag(DiagnosticKind::Grammar, misplaced, keyword, &[]),
                 }
@@ -208,6 +213,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let (count, comma) = match is_extends {
                 true => self.heritage_elements(|p, index| {
                     let first_token = (p.lx.start, p.lx.end);
+                    let errors = p.f.diagnostics.len();
                     // `parseExpressionWithTypeArguments`
                     let saved = p.enter_context(ctx::NO_RECORD, 0);
                     let extended = p.left_hand_side_expression();
@@ -219,12 +225,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                             p.type_arguments_in_no_list();
                         }
                         other_extends.push(extended);
-                        if index > 0 && p.reports_like_oxc() {
+                        // Not where oxc has given up in the element.
+                        let is_of_parser = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
+                        let found = p.f.diagnostics.get(errors..).unwrap_or_default();
+                        if index > 0 && p.is_for_oxc() && !found.iter().any(is_of_parser) {
                             let at = (first_token.0, p.prev_end());
                             oxc::second_base_class(&mut p.f.diagnostics, at);
                         }
                         if index == 1 && !heritage.has_error {
                             match p.is_ecmascript {
+                                true if p.is_for_oxc() => {}
                                 true => p.report(),
                                 false => p.flag(DiagnosticKind::Grammar, 1174, first_token, &[]),
                             }
@@ -246,12 +256,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         (heritage.extends_args, element_error) = p.type_arguments_unchecked();
                     }
                     p.check_js_type_arguments(heritage.extends_args);
+                    // oxc says it about an empty list, too.
+                    if let Some(((less_than, _), 1099)) = element_error
+                        && p.is_for_oxc()
+                    {
+                        p.js_error((less_than + 1, Diagnostic::NO_LENGTH), 8011, b"");
+                    }
                     element_error =
                         element_error.or_else(|| p.import_with_type_arguments(first_token));
                     element_error = element_error.or(of_import);
                 }),
                 false => {
                     let saved = self.enter_context(ctx::TYPE, 0);
+                    self.is_in_implements_for_oxc = self.is_for_oxc();
                     let list = self.heritage_elements(|p, _| {
                         let first_token = (p.lx.start, p.lx.end);
                         let ty = p.heritage_type(!has_implements, 2500);
@@ -259,17 +276,23 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         element_error =
                             element_error.or_else(|| p.import_with_type_arguments(first_token));
                     });
+                    self.is_in_implements_for_oxc = false;
                     self.context = saved;
                     self.js_error((keyword.0, self.prev_end()), 8005, b"");
                     list
                 }
             };
+            // After the keyword and after a comma oxc's parser wants a name.
+            if (comma.is_some() || count == 0) && !is_extends && self.is_for_oxc() {
+                self.unexpected_like_oxc();
+            }
+            let is_refused = self.is_ecmascript && !self.is_for_oxc();
             // `checkGrammarHeritageClause`
             match comma {
                 _ if heritage.has_error => {}
-                Some(_) if self.is_ecmascript => self.report(),
+                Some(_) if is_refused => self.report(),
                 Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, comma, &[]),
-                None if count == 0 && self.is_ecmascript => self.report(),
+                None if count == 0 && is_refused => self.report(),
                 None if count == 0 => {
                     let at = (keyword.1, Diagnostic::NO_LENGTH);
                     let keyword: &[u8] = if is_extends {
@@ -425,7 +448,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.next();
         }
         // In Flow: the variance of a property.
-        if self.token() == T::Asterisk || matches!(self.token(), T::Plus | T::Minus) && self.is_flow
+        if self.token() == T::Asterisk
+            || matches!(self.token(), T::Plus | T::Minus) && self.is_flow()
         {
             return true;
         }
@@ -528,7 +552,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 .find(is_keyword)
                 .map_or_else(|| self.pos(), |it| it.pos);
             let modifiers = self.take_modifiers(first_modifier);
-            if !modifiers.is_empty() && self.reports_like_oxc() {
+            if !modifiers.is_empty() && self.is_for_oxc() {
                 oxc::index_signature(&mut self.f, modifiers, Flags::READONLY | Flags::STATIC);
             }
             let mut member = self.index_signature(start, flags, modifiers);
@@ -553,7 +577,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         flags |= self.ambient();
         let is_generator = kind == MemberKind::Property && self.eat(T::Asterisk);
-        if matches!(self.token(), T::Plus | T::Minus) && self.is_flow {
+        if matches!(self.token(), T::Plus | T::Minus) && self.is_flow() {
             self.flow_variance();
         }
         let name_token = self.token();
@@ -575,7 +599,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true => self.property_name(),
             // "treat this as a property declaration with a missing name."
             false => {
-                self.error(1146, (self.full_start(), Diagnostic::NO_LENGTH), &[]);
+                match self.is_for_oxc() && self.recovers() {
+                    true => self.unexpected_like_oxc(),
+                    false => self.error(1146, (self.full_start(), Diagnostic::NO_LENGTH), &[]),
+                }
                 (
                     PropKey::Name(known::empty),
                     NameKind::Identifier,
@@ -584,16 +611,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
         };
         let name = (name_pos, self.prev_end());
+        // To oxc `static constructor` is a name like any other.
+        let is_keyword =
+            name_token == T::Constructor && !(written.contains(Flags::STATIC) && self.is_for_oxc());
         key = declared_key(key, name_token, is_default);
         flags |= flags_of_member_name(name_token, name_kind, key);
         // Neither `tryParseConstructorDeclaration` nor the property without a name looks for it.
         let mut question = None;
         if self.token() == T::Question
             && has_name
-            && !(self.recovers()
-                && name_token == T::Constructor
-                && kind == MemberKind::Property
-                && !is_generator)
+            && !(self.recovers() && is_keyword && kind == MemberKind::Property && !is_generator)
         {
             question = Some(self.pos());
             self.next();
@@ -616,10 +643,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && (kind != MemberKind::Property
                 || is_generator
                 || matches!(self.token(), T::OpenParen | T::LessThan));
+        // See `oxc::type_parameters_of_quoted_constructor`.
+        let is_quoted_constructor = name_token == T::String
+            && self.token() == T::LessThan
+            && key == PropKey::Name(known::constructor)
+            && kind == MemberKind::Property
+            && !is_generator
+            && !written.contains(Flags::STATIC)
+            && question.is_none();
         // The checker reports the `async` of `async a!`.
         if !is_function
-            && (name_token == T::Constructor
-                || flags.contains(Flags::ASYNC) && self.token() == T::Exclamation)
+            && (is_keyword || flags.contains(Flags::ASYNC) && self.token() == T::Exclamation)
         {
             is_function = self.is_constructor_without_parameters(name_token);
         }
@@ -705,8 +739,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.member_jsdoc(&mut member, first_modifier);
         }
         member.modifiers = self.take_modifiers(first_modifier);
-        if self.reports_like_oxc() {
+        if self.is_for_oxc() {
             self.check_class_member_like_oxc(&member, written, name, context);
+        }
+        if is_quoted_constructor && self.reports_like_oxc() {
+            let at = (name.1, self.prev_end());
+            let src = self.lx.src;
+            oxc::type_parameters_of_quoted_constructor(&mut self.f, src, member.func, at);
         }
         if self.options.is_javascript {
             self.check_js_member(&member, question);
@@ -733,12 +772,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `parseClassStaticBlockDeclaration`, at `static`.
     fn class_static_block(&mut self, start: Start, first_modifier: usize) {
-        if self.is_flow {
+        if self.is_flow() {
             self.flow_refuse_decorators(first_modifier);
         }
         // The checker reports them.
         let modifiers = self.take_modifiers(first_modifier);
-        if !modifiers.is_empty() && self.reports_like_oxc() {
+        if !modifiers.is_empty() && self.is_for_oxc() {
             oxc::static_block(&mut self.f, modifiers);
         }
         self.next();

@@ -1183,9 +1183,8 @@ __attribute__((minsize)) void LintReportState::finishCreation(VM& vm, JSGlobalOb
 
 void addLintReportFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
-    VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "reporter"_s), JSFunction::create(vm, globalObject, 1, "reporter"_s, jsLintReporter, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "sendReports"_s), JSFunction::create(vm, globalObject, 0, "sendReports"_s, jsLintSendReports, ImplementationVisibility::Public));
+    addLintFunction(globalObject, native, "reporter"_s, 1, jsLintReporter);
+    addLintFunction(globalObject, native, "sendReports"_s, 0, jsLintSendReports);
 }
 
 } // namespace Bun

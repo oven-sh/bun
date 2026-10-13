@@ -62,10 +62,10 @@ const MAKE_IT_A_WARNING: &[u8] = b"\n  Use --allow-unsupported to make this a wa
 enum Failure {
     /// `SyntaxError: ';' expected. (1:7)`
     Syntax(Vec<u8>),
-    /// A bug in the formatter.
-    Bug(&'static str),
-    /// What Prettier prints does not say what the file says.
-    Loss(&'static str),
+    /// A bug in the formatter: it could not print the file.
+    Bug,
+    /// `--debug-check`: what would be written does not say what the file says.
+    Changed(&'static str),
     /// TOML that cannot be read, with what is wrong with it. oxfmt passes over such a file without a word, so it is no
     /// error.
     Unread(Vec<u8>),
@@ -185,7 +185,10 @@ impl How<'_> {
         let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
             .iter()
             .any(|it| ends_in(path, it));
+        let is_oxfmt = self.resolved.options.flavor.is_oxfmt();
         let language = LanguageOptions {
+            // oxfmt has oxc's parser, like oxlint.
+            refuses_what_parser_refuses: !is_oxfmt,
             parser: if is_typescript {
                 Parser::TypeScript
             } else {
@@ -198,14 +201,15 @@ impl How<'_> {
             },
             ..LanguageOptions::default()
         };
+        let options = language.parse_options(path);
         let dialect = match self.is_flow {
             true if bun_format::flow::goes_to_babel(&self.resolved.options, path) => {
                 Dialect::flow(self.is_script)
             }
             true => Dialect::flow_parser(self.is_script),
+            false if is_oxfmt => options.dialect,
             false => Dialect::babel(self.is_script),
         };
-        let options = language.parse_options(path);
         (language, dialect, options)
     }
 }
@@ -391,40 +395,12 @@ fn without_final_newline(out: &mut Vec<u8>) {
     out.truncate(end);
 }
 
-/// What formats a block of code in Markdown. `verifies`: a block that would not be the same program afterwards stays
-/// as it is.
-fn format_javascript(verifies: bool) -> bun_format::options::FormatJavaScript {
-    fn verified(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
-        format_block(path, code, options, out, true)
-    }
-    fn unverified(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
-        format_block(path, code, options, out, false)
-    }
-    match verifies {
-        true => verified,
-        false => unverified,
-    }
-}
-
-/// Appends `code` formatted as the file at `path`. `false`: it cannot be, and stays as it is.
-fn format_block(
-    path: &[u8],
-    code: &[u8],
-    options: &FormatOptions,
-    out: &mut Vec<u8>,
-    verifies: bool,
-) -> bool {
+/// For a block of code in Markdown. Appends `code` formatted as the file at `path`. `false`: it cannot be, and stays as
+/// it is.
+fn format_block(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
     let names = Session::new();
     let names = (&Interner::new_in(&names) as &dyn Intern, &names);
-    format_block_in(
-        path,
-        code,
-        options,
-        out,
-        verifies,
-        names,
-        &mut Scratches::default(),
-    )
+    format_block_in(path, code, options, out, names, &mut Scratches::default())
 }
 
 /// The same with what the caller keeps from one block to the next.
@@ -433,7 +409,6 @@ fn format_block_in(
     code: &[u8],
     options: &FormatOptions,
     out: &mut Vec<u8>,
-    verifies: bool,
     names: (&dyn Intern, &Session),
     scratch: &mut Scratches,
 ) -> bool {
@@ -445,15 +420,7 @@ fn format_block_in(
         },
         ..Resolved::default()
     };
-    let formatted = format(
-        path,
-        code,
-        &resolved,
-        names,
-        scratch,
-        // Of JSX in MDX, which comes in a fragment, what is in the fragment is printed. That is no program.
-        verifies && !options.is_mdx_jsx,
-    );
+    let formatted = format(path, code, &resolved, names, scratch, false);
     formatted
         .map(|(formatted, _)| out.extend_from_slice(&formatted))
         .is_ok()
@@ -534,7 +501,7 @@ fn format(
         }
         Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
         Err(FormatError::TooLong) => Err(Failure::Syntax(TOO_LONG.to_vec())),
-        Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
+        Err(FormatError::InvalidDocument) => Err(Failure::Bug),
     };
     let mut out = Vec::new();
     let kind = Kind::with_options(name, options);
@@ -570,7 +537,7 @@ fn format(
             let mut format_block =
                 |path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>| {
                     let names = (atoms, memory);
-                    format_block_in(path, code, options, out, verifies, names, &mut blocks)
+                    format_block_in(path, code, options, out, names, &mut blocks)
                 };
             let format_block: Option<&mut bun_format::markdown::FormatBlock<'_>> =
                 Some(&mut format_block);
@@ -616,7 +583,7 @@ fn format(
                 });
             }
             if verifies && done.is_ok() && out != text && !is_same_toml(text, &out) {
-                return Err(Failure::Loss("formatting would change its contents"));
+                return Err(Failure::Changed("formatting would change its contents"));
             }
             return finish(done, out, "TOML");
         }
@@ -624,7 +591,7 @@ fn format(
             let done =
                 bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
             if verifies && done.is_ok() && scratch.handlebars.is_damaged() {
-                return Err(Failure::Loss(
+                return Err(Failure::Changed(
                     "formatting like Prettier would change its meaning",
                 ));
             }
@@ -649,7 +616,7 @@ fn format(
                 && out != text
                 && !bun_format::html::has_same_content(text, &out, parser, options)
             {
-                return Err(Failure::Loss(
+                return Err(Failure::Changed(
                     "formatting like Prettier would change its contents",
                 ));
             }
@@ -716,7 +683,7 @@ fn format(
             done => return done,
         }
     }
-    Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
+    Err(first_failure.unwrap_or(Failure::Bug))
 }
 
 fn print<'a>(
@@ -739,7 +706,8 @@ fn print<'a>(
         false => TypesInJavaScript::Refused,
     };
     let refusal = match options.flavor.is_oxfmt() {
-        true => bun_lint::linter::refusal_of_oxfmt(file, types),
+        true if how.resolved.formats_what_has_errors && !file.has_parse_errors() => None,
+        true => bun_lint::linter::refusal_of_oxfmt(file),
         false => bun_lint::linter::refusal_of_prettier(file, types),
     };
     if let Some(why) = refusal {
@@ -776,7 +744,7 @@ fn print<'a>(
             return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
         }
         Err(FormatError::TooLong) => return Err(Failure::Syntax(TOO_LONG.to_vec())),
-        Err(FormatError::InvalidDocument) => return Err(Failure::Bug("the formatter failed")),
+        Err(FormatError::InvalidDocument) => return Err(Failure::Bug),
     };
     if how.resolved.omits_final_newline {
         without_final_newline(&mut out);
@@ -790,7 +758,9 @@ fn print<'a>(
             bun_format::verify::compare(file, program, &after, options, &mut scratch.verify).is_ok()
         });
         if !is_same {
-            return Err(Failure::Bug("formatting would change what the code does"));
+            return Err(Failure::Changed(
+                "formatting would change what the code does",
+            ));
         }
     }
     Ok((out, cursor))
@@ -806,7 +776,7 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatte
         match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
             Some(sorted) => with_file(how, &sorted, |after, program, refused| {
                 if how.verifies && !how_to_sort.is_some_and(|it| it.keeps_imports(file, after)) {
-                    return Err(Failure::Bug(
+                    return Err(Failure::Changed(
                         "sorting imports would change what the code does",
                     ));
                 }
@@ -823,26 +793,23 @@ pub enum Refusal {
     /// It has a syntax error or is nested too deeply.
     Syntax,
     /// A bug in the formatter, which it has noticed itself.
-    Bug(&'static str),
-    /// What Prettier prints does not say what the file says.
-    Loss(&'static str),
+    Bug,
 }
 
 /// The text of the file at `path` formatted with `options`, the way `bun format` does it, and where
-/// the cursor ends up. `verifies`: with the checks that `bun format` makes on what it has printed.
-/// For the tests of the formatter.
+/// the cursor ends up. For the tests of the formatter.
 pub fn format_for_tests(
     path: &[u8],
     text: &[u8],
     options: &FormatOptions,
-    verifies: bool,
 ) -> Result<(Vec<u8>, Option<u32>), Refusal> {
     let resolved = Resolved {
         options: FormatOptions {
-            format_javascript: Some(format_javascript(verifies)),
+            format_javascript: Some(format_block),
             parse_javascript: Some(parse_javascript),
             ..options.clone()
         },
+        formats_what_has_errors: true,
         ..Resolved::default()
     };
     let names = Session::new();
@@ -852,12 +819,11 @@ pub fn format_for_tests(
         &resolved,
         (&Interner::new_in(&names), &names),
         &mut Scratches::default(),
-        verifies,
+        false,
     )
     .map_err(|failure| match failure {
         Failure::Syntax(_) | Failure::Unread(_) => Refusal::Syntax,
-        Failure::Bug(what) => Refusal::Bug(what),
-        Failure::Loss(what) => Refusal::Loss(what),
+        Failure::Bug | Failure::Changed(_) => Refusal::Bug,
     })
 }
 
@@ -1069,17 +1035,19 @@ impl Run<'_> {
     fn describe(shown: &[u8], failure: Failure) -> Vec<u8> {
         match failure {
             Failure::Syntax(error) | Failure::Unread(error) => [shown, b": ", &error].concat(),
-            Failure::Bug(what) => [
+            Failure::Bug => [
                 shown,
-                b": ",
-                what.as_bytes(),
-                b". It was not formatted. This is a bug in Bun.",
+                b": the formatter failed. It was not formatted. This is a bug in Bun.",
             ]
             .concat(),
-            Failure::Loss(what) => {
-                [shown, b": ", what.as_bytes(), b". It was not formatted."].concat()
-            }
+            Failure::Changed(what) => [shown, b": ", what.as_bytes(), b"."].concat(),
         }
+    }
+
+    /// What Prettier's `--debug-check` prints in place of the formatted text of standard input. `path`: of
+    /// `--stdin-filepath`.
+    fn name_of_stdin(path: Option<&[u8]>) -> Vec<u8> {
+        path.map_or_else(|| b"(stdin)\n".to_vec(), |it| paths::to_native(it.to_vec()))
     }
 
     /// Prettier's `formatStdin`
@@ -1291,6 +1259,7 @@ impl Run<'_> {
                     self.out.exit_code = 1;
                 }
             }
+            Ok(_) if self.options.debug_check => self.out.stdout = Self::name_of_stdin(path),
             Ok(formatted) => self.out.stdout = formatted,
         }
         self.out
@@ -1309,7 +1278,8 @@ impl Run<'_> {
             self.warn(&warning);
         }
         let names = Session::new();
-        let verifies = self.options.verify;
+        // Prettier's `listDifferent` comes first, and that is all.
+        let verifies = self.options.debug_check && !only_looks;
         let format_text = |options: &Resolved| {
             let mut first_failure = None;
             for path in paths {
@@ -1325,7 +1295,7 @@ impl Run<'_> {
                     done => return done,
                 }
             }
-            Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
+            Err(first_failure.unwrap_or(Failure::Bug))
         };
         let mut formatted = format_text(&options);
         if let Some(tailwind) = options
@@ -1367,6 +1337,11 @@ impl Run<'_> {
                     self.out.exit_code = 1;
                 }
             }
+            Ok(_) if verifies => {
+                let is_named = !self.options.formats_unnamed_stdin();
+                let path = paths.first().filter(|_| is_named);
+                self.out.stdout = Self::name_of_stdin(path.copied());
+            }
             Ok((formatted, cursor)) => {
                 self.out.stdout = formatted;
                 // As Prettier: where the cursor is now.
@@ -1382,7 +1357,8 @@ impl Run<'_> {
     fn format_files(mut self, configs: &Configs, ignored: &mut Ignored) -> Outcome {
         let (options, cwd) = (self.options, &self.environment.cwd);
         // Files are written unless a flag says otherwise.
-        let only_looks = (options.check || options.list_different) && !options.write;
+        let asks_for_different = (options.check || options.list_different) && !options.write;
+        let only_looks = asks_for_different || options.debug_check;
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
         let only =
             (options.only.as_ref()).map(|it| git::Files::read(it, !only_looks, self.environment));
@@ -1598,9 +1574,7 @@ impl Run<'_> {
                     &options,
                     (&atoms, &memory),
                     &mut scratch,
-                    // `--check` verifies too, so it never tells people to run a `bun format` that would then refuse. Only
-                    // files that need formatting pay for it.
-                    self.options.verify,
+                    self.options.debug_check,
                 ) {
                     Ok((formatted, _)) => formatted,
                     Err(failure @ Failure::Unread(_)) => {
@@ -1692,7 +1666,12 @@ impl Run<'_> {
             let shown = paths::relative(cwd, &target.path);
             match done {
                 None => {}
-                Some(Done::Unchanged) => unchanged += 1,
+                Some(Done::Unchanged) => {
+                    unchanged += 1;
+                    if options.debug_check {
+                        self.log(&shown);
+                    }
+                }
                 Some(Done::Unread(warning)) => {
                     unchanged += 1;
                     self.warn(&warning);
@@ -1731,7 +1710,12 @@ impl Run<'_> {
                             self.out.stdout.extend_from_slice(&shown);
                             self.out.stdout.push(b'\n');
                         }
+                        // Every file that passes is named below.
+                        (false, false) if options.debug_check && !options.list_different => {}
                         _ => self.log(&shown),
+                    }
+                    if options.debug_check {
+                        self.log(&shown);
                     }
                 }
             }
@@ -1754,7 +1738,8 @@ impl Run<'_> {
                 format!("{n} files")
             }
         };
-        if is_oxfmt {
+        // oxfmt has no `--debug-check`, so there it is as without a config.
+        if is_oxfmt && (options.check || !options.debug_check) {
             self.sum_up_as_oxfmt([different, unchanged, failed], pool.threads());
         } else if self.is_native {
             if options.check && only_looks {
@@ -1783,12 +1768,12 @@ impl Run<'_> {
                 self.warn(format!("Code style issues fixed in {}.", count(different)).as_bytes());
             }
         }
-        if only_looks && different > 0 && self.out.exit_code == 0 {
+        if asks_for_different && different > 0 && self.out.exit_code == 0 {
             self.out.exit_code = 1;
         }
         let sums_up = match self.is_native {
             true => !only_looks,
-            false => !is_oxfmt && !options.check && !options.list_different,
+            false => !is_oxfmt && !options.check && !options.list_different && !only_looks,
         };
         if options.log_level >= LogLevel::Log && sums_up {
             let colors = self.colors();

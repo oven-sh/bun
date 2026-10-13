@@ -99,6 +99,10 @@ pub struct LanguageOptions {
     /// With an oxlint config: what an `env` says about each variable that `globals` turns off. See
     /// [`File::global`](crate::ast::File::global).
     pub env_behind_off: Vec<(Box<[u8]>, Global)>,
+    /// The names in `env` that are on. Sorted. oxlint shows them to JavaScript plugins, and defines their variables for these.
+    pub envs: Vec<Box<[u8]>>,
+    /// `globals` itself: with what it turns off, without what an `env` defines. Sorted by name.
+    pub own_globals: Vec<(Box<[u8]>, Global)>,
     pub parser: Parser,
     /// It is `@babel/eslint-parser`, which analyzes the scopes itself: see [`LanguageOptions::has_function_scope_at_top_level`].
     pub is_babel: bool,
@@ -314,6 +318,8 @@ impl LanguageOptions {
             source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
         let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
         let mut written_globals: Vec<Box<[u8]>> = Vec::new();
+        let mut envs: Vec<Box<[u8]>> = Vec::new();
+        let mut own_globals: Vec<(Box<[u8]>, Global)> = Vec::new();
         // `env` of an `.eslintrc` or an `.oxlintrc.json`.
         for (name, is_enabled) in language_options
             .get(b"$env")
@@ -326,6 +332,7 @@ impl LanguageOptions {
                 _ => name,
             };
             if is_enabled.as_bool() == Some(true) {
+                envs.push(name.into());
                 let variables = environment(name, whose).into_iter().flatten();
                 globals.extend(variables.map(|(name, setting)| (name.into(), setting)));
             }
@@ -337,12 +344,15 @@ impl LanguageOptions {
         {
             if let Some(value) = Global::of_json(value) {
                 globals.push((name[..].into(), value));
+                own_globals.push((name[..].into(), value));
                 if value != Global::Off {
                     written_globals.push(name[..].into());
                 }
             }
         }
         crate::utils::sort::sort_unstable(&mut written_globals);
+        crate::utils::sort::sort_unstable(&mut envs);
+        crate::utils::sort::sort_by(&mut own_globals, |a, b| a.0.cmp(&b.0));
         // The last of two entries with the same name counts.
         globals.reverse();
         crate::utils::sort::sort_by(&mut globals, |a, b| a.0.cmp(&b.0));
@@ -363,6 +373,8 @@ impl LanguageOptions {
             globals,
             written_globals,
             env_behind_off,
+            envs,
+            own_globals,
             parser,
             is_babel,
             // ESLint turns it off for espree in a module. Babel's parser passes over it there.
@@ -484,6 +496,8 @@ impl Default for LanguageOptions {
             globals: Vec::new(),
             written_globals: Vec::new(),
             env_behind_off: Vec::new(),
+            envs: Vec::new(),
+            own_globals: Vec::new(),
             parser: Parser::Espree,
             is_babel: false,
             global_return: false,

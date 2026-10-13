@@ -28,7 +28,8 @@ fn write_list(tokens: Tokens, offsets: &Utf16OffsetTable, out: &mut Vec<u8>) {
 /// `[index of the token, start, end]` for each, then the UTF-16 code units that `start` and `end` count, and zeros up to a
 /// multiple of 4 bytes.
 fn write_decoded_values<'a>(file: &'a File<'a>, out: &mut Vec<u8>) {
-    let can_have_any = Dialect::of(file) == Dialect::Espree
+    // oxlint decodes names as espree does.
+    let can_have_any = (Dialect::of(file) == Dialect::Espree || file.language().is_oxlint)
         && strings::index_of_any(file.text(), b"\\&\r").is_some();
     if !can_have_any {
         return wire::words(out, &[0]);

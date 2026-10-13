@@ -924,7 +924,7 @@ _bun_format_completion() {
         '--no-color[Never use colors]' \
         '--timing[Print how long each phase took]' \
         '--threads[Number of threads (default\: one per CPU core)]:threads' \
-        '--no-verify[Skip the check that formatted code still means the same]' \
+        '--debug-check[Do not write. Fail if formatting a file would change what it means]' \
         '--version[Print the version of Bun]' \
         '-v[Print the version of Bun]' \
         '--help[Print the common flags. With --all, every flag]' \

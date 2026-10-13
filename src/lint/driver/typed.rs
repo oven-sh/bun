@@ -263,7 +263,7 @@ fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>
             }
         }
     }
-    found.sort();
+    bun_lint::utils::sort::sort(&mut found);
     found
 }
 

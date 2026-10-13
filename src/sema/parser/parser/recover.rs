@@ -177,7 +177,7 @@ enum ListStep {
 
 /// What oxc calls the token `token`, which is written `text`, in "Expected `,` but found `Identifier`".
 #[inline(never)]
-fn name_for_oxc(token: T, text: &[u8]) -> Vec<u8> {
+pub(super) fn name_for_oxc(token: T, text: &[u8]) -> Vec<u8> {
     let has_any = |of: &[u8]| bun_core::strings::index_of_any(text, of).is_some();
     let number: &[u8] = match text {
         [b'0', b'x' | b'X', ..] => b"hex",
@@ -417,6 +417,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn missing_expression(&mut self, code: u32) -> ExprId {
+        if self.token() == T::CloseParen && self.options.dialect.oxc && self.recovers() {
+            self.empty_parentheses_like_oxc();
+        }
         self.missing_identifier(code, 0);
         match self.recovers() {
             true => self.add_expr(ExprKind::Missing, self.pos(), self.full_start()),
@@ -462,6 +465,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn missing_semicolon_after_identifier(&mut self, name: Atom, (pos, end): (u32, u32)) {
         let word = self.lx.text_of(name).to_vec();
         let (here, token) = (self.range_of_token(), self.token());
+        // To oxc the word is a name like any other.
+        if self.options.dialect.oxc && !word.is_empty() && token != T::Invalid {
+            return self.error(1434, (pos, end), &[]);
+        }
         // `parseErrorForInvalidName`
         let invalid_name = |blank: T, code_if_blank: u32, code: u32| match token == blank {
             true => (here, code_if_blank),
@@ -622,10 +629,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         match kind {
             // oxc ends these lists where no comma follows.
             ListKind::VariableDeclarations if self.options.dialect.oxc => {
-                self.expected(T::Semicolon)
+                self.expected(T::Semicolon);
+                return false;
             }
             ListKind::HeritageClauseElement if self.options.dialect.oxc => {
-                self.expected(T::OpenBrace)
+                self.expected(T::OpenBrace);
+                return false;
             }
             ListKind::EnumMembers if !self.options.dialect.oxc => self.error_at_token(1357, &[]),
             _ => self.expected_in_list(T::Comma, closer),
@@ -698,6 +707,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn parsing_context_error(&mut self, kind: ListKind) {
         let word = self.lx.text();
         let code = match kind {
+            // `import;`, which oxc takes for a declaration.
+            ListKind::SourceElements | ListKind::BlockStatements
+                if self.token() == T::Import && self.options.dialect.oxc =>
+            {
+                let start = self.pos();
+                return self.look_ahead(|p| {
+                    p.next();
+                    p.import_without_call_like_oxc(start);
+                });
+            }
             ListKind::SourceElements if self.token() == T::Default => {
                 return self.error_at_token(1005, &[b"export"]);
             }
@@ -705,6 +724,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ListKind::SwitchClauses => 1130,
             ListKind::SwitchClauseStatements => 1129,
             ListKind::TypeMembers => 1131,
+            ListKind::ClassMembers if self.options.dialect.oxc => 1109,
             ListKind::ClassMembers => 1068,
             ListKind::EnumMembers => 1132,
             ListKind::HeritageClauseElement => 1109,
@@ -713,9 +733,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 let word = self.lx.text_of(self.lx.atom).to_vec();
                 return self.error_at_token(1389, &[&word]);
             }
+            // "Expression expected.", which is told in oxc's words.
+            ListKind::VariableDeclarations if self.options.dialect.oxc => 1109,
             ListKind::VariableDeclarations => 1134,
             ListKind::ObjectBindingElements => 1180,
             ListKind::ArrayBindingElements => 1181,
+            ListKind::ArgumentExpressions if self.options.dialect.oxc => 1109,
             ListKind::ArgumentExpressions => 1135,
             ListKind::ObjectLiteralMembers => 1136,
             ListKind::ArrayLiteralMembers => 1137,

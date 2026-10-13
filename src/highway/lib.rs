@@ -59,6 +59,8 @@ unsafe extern "C" {
 
     fn highway_scanner_run_stops(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
 
+    fn highway_odd_blocks(text: *const u8, text_len: usize, out: *mut u64);
+
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
 
     fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
@@ -509,14 +511,14 @@ impl ScannerStopsBuffer {
         text.len().div_ceil(64) * 8 + 8
     }
 
+    /// The stops of `text`.
     pub fn find(&mut self, text: &[u8]) -> ScannerStops<'_> {
         self.fill(text);
         self.filled(text)
     }
 
-    /// [`ScannerStopsBuffer::find`] for a text that may be the one of the last call. The caller has
-    /// held on to that text since, or has called [`ScannerStopsBuffer::forget`]: another text can
-    /// get the same address.
+    /// The stops of `text`, which may be the text of the last call. The caller has held on to that
+    /// text since, or has called [`ScannerStopsBuffer::forget`]: another text can get the same address.
     pub fn find_again(&mut self, text: &[u8]) -> ScannerStops<'_> {
         if self.filled_for != Some((text.as_ptr().addr(), text.len())) {
             self.fill(text);
@@ -600,6 +602,16 @@ impl Stops<'_> {
             pos += 56;
         }
     }
+}
+
+/// Fills `out` with one bit for every 64 bytes of `text`, the lowest bit of the first word first:
+/// whether one of them is anything but a printable character of ASCII other than the backslash, a
+/// tab, a line feed or a carriage return. The bits past the end of the text are clear.
+pub fn odd_blocks(text: &[u8], out: &mut Vec<u64>) {
+    out.clear();
+    out.resize(text.len().div_ceil(64 * 64), 0);
+    // SAFETY: `text` is readable, and the kernel writes a word for every 64 blocks of 64 bytes, whole or not.
+    unsafe { highway_odd_blocks(text.as_ptr(), text.len(), out.as_mut_ptr()) };
 }
 
 #[inline(always)]

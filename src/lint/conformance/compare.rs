@@ -6,6 +6,7 @@ use bun_lint::fix::{Fix, SuggestionKind};
 use bun_lint::linter::{LintMessage, RuleId, Utf16Offsets};
 use bun_lint::options::Json;
 use bun_lint::runner::RuleEntry;
+use bun_lint::utils::sort;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// What is reported for the code of a case, and the code after one pass of fixes.
@@ -187,7 +188,7 @@ pub struct Counts {
 /// The order of what starts at the same place depends on the order in which ESLint visits the
 /// nodes.
 fn in_order(mut messages: Vec<Reported>) -> Vec<Reported> {
-    messages.sort_by(|a, b| {
+    sort::sort_by(&mut messages, |a, b| {
         (a.line, a.column, a.end, &a.message_id, &a.message).cmp(&(
             b.line,
             b.column,

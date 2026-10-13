@@ -6,6 +6,7 @@ use crate::paths;
 use crate::results::FileResult;
 use bun_core::strings;
 use bun_lint::linter::{LintMessage, RuleId};
+use bun_lint::rule::Plugin;
 use bun_lint::source::LineStarts;
 
 /// A line, and a column in bytes, both from 1.
@@ -106,6 +107,12 @@ impl<'r> Source<'r> {
         let start = (message.line, message.column);
         let end = message.end.unwrap_or(start);
         Some(match message.rule_id {
+            // oxlint's rule marks the program, which starts before a byte order mark, and no more than 100 bytes.
+            Some(RuleId::Known(rule))
+                if rule.plugin == Plugin::Unicorn && rule.name == "no-empty-file" =>
+            {
+                (0, self.between(start, end).1.min(100))
+            }
             Some(RuleId::Known(_) | RuleId::Named(..)) => self.label(start, end),
             // A plugin in JavaScript does not see the mark: its 0 is after it.
             Some(RuleId::Js(_) | RuleId::Unknown(_)) | None => self.between(start, end),

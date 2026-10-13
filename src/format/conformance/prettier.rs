@@ -307,7 +307,7 @@ fn replace_placeholders(original: &[u8], options: &mut FormatOptions) -> Vec<u8>
         .iter()
         .filter_map(|it| Some((strings::index_of(original, it.1)?, it.0, it.1)))
         .collect();
-    found.sort_unstable();
+    bun_format::sort::sort(&mut found[..]);
     let mut text = Vec::with_capacity(original.len());
     let mut end_of_previous = 0;
     for (at, name, placeholder) in found {

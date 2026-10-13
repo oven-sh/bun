@@ -526,7 +526,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
 }
 
 /** The text that `bun lint --rules` and `bun lint --explain` print. Written to `codegenDir`. */
-const LINT_DOCS = ["lint-rule-descriptions.txt", "lint-rule-pages.txt"];
+const LINT_DOCS = ["lint-rule-pages.txt"];
 
 function emitLintDocs({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-lint-docs.ts");
@@ -538,7 +538,7 @@ function emitLintDocs({ n, cfg, sources, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "lint-rule-*.txt",
+      desc: "lint-rule-pages.txt",
       args: shJoin(cfg, [script, resolve(cfg.cwd, "docs", "lint", "rules"), ...outputs]),
     },
   });

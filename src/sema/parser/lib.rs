@@ -204,7 +204,7 @@ pub struct Parsed {
 }
 
 /// The HIR of `text`. Names are interned in `atoms`.
-pub fn parse(
+pub(crate) fn parse(
     text: &[u8],
     options: Options,
     atoms: &dyn Intern,
@@ -230,7 +230,7 @@ pub fn parse(
 
 /// The HIR of `text`, with atoms that are the file's own: `Scratch::atoms` knows them until the next
 /// file is parsed.
-pub fn parse_with_own_atoms(
+pub(crate) fn parse_with_own_atoms(
     text: &[u8],
     options: Options,
     scratch: &mut Scratch,

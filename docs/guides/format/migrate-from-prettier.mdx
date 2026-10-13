@@ -166,7 +166,6 @@ If `bun format` and Prettier 3 print different code, that's a bug. [Open an issu
 - **An unknown flag is an error.** Prettier warns and continues.
 - **`--cache` does nothing.** Every run formats every file.
 - **Exit code `2` means something went wrong**, like a syntax error or a skipped file. Prettier uses `1` for some of these.
-- **A file is verified before it's written.** If the result isn't the same program or document, Bun leaves the file alone and reports it. That covers a few inputs where Prettier drops code, like `<!DOCTYPE html>` in a Handlebars template.
 - **Bytes that aren't valid UTF-8 are kept.** Prettier replaces them.
 - **Symlinks that lead out of the repository aren't written through.**
 - **`console.log` in your config file is hidden** unless the config fails to load.

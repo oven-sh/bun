@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 import { cases as callCases } from "./oracle/jsplugins/calls/cases.mjs";
 import { cases as codePathCases, fileOf, isTypeScript } from "./oracle/jsplugins/code-paths/cases.mjs";
+import { cases as oxlintCases } from "./oracle/jsplugins/oxlint/cases.mjs";
 import {
   cases as scopeCases,
   fileOf as scopeFileOf,
@@ -3672,6 +3673,315 @@ export default {
         (it: { filename: string; message: string }) => `${it.filename} ${it.message.match(/'(\w+)'/)?.[1]}`,
       );
       expect(said.sort()).toEqual(["a.cjs second", "b.js second", "c.mjs second"]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+});
+
+describe.concurrent("what a JavaScript plugin sees with an oxlint config", () => {
+  const oracle = join(import.meta.dir, "oracle", "jsplugins", "oxlint");
+  const dump = readFileSync(join(oracle, "dump.cjs"), "utf8");
+  // By the name of a file. Recorded with oxlint 1.87.0 by record.mjs in that directory.
+  const expected: Record<string, string> = JSON.parse(
+    Buffer.from(Bun.zstdDecompressSync(readFileSync(join(oracle, "expected.json.zst")))).toString(),
+  );
+  type Diagnostic = { filename: string; message: string };
+  const slashes = (path: string) => path.replaceAll("\\", "/");
+
+  test(
+    "trees with their values, the traversal, scopes, and what sourceCode says about each node are oxlint's in every kind of file",
+    async () => {
+      const config = { ignorePatterns: ["dump.cjs"], jsPlugins: ["./dump.cjs"], rules: { "dump/all": "error" } };
+      const files = { "dump.cjs": dump, ".oxlintrc.json": oxlintrc(config), ...oxlintCases };
+      const { raw, exitCode } = await lint(files, ["-f", "json"]);
+      const diagnostics: Diagnostic[] = JSON.parse(raw).diagnostics;
+      const parsed = (message: string) => (message.startsWith("{") ? JSON.parse(message) : message);
+      for (const file of Object.keys(expected)) {
+        const found = diagnostics.filter(it => slashes(it.filename) === file);
+        expect({ file, said: found.map(it => parsed(it.message)) }).toEqual({ file, said: [parsed(expected[file])] });
+      }
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  const plugin = `const property = (object, key) => {
+        const it = Object.getOwnPropertyDescriptor(object, key);
+        return key + (it.get ? ":get" : "") + (it.enumerable ? "" : ":hidden");
+      };
+      const shape = it =>
+        (Object.isFrozen(it) ? "frozen " : "") +
+        (Object.getPrototypeOf(it) === Object.prototype ? "" : "other ") +
+        Object.getOwnPropertyNames(it).map(key => property(it, key));
+      const sorted = it => JSON.stringify(Object.fromEntries(Object.entries(it).sort()));
+      const seen = new Set();
+      const api = {
+        create(context) {
+          return {
+            Program() {
+              const { sourceCode, languageOptions } = context;
+              const { parser, parserOptions } = languageOptions;
+              const manager = sourceCode.scopeManager;
+              for (const it of [manager, languageOptions, parser, parserOptions, parserOptions.ecmaFeatures]) seen.add(it);
+              let thrown;
+              try {
+                parser.parse("a");
+              } catch (error) {
+                thrown = error.constructor.name + ": " + error.message;
+              }
+              const message = [
+                "scopeManager " + shape(manager),
+                [manager.getDeclaredVariables, manager.acquire].map(it => it.name + "/" + it.length).join(),
+                "languageOptions " + shape(languageOptions),
+                [languageOptions.sourceType, languageOptions.ecmaVersion].join(),
+                "globals " + (Object.isFrozen(languageOptions.globals) ? "frozen " : "") + sorted(languageOptions.globals),
+                "env " + (Object.isFrozen(languageOptions.env) ? "frozen " : "") + sorted(languageOptions.env),
+                "parserOptions " + shape(parserOptions) + " " + JSON.stringify(parserOptions),
+                "ecmaFeatures " + shape(parserOptions.ecmaFeatures),
+                "parser " + shape(parser),
+                [parser.name, parser.version, parser.parse.name + "/" + parser.parse.length, parser.latestEcmaVersion].join(),
+                thrown,
+                (Object.isFrozen(parser.supportedEcmaVersions) ? "frozen " : "") + parser.supportedEcmaVersions,
+                "Syntax " + [Object.isFrozen(parser.Syntax), Object.getPrototypeOf(parser.Syntax), parser.Syntax === parser.Syntax, Object.keys(parser.Syntax).join() === Object.keys(sourceCode.visitorKeys).join(), parser.Syntax.Program].join(),
+                "same " + [parser.VisitorKeys === sourceCode.visitorKeys, context.parserOptions === parserOptions, seen.size].join(),
+                "parserServices " + shape(sourceCode.parserServices),
+              ].join("\\n");
+              context.report({ loc: { line: 1, column: 0 }, message });
+            },
+          };
+        },
+      };
+      const globals = {
+        create(context) {
+          return {
+            Program() {
+              const { set, variables } = context.sourceCode.scopeManager.globalScope;
+              const { env, globals } = context.languageOptions;
+              const told = ["Array", "window", "process", "describe", "define", "foo", "bar", "baz"];
+              let sum = 0;
+              for (const name of variables.map(it => it.name).sort().join()) sum = (Math.imul(sum, 31) + name.charCodeAt(0)) | 0;
+              const message = [
+                variables.length,
+                sum,
+                Object.keys(env).sort().join() || "-",
+                Object.keys(globals).sort().map(it => it + "=" + globals[it]).join() || "-",
+                told.map(it => it + (set.has(it) ? (set.get(it).writeable ? "+w" : "+r") : "-")).join(" "),
+              ].join(" ");
+              context.report({ loc: { line: 1, column: 0 }, message });
+            },
+          };
+        },
+      };
+      export default { meta: { name: "p" }, rules: { api, globals } };`;
+  const base = { jsPlugins: ["../plugin.mjs"], rules: { "p/globals": "error" } };
+
+  // What oxlint 1.87 says. It goes through `env` and `globals` in the order of a hash map, so the plugin sorts what it prints.
+  test(
+    "scopeManager, languageOptions and parserServices are the frozen objects of oxlint, the same for all files",
+    async () => {
+      const config = {
+        ...base,
+        rules: { "p/api": "error" },
+        env: { amd: true, jest: false },
+        globals: { b: "readonly", a: "writable", Array: "off" },
+      };
+      const kinds = {
+        "a.js": ["script", true, false, false],
+        "b.cjs": ["commonjs", true, true, false],
+        "c.mjs": ["module", true, false, true],
+        "d.ts": ["script", false, false, false],
+        "e.tsx": ["script", true, false, false],
+      };
+      const files = {
+        "plugin.mjs": plugin,
+        ".oxlintrc.json": oxlintrc({}),
+        "api/.oxlintrc.json": oxlintrc(config),
+        ...Object.fromEntries(Object.keys(kinds).map(it => [`api/${it}`, "a;\n"])),
+      };
+      // One thread, so that one VM sees all the files.
+      const { raw, exitCode } = await lint(files, ["-f", "json", "--threads", "1"]);
+      const diagnostics: Diagnostic[] = JSON.parse(raw).diagnostics;
+      const said = Object.fromEntries(diagnostics.map(it => [slashes(it.filename), it.message.split("\n")]));
+      const inScript = [
+        "scopeManager frozen scopes:get,globalScope:get,getDeclaredVariables,acquire",
+        "getDeclaredVariables/1,acquire/2",
+        "languageOptions frozen sourceType:get,ecmaVersion,parser,parserOptions,globals:get,env:get",
+        "script,2026",
+        'globals frozen {"Array":"off","a":"writable","b":"readonly"}',
+        'env frozen {"amd":true}',
+        'parserOptions frozen sourceType:get,ecmaFeatures {"sourceType":"script","ecmaFeatures":{"jsx":true,"globalReturn":false,"impliedStrict":false}}',
+        "ecmaFeatures frozen jsx:get,globalReturn:get,impliedStrict:get",
+        "parser frozen name,version,parse,VisitorKeys,Syntax:get,latestEcmaVersion,supportedEcmaVersions",
+        "oxlint,1.87.0,parse/2,17",
+        "Error: `context.languageOptions.parser.parse` not implemented yet.",
+        "frozen 3,5,6,7,8,9,10,11,12,13,14,15,16,17",
+        "Syntax true,,true,true,Program",
+        "same true,true,5",
+        "parserServices frozen ",
+      ];
+      const options = ([sourceType, jsx, globalReturn, impliedStrict]: (string | boolean)[]) =>
+        JSON.stringify({ sourceType, ecmaFeatures: { jsx, globalReturn, impliedStrict } });
+      expect(said).toEqual(
+        Object.fromEntries(
+          Object.entries(kinds).map(([file, kind]) => [
+            `api/${file}`,
+            inScript.map(it =>
+              it.replace("script,2026", `${kind[0]},2026`).replace(options(kinds["a.js"]), options(kind)),
+            ),
+          ]),
+        ),
+      );
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // What oxlint 1.87 says: how many variables the global scope has, a sum over their names, `env`, `globals`, and some variables.
+  test(
+    "the globals are those of the envs that are on and of globals: builtin only without env, overrides merge, extends doesn't count",
+    async () => {
+      const everyEnv =
+        "amd applescript astro atomtest audioworklet browser builtin bun commonjs embertest es2015 es2016 es2017 es2018 es2019 es2020 es2021 es2022 es2023 es2024 es2025 es2026 es6 greasemonkey jasmine jest jquery meteor mocha mongo nashorn node phantomjs prototypejs protractor qunit serviceworker shared-node-browser shelljs svelte vitest vue webextensions worker";
+      const inSub = (more: object) => ({ files: ["sub/**"], ...more });
+      const configs: Record<string, object> = {
+        "no-env": {},
+        "env": { env: { browser: true }, globals: { foo: "readonly", bar: "off" } },
+        "empty-env": { env: {} },
+        "env-off": { env: { browser: false } },
+        "unknown-env": { env: { nope: true } },
+        "builtin-off": { env: { builtin: false, amd: true } },
+        "override-adds": { overrides: [inSub({ env: { browser: true }, globals: { foo: "writable" } })] },
+        "override-changes": {
+          env: { browser: true },
+          globals: { foo: "readonly", bar: "off" },
+          overrides: [
+            inSub({
+              env: { builtin: true, browser: false, node: true },
+              globals: { foo: "off", bar: "writable", baz: "readonly" },
+            }),
+          ],
+        },
+        "two-overrides": {
+          overrides: [{ files: ["**/*.js"], env: { amd: true } }, inSub({ env: { amd: false, jest: true } })],
+        },
+        "override-builtin-off": { overrides: [inSub({ env: { builtin: false } })] },
+        "extends": { extends: ["./base.json"] },
+        "extends-and-env": { extends: ["./base.json"], env: { jest: true }, globals: { bar: "readonly" } },
+        "globals": { globals: { foo: true, bar: false, baz: "readable", Array: "writeable", window: "off" } },
+        "every-env": { env: Object.fromEntries(everyEnv.split(" ").map(it => [it, true])) },
+      };
+      const files: Record<string, string> = { "plugin.mjs": plugin, ".oxlintrc.json": oxlintrc({}) };
+      for (const [name, config] of Object.entries(configs)) {
+        files[`${name}/.oxlintrc.json`] = oxlintrc({ ...base, ...config });
+        files[`${name}/base.json`] = JSON.stringify({ env: { amd: true }, globals: { foo: "writable" } });
+        files[`${name}/a.js`] = files[`${name}/sub/b.js`] = "a;\n";
+      }
+      const { raw, exitCode } = await lint(files, ["-f", "json"]);
+      const diagnostics: Diagnostic[] = JSON.parse(raw).diagnostics;
+      expect(Object.fromEntries(diagnostics.map(it => [slashes(it.filename), it.message]))).toEqual({
+        "builtin-off/a.js": "3 616407005 amd - Array- window- process- describe- define+r foo- bar- baz-",
+        "builtin-off/sub/b.js": "3 616407005 amd - Array- window- process- describe- define+r foo- bar- baz-",
+        "empty-env/a.js": "1 94844771 - - Array- window- process- describe- define- foo- bar- baz-",
+        "empty-env/sub/b.js": "1 94844771 - - Array- window- process- describe- define- foo- bar- baz-",
+        "env-off/a.js": "1 94844771 - - Array- window- process- describe- define- foo- bar- baz-",
+        "env-off/sub/b.js": "1 94844771 - - Array- window- process- describe- define- foo- bar- baz-",
+        "env/a.js":
+          "1198 1747972463 browser bar=off,foo=readonly Array- window+r process- describe- define- foo+r bar- baz-",
+        "env/sub/b.js":
+          "1198 1747972463 browser bar=off,foo=readonly Array- window+r process- describe- define- foo+r bar- baz-",
+        "every-env/a.js":
+          "1639 -1319075877 amd,applescript,astro,atomtest,audioworklet,browser,builtin,bun,commonjs,embertest,es2015,es2016,es2017,es2018,es2019,es2020,es2021,es2022,es2023,es2024,es2025,es2026,es6,greasemonkey,jasmine,jest,jquery,meteor,mocha,mongo,nashorn,node,phantomjs,prototypejs,protractor,qunit,serviceworker,shared-node-browser,shelljs,svelte,vitest,vue,webextensions,worker - Array+r window+r process+r describe+r define+r foo- bar- baz-",
+        "every-env/sub/b.js":
+          "1639 -1319075877 amd,applescript,astro,atomtest,audioworklet,browser,builtin,bun,commonjs,embertest,es2015,es2016,es2017,es2018,es2019,es2020,es2021,es2022,es2023,es2024,es2025,es2026,es6,greasemonkey,jasmine,jest,jquery,meteor,mocha,mongo,nashorn,node,phantomjs,prototypejs,protractor,qunit,serviceworker,shared-node-browser,shelljs,svelte,vitest,vue,webextensions,worker - Array+r window+r process+r describe+r define+r foo- bar- baz-",
+        "extends-and-env/a.js":
+          "15 -1557638922 jest bar=readonly Array- window- process- describe+r define- foo- bar+r baz-",
+        "extends-and-env/sub/b.js":
+          "15 -1557638922 jest bar=readonly Array- window- process- describe+r define- foo- bar+r baz-",
+        "extends/a.js": "66 930916712 builtin - Array+r window- process- describe- define- foo- bar- baz-",
+        "extends/sub/b.js": "66 930916712 builtin - Array+r window- process- describe- define- foo- bar- baz-",
+        "globals/a.js":
+          "69 -762096136 builtin Array=writable,bar=readonly,baz=readonly,foo=writable,window=off Array+w window- process- describe- define- foo+w bar+r baz+r",
+        "globals/sub/b.js":
+          "69 -762096136 builtin Array=writable,bar=readonly,baz=readonly,foo=writable,window=off Array+w window- process- describe- define- foo+w bar+r baz+r",
+        "no-env/a.js": "66 930916712 builtin - Array+r window- process- describe- define- foo- bar- baz-",
+        "no-env/sub/b.js": "66 930916712 builtin - Array+r window- process- describe- define- foo- bar- baz-",
+        "override-adds/a.js": "66 930916712 builtin - Array+r window- process- describe- define- foo- bar- baz-",
+        "override-adds/sub/b.js":
+          "1263 -1504104892 browser,builtin foo=writable Array+r window+r process- describe- define- foo+w bar- baz-",
+        "override-builtin-off/a.js": "66 930916712 builtin - Array+r window- process- describe- define- foo- bar- baz-",
+        "override-builtin-off/sub/b.js": "1 94844771 - - Array- window- process- describe- define- foo- bar- baz-",
+        "override-changes/a.js":
+          "1198 1747972463 browser bar=off,foo=readonly Array- window+r process- describe- define- foo+r bar- baz-",
+        "override-changes/sub/b.js":
+          "149 -543027797 builtin,node bar=writable,baz=readonly,foo=off Array+r window- process+r describe- define- foo- bar+w baz+r",
+        "two-overrides/a.js": "68 -116936702 amd,builtin - Array+r window- process- describe- define+r foo- bar- baz-",
+        "two-overrides/sub/b.js":
+          "79 -71093976 builtin,jest - Array+r window- process- describe+r define- foo- bar- baz-",
+        "unknown-env/a.js": "1 94844771 nope - Array- window- process- describe- define- foo- bar- baz-",
+        "unknown-env/sub/b.js": "1 94844771 nope - Array- window- process- describe- define- foo- bar- baz-",
+      });
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // What oxlint 1.87 says, and ESLint 10.12 with @typescript-eslint/parser 8.71.1: the same.
+  test.each(["oxlint", "eslint"])(
+    "reference.maybeImplicitGlobal is typescript-eslint's: an object, null or undefined, with a config of %s",
+    async whose => {
+      const rule = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
+        Program(node) {
+          const said = context.sourceCode.scopeManager.scopes.flatMap(scope =>
+            scope.references.map(it => {
+              const maybe = it.maybeImplicitGlobal;
+              const object = () => Object.keys(maybe) + "=" + maybe.node.type + "," + (maybe.pattern === it.identifier);
+              return it.identifier.name + ":" + (maybe ? object() : maybe);
+            }),
+          );
+          context.report({ node, message: said.join(" ") });
+        },
+      }) } } };`;
+      const code =
+        'x = 1; function f() { y = 2; x; } var a = 3; Object = 3; for (z in {}); for (var w of []); [p, q = 1] = []; ({ r } = {}); b += 1; c++; function h(d = 1, { e = 2 }) {} function i() { "use strict"; k = 1; } class C { m() { n = 1; } }';
+      const types = " let t: T = 1 as const; (u as any) = 1;";
+      const by = (type: string) => `node,pattern=${type},true`;
+      const assigned = by("AssignmentExpression");
+      const top = (maybe: string, inLoop: string) =>
+        `x:${maybe} a:null Object:${maybe} z:${inLoop} w:null p:${maybe} q:${maybe} q:${maybe} r:${maybe} b:undefined c:undefined`;
+      const inFunctions = (maybe: string) => `y:${maybe} x:undefined d:null e:null k:null n:null`;
+      const expected = {
+        "script.js": `${top(assigned, by("ForInStatement"))} ${inFunctions(assigned)}`,
+        "script.ts": `${top(assigned, by("ForInStatement"))} t:null const:null T:null u:${assigned} ${inFunctions(assigned)}`,
+        "module.mts": `${top("null", "null")} t:null const:null T:null u:null a:null ${inFunctions("null")}`,
+      };
+      const configs = {
+        oxlint: { ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "p/rule": "error" } }) },
+        eslint: {
+          "eslint.config.mjs": `import p from "./plugin.mjs";
+            const parser = { meta: { name: "typescript-eslint/parser" } };
+            export default [
+              { files: ["**/*.ts", "**/*.js", "**/*.mts"], plugins: { p }, rules: { "p/rule": "error" }, languageOptions: { parser } },
+              { files: ["script.*"], languageOptions: { sourceType: "script", parserOptions: { sourceType: "script" } } },
+            ];`,
+        },
+      };
+      const files = {
+        "plugin.mjs": rule,
+        ...configs[whose as keyof typeof configs],
+        "script.js": `${code}\n`,
+        "script.ts": `${code}${types}\n`,
+        "module.mts": `${code}${types} export { a };\n`,
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", ...Object.keys(expected)]);
+      const said: [string, string][] =
+        whose === "oxlint"
+          ? JSON.parse(raw).diagnostics.map((it: Diagnostic) => [it.filename, it.message])
+          : JSON.parse(raw).map((it: { filePath: string; messages: { message: string }[] }) => [
+              slashes(it.filePath).split("/").at(-1),
+              it.messages.map(message => message.message).join("|"),
+            ]);
+      expect(Object.fromEntries(said)).toEqual(expected);
       expect(exitCode).toBe(1);
     },
     timeout,

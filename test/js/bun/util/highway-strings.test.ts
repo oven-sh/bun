@@ -446,3 +446,51 @@ describe("lineStarts", () => {
     expect(() => hw("lineStarts", enc("a\nb\n"), new Uint8Array(4))).toThrow(RangeError);
   });
 });
+
+describe("oddBlocks", () => {
+  const isPlain = (b: number) => (b >= 0x20 && b <= 0x7e && b !== 0x5c) || b === 0x09 || b === 0x0a || b === 0x0d;
+  // Both sides of a block of 64 bytes and of a word of 64 blocks.
+  const LENGTHS = [0, 1, 63, 64, 65, 127, 128, 129, 4031, 4032, 4033, 4095, 4096, 4097, 4159, 4160, 4161, 8192, 9000];
+
+  function expectOddBlocks(text: Uint8Array, at: string) {
+    const words = Math.ceil(text.length / 4096);
+    const expected = new BigUint64Array(words + 1);
+    text.forEach((byte, i) => {
+      if (!isPlain(byte)) expected[i >> 12] |= 1n << BigInt((i >> 6) & 63);
+    });
+    // One word more than the kernel may write, to see that it stops.
+    expected[words] = 0xaaaaaaaaaaaaaaaan;
+    const out = new BigUint64Array(words + 1).fill(0xaaaaaaaaaaaaaaaan);
+    expect(hw("oddBlocks", text, new Uint8Array(out.buffer)), at).toBe(0);
+    expect([...out], at).toEqual([...expected]);
+  }
+
+  it("classifies every byte value", () => {
+    for (let byte = 0; byte < 256; byte++) {
+      for (const pos of [0, 63, 64, 100, 129]) {
+        const text = new Uint8Array(130).fill(0x61);
+        text[pos] = byte;
+        expectOddBlocks(text, `byte=${byte} pos=${pos}`);
+      }
+    }
+  });
+
+  it("marks the block of an odd byte, and no other", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        expectOddBlocks(new Uint8Array(len + off).fill(0x20).subarray(off), `len=${len} off=${off} plain`);
+        expectOddBlocks(new Uint8Array(len + off).fill(0x5c).subarray(off), `len=${len} off=${off} odd`);
+        for (const pos of [0, 1, 62, 63, 64, 65, 4031, 4032, 4095, 4096, 4097, len - 65, len - 64, len - 2, len - 1]) {
+          if (pos < 0 || pos >= len) continue;
+          const text = new Uint8Array(len + off).fill(0x7e).subarray(off);
+          text[pos] = 0x7f;
+          expectOddBlocks(text, `len=${len} off=${off} pos=${pos}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("oddBlocks", new Uint8Array(4097), new Uint8Array(8))).toThrow(RangeError);
+  });
+});

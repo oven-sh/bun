@@ -75,12 +75,15 @@ enum class Field : uint8_t {
     Init,
     // Of a variable and of a reference.
     Tainted,
+    // Of a reference of typescript-eslint, and what is in it besides `Node`.
+    MaybeImplicitGlobal,
+    Pattern,
     Count,
 };
 
 // The message. src/lint/js_plugin/scopes.rs documents the layout.
 struct LintScopes {
-    static constexpr size_t headerWords = 11, scopeWords = 9, variableWords = 8, definitionWords = 7, referenceWords = 5;
+    static constexpr size_t headerWords = 11, scopeWords = 9, variableWords = 8, definitionWords = 7, referenceWords = 6;
 
     uint32_t scopeCount, declaredCount, variableCount, definitionCount, referenceCount, implicitCount;
     // How many of the implicit globals are in `globalScope.implicit`. They come first.
@@ -198,7 +201,7 @@ struct LintScopes {
         }
         for (uint32_t i = 0; i < referenceCount; ++i) {
             auto it = reference(i);
-            if (it[0] >= nodeCount || !isIndexOrNone(it[2], nodeCount) || !isIndexOrNone(it[3], variableCount) || it[4] >= scopeCount)
+            if (it[0] >= nodeCount || !isIndexOrNone(it[2], nodeCount) || !isIndexOrNone(it[3], variableCount) || it[4] >= scopeCount || !isIndexOrNone(it[5], nodeCount))
                 return false;
         }
         for (uint32_t pairs : implicit) {
@@ -225,7 +228,7 @@ constexpr uint32_t isType = 1, isValue = 2, isUsed = 4, isStack = 256, isTainted
 // In the kind of a scope.
 constexpr uint32_t isStrict = 256, hasThis = 512, hasArguments = 1024;
 // In the flags of a reference.
-constexpr uint32_t isWrite = 2, isInit = 8, isPartial = 512, isTainted = 1024;
+constexpr uint32_t isWrite = 2, isInit = 8, isPartial = 512, isTainted = 1024, hasNullImplicitGlobal = 2048;
 // In the flags of a definition.
 constexpr uint32_t isRest = 1, lacksParent = 2;
 // In `strings`.
@@ -236,7 +239,7 @@ constexpr uint32_t implicitGlobalVariable = 10;
 // ───────────── which property goes where ─────────────
 
 // The names of the properties that the `Field`s after `Copy` are for.
-constexpr ASCIILiteral fieldNames = "$id set taints block through variables references variableScope upper isStrict thisFound childScopes __declaredVariables implicit name identifiers defs stack scope eslintUsed eslintExported eslintImplicitGlobalSetting eslintExplicitGlobal writeable isTypeVariable isValueVariable node parent index kind rest identifier from resolved flag writeExpr partial init tainted"_s;
+constexpr ASCIILiteral fieldNames = "$id set taints block through variables references variableScope upper isStrict thisFound childScopes __declaredVariables implicit name identifiers defs stack scope eslintUsed eslintExported eslintImplicitGlobalSetting eslintExplicitGlobal writeable isTypeVariable isValueVariable node parent index kind rest identifier from resolved flag writeExpr partial init tainted maybeImplicitGlobal pattern"_s;
 // In the order of `ScopeKind` and `DeclarationKind` in src/lint/js_plugin/scopes.rs.
 constexpr ASCIILiteral scopeTypes = "global module function function-expression-name block switch catch with for class class-field-initializer class-static-block tsModule tsEnum type conditionalType functionType mappedType"_s;
 constexpr ASCIILiteral definitionTypes = "Variable Parameter FunctionName ClassName CatchClause ImportBinding TSEnumName TSEnumMemberName TSModuleName Type ImplicitGlobalVariable"_s;
@@ -247,9 +250,10 @@ enum Group : uint8_t {
     Definitions,
     References,
     Implicit,
+    MaybeImplicit,
 };
-constexpr std::array<uint32_t, 5> templatesIn { 18, 16, 11, 2, 1 };
-constexpr std::array<uint32_t, 5> firstTemplateIn { 0, 18, 34, 45, 47 };
+constexpr std::array<uint32_t, 6> templatesIn { 18, 16, 11, 2, 1, 1 };
+constexpr std::array<uint32_t, 6> firstTemplateIn { 0, 18, 34, 45, 47, 48 };
 
 StringView wordAt(ASCIILiteral words, uint32_t index)
 {
@@ -261,11 +265,12 @@ StringView wordAt(ASCIILiteral words, uint32_t index)
 }
 
 // Makes what `shapeIn` returns. It runs once for each shape.
-__attribute__((minsize)) NEVER_INLINE Shape makeShapeIn(JSGlobalObject* globalObject, LintHost* host, bool isEspree, Group group, uint32_t index)
+__attribute__((minsize)) NEVER_INLINE Shape makeShapeIn(JSGlobalObject* globalObject, LintHost* host, LintScopeFlavor flavor, Group group, uint32_t index)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    LintScopeLayout& layout = host->scopes.layouts[isEspree];
+    LintScopeLayout& layout = host->scopes.layoutOf(flavor);
+    bool isEspree = flavor == LintScopeFlavor::EslintScope;
     size_t at = firstTemplateIn[group] + index;
 
     Vector<StringView, 24> keys;
@@ -296,7 +301,7 @@ __attribute__((minsize)) NEVER_INLINE Shape makeShapeIn(JSGlobalObject* globalOb
         type = classAt(index & 2 ? 2 : 1);
         add(isEspree ? "name identifiers references defs tainted stack scope"_s : "$id defs eslintUsed identifiers name references scope"_s);
         if (index & 1)
-            add("eslintImplicitGlobalSetting eslintExplicitGlobal eslintExplicitGlobalComments writeable"_s);
+            add(flavor == LintScopeFlavor::Oxlint ? "writeable eslintImplicitGlobalSetting eslintExplicitGlobal eslintExplicitGlobalComments"_s : "eslintImplicitGlobalSetting eslintExplicitGlobal eslintExplicitGlobalComments writeable"_s);
         if (index & 2)
             add("writeable eslintExplicitGlobal eslintImplicitGlobalSetting eslintExplicitGlobalComments isTypeVariable isValueVariable"_s);
         if (index & 4)
@@ -324,9 +329,12 @@ __attribute__((minsize)) NEVER_INLINE Shape makeShapeIn(JSGlobalObject* globalOb
     case Implicit:
         add(isEspree ? "set variables left"_s : "leftToBeResolved set variables"_s);
         break;
+    case MaybeImplicit:
+        add("node pattern"_s);
+        break;
     }
     JSValue prototype = globalObject->objectPrototype();
-    if (group != Implicit) {
+    if (group != Implicit && group != MaybeImplicit) {
         if (!type || !type.isObject())
             return {};
         prototype = asObject(type)->get(globalObject, vm.propertyNames->prototype);
@@ -387,7 +395,7 @@ __attribute__((minsize)) NEVER_INLINE Shape makeShapeIn(JSGlobalObject* globalOb
         JSValue constant = constantOf(key);
         Identifier name = Identifier::fromString(vm, AtomString(key.span8()));
         // To a plugin it's a plain property.
-        if (JSCell* lazy = host->scopes.lazyVariables.get(); lazy && group == Scopes && !index && !isEspree && key == "variables"_s) {
+        if (JSCell* lazy = host->scopes.lazyVariables.get(); lazy && group == Scopes && !index && flavor == LintScopeFlavor::TypeScript && key == "variables"_s) {
             like->putDirectCustomAccessor(vm, name, lazy, static_cast<unsigned>(PropertyAttribute::CustomValue));
             program.append(static_cast<uint8_t>(Field::Copy));
             continue;
@@ -401,15 +409,15 @@ __attribute__((minsize)) NEVER_INLINE Shape makeShapeIn(JSGlobalObject* globalOb
 }
 
 // The shape of the objects `index` of `group`. Without a template: there are no such objects, or an exception was thrown.
-Shape shapeIn(JSGlobalObject* globalObject, LintHost* host, bool isEspree, Group group, uint32_t index)
+Shape shapeIn(JSGlobalObject* globalObject, LintHost* host, LintScopeFlavor flavor, Group group, uint32_t index)
 {
     if (index >= templatesIn[group])
         return {};
     size_t at = firstTemplateIn[group] + index;
-    LintScopeLayout& layout = host->scopes.layouts[isEspree];
+    LintScopeLayout& layout = host->scopes.layoutOf(flavor);
     if (JSObject* like = layout.templates[at].get()) [[likely]]
         return { like, layout.programs[at].span() };
-    return makeShapeIn(globalObject, host, isEspree, group, index);
+    return makeShapeIn(globalObject, host, flavor, group, index);
 }
 
 // `map.set(key, value)`. What it takes is several KB, so it's here once.
@@ -433,15 +441,15 @@ public:
     }
 
     Vector<Shape, 20> scopeShapes, variableShapes, definitionShapes, referenceShapes;
-    Shape implicitShape;
+    Shape implicitShape, maybeImplicitShape;
 
     // Takes the shapes that the objects of the message need from the layouts of the host.
-    void takeShapes(LintHost* host, bool isEspree)
+    void takeShapes(LintHost* host, LintScopeFlavor flavor)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto take = [&](auto& shapes, Group group, uint32_t index) {
             if (index < shapes.size() && !shapes[index].like)
-                shapes[index] = shapeIn(m_globalObject, host, isEspree, group, index);
+                shapes[index] = shapeIn(m_globalObject, host, flavor, group, index);
         };
         scopeShapes.grow(templatesIn[Scopes]);
         variableShapes.grow(templatesIn[Variables]);
@@ -467,8 +475,10 @@ public:
         RETURN_IF_EXCEPTION(scope, void());
         take(referenceShapes, References, 1);
         RETURN_IF_EXCEPTION(scope, void());
+        implicitShape = shapeIn(m_globalObject, host, flavor, Implicit, 0);
+        RETURN_IF_EXCEPTION(scope, void());
         scope.release();
-        implicitShape = shapeIn(m_globalObject, host, isEspree, Implicit, 0);
+        maybeImplicitShape = shapeIn(m_globalObject, host, flavor, MaybeImplicit, 0);
     }
     Structure* mapStructure { nullptr };
     Structure* weakMapStructure { nullptr };
@@ -499,7 +509,7 @@ public:
             if (!has(definitionShapes, it[0]) || it[6] >= stringCount - firstKind + 1)
                 return false;
         }
-        return has(variableShapes, 0) && has(definitionShapes, implicitGlobalVariable) && has(referenceShapes, 0) && has(referenceShapes, 1) && implicitShape.like;
+        return has(variableShapes, 0) && has(definitionShapes, implicitGlobalVariable) && has(referenceShapes, 0) && has(referenceShapes, 1) && implicitShape.like && maybeImplicitShape.like;
     }
 
     // `[scopeManager.scopes, scopes, variables, nodeToScope, declaredVariables, definitions, references]`. All but the first and the two
@@ -765,6 +775,16 @@ private:
                 break;
             case Field::Tainted:
                 value = jsBoolean(it[1] & isTainted);
+                break;
+            case Field::MaybeImplicitGlobal:
+                if (it[5] != none) {
+                    // `{ node, pattern }`
+                    JSObject* object = JSFinalObject::create(m_vm, maybeImplicitShape.like->structure());
+                    object->putDirectOffset(m_vm, 0, m_nodes->getIndexQuickly(it[5]));
+                    object->putDirectOffset(m_vm, 1, m_nodes->getIndexQuickly(it[0]));
+                    value = object;
+                } else
+                    value = it[1] & hasNullImplicitGlobal ? jsNull() : jsUndefined();
                 break;
             default:
                 value = shape.like->getDirect(offset);
@@ -1100,7 +1120,7 @@ JSArray* addAllLibVariables(JSGlobalObject* globalObject, LintHost* host)
     state.hasAllLibVariables = true;
     LintSpan answer = Bun__Lint__ask(globalObject, askForAll, nullptr, 0);
     std::span<const uint32_t> words { reinterpret_cast<const uint32_t*>(answer.ptr), answer.len / 4 };
-    Shape shape = shapeIn(globalObject, host, false, Variables, shapeOfLibVariable);
+    Shape shape = shapeIn(globalObject, host, LintScopeFlavor::TypeScript, Variables, shapeOfLibVariable);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (words.size() < 2 || words[1] != words.size() - 2 || reinterpret_cast<uintptr_t>(answer.ptr) % 4 || !shape.like) {
         throwTypeError(globalObject, scope, "The scopes are not as expected"_s);
@@ -1205,7 +1225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGlobalVariable, (JSGlobalObject * globalObject, C
         return JSValue::encode(jsUndefined());
     uint32_t entry;
     memcpy(&entry, answer.ptr, 4);
-    Shape shape = shapeIn(globalObject, host, false, Variables, shapeOfLibVariable);
+    Shape shape = shapeIn(globalObject, host, LintScopeFlavor::TypeScript, Variables, shapeOfLibVariable);
     RETURN_IF_EXCEPTION(scope, {});
     JSString* known = libName(globalObject, host, entry >> 2);
     if (!shape.like || !known)
@@ -1224,7 +1244,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGlobalVariable, (JSGlobalObject * globalObject, C
 // `classes`: `[scopes, Variable, ImplicitLibVariable, definitions, Reference, globalSet]`, those of the scopes by the `ScopeKind` and those
 // of the definitions by the `DeclarationKind`, and an empty `set` for the global scope. It has to be the same array each time.
 // `names`: the configured globals.
-// With typescript-eslint `set` of the global scope is empty: see `globalVariable` and `addLibVariables`.
+// With typescript-eslint under ESLint `set` of the global scope is empty: see `globalVariable` and `addLibVariables`.
 JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1265,7 +1285,10 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
         return outOfStep();
     LintScopeMaker maker(globalObject, message, nodes, names, strings, text);
 
-    bool makesLibVariables = !host->isEspree();
+    LintScopeFlavor flavor = host->isOxlint() ? LintScopeFlavor::Oxlint : host->isEspree() ? LintScopeFlavor::EslintScope
+                                                                                           : LintScopeFlavor::TypeScript;
+    // oxlint has no libraries.
+    bool makesLibVariables = flavor == LintScopeFlavor::TypeScript;
     if (makesLibVariables && !host->scopes.lazyVariables) {
         constexpr uint32_t askForAll = 16;
         LintSpan libs = Bun__Lint__ask(globalObject, askForAll, nullptr, 0);
@@ -1276,12 +1299,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
         Locker locker { host->cellLock() };
         host->scopes.libNames.grow(*reinterpret_cast<const uint32_t*>(libs.ptr));
     }
-    LintScopeLayout& known = host->scopes.layouts[host->isEspree()];
+    LintScopeLayout& known = host->scopes.layoutOf(flavor);
     if (!known.classes)
         known.classes.set(vm, host, layout);
     if (known.classes.get() != layout)
         return outOfStep();
-    maker.takeShapes(host, host->isEspree());
+    maker.takeShapes(host, flavor);
     RETURN_IF_EXCEPTION(scope, {});
     for (const Shape& shape : maker.variableShapes) {
         if (!shape.like)
@@ -1401,12 +1424,11 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSetScopeManager, (JSGlobalObject * globalObject, 
 // Adds what the program in src/lint/js_plugin/worker calls to its `native` object.
 void addLintScopeFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
-    VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "scopes"_s), JSFunction::create(vm, globalObject, 3, "scopes"_s, jsLintScopes, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "globalVariable"_s), JSFunction::create(vm, globalObject, 2, "globalVariable"_s, jsLintGlobalVariable, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "addLibVariables"_s), JSFunction::create(vm, globalObject, 0, "addLibVariables"_s, jsLintAddLibVariables, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "usedVariables"_s), JSFunction::create(vm, globalObject, 0, "usedVariables"_s, jsLintUsedVariables, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "setScopeManager"_s), JSFunction::create(vm, globalObject, 1, "setScopeManager"_s, jsLintSetScopeManager, ImplementationVisibility::Public));
+    addLintFunction(globalObject, native, "scopes"_s, 3, jsLintScopes);
+    addLintFunction(globalObject, native, "globalVariable"_s, 2, jsLintGlobalVariable);
+    addLintFunction(globalObject, native, "addLibVariables"_s, 0, jsLintAddLibVariables);
+    addLintFunction(globalObject, native, "usedVariables"_s, 0, jsLintUsedVariables);
+    addLintFunction(globalObject, native, "setScopeManager"_s, 1, jsLintSetScopeManager);
 }
 
 } // namespace Bun

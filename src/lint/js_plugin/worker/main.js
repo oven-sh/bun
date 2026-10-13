@@ -319,6 +319,7 @@ const SourceCode = native.sourceCode(native.TokenStore, [
   program,
   scopeManager,
   () => fileSettings.languageOptions.parserOptions,
+  oxlintScopeManager,
 ]);
 let sourceCode = new SourceCode();
 let filename = "";
@@ -411,10 +412,67 @@ function settingsFor(settings, kind) {
   return known[kind];
 }
 
+// oxlint's `context.languageOptions`: one object for all files. What differs between files is behind getters, which answer for the
+// file being linted.
+const oxlintLanguageOptions = once(() => {
+  const ecmaFeatures = Object.freeze({
+    get jsx() {
+      return fileSettings.languageOptions.parserOptions.ecmaFeatures.jsx;
+    },
+    get globalReturn() {
+      return fileSettings.languageOptions.parserOptions.ecmaFeatures.globalReturn;
+    },
+    get impliedStrict() {
+      return fileSettings.languageOptions.parserOptions.ecmaFeatures.impliedStrict;
+    },
+  });
+  const parserOptions = Object.freeze({
+    get sourceType() {
+      return fileSettings.languageOptions.sourceType;
+    },
+    ecmaFeatures,
+  });
+  const VisitorKeys = native.visitorKeys(2);
+  let syntax = null;
+  const parser = Object.freeze({
+    name: "oxlint",
+    // The version of oxlint whose plugin API this is.
+    version: "1.87.0",
+    parse(_code, _options) {
+      throw new Error("`context.languageOptions.parser.parse` not implemented yet.");
+    },
+    VisitorKeys,
+    get Syntax() {
+      if (syntax === null) {
+        syntax = Object.create(null);
+        for (const key of Object.keys(VisitorKeys)) syntax[key] = key;
+        Object.freeze(syntax);
+      }
+      return syntax;
+    },
+    latestEcmaVersion: 17,
+    supportedEcmaVersions: Object.freeze([3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]),
+  });
+  return Object.freeze({
+    get sourceType() {
+      return fileSettings.languageOptions.sourceType;
+    },
+    ecmaVersion: 2026,
+    parser,
+    parserOptions,
+    get globals() {
+      return fileSettings.languageOptions.globals;
+    },
+    get env() {
+      return fileSettings.languageOptions.env;
+    },
+  });
+});
+
 // What a context had until ESLint 9, which plugins still ask for.
 const oldContext = {
   get parserOptions() {
-    return fileSettings.languageOptions.parserOptions;
+    return fileSettings.freezes ? oxlintLanguageOptions().parserOptions : fileSettings.languageOptions.parserOptions;
   },
   // Only a configuration for ESLint 8 has it.
   get parserPath() {
@@ -514,7 +572,7 @@ const oxlintFileContext = Object.freeze(
         return fileSettings.settings;
       },
       get languageOptions() {
-        return fileSettings.languageOptions;
+        return oxlintLanguageOptions();
       },
       extend: FileContext.prototype.extend,
     },
@@ -618,7 +676,7 @@ function addListeners(entry, listeners) {
 
 // What `native.listen` is told.
 let listenWords = new Uint32Array(64);
-// 0: the tree of typescript-estree, 1: that of espree.
+// 0: the tree of typescript-estree, which oxlint's is like in every file, 1: that of espree.
 let fileDialect = 0;
 
 function dialect() {

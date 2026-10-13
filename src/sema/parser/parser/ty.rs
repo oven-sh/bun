@@ -62,7 +62,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseTypeAnnotation`, after the `:`.
     #[cold]
     fn type_annotation_in_javascript(&mut self) -> TypeNodeId {
-        if self.is_flow {
+        if self.is_flow() {
             return self.flow_type();
         }
         let ty = self.ty();
@@ -288,7 +288,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `parseTypeOrTypePredicate`
     pub(crate) fn type_or_type_predicate(&mut self) -> TypeNodeId {
-        if self.is_flow {
+        if self.is_flow() {
             return self.flow_return_type_of_function();
         }
         // `parseReturnType`: `T extends () => A extends B ? 1 : 0 ? C : D`
@@ -614,7 +614,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             | T::TemplateHead => true,
             T::Function => !is_in_parameter,
             T::Minus => !is_in_parameter && matches!(self.peek(), T::Number | T::BigInt),
-            _ => self.is_identifier(),
+            // Not even for oxc: `a as T ? await b : c`.
+            _ => self.is_identifier_in_context(),
         }
     }
 
@@ -886,13 +887,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn name_after_dot_in_type(&mut self) -> Option<(Atom, u32)> {
         let token = self.token();
         // Flow, whose `typeof a.b` is read here, has neither rule.
-        if token == T::LessThan && !self.is_flow {
+        if token == T::LessThan && !self.is_flow() {
             return None;
         }
         let is_word = token.is_identifier_or_keyword();
         let starts_something_else = is_word
             && self.newline_before()
-            && !self.is_flow
+            && !self.is_flow()
             && self.is_followed_by_word_on_same_line();
         if starts_something_else && !self.recovers() {
             self.refuse(Refusal::Reported);
@@ -968,7 +969,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     pub(crate) fn type_arguments_unchecked(
         &mut self,
     ) -> (IdList<TypeNodeId>, Option<GrammarError>) {
-        if self.is_flow {
+        if self.is_flow() {
             return (self.flow_type_arguments(), None);
         }
         let less_than = self.pos();
@@ -1054,7 +1055,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `isListElement(PCHeritageClauseElement)`
     pub(crate) fn is_heritage_element(&mut self) -> bool {
+        if self.is_in_implements_for_oxc && self.token().is_identifier_or_keyword() {
+            return true;
+        }
+        if self.is_in_interface_extends_for_oxc {
+            return self.token() != T::OpenBrace && self.is_start_of_expression();
+        }
         match self.token() {
+            // For oxc a class extends an expression, which this starts. Where names are listed it is the body.
+            T::OpenBrace if self.options.dialect.oxc => !self.has_context(ctx::TYPE),
+            // A name to oxc.
+            T::Implements if self.options.dialect.oxc => true,
             // `isValidHeritageClauseObjectLiteral`: `{}` is the body unless something follows that
             // can follow an element.
             T::OpenBrace => self.look_ahead(|p| {
@@ -1126,12 +1137,21 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             Some(reference) => reference,
             None if self.has_failed() => TypeNodeId::NONE,
             // An error of its parser.
-            None if self.is_flow => {
+            None if self.is_flow() => {
                 self.refuse(Refusal::Reported);
                 TypeNodeId::NONE
             }
             None => {
                 self.lx.reset(before);
+                if self.is_in_implements_for_oxc {
+                    self.check_implemented_like_oxc();
+                    // It reads no regular expression there.
+                    if matches!(self.token(), T::Slash | T::SlashEquals) {
+                        let start = self.pos();
+                        self.next();
+                        return self.finish_type(TypeNodeKind::Error, start);
+                    }
+                }
                 self.heritage_expression(is_checked)
             }
         }
@@ -1145,7 +1165,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         is_checked: bool,
         not_entity_name: u32,
     ) -> Option<TypeNodeId> {
-        if !self.is_identifier() && !self.is_name_in_type_for_oxc() {
+        if !self.is_identifier()
+            && !self.is_name_in_type_for_oxc()
+            && !(self.is_in_implements_for_oxc
+                && self.token().is_identifier_or_keyword()
+                && self.token() != T::PrivateIdentifier)
+        {
             return None;
         }
         let start = self.pos();
@@ -1154,6 +1179,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.s.names.push(first);
         let mut is_optional_chain = false;
         while matches!(self.token(), T::Dot | T::QuestionDot) {
+            // The name ends here for oxc.
+            if self.token() == T::QuestionDot && self.is_in_implements_for_oxc {
+                self.s.names.truncate(base);
+                return None;
+            }
             is_optional_chain |= self.token() == T::QuestionDot;
             self.next();
             let token = self.token();
@@ -1228,6 +1258,30 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
+    /// An element of the `extends` clause of an interface as oxc reads it: a name with type arguments if the clause goes on or
+    /// ends after it, and else an expression.
+    #[cold]
+    #[inline(never)]
+    fn extended_like_oxc(&mut self, is_checked: bool) -> TypeNodeId {
+        let name = self.try_parse(|p| {
+            let name = p.heritage_entity_name(is_checked, 2499)?;
+            let is_all = matches!(
+                p.token(),
+                T::Comma | T::OpenBrace | T::Extends | T::Implements | T::Eof
+            );
+            is_all.then_some(name)
+        });
+        if let Some(name) = name {
+            return name;
+        }
+        let start = self.pos();
+        let saved = self.enter_context(0, ctx::TYPE);
+        let expr = self.assignment_expression();
+        self.context = saved;
+        let args = IdList::EMPTY;
+        self.finish_type(TypeNodeKind::Heritage { expr, args }, start)
+    }
+
     /// `parseExpressionWithTypeArguments`, of an expression that is no entity name: the checker
     /// reports it.
     #[cold]
@@ -1295,6 +1349,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let mut others: Vec<TypeNodeId> = Vec::new();
         // The checker returns after 1172 or at `implements`.
         let (mut has_extends, mut is_checked) = (false, true);
+        // For oxc: the `implements` keywords.
+        let mut implements: Vec<(u32, u32)> = Vec::new();
         let lists = self.enter_list(ListKind::HeritageClauses);
         let mut is_first = true;
         while self.is_at_heritage_clause(std::mem::take(&mut is_first)) {
@@ -1307,22 +1363,36 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.flag(DiagnosticKind::Grammar, 1172, (keyword.0, 0), &[]);
                 }
             }
-            if is_extends && has_extends && self.reports_like_oxc() {
-                oxc::misplaced_clause(&mut self.f.diagnostics, 1172, keyword, keyword);
+            if is_extends && self.is_for_oxc() {
+                let errors = &mut self.f.diagnostics;
+                match (has_extends, implements.first()) {
+                    (true, _) => oxc::misplaced_clause(errors, 1172, keyword, keyword),
+                    (false, Some(&first)) => oxc::misplaced_clause(errors, 1173, first, keyword),
+                    _ => {}
+                }
             }
             has_extends |= is_extends;
-            if !is_extends && self.reports_like_oxc() {
-                oxc::interface_implements(&mut self.f.diagnostics, keyword);
+            if !is_extends && self.is_for_oxc() {
+                implements.push(keyword);
             }
             self.next();
             let base = self.s.ids.len();
             let mut element_error = None;
+            self.is_in_interface_extends_for_oxc = is_extends && self.is_for_oxc();
+            self.is_in_implements_for_oxc = !is_extends && self.is_for_oxc();
             let (count, comma) = self.heritage_elements(|p, _| {
                 let first_token = (p.lx.start, p.lx.end);
-                let ty = p.heritage_type(is_first_extends, 2499);
+                let ty = match p.is_in_interface_extends_for_oxc && p.recovers() {
+                    true => p.extended_like_oxc(is_first_extends),
+                    false => p.heritage_type(is_first_extends, 2499),
+                };
                 let is_name = |it: &TypeNode| !matches!(it.kind, TypeNodeKind::Heritage { .. });
+                // oxc gives up after `#a` alone.
+                let is_private_name = p.lx.src.get(first_token.0 as usize) == Some(&b'#')
+                    && p.prev_end() == first_token.1;
                 if is_extends
-                    && p.reports_like_oxc()
+                    && p.is_for_oxc()
+                    && !is_private_name
                     && !p.f.types.get(ty.idx()).is_some_and(is_name)
                 {
                     let at = (first_token.0, p.prev_end());
@@ -1331,10 +1401,24 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 p.s.ids.push(ty.0);
                 element_error = element_error.or_else(|| p.import_with_type_arguments(first_token));
             });
+            self.is_in_interface_extends_for_oxc = false;
+            self.is_in_implements_for_oxc = false;
+            // After the keyword and after a comma oxc wants an element. Only `extends` can end with a comma, before the body.
+            if (comma.is_some() || count == 0) && self.is_for_oxc() {
+                match comma {
+                    Some(comma) if is_extends && self.token() == T::OpenBrace => {
+                        oxc::trailing_comma(&mut self.f.diagnostics, comma);
+                    }
+                    None if is_extends && self.token() == T::OpenBrace => {}
+                    _ => self.unexpected_like_oxc(),
+                }
+            }
             // `checkGrammarHeritageClause`
             match comma {
                 _ if !is_checked => {}
                 Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, (comma.0, 0), &[]),
+                // oxc has given up.
+                None if count == 0 && self.token() != T::OpenBrace && self.is_for_oxc() => {}
                 None if count == 0 => {
                     let at = (keyword.1, keyword.1);
                     self.flag(DiagnosticKind::Grammar, 1097, at, &[b"extends"]);
@@ -1355,6 +1439,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
         }
         self.leave_list(lists);
+        // oxc says it when it is through with the clauses.
+        for keyword in implements {
+            oxc::interface_implements(&mut self.f.diagnostics, keyword, self.lx.start);
+        }
         (extends, self.f.list(&others))
     }
 
@@ -1507,7 +1595,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let at = (start, self.prev_end());
         self.flag(DiagnosticKind::Checker, 1141, at, &[]);
-        if self.reports_like_oxc() {
+        // Where no type is, oxc has given up.
+        if at.0 < at.1 && self.reports_like_oxc() {
             oxc::argument_of_import_type(&mut self.f.diagnostics, at);
         }
         argument
@@ -1828,7 +1917,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             _ => {}
         }
         let ty = self.type_annotation();
-        self.semicolon();
+        match self.options.dialect.oxc {
+            // It wants the `}`, after a `;` or not.
+            true => _ = self.eat(T::Semicolon),
+            false => self.semicolon(),
+        }
         let members = match self.token() {
             T::CloseBrace => Span::EMPTY,
             _ => self.members_after_mapped_type(),
@@ -1862,6 +1955,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[cold]
     #[inline(never)]
     fn members_after_mapped_type(&mut self) -> Span<MemberId> {
+        if self.is_for_oxc() {
+            self.expected_like_oxc("}");
+        }
         let members = self.type_member_list();
         let first = self.f.members.get(members.start as usize);
         // `GetErrorRangeForNode`

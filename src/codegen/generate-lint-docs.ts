@@ -1,20 +1,20 @@
-// Packs the lint rule docs, `docs/lint/rules/<plugin>/<rule>.mdx`, into two files that are embedded in the executable:
+// Packs the lint rule docs, `docs/lint/rules/<plugin>/<rule>.mdx`, into one file that is embedded in the executable.
 //
-// - descriptions: one line per page, `<plugin>/<rule>\t<description from the frontmatter>`. For `bun lint --rules`.
-// - pages: for each page a NUL, `<plugin>/<rule>`, a newline, then its Markdown. For `bun lint --explain <rule>`.
-//   The Markdown is the description, then the page without its frontmatter and MDX comments. A code block's file
-//   name moves to a line above the block.
+// For each page it has a NUL, `<plugin>/<rule>`, a newline, then the page's Markdown. The Markdown is the description
+// from the frontmatter on one line, an empty line, then the page without its frontmatter and MDX comments. A code
+// block's file name moves to a line above the block.
 //
-// Both are sorted by `<plugin>/<rule>`. `src/lint/driver/explain.rs` reads them.
+// The pages are sorted by `<plugin>/<rule>`. `src/lint/driver/explain.rs` reads the file: `bun lint --rules` the
+// descriptions, `bun lint --explain <rule>` a page.
 //
-// usage: bun generate-lint-docs.ts <docs/lint/rules> <descriptions> <pages>
+// usage: bun generate-lint-docs.ts <docs/lint/rules> <pages>
 import { readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { readdirRecursive, writeIfNotChanged } from "./helpers.ts";
 
-const [root, descriptionsPath, pagesPath] = process.argv.slice(2);
-if (!root || !descriptionsPath || !pagesPath) {
-  console.error("usage: generate-lint-docs.ts <docs/lint/rules> <descriptions> <pages>");
+const [root, pagesPath] = process.argv.slice(2);
+if (!root || !pagesPath) {
+  console.error("usage: generate-lint-docs.ts <docs/lint/rules> <pages>");
   process.exit(1);
 }
 
@@ -65,15 +65,12 @@ const names = readdirRecursive(root)
   .filter(name => name.includes("/"))
   .sort((a, b) => (a < b ? -1 : 1));
 
-let descriptions = "";
 let pages = "";
 for (const name of names) {
   const text = readFileSync(join(root, name + ".mdx"), "utf8").replaceAll("\r\n", "\n");
   const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(text);
   const description = field(frontmatter?.[1] ?? "", "description").replace(/\s+/g, " ");
   const body = forTerminal(text.slice(frontmatter?.[0].length ?? 0)).replaceAll("\0", "");
-  descriptions += `${name}\t${description}\n`;
   pages += `\0${name}\n${description}\n\n${body.trim()}\n`;
 }
-writeIfNotChanged(descriptionsPath, descriptions);
 writeIfNotChanged(pagesPath, pages);

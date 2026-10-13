@@ -301,6 +301,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !has_only_strings && !self.has_failed() {
             // In a TypeScript file Prettier asks typescript-estree, which takes any expression.
             match self.is_ecmascript {
+                // The linter has oxc's words for it.
+                true if self.options.dialect.oxc => {}
                 true => self.refuse(Refusal::Reported),
                 false if is_in_type => {}
                 false => self.after_expressions_of_declaration(open, declarations),
@@ -382,7 +384,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let (mut is_type_only, mut property_name, mut can_parse_as) = (false, None, true);
         let mut property_name_end = 0;
         let mut name = self.module_export_name();
-        if name.token == T::Type || name.token == T::TypeOf && self.is_flow {
+        if name.token == T::Type || name.token == T::TypeOf && self.is_flow() {
             // "If the first token of an import specifier is 'type', there are a lot of
             // possibilities"
             if self.token() == T::As {
@@ -507,7 +509,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let saved = self.leave_await_context_of_top_level();
         let clause_start = self.pos();
         let mut identifier = None;
-        if self.is_identifier() || self.token() == T::TypeOf && self.is_flow {
+        if self.is_identifier() || self.token() == T::TypeOf && self.is_flow() {
             identifier = Some((self.lx.atom, self.pos(), self.token()));
             self.next_after_name();
         }
@@ -546,9 +548,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
             }
         }
+        // Without a `=` oxc goes on with the clause, and misses the `from`.
         if let Some((name, name_pos, _)) = identifier
             && !is_deferred
             && !matches!(self.token(), T::Comma | T::From)
+            && (self.token() == T::Equals || !self.options.dialect.oxc)
         {
             let statement = self.import_equals(start, base, flags, (name, name_pos), type_only);
             self.context = saved;
@@ -931,7 +935,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.context = saved;
         self.semicolon();
         let kind = match is_export_equals {
-            true => StmtKind::ExportAssign(expression),
+            true => {
+                self.f.rare_syntax |= rare::EXPORT_ASSIGNMENT;
+                StmtKind::ExportAssign(expression)
+            }
             false => StmtKind::ExportDefault(expression),
         };
         self.add_stmt(kind, start, modifiers)

@@ -70,10 +70,12 @@ use std::cell::{OnceCell, RefCell};
 
 mod references;
 mod scopes;
+mod table_of_oxc;
 mod variables;
 
 use references::{RawReference, ReferenceSite, References};
 use scopes::{Block, ScopeTree};
+pub use table_of_oxc::{order_in_table, order_in_table_of_oxc};
 use variables::Variables;
 
 /// Each part is computed the first time it is needed.

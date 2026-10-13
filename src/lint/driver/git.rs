@@ -300,7 +300,7 @@ impl<'e> Files<'e> {
     /// Explains why `files` (absolute paths, all [partly staged](Files::is_partly_staged)) weren't written. `done` is
     /// what didn't happen to them, like "fixed".
     pub(crate) fn refusal_to_write(&self, files: &mut [Vec<u8>], done: &str) -> Vec<u8> {
-        files.sort_unstable();
+        bun_lint::utils::sort::sort_unstable(files);
         let shown = files
             .iter()
             .map(|it| paths::relative(&self.environment.cwd, it));

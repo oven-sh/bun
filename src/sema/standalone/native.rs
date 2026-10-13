@@ -420,6 +420,21 @@ unsafe extern "C" fn highway_line_starts(p: *const u8, len: usize, out: *mut u32
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_odd_blocks(p: *const u8, len: usize, out: *mut u64) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    for (word, blocks) in text.chunks(64 * 64).enumerate() {
+        let is_odd = |c: &u8| !matches!(c, 0x20..=0x5B | 0x5D..=0x7E | b'\t' | b'\n' | b'\r');
+        let marks = blocks.chunks(64).enumerate();
+        let marks = marks.fold(0u64, |marks, (i, block)| {
+            marks | u64::from(block.iter().any(is_odd)) << i
+        });
+        // SAFETY: `out` has a word for every 64 blocks of 64 bytes, whole or not.
+        unsafe { out.add(word).write(marks) };
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_scanner_run_stops(
     p: *const u8,
     len: usize,

@@ -21,6 +21,7 @@ enum Problem {
     BadRest,
     RestNotLast,
     CommaAfterRest,
+    Unexpected,
 }
 
 impl Problem {
@@ -39,6 +40,7 @@ impl Problem {
             Problem::CommaAfterRest => {
                 "A rest parameter or binding pattern may not have a trailing comma."
             }
+            Problem::Unexpected => "Unexpected token",
         }
     }
 
@@ -292,11 +294,28 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 && !is_name_or_member(target)
             {
                 targets.noticed = target.outer_span().end;
+                // oxc looks for the operand of a `yield` wherever the line goes on, and finds the `in`.
+                let is_yield = matches!(target.kind(), ExprKind::Yield { value: None, .. });
+                let keyword = skip_trivia(file.text(), target.span().end);
+                let between = file.slice(Span::after(target.span(), keyword));
+                if is_yield
+                    && tag == StmtTag::ForIn
+                    && !target.is_parenthesized()
+                    && !bun_core::strings::contains_js_line_break(between)
+                {
+                    targets.noticed = keyword;
+                    targets.stop(Span::new(keyword, keyword + 2), Problem::Unexpected);
+                    continue;
+                }
                 targets.target(target);
             }
         }
     }
+    // oxc converts a target when it has read the operator after it. Where TypeScript's parser has an error up to there, the
+    // tree has a hole, and oxc's parser has given up at that error.
+    let gives_up_at = super::super::error_of_parser(file).map(|it| it.map_or(0, |it| it.start));
     (targets.found.into_iter())
+        .filter(|it| gives_up_at.is_none_or(|at| skip_trivia(file.text(), it.noticed) < at))
         .map(|it| {
             SyntaxError::of_oxc(it.label, it.problem.message().as_bytes().to_vec())
                 .help(Cow::Borrowed(it.problem.help()))

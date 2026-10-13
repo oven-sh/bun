@@ -670,7 +670,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                             self.const_assertion_type();
                             ExprKind::AsConst(left)
                         } else {
-                            let ty = match self.is_flow {
+                            let ty = match self.is_flow() {
                                 true => self.flow_type(),
                                 false => self.ty(),
                             };
@@ -688,7 +688,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     if self.token() == T::GreaterThan {
                         self.lx.rescan_greater_than();
                     }
-                    if self.token().binary_precedence() > last_precedence && !self.is_flow {
+                    if self.token().binary_precedence() > last_precedence && !self.is_flow() {
                         return left;
                     }
                 }
@@ -923,6 +923,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 Some(ExprKind::Dot { name_pos, .. }) if is_private(name_pos) => {
                     self.f.rare_syntax |= rare::DELETES_A_NAME;
                 }
+                // oxc looks through them.
+                Some(
+                    ExprKind::As { .. }
+                    | ExprKind::AsConst(_)
+                    | ExprKind::Satisfies { .. }
+                    | ExprKind::NonNull(_),
+                ) => self.f.rare_syntax |= rare::DELETES_A_NAME,
                 _ => {}
             }
         }
@@ -1006,7 +1013,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `parseDecoratorExpression`
     pub(crate) fn decorator_expression(&mut self) -> ExprId {
-        if self.token() == T::Await && self.has_context(ctx::AWAIT) {
+        if self.token() == T::Await && self.has_context(ctx::AWAIT) && !self.options.dialect.oxc {
             return self.await_as_decorator();
         }
         // An element is no decorator.
@@ -1131,6 +1138,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let start = self.pos();
         // `nextTokenIsOpenParenOrLessThan`, `nextTokenIsDot`: otherwise `parsePrimaryExpression`.
         if self.recovers() && !matches!(self.peek(), T::OpenParen | T::LessThan | T::Dot) {
+            if self.is_for_oxc() {
+                self.next();
+                self.import_without_call_like_oxc(start);
+                return self.add_expr(ExprKind::Missing, start, start);
+            }
             return self.missing_expression(1109);
         }
         self.next();
@@ -1246,6 +1258,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !self.recovers() || self.token() != T::LessThan {
             self.fail();
             return ExprId::NONE;
+        }
+        if !is_deferred {
+            self.import_without_call_like_oxc(start);
         }
         let (less_than, reported) = (self.pos(), self.f.diagnostics.len());
         let type_args = match self.has_type_arguments_in_expressions {
@@ -1564,7 +1579,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                             };
                             let mut instantiation = self.finish_expr(kind, start);
                             // `tryReparseOptionalChain`: it is in no chain.
-                            if !self.is_flow {
+                            if !self.is_flow() {
                                 chain = Chain::No;
                             }
                             if matches!(self.token(), T::Dot | T::QuestionDot) {
@@ -1579,7 +1594,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         }
                     };
                 }
-                T::OpenBrace if allows_calls && self.is_flow => {
+                T::OpenBrace if allows_calls && self.is_flow() => {
                     match self.flow_braces_after_expression(start, expression) {
                         Some(with_braces) => expression = with_braces,
                         None => return expression,
@@ -1617,7 +1632,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.private_name_in_optional_chain();
         }
         let (name, name_pos) = self.right_side_of_dot();
-        self.error(1477, (less_than, greater_than_end), &[]);
+        // `check_implemented_like_oxc` has said what oxc does.
+        if !self.is_in_implements_for_oxc {
+            self.error(1477, (less_than, greater_than_end), &[]);
+        }
         let (chain, chain_after) = match is_optional {
             true => (Chain::Start, Chain::Continue),
             false => (Chain::No, Chain::No),
@@ -1792,7 +1810,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         &mut self,
         allows_calls: bool,
     ) -> Option<IdList<TypeNodeId>> {
-        if self.is_flow {
+        if self.is_flow() {
             return self.flow_type_arguments_in_expression(!allows_calls);
         }
         let less_than = self.pos() as usize;
@@ -1904,6 +1922,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             T::BigInt => self.token_expr(ExprKind::BigInt(self.lx.atom)),
             T::PrivateIdentifier => {
+                self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
                 if self.is_ecmascript && self.private_name_before_in != self.pos() {
                     self.fail();
                 }
@@ -1954,7 +1973,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// No `)` follows the `expression` after the `(` at `open`.
     #[cold]
     fn unclosed_parenthesized_expression(&mut self, open: u32, expression: ExprId) -> ExprId {
-        if self.token() == T::Colon && self.is_flow {
+        if self.token() == T::Colon && self.is_flow() {
             return self.flow_type_cast(open, expression);
         }
         self.expected(T::CloseParen);
@@ -2180,6 +2199,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.flag(DiagnosticKind::Grammar, 17012, at, &args);
             }
             let (name, _) = self.identifier_name();
+            self.f.rare_syntax |= rare::NEW_TARGET;
             return self.finish_expr(ExprKind::NewTarget(name), start);
         }
         let callee_start = self.pos();
@@ -2443,7 +2463,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
         }
         let is_generator = kind == PropKind::Init && self.eat(T::Asterisk);
-        let mut is_identifier = self.is_identifier();
+        // Not even for oxc is `{ await }` a shorthand where `await` is a keyword.
+        let mut is_identifier = self.is_identifier_in_context();
         // As in a computed name.
         if self.token() == T::Await && self.await_context_of_module() != 0 {
             (is_identifier, self.has_await_in_name) = (true, true);
@@ -2451,6 +2472,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let is_bigint = self.token() == T::BigInt;
         let name_end = self.lx.end;
         let (mut key, name_kind, pos) = self.property_name();
+        if matches!(key, PropKey::Private(_)) {
+            self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
+        }
         // `getDeclarationName`: a private name outside a class declares nothing. Neither does a
         // bigint.
         if self.classes_around == 0 && matches!(key, PropKey::Private(_)) || is_bigint {
@@ -2533,6 +2557,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             modifiers = self.take_modifiers(first_modifier);
             let index = (self.s.props.len() - base) as u32;
             self.s.prop_modifiers.push((index, modifiers));
+            let is_method = kind == PropKind::Method;
+            if !(is_method && flags == Flags::ASYNC) && self.is_for_oxc() {
+                oxc::object_member(&mut self.f, modifiers, is_method);
+            }
         }
         let prop = Prop {
             kind,

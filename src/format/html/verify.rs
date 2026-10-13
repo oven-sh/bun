@@ -1,6 +1,6 @@
-//! A check that formatting has not lost or made up anything. `bun format` makes it before it writes a file.
+//! A check that formatting has not lost or made up anything: `bun format --debug-check`.
 //!
-//! What has been written is parsed, and compared with the file:
+//! What would be written is parsed, and compared with the file:
 //!
 //! - The elements, comments, blocks and declarations are the same, in the same order and in each other the same way, and the
 //!   elements have the same attributes in the same order. Upper and lower case do not count.

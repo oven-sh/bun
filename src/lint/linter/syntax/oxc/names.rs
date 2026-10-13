@@ -6,11 +6,13 @@
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
-    File, Flags, FnKind, Func, KeyKind, Module, ModuleName, Name, Node, PatKind, Stmt, StmtKind,
-    StmtTag, VarKind,
+    Class, ExprKind, File, Flags, FnKind, Func, Handle, KeyKind, Member, MemberKind, Module,
+    ModuleName, Name, Node, PatKind, Stmt, StmtKind, StmtTag, VarKind,
 };
 use crate::language::SourceType;
-use crate::semantic::{Declaration, DeclarationKinds, Scope, ScopeKind, Symbol};
+use crate::semantic::{
+    Declaration, DeclarationKinds, Scope, ScopeKind, Symbol, order_in_table_of_oxc,
+};
 use crate::span::Span;
 use crate::tokens::skip_trivia;
 use crate::utils::oxlint::{is_strict_mode, source_type};
@@ -141,16 +143,20 @@ fn is_instantiated<'a>(module: Module<'a>) -> bool {
     })
 }
 
+fn redeclaration(name: &[u8], first: Span, second: Span) -> SyntaxError {
+    let name = bstr::BStr::new(name);
+    let message = format!("Identifier `{name}` has already been declared").into_bytes();
+    SyntaxError::of_oxc(first, message)
+        .says(Cow::Owned(format!(
+            "`{name}` has already been declared here"
+        )))
+        .and(second, Cow::Borrowed("It can not be redeclared here"))
+}
+
 impl<'a> Binder<'a> {
     /// `noticed`: where oxc is when it reports the error, if not at `second`.
     fn report(&mut self, name: Name<'a>, first: Span, second: Span, noticed: Option<u32>) {
-        let name = bstr::BStr::new(name.bytes());
-        let message = format!("Identifier `{name}` has already been declared").into_bytes();
-        let error = SyntaxError::of_oxc(first, message)
-            .says(Cow::Owned(format!(
-                "`{name}` has already been declared here"
-            )))
-            .and(second, Cow::Borrowed("It can not be redeclared here"));
+        let error = redeclaration(name.bytes(), first, second);
         self.errors.push(match noticed {
             Some(at) => error.noticed_at(at),
             None => error,
@@ -447,79 +453,13 @@ impl<'a> Binder<'a> {
     }
 }
 
-/// oxc's `ident_hash` of a name, as far as hashbrown picks the bucket by it.
-fn hash_of_oxc(name: &[u8]) -> u32 {
-    const SEEDS: (u32, u32) = (0x9E37_79B9, 0x85EB_CA6B);
-    let mix = |a: u32, b: u32| {
-        let product = u64::from(a) * u64::from(b);
-        product as u32 ^ (product >> 32) as u32
-    };
-    let read = |at: usize| {
-        let bytes = name.get(at..at + 4);
-        u32::from_le_bytes(bytes.and_then(|it| it.try_into().ok()).unwrap_or_default())
-    };
-    let byte = |at: usize| name.get(at).copied().map_or(0, u32::from);
-    let len = name.len();
-    let hash = match len {
-        0 => 0,
-        1..=3 => {
-            let packed = byte(0) << 16 | byte(len / 2) << 8 | byte(len - 1);
-            mix(packed ^ SEEDS.0, packed ^ SEEDS.1)
-        }
-        4..=8 => mix(read(0) ^ SEEDS.0, read(len - 4) ^ SEEDS.1),
-        9..=16 => mix(
-            read(0) ^ read(len / 2 - 2) ^ SEEDS.0,
-            read(len - 4) ^ SEEDS.1,
-        ),
-        _ => mix(
-            read(0) ^ read(len / 3) ^ SEEDS.0,
-            read(2 * len / 3) ^ read(len - 4) ^ SEEDS.1,
-        ),
-    };
-    hash ^ (len as u32).rotate_left(16)
-}
-
-/// What a module declares at the top, in the order in which oxc goes through it: bucket by bucket through a hashbrown table that
-/// has grown as the names were declared.
+/// What a module declares at the top, in the order in which oxc goes through it.
 fn names_of_file_in_order_of_oxc<'a>(file: &'a File<'a>) -> Vec<Name<'a>> {
-    /// How many buckets hashbrown looks at in one step, with SSE2.
-    const GROUP: usize = 16;
-    fn put<'a>(table: &mut [Option<Name<'a>>], name: Name<'a>) {
-        let mask = table.len() - 1;
-        let (mut at, mut stride) = (hash_of_oxc(name.bytes()) as usize & mask, 0);
-        loop {
-            let mut group = (0..GROUP.min(table.len())).map(|it| (at + it) & mask);
-            if let Some(free) = group.find(|&it| table[it].is_none()) {
-                table[free] = Some(name);
-                return;
-            }
-            stride += GROUP;
-            at = (at + stride) & mask;
-        }
-    }
-    let capacity = |buckets: usize| match buckets {
-        0 => 0,
-        1..=8 => buckets - 1,
-        _ => buckets / 8 * 7,
-    };
-    let mut table: Vec<Option<Name<'a>>> = Vec::new();
-    for (count, symbol) in file.top_level_scope().symbols().enumerate() {
-        if count == capacity(table.len()) {
-            let buckets = match count + 1 {
-                0..=3 => 4,
-                4..=7 => 8,
-                8..=14 => 16,
-                wanted => (wanted * 8 / 7).next_power_of_two(),
-            };
-            let mut grown = vec![None; buckets];
-            for name in table.into_iter().flatten() {
-                put(&mut grown, name);
-            }
-            table = grown;
-        }
-        put(&mut table, symbol.name());
-    }
-    table.into_iter().flatten().collect()
+    let declared = file.top_level_scope().symbols().map(|it| it.name());
+    let declared: Vec<Name<'a>> = declared.collect();
+    let order = order_in_table_of_oxc(declared.iter().map(|it| it.bytes()));
+    let in_order = order.into_iter().filter_map(|it| declared.get(it as usize));
+    in_order.copied().collect()
 }
 
 fn import_flag(is_type_only: bool) -> u32 {
@@ -661,8 +601,107 @@ pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     binder.errors
 }
 
+/// The members of `class` that have the name of the member before them of that name: `check_duplicate_class_elements`, for
+/// names that are not private.
+fn repeated_members<'a>(class: Class<'a>, errors: &mut Vec<(u32, SyntaxError)>) {
+    let file = class.file();
+    let mut last: FxHashMap<&'a [u8], (Member<'a>, Span)> = FxHashMap::default();
+    let is_accessor = |it: Member<'a>| matches!(it.kind(), MemberKind::Getter | MemberKind::Setter);
+    let is_static = |it: Member<'a>| it.flags().contains(Flags::STATIC);
+    // `PropertyKey::name`, and where the key is, without brackets.
+    let name_of = |it: Member<'a>| {
+        let Some(key) = it.key() else {
+            let keyword = it.constructor_keyword()?;
+            return Some((keyword.bytes(), keyword.span()));
+        };
+        let name = match key.kind() {
+            KeyKind::Ident(name)
+            | KeyKind::String(name)
+            | KeyKind::Number(name)
+            | KeyKind::ComputedString(name)
+            | KeyKind::ComputedNumber(name) => name.bytes(),
+            KeyKind::Computed(e) if !e.is_parenthesized() => match e.kind() {
+                ExprKind::Null => &b"null"[..],
+                ExprKind::BigInt(it) => {
+                    (it.bytes().strip_suffix(b"n")).unwrap_or_else(|| it.bytes())
+                }
+                ExprKind::Regex(_) => e.text(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some((name, key.inner_span(file)))
+    };
+    for member in class.members() {
+        let is_element = match member.kind() {
+            MemberKind::Property => true,
+            // What has no body is only a type to oxc.
+            MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
+                member.func().is_some_and(|it| it.has_body())
+            }
+            // `static constructor() {}` is a method.
+            MemberKind::Constructor => {
+                is_static(member) && member.func().is_some_and(|it| it.has_body())
+            }
+            _ => false,
+        };
+        let Some((name, second)) = name_of(member).filter(|_| is_element) else {
+            continue;
+        };
+        let Some((before, first)) = last.insert(name, (member, second)) else {
+            continue;
+        };
+        let is_pair = is_accessor(before) && is_accessor(member) && before.kind() != member.kind();
+        if !is_pair && is_static(before) == is_static(member) {
+            let error = redeclaration(file.slice(first), first, second);
+            errors.push((class.span().start, error.noticed_at(u32::MAX)));
+        }
+    }
+}
+
+/// Two members of a class with one name, in TypeScript. oxc looks for them when it is through with the file, class by class.
+pub(super) fn class_members<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+    let hir = &file.hir;
+    let mut errors: Vec<(u32, SyntaxError)> = Vec::new();
+    if file.is_javascript() {
+        return Vec::new();
+    }
+    for (i, raw) in hir.classes.iter().enumerate() {
+        // The names by the low bits of their numbers. Two that share a bit can be one name, or a getter and its setter.
+        let (mut seen, mut may_repeat) = ([0u64; 4], false);
+        for it in hir.members.get(raw.members.range()).unwrap_or_default() {
+            match it.key {
+                hir::PropKey::Name(name) => {
+                    let (word, bit) = (name.0 as usize >> 6 & 3, 1u64 << (name.0 & 63));
+                    may_repeat |= seen[word] & bit != 0;
+                    seen[word] |= bit;
+                }
+                // `1n`, which has the name of `1`.
+                hir::PropKey::None => may_repeat |= it.flags.contains(Flags::LITERAL_NAME),
+                // `[null]`, `[1n]` and `[/a/]` are names to oxc.
+                hir::PropKey::Computed(e) => {
+                    may_repeat |= matches!(
+                        hir.exprs.get(e.idx()).map(|it| it.kind),
+                        Some(hir::ExprKind::Null | hir::ExprKind::BigInt(_) | hir::ExprKind::Regex)
+                    );
+                }
+                hir::PropKey::Private(_) => {}
+            }
+        }
+        let class = Class::from_raw(file, i as u32);
+        if may_repeat && class.is_in_tree() {
+            repeated_members(class, &mut errors);
+        }
+    }
+    errors.sort_by_key(|it| it.0);
+    errors.into_iter().map(|it| it.1).collect()
+}
+
 /// `oxc_span::best_match`, two edits away at most. Of two that are as close it is the first.
-fn closest<'a>(needle: &[u8], candidates: impl Iterator<Item = &'a [u8]>) -> Option<&'a [u8]> {
+pub(super) fn closest<'a>(
+    needle: &[u8],
+    candidates: impl Iterator<Item = &'a [u8]>,
+) -> Option<&'a [u8]> {
     const THRESHOLD: usize = 2;
     let characters = |text: &[u8]| bstr::ByteSlice::chars(text).collect::<Vec<char>>();
     let needle_characters = characters(needle);
@@ -680,16 +719,61 @@ fn closest<'a>(needle: &[u8], candidates: impl Iterator<Item = &'a [u8]>) -> Opt
     best.map(|it| it.0)
 }
 
-/// What oxc says about the exports of a JavaScript module. Its parser reports a name that is exported twice when it is through
-/// with the file. The pass that builds the scopes reports `export { a }` where nothing declares `a`.
+/// What oxc says about the exports of a JavaScript module.
 pub(super) fn exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
-    if !file.has_rare_syntax(rare::ODD_EXPORT)
-        || !file.is_javascript()
-        || source_type(file) != SourceType::Module
-    {
+    if !file.has_rare_syntax(rare::ODD_EXPORT) {
         return Vec::new();
     }
+    let mut errors = undeclared_exports(file);
+    errors.extend(duplicate_exports(file));
+    errors
+}
+
+/// `export { a }` where nothing declares `a`, which the pass that builds the scopes reports.
+fn undeclared_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let mut errors = Vec::new();
+    if !file.is_javascript() || source_type(file) != SourceType::Module {
+        return errors;
+    }
+    let top = file.top_level_scope();
+    let mut names_in_order: Option<Vec<Name<'a>>> = None;
+    for it in file.body() {
+        let StmtKind::ExportNamed(list) = it.kind() else {
+            continue;
+        };
+        for local in list.items().iter().map(|it| it.local()) {
+            if list.has_from() || local.is_string() || top.get_name(local.name()).is_some() {
+                continue;
+            }
+            let name = bstr::BStr::new(local.bytes());
+            let message = format!("Export '{name}' is not defined").into_bytes();
+            let names = names_in_order.get_or_insert_with(|| names_of_file_in_order_of_oxc(file));
+            let names = names.iter().map(|it| it.bytes());
+            let help = closest(local.bytes(), names).map_or(Cow::Borrowed(""), |it| {
+                Cow::Owned(format!("Did you mean '{}'?", bstr::BStr::new(it)))
+            });
+            let error = SyntaxError::of_oxc(local.span(), message).help(help);
+            errors.push(error.noticed_at(u32::MAX));
+        }
+    }
+    errors
+}
+
+/// A name that a JavaScript module exports twice, and a second `default`. oxc's parser reports them when it is through with the
+/// file, also with one that it has given up. Nothing is asked of the scopes, and the tree can have holes.
+pub(super) fn duplicate_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+    let mut errors = Vec::new();
+    if !file.is_javascript() || source_type(file) != SourceType::Module {
+        return errors;
+    }
+    let hir = &file.hir;
+    // By a default import or a named one.
+    let is_imported = |name: Name<'a>| {
+        hir.imports.iter().any(|it| {
+            let named = hir.import_specs.get(it.named.range()).unwrap_or_default();
+            it.default == name.atom() || named.iter().any(|it| it.local == name.atom())
+        })
+    };
     // `ModuleRecord::exported_bindings`, and each name with the place that another has taken from it.
     let mut last: FxHashMap<&'a [u8], Span> = FxHashMap::default();
     let mut replaced: Vec<(&'a [u8], Span)> = Vec::new();
@@ -704,8 +788,6 @@ pub(super) fn exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         let start = skip_trivia(file.text(), export + "export".len() as u32);
         Span::new(start, start + "default".len() as u32)
     };
-    let top = file.top_level_scope();
-    let mut names_in_order: Option<Vec<Name<'a>>> = None;
     for it in file.body() {
         match it.kind() {
             StmtKind::ExportDefault(_) => own_defaults.push(keyword_after(it.span().start)),
@@ -721,32 +803,11 @@ pub(super) fn exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 for item in list.items() {
                     let (local, exported) = (item.local(), item.exported());
                     export(exported.bytes(), exported.span());
-                    let symbol = top.get_name(local.name()).filter(|_| !list.has_from());
-                    let is_imported_name = symbol.is_some_and(|it| {
-                        it.declarations().any(|it| {
-                            matches!(
-                                it,
-                                Declaration::ImportDefault(_) | Declaration::ImportSpec(_)
-                            )
-                        })
-                    });
                     if exported.bytes() == b"default" {
-                        match list.has_from() || is_imported_name {
+                        match list.has_from() || is_imported(local.name()) {
                             true => other_defaults.push(exported.span()),
                             false => own_defaults.push(exported.span()),
                         }
-                    }
-                    if !list.has_from() && symbol.is_none() && !local.is_string() {
-                        let name = bstr::BStr::new(local.bytes());
-                        let message = format!("Export '{name}' is not defined").into_bytes();
-                        let names = names_in_order
-                            .get_or_insert_with(|| names_of_file_in_order_of_oxc(file));
-                        let names = names.iter().map(|it| it.bytes());
-                        let help = closest(local.bytes(), names).map_or(Cow::Borrowed(""), |it| {
-                            Cow::Owned(format!("Did you mean '{}'?", bstr::BStr::new(it)))
-                        });
-                        let error = SyntaxError::of_oxc(local.span(), message).help(help);
-                        errors.push(error.noticed_at(u32::MAX));
                     }
                 }
             }

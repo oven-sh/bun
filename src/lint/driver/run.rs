@@ -1207,7 +1207,7 @@ impl Run<'_> {
         }
         let mut unread: Vec<Vec<u8>> = std::mem::take(&mut *unread.lock());
         if !unread.is_empty() {
-            unread.sort_unstable();
+            bun_lint::utils::sort::sort_unstable(&mut unread);
             unread.dedup();
             let noun: &[u8] = match unread.len() {
                 1 => b" file was not linted because only the parser in your config can read it: ",
@@ -1343,7 +1343,7 @@ impl Run<'_> {
                 not_staged.extend(only.stage(written.get_mut()).err().map(|it| it.0));
             }
             not_written = std::mem::take(failures.get_mut());
-            not_written.sort_unstable();
+            bun_lint::utils::sort::sort_unstable(&mut not_written);
             fixed = changed.len() - not_written.len();
             fixes = in_written.into_inner() as usize;
         }

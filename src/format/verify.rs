@@ -1,6 +1,6 @@
-//! A check that formatting has not changed the program. `bun format` makes it before it writes a file.
+//! A check that formatting has not changed the program: `bun format --debug-check`.
 //!
-//! What has been written is parsed, and its syntax tree is compared with that of the file ([`tree`]). So are
+//! What would be written is parsed, and its syntax tree is compared with that of the file ([`tree`]). So are
 //! the comments ([`comments`]). All that is not in the tree is free to change: white space, semicolons,
 //! parentheses that mean nothing, the comma after the last element of a list, the separators of the members
 //! of interfaces and type literals. Parentheses that mean something make another tree.

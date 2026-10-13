@@ -694,6 +694,7 @@ impl<S: RuleSet> Linter<S> {
             let skipped = running_js.iter();
             rules_to_ignore.extend(skipped.map(|it| RuleId::Js(Arc::clone(&it.configured.rule))));
         }
+        let before_previous = problems.len();
         if let Some(again) = options.again {
             running.retain(|it| it.entry.meta.needs_modules);
             let is_of_another_rule = |it: &&LintMessage| {
@@ -844,24 +845,63 @@ impl<S: RuleSet> Linter<S> {
             }
         }
         problems.reserve(diagnostics.len());
-        let order: Vec<u32> = match (wants_places, file.language().is_oxlint) {
-            _ if diagnostics.is_empty() => Vec::new(),
-            (true, true) => {
-                let of_place =
-                    |it: &Enabled<S>| prepared.order.get(it.place as usize).map(|it| it.when);
-                let when: Vec<When> = match is_plain {
-                    true => enabled.iter().filter_map(of_place).collect(),
-                    false => running.iter().map(|it| it.when).collect(),
-                };
-                crate::runner::sorted(&diagnostics, &when)
-            }
-            (true, false) => crate::runner::sorted(&diagnostics, &[]),
-            (false, _) => (0..diagnostics.len() as u32).collect(),
+        // When oxlint runs each of the rules.
+        let of_place = |it: &Enabled<S>| prepared.order.get(it.place as usize).map(|it| it.when);
+        let follows_run = wants_places && file.language().is_oxlint && !diagnostics.is_empty();
+        let when: Vec<When> = match (follows_run, is_plain) {
+            (false, _) => Vec::new(),
+            (true, true) => enabled.iter().filter_map(of_place).collect(),
+            (true, false) => running.iter().map(|it| it.when).collect(),
         };
+        let order: Vec<u32> = match wants_places {
+            _ if diagnostics.is_empty() => Vec::new(),
+            true => crate::runner::sorted(&diagnostics, &when),
+            false => (0..diagnostics.len() as u32).collect(),
+        };
+        // oxlint sorts nothing. It prints what its rules report in the order in which it runs them: `run_once` of each rule, then
+        // the nodes in the order of the text, then the calls of Jest, then what tsgolint reports. For each place in `order`,
+        // the how manyth it is then, from 1.
+        let mut ranks: Vec<u32> = Vec::new();
+        if follows_run {
+            let phase = |place: &u32| {
+                let at = order.get(*place as usize).map_or(0, |it| *it as usize);
+                let rule = diagnostics.get(at).map_or(0, |it| u32::from(it.rule));
+                // What is about the file as a whole, at no place in it, is the first of its part.
+                let details = diagnostics.get(at).and_then(|it| it.details.as_deref());
+                let start = details.and_then(|it| it.start_position.as_ref());
+                let has_place = usize::from(start.is_none_or(|it| it.line != 0));
+                let keeps_its_order = || {
+                    let rule = ran(rule as usize);
+                    rule.is_some_and(|it| crate::oxlint_order::keeps_its_order(it.reported_as()))
+                };
+                match when.get(rule as usize) {
+                    Some(When::Once) if keeps_its_order() => (0u8, rule, at),
+                    Some(When::Once) => (0, rule, has_place),
+                    Some(When::AtTheEnd) => (2, 0, has_place),
+                    Some(When::Last) => (3, 0, has_place),
+                    _ => (1, 0, has_place),
+                }
+            };
+            let mut by_run: Vec<u32> = (0..order.len() as u32).collect();
+            crate::utils::sort::sort_by_key(&mut by_run, phase);
+            ranks.resize(order.len(), 0);
+            for (place, rank) in by_run.into_iter().zip(1..) {
+                if let Some(it) = ranks.get_mut(place as usize) {
+                    *it = rank;
+                }
+            }
+        }
+        // What was reported before comes after: plugins in JavaScript run last, and what is run again runs first.
+        let of_rules = ranks.len() as u32;
+        for it in problems.iter_mut().skip(before_previous) {
+            if it.reported != 0 && it.reported != u32::MAX {
+                it.reported += of_rules;
+            }
+        }
         let places = wants_places.then_some(&locator);
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());
-        for at in order {
+        for (place, at) in order.into_iter().enumerate() {
             let Some(diagnostic) = diagnostics.get_mut(at as usize) else {
                 continue;
             };
@@ -877,7 +917,10 @@ impl<S: RuleSet> Linter<S> {
                     config::oxlint_changes(rule.reported_as(), diagnostic.message_id),
                 );
             }
-            problems.push(to_message(diagnostic, rule.reported_as(), places));
+            problems.push(LintMessage {
+                reported: ranks.get(place).copied().unwrap_or(0),
+                ..to_message(diagnostic, rule.reported_as(), places)
+            });
             let Some(message) =
                 (problems.last_mut()).filter(|_| changes_something || rule.name().is_some())
             else {
@@ -957,7 +1000,7 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        // oxlint runs its own rules first: at one place they are first.
+        // oxlint runs its own rules first. Comments are applied to what is at one place in that order.
         if file.language().is_oxlint {
             problems[before_js..].rotate_left(of_js);
         }
@@ -1026,7 +1069,7 @@ impl<S: RuleSet> Linter<S> {
             );
         }
 
-        if file.language().is_oxlint && (of_js > 0 || has_directives) {
+        if file.language().is_oxlint && (of_rules > 0 || of_js > 0 || has_directives) {
             crate::utils::sort::sort_by_key(&mut problems, |it| it.reported);
         }
         if !has_directives {

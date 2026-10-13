@@ -577,7 +577,7 @@ fn search(
                 true => Ok(Arc::clone(&directory.above)),
                 false => configs.for_listed_directory(
                     &directory.path,
-                    (entries.iter().filter(|it| !it.is_directory)).map(|it| &it.name[..]),
+                    entries.iter().map(|it| (&it.name[..], it.is_directory)),
                     &directory.above,
                 ),
             };

@@ -14,6 +14,8 @@ use crate::gitignore::{self, Chain};
 use crate::paths::package_of;
 use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
+use bun_ast::Expr;
+use bun_ast::expr::Data;
 use bun_collections::index_sort::sort_slice;
 use bun_core::strings;
 use bun_format::FormatOptions;
@@ -513,6 +515,92 @@ fn use_tabs_in<'s>(
 }
 
 /// Of a file that `--config` names: `.oxfmtrc.json`, `oxfmt.config.ts`, `config/oxfmtrc.json`.
+/// Where the first key is that a map in `value` has for the second time. Only scalars are compared, by what they stand for:
+/// `a` is `"a"`, and `1` is not `"1"`.
+fn repeated_key(value: &Expr) -> Option<i32> {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return None;
+    }
+    match &value.data {
+        Data::EArray(it) => it.slice().iter().find_map(repeated_key),
+        Data::EObject(it) => {
+            let mut seen: Vec<Json> = Vec::new();
+            for property in it.properties.iter() {
+                let (Some(key), Some(value)) = (&property.key, &property.value) else {
+                    continue;
+                };
+                let is_scalar = !matches!(key.data, Data::EArray(_) | Data::EObject(_));
+                if let Some(scalar) = json::from_parsed(key).filter(|_| is_scalar) {
+                    if seen.contains(&scalar) {
+                        return Some(key.loc.start);
+                    }
+                    seen.push(scalar);
+                }
+                if let Some(at) = repeated_key(value) {
+                    return Some(at);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// What the `yaml` package, which reads YAML for Prettier, says about a key that a map in `text` has twice: its
+/// `prettifyError`.
+fn repeated_key_in_yaml(text: &[u8]) -> Option<Vec<u8>> {
+    use bstr::ByteSlice;
+    // Here `<<` puts the keys of another map into this one. There it is a key like any other.
+    if strings::contains(text, b"<<") {
+        return None;
+    }
+    let at = json::with_parsed(Notation::Yaml, text, repeated_key).ok()??;
+    let text = strings::without_utf8_bom(text);
+    let before = text.get(..usize::try_from(at).ok()?)?;
+    // A key in quotes is where its text starts.
+    let before = before.strip_suffix(b"\"").unwrap_or(before);
+    let before = before.strip_suffix(b"'").unwrap_or(before);
+    let line_start = strings::last_index_of_char(before, b'\n').map_or(0, |it| it + 1);
+    let line_end = strings::index_of_char_usize(&text[line_start..], b'\n')
+        .map_or(text.len(), |it| line_start + it);
+    let number = strings::count_char(before, b'\n') + 1;
+    let mut column = strings::utf8_decoded_len_utf16(&before[line_start..]) as usize;
+    let mut out = format!(
+        "Map keys must be unique at line {number}, column {}:\n\n",
+        column + 1
+    );
+    let chars = |it: &[u8]| it.chars().collect::<Vec<char>>();
+    let written = &text[line_start..line_end];
+    let mut line = chars(written.strip_suffix(b"\r").unwrap_or(written));
+    if column >= 60 && line.len() > 80 {
+        let cut = (column - 39).min(line.len() - 79);
+        line = (['…'].into_iter())
+            .chain(line[cut..].iter().copied())
+            .collect();
+        column -= cut - 1;
+    }
+    if line.len() > 80 {
+        line.truncate(79);
+        line.push('…');
+    }
+    // The line before it too, if nothing but blanks is before the key.
+    if line_start > 0 && line.iter().take(column).all(|it| *it == ' ') {
+        let start =
+            strings::last_index_of_char(&text[..line_start - 1], b'\n').map_or(0, |it| it + 1);
+        let mut above = chars(&text[start..line_start]);
+        if above.len() > 80 {
+            above.truncate(79);
+            above.extend(['…', '\n']);
+        }
+        out.extend(above);
+    }
+    out.extend(line);
+    out.push('\n');
+    out.extend(std::iter::repeat_n(' ', column));
+    out.push('^');
+    Some(out.into_bytes())
+}
+
 fn is_name_of_oxfmt(name: &[u8]) -> bool {
     strings::contains(name, b"oxfmt")
 }
@@ -643,6 +731,8 @@ pub(crate) struct Resolved {
     pub(crate) omits_final_newline: bool,
     /// One of [`Configs::unsupported_options`] is among those of the file.
     pub(crate) has_unsupported_option: bool,
+    /// What oxc's parser reports and recovers from is formatted, as in the tests of its formatter. oxfmt refuses it.
+    pub(crate) formats_what_has_errors: bool,
 }
 
 /// Adds what the `tsconfig.json` at `path` says about JSX, after what the files that it extends say.
@@ -943,9 +1033,11 @@ impl<'c> Configs<'c> {
             }
         } else if name == b"package.yaml" {
             // One that cannot be read has no configuration, as for Prettier.
-            match json::parse_as(Notation::Yaml, &read()?)
+            let text = read()?;
+            match json::parse_as(Notation::Yaml, &text)
                 .as_ref()
                 .ok()
+                .filter(|_| repeated_key_in_yaml(&text).is_none())
                 .and_then(|it| it.get(b"prettier"))
             {
                 None | Some(Json::Null | Json::Bool(false)) => return Ok(None),
@@ -957,12 +1049,19 @@ impl<'c> Configs<'c> {
         } else if !name.iter().skip(1).any(|it| *it == b'.') {
             // `.prettierrc`, and what `--config` names without an extension, like `/dev/null`: YAML, which JSON is a part of.
             let text = read()?;
+            if let Some(why) = repeated_key_in_yaml(&text) {
+                return Err(fail(&why));
+            }
             match json::parse(&text) {
                 Some(json @ Json::Object(_)) => json,
                 _ => json::parse_as(Notation::Yaml, &text).map_err(|why| fail(&why))?,
             }
         } else if name.ends_with(b".yaml") || name.ends_with(b".yml") {
-            parse(Notation::Yaml)?
+            let text = read()?;
+            if let Some(why) = repeated_key_in_yaml(&text) {
+                return Err(fail(&why));
+            }
+            json::parse_as(Notation::Yaml, &text).map_err(|why| fail(&why))?
         } else if name.ends_with(b".json5") {
             parse(Notation::Json5)?
         } else if name.ends_with(b".toml") {
@@ -1062,11 +1161,11 @@ impl<'c> Configs<'c> {
         Ok(Some(Arc::new(config)))
     }
 
-    /// What counts in `directory`, whose entries are `names`, and whose parent has `above`.
+    /// What counts in `directory`, whose parent has `above`. `entries`: the name of each, and whether it is a directory.
     fn scope<'n>(
         &self,
         directory: &[u8],
-        names: impl Iterator<Item = &'n [u8]>,
+        entries: impl Iterator<Item = (&'n [u8], bool)>,
         above: Option<&Scope>,
     ) -> Found {
         let count = if self.flavor == Flavor::Oxfmt {
@@ -1082,14 +1181,15 @@ impl<'c> Configs<'c> {
                     && bun_sys::exists(&paths::join(directory, wanted)))
         };
         let mut listed = Listed::default();
-        for name in
-            names.filter(|name| matches!(name.first(), Some(b'.' | b'p' | b'o' | b'P' | b'O')))
+        for (name, is_directory) in
+            entries.filter(|it| matches!(it.0.first(), Some(b'.' | b'p' | b'o' | b'P' | b'O')))
         {
-            if is_called(name, b".editorconfig") {
-                listed.has_editorconfig = true;
-            } else if is_called(name, b".git") || is_called(name, b".hg") {
+            // In a worktree `.git` is a file.
+            if is_called(name, b".git") || (is_directory && is_called(name, b".hg")) {
                 listed.is_project_root = true;
-            } else {
+            } else if !is_directory && is_called(name, b".editorconfig") {
+                listed.has_editorconfig = true;
+            } else if !is_directory {
                 listed.candidates.extend(
                     NAMES
                         .iter()
@@ -1243,13 +1343,13 @@ impl<'c> Configs<'c> {
         }
         for directory in missing.into_iter().rev() {
             let entries = fs::list(directory).map_or_else(Vec::new, |it| it.entries);
-            let names = (entries.iter().filter(|it| !it.is_directory)).map(|it| &it.name[..]);
+            let entries = entries.iter().map(|it| (&it.name[..], it.is_directory));
             let found = match &above {
-                Some(Ok(above)) => self.scope(directory, names, Some(above)),
-                None => self.scope(directory, names, None),
+                Some(Ok(above)) => self.scope(directory, entries, Some(above)),
+                None => self.scope(directory, entries, None),
                 // A configuration file that cannot be used does not matter below a nearer one.
                 Some(Err(error)) => {
-                    self.scope(directory, names, None)
+                    self.scope(directory, entries, None)
                         .and_then(|scope| match scope.config {
                             Some(_) => Ok(scope),
                             None => Err(error.clone()),
@@ -1264,17 +1364,17 @@ impl<'c> Configs<'c> {
         above.unwrap_or_else(|| Err(Fatal(b"The path of a directory is empty.".to_vec())))
     }
 
-    /// The same for a directory whose entries are `names`, and whose parent has `above`.
+    /// The same for a directory whose parent has `above`. `entries`: the name of each, and whether it is a directory.
     pub(crate) fn for_listed_directory<'n>(
         &self,
         directory: &[u8],
-        names: impl Iterator<Item = &'n [u8]>,
+        entries: impl Iterator<Item = (&'n [u8], bool)>,
         above: &Arc<Scope>,
     ) -> Found {
         if self.options.disable_nested_config {
             return Ok(Arc::clone(above));
         }
-        let found = self.scope(directory, names, Some(above));
+        let found = self.scope(directory, entries, Some(above));
         self.by_directory
             .lock()
             .insert(directory.to_vec(), found.clone());
@@ -1509,7 +1609,7 @@ impl<'c> Configs<'c> {
         let mut resolved = Resolved::default();
         let mut sort = SortSettings::default();
         let _ = resolved.options.set(b"filepath", path.unwrap_or_default());
-        resolved.options.format_javascript = Some(super::format_javascript(self.options.verify));
+        resolved.options.format_javascript = Some(super::format_block);
         resolved.options.parse_javascript = Some(super::parse_javascript);
         resolved.options.embedded_html = true;
         resolved.options.toml = self.is_native_in(scope);

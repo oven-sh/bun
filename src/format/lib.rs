@@ -25,7 +25,7 @@ pub mod markdown;
 pub mod options;
 pub mod pragma;
 pub mod range;
-mod sort;
+pub mod sort;
 mod stack;
 pub mod syntax_error;
 pub mod tailwind;

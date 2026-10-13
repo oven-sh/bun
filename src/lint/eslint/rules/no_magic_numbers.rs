@@ -4,8 +4,10 @@ use std::borrow::Cow;
 /// Disallow magic numbers.
 pub struct NoMagicNumbers(Checker);
 
-const USE_CONST: Message =
-    Message::new("useConst", "Number constants declarations must use 'const'.");
+const USE_CONST: Message = Message::new(
+    "useConst",
+    "Number constants declarations must use 'const'.",
+);
 const NO_MAGIC: Message = Message::new("noMagic", "No magic number: {{raw}}.");
 
 /// The maximum length of an array by the specification.
@@ -15,14 +17,20 @@ const MAX_ARRAY_LENGTH: f64 = 4_294_967_295.0;
 enum Value<'a> {
     Number(f64),
     /// `digits` are decimal, without leading zeros. Zero is not negative.
-    BigInt { is_negative: bool, digits: &'a [u8] },
+    BigInt {
+        is_negative: bool,
+        digits: &'a [u8],
+    },
 }
 
 impl Value<'_> {
     fn negated(self) -> Self {
         match self {
             Value::Number(value) => Value::Number(-value),
-            Value::BigInt { is_negative, digits } => Value::BigInt {
+            Value::BigInt {
+                is_negative,
+                digits,
+            } => Value::BigInt {
                 is_negative: !is_negative && digits != b"0",
                 digits,
             },
@@ -32,9 +40,15 @@ impl Value<'_> {
     /// It coerces to the name of an element of an array: `"0"`, `"1"`, .. `"4294967294"`.
     fn is_array_index(self) -> bool {
         match self {
-            Value::Number(value) => value.fract() == 0.0 && (0.0..MAX_ARRAY_LENGTH).contains(&value),
-            Value::BigInt { is_negative, digits } => {
-                !is_negative && (digits.len() < 10 || digits.len() == 10 && digits < &b"4294967295"[..])
+            Value::Number(value) => {
+                value.fract() == 0.0 && (0.0..MAX_ARRAY_LENGTH).contains(&value)
+            }
+            Value::BigInt {
+                is_negative,
+                digits,
+            } => {
+                !is_negative
+                    && (digits.len() < 10 || digits.len() == 10 && digits < &b"4294967295"[..])
             }
         }
     }
@@ -48,7 +62,10 @@ enum Place<'a> {
     /// The `right` of an `AssignmentPattern`.
     DefaultValue,
     /// The `value` or the `key` of a `PropertyDefinition`.
-    ClassField { is_value: bool, is_readonly: bool },
+    ClassField {
+        is_value: bool,
+        is_readonly: bool,
+    },
     EnumMember,
     /// A `TSLiteralType`.
     LiteralType(TypeNode<'a>),
@@ -60,8 +77,14 @@ enum Place<'a> {
     /// A `Property` of an object literal or an object pattern.
     Property,
     /// An `AssignmentExpression`.
-    Assignment { is_to_identifier: bool },
+    Assignment {
+        is_to_identifier: bool,
+    },
     Other,
+}
+
+fn is_number(key: Key) -> bool {
+    matches!(key.kind(), KeyKind::Number(_) | KeyKind::ComputedNumber(_))
 }
 
 #[derive(Copy, Clone)]
@@ -109,18 +132,26 @@ fn place_of_expr<'a>(full: Expr<'a>, parent: Node<'a>) -> Place<'a> {
     match parent.tag() {
         ExprTag::Jsx => Place::Jsx,
         ExprTag::Spread if is_jsx(parent.parent()) => Place::Jsx,
-        ExprTag::Assign if parent.assign_op() == Some(None) && utils::is_assignment_target(parent) => {
+        ExprTag::Assign
+            if parent.assign_op() == Some(None) && utils::is_assignment_target(parent) =>
+        {
             Place::DefaultValue
         }
         ExprTag::Assign => Place::Assignment {
-            is_to_identifier: parent.left().is_some_and(|target| target.tag() == ExprTag::Ident),
+            is_to_identifier: parent
+                .left()
+                .is_some_and(|target| target.tag() == ExprTag::Ident),
         },
         ExprTag::Index if parent.index() == Some(full) => Place::Index,
         ExprTag::Call
             if parent.as_call().is_some_and(|call| {
                 call.args().get(1) == Some(full)
                     && (ast_utils::is_specific_id(call.callee(), "parseInt")
-                        || ast_utils::is_specific_member_access(call.callee(), Some("Number"), Some("parseInt")))
+                        || ast_utils::is_specific_member_access(
+                            call.callee(),
+                            Some("Number"),
+                            Some("parseInt"),
+                        ))
             }) =>
         {
             Place::ParseIntRadix
@@ -134,7 +165,8 @@ fn place_of_expr<'a>(full: Expr<'a>, parent: Node<'a>) -> Place<'a> {
 fn parent_of_unions(ty: TypeNode<'_>, through_intersections: bool) -> Node<'_> {
     let mut parent = ty.parent();
     while let Node::Type(outer) = parent
-        && (outer.tag() == TypeTag::Union || through_intersections && outer.tag() == TypeTag::Intersection)
+        && (outer.tag() == TypeTag::Union
+            || through_intersections && outer.tag() == TypeTag::Intersection)
     {
         parent = outer.parent();
     }
@@ -205,10 +237,12 @@ impl Checker {
             ignore_bigints,
             ignore_array_indexes: object.bool_or("ignoreArrayIndexes", false),
             ignore_default_values: object.bool_or("ignoreDefaultValues", false),
-            ignore_class_field_initial_values: object.bool_or("ignoreClassFieldInitialValues", false),
+            ignore_class_field_initial_values: object
+                .bool_or("ignoreClassFieldInitialValues", false),
             ignore_enums: object.bool_or("ignoreEnums", false),
             ignore_numeric_literal_types: object.bool_or("ignoreNumericLiteralTypes", false),
-            ignore_readonly_class_properties: object.bool_or("ignoreReadonlyClassProperties", false),
+            ignore_readonly_class_properties: object
+                .bool_or("ignoreReadonlyClassProperties", false),
             ignore_type_indexes: object.bool_or("ignoreTypeIndexes", false),
             is_typescript_eslint,
         }
@@ -225,14 +259,14 @@ impl Checker {
         .props()
         .pats(&[PatTag::Object]);
 
-    pub fn narrow(&self) -> On {
+    pub fn narrow(&self, file: &File) -> On {
         let mut on = On::new()
             .exprs(&[ExprTag::Number, ExprTag::BigInt])
             .types(&[TypeTag::NumberLit, TypeTag::BigIntLit])
             .members()
             .enum_members();
-        // Nothing is reported in a `Property` otherwise.
-        if self.detect_objects {
+        // Nothing is reported in a `Property` otherwise, but for oxlint, where that of a pattern is none.
+        if self.detect_objects || file.language().is_oxlint {
             on = on.props().pats(&[PatTag::Object]);
         }
         on
@@ -258,7 +292,10 @@ impl Checker {
 
     #[inline]
     pub fn member<'a, R: Rule>(&self, member: Member<'a>, cx: &mut Cx<'a, R>) {
-        if member.flags().intersects(Flags::LITERAL_NAME | Flags::COMPUTED_NAME) {
+        if member
+            .flags()
+            .intersects(Flags::LITERAL_NAME | Flags::COMPUTED_NAME)
+        {
             self.check_key(member.key(), place_of_member(member, false), cx);
         }
     }
@@ -268,15 +305,27 @@ impl Checker {
     }
 
     pub fn prop<'a, R: Rule>(&self, property: Prop<'a>, cx: &mut Cx<'a, R>) {
-        if !property.is_jsx_attribute() {
-            self.check_key(property.key(), Place::Property, cx);
+        let key = property.key();
+        if property.is_jsx_attribute() || !key.is_some_and(is_number) {
+            return;
         }
+        let is_in_pattern =
+            || matches!(property.parent(), Node::Expr(it) if it.is_assignment_target());
+        let place = match cx.language().is_oxlint && is_in_pattern() {
+            true => Place::Other,
+            false => Place::Property,
+        };
+        self.check_key(key, place, cx);
     }
 
     pub fn pat<'a, R: Rule>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, R>) {
+        let place = match cx.language().is_oxlint {
+            true => Place::Other,
+            false => Place::Property,
+        };
         if let PatKind::Object(properties) = pattern.kind() {
             for property in properties {
-                self.check_key(property.key(), Place::Property, cx);
+                self.check_key(property.key(), place, cx);
             }
         }
     }
@@ -284,9 +333,13 @@ impl Checker {
     fn is_ignored_value(&self, value: Value) -> bool {
         match value {
             Value::Number(value) => self.ignore.contains(&value),
-            Value::BigInt { is_negative, digits } => {
-                self.ignore_bigints.iter().any(|ignored| ignored.0 == is_negative && *ignored.1 == *digits)
-            }
+            Value::BigInt {
+                is_negative,
+                digits,
+            } => self
+                .ignore_bigints
+                .iter()
+                .any(|ignored| ignored.0 == is_negative && *ignored.1 == *digits),
         }
     }
 
@@ -309,11 +362,17 @@ impl Checker {
             Some(_) if is_oxlint && e.is_parenthesized() => (e, None, value, parent),
             Some((full, Some(UnOp::Minus))) => (full, Some(b'-'), value.negated(), full.parent()),
             // oxlint points at `void 0`, `+1` and `~1` too, and prints the number alone.
-            Some((full, Some(UnOp::Plus | UnOp::BitNot | UnOp::Not | UnOp::Typeof | UnOp::Void | UnOp::Delete)))
-                if is_oxlint =>
-            {
-                (full, None, value, full.parent())
-            }
+            Some((
+                full,
+                Some(
+                    UnOp::Plus
+                    | UnOp::BitNot
+                    | UnOp::Not
+                    | UnOp::Typeof
+                    | UnOp::Void
+                    | UnOp::Delete,
+                ),
+            )) if is_oxlint => (full, None, value, full.parent()),
             Some((full, Some(UnOp::Plus))) => (full, Some(b'+'), value, full.parent()),
             _ => (e, None, value, parent),
         };
@@ -393,8 +452,12 @@ impl Checker {
                 Place::LiteralType(ty) if is_numeric_literal_type_in_one_union(ty) => {
                     Some(self.ignore_numeric_literal_types)
                 }
-                Place::LiteralType(ty) if is_in_indexed_access_type(ty) => Some(self.ignore_type_indexes),
-                Place::ClassField { is_readonly: true, .. } => Some(self.ignore_readonly_class_properties),
+                Place::LiteralType(ty) if is_in_indexed_access_type(ty) => {
+                    Some(self.ignore_type_indexes)
+                }
+                Place::ClassField {
+                    is_readonly: true, ..
+                } => Some(self.ignore_readonly_class_properties),
                 _ => None,
             };
             match is_allowed {
@@ -403,13 +466,18 @@ impl Checker {
                 Some(false) if literal.sign == Some(b'+') => {
                     return report_magic(literal.unsigned, None, literal.unsigned, cx);
                 }
-                Some(false) => return report_magic(literal.full, literal.sign, literal.unsigned, cx),
+                Some(false) => {
+                    return report_magic(literal.full, literal.sign, literal.unsigned, cx);
+                }
                 None => {}
             }
         }
         let is_ignored = match place {
             Place::DefaultValue => self.ignore_default_values,
-            Place::ClassField { is_value, is_readonly } => {
+            Place::ClassField {
+                is_value,
+                is_readonly,
+            } => {
                 self.ignore_class_field_initial_values && is_value
                     || self.ignore_readonly_class_properties && is_readonly
             }
@@ -420,8 +488,15 @@ impl Checker {
             }
             Place::ParseIntRadix | Place::Jsx => true,
             Place::Index => self.ignore_array_indexes && literal.value.is_array_index(),
-            Place::Property | Place::Assignment { is_to_identifier: false } => !self.detect_objects,
-            Place::Declarator(_) | Place::Assignment { is_to_identifier: true } | Place::Other => false,
+            Place::Property
+            | Place::Assignment {
+                is_to_identifier: false,
+            } => !self.detect_objects,
+            Place::Declarator(_)
+            | Place::Assignment {
+                is_to_identifier: true,
+            }
+            | Place::Other => false,
         };
         if is_ignored {
             return;
@@ -439,7 +514,9 @@ impl Checker {
 
 fn report_magic<R: Rule>(at: Span, sign: Option<u8>, unsigned: Span, cx: &Cx<'_, R>) {
     let raw = match sign {
-        Some(_) if at.start + 1 == unsigned.start && at.end == unsigned.end => Cow::Borrowed(cx.slice(at)),
+        Some(_) if at.start + 1 == unsigned.start && at.end == unsigned.end => {
+            Cow::Borrowed(cx.slice(at))
+        }
         Some(sign) => Cow::Owned([&[sign][..], cx.slice(unsigned)].concat()),
         None => Cow::Borrowed(cx.slice(unsigned)),
     };
@@ -455,8 +532,8 @@ impl Rule for NoMagicNumbers {
         NoMagicNumbers(Checker::new(options, false))
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        self.0.narrow()
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        self.0.narrow(file)
     }
 
     #[inline]

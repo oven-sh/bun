@@ -2,10 +2,11 @@
 
 use super::scopes::ConfiguredGlobals;
 use crate::language::{Global, LanguageOptions, SourceType};
-use crate::linter::globals::config_globals_in_order;
+use crate::linter::globals::{Tables, config_globals_in_order, environment};
 use crate::linter::{write_json, write_json_with};
 use crate::options::Json;
 use crate::rule::Kind;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -125,7 +126,7 @@ pub struct FileSettings {
     pub(super) id: u32,
     /// `{ settings, languageOptions, globals, freezes, isLegacy, parser }`
     pub(super) json: Box<[u8]>,
-    /// ESLint's `configGlobals`, in the order of the keys of `globals` in `json`.
+    /// ESLint's `configGlobals`, or what oxlint defines, in the order of the keys of `globals` in `json`.
     pub(super) globals: ConfiguredGlobals,
     /// JSON: `[{ config, index }, ..]`, the objects of a configuration file that the settings are merged of, if there is
     /// something in them that JSON cannot say, like a function. A realm takes them from there.
@@ -144,6 +145,33 @@ pub(crate) fn has_what_json_lacks(json: &Json) -> bool {
     }
 }
 
+/// The variables that oxlint's `addGlobals` defines for a plugin, in its order: for each `env` that is on what can only be read and then
+/// what can be written, then what `globals` has. A name that `globals` has is only there, and not at all if it's `"off"`. Unlike
+/// oxlint's own rules, plugins only have `Array` and the like if the `env` called `builtin` is on. oxlint goes through the `env`s and
+/// through `globals` in the order of a hash map. Here it's by their names.
+fn globals_of_oxlint(language: &LanguageOptions) -> Vec<(Box<[u8]>, Global)> {
+    let own = &language.own_globals;
+    let is_own = |name: &[u8]| own.binary_search_by(|it| (*it.0).cmp(name)).is_ok();
+    let mut all: Vec<(Box<[u8]>, Global)> = Vec::new();
+    let mut index_of: FxHashMap<&'static [u8], usize> = FxHashMap::default();
+    for env in &language.envs {
+        let variables = environment(env, Tables::Oxlint).into_iter().flatten();
+        let variables: Vec<_> = variables.filter(|it| !is_own(it.0)).collect();
+        for wanted in [Global::Readonly, Global::Writable] {
+            for &(name, setting) in variables.iter().filter(|it| it.1 == wanted) {
+                // The one that is there keeps its place.
+                let at = *index_of.entry(name).or_insert_with(|| {
+                    all.push((name.into(), setting));
+                    all.len() - 1
+                });
+                all[at].1 = setting;
+            }
+        }
+    }
+    all.extend(own.iter().filter(|it| it.1 != Global::Off).cloned());
+    all
+}
+
 impl FileSettings {
     /// `sources`: `$source` of the objects of an `eslint.config.js` that `language` is merged of, in their order. `parser`:
     /// `$parser` of the one that `languageOptions.parser` is from.
@@ -160,7 +188,12 @@ impl FileSettings {
         });
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let string = |text: &[u8]| Json::String(text.to_vec());
-        let globals = language.globals.iter().map(|(name, setting)| {
+        // oxlint only has what `globals` itself says there.
+        let written = match language.is_oxlint {
+            true => &language.own_globals,
+            false => &language.globals,
+        };
+        let globals = written.iter().map(|(name, setting)| {
             let setting: &[u8] = match setting {
                 Global::Readonly => b"readonly",
                 Global::Writable => b"writable",
@@ -173,7 +206,7 @@ impl FileSettings {
             SourceType::Script => b"script",
             SourceType::CommonJs => b"commonjs",
         };
-        let language_options = Json::Object(vec![
+        let mut language_options = vec![
             (
                 b"ecmaVersion".to_vec(),
                 Json::Number(f64::from(language.ecma_version)),
@@ -187,7 +220,13 @@ impl FileSettings {
                     options => options.clone(),
                 },
             ),
-        ]);
+        ];
+        if language.is_oxlint {
+            let envs = language.envs.iter();
+            let envs = envs.map(|it| (it.to_vec(), Json::Bool(true)));
+            language_options.push((b"env".to_vec(), Json::Object(envs.collect())));
+        }
+        let language_options = Json::Object(language_options);
         let settings = match &*language.settings {
             Json::Null => Json::Object(Vec::new()),
             // A key that begins with `$` is this program's own.
@@ -205,10 +244,15 @@ impl FileSettings {
                 Global::Off => b"off",
             }
         };
-        let globals = config_globals_in_order(language)
-            .into_iter()
-            .map(|(name, setting)| (name.into_owned().into(), setting));
-        let globals = ConfiguredGlobals::new(globals.collect(), language.lib_variables());
+        let globals = match language.is_oxlint {
+            true => ConfiguredGlobals::new(globals_of_oxlint(language), std::iter::empty()),
+            false => {
+                let globals = config_globals_in_order(language)
+                    .into_iter()
+                    .map(|(name, setting)| (name.into_owned().into(), setting));
+                ConfiguredGlobals::new(globals.collect(), language.lib_variables())
+            }
+        };
         let all_globals = globals
             .iter()
             .map(|(name, setting)| (name.to_vec(), string(setting_name(*setting))))

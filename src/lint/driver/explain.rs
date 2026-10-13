@@ -1,7 +1,7 @@
 //! `--rules` and `--explain`, which list and document the rules.
 //!
-//! The text comes from `docs/lint/rules/<plugin>/<rule>.mdx`. `src/codegen/generate-lint-docs.ts` packs it into two
-//! files that are embedded in the executable, compressed. Only these two flags read them.
+//! The text comes from `docs/lint/rules/<plugin>/<rule>.mdx`. `src/codegen/generate-lint-docs.ts` packs it into one
+//! file that is embedded in the executable, compressed. Only these two flags read it.
 
 use crate::format::oxlint::plugin as scope_in_oxlint;
 use crate::print_config::{object, text, write_indented};
@@ -25,22 +25,25 @@ macro_rules! pretty {
     };
 }
 
-/// Descriptions by [page name](Meta::page). The embedded file has one `name<tab>description` line per page.
+/// Every page: a NUL, its [name](Meta::page), a newline, then its Markdown. That's the description on one line, an empty
+/// line, then the rest.
+fn pages() -> &'static [u8] {
+    bun_zstd::embed_compressed!(codegen "lint-rule-pages.txt")
+}
+
+/// Descriptions by page name.
 fn descriptions() -> FxHashMap<&'static [u8], &'static [u8]> {
-    let lines = bun_zstd::embed_compressed!(codegen "lint-rule-descriptions.txt");
-    let lines = strings::split(lines, b"\n");
-    lines
-        .filter_map(|line| {
-            let tab = strings::index_of_char_usize(line, b'\t')?;
-            Some((&line[..tab], &line[tab + 1..]))
+    strings::split(pages(), b"\0")
+        .filter_map(|page| {
+            let mut lines = strings::split(page, b"\n");
+            Some((lines.next()?, lines.next()?))
         })
         .collect()
 }
 
-/// The rule's docs page in Markdown: the description, an empty line, then the rest.
+/// The rule's docs page in Markdown.
 fn page_of(meta: &Meta) -> Option<&'static [u8]> {
-    // Each page starts with a NUL, its name and a newline.
-    let pages = bun_zstd::embed_compressed!(codegen "lint-rule-pages.txt");
+    let pages = pages();
     let head = [b"\0", &meta.page()[..], b"\n"].concat();
     let page = &pages[strings::index_of(pages, &head)? + head.len()..];
     Some(&page[..strings::index_of_char_usize(page, 0).unwrap_or(page.len())])

@@ -42,21 +42,30 @@ void LintHost::finishCreation(VM& vm, JSGlobalObject* globalObject)
     endFile(vm);
 }
 
+// There is one LintHost in a VM. Marking it doesn't need SlotVisitor::append inlined at every field.
+template<typename Visitor>
+struct OutOfLineVisitor {
+    Visitor& visitor;
+    template<typename Barrier>
+    NEVER_INLINE void append(const Barrier& barrier) { visitor.append(barrier); }
+};
+
 template<typename Visitor>
 void LintHost::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<LintHost>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_positionStructure);
-    visitor.append(thisObject->m_locStructure);
-    visitor.append(thisObject->m_text);
-    thisObject->report.visit(visitor);
-    thisObject->sourceCode.visit(visitor);
+    OutOfLineVisitor<Visitor> fields { visitor };
+    fields.append(thisObject->m_positionStructure);
+    fields.append(thisObject->m_locStructure);
+    fields.append(thisObject->m_text);
+    thisObject->report.visit(fields);
+    thisObject->sourceCode.visit(fields);
     Locker locker { thisObject->cellLock() };
-    thisObject->scopes.visit(visitor);
-    thisObject->nodes.visit(visitor);
-    thisObject->tokens.visit(visitor);
+    thisObject->scopes.visit(fields);
+    thisObject->nodes.visit(fields);
+    thisObject->tokens.visit(fields);
 }
 
 DEFINE_VISIT_CHILDREN(LintHost);
@@ -168,11 +177,16 @@ extern "C" void Bun__Lint__endFile(JSGlobalObject* globalObject)
     LintHost::from(globalObject)->endFile(globalObject->vm());
 }
 
-void addLintHostFunctions(JSGlobalObject* globalObject, JSObject* native)
+NEVER_INLINE void addLintFunction(JSGlobalObject* globalObject, JSObject* object, ASCIILiteral name, unsigned length, NativeFunction function)
 {
     VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "beginFile"_s), JSFunction::create(vm, globalObject, 2, "beginFile"_s, jsLintBeginFile, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "endFile"_s), JSFunction::create(vm, globalObject, 0, "endFile"_s, jsLintEndFile, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, name), JSFunction::create(vm, globalObject, length, name, function, ImplementationVisibility::Public));
+}
+
+void addLintHostFunctions(JSGlobalObject* globalObject, JSObject* native)
+{
+    addLintFunction(globalObject, native, "beginFile"_s, 2, jsLintBeginFile);
+    addLintFunction(globalObject, native, "endFile"_s, 0, jsLintEndFile);
     addLintReportFunctions(globalObject, native);
     addLintSourceCodeFunctions(globalObject, native);
     addLintTokenFunctions(globalObject, native);

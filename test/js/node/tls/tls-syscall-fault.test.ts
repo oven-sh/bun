@@ -187,6 +187,46 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     );
   });
 
+  // The engine takes 128 KB of a write at a time. The rest waits as plaintext, and the write is still pending.
+  describe.each(["client", "server"] as const)("send → ECONNRESET for the rest of the %s's write", side => {
+    test.each([
+      ["fails the write", false],
+      ["first delivers what the peer sent before", true],
+    ])("%s", async (_name, peerWroteFirst) => {
+      using p = await connectedTLSPair();
+      const [writer, peer] = side === "client" ? [p.client, p.serverSock] : [p.serverSock, p.client];
+      const seen = observe(writer);
+      const received = collect(writer);
+      if (peerWroteFirst) {
+        // Only the sends fail here, so the reads of the writer end once the peer has read up to its FIN and answers.
+        // Without this the peer stays silent, and with nothing to read first the writer closes on its own.
+        peer.resume();
+        writer.pause();
+        await new Promise<void>(resolve => peer.write("late", () => resolve()));
+      }
+      const written = Promise.withResolvers<Error | null | undefined>();
+      // A few bytes of ciphertext stay behind, so the rest of the write waits for the writable event.
+      fault.set({ syscall: "send", action: "short", bytes: 128 * 1024, fd: fdOf(writer) });
+      writer.write(Buffer.alloc(256 * 1024, "a"), written.resolve);
+      // That event sends the ciphertext first.
+      fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", after: 1, repeat: -1, fd: fdOf(writer) });
+      writer.resume();
+      await seen.closed;
+      expect({
+        received: received().toString(),
+        written: (await written.promise)?.message,
+        // The reads go on until the close, so the FIN that the peer answers with can come first.
+        events: seen.events.filter(event => event !== "end"),
+        errors: seen.errors,
+      }).toEqual({
+        received: peerWroteFirst ? "late" : "",
+        written: "write ECONNRESET",
+        events: ["error", "close(hadError=true)"],
+        errors: [{ name: "Error", code: "ECONNRESET", syscall: "write", message: "write ECONNRESET" }],
+      });
+    });
+  });
+
   // The write fails with the close of the engine, which reads first. A reader that stopped may be waiting for the write.
   test("send → EPIPE fails the write of a reader that stopped for backpressure and does not go on", async () => {
     using p = await connectedTLSPair();

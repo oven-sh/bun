@@ -47,8 +47,14 @@ pub struct State<'a> {
 
 impl<'a> State<'a> {
     pub fn methods_without_this(&self) -> impl Iterator<Item = Func<'a>> {
-        let unused = self.methods.iter().zip(&self.is_using_this).filter(|it| !it.1);
-        unused.map(|it| *it.0).filter(|func| !self.uses_this.contains(func))
+        let unused = self
+            .methods
+            .iter()
+            .zip(&self.is_using_this)
+            .filter(|it| !it.1);
+        unused
+            .map(|it| *it.0)
+            .filter(|func| !self.uses_this.contains(func))
     }
 }
 
@@ -82,7 +88,10 @@ impl Checker {
         let except_methods = options.strings("exceptMethods");
         Checker {
             enforce_for_class_fields: options.bool_or("enforceForClassFields", true),
-            except_methods: except_methods.iter().map(|name| name.as_bytes().to_vec()).collect(),
+            except_methods: except_methods
+                .iter()
+                .map(|name| name.as_bytes().to_vec())
+                .collect(),
             ignore_override_methods: options.bool_or("ignoreOverrideMethods", false),
             ignore_classes_with_implements,
             are_private_names_public,
@@ -100,23 +109,38 @@ impl Checker {
         let inside = |func: Func<'a>| {
             let whole = func.span();
             let start = match func.open_paren() {
-                Some(open) => func.type_params().first().map_or(open, |it| it.span().start),
+                Some(open) => func
+                    .type_params()
+                    .first()
+                    .map_or(open, |it| it.span().start),
                 None => whole.start,
             };
             Span::new(start, whole.end)
         };
-        let methods = state.methods.iter().enumerate().map(|(index, &func)| (inside(func), func, index, false));
-        let others = state.others.iter().map(|&func| (inside(func), func, usize::MAX, true));
+        let methods = state
+            .methods
+            .iter()
+            .enumerate()
+            .map(|(index, &func)| (inside(func), func, index, false));
+        let others = state
+            .others
+            .iter()
+            .map(|&func| (inside(func), func, usize::MAX, true));
         let mut methods: Vec<_> = methods.chain(others).collect();
-        methods.sort_unstable_by_key(|it| it.0.start);
+        bun_lint::utils::sort::sort_by_key(&mut methods, |it| it.0.start);
         // The last that starts before the `this`.
         let mut at = 0;
-        for e in file.exprs_of_kind(ExprTag::This).chain(file.exprs_of_kind(ExprTag::Super)) {
+        for e in file
+            .exprs_of_kind(ExprTag::This)
+            .chain(file.exprs_of_kind(ExprTag::Super))
+        {
             let start = e.span().start;
             let is_at = methods.get(at).is_some_and(|it| it.0.start <= start)
                 && methods.get(at + 1).is_none_or(|it| start < it.0.start);
             if !is_at {
-                at = methods.partition_point(|it| it.0.start <= start).wrapping_sub(1);
+                at = methods
+                    .partition_point(|it| it.0.start <= start)
+                    .wrapping_sub(1);
             }
             let around = methods.get_mut(at).filter(|it| start < it.0.end);
             if around.as_ref().is_some_and(|it| it.3) {
@@ -144,8 +168,10 @@ impl Checker {
             return None;
         }
         // For oxlint a declaration without a body is a function as well.
-        let is_function =
-            |func: Func<'a>| func.has_body() || is_oxlint && !matches!(func.owner(), Node::Member(it) if it.is_signature());
+        let is_function = |func: Func<'a>| {
+            func.has_body()
+                || is_oxlint && !matches!(func.owner(), Node::Member(it) if it.is_signature())
+        };
         let owner = state.owners_of_this.find(Node::Expr(e), |child, ancestor| match ancestor {
             Node::Func(func) => match func.kind() {
                 FnKind::StaticBlock => Some(None),
@@ -188,7 +214,9 @@ impl Checker {
             Some(arrow) => Some(arrow.end),
             None => func.body_span().map(|it| it.start),
         };
-        owner.flatten().filter(|&func| !is_oxlint || body_start(func).is_some_and(|start| start <= e.span().start))
+        owner.flatten().filter(|&func| {
+            !is_oxlint || body_start(func).is_some_and(|start| start <= e.span().start)
+        })
     }
 
     /// Notes the functions of the members of `class` that have to use `this`, and the others.
@@ -197,7 +225,9 @@ impl Checker {
             let before = state.methods.len();
             self.check_member(member, class, state);
             if state.methods.len() == before {
-                state.others.extend(member.func().filter(|it| it.has_body()));
+                state
+                    .others
+                    .extend(member.func().filter(|it| it.has_body()));
             }
         }
     }
@@ -216,7 +246,10 @@ impl Checker {
         // oxlint sees no function in parentheses, and none in a key.
         let is_oxlint = member.file().language().is_oxlint;
         let value = match is_field {
-            true => member.init().filter(|it| !(is_oxlint && it.is_parenthesized())).and_then(Expr::as_fn),
+            true => member
+                .init()
+                .filter(|it| !(is_oxlint && it.is_parenthesized()))
+                .and_then(Expr::as_fn),
             false => member.func(),
         };
         let value = value.filter(|func| func.has_body());
@@ -249,7 +282,9 @@ impl Checker {
                 return;
             }
         }
-        state.methods.extend(value.into_iter().chain(function_in_key));
+        state
+            .methods
+            .extend(value.into_iter().chain(function_in_key));
     }
 }
 
@@ -282,6 +317,7 @@ impl Rule for ClassMethodsUseThis {
         self.checker.mark_this_used(cx.file(), &mut cx.state);
         for func in cx.state.methods_without_this() {
             cx.report(ast_utils::get_function_head_loc(func), MISSING_THIS)
+                .called_with(func.owner())
                 .data("name", ast_utils::get_function_name_with_kind(func));
         }
     }

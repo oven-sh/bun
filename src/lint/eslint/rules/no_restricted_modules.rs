@@ -1,5 +1,5 @@
 use bun_core::strings;
-use super::no_restricted_imports::{IgnoreRules, IgnoreSyntax, ignore_rules};
+use super::no_restricted_imports::{IgnoreRules, ignore_rules};
 use bun_lint::prelude::*;
 
 /// Disallow specified modules when loaded by `require`.
@@ -41,7 +41,7 @@ impl Rule for NoRestrictedModules {
         });
         NoRestrictedModules {
             paths: paths.collect(),
-            patterns: (!patterns.is_empty()).then(|| ignore_rules(&patterns, true, IgnoreSyntax::Npm5)),
+            patterns: (!patterns.is_empty()).then(|| ignore_rules(&patterns, true)),
         }
     }
 

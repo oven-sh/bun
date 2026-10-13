@@ -285,6 +285,11 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
+// LintHost.cpp
+namespace Bun {
+JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
+}
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
     static std::once_flag jsc_init_flag;
@@ -2613,6 +2618,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_testMatcherUtilsObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
              init.set(result.toObject(init.owner));
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_lintHost), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             init.set(Bun::createLintHost(init.vm, init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_nodeErrorCache), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* structure = ErrorCodeCache::createStructure(

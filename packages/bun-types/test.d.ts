@@ -2808,6 +2808,11 @@ declare module "bun:test" {
     toBeCalled(): R;
 
     /**
+     * Ensures that a mock function is called exactly once.
+     */
+    toHaveBeenCalledOnce(): void;
+
+    /**
      * Ensures that a mock function is called an exact number of times.
      */
     toHaveBeenCalledTimes(expected: number): R;

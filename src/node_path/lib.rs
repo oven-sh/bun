@@ -1,5 +1,5 @@
 //! Node's `path.posix` and `path.win32`: the algorithms, on slices of `u8` or `u16`. `node:path`
-//! (src/runtime/node/path.rs) and the paths of `bun lint` and `bun format` are these.
+//! (src/runtime/node/path.rs) and the paths of `bun lint` and `bun fmt` are these.
 
 #![feature(adt_const_params)]
 

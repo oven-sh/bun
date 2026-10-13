@@ -9322,10 +9322,14 @@ declare module "bun" {
    *     in the brackets.
    * - `{a,b}`
    *     Match one of the patterns contained in the braces.
-   *     The sub-patterns can use any of the other wildcards.
-   *     Braces may be nested up to 10 levels deep.
+   *     The sub-patterns can use any of the other wildcards, and braces can nest.
+   * - `{1..3}`, `{a..e}`, `{01..10}`, `{1..9..2}`
+   *     Matches any number or letter in the range. A third value is the step.
+   * - `?(a|b)`, `*(a|b)`, `+(a|b)`, `@(a|b)`, `!(a|b)`
+   *     Matches zero or one, zero or more, one or more, exactly one, or none
+   *     of the patterns. Parentheses without one of these prefixes are literal.
    * - `!`
-   *     Negates the result when at the start of the pattern.
+   *     Negates the result when at the start of the pattern, unless a "(" follows.
    *     Multiple "!" characters negate the pattern multiple times.
    * - `\`
    *     Escapes any of the special characters listed here.

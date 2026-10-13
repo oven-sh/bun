@@ -105,9 +105,9 @@ fn printed_key<'a>(
     if matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
         && !source.starts_with(b"`")
         && let Some(context) = context_of_string(source, f)
+        && let Some(sorted) = sorted_string_literal(source, false, (span, parent), context, f)
     {
-        let place = (span, parent);
-        return Cow::Owned(sorted_string_literal(source, false, place, context, f));
+        return Cow::Owned(sorted);
     }
     if let (KeyKind::ComputedString(_), [b'`', text @ .., b'`']) = (key.kind(), source)
         && has_white_space(text)
@@ -115,8 +115,12 @@ fn printed_key<'a>(
             f.context().tailwind_context(),
             f.options().tailwind.as_deref(),
         )
+        && let context = match context.follows_plugin {
+            true => context.in_template_at(span, parent, f),
+            false => context,
+        }
+        && let Some(sorted) = sorted_template_text(text, (true, true), context, tailwind)
     {
-        let sorted = sorted_template_text(text, (true, true), context, tailwind);
         return with_normalized_newlines(Cow::Owned([&b"`"[..], &sorted, b"`"].concat()));
     }
     match key.kind() {

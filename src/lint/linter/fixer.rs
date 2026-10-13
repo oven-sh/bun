@@ -14,6 +14,8 @@ pub struct Fixed {
     pub remaining: Vec<LintMessage>,
     /// The rules whose fixes are in `output`.
     pub applied: Vec<RuleId>,
+    /// Number of fixes applied to produce `output`.
+    pub count: usize,
 }
 
 /// The byte order mark.
@@ -34,6 +36,7 @@ pub fn apply_fixes(
             output: text.to_vec(),
             remaining,
             applied: Vec::new(),
+            count: 0,
         };
     }
     crate::utils::sort::sort_by_key(&mut fixable, |it| {
@@ -43,6 +46,7 @@ pub fn apply_fixes(
     let mut last: Option<usize> = None;
     let mut is_fixed = false;
     let mut applied: Vec<RuleId> = Vec::new();
+    let mut count = 0;
     for message in fixable {
         let Some(fix) = message.fix.as_ref().filter(|_| should_fix(&message)) else {
             remaining.push(message);
@@ -62,6 +66,7 @@ pub fn apply_fixes(
         }
         output.extend_from_slice(&fix.text);
         last = Some(end);
+        count += 1;
         if let Some(rule) = message.rule_id
             && !applied.contains(&rule)
         {
@@ -75,6 +80,7 @@ pub fn apply_fixes(
         output,
         remaining,
         applied,
+        count,
     }
 }
 
@@ -82,6 +88,8 @@ pub fn apply_fixes(
 pub struct FixReport {
     /// Whether the text has changed.
     pub is_fixed: bool,
+    /// Number of fixes applied to produce `output`, over all passes.
+    pub fixes: usize,
     pub output: Vec<u8>,
     /// What is left to report, about `output`.
     pub result: LintResult,
@@ -92,7 +100,7 @@ pub struct FixReport {
 }
 
 fn is_fatal(result: &LintResult) -> bool {
-    matches!(&result.messages[..], [only] if only.is_fatal)
+    !result.messages.is_empty() && result.messages.iter().all(|it| it.is_fatal)
 }
 
 /// The text cannot be parsed. What is said about a comment with a configuration that cannot be read is fatal, too.
@@ -100,14 +108,22 @@ pub fn is_parse_error(message: &LintMessage) -> bool {
     message.is_fatal && message.message.starts_with(b"Parsing error: ")
 }
 
-/// What is reported if the fixes of a pass are taken back. `before`: the text before that pass. `was_fixed`: it is not the first text.
+/// oxlint's error for a name that is declared twice. It isn't from oxc's parser, which takes such a text.
+pub fn is_redeclaration(message: &LintMessage) -> bool {
+    message.message.starts_with(b"Parsing error: Identifier `")
+        && message.message.ends_with(b"` has already been declared")
+}
+
+/// The report to return when a pass's fixes are rolled back. `before` is the text before that pass. `was_fixed` says whether
+/// earlier passes had already changed it, and `fixes` is how many fixes they applied.
 fn without_the_last_pass(
     before: Vec<u8>,
-    (rules, was_fixed): (Vec<RuleId>, bool),
+    (rules, was_fixed, fixes): (Vec<RuleId>, bool, usize),
     lint: &mut dyn FnMut(&[u8]) -> LintResult,
 ) -> FixReport {
     FixReport {
         is_fixed: was_fixed,
+        fixes,
         result: lint(&before),
         output: before,
         is_circular: false,
@@ -125,9 +141,9 @@ pub fn verify_and_fix(
 ) -> FixReport {
     let mut current = text.to_vec();
     let mut previous: Option<Vec<u8>> = None;
-    let (mut is_fixed, mut is_circular) = (false, false);
-    // The rules whose fixes the pass before has applied, and whether the text had changed before it.
-    let mut last_pass: Option<(Vec<RuleId>, bool)> = None;
+    let (mut is_fixed, mut is_circular, mut fixes) = (false, false, 0);
+    // About the previous pass: the rules whose fixes it applied, then `is_fixed` and `fixes` as they were before it.
+    let mut last_pass: Option<(Vec<RuleId>, bool, usize)> = None;
     let mut passes = 0;
     loop {
         passes += 1;
@@ -144,14 +160,16 @@ pub fn verify_and_fix(
         if is_fatal {
             return FixReport {
                 is_fixed,
+                fixes,
                 output: current,
                 result,
                 is_circular,
                 broken_by: None,
             };
         }
-        last_pass = Some((fixed.applied, is_fixed));
+        last_pass = Some((fixed.applied, is_fixed, fixes));
         is_fixed |= fixed.is_fixed;
+        fixes += fixed.count;
         let second_previous = previous.take();
         previous = Some(std::mem::replace(&mut current, fixed.output));
         if passes > 1 && second_previous.as_ref() == Some(&current) {
@@ -170,6 +188,7 @@ pub fn verify_and_fix(
             }
             return FixReport {
                 is_fixed,
+                fixes,
                 output: current,
                 result,
                 is_circular,

@@ -18,7 +18,12 @@ fn is_matching_identifier<'a>(e: Expr<'a>, name: Name<'a>) -> bool {
 
 /// The `arr` of `name < arr.length`.
 fn is_less_than_length_expression<'a>(test: Expr<'a>, name: Name<'a>) -> Option<Expr<'a>> {
-    let ExprKind::Binary { op: BinOp::Lt, left, right } = test.kind() else {
+    let ExprKind::Binary {
+        op: BinOp::Lt,
+        left,
+        right,
+    } = test.kind()
+    else {
         return None;
     };
     if !is_matching_identifier(left, name) {
@@ -27,11 +32,13 @@ fn is_less_than_length_expression<'a>(test: Expr<'a>, name: Name<'a>) -> Option<
     let object = match right.kind() {
         ExprKind::Dot { obj, name, .. } if name.name().is("length") => obj,
         // For oxlint `a["length"]`, not `a[length]`.
-        ExprKind::Index { obj, index, .. } if test.file().language().is_oxlint => match index.kind() {
-            ExprKind::String(key) if key.is("length") => obj,
-            ExprKind::Template(key) if key.as_static().is_some_and(|it| it.is("length")) => obj,
-            _ => return None,
-        },
+        ExprKind::Index { obj, index, .. } if test.file().language().is_oxlint => {
+            match index.kind() {
+                ExprKind::String(key) if key.is("length") => obj,
+                ExprKind::Template(key) if key.as_static().is_some_and(|it| it.is("length")) => obj,
+                _ => return None,
+            }
+        }
         ExprKind::Index { obj, index, .. } if index.is_ident("length") => obj,
         _ => return None,
     };
@@ -43,7 +50,9 @@ fn is_less_than_length_expression<'a>(test: Expr<'a>, name: Name<'a>) -> Option<
 fn oxlint_looks_at<'a>(array: Expr<'a>, index_var: Symbol<'a>) -> bool {
     !array.is_parenthesized()
         && matches!(array.tag(), ExprTag::Ident | ExprTag::Dot | ExprTag::Index)
-        && !index_var.references().any(|it| array.span().contains(it.span()))
+        && !index_var
+            .references()
+            .any(|it| array.span().contains(it.span()))
 }
 
 /// For oxlint what is in parentheses is nothing that it knows, unless it is assigned to.
@@ -83,11 +92,16 @@ fn oxc_parent(at: Node<'_>) -> Option<(Around, Node<'_>, bool)> {
     let parent = at.parent();
     Some(match (at, parent) {
         (Node::Expr(e), Node::Expr(around)) => match around.kind() {
-            ExprKind::Unary { op: UnOp::Delete, .. } => (Around::Delete, parent, false),
-            ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => {
-                (Around::Update, parent, true)
+            ExprKind::Unary {
+                op: UnOp::Delete, ..
+            } => (Around::Delete, parent, false),
+            ExprKind::Unary {
+                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                ..
+            } => (Around::Update, parent, true),
+            ExprKind::Assign { target, .. } if target == e && !is_pattern(parent) => {
+                (Around::Assignment, parent, true)
             }
-            ExprKind::Assign { target, .. } if target == e && !is_pattern(parent) => (Around::Assignment, parent, true),
             ExprKind::Assign { target, .. } => (Around::Other, parent, target == e),
             ExprKind::Array(_) if is_pattern(parent) => (Around::Pattern, parent, true),
             ExprKind::Spread(_) => (Around::Other, parent, is_pattern(parent)),
@@ -120,28 +134,42 @@ fn oxlint_is_assignee(member: Expr) -> bool {
         (*it, at, parentheses) = (kind, parent, 0);
     }
     let [first, second] = around;
-    !matches!(first, Around::Member | Around::Other) || second == Around::Pattern && first != Around::Member
+    !matches!(first, Around::Member | Around::Other)
+        || second == Around::Pattern && first != Around::Member
 }
 
 fn is_increment<'a>(update: Expr<'a>, name: Name<'a>) -> bool {
     match update.kind() {
-        ExprKind::Unary { op: UnOp::PreInc | UnOp::PostInc, operand } => is_matching_identifier(operand, name),
-        ExprKind::Assign { op, target, value } if is_matching_identifier(target, name) => match op {
-            Some(BinOp::Add) => is_literal(value, 1.0),
-            None => match value.kind() {
-                ExprKind::Binary { op: BinOp::Add, left, right } => {
-                    (is_matching_identifier(left, name) && is_literal(right, 1.0))
-                        || (is_literal(left, 1.0) && is_matching_identifier(right, name))
-                }
+        ExprKind::Unary {
+            op: UnOp::PreInc | UnOp::PostInc,
+            operand,
+        } => is_matching_identifier(operand, name),
+        ExprKind::Assign { op, target, value } if is_matching_identifier(target, name) => {
+            match op {
+                Some(BinOp::Add) => is_literal(value, 1.0),
+                None => match value.kind() {
+                    ExprKind::Binary {
+                        op: BinOp::Add,
+                        left,
+                        right,
+                    } => {
+                        (is_matching_identifier(left, name) && is_literal(right, 1.0))
+                            || (is_literal(left, 1.0) && is_matching_identifier(right, name))
+                    }
+                    _ => false,
+                },
                 _ => false,
-            },
-            _ => false,
-        },
+            }
+        }
         _ => false,
     }
 }
 
-fn is_index_only_used_with_array<'a>(body: Stmt<'a>, index_var: Symbol<'a>, array: Expr<'a>) -> bool {
+fn is_index_only_used_with_array<'a>(
+    body: Stmt<'a>,
+    index_var: Symbol<'a>,
+    array: Expr<'a>,
+) -> bool {
     let (body, array_text) = (body.span(), array.text());
     let is_oxlint = array.file().language().is_oxlint;
     index_var.references().all(|reference| {
@@ -164,8 +192,8 @@ fn is_index_only_used_with_array<'a>(body: Stmt<'a>, index_var: Symbol<'a>, arra
 }
 
 impl Rule for PreferForOf {
-    const META: Meta =
-        Meta::typescript("prefer-for-of", Kind::Suggestion).presets(Presets::STYLISTIC)
+    const META: Meta = Meta::typescript("prefer-for-of", Kind::Suggestion)
+        .presets(Presets::STYLISTIC)
         .reports_on_exit();
     const ON: On = On::new().stmts(&[StmtTag::For]);
     no_state!();
@@ -211,14 +239,20 @@ impl Rule for PreferForOf {
         };
         if is_oxlint
             && (!oxlint_looks_at(array, index_var)
-                || declarator.init().is_some_and(|init| oxlint_minds_parentheses(init, test, update)))
+                || declarator
+                    .init()
+                    .is_some_and(|init| oxlint_minds_parentheses(init, test, update)))
         {
             return;
         }
         if is_index_only_used_with_array(body, index_var, array) {
             // oxlint points at what is between the parentheses.
-            let place = if is_oxlint { Span::new(init.span().start, update.span().end) } else { stmt.span() };
-            cx.report(place, PREFER_FOR_OF);
+            let place = if is_oxlint {
+                Span::new(init.span().start, update.span().end)
+            } else {
+                stmt.span()
+            };
+            cx.report(place, PREFER_FOR_OF).called_with(stmt);
         }
     }
 }

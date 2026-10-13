@@ -30,10 +30,16 @@ pub struct State<'a> {
 }
 
 impl Rule for NoDeprecated {
-    const META: Meta = Meta::plugin(Plugin::Import, "no-deprecated", Kind::Suggestion).needs_modules();
+    const META: Meta =
+        Meta::plugin(Plugin::Import, "no-deprecated", Kind::Suggestion).needs_modules();
     /// Whatever is an `Identifier` of ESTree, or has one that is not a node here.
     const ON: On = On::new()
-        .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::ImportMeta, ExprTag::NewTarget])
+        .exprs(&[
+            ExprTag::Ident,
+            ExprTag::Dot,
+            ExprTag::ImportMeta,
+            ExprTag::NewTarget,
+        ])
         .stmts(&[
             StmtTag::Interface,
             StmtTag::TypeAlias,
@@ -95,7 +101,10 @@ impl Rule for NoDeprecated {
                     },
                     _ => false,
                 };
-                if cx.state.deprecated.contains_key(&name) && !e.is_jsx_tag_name() && !is_passed_over() {
+                if cx.state.deprecated.contains_key(&name)
+                    && !e.is_jsx_tag_name()
+                    && !is_passed_over()
+                {
                     check_identifier(name, e.span(), node, cx);
                 }
             }
@@ -110,15 +119,20 @@ impl Rule for NoDeprecated {
                         Node::Expr(parent) if !it.is_chain_root() => Some(parent),
                         _ => None,
                     };
-                    let mut properties = std::iter::successors(Some(e), around).map_while(|it| match it.kind() {
-                        ExprKind::Dot { name, .. } => Some(name),
-                        _ => None,
-                    });
+                    let mut properties =
+                        std::iter::successors(Some(e), around).map_while(|it| match it.kind() {
+                            ExprKind::Dot { name, .. } => Some(name),
+                            _ => None,
+                        });
                     check_member_expression(object, node, &mut properties, cx);
                 }
             }
             ExprKind::ImportMeta | ExprKind::NewTarget => {
-                let name = if e.tag() == ExprTag::ImportMeta { "meta" } else { "target" };
+                let name = if e.tag() == ExprTag::ImportMeta {
+                    "meta"
+                } else {
+                    "target"
+                };
                 if let Some((_, property)) = e.meta_property_spans() {
                     check_identifier(cx.file().name_of(name), property, node, cx);
                 }
@@ -134,11 +148,15 @@ impl Rule for NoDeprecated {
             StmtKind::TypeAlias(it) => check_ident(Some(it.name()), node, cx),
             StmtKind::Enum(it) => check_ident(Some(it.name()), node, cx),
             // The `B` of `namespace A.B` is no statement of its own.
-            StmtKind::Module(it) => std::iter::successors(Some(it), |it| it.nested()).for_each(|it| match it.name() {
-                ModuleName::Ident(name) => check_ident(Some(name), node, cx),
-                ModuleName::Global => check_identifier(cx.file().name_of("global"), it.name_span(), node, cx),
-                ModuleName::String(_) => {}
-            }),
+            StmtKind::Module(it) => {
+                std::iter::successors(Some(it), |it| it.nested()).for_each(|it| match it.name() {
+                    ModuleName::Ident(name) => check_ident(Some(name), node, cx),
+                    ModuleName::Global => {
+                        check_identifier(cx.file().name_of("global"), it.name_span(), node, cx)
+                    }
+                    ModuleName::String(_) => {}
+                })
+            }
             StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Labeled { .. } => {
                 check_ident(stmt.label(), node, cx);
             }
@@ -237,7 +255,9 @@ impl Rule for NoDeprecated {
             match found {
                 Found::Deprecated(deprecation) => report(at, deprecation, cx),
                 Found::Errors(imports, source) => {
-                    cx.report(at, PARSE_ERRORS).data("source", source).data("errors", imports.errors_text());
+                    cx.report(at, PARSE_ERRORS)
+                        .data("source", source)
+                        .data("errors", imports.errors_text());
                 }
             }
         }
@@ -250,11 +270,13 @@ impl<'a> State<'a> {
             return;
         };
         if let Some(deprecation) = self.maps.module_deprecation(imports) {
-            self.found.push((import.span(), Found::Deprecated(deprecation)));
+            self.found
+                .push((import.span(), Found::Deprecated(deprecation)));
         }
         if imports.has_errors() {
             let source = import.spec_span().unwrap_or_else(|| import.span());
-            self.found.push((source, Found::Errors(imports, import.spec())));
+            self.found
+                .push((source, Found::Errors(imports, import.spec())));
             return;
         }
         if let Some(local) = import.default() {
@@ -268,12 +290,23 @@ impl<'a> State<'a> {
         for specifier in import.named() {
             // A name in quotes has no `name`.
             if !specifier.imported().is_string() {
-                self.check_specifier(imports, specifier.imported().bytes(), specifier.local(), specifier.span());
+                self.check_specifier(
+                    imports,
+                    specifier.imported().bytes(),
+                    specifier.local(),
+                    specifier.span(),
+                );
             }
         }
     }
 
-    fn check_specifier(&mut self, imports: ExportMap<'a>, imported: &[u8], local: Ident<'a>, at: Span) {
+    fn check_specifier(
+        &mut self,
+        imports: ExportMap<'a>,
+        imported: &[u8],
+        local: Ident<'a>,
+        at: Span,
+    ) {
         let Got::Meta(exported) = self.maps.get_export(imports, imported) else {
             return;
         };
@@ -288,21 +321,24 @@ impl<'a> State<'a> {
 
     /// upstream's `declaredScope(context, name, node) === 'module'`
     fn is_declared_in_module(&mut self, name: Name<'a>, node: Node<'a>) -> bool {
-        let State { deprecated, namespaces, first_references, .. } = self;
+        let State {
+            deprecated,
+            namespaces,
+            first_references,
+            ..
+        } = self;
         let first_references = first_references.get_or_insert_with(|| {
             let mut first_references = FxHashMap::default();
             for reference in node.file().references_as_visited() {
                 let name = reference.name();
-                // ESLint has the name of a class declaration once more, in the scope of the class.
-                let is_name_of_class = |it: Scope<'a>| match it.node() {
-                    Node::Class(class) => class.name().is_some_and(|it| it.name() == name),
-                    _ => false,
-                };
                 if deprecated.contains_key(&name) || namespaces.contains_key(&name) {
-                    first_references.entry((reference.scope(), name)).or_insert_with(|| {
-                        reference.symbol().is_some_and(|it| it.scope().kind() == ScopeKind::Module)
-                            && !reference.scope().chain().any(is_name_of_class)
-                    });
+                    first_references
+                        .entry((reference.scope(), name))
+                        .or_insert_with(|| {
+                            reference
+                                .variable()
+                                .is_some_and(|it| it.scope().kind() == ScopeKind::Module)
+                        });
                 }
             }
             first_references
@@ -362,7 +398,10 @@ fn check_member_expression<'a>(
     }
     for property in properties {
         // The `name` of a `PrivateIdentifier` is without the `#`.
-        let name = property.bytes().strip_prefix(b"#").unwrap_or_else(|| property.bytes());
+        let name = property
+            .bytes()
+            .strip_prefix(b"#")
+            .unwrap_or_else(|| property.bytes());
         let Got::Meta(metadata) = cx.state.maps.get_export(namespace, name) else {
             return;
         };

@@ -7,6 +7,7 @@ use bun_lint::context::Severity;
 use bun_lint::fix::Fix;
 use bun_lint::linter::{LintMessage, RuleId};
 use bun_lint::span::Span;
+use bun_lint::utils::sort;
 use std::cell::RefCell;
 
 /// The names of the rules, as the comments have them.
@@ -108,7 +109,7 @@ impl Enabled {
     pub(crate) fn finish(self, mut messages: Vec<LintMessage>) -> Vec<LintMessage> {
         messages.retain(|it| !matches!(&it.rule_id, Some(RuleId::Unknown(id)) if RULES.iter().any(|name| name.as_bytes() == &id[..])));
         messages.extend(self.messages.into_inner());
-        messages.sort_by_key(|it| (it.line, it.column));
+        sort::sort_by_key(&mut messages, |it| (it.line, it.column));
         messages
     }
 }

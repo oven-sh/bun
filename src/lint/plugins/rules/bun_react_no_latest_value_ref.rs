@@ -8,11 +8,11 @@ pub struct ReactNoLatestValueRef;
 
 const DURING_RENDER: Message = Message::new(
     "duringRender",
-    "`{{name}}.current` is set while the component renders. React can render a component without showing the result, and more than once.",
+    "`{{name}}.current` is set during render. React may render more than once, or throw the result away.",
 );
 const IN_EFFECT: Message = Message::new(
     "inEffect",
-    "This effect only copies a value into `{{name}}.current` after a render. A function from `useEffectEvent()` sees the latest values without a ref.",
+    "This effect only copies a value into `{{name}}.current`. Use `useEffectEvent()` to read the latest values without a ref.",
 );
 
 /// `name()`, `React.name()`

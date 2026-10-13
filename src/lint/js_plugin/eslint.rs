@@ -26,7 +26,8 @@ mod call {
 const NEEDS_CONFIGURATION: u8 = b'4';
 pub(super) const NOT_INSTALLED: u8 = b'5';
 
-pub(super) const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
+pub(super) const OUT_OF_STEP: &[u8] =
+    b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -131,8 +132,9 @@ impl Host<'_> {
         Err(OUT_OF_STEP.to_vec().into())
     }
 
-    /// ESLint's `Linter.verify`. `run`: JSON, what is the same for all files of a configuration file: `from`, `basePath`,
+    /// Calls ESLint's `Linter.verify`. `run` is JSON with what all files of a config file share: `from`, `basePath`,
     /// `allowInlineConfig`, `onlyErrors`, `aboutLayout`, and for [`Configuration::whole`] `file`, `ignores` and `added`.
+    /// `reviveOverride` in `worker/eslint.js` turns each object in `added` into one that every ESLint 9 and 10 accepts.
     pub fn lint_with_eslint(
         &self,
         configuration: &Configuration,
@@ -157,7 +159,7 @@ impl Host<'_> {
         self.engine.with_vm(file.text.len(), &mut |vm| {
             returned = self.lint_in(vm, &message, configuration, run)
         })?;
-        let Some(Json::Array(parts)) = crate::json::parse(&returned?) else {
+        let Some(parts) = crate::json::parse(&returned?).and_then(Json::into_array) else {
             return Err(OUT_OF_STEP.to_vec().into());
         };
         let [shown, suppressed, deprecated] = &parts[..] else {

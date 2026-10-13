@@ -1380,6 +1380,69 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       },
     );
 
+    // 8 MiB doesn't fit in the pipe and nobody reads it, so the write stays parked and the child
+    // waits in its poll of stdout. That poll is where it learns the reader left. The sink rejects
+    // the parked promise from that callback, and the JS that runs next closes the sink and drops
+    // the last refs on it while the pipe writer inside it is still on the stack (ASAN:
+    // heap-use-after-free). On Windows a write to stdout blocks, so "parked" would never print.
+    // setImmediate() runs on a later turn of the loop, once the sink has the chunk.
+    it.skipIf(isWindows).each([
+      [
+        "an async iterable's write",
+        `(async function* () {
+           try {
+             setImmediate(() => console.error("parked"));
+             yield Buffer.alloc(8 * 1024 * 1024, "x");
+           } finally {
+             console.error("closed");
+           }
+         })()`,
+        "parked\nclosed\nEPIPE\n",
+      ],
+      [
+        "a direct stream's flush()",
+        `new ReadableStream({
+           type: "direct",
+           async pull(controller) {
+             controller.write(Buffer.alloc(8 * 1024 * 1024, "x"));
+             setImmediate(() => console.error("parked"));
+             await controller.flush();
+           },
+         })`,
+        "parked\nEPIPE\n",
+      ],
+    ])(
+      "Bun.write(Bun.stdout, response) rejects with EPIPE when the reader of the pipe leaves while %s is parked",
+      async (_, body, expected) => {
+        // The read end is held open and never read. `proc.stdout.cancel()` starts a read first, which can drain it all.
+        using dir = tempDir("bun-write-epipe", {});
+        const fifo = join(String(dir), "fifo");
+        expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+        const held = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const stdout = fs.openSync(fifo, "w");
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `await Bun.write(Bun.stdout, new Response(${body})).catch(e => console.error(e.code));`,
+          ],
+          env: bunEnv,
+          stdout,
+          stderr: "pipe",
+        });
+        fs.closeSync(stdout);
+        const decoder = new TextDecoder();
+        let stderr = "";
+        for await (const chunk of proc.stderr) {
+          const wasParked = stderr.includes("parked\n");
+          stderr += decoder.decode(chunk, { stream: true });
+          if (!wasParked && stderr.includes("parked\n")) fs.closeSync(held);
+        }
+        expect(stderr).toBe(expected);
+        expect(await proc.exited).toBe(0);
+      },
+    );
+
     // /dev/full: every write fails with ENOSPC.
     it.skipIf(process.platform !== "linux")("rejects with the write error, for each kind of body", async () => {
       await using server = await origin();

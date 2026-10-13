@@ -3488,7 +3488,8 @@ const wrong: number = "";
         );
         expect(exitCode).toBe(1);
       },
-      30_000,
+      // 26 seconds of processor time, shared with 19 other tests.
+      90_000,
     );
 
     test(
@@ -15683,6 +15684,16 @@ export function f<T>(rest: T) {
     expect(stdout).toContain("Usage: bun check [flags] [...files or directories]");
     expect(stdout).toContain("-p, --project=<val>");
     expect(stdout).toContain("-b, --build");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--help prints bun check's help even if package.json has a `check` script", async () => {
+    using dir = project({ "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }) });
+    const { stdout, exitCode } = await check(dir, ["--help"]);
+    expect(stdout).toStartWith("Usage: bun check [flags] [...files or directories]");
+    expect(stdout).toEndWith(
+      `note: package.json has a "check" script, so bun check runs that script\n  Change the script to "bun check" to use the built-in command`,
+    );
     expect(exitCode).toBe(0);
   });
 });

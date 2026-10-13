@@ -15,7 +15,8 @@ fn key(it: &RuleSetting) -> (&[u8], bool) {
 impl Config {
     /// oxlint's `ConfigStore::number_of_rules`, of an `.oxlintrc.json`: the rules that warn or are errors where no override
     /// applies, and those that an override makes warn or an error, whichever files it is for. What an override turns off still
-    /// counts. `with_types`: the rules that need types count too.
+    /// counts. What `categories` turn on for a plugin that only an override has doesn't. `with_types`: the rules that need
+    /// types count too.
     ///
     /// A rule that only a category turns on and that does not exist here is not counted.
     pub fn number_of_rules_of_oxlint(&self, registry: &Registry, with_types: bool) -> usize {
@@ -34,7 +35,7 @@ impl Config {
         }
         on.extend(
             settings(true)
-                .filter(|it| it.severity != Severity::Off)
+                .filter(|it| it.severity != Severity::Off && !it.yields)
                 .map(key),
         );
         let needs_types = |id: &[u8]| {

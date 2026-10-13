@@ -6,7 +6,8 @@ pub struct NoDupeClassMembers;
 
 impl Rule for NoDupeClassMembers {
     const META: Meta = Meta::typescript("no-dupe-class-members", Kind::Problem)
-        .extends_base_rule("no-dupe-class-members");
+        .extends_base_rule("no-dupe-class-members")
+        .hints();
     const ON: On = On::new().classes();
     type State<'a> = Seen<'a>;
 

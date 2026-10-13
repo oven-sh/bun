@@ -8,15 +8,21 @@
 //! `.editorconfig` counts, and which files are ignored (`files.rs`).
 
 use super::cli::{Options, Precedence};
+use super::tailwind::SetBy;
 use super::{editorconfig, tailwind};
 use crate::configs::NAMES_OF_VITE;
 use crate::gitignore::{self, Chain};
+use crate::paths::package_of;
 use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
+use bun_ast::Expr;
+use bun_ast::expr::Data;
 use bun_collections::index_sort::sort_slice;
 use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
+use bun_format::tailwind::Oxc;
+use bun_lint::glob::Picomatch;
 use bun_lint::json::{self, Notation};
 use bun_lint::linter::config::{glob_refusal, strings_of};
 use bun_lint::linter::write_json;
@@ -96,6 +102,11 @@ const OPTIONS: [&[u8]; 28] = [
     b"vueIndentScriptAndStyle",
 ];
 
+/// Returns true for Prettier's own options. Flags can also set Bun's extra features.
+pub(super) fn is_option_of_prettier(name: &[u8]) -> bool {
+    OPTIONS.contains(&name)
+}
+
 /// Those of [`OPTIONS`] whose value is a string.
 const OPTIONS_WITH_STRINGS: [&[u8]; 10] = [
     b"parser",
@@ -112,6 +123,9 @@ const OPTIONS_WITH_STRINGS: [&[u8]; 10] = [
 
 /// What else there is at the top of a configuration file of Prettier.
 const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath"];
+
+/// The name [`SortSettings`] uses for `sortImports` when a flag or `[fmt]` sets it.
+const SORT_IMPORTS_OF_BUN: &[u8] = b"bun.sortImports";
 
 /// The largest number that is read. It stands for `Infinity` and for `max_line_length = off`.
 pub(super) const NO_END: &[u8] = b"4294967295";
@@ -143,6 +157,9 @@ struct Override {
 struct Plugins {
     /// One of them is not built in: its options are not known here.
     names_others: bool,
+    /// One of them is `prettier-plugin-tailwindcss`.
+    sorts_classes: bool,
+    oxc: Oxc,
     /// Those that may print what this formatter formats in another way.
     missing: Vec<Vec<u8>>,
     /// How the names of the files end that they add to what Prettier reads.
@@ -171,54 +188,93 @@ pub(crate) struct Scope {
     editorconfigs: Vec<Arc<editorconfig::File>>,
 }
 
+impl Scope {
+    pub(crate) fn has_editorconfig(&self) -> bool {
+        !self.editorconfigs.is_empty()
+    }
+}
+
 /// An element of oxc's `GlobSet`.
 pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
     bun_glob::Pattern::of_oxc_glob_set(pattern)
 }
 
+/// Parses a pattern from Prettier's `overrides` or command line.
+pub(crate) fn glob_of_prettier(pattern: &[u8], how: Picomatch) -> bun_glob::Pattern {
+    bun_glob::Pattern::with_dots(
+        &bun_lint::glob::from_picomatch(pattern, how),
+        bun_glob::Dots::SkipTraversal,
+    )
+}
+
 fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
-    let all = strings_of(json);
-    let pattern = |text: &&[u8]| Pattern {
+    patterns_of(strings_of(json).into_iter(), is_oxfmt)
+}
+
+fn patterns_of<'t>(all: impl Iterator<Item = &'t [u8]>, is_oxfmt: bool) -> Vec<Pattern> {
+    let pattern = |text: &[u8]| Pattern {
         glob: if is_oxfmt {
             glob_of_oxc(text)
         } else {
-            // `micromatch.isMatch(path, pattern, { dot: true })`
-            bun_glob::Pattern::new(text, bun_glob::Options::MICROMATCH_DOT)
+            glob_of_prettier(text, Picomatch::Micromatch)
         },
-        text: (*text).into(),
+        text: text.into(),
         has_slash: strings::contains_char(text, b'/'),
     };
-    all.iter().map(pattern).collect()
+    all.map(pattern).collect()
 }
 
-/// The package of a plugin that is named, or is a path into `node_modules`.
-fn package_of(plugin: &[u8]) -> &[u8] {
-    let Some(at) = strings::last_index_of(plugin, b"node_modules/") else {
-        return plugin;
-    };
-    let rest = &plugin[at + b"node_modules/".len()..];
-    let slash_from =
-        |from: usize| Some(from + strings::index_of_char_usize(rest.get(from..)?, b'/')?);
-    let end = match rest.first() {
-        Some(b'@') => slash_from(0).and_then(|it| slash_from(it + 1)),
-        _ => slash_from(0),
-    };
-    &rest[..end.unwrap_or(rest.len())]
-}
+const PLUGIN_FOR_CLASSES: &[u8] = b"prettier-plugin-tailwindcss";
+/// It reads JavaScript and TypeScript with another parser, and what is printed is the same.
+const PLUGIN_OF_OXC: &[u8] = b"@prettier/plugin-oxc";
 
-/// What the plugins that sort imports do is built in.
+/// What the plugins that sort imports and classes do is built in.
 pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
     let name = package_of(name);
-    name.ends_with(b"/prettier-plugin-sort-imports") || name == b"prettier-plugin-organize-imports"
+    name.ends_with(b"/prettier-plugin-sort-imports")
+        || name == b"prettier-plugin-organize-imports"
+        || name == PLUGIN_FOR_CLASSES
+        || name == PLUGIN_OF_OXC
+}
+
+/// What an element of `plugins` names. One that is no string is a module that a configuration in JavaScript has imported,
+/// which is known by what it exports.
+fn name_of(plugin: &Json) -> Option<&[u8]> {
+    let has =
+        |export: &[u8], key: &[u8]| plugin.get(export).is_some_and(|it| it.get(key).is_some());
+    match plugin.as_str() {
+        None if has(b"options", b"tailwindConfig") => Some(PLUGIN_FOR_CLASSES),
+        None if has(b"parsers", b"oxc") => Some(PLUGIN_OF_OXC),
+        name => name,
+    }
+}
+
+/// See [`Oxc`]. `plugins`: in the order of their list.
+fn oxc_among<'p>(plugins: impl Iterator<Item = &'p [u8]>) -> Oxc {
+    let mut oxc = Oxc::Absent;
+    for name in plugins.map(package_of) {
+        oxc = match (name == PLUGIN_OF_OXC, oxc) {
+            (true, _) => Oxc::Behind,
+            (false, Oxc::Behind) if name == PLUGIN_FOR_CLASSES => Oxc::Before,
+            (false, oxc) => oxc,
+        };
+    }
+    oxc
+}
+
+fn is_plugin_for_classes(name: &[u8]) -> bool {
+    package_of(name) == PLUGIN_FOR_CLASSES
 }
 
 fn is_built_in(plugin: &Json) -> bool {
-    plugin.as_str().is_some_and(is_built_in_plugin)
+    name_of(plugin).is_some_and(is_built_in_plugin)
 }
 
-/// Plugins that add a language to Prettier and leave the others as they are, with how the names of its files end.
-/// Without them the rest of a project is formatted the same.
-const PLUGINS_FOR_LANGUAGES: [(&[u8], &[&[u8]]); 22] = [
+/// Plugins that add a language to Prettier, or change what it makes of one kind of file, and leave the others as they are, with
+/// how the names of those files end. Without them the rest of a project is formatted the same.
+const PLUGINS_FOR_LANGUAGES: [(&[u8], &[&[u8]]); 23] = [
+    // Its order of the fields is not that of `sortPackageJson`, which is oxfmt's.
+    (b"prettier-plugin-packagejson", &[b"/package.json"]),
     (b"prettier-plugin-svelte", &[b".svelte"]),
     (b"prettier-plugin-astro", &[b".astro"]),
     (b"@prettier/plugin-pug", &[b".pug", b".jade"]),
@@ -265,7 +321,7 @@ pub(super) fn is_missing_plugin(name: &[u8]) -> bool {
 }
 
 /// `value` as Prettier shows it in a warning: `["a", 1]`, `{ a: true }`.
-fn write_as_shown(out: &mut Vec<u8>, value: &Json) {
+pub(super) fn write_as_shown(out: &mut Vec<u8>, value: &Json) {
     let separate = |out: &mut Vec<u8>, index: usize| {
         if index > 0 {
             out.extend_from_slice(b", ");
@@ -300,9 +356,8 @@ fn write_as_shown(out: &mut Vec<u8>, value: &Json) {
 
 /// The object `before` with the keys of the object `after`, both as JSON. `after` if one is no object.
 fn merged_objects(before: &[u8], after: &[u8]) -> Vec<u8> {
-    let (Some(Json::Object(mut entries)), Some(Json::Object(added))) =
-        (bun_lint::json::parse(before), bun_lint::json::parse(after))
-    else {
+    let object = |text| bun_lint::json::parse(text).and_then(Json::into_object);
+    let (Some(mut entries), Some(added)) = (object(before), object(after)) else {
         return after.to_vec();
     };
     for (name, value) in added {
@@ -333,6 +388,14 @@ fn settings(json: &Json, is_oxfmt: bool) -> Settings {
     for (name, value) in json.as_object().unwrap_or_default() {
         let is_option = OPTIONS.contains(&&name[..]);
         let text = match value {
+            // As JSON, a string too: the plugin that sorts classes refuses a value of the wrong type.
+            Json::Null | Json::Bool(_) | Json::Number(_) | Json::String(_)
+                if !is_oxfmt && name.starts_with(b"tailwind") =>
+            {
+                let mut text = Vec::new();
+                write_json(&mut text, value);
+                text
+            }
             Json::String(text) if is_option && !OPTIONS_WITH_STRINGS.contains(&&name[..]) => {
                 [b"\"", &text[..], b"\""].concat()
             }
@@ -416,12 +479,12 @@ impl Override {
         }
         let name = paths::basename(relative);
         [false, true].into_iter().any(|with_slashes| {
-            // With patterns without slashes, what is excluded is matched against the name too,
-            // whatever it looks like: micromatch's `basename`.
-            // What is the path, letter for letter, matches before `basename` is looked at.
-            let matches = |it: &Pattern| match with_slashes {
-                true => it.glob.matches(relative),
-                false => it.glob.matches(name) || *it.text == *relative,
+            // This is micromatch's `basename` option. For `files` patterns without a slash, `excludeFiles` patterns are
+            // matched against the file name too, whether or not they have a slash themselves.
+            // A pattern that equals the path character for character always matches, whatever it means as a glob.
+            // micromatch checks that before it looks at `basename`.
+            let matches = |it: &Pattern| {
+                it.glob.matches(if with_slashes { relative } else { name }) || *it.text == *relative
             };
             self.files
                 .iter()
@@ -502,16 +565,187 @@ fn use_tabs_in<'s>(
     Some(value == b"true")
 }
 
+/// Where the first key is that a map in `value` has for the second time. Only scalars are compared, by what they stand for:
+/// `a` is `"a"`. `as_texts`: `1` is `"1"` too.
+fn repeated_key(value: &Expr, as_texts: bool) -> Option<i32> {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return None;
+    }
+    match &value.data {
+        Data::EArray(it) => (it.slice().iter()).find_map(|it| repeated_key(it, as_texts)),
+        Data::EObject(it) => {
+            let mut seen: Vec<Json> = Vec::new();
+            for property in it.properties.iter() {
+                let (Some(key), Some(value)) = (&property.key, &property.value) else {
+                    continue;
+                };
+                let is_scalar = !matches!(key.data, Data::EArray(_) | Data::EObject(_));
+                if let Some(mut scalar) = json::from_parsed(key).filter(|_| is_scalar) {
+                    if as_texts && scalar.as_str().is_none() {
+                        let mut text = Vec::new();
+                        write_json(&mut text, &scalar);
+                        scalar = Json::String(text);
+                    }
+                    if seen.contains(&scalar) {
+                        return Some(key.loc.start);
+                    }
+                    seen.push(scalar);
+                }
+                if let Some(at) = repeated_key(value, as_texts) {
+                    return Some(at);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// The first key that a map in a text has for the second time.
+struct RepeatedKey<'a> {
+    /// Without a byte order mark.
+    text: &'a [u8],
+    /// What of `text` is before the key.
+    before: &'a [u8],
+}
+
+fn before_repeated_key(text: &[u8], as_texts: bool) -> Option<RepeatedKey<'_>> {
+    // Here `<<` puts the keys of another map into this one.
+    if strings::contains(text, b"<<") {
+        return None;
+    }
+    let find = |it: &Expr| repeated_key(it, as_texts);
+    let at = json::with_parsed(Notation::Yaml, text, find).ok()??;
+    let text = strings::without_utf8_bom(text);
+    let before = text.get(..usize::try_from(at).ok()?)?;
+    // A key in quotes is where its text starts.
+    let before = before.strip_suffix(b"\"").unwrap_or(before);
+    let before = before.strip_suffix(b"'").unwrap_or(before);
+    Some(RepeatedKey { text, before })
+}
+
+/// What js-yaml, which reads YAML for ESLint 8, throws about a key that a map in `text` has twice: the message of its
+/// `YAMLException`, with `makeSnippet`.
+pub(crate) fn duplicated_mapping_key(text: &[u8]) -> Option<Vec<u8>> {
+    use bstr::ByteSlice;
+    let RepeatedKey { text, before } = before_repeated_key(text, true)?;
+    let position = before.chars().count();
+    let mut buffer: Vec<char> = text.chars().collect();
+    if !matches!(buffer.last(), Some('\n' | '\r')) {
+        buffer.push('\n');
+    }
+    // Where each line starts and ends.
+    let mut lines: Vec<(usize, usize)> = Vec::new();
+    let (mut start, mut at) = (0, 0);
+    while let Some(&c) = buffer.get(at) {
+        let len = match (c, buffer.get(at + 1)) {
+            ('\r', Some('\n')) => 2,
+            ('\n' | '\r' | '\0', _) => 1,
+            _ => 0,
+        };
+        if len > 0 {
+            lines.push((start, at));
+            start = at + len;
+        }
+        at += len.max(1);
+    }
+    let found = lines.iter().position(|it| position <= it.1)?;
+    let number_width = (found + 2).min(lines.len()).to_string().len();
+    let half = (79 - (1 + number_width + 3)) / 2 - 1;
+    let column = position - lines[found].0;
+    // `getLine`: the text, and where that column is in it.
+    let line = |at: usize| {
+        let (mut start, mut end) = lines[at];
+        let position = start + column;
+        let (mut head, mut tail) = ("", "");
+        if position > start + half {
+            head = " ... ";
+            start = position - half + head.len();
+        }
+        if end > position + half {
+            tail = " ...";
+            end = position + half - tail.len();
+        }
+        let shown = buffer.get(start..end).unwrap_or_default().iter();
+        let shown: String = shown.map(|&c| if c == '\t' { '→' } else { c }).collect();
+        let text = format!(" {:>number_width$} | {head}{shown}{tail}\n", at + 1);
+        (text, (position + head.len()).saturating_sub(start))
+    };
+    let mut out = format!("duplicated mapping key ({}:{})\n\n", found + 1, column + 1);
+    for at in found.saturating_sub(3)..found {
+        out.push_str(&line(at).0);
+    }
+    let (text, caret) = line(found);
+    out.push_str(&text);
+    out.extend(std::iter::repeat_n('-', 1 + number_width + 3 + caret));
+    out.push_str("^\n");
+    for at in (found + 1..lines.len()).take(2) {
+        out.push_str(&line(at).0);
+    }
+    out.pop();
+    Some(out.into_bytes())
+}
+
+/// What the `yaml` package, which reads YAML for Prettier, says about a key that a map in `text` has twice: its
+/// `prettifyError`.
+fn repeated_key_in_yaml(text: &[u8]) -> Option<Vec<u8>> {
+    use bstr::ByteSlice;
+    let RepeatedKey { text, before } = before_repeated_key(text, false)?;
+    let line_start = strings::last_index_of_char(before, b'\n').map_or(0, |it| it + 1);
+    let line_end = strings::index_of_char_usize(&text[line_start..], b'\n')
+        .map_or(text.len(), |it| line_start + it);
+    let number = strings::count_char(before, b'\n') + 1;
+    let mut column = strings::utf8_decoded_len_utf16(&before[line_start..]) as usize;
+    let mut out = format!(
+        "Map keys must be unique at line {number}, column {}:\n\n",
+        column + 1
+    );
+    let chars = |it: &[u8]| it.chars().collect::<Vec<char>>();
+    let written = &text[line_start..line_end];
+    let mut line = chars(written.strip_suffix(b"\r").unwrap_or(written));
+    if column >= 60 && line.len() > 80 {
+        let cut = (column - 39).min(line.len() - 79);
+        line = (['…'].into_iter())
+            .chain(line[cut..].iter().copied())
+            .collect();
+        column -= cut - 1;
+    }
+    if line.len() > 80 {
+        line.truncate(79);
+        line.push('…');
+    }
+    // The line before it too, if nothing but blanks is before the key.
+    if line_start > 0 && line.iter().take(column).all(|it| *it == ' ') {
+        let start =
+            strings::last_index_of_char(&text[..line_start - 1], b'\n').map_or(0, |it| it + 1);
+        let mut above = chars(&text[start..line_start]);
+        if above.len() > 80 {
+            above.truncate(79);
+            above.extend(['…', '\n']);
+        }
+        out.extend(above);
+    }
+    out.extend(line);
+    out.push('\n');
+    out.extend(std::iter::repeat_n(' ', column));
+    out.push('^');
+    Some(out.into_bytes())
+}
+
 /// Of a file that `--config` names: `.oxfmtrc.json`, `oxfmt.config.ts`, `config/oxfmtrc.json`.
 fn is_name_of_oxfmt(name: &[u8]) -> bool {
     strings::contains(name, b"oxfmt")
 }
 
-/// Whether one of oxfmt's configuration files is in `directory`.
-pub(super) fn has_configuration_of_oxfmt(directory: &[u8]) -> bool {
-    NAMES[..NAMES_OF_OXFMT]
-        .iter()
-        .any(|name| fs::is_file(&paths::join(directory, name)))
+/// Display name of the Prettier config `NAMES[at]` in `directory`, or `None` if it isn't one. Never runs the file.
+fn of_prettier(directory: &[u8], at: usize) -> Option<Vec<u8>> {
+    let name = *NAMES.get(at)?;
+    if !name.starts_with(b"package.") {
+        return Some(name.to_vec());
+    }
+    let package = json::parse(&fs::read(&paths::join(directory, name)).ok()?)?;
+    let has_it = !matches!(package.get(b"prettier")?, Json::Null | Json::Bool(false));
+    has_it.then(|| [b"prettier in ", name].concat())
 }
 
 /// Which formatters are among the dependencies of a project. That tells what one without a configuration file is
@@ -552,14 +786,16 @@ impl Plugins {
         let plugins = json.get(b"plugins")?.as_array()?;
         Some(Plugins {
             names_others: !plugins.iter().all(is_built_in),
-            // One that is not a name is an object that a configuration in JavaScript has imported.
+            sorts_classes: (plugins.iter().filter_map(name_of)).any(is_plugin_for_classes),
+            oxc: oxc_among(plugins.iter().filter_map(name_of)),
             missing: (plugins.iter())
-                .map(|it| it.as_str().unwrap_or(b"(an object)"))
+                .map(|it| name_of(it).unwrap_or(b"(an object)"))
                 .filter(|it| is_missing_plugin(it))
                 .map(<[u8]>::to_vec)
                 .collect(),
             packages: (plugins.iter().filter_map(Json::as_str))
                 .filter(|it| !it.starts_with(b".") && !it.starts_with(b"/"))
+                .filter(|it| !it.starts_with(b"file:"))
                 .map(<[u8]>::to_vec)
                 .collect(),
             endings: (plugins.iter())
@@ -629,6 +865,8 @@ pub(crate) struct Resolved {
     pub(crate) omits_final_newline: bool,
     /// One of [`Configs::unsupported_options`] is among those of the file.
     pub(crate) has_unsupported_option: bool,
+    /// What oxc's parser reports and recovers from is formatted, as in the tests of its formatter. oxfmt refuses it.
+    pub(crate) formats_what_has_errors: bool,
 }
 
 /// Adds what the `tsconfig.json` at `path` says about JSX, after what the files that it extends say.
@@ -717,12 +955,16 @@ pub(crate) struct Configs<'c> {
     options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
+    /// `[[fmt.overrides]]`. Globs are relative to the working directory.
+    overrides: Vec<Override>,
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
     /// [`Configs::name`]
     arguments: Guarded<Vec<Vec<u8>>>,
     /// [`Configs::lacks_file`]
     lacks_file: OnceLock<bool>,
+    /// [`Configs::note`]
+    note: OnceLock<Vec<u8>>,
     /// Who asks has seen to it that the configuration files of a file count.
     counts_everywhere: bool,
     pub(crate) flavor: Flavor,
@@ -757,13 +999,33 @@ impl<'c> Configs<'c> {
     ) -> Configs<'c> {
         let (is_like_oxfmt, reads_editorconfig) = (options.is_like_oxfmt, options.editorconfig);
         let named = options.config.clone();
+        // Patterns in bunfig.toml are Bun's globs. `is_oxfmt` below makes `excludeFiles` match against the path, like `files`.
+        let pattern = |text: &Vec<u8>| Pattern {
+            glob: bun_glob::Pattern::of_bunfig(text),
+            text: text[..].into(),
+            has_slash: strings::contains_char(text, b'/'),
+        };
+        let strings = |all: &[Vec<u8>]| all.iter().map(pattern).collect();
+        let overrides = (options.overrides.iter())
+            .map(|it| Override {
+                files: strings(&it.files),
+                excluded: strings(&it.excluded),
+                settings: (it.format.iter())
+                    .map(|it| (it.0.to_vec(), it.1.clone()))
+                    .collect(),
+                plugins: None,
+                is_oxfmt: true,
+            })
+            .collect();
         let mut configs = Configs {
             options,
+            overrides,
             environment,
             by_directory: Guarded::new(FxHashMap::default()),
             named: None,
             arguments: Default::default(),
             lacks_file: OnceLock::new(),
+            note: OnceLock::new(),
             counts_everywhere,
             flavor: Flavor::Prettier,
             tsconfigs: Guarded::new(FxHashMap::default()),
@@ -781,12 +1043,13 @@ impl<'c> Configs<'c> {
                     formatters = Formatters::depended_on(&environment.cwd);
                     let has_oxfmt = formatters.oxfmt || formatters.vite_plus;
                     let has_prettier = formatters.prettier;
+                    // Depending on both suggests a migration to oxfmt, so oxfmt wins.
                     if has_oxfmt && has_prettier {
-                        configs.warn(&[
-                            b"There is no configuration file, and the project depends on both oxfmt and prettier: files are formatted like Prettier does. --flavor oxfmt, or an .oxfmtrc.json, which bun format --init writes, changes that.",
-                        ]);
+                        configs.note.get_or_init(|| {
+                            b"No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like oxfmt. Add a config file to change that.".to_vec()
+                        });
                     }
-                    has_oxfmt && !has_prettier
+                    has_oxfmt
                 }),
             },
             // The name of the one that cannot be used tells.
@@ -904,9 +1167,11 @@ impl<'c> Configs<'c> {
             }
         } else if name == b"package.yaml" {
             // One that cannot be read has no configuration, as for Prettier.
-            match json::parse_as(Notation::Yaml, &read()?)
+            let text = read()?;
+            match json::parse_as(Notation::Yaml, &text)
                 .as_ref()
                 .ok()
+                .filter(|_| repeated_key_in_yaml(&text).is_none())
                 .and_then(|it| it.get(b"prettier"))
             {
                 None | Some(Json::Null | Json::Bool(false)) => return Ok(None),
@@ -918,12 +1183,19 @@ impl<'c> Configs<'c> {
         } else if !name.iter().skip(1).any(|it| *it == b'.') {
             // `.prettierrc`, and what `--config` names without an extension, like `/dev/null`: YAML, which JSON is a part of.
             let text = read()?;
+            if let Some(why) = repeated_key_in_yaml(&text) {
+                return Err(fail(&why));
+            }
             match json::parse(&text) {
                 Some(json @ Json::Object(_)) => json,
                 _ => json::parse_as(Notation::Yaml, &text).map_err(|why| fail(&why))?,
             }
         } else if name.ends_with(b".yaml") || name.ends_with(b".yml") {
-            parse(Notation::Yaml)?
+            let text = read()?;
+            if let Some(why) = repeated_key_in_yaml(&text) {
+                return Err(fail(&why));
+            }
+            json::parse_as(Notation::Yaml, &text).map_err(|why| fail(&why))?
         } else if name.ends_with(b".json5") {
             parse(Notation::Json5)?
         } else if name.ends_with(b".toml") {
@@ -951,7 +1223,7 @@ impl<'c> Configs<'c> {
             .get(b"plugins")
             .is_some_and(|it| it.as_array().is_none())
         {
-            return Err(fail(b"\"plugins\" is not an array."));
+            return Err(fail(b"\"plugins\" must be an array"));
         }
         let is_override = |it: &Json| match it.get(b"files") {
             Some(Json::String(_)) => true,
@@ -964,7 +1236,7 @@ impl<'c> Configs<'c> {
             .is_some_and(|it| !it.as_array().is_some_and(|it| it.iter().all(is_override)))
         {
             return Err(fail(
-                b"\"overrides\" is not an array of objects with \"files\", a pattern or an array of patterns.",
+                b"\"overrides\" must be an array of objects, each with \"files\" set to a pattern or an array of patterns",
             ));
         }
         if is_oxfmt
@@ -1010,24 +1282,32 @@ impl<'c> Configs<'c> {
         }
         let config = Config::new(path, &json, is_oxfmt);
         let of_overrides = config.overrides.iter().filter_map(|it| it.plugins.as_ref());
-        if of_overrides
-            .chain([&config.plugins])
-            .any(|it| !it.missing.is_empty())
+        let mut missing: Vec<&[u8]> = Vec::new();
+        for name in [&config.plugins]
+            .into_iter()
+            .chain(of_overrides)
+            .flat_map(|it| &it.missing)
         {
-            self.warn(&[
-                b"Plugins are not supported: \"plugins\" in ",
-                path,
-                b" has no effect.",
-            ]);
+            if !missing.contains(&&name[..]) {
+                missing.push(name);
+            }
+        }
+        // Without the flag the files are left alone because of them, which is said at the end.
+        if !missing.is_empty() && self.options.allow_unsupported {
+            let end: &[u8] = match missing.len() {
+                1 => b" has no effect because bun fmt does not include that plugin",
+                _ => b" have no effect because bun fmt does not include those plugins",
+            };
+            self.warn(&[&missing.join(&b", "[..]), b" in ", path, end]);
         }
         Ok(Some(Arc::new(config)))
     }
 
-    /// What counts in `directory`, whose entries are `names`, and whose parent has `above`.
+    /// What counts in `directory`, whose parent has `above`. `entries`: the name of each, and whether it is a directory.
     fn scope<'n>(
         &self,
         directory: &[u8],
-        names: impl Iterator<Item = &'n [u8]>,
+        entries: impl Iterator<Item = (&'n [u8], bool)>,
         above: Option<&Scope>,
     ) -> Found {
         let count = if self.flavor == Flavor::Oxfmt {
@@ -1043,14 +1323,15 @@ impl<'c> Configs<'c> {
                     && bun_sys::exists(&paths::join(directory, wanted)))
         };
         let mut listed = Listed::default();
-        for name in
-            names.filter(|name| matches!(name.first(), Some(b'.' | b'p' | b'o' | b'P' | b'O')))
+        for (name, is_directory) in
+            entries.filter(|it| matches!(it.0.first(), Some(b'.' | b'p' | b'o' | b'P' | b'O')))
         {
-            if is_called(name, b".editorconfig") {
-                listed.has_editorconfig = true;
-            } else if is_called(name, b".git") || is_called(name, b".hg") {
+            // In a worktree `.git` is a file.
+            if is_called(name, b".git") || (is_directory && is_called(name, b".hg")) {
                 listed.is_project_root = true;
-            } else {
+            } else if !is_directory && is_called(name, b".editorconfig") {
+                listed.has_editorconfig = true;
+            } else if !is_directory {
                 listed.candidates.extend(
                     NAMES
                         .iter()
@@ -1090,10 +1371,16 @@ impl<'c> Configs<'c> {
                     .concat(),
                 ));
             }
-            for at in candidates {
+            let mut candidates = candidates.into_iter();
+            for at in candidates.by_ref() {
                 if let Some(found) =
                     self.load(&paths::join(directory, NAMES[at]), at < NAMES_OF_OXFMT)?
                 {
+                    if at < NAMES_OF_OXFMT
+                        && let Some(other) = candidates.find_map(|it| of_prettier(directory, it))
+                    {
+                        self.note_ignored(&found.path, &other);
+                    }
                     config = Some(found);
                     break;
                 }
@@ -1123,6 +1410,22 @@ impl<'c> Configs<'c> {
         }))
     }
 
+    /// Records that the oxfmt config at `used` won over the Prettier config `ignored` in the same directory.
+    fn note_ignored(&self, used: &[u8], ignored: &[u8]) {
+        self.note.get_or_init(|| {
+            let used = paths::relative(&self.environment.cwd, used);
+            let end = b" is ignored. Use --config to pick it.";
+            [b"Using ", &used[..], b". ", ignored, end].concat()
+        });
+    }
+
+    /// One-time note for the user about which of two config files was picked.
+    pub(crate) fn note(&self) -> Option<&[u8]> {
+        // The lookup also runs before `--config` is applied. Ignore what it found then.
+        let is_looked_for = self.named.is_none() && self.options.config_lookup;
+        self.note.get().filter(|_| is_looked_for).map(|it| &it[..])
+    }
+
     /// Whether the working directory has no configuration file, in it or above it.
     fn lacks_file(&self) -> bool {
         let has_none = || {
@@ -1130,6 +1433,15 @@ impl<'c> Configs<'c> {
             own.is_ok_and(|it| it.config.is_none())
         };
         *self.lacks_file.get_or_init(has_none)
+    }
+
+    /// True if the run isn't imitating another tool: no Prettier or oxfmt config applies to the working directory, and no
+    /// flag asks for one.
+    pub(crate) fn is_native(&self) -> bool {
+        self.flavor == Flavor::Prettier
+            && self.options.is_like_oxfmt.is_none()
+            && self.named.is_none()
+            && (!self.options.config_lookup || self.lacks_file())
     }
 
     /// Says that `directory` is an argument, or that a file in it is one.
@@ -1173,13 +1485,13 @@ impl<'c> Configs<'c> {
         }
         for directory in missing.into_iter().rev() {
             let entries = fs::list(directory).map_or_else(Vec::new, |it| it.entries);
-            let names = entries.iter().map(|it| &it.name[..]);
+            let entries = entries.iter().map(|it| (&it.name[..], it.is_directory));
             let found = match &above {
-                Some(Ok(above)) => self.scope(directory, names, Some(above)),
-                None => self.scope(directory, names, None),
+                Some(Ok(above)) => self.scope(directory, entries, Some(above)),
+                None => self.scope(directory, entries, None),
                 // A configuration file that cannot be used does not matter below a nearer one.
                 Some(Err(error)) => {
-                    self.scope(directory, names, None)
+                    self.scope(directory, entries, None)
                         .and_then(|scope| match scope.config {
                             Some(_) => Ok(scope),
                             None => Err(error.clone()),
@@ -1194,17 +1506,17 @@ impl<'c> Configs<'c> {
         above.unwrap_or_else(|| Err(Fatal(b"The path of a directory is empty.".to_vec())))
     }
 
-    /// The same for a directory whose entries are `names`, and whose parent has `above`.
+    /// The same for a directory whose parent has `above`. `entries`: the name of each, and whether it is a directory.
     pub(crate) fn for_listed_directory<'n>(
         &self,
         directory: &[u8],
-        names: impl Iterator<Item = &'n [u8]>,
+        entries: impl Iterator<Item = (&'n [u8], bool)>,
         above: &Arc<Scope>,
     ) -> Found {
         if self.options.disable_nested_config {
             return Ok(Arc::clone(above));
         }
-        let found = self.scope(directory, names, Some(above));
+        let found = self.scope(directory, entries, Some(above));
         self.by_directory
             .lock()
             .insert(directory.to_vec(), found.clone());
@@ -1239,16 +1551,47 @@ impl<'c> Configs<'c> {
     }
 
     /// The plugins that the configuration names for the file at `path`, which has `scope`: the last list that applies
-    /// is the list.
-    fn plugins_for<'s>(&'s self, scope: &'s Scope, path: &[u8]) -> Option<&'s Plugins> {
+    /// is the list. `None`: text without a file name, which no override matches.
+    fn plugins_for<'s>(&'s self, scope: &'s Scope, path: Option<&[u8]>) -> Option<&'s Plugins> {
         let config = self.config_of(scope).ok().flatten()?;
-        let of_override = config.in_last_override(path, |it| it.plugins.as_ref());
+        let of_override =
+            path.and_then(|path| config.in_last_override(path, |it| it.plugins.as_ref()));
         Some(of_override.unwrap_or(&config.plugins))
     }
 
     /// See [`Plugins::missing`], for the file at `path`, which has `scope`.
-    pub(crate) fn missing_plugins<'s>(&'s self, scope: &'s Scope, path: &[u8]) -> &'s [Vec<u8>] {
+    pub(crate) fn missing_plugins<'s>(
+        &'s self,
+        scope: &'s Scope,
+        path: Option<&[u8]>,
+    ) -> &'s [Vec<u8>] {
         (self.plugins_for(scope, path)).map_or(&[][..], |it| &it.missing[..])
+    }
+
+    /// Whether the config or `--plugin` names a plugin that isn't built in, for the file at `path`, which has `scope`.
+    pub(crate) fn names_other_plugins(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
+        (self.plugins_for(scope, path)).is_some_and(|it| it.names_others)
+            || !(self.options.plugins.iter()).all(|it| is_built_in_plugin(it))
+    }
+
+    /// Whether the config or `--plugin` names `prettier-plugin-tailwindcss` for the file at `path`, which has `scope`.
+    fn names_plugin_for_classes(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
+        (self.plugins_for(scope, path)).is_some_and(|it| it.sorts_classes)
+            || (self.options.plugins.iter()).any(|it| is_plugin_for_classes(it))
+    }
+
+    /// See [`Oxc`], for the file at `path`, which has `scope` and the option `parser`.
+    fn oxc_for(&self, scope: &Scope, path: Option<&[u8]>, parser: Option<&[u8]>) -> Oxc {
+        let of_config = self
+            .plugins_for(scope, path)
+            .map_or(Oxc::Absent, |it| it.oxc);
+        match of_config {
+            _ if parser.is_some_and(|it| !it.starts_with(b"oxc")) => Oxc::Absent,
+            // The code in MDX is Babel's.
+            _ if path.is_some_and(|it| it.ends_with(b".mdx")) => Oxc::Absent,
+            Oxc::Absent => oxc_among(self.options.plugins.iter().map(|it| &it[..])),
+            oxc => oxc,
+        }
     }
 
     /// See [`Plugins::endings`], for the file at `path`, which has `scope`.
@@ -1260,7 +1603,7 @@ impl<'c> Configs<'c> {
         let of_flags = (self.options.plugins.iter())
             .filter_map(|it| endings_of_plugin(it))
             .flatten();
-        let of_config = self.plugins_for(scope, path).into_iter();
+        let of_config = self.plugins_for(scope, Some(path)).into_iter();
         of_config
             .flat_map(|it| &it.endings)
             .chain(of_flags)
@@ -1285,7 +1628,7 @@ impl<'c> Configs<'c> {
     pub(crate) fn packages_of_plugins<'s>(
         &'s self,
         scope: &'s Scope,
-        path: &[u8],
+        path: Option<&[u8]>,
     ) -> impl Iterator<Item = &'s [u8]> + use<'s, 'c> {
         (self.plugins_for(scope, path).into_iter())
             .flat_map(|it| &it.packages)
@@ -1314,10 +1657,17 @@ impl<'c> Configs<'c> {
             .unwrap_or(false)
     }
 
+    /// Returns true if Bun's own choices apply in `scope`: the run is in native mode and the directory has no Prettier
+    /// config. That's where TOML gets formatted and generated files get skipped.
+    pub(crate) fn is_native_in(&self, scope: &Scope) -> bool {
+        self.is_native() && self.config_of(scope).is_ok_and(|it| it.is_none())
+    }
+
     /// The option `parser` for the file at `path`, which has `scope`, if it is set.
     pub(crate) fn parser_for(&self, scope: &Scope, path: &[u8]) -> Option<Box<[u8]>> {
         let is_about_parser = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"parser";
         let may_be_set = self.options.format.iter().any(|it| it.0 == b"parser")
+            || (self.overrides.iter()).any(|it| it.settings.iter().any(is_about_parser))
             || self.config_of(scope).ok().flatten().is_some_and(|config| {
                 config.settings.iter().any(is_about_parser)
                     || config
@@ -1333,13 +1683,25 @@ impl<'c> Configs<'c> {
 
     /// Prettier's `getOptionsForFile`: how to format the file at `path`, which has `scope`.
     pub(crate) fn options_for(&self, scope: &Scope, path: &[u8]) -> Result<Resolved, Fatal> {
+        self.options_of(scope, Some(path))
+    }
+
+    /// The same for text without a file name, like `prettier --parser x < file`. `scope` is the working directory's.
+    /// Overrides and `.editorconfig` sections match on a name, so they don't apply.
+    pub(crate) fn options_without_name(&self, scope: &Scope) -> Result<Resolved, Fatal> {
+        self.options_of(scope, None)
+    }
+
+    fn options_of(&self, scope: &Scope, path: Option<&[u8]>) -> Result<Resolved, Fatal> {
+        let directory = path.map_or(&self.environment.cwd[..], paths::dirname);
         let config = self.config_of(scope)?;
         let is_oxfmt = self.is_oxfmt_for(scope);
         let mut from_config: Vec<(&[u8], &[u8])> = Vec::new();
         if let Some(config) = config {
             from_config.extend(config.settings.iter().map(|it| (&it.0[..], &it.1[..])));
-            let relative = paths::relative(paths::dirname(&config.path), path);
-            for it in config.overrides.iter().filter(|it| it.matches(&relative)) {
+            let relative = path.map(|path| paths::relative(paths::dirname(&config.path), path));
+            let is_for_it = |it: &&Override| relative.as_ref().is_some_and(|path| it.matches(path));
+            for it in config.overrides.iter().filter(is_for_it) {
                 from_config.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
             }
             // oxfmt has no such option.
@@ -1348,15 +1710,18 @@ impl<'c> Configs<'c> {
             }
         }
         let mut from_files: Vec<(&[u8], &[u8])> = Vec::new();
-        let from_editorconfig = match (self.options.config_lookup, self.flavor) {
-            (false, _) => Vec::new(),
-            (true, Flavor::Prettier) => {
+        let from_editorconfig = match (self.options.config_lookup, self.flavor, path) {
+            (false, ..) | (true, Flavor::Prettier, None) => Vec::new(),
+            (true, Flavor::Prettier, Some(path)) => {
                 editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path)
             }
-            (true, Flavor::Oxfmt) => {
+            (true, Flavor::Oxfmt, _) => {
                 let use_tabs = use_tabs_in(from_config.iter().copied());
                 (scope.editorconfigs.first())
-                    .map(|it| editorconfig::options_for_oxfmt(it, path, use_tabs))
+                    .map(|it| match path {
+                        Some(path) => editorconfig::options_for_oxfmt(it, path, use_tabs),
+                        None => editorconfig::options_of_root_for_oxfmt(it, use_tabs),
+                    })
                     .unwrap_or_default()
             }
         };
@@ -1376,12 +1741,24 @@ impl<'c> Configs<'c> {
         }
         from_files.extend(from_config);
         let has_files = config.is_some() || !from_editorconfig.is_empty();
-        let from_flags = self.options.format.iter().map(|it| (it.0, &it.1[..]));
+        let mut from_flags: Vec<(&[u8], &[u8])> =
+            (self.options.format.iter().map(|it| (it.0, &it.1[..]))).collect();
+        if let Some(path) = path.filter(|_| !self.overrides.is_empty()) {
+            let relative = paths::relative(&self.environment.cwd, path);
+            for it in self.overrides.iter().filter(|it| it.matches(&relative)) {
+                from_flags.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
+            }
+        }
+        // Bun's `sortImports` does more than oxfmt's, so it gets its own name.
+        for it in from_flags.iter_mut().filter(|it| it.0 == b"sortImports") {
+            it.0 = SORT_IMPORTS_OF_BUN;
+        }
+        let of_flags = from_flags.iter().copied();
         let all: Vec<(&[u8], &[u8])> = match self.options.config_precedence {
-            Precedence::CliOverride => from_files.into_iter().chain(from_flags).collect(),
-            Precedence::FileOverride => from_flags.chain(from_files).collect(),
+            Precedence::CliOverride => from_files.into_iter().chain(of_flags).collect(),
+            Precedence::FileOverride => of_flags.chain(from_files).collect(),
             Precedence::PreferFile if has_files => from_files,
-            Precedence::PreferFile => from_flags.collect(),
+            Precedence::PreferFile => of_flags.collect(),
         };
         // Prettier looks at the flags first, also at one that a file takes the place of.
         let mut flags = self.options.format.iter();
@@ -1393,10 +1770,11 @@ impl<'c> Configs<'c> {
         }
         let mut resolved = Resolved::default();
         let mut sort = SortSettings::default();
-        let _ = resolved.options.set(b"filepath", path);
-        resolved.options.format_javascript = Some(super::format_javascript(self.options.verify));
+        let _ = resolved.options.set(b"filepath", path.unwrap_or_default());
+        resolved.options.format_javascript = Some(super::format_block);
         resolved.options.parse_javascript = Some(super::parse_javascript);
         resolved.options.embedded_html = true;
+        resolved.options.toml = self.is_native_in(scope);
         if is_oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
             // It sorts the keys of a `package.json` unless it is told not to.
@@ -1404,13 +1782,25 @@ impl<'c> Configs<'c> {
         }
         let mut sort_imports: Option<Vec<u8>> = None;
         let mut sort_tailwindcss: Option<Vec<u8>> = None;
+        // oxfmt-only options are also valid under a Prettier config when a flag or `[fmt]` sets them.
+        let is_known = |name: &[u8]| is_oxfmt || from_flags.iter().any(|it| it.0 == name);
         // Prettier knows the options of the plugins that it has loaded.
-        let knows_all_options = !is_oxfmt
-            && !(self.plugins_for(scope, path)).is_some_and(|it| it.names_others)
-            && (self.options.plugins.iter()).all(|it| is_built_in_plugin(it));
+        let knows_all_options = !is_oxfmt && !self.names_other_plugins(scope, path);
         let mut unknown: Vec<(&[u8], &[u8])> = Vec::new();
+        // `sortTailwindcss` as the options of the plugin have it.
+        let mut of_plugin =
+            (!is_oxfmt && self.names_plugin_for_classes(scope, path)).then(Vec::new);
         for (name, value) in all {
+            if let Some(entries) = &mut of_plugin
+                && let Some(entry) = tailwind::option_of_plugin(name, value)
+            {
+                let entry = entry.map_err(Fatal)?;
+                entries.retain(|it: &(Vec<u8>, Json)| it.0 != entry.0);
+                entries.push(entry);
+                continue;
+            }
             match name {
+                SORT_IMPORTS_OF_BUN => _ = sort.set(name, value),
                 // An override of oxfmt changes the keys that it has. `experimentalSortImports` is the old name.
                 name if is_oxfmt && name.ends_with(b"ortImports") => {
                     let merged = sort_imports
@@ -1420,10 +1810,10 @@ impl<'c> Configs<'c> {
                     sort_imports = Some(merged);
                 }
                 name if sort.set(name, value) => {}
-                b"insertFinalNewline" if is_oxfmt => {
+                b"insertFinalNewline" if is_known(name) => {
                     resolved.omits_final_newline = value == b"false"
                 }
-                b"sortPackageJson" | b"sortPackageJson.sortScripts" if is_oxfmt => {
+                b"sortPackageJson" | b"sortPackageJson.sortScripts" if is_known(name) => {
                     let _ = resolved.options.set(name, value);
                 }
                 b"experimentalSortPackageJson" if is_oxfmt => {
@@ -1437,7 +1827,7 @@ impl<'c> Configs<'c> {
                     }
                 }
                 // An override changes the keys that it has.
-                name if is_oxfmt && is_tailwind(name) => {
+                name if is_tailwind(name) && is_known(name) => {
                     sort_tailwindcss = Some(match &sort_tailwindcss {
                         Some(before) => merged_objects(before, value),
                         None => value.to_vec(),
@@ -1467,7 +1857,7 @@ impl<'c> Configs<'c> {
         }
         if !is_oxfmt
             && resolved.options.parser.is_none()
-            && let Some(parser) = super::files::parser_by_interpreter(path)
+            && let Some(parser) = path.and_then(super::files::parser_by_interpreter)
         {
             let _ = resolved.options.set(b"parser", parser);
         }
@@ -1476,7 +1866,8 @@ impl<'c> Configs<'c> {
         }
         for (name, value) in sort.of_plugins_not_named().chain(unknown) {
             // A string and what else there is in JSON are told apart by their looks here.
-            let json = json::parse(value).filter(|it| !matches!(it, Json::String(_)));
+            let is_json = name.starts_with(b"tailwind");
+            let json = json::parse(value).filter(|it| is_json || !matches!(it, Json::String(_)));
             let mut shown = Vec::new();
             write_as_shown(
                 &mut shown,
@@ -1485,15 +1876,33 @@ impl<'c> Configs<'c> {
             self.warn(&[b"Ignored unknown option { ", name, b": ", &shown, b" }."]);
         }
         if sort.organizes_imports() {
-            for (name, value) in self.tsconfig_of(paths::dirname(path)).iter() {
+            for (name, value) in self.tsconfig_of(directory).iter() {
                 sort.set(name, value);
             }
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
-        if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
-            let of_config = config.map(|it| paths::dirname(&it.path));
-            let tailwind =
-                tailwind::for_file(&self.classes, self.environment, &value, (of_config, path));
+        // A flag or `[fmt]` counts for more than the plugin.
+        let (value, set_by) = match (sort_tailwindcss, of_plugin, config) {
+            (Some(value), _, Some(config)) if config.is_oxfmt => {
+                (value, SetBy::Oxfmt(paths::dirname(&config.path)))
+            }
+            (Some(value), ..) => (value, SetBy::Bun),
+            (None, Some(entries), _) => {
+                if let Some(warning) = tailwind::warning_of_plugin(&entries) {
+                    self.warn(&[&warning]);
+                }
+                let mut value = Vec::new();
+                write_json(&mut value, &Json::Object(entries));
+                // Not the file that `--config` names.
+                let found = scope.config.as_ref().map(|it| paths::dirname(&it.path));
+                (value, SetBy::Plugin(found.unwrap_or(&self.environment.cwd)))
+            }
+            (None, None, _) => (b"false".to_vec(), SetBy::Bun),
+        };
+        if value != b"false" {
+            let places = (set_by, directory);
+            let mut tailwind = tailwind::for_file(&self.classes, self.environment, &value, places);
+            tailwind.oxc = self.oxc_for(scope, path, resolved.options.parser.as_deref());
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }
         Ok(resolved)

@@ -36,11 +36,14 @@ pub(crate) enum Dialect {
 
 impl Dialect {
     /// That of the parser that ESLint would read the file with: espree's for JavaScript if that is what
-    /// `languageOptions.parser` says. espree cannot read anything else.
+    /// `languageOptions.parser` says. espree cannot read anything else. oxlint's nodes have the fields of TypeScript in every file.
     #[inline]
     pub(crate) fn of(file: &File) -> Dialect {
-        match file.language().parser {
-            crate::language::Parser::Espree if file.is_javascript() => Dialect::Espree,
+        let language = file.language();
+        match language.parser {
+            crate::language::Parser::Espree if file.is_javascript() && !language.is_oxlint => {
+                Dialect::Espree
+            }
             _ => Dialect::TypeScript,
         }
     }

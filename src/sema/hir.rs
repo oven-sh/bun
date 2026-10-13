@@ -314,6 +314,7 @@ impl<T> Default for Fixed<'_, T> {
 }
 
 impl<'s, T: Copy> Fixed<'s, T> {
+    #[inline(never)]
     pub(crate) fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
         Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
     }
@@ -1027,6 +1028,64 @@ pub struct VarDecl {
     pub loc: TextRange,
 }
 
+/// [`FileIn::rare_syntax`]
+pub mod rare {
+    /// An `await` or a `yield` is between the parentheses of a parameter list.
+    pub const SUSPENDS_IN_PARAMETERS: u32 = 1 << 0;
+    /// A variable statement, a function or a class is the body of an `if`, a loop, a `with` or a label.
+    pub const DECLARATION_AS_BODY: u32 = 1 << 1;
+    /// A getter has parameters, or a setter has none, several, or a rest parameter.
+    pub const ODD_ACCESSOR: u32 = 1 << 2;
+    /// `{ a = 1 }` where an expression can be.
+    pub const DEFAULT_IN_OBJECT: u32 = 1 << 3;
+    /// A class has a second constructor or an `async` one, a member that is called `prototype` or `#constructor`, one that is
+    /// called `constructor` and is not its constructor, or two with one private name.
+    pub const NOTABLE_CLASS_MEMBER: u32 = 1 << 4;
+    /// There is a private name that no class around it declares, or `super.#a`.
+    pub const ODD_PRIVATE_NAME: u32 = 1 << 5;
+    /// `delete a`, `delete a.#b`
+    pub const DELETES_A_NAME: u32 = 1 << 6;
+    /// The body of a function starts with a string, which may be a directive.
+    pub const DIRECTIVE_IN_FUNCTION: u32 = 1 << 7;
+    /// A type parameter has a modifier: `<const T>`, `<in T>`.
+    pub const TYPE_PARAMETER_MODIFIER: u32 = 1 << 8;
+    /// `T?`, `?T`, `T!` or `!T` is a type, outside a comment.
+    pub const JSDOC_TYPE: u32 = 1 << 9;
+    /// There is a type predicate: `a is T`, `asserts a`.
+    pub const TYPE_PREDICATE: u32 = 1 << 10;
+    /// A declaration in the head of a `for-in` or a `for-of` has an initializer or a type.
+    pub const ODD_LOOP_HEAD: u32 = 1 << 11;
+    /// `export = a`
+    pub const EXPORT_ASSIGNMENT: u32 = 1 << 12;
+    /// An `import` or an `export` of a JavaScript file may be in a block, in a function or the body of a statement. Only set for
+    /// oxc's dialect.
+    pub const NESTED_MODULE_SYNTAX: u32 = 1 << 13;
+    /// Something other than a plain name or member is assigned to, incremented or decremented (`[a] = b`, `a?.b = 1`,
+    /// `a()++`), or the head of a `for-in` / `for-of` is an expression.
+    pub const ODD_TARGET: u32 = 1 << 16;
+    /// A scope may declare a name twice in a way that oxc rejects. Only set for oxc's dialect.
+    pub const MAY_REDECLARE: u32 = 1 << 17;
+    /// A JavaScript file may export a name twice, or have `export { a }` and not declare `a` at its top level. Only set for
+    /// oxc's dialect.
+    pub const ODD_EXPORT: u32 = 1 << 18;
+    /// `new.target`, or `new.` and another name.
+    pub const NEW_TARGET: u32 = 1 << 19;
+    /// `for await`
+    pub const FOR_AWAIT: u32 = 1 << 20;
+    /// A statement has a label, a `break` or a `continue` names one, a `break` is in no loop and no `switch` of its function, or
+    /// a `continue` is in no loop of it.
+    pub const ODD_JUMP: u32 = 1 << 21;
+    /// A statement in the body of a function or of a namespace starts with `declare`.
+    pub const NESTED_DECLARE: u32 = 1 << 22;
+    /// An `await`, a `yield` or an `await using` is in a static block, or in a function in one.
+    pub const SUSPENDS_IN_STATIC_BLOCK: u32 = 1 << 24;
+    /// `await using a = b`
+    pub const AWAIT_USING: u32 = 1 << 25;
+    /// A list of variable declarations is empty or declares with `using`, a `const` or a pattern in it has no initializer and
+    /// isn't ambient, or the head of a `for-in` / `for-of` doesn't declare exactly one variable.
+    pub const ODD_DECLARATION: u32 = 1 << 26;
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ModifierKind {
     /// Exactly one flag (`ModifierToFlag`).
@@ -1083,6 +1142,16 @@ pub enum DiagnosticKind {
     Grammar,
     /// `c.error`. Not suppressed by parse diagnostics.
     Checker,
+    /// An error of oxc's parser that TypeScript leaves to its checker. Only `Dialect::oxc` has these, and only `bun lint` reads
+    /// them. `bun_sema_parser`'s `oxc.rs` says what is in the fields.
+    Oxc,
+    /// The same, where oxc's parser gives up.
+    OxcFatal,
+    /// The same from the pass that builds oxc's scopes, which doesn't run on a file that its parser has an error for.
+    OxcSemantic,
+    /// A statement that reads with `await` as a name and not with `await` as the operator, in a file that nothing before it
+    /// makes a module. The tree has the first reading. `related`: the errors of the second.
+    OxcSecondReading,
 }
 
 /// `ast.Diagnostic`
@@ -2004,6 +2073,9 @@ pub struct FileIn<S: Storage> {
     /// Two of the parameters of a function or a signature may bind one name. Only `bun_sema_parser` says so, and it may say
     /// so of what a speculative parse has given up.
     pub may_bind_a_parameter_twice: bool,
+    /// Bits of [`rare`]: syntax that nearly no file has, which the parser notices on its way. Only `bun_sema_parser` sets
+    /// them, also for what a speculative parse has given up.
+    pub rare_syntax: u32,
     /// Diagnostics produced while parsing the file.
     pub diagnostics: S::Kept<Diagnostic>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of
@@ -2537,6 +2609,7 @@ macro_rules! file_in_arena {
             decorators: $few!($this.decorators),
             legacy_decorators: $this.legacy_decorators,
             may_bind_a_parameter_twice: $this.may_bind_a_parameter_twice,
+            rare_syntax: $this.rare_syntax,
             diagnostics: $kept!($this.diagnostics),
             has_parse_diagnostics: $this.has_parse_diagnostics,
             syntax_errors: $this.syntax_errors,

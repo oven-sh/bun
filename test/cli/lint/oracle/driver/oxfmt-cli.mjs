@@ -1,9 +1,9 @@
-// Runs the command line of real oxfmt and `bun format` on generated projects that have an `.oxfmtrc.json`, and compares which
+// Runs the command line of real oxfmt and `bun fmt` on generated projects that have an `.oxfmtrc.json`, and compares which
 // files `--list-different` names, the exit code, and the files after writing.
 //
-//   bun oxfmt-cli.mjs --oxfmt=<path of oxfmt> --scratch=<directory> --bin="bun format" [--only=substring]
+//   bun oxfmt-cli.mjs --oxfmt=<path of oxfmt> --scratch=<directory> --bin="bun fmt" [--only=substring]
 //
-// Only JavaScript and TypeScript are compared: `bun format` leaves the rest alone.
+// Only JavaScript and TypeScript are compared: `bun fmt` leaves the rest alone.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,7 +11,7 @@ import path from "node:path";
 const flag = name => process.argv.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
 const scratch = path.resolve(flag("scratch"));
 const oxfmt = [path.resolve(flag("oxfmt"))];
-const bin = (flag("bin") ?? "bun format").split(" ");
+const bin = (flag("bin") ?? "bun fmt").split(" ");
 const only = flag("only");
 
 const ugly = `const a = {b:1,  c:"two"}\nfunction f(x){return [x,\n'y']}\n`;
@@ -196,7 +196,7 @@ for (const test of cases) {
   else {
     failed.push(test.name);
     console.log(`FAIL ${test.name}: oxfmt ${args.join(" ")}\n${problems.join("\n")}`);
-    console.log(`--- stderr of oxfmt\n${expected.stderr}\n--- stderr of bun format\n${actual.stderr}\n`);
+    console.log(`--- stderr of oxfmt\n${expected.stderr}\n--- stderr of bun fmt\n${actual.stderr}\n`);
   }
 }
 console.log(`${passed} passed, ${failed.length} failed`);

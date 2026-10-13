@@ -33,7 +33,7 @@ const plugins = [
 ];
 // Those of which nothing is.
 const notBuiltIn = ["jsdoc", "vue"];
-const theirs = Object.fromEntries(notBuiltIn.map(plugin => [plugin, new Set()]));
+const theirs = Object.fromEntries(notBuiltIn.map(plugin => [plugin, { categories: new Set(), names: [] }]));
 // Where the executable does something else than the source says. Each was tried: a file of each kind that the rule reports.
 const corrections = {
   // 1.80 reports `require()` in JavaScript files too.
@@ -42,7 +42,8 @@ const corrections = {
 const table = {};
 const runsOn = {};
 for (const { scope: plugin, value: name, category, fix, type_aware: needsTypes } of rules) {
-  theirs[plugin]?.add(category);
+  theirs[plugin]?.categories.add(category);
+  theirs[plugin]?.names.push(name);
   if (!plugins.includes(plugin)) continue;
   if (!categories.includes(category)) throw new Error(`${plugin}/${name}: ${category}`);
   ((table[plugin] ??= {})[category] ??= []).push(name);
@@ -120,9 +121,16 @@ ${plugins
   .join("\n")}
 ];
 
-/// The plugins of which no rule is built in, as oxlint calls them, each with the categories that it has rules in, separated by spaces.
-pub(super) static NOT_BUILT_IN: &[(&str, &str)] = &[
-${notBuiltIn.map(plugin => `    ("${plugin}", "${categories.filter(it => theirs[plugin].has(it)).join(" ")}"),`).join("\n")}
+/// The plugins of which no rule is built in, as oxlint calls them, each with the categories that it has rules in and the names of
+/// its rules, separated by spaces.
+#[rustfmt::skip]
+pub(super) static NOT_BUILT_IN: &[(&str, &str, &str)] = &[
+${notBuiltIn
+  .map(
+    plugin =>
+      `    ("${plugin}", "${categories.filter(it => theirs[plugin].categories.has(it)).join(" ")}", ${literal(theirs[plugin].names, "    ")}),`,
+  )
+  .join("\n")}
 ];
 
 ${[

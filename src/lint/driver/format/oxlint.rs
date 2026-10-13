@@ -1,15 +1,12 @@
-//! What the formats of oxlint share, and what its `--rules` prints.
+//! Code shared by oxlint's formats.
 
-use crate::print_config::{object, text, write_indented};
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintMessage, Registry, RuleId, parse_rule_id};
+use bun_lint::linter::{LintMessage, RuleId, parse_rule_id};
 use bun_lint::options::Json;
-use bun_lint::rule::{Fixable, Plugin};
+use bun_lint::rule::Plugin;
 use bun_lint::source::LineStarts;
-use bun_sema::util::FxHashMap;
 use std::cell::OnceCell;
-use std::io::Write;
 
 /// What oxlint says about a run.
 pub(crate) struct Run {
@@ -21,38 +18,17 @@ pub(crate) struct Run {
     pub(crate) seconds: f64,
 }
 
-/// `eslint(no-debugger)`, `typescript(no-explicit-any)`
+/// `eslint(no-debugger)`, `typescript(no-explicit-any)`, `TS(1038)`
 pub(super) fn code(message: &LintMessage) -> Option<Vec<u8>> {
-    let rule = message.rule_id.as_ref()?;
+    let Some(rule) = message.rule_id.as_ref() else {
+        let code = message.details.as_ref().map(|it| it.typescript_code);
+        return code
+            .filter(|it| *it != 0)
+            .map(|it| format!("TS({it})").into_bytes());
+    };
     let id = rule.to_vec();
     let (plugin, name) = parse_rule_id(&id);
     Some([scope_of(rule, plugin), b"(", name, b")"].concat())
-}
-
-/// [`code`], made once for each rule that is built in.
-#[derive(Default)]
-pub(super) struct Codes(FxHashMap<usize, Vec<u8>>);
-
-impl Codes {
-    /// Writes `before` and the code of `message`, if it has one.
-    pub(super) fn write(&mut self, out: &mut Vec<u8>, before: &[u8], message: &LintMessage) {
-        let made;
-        let code = match &message.rule_id {
-            Some(RuleId::Known(meta)) => {
-                let known = self.0.entry(std::ptr::from_ref(*meta).addr());
-                &*known.or_insert_with(|| code(message).unwrap_or_default())
-            }
-            _ => match code(message) {
-                Some(code) => {
-                    made = code;
-                    &made
-                }
-                None => return,
-            },
-        };
-        out.extend_from_slice(before);
-        out.extend_from_slice(code);
-    }
 }
 
 /// [`scope`] for the prefix of `rule`. A plugin in JavaScript is called what it is called.
@@ -230,55 +206,4 @@ pub(crate) fn page_of(of: Plugin, name: &[u8]) -> Option<Vec<u8>> {
         b".html",
     ];
     (!matches!(of, Plugin::Bun | Plugin::BunTest)).then(|| page.concat())
-}
-
-/// `--rules`. `as_json`: with `-f json`.
-pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool) {
-    let mut all: Vec<_> = registry
-        .all()
-        .iter()
-        .map(|it| (plugin(it.meta.plugin.prefix().as_bytes()), &it.meta))
-        .collect();
-    // A rule of the React Compiler is there as `react-hooks/..` too: the one of oxlint's own plugin is listed.
-    bun_lint::utils::sort::sort_by_key(&mut all, |it| {
-        (it.0, it.1.name, it.1.plugin.prefix().as_bytes() != it.0)
-    });
-    all.dedup_by_key(|it| (it.0, it.1.name));
-    if !as_json {
-        for (scope, meta) in all {
-            out.extend_from_slice(scope);
-            let _ = writeln!(out, "/{}", meta.name);
-        }
-        return;
-    }
-    let rules = all.into_iter().map(|(scope, meta)| {
-        let category = bun_lint::linter::oxlint_category(meta.plugin, meta.name);
-        let fix: &[u8] = match (meta.fixable != Fixable::No, meta.has_suggestions) {
-            (true, true) => b"fixable_safe_fix_or_suggestion",
-            (true, false) => b"fixable_fix",
-            (false, true) => b"fixable_suggestion",
-            (false, false) => b"none",
-        };
-        let url = page_of(meta.plugin, meta.name.as_bytes());
-        object(vec![
-            (b"scope", text(scope)),
-            (b"value", text(meta.name.as_bytes())),
-            (
-                b"category",
-                category.map_or(Json::Null, |it| text(it.as_bytes())),
-            ),
-            (b"type_aware", Json::Bool(meta.requires_types)),
-            (b"fix", text(fix)),
-            (
-                b"default",
-                Json::Bool(
-                    category == Some("correctness")
-                        && matches!(scope, b"eslint" | b"typescript" | b"oxc" | b"unicorn"),
-                ),
-            ),
-            (b"docs_url", url.map_or(Json::Null, |it| text(&it))),
-        ])
-    });
-    write_indented(out, &Json::Array(rules.collect()), 0);
-    out.push(b'\n');
 }

@@ -17,6 +17,9 @@ pub type Rank = Option<u32>;
 pub trait Orders: std::fmt::Debug + Send + Sync + std::panic::RefUnwindSafe {
     /// The rank of each of `classes`, which have one blank between them. `None`: that is not known yet.
     fn ranks_of(&self, classes: &[u8]) -> Option<Vec<Rank>>;
+
+    /// Whether there is a Tailwind that can be asked.
+    fn has_tailwind(&self) -> bool;
 }
 
 /// Names, and patterns for names, which are written `"/^tw/"`.
@@ -46,6 +49,10 @@ impl Names {
         all
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty() && self.patterns.is_empty()
+    }
+
     /// Those that are no patterns.
     pub fn names(&self) -> &[Vec<u8>] {
         &self.names
@@ -66,6 +73,17 @@ impl Names {
     }
 }
 
+/// Whether `@prettier/plugin-oxc` is among the plugins. It reads TypeScript, and the JavaScript that is not in HTML.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Oxc {
+    #[default]
+    Absent,
+    /// The plugin that sorts classes looks at its tree.
+    Before,
+    /// It is behind that plugin and takes its place: in what it reads nothing is sorted.
+    Behind,
+}
+
 /// `sortTailwindcss`, for one file.
 #[derive(Debug)]
 pub struct Tailwind {
@@ -75,6 +93,9 @@ pub struct Tailwind {
     pub attributes: Names,
     pub preserves_whitespace: bool,
     pub preserves_duplicates: bool,
+    /// `prettier-plugin-tailwindcss` in a Prettier config has turned it on: where oxfmt has rules of its own, the plugin's count.
+    pub follows_plugin: bool,
+    pub oxc: Oxc,
     pub orders: Box<dyn Orders>,
     /// See [`Tailwind::has_missed`].
     pub has_missed: AtomicBool,
@@ -261,23 +282,23 @@ impl Tailwind {
         if !collapses_whitespace {
             return Cow::Owned([prefix, result, suffix].concat());
         }
-        // Of the white space at an end a blank stays, or nothing.
-        let mut sorted = strings::trim_js_whitespace_end(&prefix).to_vec();
+        // Of the white space at an end a blank stays, or nothing. The plugin goes by what is white space in JavaScript, which
+        // takes a class away that is a no-break space.
+        let mut sorted = prefix.trim_ascii_end().to_vec();
         if sorted.len() < prefix.len() {
             sorted.push(b' ');
         }
-        if !ends.collapses_start && strings::trim_js_whitespace_start(&result).len() < result.len()
-        {
+        if !ends.collapses_start && result.trim_ascii_start().len() < result.len() {
             sorted.push(b' ');
         }
-        sorted.extend_from_slice(strings::trim_js_whitespace(&result));
-        if !ends.collapses_end && strings::trim_js_whitespace_end(&result).len() < result.len() {
+        sorted.extend_from_slice(result.trim_ascii());
+        if !ends.collapses_end && result.trim_ascii_end().len() < result.len() {
             sorted.push(b' ');
         }
-        if strings::trim_js_whitespace_start(&suffix).len() < suffix.len() {
+        if suffix.trim_ascii_start().len() < suffix.len() {
             sorted.push(b' ');
         }
-        sorted.extend_from_slice(strings::trim_js_whitespace_start(&suffix));
+        sorted.extend_from_slice(suffix.trim_ascii_start());
         Cow::Owned(sorted)
     }
 }

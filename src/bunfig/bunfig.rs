@@ -153,7 +153,7 @@ struct Parser<'a, 'tool> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
-    /// Reads `[lint]` and `[format]`.
+    /// Reads `[lint]` and `[fmt]`.
     tool: Option<&'a mut crate::ToolReader<'tool>>,
 }
 

@@ -68,7 +68,12 @@ fn sorted_value(
         (start, end) = (start + 1, end - 1);
     }
     let value = text.get(start..end)?;
-    let sorted = match value_of(attr.name_span.of(text), parser, tailwind) {
+    // In HTML Prettier writes the name of an attribute that it knows in small letters.
+    let name = match attr.name_span.of(text) {
+        name if parser == Parser::Html && name.eq_ignore_ascii_case(b"class") => b"class",
+        name => name,
+    };
+    let sorted = match value_of(name, parser, tailwind) {
         Value::Classes => tailwind.sorted(value).into_owned(),
         Value::Expression if strings::index_of_any(value, b"`'\"").is_some() => {
             js::with_sorted_classes(parse?, value, tailwind, parser == Parser::Angular)?

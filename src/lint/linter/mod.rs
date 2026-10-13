@@ -47,39 +47,45 @@ pub use config::{
     LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
 };
 pub use fixer::{
-    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, verify_and_fix,
+    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, is_redeclaration,
+    verify_and_fix,
 };
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
+pub(crate) use message::write_json_with;
 pub use message::{
-    Details, LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
-    write_json, write_json_indented,
+    Data, Details, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind,
+    Utf16Offsets, write_json, write_json_indented,
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
-    Deprecated, NativePlugins, Registry, deprecated_rule, formatting_rule, formatting_rules,
-    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
+    Deprecated, Missing, Modes, Names, NativePlugins, Registry, deprecated_info, deprecated_rule,
+    formatting_rule, formatting_rules, normalize_plugin_name, oxlint_category_of_key,
+    oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
 };
 pub use resolved::{
     ConfiguredJsRule, ConfiguredRule, Entry, FormattingRule, LinterOptions, ResolvedConfig,
     severity_of,
 };
-use resolved::{Prepared, Slot};
+use resolved::{Prepared, Skipped, Slot};
+pub use schema::{OptionMistake, Step, mistake_in_options, schema_and_defaults};
 pub use syntax::{
-    Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, refusal_of_oxfmt,
-    refusal_of_prettier, refused_by_prettier_with,
+    Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, parse_errors,
+    refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
-use crate::rule::{Meta, Plugin, When};
+use crate::oxlint_order::Ran as InOxlint;
+use crate::rule::{Meta, When};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::runner::{Enabled, Listeners, RuleEntry, each_bit};
 use crate::span::Span;
-use directives::{ConfigComment, Label};
+use directives::ConfigComment;
+pub(crate) use directives::Label;
 use instances::Instances;
 use message::Locator;
 use std::borrow::Cow;
@@ -114,6 +120,8 @@ pub struct LintOptions<'o> {
     pub rule_filter: Option<&'o (dyn Fn(&RuleId, Severity) -> bool + Sync)>,
     /// Runs the rules of JavaScript plugins. `None`: they are skipped.
     pub js_plugins: Option<&'o js_plugin::Host<'o>>,
+    /// For [`Host::run_on_block`](js_plugin::Host::run_on_block).
+    pub parse_again: Option<&'o js_plugin::ParseAgain<'o>>,
     /// The file is linted again, for the rules that are about several files only.
     pub again: Option<Again<'o>>,
     /// How much of the path of the file is ESLint's `physicalFilename`, if not all of it: it is a block that a processor has
@@ -147,6 +155,7 @@ impl Default for LintOptions<'_> {
             wants_suppressions: true,
             rule_filter: None,
             js_plugins: None,
+            parse_again: None,
             again: None,
             physical_path_len: None,
             respects_eslint_comments: true,
@@ -174,6 +183,9 @@ pub struct LintResult {
     pub thrown: Option<Vec<u8>>,
     /// [`File::known_line_starts`], for whoever lints to keep.
     pub line_starts: Option<Vec<u32>>,
+    /// With a configuration of oxlint that has a rule for which the file may be linted again: where in the run of oxlint each of
+    /// the messages of the rules is, by [`LintMessage::reported`], from 1.
+    pub run_keys: Vec<(u64, u128)>,
 }
 
 /// `S`: the rules that it has.
@@ -191,8 +203,8 @@ struct Running<'r, S> {
     /// What the configuration has for it.
     configured: Option<&'r ConfiguredRule>,
     severity: Severity,
-    /// [`Slot::when`]
-    when: When,
+    /// [`Slot::in_oxlint`]
+    in_oxlint: InOxlint,
     rule: RuleRef<'r, S>,
     /// [`ConfiguredRule::refusal`]
     refusal: Option<Cow<'r, [u8]>>,
@@ -279,10 +291,10 @@ impl Named<'_> {
     }
 
     /// [`schema::validate`]. `Ok`: what a rule of a JavaScript plugin gets as its options.
-    fn validate(self, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
+    fn validate(self, options: &[Json], stands_alone: bool) -> Result<Vec<Json>, Vec<u8>> {
         match self {
             Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
-                schema::validate(entry.meta, options).map(|()| Vec::new())
+                schema::validate(entry.meta, options, stands_alone).map(|()| Vec::new())
             }
             Named::Js(rule) => schema::validate_js(rule, options),
         }
@@ -361,7 +373,7 @@ impl<S: RuleSet> Linter<S> {
     }
 
     /// [`Rule::validate`](crate::rule::Rule::validate) of `entry`.
-    fn validate(&self, entry: &RuleEntry, options: &[Json]) -> Result<(), Vec<u8>> {
+    pub fn validate(&self, entry: &RuleEntry, options: &[Json]) -> Result<(), Vec<u8>> {
         let index = self.registry.index_of(entry);
         match index.and_then(|it| self.numbers.get(it)) {
             Some(number) => S::validate(*number, &Options::new(options)),
@@ -385,19 +397,19 @@ impl<S: RuleSet> Linter<S> {
             };
             let number = instance.number();
             on.insert(number);
-            let (when, oxlint_number) = match config.language.is_oxlint {
+            let in_oxlint = match config.language.is_oxlint {
                 true => crate::oxlint_order::of(rule.reported_as()),
-                false => (rule.entry.meta.reports, 0),
+                false => InOxlint::unknown(rule.entry.meta.reports, 0),
             };
             let at = at as u32;
             let severity = rule.severity;
             let slot = Slot {
                 at,
                 number,
-                when,
+                in_oxlint,
                 severity,
             };
-            order.push((oxlint_number, slot, Arc::clone(instance)));
+            order.push((in_oxlint.number, slot, Arc::clone(instance)));
             if rule.entry.meta.requires_types {
                 typed.push(rule.entry.meta);
             }
@@ -415,6 +427,7 @@ impl<S: RuleSet> Linter<S> {
             rules: Arc::new(rules),
             refusal,
             typed: typed.into(),
+            needs_modules: config.rules.iter().any(|it| it.entry.meta.needs_modules),
         }
     }
 
@@ -449,20 +462,21 @@ impl<S: RuleSet> Linter<S> {
     ) -> LintResult {
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
-        if let Some(fatal) = parse_error(file) {
+        let (mut fatal, is_of_parser) = syntax::parse_errors_and_stage(file);
+        if !fatal.is_empty() {
             let is_oxlint = file.language().is_oxlint;
-            if is_oxlint && syntax::is_flow(file) {
+            if is_oxlint && is_of_parser && syntax::is_flow(file) {
                 return LintResult::default();
             }
             // What oxc refuses, oxlint does not lint. tsgolint reads the file on its own, and oxlint, which has not seen the comments,
             // passes on all that it reports. Here that is so where the tree is whole: the error is an early one.
             if !is_oxlint || file.types.is_none() || file.has_parse_errors() {
                 return LintResult {
-                    messages: vec![fatal],
+                    messages: fatal,
                     ..LintResult::default()
                 };
             }
-            problems.push(fatal);
+            problems.append(&mut fatal);
         }
         let is_refused = !problems.is_empty();
         let mut result = LintResult::default();
@@ -546,7 +560,7 @@ impl<S: RuleSet> Linter<S> {
                     entry: rule.entry,
                     configured: Some(rule),
                     severity: rule.severity,
-                    when: slot.when,
+                    in_oxlint: slot.in_oxlint,
                     rule: RuleRef::Shared(instance),
                     refusal: self.refusal(rule).map(Cow::Borrowed),
                 });
@@ -576,12 +590,31 @@ impl<S: RuleSet> Linter<S> {
                 problems: &mut problems,
                 skipped: &mut result.skipped_rules,
                 configured: Vec::new(),
+                by_other_name: Vec::new(),
             };
             for comment in comments.iter().filter(is_understood) {
                 inline.apply(comment, &mut running, &mut running_js);
             }
             for comment in comments.iter().filter(is_understood) {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
+            }
+        }
+        let mut off: Vec<RuleId> = Vec::new();
+        if config.has_every_rule {
+            let is_on = |id: &RuleId| match is_plain {
+                true => (config
+                    .rules
+                    .iter()
+                    .filter(|it| it.severity != Severity::Off))
+                .any(|it| RuleId::Known(it.reported_as()) == *id),
+                false => (running.iter().filter(|it| it.severity != Severity::Off))
+                    .any(|it| it.ran().id() == *id),
+            };
+            let named = disable_directives.iter().filter_map(|it| it.rule.as_ref());
+            for rule in named.filter(|it| !is_on(it)) {
+                if !off.contains(rule) {
+                    off.push(rule.clone());
+                }
             }
         }
 
@@ -617,13 +650,13 @@ impl<S: RuleSet> Linter<S> {
         };
         // Read where comments are applied.
         let mut rules_to_ignore = Vec::new();
-        // To oxlint, what disables a rule that it does not run on the file is unused.
-        let ignores_what_is_filtered = !config.language.is_oxlint;
+        // A comment for a rule that was skipped isn't called unused. oxlint does call it unused.
+        let ignores_skipped_rules = !config.language.is_oxlint;
         if let Some(filter) = options.rule_filter {
             running.retain(|it| {
                 let id = it.ran().id();
                 let runs = it.severity == Severity::Off || filter(&id, it.severity);
-                if !runs && ignores_what_is_filtered {
+                if !runs && ignores_skipped_rules {
                     rules_to_ignore.push(id);
                 }
                 runs
@@ -631,7 +664,7 @@ impl<S: RuleSet> Linter<S> {
             running_js.retain(|it| {
                 let id = RuleId::Js(Arc::clone(&it.configured.rule));
                 let runs = filter(&id, it.severity);
-                if !runs && ignores_what_is_filtered {
+                if !runs && ignores_skipped_rules {
                     rules_to_ignore.push(id);
                 }
                 runs
@@ -650,12 +683,13 @@ impl<S: RuleSet> Linter<S> {
                 ..LintResult::default()
             };
         }
-        // Nor can what disables a rule that does not run for lack of types be called unused.
-        if file.types.is_none() && is_plain {
+        // Rules that need types are skipped when there are none.
+        let skips_typed_rules = file.types.is_none() && ignores_skipped_rules;
+        if skips_typed_rules && is_plain {
             if has_directives {
                 rules_to_ignore.extend(prepared.typed.iter().copied().map(RuleId::Known));
             }
-        } else if file.types.is_none() && !options.again.is_some_and(|it| it.had_types) {
+        } else if skips_typed_rules && !options.again.is_some_and(|it| it.had_types) {
             let without_types = running
                 .iter()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
@@ -665,10 +699,11 @@ impl<S: RuleSet> Linter<S> {
             let skipped = running_js.iter();
             rules_to_ignore.extend(skipped.map(|it| RuleId::Js(Arc::clone(&it.configured.rule))));
         }
+        let before_previous = problems.len();
         if let Some(again) = options.again {
             running.retain(|it| it.entry.meta.needs_modules);
             let is_of_another_rule = |it: &&LintMessage| {
-                it.message_id.is_some()
+                (it.message_id.is_some() || is_thrown_error(it))
                     && !matches!(&it.rule_id, Some(RuleId::Known(meta)) if meta.needs_modules)
             };
             let previous = (again.previous.messages.iter()).chain(&again.previous.suppressed);
@@ -702,6 +737,7 @@ impl<S: RuleSet> Linter<S> {
                     &enabled,
                     !options.disables_fixes,
                     options.physical_path_len,
+                    options.parse_again,
                 ) {
                     Ok(reports) => {
                         problems.reserve(reports.len());
@@ -763,6 +799,9 @@ impl<S: RuleSet> Linter<S> {
         }
         let wants_places = options.wants_places || wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
+        for (it, reported) in problems.iter_mut().skip(before_js).zip(1..) {
+            it.reported = reported;
+        }
         file.sink.wants_help.set(options.wants_help);
         file.sink.drops_messages.set(!options.wants_messages);
         (file.sink.drops_texts_of_fixes).set(!options.wants_texts_of_fixes);
@@ -780,41 +819,106 @@ impl<S: RuleSet> Linter<S> {
         };
         let mut diagnostics = crate::runner::run(file, &enabled, wants_fixes);
         if let Some(thrown) = file.sink.thrown.take() {
-            let said = [&thrown.error[..], b"\nOccurred while linting ", file.path()];
-            let mut said = said.concat();
-            if let Some(at) = thrown.at {
-                let id = ran(thrown.rule as usize).map(|it| it.id().to_vec());
-                let line = file.line_of(at).to_string();
-                said.extend_from_slice(b":");
-                said.extend_from_slice(line.as_bytes());
-                said.extend_from_slice(b"\nRule: \"");
-                said.extend_from_slice(&id.unwrap_or_default());
-                said.extend_from_slice(b"\"");
-            }
-            return LintResult {
-                thrown: Some(said),
-                ..LintResult::default()
+            // "error:" stands for the plain `Error:` where the run ends.
+            let said = match (thrown.name, file.language().is_oxlint) {
+                ("Error", false) => thrown.message,
+                (name, _) => [name.as_bytes(), b": ", &thrown.message].concat(),
             };
+            let id = ran(thrown.rule as usize).map_or_else(Vec::new, |it| it.id().to_vec());
+            let error = ThrownError {
+                said: &said,
+                at: match thrown.at {
+                    Some(at) => js_plugin::ThrownAt::Line(file.line_of(at)),
+                    None => js_plugin::ThrownAt::Unknown,
+                },
+                rule: thrown.at.map(|_| &id[..]),
+            };
+            match error.outcome(file.path(), config) {
+                Ok(problem) => {
+                    diagnostics.retain(|it| it.rule != thrown.rule);
+                    // oxlint stops at the first error, so a file has one at most. It comes where the JavaScript plugins' findings do.
+                    if !problems.iter().any(is_thrown_error) {
+                        problems.push(LintMessage {
+                            reported: of_js as u32 + 1,
+                            ..problem
+                        });
+                    }
+                }
+                Err(thrown) => {
+                    return LintResult {
+                        thrown: Some(thrown),
+                        ..LintResult::default()
+                    };
+                }
+            }
         }
         problems.reserve(diagnostics.len());
-        let order: Vec<u32> = match (wants_places, file.language().is_oxlint) {
+        if wants_places {
+            file.expect_positions(diagnostics.len());
+        }
+        // oxlint sorts nothing. It prints what its rules report in the order in which it runs them.
+        let follows_run = wants_places && file.language().is_oxlint && !diagnostics.is_empty();
+        // When oxlint runs a rule, and with which kinds of node it calls it.
+        let in_oxlint = |rule: usize| match is_plain {
+            true => {
+                let place = enabled.get(rule)?.place as usize;
+                Some(&prepared.order.get(place)?.in_oxlint)
+            }
+            false => Some(&running.get(rule)?.in_oxlint),
+        };
+        // A file is linted again for a rule that has asked about the other files.
+        let wants_keys =
+            follows_run && prepared.needs_modules && file.sink.asks_about_modules.get();
+        let about = |rule: u16| in_oxlint(rule as usize);
+        let (by_run, run_keys) = match follows_run {
+            true => crate::oxlint_order::in_run_order(file, &diagnostics, &about, wants_keys),
+            false => (Vec::new(), Vec::new()),
+        };
+        let of_rules = by_run.len() as u32;
+        // What was reported when the file was linted before, among which what is reported now belongs.
+        let keys_before = options
+            .again
+            .map_or(&[][..], |it| &it.previous.run_keys[..]);
+        let before_in_run = |step: u32| {
+            let key = run_keys.get(step as usize - 1);
+            key.map_or(0, |key| keys_before.partition_point(|it| it <= key) as u32)
+        };
+        // Only the comments want them by their places. Without any they are made in the order in which they are printed.
+        let in_run_order = follows_run && !has_directives;
+        // Else, for each of them, the how manyth it is printed, from 1.
+        let mut ranks: Vec<u32> = vec![0; if in_run_order { 0 } else { by_run.len() }];
+        for (at, rank) in by_run.iter().zip(1..) {
+            if let Some(it) = ranks.get_mut(*at as usize) {
+                *it = rank + before_in_run(rank);
+            }
+        }
+        let order: Vec<u32> = match wants_places {
             _ if diagnostics.is_empty() => Vec::new(),
-            (true, true) => {
-                let of_place =
-                    |it: &Enabled<S>| prepared.order.get(it.place as usize).map(|it| it.when);
-                let when: Vec<When> = match is_plain {
-                    true => enabled.iter().filter_map(of_place).collect(),
-                    false => running.iter().map(|it| it.when).collect(),
+            _ if in_run_order => by_run,
+            true => {
+                let rules = 0..if follows_run {
+                    enabled.len().max(running.len())
+                } else {
+                    0
                 };
+                let when: Vec<When> = rules.map_while(|it| Some(in_oxlint(it)?.when)).collect();
                 crate::runner::sorted(&diagnostics, &when)
             }
-            (true, false) => crate::runner::sorted(&diagnostics, &[]),
-            (false, _) => (0..diagnostics.len() as u32).collect(),
+            false => (0..diagnostics.len() as u32).collect(),
         };
+        // What was reported before comes after: plugins in JavaScript run last, and what is run again runs first.
+        for it in problems.iter_mut().skip(before_previous) {
+            if it.reported != 0 && it.reported != u32::MAX {
+                it.reported += match keys_before.get(it.reported as usize - 1) {
+                    Some(key) => run_keys.partition_point(|it| it < key) as u32,
+                    None => of_rules,
+                };
+            }
+        }
         let places = wants_places.then_some(&locator);
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());
-        for at in order {
+        for (at, step) in order.into_iter().zip(1..) {
             let Some(diagnostic) = diagnostics.get_mut(at as usize) else {
                 continue;
             };
@@ -830,7 +934,13 @@ impl<S: RuleSet> Linter<S> {
                     config::oxlint_changes(rule.reported_as(), diagnostic.message_id),
                 );
             }
-            problems.push(to_message(diagnostic, rule.reported_as(), places));
+            problems.push(LintMessage {
+                reported: match in_run_order {
+                    true => step + before_in_run(step),
+                    false => ranks.get(at as usize).copied().unwrap_or(0),
+                },
+                ..to_message(diagnostic, rule.reported_as(), places)
+            });
             let Some(message) =
                 (problems.last_mut()).filter(|_| changes_something || rule.name().is_some())
             else {
@@ -879,6 +989,7 @@ impl<S: RuleSet> Linter<S> {
                         &enabled,
                         !options.disables_fixes,
                         options.physical_path_len,
+                        options.parse_again,
                     )
                 }
                 // Nothing here runs JavaScript.
@@ -909,32 +1020,36 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        // oxlint runs its own rules first: at one place they are first.
+        // oxlint runs its own rules first. Comments are applied to what is at one place in that order.
         if file.language().is_oxlint {
             problems[before_js..].rotate_left(of_js);
+            // When a rule of a JavaScript plugin throws, oxlint has nothing of any such rule for the file, and all of its own rules'
+            // findings.
+            if problems.iter().any(is_thrown_error) {
+                problems.retain(|it| !it.rule_id.as_ref().is_some_and(stands_for_js_rule));
+            }
         }
-        if wants_places {
+        if wants_places && !in_run_order {
             LintMessage::sort(&mut problems);
         }
 
         let report_unused = (options.report_unused_disable_directives)
             .unwrap_or(config.linter.report_unused_disable_directives);
+        let has_skipped_rules = || match config.skipped {
+            Skipped::None => false,
+            Skipped::OnlyJsdoc => bun_core::strings::contains(file.text(), b"/**"),
+            Skipped::Any => true,
+        };
         let can_tell = |name: &[u8]| {
-            let slash = bun_core::strings::last_index_of_char(name, b'/');
-            match config.find_js_rule(name) {
-                Some(_) => true,
-                None if config.find_rule(&self.registry, name).is_some() => true,
-                None if config.named_rule(name).is_some() => true,
-                // One of a plugin that is skipped.
-                None if slash.is_some() && config.has_skipped_rules => false,
-                None if slash
-                    .and_then(|it| Plugin::of_oxlint_prefix(&name[..it]))
-                    .is_some_and(Plugin::has_no_rules) =>
-                {
-                    false
-                }
-                None => !config::is_rule_of_oxlint(slash.map_or(name, |it| &name[it + 1..])),
+            // Every rule that's on ran, so a comment that silences nothing here silences nothing in oxlint either.
+            if config.find_js_rule(name).is_some() || !has_skipped_rules() {
+                return true;
             }
+            // oxlint goes by what is after the last `/`, so a rule that was skipped may be meant if it's called that.
+            let slash = bun_core::strings::last_index_of_char(name, b'/');
+            let last = slash.map_or(name, |it| &name[it + 1..]);
+            let is_here = || (self.registry.all().iter()).any(|it| it.meta.name.as_bytes() == last);
+            !config::is_rule_not_built_in(last) && (!config::is_rule_of_oxlint(last) || is_here())
         };
         // Adds to each of `messages`, which are sorted by position, what suppresses it.
         let apply_comments =
@@ -946,7 +1061,7 @@ impl<S: RuleSet> Linter<S> {
                             report_unused,
                             wants_fixes,
                             rules_to_ignore: &rules_to_ignore,
-                            has_skipped_rules: config.has_skipped_rules,
+                            has_skipped_rules: &has_skipped_rules,
                             can_tell: &can_tell,
                         },
                         comments.iter().filter(is_directive).filter(is_understood),
@@ -963,7 +1078,8 @@ impl<S: RuleSet> Linter<S> {
                             wants_fixes,
                             wants_suppressions,
                             rules_to_ignore: &rules_to_ignore,
-                            has_skipped_rules: config.has_skipped_rules,
+                            has_skipped_rules: config.skipped != Skipped::None,
+                            off: &off,
                         },
                         messages,
                     );
@@ -978,6 +1094,10 @@ impl<S: RuleSet> Linter<S> {
             );
         }
 
+        if file.language().is_oxlint && !problems.is_sorted_by_key(|it| it.reported) {
+            crate::utils::sort::sort_by_key(&mut problems, |it| it.reported);
+        }
+        result.run_keys = run_keys;
         if !has_directives {
             result.messages = problems;
         } else {
@@ -1009,8 +1129,7 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
         let suggestion = Suggestion {
             message_id: Cow::Borrowed(""),
             message: message.message.clone(),
-            data: Vec::new(),
-            has_data: false,
+            data: Data::None,
             fix,
             kind,
         };
@@ -1054,6 +1173,7 @@ fn to_message(
         suppressions: Vec::new(),
         comments_apply_at: (details.as_deref().and_then(|it| it.comments_apply_at))
             .map(|it| (position(it.start), position(it.end))),
+        not_numbers: NotNumbers::default(),
         details: details.map(|it| {
             let place = |(span, text): (Span, Cow<'static, str>)| {
                 (position(span.start), position(span.end), text)
@@ -1063,9 +1183,11 @@ fn to_message(
                 labels: it.labels.into_iter().map(place).collect(),
                 help: it.help,
                 note: it.note,
+                typescript_code: 0,
             })
         }),
         constant_help: diagnostic.constant_help,
+        reported: 0,
     }
 }
 
@@ -1077,8 +1199,8 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
         severity: rule.severity,
         message: report.message,
         message_id: Some(id.map_or(Cow::Borrowed(""), |id| Cow::Owned(id.into()))),
-        line: report.line,
-        column: report.column,
+        line: report.line.unwrap_or(0),
+        column: report.column.unwrap_or(0),
         end: report.end,
         is_fatal: false,
         fix: report.fix.filter(|_| wants_fixes),
@@ -1087,8 +1209,13 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
             .collect(),
         suppressions: Vec::new(),
         comments_apply_at: None,
+        not_numbers: NotNumbers {
+            line: report.line.is_none(),
+            column: report.column.is_none(),
+        },
         details: None,
         constant_help: None,
+        reported: 0,
     }
 }
 
@@ -1099,41 +1226,82 @@ fn js_failure(
     path: &[u8],
     config: &ResolvedConfig,
 ) -> Result<LintMessage, Vec<u8>> {
-    let message = &failure.message[..];
-    if !config.prefers_typescript_rules {
-        let mut thrown = [message, b"\nOccurred while linting ", path].concat();
-        if let Some(line) = failure.line {
-            thrown.extend_from_slice(format!(":{line}").as_bytes());
-        }
-        if let Some(rule) = rule {
-            thrown.extend_from_slice(b"\nRule: \"");
-            thrown.extend_from_slice(&rule.configured.rule.id);
-            thrown.push(b'"');
-        }
-        return Err(thrown);
+    let error = ThrownError {
+        said: &failure.message,
+        at: failure.at,
+        rule: rule.map(|it| &it.configured.rule.id[..]),
+    };
+    error.outcome(path, config)
+}
+
+/// Whether `problem` is what [`ThrownError::outcome`] makes for oxlint. Every other fatal problem is at a place in the file.
+fn is_thrown_error(problem: &LintMessage) -> bool {
+    problem.is_fatal && problem.line == 0
+}
+
+/// Whether oxlint could only run the rule as a rule of a JavaScript plugin: it is one, or it's a native rule that oxlint doesn't have.
+fn stands_for_js_rule(id: &RuleId) -> bool {
+    match id {
+        RuleId::Js(_) => true,
+        RuleId::Known(meta) | RuleId::Named(meta, _) => config::oxlint_lacks(meta),
+        RuleId::Unknown(_) => false,
     }
-    Ok(LintMessage {
-        rule_id: None,
-        severity: Severity::Error,
-        message: [
-            b"Error running JS plugin.\nFile path: ",
-            path,
-            b"\n",
-            message,
-        ]
-        .concat(),
-        message_id: None,
-        line: 0,
-        column: 0,
-        end: None,
-        is_fatal: true,
-        fix: None,
-        suggestions: Vec::new(),
-        suppressions: Vec::new(),
-        comments_apply_at: None,
-        details: None,
-        constant_help: None,
-    })
+}
+
+/// An error that a rule has thrown, whether the rule is JavaScript or calls [`Cx::throw`](crate::context::Cx::throw).
+struct ThrownError<'e> {
+    /// The error as the tool prints it, without the stack.
+    said: &'e [u8],
+    at: js_plugin::ThrownAt,
+    /// ESLint's `ruleId`
+    rule: Option<&'e [u8]>,
+}
+
+impl ThrownError<'_> {
+    /// `path`: the file that was being linted. `Ok`: oxlint reports this for the file and goes on. `Err`: ESLint ends the run and
+    /// prints this.
+    fn outcome(&self, path: &[u8], config: &ResolvedConfig) -> Result<LintMessage, Vec<u8>> {
+        if !config.prefers_typescript_rules {
+            let occurred: &[u8] = b"\nOccurred while linting ";
+            let line = match self.at {
+                // ESLint's `createRuleListeners` names the rule in the message, and then there's no line for it.
+                js_plugin::ThrownAt::Create => {
+                    let (loading, rule): (&[u8], _) = (b"Error while loading rule '", self.rule);
+                    let rule = rule.unwrap_or_default();
+                    return Err([loading, rule, b"': ", self.said, occurred, path].concat());
+                }
+                js_plugin::ThrownAt::Line(line) => format!(":{line}"),
+                js_plugin::ThrownAt::Unknown => String::new(),
+            };
+            let named = (self.rule).map(|rule| [b"\nRule: \"", rule, b"\""].concat());
+            let named = named.unwrap_or_default();
+            return Err([self.said, occurred, path, line.as_bytes(), &named].concat());
+        }
+        Ok(LintMessage {
+            rule_id: None,
+            severity: Severity::Error,
+            message: [
+                b"Error running JS plugin.\nFile path: ",
+                path,
+                b"\n",
+                self.said,
+            ]
+            .concat(),
+            message_id: None,
+            line: 0,
+            column: 0,
+            end: None,
+            is_fatal: true,
+            fix: None,
+            suggestions: Vec::new(),
+            suppressions: Vec::new(),
+            comments_apply_at: None,
+            not_numbers: NotNumbers::default(),
+            details: None,
+            constant_help: None,
+            reported: 0,
+        })
+    }
 }
 
 /// Applies the comments of a file to its configuration.
@@ -1146,6 +1314,8 @@ struct Inline<'i, 'c, 'a, S: RuleSet> {
     skipped: &'i mut Vec<Box<[u8]>>,
     /// The rules that a comment has configured already.
     configured: Vec<Named<'c>>,
+    /// The subset of `configured` that was set [through the paired rule's name](Inline::set_by).
+    by_other_name: Vec<Named<'c>>,
 }
 
 impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
@@ -1165,7 +1335,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
     }
 
     /// The rule called `id`. If there is none, reports that, unless the plugin is one that the
-    /// configuration knows, or the rule is left to `bun format`. `is_turned_on`: by the comment, so that it is missed.
+    /// configuration knows, or the rule is left to `bun fmt`. `is_turned_on`: by the comment, so that it is missed.
     fn find(
         &mut self,
         comment: &ConfigComment,
@@ -1201,16 +1371,62 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         if found.is_none() {
             // All rules of a plugin that is loaded are known.
             let is_known_to_be_missing = lacks_it || js.is_some() && !config.skips_unknown_rules;
-            if is_about_layout || !is_known_to_be_missing && self.config.is_foreign(id) {
+            // With every rule built in, there's no npm package that could provide the rule a comment enables.
+            let is_of_a_package = !is_known_to_be_missing
+                && self.config.is_foreign(id)
+                && !(config.has_every_rule && is_turned_on);
+            if is_about_layout || is_of_a_package {
                 if is_turned_on && !self.skipped.iter().any(|it| **it == *id) {
                     self.skipped.push(id.into());
                 }
-            } else {
+            } else if is_turned_on || !config.has_every_rule {
                 let message = registry::missing_rule_message(id);
                 self.error(comment, Some(RuleId::Unknown(id.into())), message);
             }
         }
         found
+    }
+
+    /// Calls [`Registry::pair_of`], but only in configs where a pair acts as one rule.
+    fn pair_of(&self, rule: Named) -> Option<(&'static RuleEntry, &'static RuleEntry)> {
+        match rule {
+            Named::Native(entry) if self.config.has_every_rule => {
+                self.linter.registry.pair_of(entry.meta)
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the rule that a config comment naming `rule` applies to in this file. `given` are the comment's options.
+    /// For a [pair](Registry::pair_of) that's the typescript-eslint version in TypeScript files, unless it can't run or
+    /// only the core rule accepts the options.
+    fn set_by(&self, rule: Named<'c>, given: &[Json]) -> Named<'c> {
+        let Some((base, extension)) = self.pair_of(rule) else {
+            return rule;
+        };
+        let can_run = !extension.meta.requires_types || self.file.types.is_some();
+        let stands_alone = self.file.language().stands_alone;
+        let takes = |it: &RuleEntry| schema::validate(it.meta, given, stands_alone).is_ok();
+        let is_for_base = self.file.is_javascript() || !can_run || !takes(extension) && takes(base);
+        Named::Native(if is_for_base { base } else { extension })
+    }
+
+    /// Returns the rule that a disable comment naming `rule` applies to. For a pair that's whichever rule runs on this file.
+    fn disabled_by(&self, rule: Named<'c>) -> Named<'c> {
+        let Some((base, extension)) = self.pair_of(rule) else {
+            return rule;
+        };
+        let is_of_pair = |it: &&Named| [base, extension].iter().any(|of| it.is(Named::Native(of)));
+        if let Some(set) = self.configured.iter().find(is_of_pair) {
+            return *set;
+        }
+        let is_on =
+            |it: &RuleEntry| (self.config.rule(it)).is_some_and(|it| it.severity != Severity::Off);
+        match (is_on(base), is_on(extension)) {
+            (true, false) => Named::Native(base),
+            (false, true) => Named::Native(extension),
+            _ => self.set_by(rule, &[]),
+        }
     }
 
     /// The part of ESLint's `applyInlineConfig` and of what `verify` does with its result that is
@@ -1224,6 +1440,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         match comment.label {
             Label::Rules => {}
             Label::Env if self.file.language().eslint_8.is_some() => return,
+            Label::Env if self.file.language().stands_alone => return,
             Label::Env => {
                 return self.fatal(
                     comment,
@@ -1258,9 +1475,27 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 value => Some(value),
             };
             let is_turned_on = first.and_then(severity_of) != Some(Severity::Off);
-            let Some(rule) = self.find(comment, &id, is_turned_on) else {
+            let Some(named) = self.find(comment, &id, is_turned_on) else {
                 continue;
             };
+            let given = match &value {
+                Json::Array(items) => items.get(1..).unwrap_or_default(),
+                _ => &[],
+            };
+            let rule = self.set_by(named, given);
+            // A setting under the rule's own name beats one under the paired name, in either order.
+            if !named.is(rule) {
+                let is_configured = |it: &Named| it.is(rule);
+                if self.configured.iter().any(is_configured)
+                    && !self.by_other_name.iter().any(is_configured)
+                {
+                    continue;
+                }
+                self.by_other_name.push(rule);
+            } else if let Some(at) = self.by_other_name.iter().position(|it| it.is(rule)) {
+                self.by_other_name.swap_remove(at);
+                self.configured.retain(|it| !it.is(rule));
+            }
             // In ESLint 8 a comment says all there is to say about a rule, and the last comment counts.
             let value = match eslint_8.map(|it| it.inline_setting(&id, &value, rule.js())) {
                 Some(Ok(setting)) => Json::Array(setting),
@@ -1312,8 +1547,13 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             };
             // A comment that has only a severity keeps the options of the configuration.
             let keeps_options = inline.len() == 1 && eslint_8.is_none();
+            let over_defaults;
             let options: &[Json] = match existing {
                 Some(existing) if keeps_options => existing.options(),
+                Some(Existing::Native(existing)) if !existing.defaults.is_empty() => {
+                    over_defaults = schema::deep_merge_arrays(&existing.defaults, &inline[1..]);
+                    &over_defaults
+                }
                 _ => &inline[1..],
             };
             if self.config.linter.report_unused_inline_configs != Severity::Off {
@@ -1332,9 +1572,18 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 || keeps_options && existing.is_some_and(|it| it.severity() != Severity::Off);
             // ESLint leaves out what is off only if that is written `0`.
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
+            let stands_alone = self.file.language().stands_alone;
             let validated = match is_validated || is_zero {
                 true => None,
-                false => Some(rule.validate(options)),
+                // Options are valid for a pair if either rule accepts them.
+                false => Some(rule.validate(options, stands_alone).or_else(|lines| {
+                    let pair = self.pair_of(rule).map(|it| [it.0, it.1]);
+                    let mut pair = pair.iter().flatten();
+                    match pair.any(|it| schema::validate(it.meta, options, stands_alone).is_ok()) {
+                        true => Ok(Vec::new()),
+                        false => Err(lines),
+                    }
+                })),
             };
             if let Some(Err(lines)) = &validated {
                 let message = quoted(&[
@@ -1348,6 +1597,15 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 continue;
             }
             self.configured.push(rule);
+            // Make sure the paired rule doesn't run too.
+            if let Some((base, extension)) = self.pair_of(rule) {
+                let rests = if rule.is(Named::Native(base)) {
+                    extension
+                } else {
+                    base
+                };
+                running.retain(|it| !is_same_rule(it.entry, rests));
+            }
             let (entry, existing) = match (rule, existing) {
                 (Named::Native(entry), Some(Existing::Native(existing))) => (entry, Some(existing)),
                 (Named::Native(entry), _) => (entry, None),
@@ -1411,7 +1669,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 entry,
                 configured: existing,
                 severity,
-                when: entry.meta.reports,
+                in_oxlint: InOxlint::unknown(entry.meta.reports, u16::MAX),
                 rule,
                 refusal,
             };
@@ -1528,6 +1786,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             let Some(rule) = self.find(comment, name, false) else {
                 return true;
             };
+            let rule = self.disabled_by(rule);
             let is_new = !rules.iter().any(|it| it.is(rule));
             if is_new {
                 rules.push(rule);

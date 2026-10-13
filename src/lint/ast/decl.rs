@@ -6,6 +6,7 @@ use super::{
 };
 use crate::span::Span;
 use crate::tokens::skip_trivia;
+use bun_collections::ByteSet;
 use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner};
 use bun_sema::hir::{self, NameKind};
 
@@ -722,15 +723,11 @@ pub(super) fn is_computed(key: hir::PropKey, name_kind: NameKind) -> bool {
 /// `\\`: what `token_len` says, without looking for anything else that a token can be.
 #[inline]
 fn ascii_name_len(text: &[u8]) -> Option<usize> {
-    static IS_PART: [bool; 256] = {
-        let (mut table, mut b) = ([false; 256], 0usize);
-        while b < 128 {
-            table[b] = (b as u8).is_ascii_alphanumeric() || b as u8 == b'_' || b as u8 == b'$';
-            b += 1;
-        }
-        table
-    };
-    let is_part = |b: &u8| IS_PART[*b as usize];
+    static PART: ByteSet = ByteSet::of(b"_$")
+        .with_range(b'0', b'9')
+        .with_range(b'A', b'Z')
+        .with_range(b'a', b'z');
+    let is_part = |b: &u8| PART.has(*b);
     if !text
         .first()
         .is_some_and(|b| is_part(b) && !b.is_ascii_digit())
@@ -792,13 +789,24 @@ impl File<'_> {
 fn jsx_identifier_end(text: &[u8], at: u32) -> u32 {
     let mut rest = text.get(at as usize..).unwrap_or_default();
     let mut end = at;
+    // Once oxc's lexer is past a `-`, an escape ends the name.
+    let mut is_past_dash = false;
     while let [b, after @ ..] = rest
+        && !(*b == b'\\' && is_past_dash)
         && (b.is_ascii_alphanumeric()
-            || matches!(b, b'_' | b'$' | b'-')
+            || matches!(b, b'_' | b'$' | b'-' | b'\\')
             || (*b >= 0x80 && bun_core::strings::js_whitespace_len(rest) == 0))
     {
-        rest = after;
-        end += 1;
+        is_past_dash |= *b == b'-';
+        // `\u{61}`. Only oxc takes an escape here.
+        let in_braces = match (b, after) {
+            (b'\\', [b'u', b'{', ..]) => {
+                bun_core::strings::index_of_char_usize(after, b'}').map_or(0, |it| it + 1)
+            }
+            _ => 0,
+        };
+        rest = &after[in_braces..];
+        end += 1 + in_braces as u32;
     }
     end
 }

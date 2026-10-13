@@ -8,6 +8,7 @@
 //!   https://github.com/vercel/next.js/tree/canary/packages/eslint-plugin-next (Copyright Vercel, Inc., MIT License)
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 mod a11y;
 mod jsx;

@@ -1023,6 +1023,7 @@ dependencies = [
  "bun_threading",
  "bun_wyhash",
  "bun_yarr",
+ "bun_zstd",
  "rustc-hash",
  "smallvec",
 ]
@@ -1058,6 +1059,7 @@ dependencies = [
  "bun_lint_react",
  "bun_lint_typescript",
  "bun_lint_unicorn",
+ "bun_md",
  "bun_paths",
  "bun_sema",
  "bun_sema_driver",
@@ -1065,6 +1067,7 @@ dependencies = [
  "bun_semver",
  "bun_sys",
  "bun_threading",
+ "bun_zstd",
 ]
 
 [[package]]
@@ -1589,6 +1592,7 @@ dependencies = [
  "bun_sema_standalone",
  "bun_threading",
  "bun_wyhash",
+ "bun_zstd",
  "hashbrown 0.15.5",
  "rustc-hash",
  "smallvec",
@@ -1629,6 +1633,7 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_core",
+ "bun_highway",
  "bun_sema",
  "bun_threading",
  "smallvec",

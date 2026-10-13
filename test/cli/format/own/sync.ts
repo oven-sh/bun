@@ -34,7 +34,7 @@ for (const [path, bytes] of files) {
     rmSync(directory, { recursive: true });
   }
   writeFileSync(join(import.meta.dir, `${name}.prettier.snap`), render(asPrettier));
-  // `.todo`: `bun format` does not print that yet, and it is not compared.
+  // `.todo`: `bun fmt` does not print that yet, and it is not compared.
   const snapshot = join(import.meta.dir, `${name}.snap`);
   if (asOxfmt.length > 0) writeFileSync(existsSync(`${snapshot}.todo`) ? `${snapshot}.todo` : snapshot, render(asOxfmt));
 }

@@ -15,9 +15,9 @@ pub struct NoUnboundedRequests {
 
 const NO_TIMEOUT: Message = Message::new(
     "noTimeout",
-    "axios waits for the answer for as long as it takes. Set `timeout`, or a `signal` that ends the request.",
+    "This axios request has no time limit. Set `timeout` or pass a `signal`.",
 );
-const NO_LIMIT: Message = Message::new("noLimit", "`timeout: {{value}}` sets no limit.");
+const NO_LIMIT: Message = Message::new("noLimit", "`timeout: {{value}}` means no time limit.");
 
 /// `axios()`, and its methods that take a configuration.
 const AXIOS: TraceMap<'static, ()> = TraceMap::new(&[

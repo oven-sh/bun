@@ -50,7 +50,7 @@ pub(crate) fn write_template_literal<'a>(
             TemplateLike::TemplateLiteral(template).fmt(f);
         }
     });
-    InTailwindContext(context.map(|it| it.in_template(e)), content).fmt(f);
+    InTailwindContext(context.map(|it| it.in_template(e, f)), content).fmt(f);
 }
 
 /// `${e}` at `i` in a template that is written as the language in it. Prettier's
@@ -258,7 +258,7 @@ impl<'a> Format<'a> for TemplateLike<'a> {
         write!(f, [line_suffix_boundary(), "`"]);
         let context = f.context().tailwind_context();
         // The line breaks between classes go, so they say nothing about where a `${` is.
-        let collapses_line_breaks = context.is_some_and(|it| !it.preserves_whitespace);
+        let collapses_line_breaks = context.is_some_and(|it| it.collapses_line_breaks());
         let mut expressions = self
             .expressions(false, f)
             .map(|it| match collapses_line_breaks {
@@ -276,7 +276,7 @@ impl<'a> Format<'a> for TemplateLike<'a> {
                 .and_then(|context| {
                     let tailwind = f.options().tailwind.as_deref()?;
                     let place = (i == 0, i + 1 == count);
-                    Some(sorted_template_text(source, place, context, tailwind))
+                    sorted_template_text(source, place, context, tailwind)
                 });
             let raw = sorted.as_deref().unwrap_or(source);
             around_node_at(

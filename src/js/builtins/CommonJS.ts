@@ -12,7 +12,7 @@ export function main() {
 
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
-export function require(this: JSCommonJSModule, _: string) {
+export function require(this: JSCommonJSModule, _id: string) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
   return $overridableRequire.$apply(this, arguments);
 }

@@ -288,7 +288,7 @@ impl Checker<'_, '_> {
             // like any other meaning.
             let type_only = files
                 .type_only_alias_declaration_ex(sym, SymFlags::VALUE)
-                .filter(|_| files.symbol_flags(sym).intersects(SymFlags::VALUE));
+                .filter(|_| self.get_symbol_flags(sym).intersects(SymFlags::VALUE));
             inspected[local.idx()] = 1 + u8::from(type_only.is_some());
             let Some(type_only) = type_only else {
                 continue;

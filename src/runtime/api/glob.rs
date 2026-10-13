@@ -17,7 +17,9 @@ use bun_sys as syscall;
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
 #[bun_jsc::JsClass]
 pub(crate) struct Glob {
-    pattern: Box<[u8]>,
+    /// An ASCII pattern is the JavaScript string's own buffer, not a copy.
+    pattern: bun_core::Utf8Bytes<'static>,
+    shape: bun_glob::matcher::Shape,
     has_pending_activity: AtomicUsize,
 }
 
@@ -504,11 +506,11 @@ impl Glob {
         // Match the walker's root choice (`Iterator::init`): an absolute
         // pattern roots at its literal prefix and ignores the cwd, a relative
         // pattern roots at the cwd. A `/$bunfs/` root walks the graph.
-        let pattern_is_absolute = resolve_path::is_absolute(&self.pattern)
-            || (cfg!(windows) && resolve_path::is_absolute_posix(&self.pattern));
+        let pattern_is_absolute = resolve_path::is_absolute(self.pattern.slice())
+            || (cfg!(windows) && resolve_path::is_absolute_posix(self.pattern.slice()));
         let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some()
             && if pattern_is_absolute {
-                bun_standalone_graph::is_bun_standalone_file_path(&self.pattern)
+                bun_standalone_graph::is_bun_standalone_file_path(self.pattern.slice())
             } else {
                 match_opts
                     .cwd
@@ -521,12 +523,12 @@ impl Glob {
                 StandaloneAccessor,
             >(
                 global_this,
-                &self.pattern,
+                self.pattern.slice(),
                 &match_opts,
             )?)));
         }
         Ok(Some(AnyGlobWalker::Fs(
-            init_walker::<walk::SyscallAccessor>(global_this, &self.pattern, &match_opts)?,
+            init_walker::<walk::SyscallAccessor>(global_this, self.pattern.slice(), &match_opts)?,
         )))
     }
 
@@ -553,12 +555,10 @@ impl Glob {
             )));
         }
 
-        let pat_str: Box<[u8]> = pat_arg
-            .to_bun_string(global_this)?
-            .to_owned_slice()
-            .into_boxed_slice();
+        let pat_str = pat_arg.to_utf8(global_this)?;
 
         Ok(Box::new(Glob {
+            shape: bun_glob::matcher::Shape::of(pat_str.slice()),
             pattern: pat_str,
             has_pending_activity: AtomicUsize::new(0),
         }))
@@ -678,8 +678,12 @@ impl Glob {
 
         let str = str_arg.to_utf8(global_this)?;
 
-        Ok(JSValue::from(
-            bun_glob::r#match(&self.pattern, str.slice()).matches(),
-        ))
+        let matched = bun_glob::matcher::match_prepared::<{ cfg!(windows) }>(
+            self.pattern.slice(),
+            &self.shape,
+            str.slice(),
+            bun_glob::Dots::Match,
+        );
+        Ok(JSValue::from(matched.matches()))
     }
 }

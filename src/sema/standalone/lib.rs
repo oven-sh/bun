@@ -1,6 +1,8 @@
 //! `bun_sema` with Bun's parser as its front end, backed by the file system: the basis of its tests
 //! and of the `bun-sema` command line tool. The bundler does not use this crate.
 
+#![feature(linkage)]
+
 pub mod hir_dump;
 pub mod native;
 
@@ -19,7 +21,7 @@ pub fn parse<'s>(
     experimental_decorators: bool,
 ) -> hir::File<'s> {
     let path = path.as_bytes();
-    bun_js_parser::sema::summarize(
+    bun_sema_parser::summarize(
         arena,
         path,
         None,
@@ -28,7 +30,6 @@ pub fn parse<'s>(
         experimental_decorators,
         false,
     )
-    .0
 }
 
 /// Runs `work(i)` for every `i` below `count` on `threads` threads, which have the stack of a thread of `bun check`.

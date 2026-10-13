@@ -196,7 +196,7 @@ console.log("How...dashing?");
     if (!sourceMapURL) {
       throw new Error("No source map URL found");
     }
-    const sourceMap = await (await fetch(new URL(sourceMapURL, "http://" + hostname + ":" + port))).json();
+    const sourceMap: any = await (await fetch(new URL(sourceMapURL, "http://" + hostname + ":" + port))).json();
     sourceMap.sourcesContent = sourceMap.sourcesContent.map(a => a.trim());
     expect(sourceMap.debugId).toMatch(/^[0-9A-F]{32}$/);
     sourceMap.debugId = "<debug-id>";
@@ -645,11 +645,12 @@ test("serve html error handling", async () => {
     const path = join(dir, "index.html");
 
     const { default: html } = await import(path);
-    let servers: Server[] = [];
+    let servers: Server<undefined>[] = [];
     for (let i = 0; i < 10; i++) {
       servers.push(
         Bun.serve({
           port: 0,
+          // @ts-expect-error legacy option name
           static: {
             "/": html,
           },
@@ -1143,6 +1144,7 @@ test("wildcard static routes", async () => {
   for (let development of [true, false]) {
     using server = Bun.serve({
       port: 0,
+      // @ts-expect-error legacy option name
       static: {
         "/*": html,
       },
@@ -1169,6 +1171,7 @@ test("serve html with JSX runtime in development mode", async () => {
   using server = Bun.serve({
     port: 0,
     development: true,
+    // @ts-expect-error legacy option name
     static: {
       "/": html,
     },
@@ -1195,6 +1198,7 @@ test("serve html with JSX runtime in production mode", async () => {
   using server = Bun.serve({
     port: 0,
     development: false,
+    // @ts-expect-error legacy option name
     static: {
       "/": html,
     },
@@ -1222,6 +1226,7 @@ test("you can have HTML imports apply to only specific methods outside of the de
   using server = Bun.serve({
     port: 0,
     development: false,
+    // @ts-expect-error legacy option name
     static: {
       "/boop": html,
 
@@ -1276,6 +1281,7 @@ for (let development of [true, false, { hmr: false }]) {
     using server = Bun.serve({
       port: 0,
       development,
+      // @ts-expect-error legacy option name
       static: {
         "/*": html,
         "/api": false,
@@ -1319,6 +1325,7 @@ for (let development of [true, false, { hmr: false }]) {
     using server = Bun.serve({
       port: 0,
       development,
+      // @ts-expect-error legacy option name
       static: {
         "/*": html,
         "/api/*": false,

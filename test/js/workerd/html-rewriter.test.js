@@ -1121,6 +1121,7 @@ describe("HTMLRewriter", () => {
           }
           chunk.set(new TextEncoder().encode("<p>intro</p><b>one</b>"));
           let kept = null;
+          let pending;
           let seen = "the consumer did not run";
           const wired = Promise.withResolvers();
           const input = new ReadableStream({
@@ -1131,9 +1132,11 @@ describe("HTMLRewriter", () => {
             },
           });
           const first = new HTMLRewriter().on("b", {
-            async element(el) {
+            element(el) {
               kept = el;
-              await new Promise(() => {});
+              const promise = new Promise(() => {});
+              pending = new WeakRef(promise);
+              return promise;
             },
           });
           const second = new HTMLRewriter().on("p", {
@@ -1141,13 +1144,22 @@ describe("HTMLRewriter", () => {
               if (kept) seen = "tagName " + kept.tagName + ", setAttribute() " + kept.setAttribute("seen", "1");
             },
           });
-          const out = second.transform(first.transform(new Response(input)));
+          const mid = first.transform(new Response(input));
+          const out = second.transform(mid);
           wired.resolve();
           const outcome = await out.text().then(
             () => "resolved",
             err => "rejected with " + err.message,
           );
           console.log(outcome + "; kept token in the consumer: " + seen);
+          // The failed rewrite must not keep the promise of its handler. The
+          // read of mid after the collections keeps the rewrite reachable.
+          for (let i = 0; i < 3; i++) {
+            await new Promise(resolve => setImmediate(resolve));
+            Bun.gc(true);
+          }
+          const fate = pending.deref() ? "retained" : "collected";
+          console.log("promise of the handler: " + fate + ", Response status: " + mid.status);
         `;
         const { stdout, exitCode } = await run(fixture, {
           ...bunEnv,
@@ -1159,6 +1171,7 @@ describe("HTMLRewriter", () => {
           [
             "rejected with The memory limit has been exceeded.; " +
               "kept token in the consumer: tagName undefined, setAttribute() undefined",
+            "promise of the handler: collected, Response status: 200",
             "",
           ],
         ]).toContainEqual(stdout);

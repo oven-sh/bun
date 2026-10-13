@@ -1629,6 +1629,15 @@ impl RewriterPipe {
         let wrapper = self.pending_suspension.take();
         if !matches!(e, lol_html::errors::RewritingError::Suspended) {
             // The memory limit can fail the call after a handler suspended: nothing is parked.
+            if wrapper.is_some()
+                && let Some(cell) = self.cell.try_get()
+            {
+                js_HTMLRewriterTransform::suspension_promise_set_cached(
+                    cell,
+                    &self.global,
+                    JSValue::UNDEFINED,
+                );
+            }
             return;
         }
         let wrapper =

@@ -293,7 +293,9 @@ impl Check<'_, '_> {
             if len > 0 {
                 self.texts(&children[at..at + len], (previous, next), how);
             }
-            self.reader.mark(9);
+            if next.is_some() {
+                self.reader.mark(9);
+            }
             (at, previous) = (at + len + 1, next);
         }
     }

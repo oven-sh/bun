@@ -1090,7 +1090,8 @@ describe("Bun.build metafile artifacts", () => {
       const failed = {
         success: false,
         outputs: [],
-        logs: [expect.stringContaining(`writing metafile ${JSON.stringify(join(String(dir), "out", path))}`)],
+        // The message names the file that the build could not write.
+        logs: [expect.stringMatching(/writing metafile ".*out[\\/]+taken[\\/]+meta"$/)],
       };
       const report = ({ success, outputs, logs }: Bun.BuildOutput) => ({
         success,

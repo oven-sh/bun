@@ -83,11 +83,15 @@ class PostgresError extends SQLError implements Bun.SQL.PostgresError {
     if (where !== undefined) this.where = where;
     if (schema !== undefined) this.schema = schema;
     if (table !== undefined) this.table = table;
+    // Error instances carry JSC's own `line`/`column` source position; remove
+    // them so a field the server didn't send reads as undefined.
     if (column !== undefined) this.column = column;
+    else delete this.column;
     if (dataType !== undefined) this.dataType = dataType;
     if (constraint !== undefined) this.constraint = constraint;
     if (file !== undefined) this.file = file;
     if (line !== undefined) this.line = line;
+    else delete this.line;
     if (routine !== undefined) this.routine = routine;
   }
 }

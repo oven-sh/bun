@@ -29,7 +29,6 @@ use bun_lint::ast::File;
 use bun_lint::js_plugin::{HEAVY, Unformatted};
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
-use bun_lint::utils::code_frame::{self, Frame, Lines, Place, Version};
 use bun_lint::utils::text::ends_with_ignore_ascii_case as ends_in;
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
 use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
@@ -54,29 +53,93 @@ macro_rules! pretty {
     };
 }
 
-const NESTED_TOO_DEEPLY: &[u8] = b"RangeError: The code is nested too deeply.";
-/// In the words of Prettier.
-const TOO_LONG: &[u8] = b"RangeError: Invalid string length";
+const NESTED_TOO_DEEPLY: &[u8] = b"The code is nested too deeply";
+const TOO_LONG: &[u8] = b"The formatted code is too long for a string";
 const MAKE_IT_A_WARNING: &[u8] = b"\n  Use --allow-unsupported to make this a warning.";
+
+/// What is wrong with the text of a file, and where.
+struct Problem {
+    message: Vec<u8>,
+    at: Option<Place>,
+}
+
+struct Place {
+    line: u32,
+    /// From 1, in bytes.
+    column: u32,
+    line_text: Vec<u8>,
+}
+
+impl Problem {
+    /// It is about the whole file.
+    fn new(message: &[u8]) -> Problem {
+        Problem {
+            message: message.to_vec(),
+            at: None,
+        }
+    }
+
+    /// `offset`: in `text`, not counting a byte order mark.
+    #[cold]
+    fn at(text: &[u8], message: &[u8], offset: u32) -> Problem {
+        let text = strings::without_utf8_bom(text);
+        let before = &text[..text.len().min(offset as usize)];
+        let (mut line, mut line_start, mut from) = (1u32, 0, 0);
+        while let Some(found) = strings::index_of_any(&before[from..], b"\n\r") {
+            from += found + 1;
+            // The `\n` of `\r\n` ends the line.
+            if before[from - 1] == b'\n' || text.get(from) != Some(&b'\n') {
+                (line, line_start) = (line + 1, from);
+            }
+        }
+        let rest = &text[line_start..];
+        let end = strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
+        Problem {
+            message: message.to_vec(),
+            at: Some(Place {
+                line,
+                column: (before.len() - line_start) as u32 + 1,
+                line_text: rest[..end].to_vec(),
+            }),
+        }
+    }
+
+    /// As Bun prints every other error: the line, a caret, the message, and where it is. `shown`: the name of the file.
+    fn print(&self, shown: &[u8], kind: bun_ast::Kind, colors: bool) -> Vec<u8> {
+        let message = bun_ast::Msg {
+            kind,
+            data: bun_ast::Data {
+                text: self.message.clone().into(),
+                location: Some(bun_ast::Location {
+                    file: shown.to_vec().into(),
+                    line: self.at.as_ref().map_or(0, |it| it.line as i32),
+                    column: self.at.as_ref().map_or(0, |it| it.column as i32),
+                    line_text: self.at.as_ref().map(|it| it.line_text.clone().into()),
+                    ..Default::default()
+                }),
+            },
+            ..Default::default()
+        };
+        let mut printed = String::new();
+        let _ = match colors {
+            true => message.write_format::<true>(&mut printed),
+            false => message.write_format::<false>(&mut printed),
+        };
+        printed.push('\n');
+        printed.into_bytes()
+    }
+}
 
 /// Why a file is left as it is.
 enum Failure {
-    /// `SyntaxError: ';' expected. (1:7)`
-    Syntax(Vec<u8>),
+    Syntax(Problem),
     /// A bug in the formatter: it could not print the file.
     Bug,
     /// `--debug-check`: what would be written does not say what the file says.
     Changed(&'static str),
     /// TOML that cannot be read, with what is wrong with it. oxfmt passes over such a file without a word, so it is no
     /// error.
-    Unread(Vec<u8>),
-}
-
-/// `error.message` of what is in a [`Failure::Syntax`].
-fn message_of(error: &[u8]) -> &[u8] {
-    (error.strip_prefix(b"SyntaxError: "))
-        .or_else(|| error.strip_prefix(b"RangeError: "))
-        .unwrap_or(error)
+    Unread(Problem),
 }
 
 /// Tailwind has been asked, and the order of the classes in the file that is shown as `shown` is still not known.
@@ -308,70 +371,21 @@ struct Refused<'a> {
     is_nested_too_deeply: bool,
 }
 
-/// `SyntaxError: ';' expected. (1:7)`
-fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
-    let mut out = b"SyntaxError: ".to_vec();
+fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Problem {
+    let mut message = Vec::new();
     match first.and_then(|it| Some((it, bun_sema::messages::message(it.code)?.1))) {
-        Some((diagnostic, text)) => bun_sema::messages::format(&mut out, text, &diagnostic.args),
-        None => out.extend_from_slice(b"Unexpected token"),
-    }
-    let at = file.position(first.map_or(0, |it| it.start));
-    let _ = write!(out, " ({}:{})", at.line, at.column + 1);
-    write_frame(&mut out, file, at.line, at.column);
-    out
-}
-
-/// `SyntaxError: Unclosed string (3:6)`, for code that isn't JavaScript or TypeScript.
-#[cold]
-fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Vec<u8> {
-    syntax_error_in_words(text, message.text().as_bytes(), offset)
-}
-
-/// What Prettier appends to a syntax error: the lines around it. `column`: counted from 0.
-fn write_frame<'a>(out: &mut Vec<u8>, lines: &(impl Lines<'a> + ?Sized), line: u32, column: u32) {
-    let frame = Frame {
-        version: Version::Eight,
-        start: Place {
-            line,
-            column: Some(column),
-        },
-        end: None,
-        message: b"",
-        lines_above: 2,
-        lines_below: 3,
-    };
-    let len = out.len();
-    out.push(b'\n');
-    if !code_frame::write(out, lines, &frame) {
-        out.truncate(len);
-    }
-}
-
-/// `offset`: not counting a byte order mark.
-#[cold]
-fn syntax_error_in_words(text: &[u8], message: &[u8], offset: u32) -> Vec<u8> {
-    let text = strings::without_utf8_bom(text);
-    let before = &text[..text.len().min(offset as usize)];
-    let (mut line, mut line_start, mut from) = (1u32, 0, 0);
-    while let Some(found) = strings::index_of_any(&before[from..], b"\n\r") {
-        from += found + 1;
-        // The `\n` of `\r\n` ends the line.
-        if before[from - 1] == b'\n' || text.get(from) != Some(&b'\n') {
-            (line, line_start) = (line + 1, from);
+        Some((diagnostic, text)) => {
+            bun_sema::messages::format(&mut message, text, &diagnostic.args)
         }
+        None => message.extend_from_slice(b"Unexpected token"),
     }
-    // As Prettier counts them: in UTF-16 code units.
-    let column = bun_core::strings::utf8_decoded_len_utf16(&before[line_start..]);
-    let mut out = format!(
-        "SyntaxError: {} ({line}:{})",
-        BStr::new(message),
-        column + 1
-    )
-    .into_bytes();
-    // No more of them than are shown.
-    let lines: Vec<&[u8]> = strings::js_lines(text).take(line as usize + 3).collect();
-    write_frame(&mut out, &lines[..], line, column);
-    out
+    Problem::at(file.text(), &message, first.map_or(0, |it| it.start))
+}
+
+/// For code that isn't JavaScript or TypeScript.
+#[cold]
+fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Problem {
+    Problem::at(text, message.text().as_bytes(), offset)
 }
 
 /// What is allocated to format a file, and used again for the next.
@@ -478,9 +492,9 @@ fn format(
     let options = &resolved.options;
     // What `>` of Windows PowerShell writes. Some parsers take it for UTF-8 with a NUL next to every letter.
     if matches!(text, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
-        return Err(Failure::Syntax(
-            b"SyntaxError: This file is UTF-16. bun fmt only reads UTF-8.".to_vec(),
-        ));
+        return Err(Failure::Syntax(Problem::new(
+            b"This file is UTF-16. bun fmt only reads UTF-8",
+        )));
     }
     // The name says what kind of file it is. Whether it is TypeScript is up to `path`.
     let name = options
@@ -496,20 +510,22 @@ fn format(
             let cursor = bun_format::cursor::cursor_in_formatted_text(text, options, &out);
             Ok((out, cursor))
         }
-        Err(FormatError::SyntaxError) => Err(Failure::Syntax(
-            format!("SyntaxError: This is not valid {what}.").into_bytes(),
-        )),
+        Err(FormatError::SyntaxError) => Err(Failure::Syntax(Problem::new(
+            format!("This is not valid {what}").as_bytes(),
+        ))),
         Err(FormatError::SyntaxErrorAt(error)) => {
             Err(Failure::Syntax(syntax_error_at(text, error)))
         }
-        Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
-        Err(FormatError::TooLong) => Err(Failure::Syntax(TOO_LONG.to_vec())),
+        Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY))),
+        Err(FormatError::TooLong) => Err(Failure::Syntax(Problem::new(TOO_LONG))),
         Err(FormatError::InvalidDocument) => Err(Failure::Bug),
     };
     let mut out = Vec::new();
     let kind = Kind::with_options(name, options);
     if let (None, Some(parser)) = (kind, &options.parser) {
-        return Err(Failure::Syntax(cannot_resolve_parser(parser)));
+        return Err(Failure::Syntax(Problem::new(&cannot_resolve_parser(
+            parser,
+        ))));
     }
     match kind {
         Some(Kind::Script) | None => {}
@@ -579,7 +595,7 @@ fn format(
             if done == Err(FormatError::SyntaxError)
                 && let Some((message, offset)) = bun_format::toml::syntax_error(text)
             {
-                let error = syntax_error_in_words(text, &message, offset);
+                let error = Problem::at(text, &message, offset);
                 return Err(match options.flavor.is_oxfmt() {
                     true => Failure::Unread(error),
                     false => Failure::Syntax(error),
@@ -630,9 +646,7 @@ fn format(
             if matches!(done, Err(FormatError::SyntaxError))
                 && let Some((message, offset)) = bun_format::html::syntax_error(text, parser)
             {
-                return Err(Failure::Syntax(syntax_error_in_words(
-                    text, &message, offset,
-                )));
+                return Err(Failure::Syntax(Problem::at(text, &message, offset)));
             }
             let cursor = done.as_ref().ok().copied().flatten();
             return finish(done.map(|_| ()), out, "HTML").map(|(out, _)| (out, cursor));
@@ -700,7 +714,7 @@ fn print<'a>(
     scratch: &mut Scratches,
 ) -> Result<Formatted, Failure> {
     if refused.is_nested_too_deeply {
-        return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+        return Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY)));
     }
     let options = &how.resolved.options;
     // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
@@ -718,16 +732,11 @@ fn print<'a>(
         false => bun_lint::linter::refusal_of_prettier(file, types),
     };
     if let Some(why) = refusal {
-        let at = file.position(why.at);
-        let mut out = format!(
-            "SyntaxError: {} ({}:{})",
-            BStr::new(&why.message),
-            at.line,
-            at.column + 1
-        )
-        .into_bytes();
-        write_frame(&mut out, file, at.line, at.column);
-        return Err(Failure::Syntax(out));
+        return Err(Failure::Syntax(Problem::at(
+            file.text(),
+            &why.message,
+            why.at,
+        )));
     }
     let mut out = Vec::new();
     let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| {
@@ -748,9 +757,9 @@ fn print<'a>(
             return Err(Failure::Syntax(syntax_error_at(file.text(), error)));
         }
         Err(FormatError::NestedTooDeeply) => {
-            return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+            return Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY)));
         }
-        Err(FormatError::TooLong) => return Err(Failure::Syntax(TOO_LONG.to_vec())),
+        Err(FormatError::TooLong) => return Err(Failure::Syntax(Problem::new(TOO_LONG))),
         Err(FormatError::InvalidDocument) => return Err(Failure::Bug),
     };
     if how.resolved.omits_final_newline {
@@ -778,7 +787,7 @@ fn print<'a>(
 fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatted, Failure> {
     with_file(how, text, |file, program, refused| {
         if refused.is_nested_too_deeply {
-            return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+            return Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY)));
         }
         // A file whose imports move is parsed again.
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
@@ -847,8 +856,8 @@ enum Done {
     PutAside,
     /// For the user. The exit code is 2.
     Failed(Vec<u8>),
-    /// See [`Failure::Unread`]. A warning for the user.
-    Unread(Vec<u8>),
+    /// The same.
+    Refused(Failure),
 }
 
 struct Run<'r> {
@@ -1047,15 +1056,28 @@ impl Run<'_> {
         out
     }
 
-    fn describe(shown: &[u8], failure: Failure) -> Vec<u8> {
-        match failure {
-            Failure::Syntax(error) | Failure::Unread(error) => [shown, b": ", &error].concat(),
-            Failure::Bug => [
-                shown,
-                b": the formatter failed. It was not formatted. This is a bug in Bun.",
-            ]
-            .concat(),
-            Failure::Changed(what) => [shown, b": ", what.as_bytes(), b"."].concat(),
+    /// Says why the file that is shown as `shown` is left as it is. Not in the way of Prettier or oxfmt, whose words for it
+    /// are others anyway.
+    fn report(&mut self, shown: &[u8], failure: &Failure) {
+        let (problem, kind, level) = match failure {
+            Failure::Unread(problem) => (problem, bun_ast::Kind::Warn, LogLevel::Warn),
+            Failure::Syntax(problem) => (problem, bun_ast::Kind::Err, LogLevel::Error),
+            Failure::Bug => {
+                let text =
+                    b"The formatter failed, so this file was not formatted. This is a bug in Bun";
+                (&Problem::new(text), bun_ast::Kind::Err, LogLevel::Error)
+            }
+            Failure::Changed(what) => {
+                let text = [b"Not formatted, because ", what.as_bytes()].concat();
+                (&Problem::new(&text), bun_ast::Kind::Err, LogLevel::Error)
+            }
+        };
+        if self.options.log_level >= level {
+            let printed = problem.print(shown, kind, self.colors());
+            self.out.stderr.extend_from_slice(&printed);
+        }
+        if kind == bun_ast::Kind::Err {
+            self.out.exit_code = 2;
         }
     }
 
@@ -1344,16 +1366,16 @@ impl Run<'_> {
         }
         match formatted {
             Err(failure @ Failure::Unread(_)) => {
-                self.warn(&Self::describe(name, failure));
+                self.report(name, &failure);
                 if !only_looks {
                     self.out.stdout = text;
                 }
             }
-            Err(Failure::Syntax(error)) if forgives => {
-                self.error(message_of(&error));
+            Err(failure @ Failure::Syntax(_)) if forgives => {
+                self.report(name, &failure);
                 self.out.exit_code = 0;
             }
-            Err(failure) => self.error(&Self::describe(name, failure)),
+            Err(failure) => self.report(name, &failure),
             // Prettier's `listDifferent`: with `--write` it has nothing to say, and nothing is printed either.
             Ok((formatted, _)) if only_looks => {
                 if formatted != text && !self.options.write {
@@ -1613,10 +1635,7 @@ impl Run<'_> {
                     self.options.debug_check,
                 ) {
                     Ok((formatted, _)) => formatted,
-                    Err(failure @ Failure::Unread(_)) => {
-                        return Ok(Done::Unread(Self::describe(&shown, failure)));
-                    }
-                    Err(failure) => return Err(Self::describe(&shown, failure)),
+                    Err(failure) => return Ok(Done::Refused(failure)),
                 };
                 if options
                     .options
@@ -1708,9 +1727,13 @@ impl Run<'_> {
                         self.log(&shown);
                     }
                 }
-                Some(Done::Unread(warning)) => {
+                Some(Done::Refused(failure @ Failure::Unread(_))) => {
                     unchanged += 1;
-                    self.warn(&warning);
+                    self.report(&shown, &failure);
+                }
+                Some(Done::Refused(failure)) => {
+                    failed += 1;
+                    self.report(&shown, &failure);
                 }
                 // Prettier goes no further.
                 Some(Done::Failed(error)) if config::is_invalid_value(&error) => {

@@ -51,9 +51,9 @@ impl<'s> Program<'s> {
     /// Likewise for the list of properties that an intersection keeps (`Finished::listings`). A
     /// retried task finds the list in the tables that the valid tasks published.
     /// `is_published`: whether the tasks of this round publish their tables. If not, a retried
-    /// task could not find the list of a valid one: when the round has an invalid task, those
-    /// that noted a list are invalid too, and what they noted is forgotten. A round of retries
-    /// publishes.
+    /// task could not find the list of a valid one: the tasks that noted a list of an
+    /// intersection that an invalid task noted are invalid too, and what the round noted is
+    /// forgotten. A round of retries publishes.
     pub fn validate(&self, finished: &[Finished<'s>], is_published: bool) -> Vec<bool> {
         let mut serial = self.serial_variances.lock();
         let mut listings = self.serial_listings.lock();
@@ -88,9 +88,25 @@ impl<'s> Program<'s> {
             })
             .collect();
         if !is_published {
-            if compares_listings && invalid.contains(&true) {
+            // Of the intersections that an invalid task noted, and so on from the tasks that this
+            // makes invalid.
+            let mut noted_by_invalid: Vec<Sym> = Vec::new();
+            let mut has_grown = compares_listings;
+            while has_grown {
+                has_grown = false;
                 for (finished, is_invalid) in finished.iter().zip(&mut invalid) {
-                    *is_invalid |= !finished.listings.is_empty();
+                    let of = |it: &(Sym, bool)| noted_by_invalid.contains(&it.0);
+                    if !*is_invalid && finished.listings.iter().any(of) {
+                        (*is_invalid, has_grown) = (true, true);
+                    }
+                    if *is_invalid {
+                        for it in &finished.listings {
+                            if !noted_by_invalid.contains(&it.0) {
+                                noted_by_invalid.push(it.0);
+                                has_grown = true;
+                            }
+                        }
+                    }
                 }
             }
             listings.retain(|_, first| first.1);

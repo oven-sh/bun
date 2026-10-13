@@ -313,9 +313,10 @@ pub struct PlanOptions {
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most. Each
     /// occupies memory.
     pub projects_at_once: usize,
-    /// A project with at most this many files of its own is small: see `projects_at_once`. A
-    /// small project is built by one thread, and at most four times `projects_at_once` of them
-    /// at once, and no more than there are threads: each program occupies memory.
+    /// A project with at most this many files of its own is small: see `projects_at_once`. Where
+    /// there are at least as many projects as threads, a small project is built by one thread,
+    /// and at most four times `projects_at_once` of them at once, and no more than there are
+    /// threads: each program occupies memory.
     pub files_of_a_small_project: usize,
     /// `Request::after_file` is only called for the files that are checked, not at the end for the
     /// declaration files and the JSON files that are not. Then nothing reads what the last step
@@ -3021,10 +3022,12 @@ fn check_with_references(
     let large_at_once = (request.plan_options.projects_at_once)
         .clamp(1, host.threads().max(1))
         .min(count.max(1));
-    // A program that reads the sources of what it references has all of those files too.
+    // A program that reads the sources of what it references has all of those files too. With
+    // fewer projects than threads, one thread each would leave threads idle.
     let is_small = |index: usize| {
         !reads_sources
             && built_at_once > large_at_once
+            && built_at_once >= host.threads()
             && roots[index].len() <= request.plan_options.files_of_a_small_project
     };
     // `is_built`: by project, now. `Err`: the projects that have to be built first, besides those

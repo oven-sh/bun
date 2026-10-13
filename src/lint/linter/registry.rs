@@ -227,6 +227,15 @@ fn is_in_oxlint(plugin: Plugin, name: &[u8]) -> bool {
     std::str::from_utf8(name).is_ok_and(|name| oxlint_category(plugin, name).is_some())
 }
 
+/// Whether oxlint has the rule that [`oxlint_rule_key`] writes as `key`.
+pub(crate) fn is_oxlint_rule_key(key: &[u8]) -> bool {
+    let (prefix, name) = match parse_rule_id(key) {
+        (b"", name) => (&b"eslint"[..], name),
+        other => other,
+    };
+    (PLUGINS_OF_OXLINT.iter()).any(|it| it.1 == prefix && is_in_oxlint(it.0, name))
+}
+
 /// The one way to write the rule that an `.oxlintrc.json` calls `id`: oxlint's `parse_rule_key` and
 /// `transform_rule_and_plugin_name`. All names of a rule are one rule, so what is said last counts:
 /// `no-unused-vars`, `eslint/no-unused-vars`, `typescript/no-unused-vars` and

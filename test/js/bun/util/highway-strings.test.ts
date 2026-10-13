@@ -334,3 +334,71 @@ describe("highway byte-search kernels", () => {
     expect(Buffer.alloc(0).lastIndexOf(1)).toBe(-1);
   });
 });
+
+describe("scannerRunStops", () => {
+  const isNameByte = (b: number) =>
+    (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a) || b === 0x5f || b === 0x24;
+  // One per bitmap, in the kernel's order.
+  const STOPS = [
+    (b: number) => !isNameByte(b),
+    (b: number) => b !== 0x20 && b !== 0x09,
+    (b: number) => b === 0x22 || b === 0x27 || b === 0x60 || b === 0x24 || b === 0x5c || b < 0x20 || b >= 0x80,
+  ];
+
+  function expectStops(text: Uint8Array, at: string) {
+    const planeLen = Math.ceil(text.length / 64) * 8;
+    const expected = new Uint8Array(planeLen * 3);
+    STOPS.forEach((stops, plane) => {
+      for (let i = 0; i < planeLen * 8; i++) {
+        // The end of the text stops every run.
+        if (i >= text.length || stops(text[i])) expected[plane * planeLen + (i >> 3)] |= 1 << (i & 7);
+      }
+    });
+    const out = new Uint8Array(planeLen * 3);
+    expect(hw("scannerRunStops", text, out), at).toBe(0);
+    expect(out.toHex(), at).toBe(expected.toHex());
+  }
+
+  it("classifies every byte value in every lane", () => {
+    for (let shift = 0; shift < 64; shift++) {
+      expectStops(
+        Uint8Array.from({ length: 256 + shift }, (_, i) => (i + 256 - shift) & 0xff),
+        `shift=${shift}`,
+      );
+    }
+  });
+
+  it("sets the bits past the end of the text", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const byte of [0x61, 0x20, 0x22, 0x00, 0xff]) {
+          expectStops(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("finds one stop at every interesting position", () => {
+    for (const len of LENGTHS) {
+      for (const pos of positions(len)) {
+        for (const [run, stop] of [
+          [0x61, 0x2e],
+          [0x24, 0xc3],
+          [0x20, 0x61],
+          [0x09, 0x0a],
+          [0x2d, 0x27],
+          [0x7f, 0x5c],
+          [0x5f, 0x60],
+        ]) {
+          const text = new Uint8Array(len + 1).fill(run).subarray(1);
+          text[pos] = stop;
+          expectStops(text, `len=${len} pos=${pos} run=${run} stop=${stop}`);
+        }
+      }
+    }
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("scannerRunStops", new Uint8Array(65), new Uint8Array(3 * 8))).toThrow(RangeError);
+  });
+});

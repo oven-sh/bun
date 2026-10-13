@@ -12,7 +12,6 @@
 //! first has refused.
 
 #![forbid(unsafe_code)]
-#![feature(portable_simd)]
 
 mod lexer;
 mod names;
@@ -152,6 +151,7 @@ pub struct Options {
 #[derive(Default)]
 pub struct Scratch {
     names: names::Names,
+    stops: bun_highway::ScannerStopsBuffer,
     stacks: parser::Stacks,
     declared: parser::Declared,
     /// A file that is no longer needed: its lists are for the next one, and so is the box. A file is large, and goes from

@@ -3488,7 +3488,8 @@ const wrong: number = "";
         );
         expect(exitCode).toBe(1);
       },
-      30_000,
+      // 26 seconds of processor time, shared with 19 other tests.
+      90_000,
     );
 
     test(

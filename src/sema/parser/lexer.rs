@@ -1,5 +1,6 @@
-//! The scanner. It works on bytes: one dispatch on the first byte of a token, 16 bytes at a time
-//! through names, strings and comments. Everything that is not ASCII takes a slow path.
+//! The scanner. It works on bytes, with one dispatch on the first byte of a token. A highway kernel
+//! goes over the text once, up front, and finds where names, indentation and the plain parts of
+//! strings end ([`ScannerStops`]). Everything that is not ASCII takes a slow path.
 //!
 //! What it cannot scan it refuses ([`Lexer::refuse`]): from then on every token is the end of the
 //! file, so the parser unwinds without testing anything. With `Options::recovers` it reports an error
@@ -11,14 +12,15 @@ use crate::token::T;
 use bun_core::lexer::{
     is_identifier_part, is_identifier_start, is_white_space_like, is_white_space_single_line,
 };
-use bun_core::strings::{is_js_line_terminator, push_codepoint_wtf8_joined};
+use bun_core::strings::{self, is_js_line_terminator, push_codepoint_wtf8_joined};
+use bun_highway::ScannerStops;
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind};
-use std::simd::cmp::{SimdPartialEq, SimdPartialOrd};
-use std::simd::u8x16;
 
 pub(crate) struct Lexer<'a> {
     pub(crate) src: &'a [u8],
+    /// Of the whole text, also while `src` is cut short.
+    stops: ScannerStops<'a>,
     pub(crate) token: T,
     /// A line break precedes the token.
     pub(crate) newline_before: bool,
@@ -197,58 +199,9 @@ static FIRST: [First; 256] = {
     }
 };
 
-/// The number of leading bytes of `bytes` that are tabs or spaces.
-#[inline(always)]
-fn blank_run(bytes: u8x16) -> u32 {
-    let blanks = bytes.simd_eq(u8x16::splat(b'\t')) | bytes.simd_eq(u8x16::splat(b' '));
-    (!blanks.to_bitmask() as u32 | 1 << 16).trailing_zeros()
-}
-
-/// The end of the tabs and spaces at `pos`. How far a line is indented is hard to guess, so it is not
-/// asked byte by byte.
-#[inline(always)]
-fn end_of_indentation(src: &[u8], mut pos: usize) -> usize {
-    while let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>()) {
-        let len = blank_run(u8x16::from_array(*chunk)) as usize;
-        pos += len;
-        if len < 16 {
-            return pos;
-        }
-    }
-    while matches!(src.get(pos), Some(b'\t' | b' ')) {
-        pos += 1;
-    }
-    pos
-}
-
 #[inline(always)]
 const fn is_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
-}
-
-/// By the upper and by the lower half of a byte, a set of bits. The two sets of a byte have a bit in
-/// common if it is a letter, a digit, `_` or `$`.
-const NAME_BYTES: [[u8; 16]; 2] = {
-    let (mut by_upper, mut by_lower) = ([0; 16], [0; 16]);
-    let mut byte = 0u8;
-    while byte < 0x80 {
-        if is_name_byte(byte) {
-            by_upper[(byte >> 4) as usize] |= 1 << (byte >> 4);
-            by_lower[(byte & 15) as usize] |= 1 << (byte >> 4);
-        }
-        byte += 1;
-    }
-    [by_upper, by_lower]
-};
-
-/// The number of leading bytes of `bytes` that are ASCII letters, digits, `_` or `$`.
-#[inline(always)]
-fn name_run(bytes: u8x16) -> u32 {
-    let [by_upper, by_lower] = NAME_BYTES.map(u8x16::from_array);
-    let upper = by_upper.swizzle_dyn(bytes >> u8x16::splat(4));
-    let lower = by_lower.swizzle_dyn(bytes & u8x16::splat(15));
-    let others = (upper & lower).simd_eq(u8x16::splat(0)).to_bitmask() as u32;
-    (others | 1 << 16).trailing_zeros()
 }
 
 /// The code point at the start of `text`, and its length in bytes. `None`: it is not UTF-8.
@@ -280,28 +233,16 @@ fn is_utf8(text: &[u8]) -> bool {
     is_valid
 }
 
-/// Where the first of `ends` is from `pos` on, or the end of `src`.
-#[inline]
-fn end_of_run_before(src: &[u8], mut pos: usize, ends: [u8; 4]) -> usize {
-    while let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>()) {
-        let bytes = u8x16::from_array(*chunk);
-        let [a, b, c, d] = ends.map(|end| bytes.simd_eq(u8x16::splat(end)));
-        let mask = (a | b | c | d).to_bitmask();
-        if mask != 0 {
-            return pos + mask.trailing_zeros() as usize;
-        }
-        pos += 16;
-    }
-    while src.get(pos).is_some_and(|c| !ends.contains(c)) {
-        pos += 1;
-    }
-    pos
-}
-
 impl<'a> Lexer<'a> {
-    pub(crate) fn new(src: &'a [u8], atoms: &'a dyn Intern, names: &'a mut Names) -> Self {
+    pub(crate) fn new(
+        src: &'a [u8],
+        stops: ScannerStops<'a>,
+        atoms: &'a dyn Intern,
+        names: &'a mut Names,
+    ) -> Self {
         Lexer {
             src,
+            stops,
             token: T::Eof,
             newline_before: false,
             has_escape: false,
@@ -579,9 +520,10 @@ impl<'a> Lexer<'a> {
                     pos = next;
                     continue;
                 }
+                // How far a line is indented is hard to guess, so it is not asked byte by byte.
                 First::LineFeed => {
                     self.newline_before = true;
-                    pos = end_of_indentation(src, next);
+                    pos = self.stops.after_blanks.next(next);
                     continue;
                 }
                 First::CarriageReturn => {
@@ -764,7 +706,7 @@ impl<'a> Lexer<'a> {
                 },
                 b'\n' => {
                     self.newline_before = true;
-                    Some(end_of_indentation(self.src, pos + 1))
+                    Some(self.stops.after_blanks.next(pos + 1))
                 }
                 b'\r' => {
                     self.newline_before = true;
@@ -924,8 +866,8 @@ impl<'a> Lexer<'a> {
         else {
             return self.name_of_any_length(start);
         };
-        let len = name_run(u8x16::from_array(*chunk));
-        if len == 16 {
+        let len = self.stops.after_name.run(start);
+        if len >= 16 {
             return self.long_name(start);
         }
         let after = chunk[(len & 15) as usize];
@@ -965,8 +907,8 @@ impl<'a> Lexer<'a> {
         let Some(chunk) = (src.get(start + 16..)).and_then(|rest| rest.first_chunk::<16>()) else {
             return self.name_of_any_length(start);
         };
-        let len = 16 + name_run(u8x16::from_array(*chunk)) as usize;
-        if len == 32 {
+        let len = self.stops.after_name.run(start) as usize;
+        if len >= 32 {
             return self.name_of_any_length(start);
         }
         let after = chunk[len & 15];
@@ -984,17 +926,7 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn name_of_any_length(&mut self, start: usize) {
         let src = self.src;
-        let mut end = start;
-        while let Some(chunk) = src.get(end..).and_then(|rest| rest.first_chunk::<16>()) {
-            let len = name_run(u8x16::from_array(*chunk)) as usize;
-            end += len;
-            if len < 16 {
-                break;
-            }
-        }
-        while src.get(end).is_some_and(|&byte| is_name_byte(byte)) {
-            end += 1;
-        }
+        let end = self.stops.after_name.next(start).min(src.len());
         if matches!(src.get(end), Some(b'\\' | 0x80..)) {
             return self.name_slowly(start, end);
         }
@@ -1186,37 +1118,17 @@ impl<'a> Lexer<'a> {
     // ───────────────────────────── comments ─────────────────────────────
 
     /// The position of the line break that ends the line of `pos`, or the end of the text.
-    fn end_of_line(&self, mut pos: usize) -> usize {
+    fn end_of_line(&self, pos: usize) -> usize {
         let src = self.src;
-        loop {
-            let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>()) else {
-                break;
-            };
-            let bytes = u8x16::from_array(*chunk);
-            let found = bytes.simd_eq(u8x16::splat(b'\n'))
-                | bytes.simd_eq(u8x16::splat(b'\r'))
-                | bytes.simd_eq(u8x16::splat(0xE2));
-            let mask = found.to_bitmask();
-            if mask == 0 {
-                pos += 16;
-                continue;
-            }
-            pos += mask.trailing_zeros() as usize;
+        let mut pos = self.end_of_run_before(pos, *b"\n\r\xE2\xE2");
+        while pos < src.len() {
             if src[pos] != 0xE2 || matches!(src.get(pos..pos + 3), Some([_, 0x80, 0xA8 | 0xA9])) {
                 return pos;
             }
-            pos += 1;
+            let rest = &src[pos + 1..];
+            pos += 1 + strings::index_of_any(rest, b"\n\r\xE2").unwrap_or(rest.len());
         }
-        while let Some(&byte) = src.get(pos) {
-            if byte == b'\n'
-                || byte == b'\r'
-                || matches!(src.get(pos..pos + 3), Some([0xE2, 0x80, 0xA8 | 0xA9]))
-            {
-                return pos;
-            }
-            pos += 1;
-        }
-        src.len()
+        pos
     }
 
     /// Notes the `//` comment at `start`. Returns its end.
@@ -1242,43 +1154,32 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn block_comment(&mut self, start: usize) -> Option<usize> {
         let src = self.src;
-        let mut pos = start + 2;
+        let rest = src.get(start + 2..).unwrap_or_default();
+        let len = strings::index_of(rest, b"*/");
+        let body = &rest[..len.unwrap_or(rest.len())];
         // The start of its last line.
         let mut last_line = start;
-        let end = loop {
-            if let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>()) {
-                let bytes = u8x16::from_array(*chunk);
-                let found = bytes.simd_eq(u8x16::splat(b'*'))
-                    | bytes.simd_eq(u8x16::splat(b'\n'))
-                    | bytes.simd_eq(u8x16::splat(b'\r'))
-                    | bytes.simd_eq(u8x16::splat(0xE2));
-                let mask = found.to_bitmask();
-                if mask == 0 {
-                    pos += 16;
+        let mut before = body.len();
+        while let Some(at) = strings::last_index_of_any(&body[..before], b"\n\r\xE2") {
+            let line_break = match body[at..] {
+                [0xE2, 0x80, 0xA8 | 0xA9, ..] => 3,
+                [0xE2, ..] => {
+                    before = at;
                     continue;
                 }
-                pos += mask.trailing_zeros() as usize;
-            }
-            let Some(&byte) = src.get(pos) else {
-                // "'*/' expected.", at the end of the text. The comment ends there.
-                if !self.error(Refusal::Unterminated, 1010, (pos, pos), &[]) {
-                    return None;
-                }
-                break pos;
+                _ => 1,
             };
-            match byte {
-                b'*' if src.get(pos + 1) == Some(&b'/') => break pos + 2,
-                b'\n' | b'\r' => {
-                    self.newline_before = true;
-                    last_line = pos + 1;
-                }
-                0xE2 if matches!(src.get(pos..pos + 3), Some([_, 0x80, 0xA8 | 0xA9])) => {
-                    self.newline_before = true;
-                    last_line = pos + 3;
-                }
-                _ => {}
+            self.newline_before = true;
+            last_line = start + 2 + at + line_break;
+            break;
+        }
+        let end = match len {
+            Some(len) => start + 2 + len + 2,
+            // "'*/' expected.", at the end of the text. The comment ends there.
+            None if self.error(Refusal::Unterminated, 1010, (src.len(), src.len()), &[]) => {
+                src.len()
             }
-            pos += 1;
+            None => return None,
         };
         if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
@@ -1335,32 +1236,40 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn string(&mut self, start: usize, quote: u8) {
         let src = self.src;
-        let mut pos = start + 1;
-        while let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>()) {
-            let bytes = u8x16::from_array(*chunk);
-            // The quote, a backslash, a control character, or anything that is not ASCII.
-            let found = bytes.simd_eq(u8x16::splat(quote))
-                | bytes.simd_eq(u8x16::splat(b'\\'))
-                | bytes.simd_lt(u8x16::splat(0x20))
-                | bytes.simd_ge(u8x16::splat(0x80));
-            let mask = found.to_bitmask();
-            if mask == 0 {
-                pos += 16;
-                continue;
+        let mut end = start + 1;
+        loop {
+            end = self.stops.in_string.next(end);
+            match src.get(end) {
+                Some(&c) if c == quote => break,
+                Some(b'"' | b'\'' | b'`' | b'$') => end += 1,
+                // A backslash, a control character, or anything that is not ASCII.
+                _ => return self.string_slowly(start, quote),
             }
-            pos += mask.trailing_zeros() as usize;
-            if src.get(pos) == Some(&quote) {
-                self.atom = self.atom_of_source(start + 1, pos);
-                self.plain_string = start as u32;
-                return self.set(T::String, start, pos + 1);
-            }
-            break;
         }
-        self.string_slowly(start, quote);
+        self.atom = self.atom_of_source(start + 1, end);
+        self.plain_string = start as u32;
+        self.set(T::String, start, end + 1);
     }
 
-    /// The atom of the text from `start` to `end`, which has no zero byte and after which 16 more
-    /// bytes of the source follow.
+    /// Where the first of `ends` is from `pos` on, or the end of the text. Each of `ends` is one of `ScannerStops::in_string`.
+    #[inline]
+    fn end_of_run_before(&self, mut pos: usize, ends: [u8; 4]) -> usize {
+        let src = self.src;
+        loop {
+            pos = self.stops.in_string.next(pos);
+            match src.get(pos) {
+                None => return src.len(),
+                Some(c) if ends.contains(c) => return pos,
+                // Every byte of such a text is a stop.
+                Some(0x80..) => break,
+                Some(_) => pos += 1,
+            }
+        }
+        let rest = &src[pos..];
+        pos + strings::index_of_any(rest, &ends).unwrap_or(rest.len())
+    }
+
+    /// The atom of the text from `start` to `end`, which has no zero byte.
     #[inline]
     fn atom_of_source(&mut self, start: usize, end: usize) -> Atom {
         let text = Text::of_source(self.src, start, end);
@@ -1532,26 +1441,8 @@ impl<'a> Lexer<'a> {
                         }
                     },
                 },
-                // Up to 16 bytes that stand for themselves. Between two escapes there are often few: all 16 are copied, and
-                // those that count are kept.
-                Some(_) if let Some(chunk) = src[pos..].first_chunk::<16>() => {
-                    let bytes = u8x16::from_array(*chunk);
-                    let [a, b, c, d] =
-                        [quote, b'\\', b'\n', b'\r'].map(|end| bytes.simd_eq(u8x16::splat(end)));
-                    let len = ((a | b | c | d).to_bitmask().trailing_zeros() as usize).min(16);
-                    debug_assert_eq!(
-                        pos + len,
-                        end_of_run_before(src, pos + 1, [quote, b'\\', b'\n', b'\r']).min(pos + 16)
-                    );
-                    let not_ascii = bytes.simd_ge(u8x16::splat(0x80)).to_bitmask();
-                    is_ascii &= not_ascii & ((1 << len) - 1) == 0;
-                    let kept = text.len() + len;
-                    text.extend_from_slice(chunk);
-                    text.truncate(kept);
-                    pos += len;
-                }
                 Some(_) => {
-                    let end = end_of_run_before(src, pos + 1, [quote, b'\\', b'\n', b'\r']);
+                    let end = self.end_of_run_before(pos + 1, [quote, b'\\', b'\n', b'\r']);
                     let written = src.get(pos..end).unwrap_or_default();
                     is_ascii &= written.is_ascii();
                     text.extend_from_slice(written);
@@ -1699,7 +1590,7 @@ impl<'a> Lexer<'a> {
                     };
                 }
                 Some(_) => {
-                    let end = end_of_run_before(src, pos + 1, *b"`$\\\r");
+                    let end = self.end_of_run_before(pos + 1, *b"`$\\\r");
                     let written = src.get(pos..end).unwrap_or_default();
                     is_ascii &= written.is_ascii();
                     text.extend_from_slice(written);

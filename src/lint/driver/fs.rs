@@ -4,7 +4,9 @@ use crate::paths;
 use bun_core::ZStr;
 use bun_paths::resolve_path::z;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, path_buffer_pool};
+use bun_sema::util::FxHashSet;
 use bun_sys::{EntryKind, Fd, File, O};
+use bun_threading::Guarded;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// `ENOENT: No such file or directory`
@@ -313,9 +315,20 @@ fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
     Some(found.unwrap_or(cwd))
 }
 
+/// The real paths of the files that a run has written. Two paths can lead to one file (a link, a letter in the other case), and
+/// two threads that replace the same file at the same time fail now and then on Windows.
+#[derive(Default)]
+pub(crate) struct Written(Guarded<FxHashSet<Vec<u8>>>);
+
 /// Replaces the text of the file at `path`, which exists. What links to the file still does. `Err`: why it is not written.
 /// A link below `cwd`, the working directory, is not followed out of the repository: nobody reads the links of a checkout.
-pub(crate) fn write_atomically(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
+/// A file that is in `written` already is left as it is.
+pub(crate) fn write_atomically(
+    written: &Written,
+    cwd: &[u8],
+    path: &[u8],
+    text: &[u8],
+) -> Result<(), Vec<u8>> {
     let mut buffer = path_buffer_pool::get();
     let real = bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer)
         .map_err(|error| describe(&error))?
@@ -327,6 +340,9 @@ pub(crate) fn write_atomically(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(
         && !repository(cwd).is_some_and(|it| paths::inside(&it, &portable).is_some())
     {
         return Err(b"it is a symlink to a file outside the repository".to_vec());
+    }
+    if !written.0.lock().insert(real.clone()) {
+        return Ok(());
     }
     write_through(&real, text).map_err(|error| describe(&error))
 }

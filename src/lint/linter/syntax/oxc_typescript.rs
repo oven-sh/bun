@@ -11,10 +11,11 @@ use super::{Stage, SyntaxError};
 use crate::ast::{Expr, File, Handle, Node, Stmt, TypeNode, TypeParam};
 use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
+use crate::utils::oxlint::is_strict_mode;
 use bun_sema::bind::{FnOwner, Parent};
 use bun_sema::hir::{
     self, Diagnostic, DiagnosticKind, ExprKind, Flags, FnKind, JSDocTypeKind, ModifierKind,
-    ModuleName, StmtKind, TypeNodeKind, rare,
+    ModuleName, PatKind, StmtKind, TypeNodeKind, VarKind, rare,
 };
 use std::borrow::Cow;
 
@@ -119,7 +120,9 @@ fn of_grammar<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
         // In the head of a class it has no length. oxc's parser goes on to the `{`, and takes it for an object after `extends`.
         1097 if it.end == Diagnostic::NO_LENGTH => unexpected(skip_trivia(text, it.start)),
         1097 => {
-            let keyword = Span::new(it.start.saturating_sub(7), it.start);
+            // It is noted at the end of the keyword.
+            let end = it.start;
+            let keyword = Span::new(end.saturating_sub(7), end);
             error(
                 1097,
                 keyword,
@@ -153,6 +156,10 @@ fn of_grammar<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
                 Span::new(second.pos, second.end),
                 Cow::Borrowed("Another 'default' clause cannot appear here."),
             )
+        }
+        1358 => {
+            let message = "Tagged template expressions are not permitted in an optional chain";
+            error(0, span, message, Stage::Parser)
         }
         // The body of an accessor in a type.
         1183 => {
@@ -394,6 +401,70 @@ fn type_predicates<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
     }
 }
 
+/// The declaration in the head of a `for-in` or a `for-of` that has an initializer or a type.
+fn loop_heads<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
+    let hir = &file.hir;
+    for (i, raw) in hir.stmts.iter().enumerate() {
+        let (left, word) = match raw.kind {
+            StmtKind::ForIn { left, .. } => (left, "in"),
+            StmtKind::ForOf { left, .. } => (left, "of"),
+            _ => continue,
+        };
+        let Some(head) = hir.stmts.get(left.idx()) else {
+            continue;
+        };
+        let StmtKind::Var(list) = head.kind else {
+            continue;
+        };
+        // Who counts the declarations has more than one.
+        let Some([only]) = hir.var_decls.get(list.range()) else {
+            continue;
+        };
+        let Some(name) = hir.pats.get(only.pat.idx()) else {
+            continue;
+        };
+        if matches!(file.bound.stmt_parent.get(i), None | Some(Parent::None)) {
+            continue;
+        }
+        if only.init.is_some() {
+            let is_lexical = only.kind != VarKind::Var;
+            // Annex B has `for (var a = 1 in b)`, in code that is not strict.
+            let is_taken = word == "in"
+                && !is_lexical
+                && matches!(name.kind, PatKind::Ident(_))
+                && !is_strict_mode(Node::Stmt(Stmt::from_raw(file, i as u32)).scope(), file);
+            if !is_taken {
+                let message =
+                    format!("for-{word} loop variable declaration may not have an initializer");
+                let stage = match word == "in" && is_lexical {
+                    true => Stage::Parser,
+                    false => Stage::Semantic,
+                };
+                all.push(error(
+                    0,
+                    Span::new(head.start, head.loc.end),
+                    &message,
+                    stage,
+                ));
+            }
+        }
+        if only.ty.is_some() {
+            let code = if word == "in" { 2404 } else { 2483 };
+            let message = format!(
+                "The left-hand side of a 'for...{word}' statement cannot use a type annotation."
+            );
+            let help = "This iterator's type will be inferred from the iterable. You can safely remove the type annotation.";
+            let found = error(
+                code,
+                Span::new(name.pos, name.end),
+                &message,
+                Stage::Semantic,
+            );
+            all.push(found.help(Cow::Borrowed(help)));
+        }
+    }
+}
+
 /// `<T>a` and `<T>() => a` in a `.mts` or `.cts` file, where they could be JSX.
 fn reserved_in_mts_and_cts<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
     let hir = &file.hir;
@@ -445,6 +516,9 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     }
     if file.has_rare_syntax(rare::TYPE_PREDICATE) {
         type_predicates(file, &mut all);
+    }
+    if file.has_rare_syntax(rare::ODD_LOOP_HEAD) {
+        loop_heads(file, &mut all);
     }
     all
 }

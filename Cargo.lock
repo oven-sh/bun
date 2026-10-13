@@ -1628,6 +1628,7 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_core",
+ "bun_highway",
  "bun_sema",
  "bun_threading",
  "smallvec",

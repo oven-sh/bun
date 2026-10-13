@@ -1311,12 +1311,13 @@ impl Run<'_> {
             let changed: Vec<&FileResult> = results.iter().filter(|it| it.is_fixed).collect();
             let (mut failures, mut written) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
             let in_written = AtomicU64::new(0);
+            let once = fs::Written::default();
             pool.for_each(changed.len(), 1, &|index| {
                 let result = changed[index];
                 let done = match result.written() {
                     // Not nothing in its place. Fixes that leave nothing of a file give an empty text, which is written.
                     None => Err(b"the fixed code was lost. This is a bug in Bun.".to_vec()),
-                    Some(text) => fs::write_atomically(&environment.cwd, &result.path, text),
+                    Some(text) => fs::write_atomically(&once, &environment.cwd, &result.path, text),
                 };
                 match done {
                     Ok(()) => {

@@ -1568,6 +1568,7 @@ impl Run<'_> {
         let mut results = Guarded::new(done);
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
+        let once = fs::Written::default();
         let format_at = |at: usize| {
             let (index, target) = work[at];
             let began = Instant::now();
@@ -1622,7 +1623,7 @@ impl Run<'_> {
                     return Ok(Done::PartlyStaged);
                 }
                 if !only_looks {
-                    fs::write_atomically(cwd, &target.path, &formatted).map_err(|why| {
+                    fs::write_atomically(&once, cwd, &target.path, &formatted).map_err(|why| {
                         [b"Unable to write file \"", &shown[..], b"\":\n", &why].concat()
                     })?;
                 }

@@ -1,7 +1,7 @@
 //! Expressions.
 
 use super::stmt::ModifiersOf;
-use super::{ListKind, Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -699,14 +699,21 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     let takes_a_mix = self.recovers();
                     let is_as_or = takes_a_mix && !self.options.dialect.typescript_5;
                     // Asked before the right side adds its parentheses.
-                    let is_left_a_mix = !takes_a_mix && self.is_logical_and_or_or(left);
+                    let looks_for_a_mix = !takes_a_mix || self.is_for_oxc();
+                    let is_left_a_mix = looks_for_a_mix && self.is_logical_and_or_or(left);
                     let right = self.binary_expression(match is_as_or {
                         // `OperatorPrecedenceCoalesce` is `OperatorPrecedenceLogicalOR`.
                         true => T::BarBar.binary_precedence(),
                         false => new_precedence,
                     });
-                    if is_left_a_mix || (!takes_a_mix && self.is_logical_and_or_or(right)) {
-                        self.report();
+                    if is_left_a_mix || (looks_for_a_mix && self.is_logical_and_or_or(right)) {
+                        match takes_a_mix {
+                            true => {
+                                let at = (start, self.prev_end());
+                                oxc::mixed_coalesce(&mut self.f.diagnostics, at);
+                            }
+                            false => self.report(),
+                        }
                     }
                     let kind = ExprKind::Binary {
                         op: BinOp::Nullish,
@@ -1221,6 +1228,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.s.ids.push(missing.0);
         }
         let args = self.take_ids(base);
+        if self.is_for_oxc() {
+            oxc::import_call(&mut self.f, self.lx.src, start, args, close);
+        }
         if is_deferred && !args.is_empty() {
             let specifier = self.f.id_at(args, 0);
             self.f.deferred_import_calls.push((specifier, close));
@@ -1526,7 +1536,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     chain = Chain::Continue;
                 }
                 T::NoSubstitutionTemplate | T::TemplateHead => {
-                    let is_in_chain = chain != Chain::No && non_null != expression;
+                    // To oxc `a?.b!` is still in the chain.
+                    let is_in_chain =
+                        chain != Chain::No && (non_null != expression || self.reports_like_oxc());
                     expression =
                         self.tagged_template(start, expression, IdList::EMPTY, is_in_chain);
                 }
@@ -1541,7 +1553,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                             self.call(start, expression, type_args, chain)
                         }
                         T::NoSubstitutionTemplate | T::TemplateHead => {
-                            let is_in_chain = chain != Chain::No && non_null != expression;
+                            let is_in_chain = chain != Chain::No
+                                && (non_null != expression || self.reports_like_oxc());
                             self.tagged_template(start, expression, type_args, is_in_chain)
                         }
                         _ => {
@@ -2014,6 +2027,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.options.dialect.babel {
             return;
         }
+        // oxc has one error for the piece, and goes on.
+        if self.is_for_oxc() {
+            let closer = match self.token() {
+                T::TemplateHead | T::TemplateMiddle => 2,
+                _ => 1,
+            };
+            let at = (self.lx.start + 1, self.lx.end.saturating_sub(closer));
+            return oxc::bad_escape_in_template(&mut self.f.diagnostics, at);
+        }
         match self.recovers() {
             true => self.lx.rescan_template_without_tag(),
             false => self.report(),
@@ -2161,6 +2183,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return self.finish_expr(ExprKind::NewTarget(name), start);
         }
         let callee_start = self.pos();
+        let is_import_call = self.token() == T::Import && self.peek() == T::OpenParen;
         let callee = self.primary_expression();
         let mut callee = self.expression_rest(callee_start, callee, false);
         let mut type_args = IdList::EMPTY;
@@ -2195,6 +2218,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             chain: Chain::No,
             template: ExprId::NONE,
         });
+        if is_import_call && self.is_for_oxc() {
+            let at = (callee_start, self.prev_end());
+            oxc::new_import(&mut self.f.diagnostics, at);
+        }
         self.finish_expr(ExprKind::New(call), start)
     }
 

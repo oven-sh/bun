@@ -746,6 +746,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // `parseClassStaticBlockBody`
         let suspensions = self.suspensions;
         let (body, _) = self.function_block(ctx::AWAIT);
+        if self.is_for_oxc() {
+            oxc::returns_in_static_block(&mut self.f, body);
+        }
         if self.suspensions != suspensions {
             self.f.rare_syntax |= rare::SUSPENDS_IN_STATIC_BLOCK;
         }

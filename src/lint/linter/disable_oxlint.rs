@@ -456,6 +456,7 @@ pub(crate) fn apply<'a>(
     };
     let mut report = |span: Span, message: Vec<u8>, removal: Option<Span>| {
         let mut problem = locator.problem(span, input.report_unused, None, message);
+        problem.reported = u32::MAX;
         if let Some(span) = removal.filter(|_| input.wants_fixes) {
             problem.suggestions.push(Suggestion {
                 message_id: Cow::Borrowed(""),

@@ -57,7 +57,8 @@ fn kind_of_token_in(node: Node, offset: u32, piece: &mut Span) -> Option<TokenKi
             ExprKind::Regex(_) => Some(TokenKind::RegularExpression),
             ExprKind::Template(template) => {
                 if !piece.contains_offset(offset) {
-                    let (exprs, mut before, mut end) = (template.exprs(), 0, template.exprs().len());
+                    let (exprs, mut before, mut end) =
+                        (template.exprs(), 0, template.exprs().len());
                     while before < end {
                         let middle = before.midpoint(end);
                         match exprs.get(middle).is_some_and(|it| it.span().end <= offset) {
@@ -72,8 +73,12 @@ fn kind_of_token_in(node: Node, offset: u32, piece: &mut Span) -> Option<TokenKi
             _ => None,
         },
         Node::Prop(prop) => {
-            let key = prop.key().filter(|it| matches!(it.kind(), KeyKind::String(_)))?;
-            key.span(prop.file()).contains_offset(offset).then_some(TokenKind::String)
+            let key = prop
+                .key()
+                .filter(|it| matches!(it.kind(), KeyKind::String(_)))?;
+            key.span(prop.file())
+                .contains_offset(offset)
+                .then_some(TokenKind::String)
         }
         _ => None,
     }
@@ -92,7 +97,8 @@ fn kinds_of_tokens_around<'a>(file: &'a File<'a>, places: &[Span]) -> Vec<Option
     while let Some((node, within)) = pending.pop() {
         // In `node` and in none of its children.
         let mut look_at = |own: std::ops::Range<usize>| {
-            let own = (kinds.get_mut(own.clone()).unwrap_or_default().iter_mut()).zip(places.get(own).unwrap_or_default());
+            let own = (kinds.get_mut(own.clone()).unwrap_or_default().iter_mut())
+                .zip(places.get(own).unwrap_or_default());
             own.for_each(|(kind, place)| *kind = kind_of_token_in(node, place.start, &mut piece));
         };
         let mut next = within.start;
@@ -100,7 +106,10 @@ fn kinds_of_tokens_around<'a>(file: &'a File<'a>, places: &[Span]) -> Vec<Option
             if next == within.end {
                 return;
             }
-            let (span, rest) = (child.span(), places.get(next..within.end).unwrap_or_default());
+            let (span, rest) = (
+                child.span(),
+                places.get(next..within.end).unwrap_or_default(),
+            );
             let first = next + rest.partition_point(|it| it.start < span.start);
             let after = next + rest.partition_point(|it| it.start < span.end);
             look_at(next..first);
@@ -121,7 +130,9 @@ impl NoIrregularWhitespace {
     ///
     /// `known`: the kind of the token that it is in.
     fn is_skipped<'a>(&self, file: &'a File<'a>, offset: u32, known: Option<TokenKind>) -> bool {
-        debug_assert!(known.is_none() || known == file.token_or_comment_around(offset).map(Token::kind));
+        debug_assert!(
+            known.is_none() || known == file.token_or_comment_around(offset).map(Token::kind)
+        );
         let token = match known {
             Some(_) => None,
             None => file.token_or_comment_around(offset),
@@ -131,8 +142,12 @@ impl NoIrregularWhitespace {
         };
         match kind {
             TokenKind::String => self.skip_strings,
-            TokenKind::RegularExpression => self.skip_reg_exps.unwrap_or_else(|| skips_by_default(file)),
-            TokenKind::Template => self.skip_templates.unwrap_or_else(|| skips_by_default(file)),
+            TokenKind::RegularExpression => {
+                self.skip_reg_exps.unwrap_or_else(|| skips_by_default(file))
+            }
+            TokenKind::Template => self
+                .skip_templates
+                .unwrap_or_else(|| skips_by_default(file)),
             // The value of an attribute is a string `Literal`.
             TokenKind::JsxText => match token.and_then(|it| file.token_before(it)) {
                 Some(before) if before.is_punctuator("=") => self.skip_strings,
@@ -147,7 +162,11 @@ impl NoIrregularWhitespace {
         let text = cx.text();
         let rest_from = |at: usize| text.get(at..).unwrap_or_default();
         // ESLint takes a byte order mark off the text.
-        let mut at = if text.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
+        let mut at = if text.starts_with(b"\xEF\xBB\xBF") {
+            3
+        } else {
+            0
+        };
         // Nearly all is ASCII, in which there are two such characters. Where the ASCII ends that `at` is in.
         let mut ascii_end = at;
         let mut found = Vec::new();
@@ -155,7 +174,8 @@ impl NoIrregularWhitespace {
             let ahead = match byte.is_ascii() {
                 true => {
                     if at >= ascii_end {
-                        ascii_end = strings::first_non_ascii(rest_from(at)).map_or(text.len(), |first| at + first as usize);
+                        ascii_end = strings::first_non_ascii(rest_from(at))
+                            .map_or(text.len(), |first| at + first as usize);
                     }
                     let ascii = text.get(at..ascii_end).unwrap_or_default();
                     strings::index_of_any(ascii, b"\x0B\x0C").unwrap_or(ascii.len())
@@ -178,8 +198,20 @@ impl NoIrregularWhitespace {
         if found.is_empty() {
             return;
         }
+        // oxc's lexer takes the line separator that ends a `//` comment with the comment, and does not note it.
+        let ends_comment = |place: Span| {
+            let before = place.start.checked_sub(1);
+            cx.language().is_oxlint
+                && matches!(
+                    irregular_at(cx.slice(place)),
+                    Some((Irregular::LineTerminator, _))
+                )
+                && before
+                    .and_then(|it| cx.file().token_or_comment_around(it))
+                    .is_some_and(|it| it.kind() == TokenKind::Line && it.span().end == place.start)
+        };
         for (&place, kind) in found.iter().zip(kinds_of_tokens_around(cx.file(), &found)) {
-            if !self.is_skipped(cx.file(), place.start, kind) {
+            if !self.is_skipped(cx.file(), place.start, kind) && !ends_comment(place) {
                 cx.report(place, NO_IRREGULAR_WHITESPACE).hint_with(|| {
                     let character = strings::wtf8_first_codepoint(cx.slice(place))?;
                     Some(format!("It is the character U+{character:04X}. Replace it with a plain space or a line break."))
@@ -190,7 +222,10 @@ impl NoIrregularWhitespace {
 }
 
 impl Rule for NoIrregularWhitespace {
-    const META: Meta = Meta::eslint("no-irregular-whitespace", Kind::Problem).recommended().reports_at_the_end().hints();
+    const META: Meta = Meta::eslint("no-irregular-whitespace", Kind::Problem)
+        .recommended()
+        .reports_at_the_end()
+        .hints();
     const ON: On = On::new().finish();
     no_state!();
 

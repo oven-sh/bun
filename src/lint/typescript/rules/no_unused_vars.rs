@@ -1370,8 +1370,8 @@ impl NoUnusedVars {
         let name = unused_var.name();
         let is_oxlint = cx.language().is_oxlint;
         let mut report = cx.report(id, if is_oxlint { Message::new(message.id, "{{text}}") } else { message });
-        // As many columns as the name is long, however it is written.
-        if cx.file().slice(id) != name.bytes() || !name.bytes().is_ascii() {
+        // As many columns as the name is long, however it is written. oxlint labels what is written.
+        if !is_oxlint && (cx.file().slice(id) != name.bytes() || !name.bytes().is_ascii()) {
             let start = cx.position(id.start);
             report = report.end_at(Position {
                 line: start.line,

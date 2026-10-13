@@ -26,9 +26,18 @@ mod flag {
     pub(super) const TYPE_PARAMETER: u16 = 1 << 10;
     /// Every namespace counts as one that has values.
     pub(super) const NAMESPACE: u16 = 1 << 11;
+    /// In JavaScript, a function that a block in the scope declares. Outside strict code it is a `var` of the function around.
+    pub(super) const FUNCTION_IN_BLOCK: u16 = 1 << 12;
 
-    pub(super) const VALUE: u16 =
-        VAR | LEXICAL | CLASS | FUNCTION | ENUM | CONST_ENUM | ENUM_MEMBER | NAMESPACE;
+    pub(super) const VALUE: u16 = VAR
+        | LEXICAL
+        | CLASS
+        | FUNCTION
+        | ENUM
+        | CONST_ENUM
+        | ENUM_MEMBER
+        | NAMESPACE
+        | FUNCTION_IN_BLOCK;
     pub(super) const TYPE: u16 =
         CLASS | INTERFACE | ENUM | CONST_ENUM | ENUM_MEMBER | TYPE_PARAMETER | ALIAS;
 }
@@ -85,62 +94,91 @@ const RULES: [(u16, u16, u16); 13] = {
     ]
 };
 
-/// What is known about a name.
-#[derive(Copy, Clone, Default)]
-struct Entry {
-    /// The id of a scope that declares it. No scope has the id 0.
-    scope: u32,
-    /// The index of that scope in `Declared::open` while it is open.
-    depth: u32,
-    /// As what: bits of `flag`.
-    flags: u16,
+/// What is known about a name: the id of a scope that declares it in the upper half, the depth of that scope in the next 16
+/// bits, and as what it is declared there in the low 16, which are bits of `flag`. No scope has the id 0.
+type Entry = u64;
+
+#[inline(always)]
+fn scope_of(entry: Entry) -> u32 {
+    (entry >> 32) as u32
 }
 
-/// Where a scope found the lists of [`Declared`] when it was opened.
-#[derive(Copy, Clone)]
-pub(crate) struct Outer {
-    replaced: u32,
-    hoisted: u32,
+#[inline(always)]
+fn depth_of(entry: Entry) -> usize {
+    usize::from((entry >> 16) as u16)
+}
+
+#[inline(always)]
+fn stamp_of(scope: u32, depth: usize) -> Entry {
+    Entry::from(scope) << 32 | (depth as Entry) << 16
+}
+
+/// How deep scopes are told apart. In a scope that is deeper the answer is "maybe".
+const DEPTHS: usize = 256;
+
+/// In `Declared::log`, with the place: the name goes up to the function. What is beside it are its flags.
+const HOISTED: u32 = 1 << 31;
+
+/// A scope that is open, by its depth.
+#[derive(Copy, Clone, Default)]
+struct Level {
+    /// 0: none is open at this depth.
+    id: u32,
+    /// How long `Declared::log` was when it was opened.
+    log: u32,
+    /// `Declared::holds_vars` around it.
     holds_vars: u32,
 }
 
-/// [`Outer`] for a speculative parse.
+/// Where a speculative parse began.
 #[derive(Copy, Clone)]
 pub(crate) struct Mark {
-    open: u32,
-    outer: Outer,
+    stamp: Entry,
+    log: u32,
+    holds_vars: u32,
+    unopened: u32,
 }
 
 #[derive(Default)]
 pub(crate) struct Declared {
-    /// Off for every parser but oxc's, and once the answer is "maybe".
+    /// Off unless `Dialect::oxc_names`, and once the answer is "maybe".
     is_on: bool,
     is_javascript: bool,
+    /// How many of the innermost scopes have no level yet. Most blocks declare nothing, so a block gets its level with its first
+    /// declaration. While it is off every scope is counted here.
+    unopened: u32,
+    mask: u32,
+    /// An entry without flags for the innermost scope that has a level.
+    stamp: Entry,
+    /// The innermost open scope that a `var` declares in: a function, a static block, a namespace, the file.
+    holds_vars: u32,
+    /// The id that was given out last. None is given out twice, from file to file.
+    last: u32,
     /// By the low bits of the number of a name. Two names that share a place count as one, which can only turn a "no" into a
     /// "maybe". It is never cleared: an entry of another file has the id of a scope that is not open.
     table: Vec<Entry>,
-    mask: u32,
-    /// The ids of the open scopes, the outermost first.
-    open: Vec<u32>,
-    /// The id that was given out last. None is given out twice, from file to file.
-    last: u32,
-    /// The innermost open scope.
-    now: u32,
-    /// The innermost open scope that a `var` declares in: a function, a static block, a namespace, the file.
-    holds_vars: u32,
-    /// The entries of open scopes that a scope in them has replaced, with their places in `table`.
-    replaced: Vec<(u32, Entry)>,
-    /// What the open blocks of `holds_vars` have declared with `var`: the place in `table`, and the flag. oxc notes such a name
-    /// in every scope up to the function. In sloppy JavaScript a function in a block is such a name too.
-    hoisted: Vec<(u32, u16)>,
+    levels: Vec<Level>,
+    /// What is to be done when a scope closes. An entry of an open scope that a scope in it has replaced, with its place in
+    /// `table`, is put back. A name that a block has declared with `var` ([`HOISTED`]) is declared in the scope around: oxc notes
+    /// it in every scope up to the function. In JavaScript a function in a block is such a name too.
+    log: Vec<(u32, Entry)>,
+    /// For `close_level_with_log`.
+    carried: Vec<(u32, u16)>,
     /// The parameters of the function whose block comes next.
-    pub(crate) parameters: (Span<TypeParamId>, Span<ParamId>),
+    parameters: (Span<TypeParamId>, Span<ParamId>),
 }
 
 impl Declared {
-    pub(crate) fn begin(&mut self, text_len: usize, is_on: bool, is_javascript: bool) {
-        (self.is_on, self.is_javascript) = (is_on, is_javascript);
-        if !is_on {
+    /// `has_table`: `note_odd_exports` will be called.
+    pub(crate) fn begin(
+        &mut self,
+        text_len: usize,
+        is_on: bool,
+        has_table: bool,
+        is_javascript: bool,
+    ) {
+        (self.is_on, self.is_javascript, self.unopened) = (is_on, is_javascript, 0);
+        if !is_on && !has_table {
             return;
         }
         // A file that has its own atoms numbers them from 0. Beyond a million names some share a place.
@@ -148,56 +186,69 @@ impl Declared {
             .next_power_of_two()
             .min(1 << 20);
         if self.table.len() < places {
-            self.table.resize(places, Entry::default());
+            self.table.resize(places, 0);
         }
         self.mask = places as u32 - 1;
         if self.last > u32::MAX / 2 {
-            self.table.fill(Entry::default());
+            self.table.fill(0);
             self.last = 0;
         }
-        self.open.clear();
-        self.replaced.clear();
-        self.hoisted.clear();
-        self.parameters = Default::default();
+        // The last file has closed its scopes, unless it was given up.
+        if self.levels.len() != DEPTHS || depth_of(self.stamp) != 0 {
+            self.levels.clear();
+            self.levels.resize(DEPTHS, Level::default());
+        }
         self.last += 1;
-        (self.now, self.holds_vars) = (self.last, self.last);
-        self.open.push(self.last);
+        self.holds_vars = self.last;
+        self.stamp = stamp_of(self.last, 0);
+        if let Some(level) = self.levels.first_mut() {
+            level.id = self.last;
+        }
+        self.log.clear();
+        self.parameters = Default::default();
     }
 
     #[inline(always)]
     fn is_open(&self, entry: Entry) -> bool {
-        self.open.get(entry.depth as usize) == Some(&entry.scope)
+        (self.levels.get(depth_of(entry))).is_some_and(|it| it.id == scope_of(entry))
+    }
+
+    #[inline(always)]
+    fn rule(&self, kind: Declares) -> (u16, u16) {
+        let (flags, in_typescript, in_javascript) = RULES[kind as usize];
+        match self.is_javascript {
+            true => (flags, in_javascript),
+            false => (flags, in_typescript),
+        }
     }
 
     /// Returns whether the name may be declared already by what the declaration can't stand beside.
     #[inline(always)]
     fn declare(&mut self, name: Atom, kind: Declares) -> bool {
-        let (flags, in_typescript, in_javascript) = RULES[kind as usize];
-        let excludes = match self.is_javascript {
-            true => in_javascript,
-            false => in_typescript,
-        };
+        if self.unopened != 0 && !self.open_levels() {
+            return true;
+        }
+        let (flags, excludes) = self.rule(kind);
         let place = name.0 & self.mask;
-        let is_hoisted = self.now != self.holds_vars
-            && (kind == Declares::Var || kind == Declares::Function && self.is_javascript);
-        let Some(&old) = self.table.get(place as usize) else {
+        let is_hoisted = (kind == Declares::Var
+            || kind == Declares::Function && self.is_javascript)
+            && scope_of(self.stamp) != self.holds_vars;
+        let Some(entry) = self.table.get_mut(place as usize) else {
             return false;
         };
-        if is_hoisted || self.is_open(old) {
+        let old = *entry;
+        let is_open = (self.levels.get(depth_of(old))).is_some_and(|it| it.id == scope_of(old));
+        if is_hoisted || is_open {
             return self.declare_beside(place, old, (flags, excludes), is_hoisted);
         }
-        self.put(place, flags);
+        *entry = self.stamp | Entry::from(flags);
         false
     }
 
     #[inline(always)]
     fn put(&mut self, place: u32, flags: u16) {
         if let Some(entry) = self.table.get_mut(place as usize) {
-            *entry = Entry {
-                scope: self.now,
-                depth: self.open.len() as u32 - 1,
-                flags,
-            };
+            *entry = self.stamp | Entry::from(flags);
         }
     }
 
@@ -211,121 +262,174 @@ impl Declared {
         is_hoisted: bool,
     ) -> bool {
         if is_hoisted {
-            self.hoisted.push((place, flags));
+            let above = match flags {
+                flag::FUNCTION => flag::FUNCTION_IN_BLOCK,
+                _ => flags,
+            };
+            self.log.push((place | HOISTED, Entry::from(above)));
         }
         if !self.is_open(old) {
             self.put(place, flags);
             return false;
         }
-        if old.scope == self.now {
-            self.put(place, old.flags | flags);
-            return old.flags & excludes != 0;
+        let clashes = old as u16 & excludes != 0;
+        if scope_of(old) == scope_of(self.stamp) {
+            self.put(place, old as u16 | flags);
+            return clashes;
         }
-        self.replaced.push((place, old));
+        self.log.push((place, old));
         self.put(place, flags);
         // oxc asks each scope up to the function, and stops at the first that has the name.
-        is_hoisted && old.scope >= self.holds_vars && old.flags & excludes != 0
+        is_hoisted && scope_of(old) >= self.holds_vars && clashes
     }
 
+    /// Returns `false` where it is too deep.
     #[inline(always)]
-    fn open_scope(&mut self, holds_vars: bool) -> Outer {
-        let outer = Outer {
-            replaced: self.replaced.len() as u32,
-            hoisted: self.hoisted.len() as u32,
+    fn open_level(&mut self, holds_vars: bool) -> bool {
+        let depth = depth_of(self.stamp) + 1;
+        let Some(level) = self.levels.get_mut(depth) else {
+            return false;
+        };
+        self.last += 1;
+        *level = Level {
+            id: self.last,
+            log: self.log.len() as u32,
             holds_vars: self.holds_vars,
         };
-        if self.is_on {
-            self.last += 1;
-            self.now = self.last;
-            self.open.push(self.last);
-            if holds_vars {
-                self.holds_vars = self.last;
+        self.stamp = stamp_of(self.last, depth);
+        if holds_vars {
+            self.holds_vars = self.last;
+        }
+        true
+    }
+
+    /// Gives the scopes that have none a level. They are blocks.
+    #[inline(never)]
+    fn open_levels(&mut self) -> bool {
+        while self.unopened != 0 {
+            if !self.open_level(false) {
+                return false;
             }
+            self.unopened -= 1;
         }
-        outer
+        true
     }
 
-    #[inline(always)]
-    fn close_scope(&mut self, outer: Outer) {
-        if !self.is_on {
+    /// Closes the innermost scope, which has a level.
+    #[inline(never)]
+    fn close_level(&mut self) {
+        let depth = depth_of(self.stamp);
+        let Some(&level) = self.levels.get(depth).filter(|_| self.is_on) else {
             return;
+        };
+        if self.log.len() != level.log as usize {
+            return self.close_level_with_log(depth, level);
         }
-        if self.replaced.len() + self.hoisted.len() != (outer.replaced + outer.hoisted) as usize {
-            return self.close_scope_with_lists(outer);
-        }
-        self.leave(outer);
+        self.leave(depth, level);
     }
 
     #[inline(always)]
-    fn leave(&mut self, outer: Outer) {
-        self.open.pop();
-        self.now = self.open.last().copied().unwrap_or_default();
-        self.holds_vars = outer.holds_vars;
+    fn leave(&mut self, depth: usize, level: Level) {
+        if let Some(level) = self.levels.get_mut(depth) {
+            level.id = 0;
+        }
+        let around = depth.saturating_sub(1);
+        self.stamp = stamp_of(self.levels.get(around).map_or(0, |it| it.id), around);
+        self.holds_vars = level.holds_vars;
     }
 
-    fn give_back(&mut self, from: u32) {
-        while self.replaced.len() > from as usize
-            && let Some((place, entry)) = self.replaced.pop()
+    /// Puts back what was replaced since the log was `from` long. What goes up to the function is left in `carried`.
+    fn unwind(&mut self, from: u32) {
+        self.carried.clear();
+        while self.log.len() > from as usize
+            && let Some((place, entry)) = self.log.pop()
         {
-            if let Some(slot) = self.table.get_mut(place as usize) {
+            if place & HOISTED != 0 {
+                self.carried.push((place & !HOISTED, entry as u16));
+            } else if let Some(slot) = self.table.get_mut(place as usize) {
                 *slot = entry;
             }
         }
     }
 
     #[inline(never)]
-    fn close_scope_with_lists(&mut self, outer: Outer) {
-        let held_vars = self.holds_vars == self.now;
-        self.give_back(outer.replaced);
-        self.leave(outer);
-        // What a block has hoisted is now declared by the scope around it.
-        for index in outer.hoisted as usize..self.hoisted.len() {
-            let Some(&(place, flags)) = self.hoisted.get(index).filter(|_| !held_vars) else {
+    fn close_level_with_log(&mut self, depth: usize, level: Level) {
+        let held_vars = self.holds_vars == scope_of(self.stamp);
+        self.unwind(level.log);
+        self.leave(depth, level);
+        if held_vars {
+            return;
+        }
+        let goes_on = scope_of(self.stamp) != self.holds_vars;
+        for index in 0..self.carried.len() {
+            let Some(&(place, flags)) = self.carried.get(index) else {
                 break;
             };
             let Some(&old) = self.table.get(place as usize) else {
                 continue;
             };
             match self.is_open(old) {
-                true if old.scope == self.now => self.put(place, old.flags | flags),
+                true if scope_of(old) == scope_of(self.stamp) => {
+                    self.put(place, old as u16 | flags)
+                }
                 true => {
-                    self.replaced.push((place, old));
+                    self.log.push((place, old));
                     self.put(place, flags);
                 }
                 false => self.put(place, flags),
             }
-        }
-        if held_vars || self.now == self.holds_vars {
-            self.hoisted.truncate(outer.hoisted as usize);
+            if goes_on {
+                self.log.push((place | HOISTED, Entry::from(flags)));
+            }
         }
     }
 
+    #[inline(always)]
     pub(crate) fn mark(&self) -> Mark {
         Mark {
-            open: self.open.len() as u32,
-            outer: Outer {
-                replaced: self.replaced.len() as u32,
-                hoisted: self.hoisted.len() as u32,
-                holds_vars: self.holds_vars,
-            },
+            stamp: self.stamp,
+            log: self.log.len() as u32,
+            holds_vars: self.holds_vars,
+            unopened: self.unopened,
         }
     }
 
     pub(crate) fn rollback(&mut self, to: Mark) {
+        self.unopened = to.unopened;
         if !self.is_on {
             return;
         }
-        self.give_back(to.outer.replaced);
-        self.hoisted.truncate(to.outer.hoisted as usize);
-        self.open.truncate(to.open as usize);
-        self.now = self.open.last().copied().unwrap_or_default();
-        self.holds_vars = to.outer.holds_vars;
+        self.unwind(to.log);
+        let (kept, open) = (depth_of(to.stamp), depth_of(self.stamp));
+        for level in self.levels.get_mut(kept + 1..=open).unwrap_or_default() {
+            level.id = 0;
+        }
+        self.stamp = to.stamp;
+        self.holds_vars = to.holds_vars;
     }
 
-    /// Whether the file itself declares `name`. Only at the end of the file.
-    fn is_declared_at_top(&self, name: Atom) -> bool {
-        let entry = self.table.get((name.0 & self.mask) as usize);
-        entry.is_some_and(|it| Some(&it.scope) == self.open.first())
+    /// Puts `name` in the set `names`, which is an id that no scope has. Only at the end of the file. A name that would share
+    /// its place with another is left out.
+    fn add_to(&mut self, names: u32, name: Atom) {
+        if name.0 <= self.mask
+            && let Some(entry) = self.table.get_mut(name.0 as usize)
+        {
+            *entry = stamp_of(names, 0);
+        }
+    }
+
+    /// Whether `add_to` has put `name` in the set `names`.
+    fn is_in(&self, names: u32, name: Atom) -> bool {
+        name.0 <= self.mask && self.table.get(name.0 as usize) == Some(&stamp_of(names, 0))
+    }
+
+    /// Whether it was asked about `name` before, or about one that shares its place. Only at the end of the file: `names` is an
+    /// id that no scope has.
+    fn exports_twice(&mut self, name: Atom, names: u32) -> bool {
+        let Some(entry) = self.table.get_mut((name.0 & self.mask) as usize) else {
+            return true;
+        };
+        std::mem::replace(entry, stamp_of(names, 0)) == stamp_of(names, 0)
     }
 }
 
@@ -340,6 +444,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// The scope that is open declares `name`.
     #[inline(always)]
     pub(crate) fn declare(&mut self, name: Atom, kind: Declares) {
+        if self.declared.is_on {
+            self.declare_name(name, kind);
+        }
+    }
+
+    #[inline(never)]
+    fn declare_name(&mut self, name: Atom, kind: Declares) {
         if self.declared.is_on && self.declared.declare(name, kind) {
             self.may_redeclare();
         }
@@ -348,11 +459,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// The same for the names that `pat` binds.
     #[inline(always)]
     pub(crate) fn declare_pattern(&mut self, pat: PatId, kind: Declares) {
-        if !self.declared.is_on {
-            return;
+        if self.declared.is_on {
+            self.declare_names_of(pat, kind);
         }
+    }
+
+    #[inline(never)]
+    fn declare_names_of(&mut self, pat: PatId, kind: Declares) {
         match self.f.pats.get(pat.idx()).map(|it| it.kind) {
-            Some(PatKind::Ident(name)) => self.declare(name, kind),
+            Some(PatKind::Ident(name)) => {
+                if self.declared.declare(name, kind) {
+                    self.may_redeclare();
+                }
+            }
             _ => self.declare_names_in(pat, kind),
         }
     }
@@ -370,7 +489,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 Some(&Pat {
                     kind: PatKind::Ident(name),
                     ..
-                }) => self.declare(name, kind),
+                }) => self.declare_name(name, kind),
                 _ => {}
             }
         }
@@ -378,39 +497,69 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// A block, the head and body of a `for`, the cases of a `switch`, a `catch` clause, the members of an enum.
     #[inline(always)]
-    pub(crate) fn open_scope(&mut self) -> Outer {
-        self.declared.open_scope(false)
+    pub(crate) fn open_scope(&mut self) {
+        self.declared.unopened += 1;
     }
 
     /// The body of a namespace.
     #[inline(always)]
-    pub(crate) fn open_scope_for_vars(&mut self) -> Outer {
-        self.declared.open_scope(true)
+    pub(crate) fn open_scope_for_vars(&mut self) {
+        match self.declared.is_on {
+            true => self.open_level_for_vars(),
+            false => self.declared.unopened += 1,
+        }
+    }
+
+    #[inline(never)]
+    fn open_level_for_vars(&mut self) {
+        if !(self.declared.open_levels() && self.declared.open_level(true)) {
+            // The scope is closed like the others that have no level.
+            self.declared.unopened += 1;
+            self.may_redeclare();
+        }
+    }
+
+    /// The function whose block comes next has these.
+    #[inline(always)]
+    pub(crate) fn note_parameters(&mut self, types: Span<TypeParamId>, values: Span<ParamId>) {
+        if self.declared.is_on {
+            self.declared.parameters = (types, values);
+        }
     }
 
     /// The block of a function or a static block. A function without one has nothing that its parameters could clash with.
     #[inline(always)]
-    pub(crate) fn open_function(&mut self) -> Outer {
-        let outer = self.declared.open_scope(true);
+    pub(crate) fn open_function(&mut self) {
+        match self.declared.is_on {
+            true => self.open_level_of_function(),
+            false => self.declared.unopened += 1,
+        }
+    }
+
+    #[inline(never)]
+    fn open_level_of_function(&mut self) {
+        self.open_level_for_vars();
         let (type_parameters, parameters) = std::mem::take(&mut self.declared.parameters);
-        if self.declared.is_on {
-            for index in type_parameters.range() {
-                if let Some(name) = self.f.type_params.get(index).map(|it| it.name) {
-                    self.declare(name, Declares::TypeParameter);
-                }
-            }
-            for index in parameters.range() {
-                if let Some(pat) = self.f.params.get(index).map(|it| it.pat) {
-                    self.declare_pattern(pat, Declares::Parameter);
-                }
+        for index in type_parameters.range() {
+            if let Some(name) = self.f.type_params.get(index).map(|it| it.name) {
+                self.declare_name(name, Declares::TypeParameter);
             }
         }
-        outer
+        for index in parameters.range() {
+            if let Some(pat) = self.f.params.get(index).map(|it| it.pat)
+                && self.declared.is_on
+            {
+                self.declare_names_of(pat, Declares::Parameter);
+            }
+        }
     }
 
     #[inline(always)]
-    pub(crate) fn close_scope(&mut self, outer: Outer) {
-        self.declared.close_scope(outer);
+    pub(crate) fn close_scope(&mut self) {
+        match self.declared.unopened {
+            0 => self.declared.close_level(),
+            _ => self.declared.unopened -= 1,
+        }
     }
 
     /// At the end of a JavaScript file: `rare::ODD_EXPORT`.
@@ -418,26 +567,62 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !self.options.dialect.oxc || !self.options.is_javascript || !self.f.has_module_syntax {
             return;
         }
-        // Nothing is known once the answer about redeclarations is "maybe".
-        if !self.declared.is_on {
-            self.f.rare_syntax |= rare::ODD_EXPORT;
+        // oxlint prints nothing but the parser's errors about a file that doesn't parse, and the tree has holes then.
+        if self.has_failed() || self.f.has_parse_diagnostics {
             return;
         }
         let (f, declared) = (&self.f, &mut self.declared);
-        let is_undeclared = f.exports.iter().any(|it| {
-            let items = f.export_specs.get(it.items.range()).unwrap_or_default();
-            !it.has_module_specifier
-                && !items.iter().all(|it| declared.is_declared_at_top(it.local))
-        });
-        // The exported names are declared in a scope of their own, which finds the one that is there twice.
-        declared.open_scope(false);
-        let mut export =
-            |name: Atom| name.is_some() && declared.declare(name, Declares::EnumMember);
+        let kind_of = |id: StmtId| f.stmts.get(id.idx()).map(|it| it.kind);
+        let is_local = |it: &&Export| !it.has_module_specifier && !it.items.is_empty();
+        let mut is_undeclared = false;
+        if f.exports.iter().any(|it| is_local(&it)) {
+            // The names that a statement of the file declares in plain sight. Any other may be undeclared: one in a pattern, a
+            // `var` in a block.
+            declared.last += 1;
+            let at_top = declared.last;
+            for id in f.ids(f.body) {
+                match kind_of(id) {
+                    Some(StmtKind::Fn(it)) => {
+                        if let Some(it) = f.fns.get(it.idx()) {
+                            declared.add_to(at_top, it.name);
+                        }
+                    }
+                    Some(StmtKind::Class(it)) => {
+                        if let Some(it) = f.classes.get(it.idx()) {
+                            declared.add_to(at_top, it.name);
+                        }
+                    }
+                    Some(StmtKind::Var(list)) => {
+                        for it in f.var_decls.get(list.range()).unwrap_or_default() {
+                            if let Some(PatKind::Ident(name)) =
+                                f.pats.get(it.pat.idx()).map(|it| it.kind)
+                            {
+                                declared.add_to(at_top, name);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for it in f.imports.iter() {
+                declared.add_to(at_top, it.default);
+                declared.add_to(at_top, it.namespace);
+                for it in f.import_specs.get(it.named.range()).unwrap_or_default() {
+                    declared.add_to(at_top, it.local);
+                }
+            }
+            is_undeclared = f.exports.iter().filter(is_local).any(|it| {
+                let items = f.export_specs.get(it.items.range()).unwrap_or_default();
+                !items.iter().all(|it| declared.is_in(at_top, it.local))
+            });
+        }
+        declared.last += 1;
+        let names = declared.last;
+        let mut export = |name: Atom| name.is_some() && declared.exports_twice(name, names);
         let name_or_default = |flags: Flags, name: Atom| match flags.contains(Flags::DEFAULT) {
             true => known::default,
             false => name,
         };
-        let kind_of = |id: StmtId| f.stmts.get(id.idx()).map(|it| it.kind);
         let is_twice = f.ids(f.body).any(|id| match kind_of(id) {
             Some(StmtKind::ExportDefault(_)) => export(known::default),
             Some(StmtKind::ExportStar { alias, .. }) => export(alias),

@@ -94,8 +94,13 @@ impl Section {
         if bom == Some(BOM::Utf16Le) {
             added = added.iter().flat_map(|it| [*it, 0]).collect();
         }
-        fs::write_atomically(cwd, &path, &[before, added].concat())
-            .map_err(|why| cannot("write", &why))?;
+        fs::write_atomically(
+            &fs::Written::default(),
+            cwd,
+            &path,
+            &[before, added].concat(),
+        )
+        .map_err(|why| cannot("write", &why))?;
         Ok(format!("Added [{}] to bunfig.toml", self.name).into_bytes())
     }
 

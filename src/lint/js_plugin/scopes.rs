@@ -834,8 +834,8 @@ struct Builder<'t, 'a> {
     lists: Vec<u32>,
 }
 
-/// [`crate::utils::oxlint::is_strict_mode`] of a scope of a file that is no module. `known`: what it has found, by the id of the scope,
-/// so that it looks at each scope once.
+/// typescript-eslint's `scope.isStrict` in a file that is no module. `known`: what it has found, by the id of the scope, so that it
+/// looks at each scope once.
 fn is_strict_for_oxlint(scope: Scope, known: &mut Vec<Option<bool>>) -> bool {
     let mut asked = Vec::new();
     let mut is_strict = false;
@@ -846,7 +846,16 @@ fn is_strict_for_oxlint(scope: Scope, known: &mut Vec<Option<bool>>) -> bool {
             break;
         }
         asked.push(id);
-        if crate::utils::oxlint::makes_strict(it) {
+        let is_of_typescript = matches!(
+            it.kind(),
+            ScopeKind::ConditionalType
+                | ScopeKind::FunctionType
+                | ScopeKind::MappedType
+                | ScopeKind::TsEnum
+                | ScopeKind::TsModule
+                | ScopeKind::Type
+        );
+        if is_of_typescript || crate::utils::oxlint::makes_strict(it) {
             is_strict = true;
             break;
         }
@@ -860,6 +869,15 @@ fn is_strict_for_oxlint(scope: Scope, known: &mut Vec<Option<bool>>) -> bool {
     is_strict
 }
 
+/// Whether `scope` is the top level of a CommonJS file under oxlint, which is a function there, and gets the `arguments` of one. A
+/// `var arguments` is that variable.
+fn gets_arguments_of_file<'a>(file: &'a File<'a>, scope: Scope<'a>) -> bool {
+    scope.kind() == ScopeKind::Module
+        && file.language().is_oxlint
+        && crate::utils::oxlint::source_type(file) == SourceType::CommonJs
+        && !scope.symbols().any(|it| it.name().bytes() == b"arguments")
+}
+
 impl<'t, 'a> Builder<'t, 'a> {
     /// Takes the scopes, variables, definitions and references from [`crate::semantic`].
     fn collect(&mut self, file: &'a File<'a>) {
@@ -869,24 +887,60 @@ impl<'t, 'a> Builder<'t, 'a> {
 
         // By `Symbol::key`: the index of the variable.
         let mut index_of = vec![NONE; file.symbol_key_limit()];
-        // With a configuration of oxlint `Scope::is_strict` takes every file for a module.
-        let is_no_module = file.language().is_oxlint
-            && crate::utils::oxlint::source_type(file) != SourceType::Module;
+        // With a configuration of oxlint the scopes of [`crate::semantic`] are those of a module, whatever the file is, and
+        // `Scope::is_strict` takes it for one. A plugin sees what oxlint shows it: in a script what is at the top level is in the
+        // global scope, and in a CommonJS file in the scope of a function, which has `arguments`.
+        let of_oxlint =
+            (file.language().is_oxlint).then(|| crate::utils::oxlint::source_type(file));
+        let is_no_module = of_oxlint.is_some_and(|it| it != SourceType::Module);
+        let (is_script, is_commonjs) = (
+            of_oxlint == Some(SourceType::Script),
+            of_oxlint == Some(SourceType::CommonJs),
+        );
+        // The scope of the module is the second, and left out of a script.
+        let place = |scope: Scope| scope.id().0 - u32::from(is_script && scope.id().0 > 0);
+        let mut arguments_of_file = NONE;
         let mut known_strict = Vec::new();
         for scope in file.scopes() {
-            let index = self.scopes.len() as u32;
+            let is_top = scope.kind() == ScopeKind::Module;
+            let index = match is_script && is_top {
+                true => 0,
+                false => self.scopes.len() as u32,
+            };
             let is_strict = match is_no_module {
+                // The directive is in the function.
+                true if is_commonjs && scope.kind() == ScopeKind::Global => false,
                 true => is_strict_for_oxlint(scope, &mut known_strict),
                 false => scope.is_strict(),
             };
-            self.scopes.push(ScopeRecord {
-                kind: scope.kind() as u32 | (u32::from(is_strict) * IS_STRICT),
-                block: id(block(scope)),
-                upper: scope.parent().map(|it| it.id().0),
-                variable_scope: scope.variable_scope().id().0,
-                last: index,
-                first_variable: self.variables.len() as u32,
-            });
+            let kind = match is_commonjs && is_top {
+                true => ScopeKind::Function,
+                false => scope.kind(),
+            };
+            if !(is_script && is_top) {
+                self.scopes.push(ScopeRecord {
+                    kind: kind as u32 | (u32::from(is_strict) * IS_STRICT),
+                    block: id(block(scope)),
+                    upper: scope.parent().map(place),
+                    variable_scope: place(scope.variable_scope()),
+                    last: index,
+                    first_variable: self.variables.len() as u32,
+                });
+            }
+            if gets_arguments_of_file(file, scope) {
+                arguments_of_file = self.variables.len() as u32;
+                let first_definition = self.definitions.len() as u32;
+                self.variables.push(VariableRecord {
+                    name: Name::Arguments,
+                    text: b"arguments",
+                    scope: index,
+                    flags: IS_VALUE | IS_ARGUMENTS,
+                    first_definition,
+                    end_definition: first_definition,
+                    settings: 0,
+                    comments: 0,
+                });
+            }
             for symbol in scope.symbols() {
                 if let Some(index) = index_of.get_mut(symbol.key()) {
                     *index = self.variables.len() as u32;
@@ -978,11 +1032,13 @@ impl<'t, 'a> Builder<'t, 'a> {
                     | (u32::from(global.is_some()) * TO_GLOBAL)
                     | (u32::from(is_partial) * IS_PARTIAL),
                 written,
-                variable: (reference.symbol())
-                    .and_then(|it| index_of.get(it.key()))
-                    .copied()
-                    .unwrap_or(NONE),
-                from: reference.scope().id().0,
+                variable: match reference.symbol() {
+                    Some(it) => index_of.get(it.key()).copied().unwrap_or(NONE),
+                    // In a function it has a symbol.
+                    None if reference.name().bytes() == b"arguments" => arguments_of_file,
+                    None => NONE,
+                },
+                from: place(reference.scope()),
                 name: reference.name().bytes(),
             };
             match record.made_at == identifier {
@@ -1910,9 +1966,18 @@ pub(super) fn mark_used<'a>(file: &'a File<'a>, indices: impl Iterator<Item = u3
     if indices.peek().is_none() {
         return;
     }
-    for (index, symbol) in file.scopes().flat_map(Scope::symbols).enumerate() {
-        if indices.next_if_eq(&(index as u32)).is_some() {
-            symbol.mark_used();
+    let mut index = 0u32;
+    for scope in file.scopes() {
+        // It's counted, and it's no symbol.
+        if gets_arguments_of_file(file, scope) {
+            let _ = indices.next_if_eq(&index);
+            index += 1;
+        }
+        for symbol in scope.symbols() {
+            if indices.next_if_eq(&index).is_some() {
+                symbol.mark_used();
+            }
+            index += 1;
         }
     }
 }

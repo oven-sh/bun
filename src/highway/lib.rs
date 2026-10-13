@@ -55,6 +55,8 @@ unsafe extern "C" {
         text_len: usize,
     ) -> usize;
 
+    fn highway_scanner_run_stops(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
+
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
 
     fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
@@ -451,6 +453,81 @@ pub fn index_of_interesting_character_in_multiline_comment(slice: &[u8]) -> Opti
     }
 
     Some(result)
+}
+
+/// Buffer for [`ScannerStops`]. Keep one per thread so the allocation is reused from file to file.
+#[derive(Default)]
+pub struct ScannerStopsBuffer(Vec<u8>);
+
+/// Where runs of bytes end in a JavaScript or TypeScript source. One kernel call finds them for the
+/// whole text, so a scanner gets the length of a name or a string from a load and a bit scan
+/// instead of a call per token.
+#[derive(Copy, Clone)]
+pub struct ScannerStops<'a> {
+    /// Everything but ASCII letters, digits, `_` and `$`.
+    pub after_name: Stops<'a>,
+    /// Everything but tabs and spaces.
+    pub after_blanks: Stops<'a>,
+    /// `"`, `'`, `` ` ``, `$`, `\`, control characters, and everything that isn't ASCII.
+    pub in_string: Stops<'a>,
+}
+
+impl ScannerStopsBuffer {
+    pub fn find(&mut self, text: &[u8]) -> ScannerStops<'_> {
+        // 8 bytes more than the kernel writes, so that `Stops::window` can load a whole word at
+        // any position. They are set, like all bits past the end: a run ends with the text.
+        let plane_len = text.len().div_ceil(64) * 8 + 8;
+        self.0.resize(3 * plane_len, 0);
+        for plane in self.0.chunks_exact_mut(plane_len) {
+            plane[plane_len - 8..].fill(0xFF);
+        }
+        // SAFETY: `text` is readable, and the kernel writes `plane_len - 8` bytes to each of the three planes.
+        unsafe {
+            highway_scanner_run_stops(text.as_ptr(), text.len(), self.0.as_mut_ptr(), plane_len);
+        }
+        let (after_name, rest) = self.0.split_at(plane_len);
+        let (after_blanks, in_string) = rest.split_at(plane_len);
+        ScannerStops {
+            after_name: Stops(after_name),
+            after_blanks: Stops(after_blanks),
+            in_string: Stops(in_string),
+        }
+    }
+}
+
+/// One bit per byte of a text, lowest bit first. A set bit is a byte that ends a run.
+#[derive(Copy, Clone)]
+pub struct Stops<'a>(&'a [u8]);
+
+impl Stops<'_> {
+    /// The bits from `pos` on. The upper 7 may be zeros that were shifted in.
+    #[inline(always)]
+    fn window(self, pos: usize) -> u64 {
+        let at = pos >> 3;
+        match self.0.get(at..at + 8) {
+            Some(bits) => u64::from_le_bytes(bits.try_into().unwrap_or_default()) >> (pos & 7),
+            None => 1,
+        }
+    }
+
+    /// How many bytes there are from `pos` to the next stop. Exact below 57; anything higher only
+    /// says that there are at least 57.
+    #[inline(always)]
+    pub fn run(self, pos: usize) -> u32 {
+        self.window(pos).trailing_zeros()
+    }
+
+    /// The first stop at or after `pos`. The end of the text is one.
+    #[inline(always)]
+    pub fn next(self, mut pos: usize) -> usize {
+        loop {
+            let window = self.window(pos);
+            if window != 0 {
+                return pos + window.trailing_zeros() as usize;
+            }
+            pos += 56;
+        }
+    }
 }
 
 #[inline(always)]

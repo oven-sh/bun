@@ -1563,6 +1563,36 @@ describe.concurrent("an .oxlintrc.json", () => {
     });
   });
 
+  // Each row is what oxlint 1.87 does. The name is the one it prints.
+  test.each<[config: object, name: string | undefined]>([
+    [{ rules: { "no-debugger": ["error", { a: 1 }] } }, "no-debugger"],
+    [{ rules: { "no-debugger": ["off", 1] } }, "no-debugger"],
+    [{ rules: { "no-debugger": ["error", null] } }, "no-debugger"],
+    [{ rules: { "no-debugger": ["error", {}] } }, "no-debugger"],
+    [{ rules: { "eslint/no-debugger": ["error", 1] } }, "no-debugger"],
+    [{ overrides: [{ files: ["*.ts"], rules: { "no-debugger": ["error", 1] } }] }, "no-debugger"],
+    [{ rules: { "@typescript-eslint/no-non-null-assertion": ["error", 1] } }, "typescript/no-non-null-assertion"],
+    [{ plugins: ["jsx-a11y"], rules: { "jsx-a11y/html-has-lang": ["error", 1] } }, "jsx_a11y/html-has-lang"],
+    [{ plugins: ["import"], rules: { "import-x/no-self-import": ["error", 1] } }, "import/no-self-import"],
+    [{ plugins: ["jest"], rules: { "jest/no-focused-tests": ["error", 1] } }, "jest/no-focused-tests"],
+    [{ plugins: ["vitest"], rules: { "vitest/no-focused-tests": ["error", 1] } }, "vitest/no-focused-tests"],
+    [{ plugins: ["react"], rules: { "react/no-danger": ["error", 1] } }, "react/no-danger"],
+    // The plugin is not on.
+    [{ rules: { "react/no-danger": ["error", 1] } }, undefined],
+    [{ rules: { "no-debugger": ["error"] } }, undefined],
+    [{ rules: { eqeqeq: ["error", "always"] } }, undefined],
+  ])("options for a rule of oxlint that takes none: %j", async (config, name) => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, ...config }),
+      "a.js": "export {};\n",
+    };
+    const { stdout, exitCode } = await lint(files, ["a.js"]);
+    const refusal = "This rule does not accept configuration options.";
+    if (name) expect(stdout).toContain(`Invalid configuration for rule \`${name}\`:\n  ${refusal}`);
+    else expect(stdout).not.toContain(refusal);
+    expect(exitCode).toBe(name ? 1 : 0);
+  });
+
   // oxlint 1.87 takes each, and each is valid by its own configuration_schema.json. The schemas of ESLint's rules refuse them.
   test("options that oxlint takes and the schema of ESLint's rule does not", async () => {
     const sets: [rule: string, options: unknown[]][] = [
@@ -2841,6 +2871,77 @@ describe.concurrent("an .oxlintrc.json", () => {
       names.flatMap(it => [`a${it}.js:1:1 no-debugger`, `b${it}.js:1:1 no-debugger`]).sort();
     expect(oxlint.problems).toEqual(notSilenced("feff", "180e", "200b"));
     expect(eslint.problems).toEqual(notSilenced("85", "180e", "200b"));
+  });
+
+  // What oxlint 1.87 and ESLint 10.12 report.
+  test("no-irregular-whitespace: oxlint lets a line separator pass that ends a // comment", async () => {
+    const files = {
+      "a.js": "a; // c\u2028b;\n",
+      "b.js": "a; // c\u2029b;\n",
+      "c.js": "a; // c\u2028\u2028b;\n",
+      "d.js": "a;\u2028b;\n",
+      "e.js": "a; /* c\u2028d */ b;\n",
+      "f.js": "// c\u2028",
+    };
+    const rules = { "no-irregular-whitespace": "error" };
+    const [oxlint, eslint] = await Promise.all([
+      lint({ ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules }), ...files }),
+      lint({ "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n`, ...files }),
+    ]);
+    const places = (problems: string[]) => problems.map(it => it.replace(" no-irregular-whitespace", ""));
+    // The second separator of c.js. This format counts lines like ESLint. oxlint's own formats say 1:11.
+    expect(places(oxlint.problems)).toEqual(["c.js:2:1", "d.js:1:3", "e.js:1:8"]);
+    expect(places(eslint.problems)).toEqual([
+      "a.js:1:8",
+      "b.js:1:8",
+      "c.js:1:8",
+      "c.js:2:1",
+      "d.js:1:3",
+      "e.js:1:8",
+      "f.js:1:5",
+    ]);
+  });
+
+  // The lines of oxlint 1.87, in its order.
+  test("the findings about a file: of the built-in rules by place, of JS plugins as they report, about comments last", async () => {
+    const plugin = `export default { meta: { name: "pl" }, rules: {
+      back: { create(c) { const all = []; return { Identifier(n) { all.push(n); }, "Program:exit"() { for (const n of all.reverse()) c.report({ node: n, message: "back " + n.name }); } }; } },
+      fwd: { create(c) { return { Identifier(n) { c.report({ node: n, message: "fwd " + n.name }); } }; } },
+    } };\n`;
+    const rules = { "pl/fwd": "error", "pl/back": "error", "no-var": "warn", "no-debugger": "error" };
+    const code = [
+      "// oxlint-disable-next-line no-alert",
+      "debugger;",
+      "a; b;",
+      "// oxlint-disable-next-line pl/back",
+      "debugger;",
+      "var c = 1; // oxlint-disable-line no-var",
+      "d; // oxlint-disable-line pl/fwd",
+      "// oxlint-disable-next-line no-eval",
+      "debugger;",
+    ];
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, jsPlugins: ["./plugin.js"], rules }),
+      "plugin.js": plugin,
+      "c.js": code.join("\n") + "\n",
+    };
+    const { stdout } = await lint(files, ["-f", "unix", "--report-unused-disable-directives", "c.js"]);
+    const lines = stdout.split("\n").filter(it => it.startsWith("c.js:"));
+    expect(lines.map(it => it.replace(/^c\.js:(\d+:\d+): .*?(\w+\([\w-]+\))?\]$/, "$1 $2").trim())).toEqual([
+      "2:1 eslint(no-debugger)",
+      "5:1 eslint(no-debugger)",
+      "9:1 eslint(no-debugger)",
+      "3:1 pl(fwd)",
+      "3:4 pl(fwd)",
+      "6:5 pl(fwd)",
+      "7:1 pl(back)",
+      "6:5 pl(back)",
+      "3:4 pl(back)",
+      "3:1 pl(back)",
+      "1:1",
+      "4:1",
+      "8:1",
+    ]);
   });
 
   // Each count is what oxlint 1.87 prints.

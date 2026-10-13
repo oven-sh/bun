@@ -29,6 +29,8 @@ glob.match("index.ts"); // => true
 glob.match("index.js"); // => false
 ```
 
+To match many paths against one pattern, create the `Glob` once and reuse it. With any pattern, the time `match()` takes grows linearly with the length of the path.
+
 The `Glob` class implements the following interface:
 
 ```ts
@@ -141,7 +143,7 @@ glob.match("c.ts"); // => true
 glob.match("d.ts"); // => false
 ```
 
-You can nest these patterns, and they can contain any of the other wildcards.
+You can nest these patterns to any depth, and they can contain any of the other wildcards.
 
 ### `{1..3}` - Match a range of numbers or letters
 

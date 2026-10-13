@@ -108,6 +108,12 @@ pub fn is_parse_error(message: &LintMessage) -> bool {
     message.is_fatal && message.message.starts_with(b"Parsing error: ")
 }
 
+/// oxlint's error for a name that is declared twice. It isn't from oxc's parser, which takes such a text.
+pub fn is_redeclaration(message: &LintMessage) -> bool {
+    message.message.starts_with(b"Parsing error: Identifier `")
+        && message.message.ends_with(b"` has already been declared")
+}
+
 /// The report to return when a pass's fixes are rolled back. `before` is the text before that pass. `was_fixed` says whether
 /// earlier passes had already changed it, and `fixes` is how many fixes they applied.
 fn without_the_last_pass(

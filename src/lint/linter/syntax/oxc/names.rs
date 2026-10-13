@@ -6,15 +6,16 @@
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
-    File, Flags, FnKind, Func, Module, ModuleName, Name, Node, PatKind, Stmt, StmtKind, VarKind,
+    File, Flags, FnKind, Func, Module, ModuleName, Name, Node, PatKind, Stmt, StmtKind, StmtTag,
+    VarKind,
 };
 use crate::language::SourceType;
-use crate::semantic::{Declaration, Scope, ScopeKind};
+use crate::semantic::{Declaration, DeclarationKinds, Scope, ScopeKind, Symbol};
 use crate::span::Span;
 use crate::tokens::skip_trivia;
 use crate::utils::oxlint::{is_strict_mode, source_type};
-use bun_sema::hir::rare;
-use rustc_hash::FxHashMap;
+use bun_sema::hir::{self, rare};
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
@@ -71,7 +72,7 @@ struct Declared {
     span: Span,
 }
 
-struct Symbol {
+struct Bound {
     /// The flags of all its declarations, and the name of the first.
     all: Declared,
     /// `Scoping::symbol_redeclarations`: empty, or every declaration.
@@ -86,7 +87,7 @@ struct Binder<'a> {
     is_module: bool,
     /// The scope of the file.
     top: u32,
-    symbols: Vec<Symbol>,
+    symbols: Vec<Bound>,
     bindings: FxHashMap<Key<'a>, usize>,
     /// `SemanticBuilder::hoisting_variables`: what a `var` has passed through on its way to the function.
     hoisting: FxHashMap<Key<'a>, usize>,
@@ -181,7 +182,7 @@ impl<'a> Binder<'a> {
     }
 
     fn create(&mut self, key: Key<'a>, declared: Declared) -> usize {
-        self.symbols.push(Symbol {
+        self.symbols.push(Bound {
             all: declared,
             declarations: SmallVec::new(),
         });
@@ -434,11 +435,91 @@ impl<'a> Binder<'a> {
                 is_both.then_some((key.1, first.span, last.span))
             })
             .collect();
-        crate::utils::sort::sort_unstable_by_key(&mut clashing, |it| it.1.start);
+        if clashing.len() > 1 {
+            let order = names_of_file_in_order_of_oxc(self.file);
+            crate::utils::sort::sort_unstable_by_key(&mut clashing, |it| {
+                order.iter().position(|&name| name == it.0)
+            });
+        }
         for (name, first, last) in clashing {
             self.report(name, first, last, Some(u32::MAX));
         }
     }
+}
+
+/// oxc's `ident_hash` of a name, as far as hashbrown picks the bucket by it.
+fn hash_of_oxc(name: &[u8]) -> u32 {
+    const SEEDS: (u32, u32) = (0x9E37_79B9, 0x85EB_CA6B);
+    let mix = |a: u32, b: u32| {
+        let product = u64::from(a) * u64::from(b);
+        product as u32 ^ (product >> 32) as u32
+    };
+    let read = |at: usize| {
+        let bytes = name.get(at..at + 4);
+        u32::from_le_bytes(bytes.and_then(|it| it.try_into().ok()).unwrap_or_default())
+    };
+    let byte = |at: usize| name.get(at).copied().map_or(0, u32::from);
+    let len = name.len();
+    let hash = match len {
+        0 => 0,
+        1..=3 => {
+            let packed = byte(0) << 16 | byte(len / 2) << 8 | byte(len - 1);
+            mix(packed ^ SEEDS.0, packed ^ SEEDS.1)
+        }
+        4..=8 => mix(read(0) ^ SEEDS.0, read(len - 4) ^ SEEDS.1),
+        9..=16 => mix(
+            read(0) ^ read(len / 2 - 2) ^ SEEDS.0,
+            read(len - 4) ^ SEEDS.1,
+        ),
+        _ => mix(
+            read(0) ^ read(len / 3) ^ SEEDS.0,
+            read(2 * len / 3) ^ read(len - 4) ^ SEEDS.1,
+        ),
+    };
+    hash ^ (len as u32).rotate_left(16)
+}
+
+/// What a module declares at the top, in the order in which oxc goes through it: bucket by bucket through a hashbrown table that
+/// has grown as the names were declared.
+fn names_of_file_in_order_of_oxc<'a>(file: &'a File<'a>) -> Vec<Name<'a>> {
+    /// How many buckets hashbrown looks at in one step, with SSE2.
+    const GROUP: usize = 16;
+    fn put<'a>(table: &mut [Option<Name<'a>>], name: Name<'a>) {
+        let mask = table.len() - 1;
+        let (mut at, mut stride) = (hash_of_oxc(name.bytes()) as usize & mask, 0);
+        loop {
+            let mut group = (0..GROUP.min(table.len())).map(|it| (at + it) & mask);
+            if let Some(free) = group.find(|&it| table[it].is_none()) {
+                table[free] = Some(name);
+                return;
+            }
+            stride += GROUP;
+            at = (at + stride) & mask;
+        }
+    }
+    let capacity = |buckets: usize| match buckets {
+        0 => 0,
+        1..=8 => buckets - 1,
+        _ => buckets / 8 * 7,
+    };
+    let mut table: Vec<Option<Name<'a>>> = Vec::new();
+    for (count, symbol) in file.top_level_scope().symbols().enumerate() {
+        if count == capacity(table.len()) {
+            let buckets = match count + 1 {
+                0..=3 => 4,
+                4..=7 => 8,
+                8..=14 => 16,
+                wanted => (wanted * 8 / 7).next_power_of_two(),
+            };
+            let mut grown = vec![None; buckets];
+            for name in table.into_iter().flatten() {
+                put(&mut grown, name);
+            }
+            table = grown;
+        }
+        put(&mut table, symbol.name());
+    }
+    table.into_iter().flatten().collect()
 }
 
 fn import_flag(is_type_only: bool) -> u32 {
@@ -448,18 +529,119 @@ fn import_flag(is_type_only: bool) -> u32 {
     }
 }
 
+/// Whether the declarations of `symbol`, which has several, can clash. Not those that many files have: overloads, namespaces
+/// that merge, a type and a value of one name, a `var` that is declared again or has the name of a parameter.
+fn may_clash(symbol: Symbol, is_typescript: bool) -> bool {
+    type Kinds = DeclarationKinds;
+    let kinds = symbol.declaration_kinds();
+    if is_typescript {
+        let not_types = Kinds::VARIABLE
+            .union(Kinds::PARAMETER)
+            .union(Kinds::FUNCTION_NAME)
+            .union(Kinds::IMPORT_BINDING);
+        if kinds == Kinds::FUNCTION_NAME
+            || kinds == Kinds::TS_MODULE_NAME
+            || symbol.declaration_count() == 2
+                && kinds.contains(Kinds::TYPE)
+                && kinds != Kinds::TYPE
+                && not_types.contains(kinds.difference(Kinds::TYPE))
+        {
+            return false;
+        }
+    }
+    if !Kinds::VARIABLE.union(Kinds::PARAMETER).contains(kinds) {
+        return true;
+    }
+    symbol.declarations().any(|it| match (it, it.node()) {
+        (Declaration::Var(_), Some(Node::VarDecl(it))) => it.var_kind() != VarKind::Var,
+        (Declaration::Param(_), _) => false,
+        _ => true,
+    })
+}
+
+/// The names that more than one declaration may declare in one of oxc's scopes. Each name is bound on its own, so no other name
+/// has to be replayed.
+fn candidates<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
+    let mut names = FxHashSet::default();
+    let is_typescript = !file.is_javascript();
+    let twice = file.symbols_declared_twice();
+    names.extend(
+        twice
+            .filter(|&it| may_clash(it, is_typescript))
+            .map(|it| it.name()),
+    );
+    // What a block declares meets what goes through the block on its way up to the function: a `var`, and outside strict code a
+    // function of JavaScript.
+    let functions_go_up = file.is_javascript() && source_type(file) != SourceType::Module;
+    let goes_through = file.has_names_that_leave_blocks();
+    if !goes_through && !functions_go_up && !file.has_stmts([StmtTag::Try]) {
+        return names;
+    }
+    for (scope, symbol) in file.symbols_of_blocks(!goes_through && !functions_go_up) {
+        let name = symbol.name();
+        let is_function = || {
+            let kinds = symbol.declaration_kinds();
+            kinds.contains(DeclarationKinds::FUNCTION_NAME)
+        };
+        let is_in_block_of_catch = || {
+            scope.kind() == ScopeKind::Catch
+                && (scope.children().next()).is_some_and(|it| it.get_name(name).is_some())
+        };
+        if (goes_through || functions_go_up && is_function())
+            && scope.variable_scope().get_name(name).is_some()
+            || is_in_block_of_catch()
+        {
+            names.insert(name);
+        }
+    }
+    names
+}
+
+/// A declaration: where its name is, the name, and the scope that it is declared in.
+type Found<'a> = (Span, Name<'a>, Declaration<'a>, Scope<'a>);
+
+/// The members of enums that are written as `["a"]`. To oxc that is the name `a`. Here such a member is no variable.
+fn computed_enum_members<'a>(file: &'a File<'a>) -> Vec<Found<'a>> {
+    let mut all = Vec::new();
+    let is_computed = |it: &hir::EnumMember| it.computed_name.is_some();
+    if !file.hir.enum_members.iter().any(is_computed) {
+        return all;
+    }
+    for it in file.stmts_of_kind(StmtTag::Enum) {
+        let StmtKind::Enum(declaration) = it.kind() else {
+            continue;
+        };
+        for member in declaration.members() {
+            if let Some(key) = member.computed_key()
+                && let Some(hir::ExprKind::String(name)) = key.try_raw().map(|it| it.kind)
+            {
+                let (span, name) = (key.span(), file.name(name));
+                let scope = file.scope_at(span.start);
+                all.push((span, name, Declaration::EnumMember(member), scope));
+            }
+        }
+    }
+    all
+}
+
 /// "Identifier `a` has already been declared"
 pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
-    if !file.has_rare_syntax(rare::MAY_REDECLARE) {
+    // Where no rule makes the variables of every file, the parser has looked out for a name that may be declared twice.
+    if file.language().parser_tracks_names && !file.has_rare_syntax(rare::MAY_REDECLARE) {
         return Vec::new();
     }
-    let mut all: Vec<(Span, Name<'a>, Declaration<'a>, Scope<'a>)> = Vec::new();
-    for symbol in file.symbols() {
-        let (name, scope) = (symbol.name(), symbol.scope());
-        let named = symbol
-            .declarations()
-            .filter_map(|it| Some((it.name_span()?, name, it, scope)));
-        all.extend(named);
+    let mut all: Vec<Found<'a>> = computed_enum_members(file);
+    let mut names = candidates(file);
+    names.extend(all.iter().map(|it| it.1));
+    for name in names {
+        for symbol in file.symbols_named(name) {
+            let scope = symbol.scope();
+            let named = symbol.declarations();
+            all.extend(named.filter_map(|it| Some((it.name_span()?, name, it, scope))));
+        }
+    }
+    if all.is_empty() {
+        return Vec::new();
     }
     crate::utils::sort::sort_unstable_by_key(&mut all, |it| it.0.start);
     let mut binder = Binder {
@@ -479,8 +661,7 @@ pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     binder.errors
 }
 
-/// `oxc_span::best_match`, two edits away at most. Of two that are as close oxc takes the one that its hash table has first,
-/// which is not known here.
+/// `oxc_span::best_match`, two edits away at most. Of two that are as close it is the first.
 fn closest<'a>(needle: &[u8], candidates: impl Iterator<Item = &'a [u8]>) -> Option<&'a [u8]> {
     const THRESHOLD: usize = 2;
     let characters = |text: &[u8]| bstr::ByteSlice::chars(text).collect::<Vec<char>>();
@@ -492,7 +673,7 @@ fn closest<'a>(needle: &[u8], candidates: impl Iterator<Item = &'a [u8]>) -> Opt
         }
         let distance =
             bun_core::strings::edit_distance(characters(candidate).into_iter(), &needle_characters);
-        if distance <= THRESHOLD && best.is_none_or(|it| (distance, candidate) < (it.1, it.0)) {
+        if distance <= THRESHOLD && best.is_none_or(|it| distance < it.1) {
             best = Some((candidate, distance));
         }
     }
@@ -524,6 +705,7 @@ pub(super) fn exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         Span::new(start, start + "default".len() as u32)
     };
     let top = file.top_level_scope();
+    let mut names_in_order: Option<Vec<Name<'a>>> = None;
     for it in file.body() {
         match it.kind() {
             StmtKind::ExportDefault(_) => own_defaults.push(keyword_after(it.span().start)),
@@ -557,7 +739,9 @@ pub(super) fn exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                     if !list.has_from() && symbol.is_none() && !local.is_string() {
                         let name = bstr::BStr::new(local.bytes());
                         let message = format!("Export '{name}' is not defined").into_bytes();
-                        let names = top.symbols().map(|it| it.name().bytes());
+                        let names = names_in_order
+                            .get_or_insert_with(|| names_of_file_in_order_of_oxc(file));
+                        let names = names.iter().map(|it| it.bytes());
                         let help = closest(local.bytes(), names).map_or(Cow::Borrowed(""), |it| {
                             Cow::Owned(format!("Did you mean '{}'?", bstr::BStr::new(it)))
                         });

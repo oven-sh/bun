@@ -751,6 +751,79 @@ size_t IndexOfInterestingCharacterInMultilineCommentImpl(const uint8_t* HWY_REST
     return text_len;
 }
 
+// `upper[b >> 4] & lower[b & 15]` is nonzero for the bytes an ASCII identifier is made of. Bit r
+// stands for the 16 bytes whose upper half is r.
+struct IdentifierNibbles {
+    alignas(16) uint8_t upper[16] {};
+    alignas(16) uint8_t lower[16] {};
+};
+static constexpr IdentifierNibbles kIdentifierNibbles = [] {
+    IdentifierNibbles nibbles;
+    for (unsigned b = 0; b < 0x80; ++b) {
+        if ((b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_' || b == '$') {
+            nibbles.upper[b >> 4] |= 1 << (b >> 4);
+            nibbles.lower[b & 15] |= 1 << (b >> 4);
+        }
+    }
+    return nibbles;
+}();
+
+// Stage 1 of the scanner in src/sema/parser/lexer.rs: one pass over the source instead of a call
+// per token. Writes three bitmaps, `plane_len` bytes apart, with one bit per source byte (bit i of
+// byte j is source byte 8 * j + i). A set bit is a byte that ends a run:
+//   plane 0: not an ASCII letter, digit, `_` or `$`
+//   plane 1: not a tab or a space
+//   plane 2: `"`, `'`, `` ` ``, `$`, `\`, a control character, or not ASCII
+// Each plane gets ceil(text_len / 64) * 8 bytes. The bits past the end of the source are set.
+void ScannerRunStopsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
+{
+    const hn::CappedTag<uint8_t, 64> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto by_upper = hn::LoadDup128(d, kIdentifierNibbles.upper);
+    const auto by_lower = hn::LoadDup128(d, kIdentifierNibbles.lower);
+    const auto vec_low_half = hn::Set(d, uint8_t { 0x0F });
+    const auto vec_zero = hn::Zero(d);
+    const auto vec_tab = hn::Set(d, '\t');
+    const auto vec_space = hn::Set(d, ' ');
+    const auto vec_double_quote = hn::Set(d, '"');
+    const auto vec_single_quote = hn::Set(d, '\'');
+    const auto vec_backtick = hn::Set(d, '`');
+    const auto vec_dollar = hn::Set(d, '$');
+    const auto vec_backslash = hn::Set(d, '\\');
+    const auto vec_printable = hn::Set(d, uint8_t { 0x7F - 0x20 });
+
+    for (size_t pos = 0; pos < text_len; pos += 64) {
+        const uint8_t* block = text + pos;
+        uint8_t last_block[64];
+        if (text_len - pos < 64) {
+            std::memset(last_block, 0, sizeof(last_block));
+            std::memcpy(last_block, block, text_len - pos);
+            block = last_block;
+        }
+
+        uint64_t not_identifier = 0, blank = 0, string_stop = 0;
+        for (size_t i = 0; i < 64; i += N) {
+            const auto vec = hn::LoadU(d, block + i);
+            const auto rows = hn::And(hn::TableLookupBytes(by_upper, hn::ShiftRight<4>(vec)),
+                hn::TableLookupBytes(by_lower, hn::And(vec, vec_low_half)));
+            not_identifier |= hn::BitsFromMask(d, hn::Eq(rows, vec_zero)) << i;
+            blank |= hn::BitsFromMask(d, hn::Or(hn::Eq(vec, vec_tab), hn::Eq(vec, vec_space))) << i;
+            // Below 0x20 wraps around to above 0x5F, where 0x80 and up land too.
+            const auto mask_not_printable = hn::Gt(hn::Sub(vec, vec_space), vec_printable);
+            const auto mask_quote = hn::Or(hn::Or(hn::Eq(vec, vec_double_quote), hn::Eq(vec, vec_single_quote)), hn::Eq(vec, vec_backtick));
+            const auto mask_escape = hn::Or(hn::Eq(vec, vec_backslash), hn::Eq(vec, vec_dollar));
+            string_stop |= hn::BitsFromMask(d, hn::Or(hn::Or(mask_quote, mask_escape), mask_not_printable)) << i;
+        }
+        const uint64_t not_blank = ~blank;
+
+        uint8_t* plane = out + pos / 8;
+        std::memcpy(plane, &not_identifier, 8);
+        std::memcpy(plane + plane_len, &not_blank, 8);
+        std::memcpy(plane + 2 * plane_len, &string_stop, 8);
+    }
+}
+
 size_t IndexOfNewlineOrNonASCIIOrHashOrAtImpl(const uint8_t* HWY_RESTRICT start_ptr, size_t search_len)
 {
     ASSERT(search_len > 0);
@@ -2329,6 +2402,7 @@ HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(MemRMemImpl);
 HWY_EXPORT(MemMem16Impl);
 HWY_EXPORT(MemRMem16Impl);
+HWY_EXPORT(ScannerRunStopsImpl);
 HWY_EXPORT(VisibleLatin1WidthExcludeANSIImpl);
 HWY_EXPORT(VisibleLatin1WidthImpl);
 HWY_EXPORT(VisibleUTF16WidthImpl);
@@ -2481,6 +2555,11 @@ size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* H
 size_t highway_index_of_interesting_character_in_multiline_comment(const uint8_t* HWY_RESTRICT text, size_t text_len)
 {
     return BUN_HWY_DISPATCH(IndexOfInterestingCharacterInMultilineCommentImpl)(text, text_len);
+}
+
+void highway_scanner_run_stops(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
+{
+    BUN_HWY_DISPATCH(ScannerRunStopsImpl)(text, text_len, out, plane_len);
 }
 
 size_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)

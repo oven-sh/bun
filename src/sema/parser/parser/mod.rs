@@ -21,7 +21,7 @@ mod ty;
 use crate::lexer::{Lexer, Mark};
 use crate::token::T;
 use crate::{Options, Parsed, Refusal, Refused, Scratch};
-use bun_sema::atom::{Atom, Intern};
+use bun_sema::atom::{Atom, Intern, known};
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
 pub(crate) use declared::Declared;
@@ -324,8 +324,14 @@ pub(crate) fn run<'a>(
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
     let mut declared = std::mem::take(&mut scratch.declared);
-    declared.begin(text.len(), options.dialect.oxc, options.is_javascript);
-    let mut lx = Lexer::new(text, atoms, &mut scratch.names);
+    declared.begin(
+        text.len(),
+        options.dialect.oxc_names,
+        options.dialect.oxc && options.is_javascript,
+        options.is_javascript,
+    );
+    let stops = scratch.stops.find(text);
+    let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
     lx.is_jsx = options.is_jsx;
     lx.recovers = options.recovers;
     lx.comments = std::mem::take(&mut file.comments);
@@ -987,9 +993,41 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     #[inline(always)]
     pub(crate) fn note_identifier(&mut self, atom: Atom, pos: u32) -> Atom {
         if atom.is_keyword_identifier() {
-            self.f.keyword_identifier_positions.push(pos);
+            self.note_keyword_identifier(atom, pos);
         }
         atom
+    }
+
+    /// [`Parser::note_identifier`] of a name that a type refers to. oxc's parser takes any word there.
+    #[inline(always)]
+    pub(crate) fn note_name_in_type(&mut self, atom: Atom, pos: u32) {
+        if atom.is_keyword_identifier() {
+            self.f.keyword_identifier_positions.push(pos);
+        }
+    }
+
+    /// oxc's parser reports `await` and `yield` where they are names in the context in which they are keywords. At the top
+    /// level a file is in the await context from its first `import` or `export` on, or by its name, which is not known here.
+    #[cold]
+    #[inline(never)]
+    fn note_keyword_identifier(&mut self, atom: Atom, pos: u32) {
+        self.f.keyword_identifier_positions.push(pos);
+        if !self.options.dialect.oxc {
+            return;
+        }
+        // In a type `await` is a name to oxc.
+        let is_keyword_here =
+            atom == known::r#await && self.has_context(ctx::AWAIT) && !self.has_context(ctx::TYPE)
+                || atom == known::r#yield && self.has_context(ctx::YIELD);
+        let is_at_top_level = atom == known::r#await && self.has_context(ctx::TOP_LEVEL);
+        if is_keyword_here {
+            let code = match (is_at_top_level, self.f.has_module_syntax) {
+                (false, _) => 1359,
+                (true, true) => 1262,
+                (true, false) => 1214,
+            };
+            self.flag(DiagnosticKind::Grammar, code, (pos, pos + 5), &[]);
+        }
     }
 
     /// `isIdentifier`

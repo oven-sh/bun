@@ -1370,6 +1370,12 @@ impl Config {
                     .or(or_else),
             );
         }
+        if self.prefers_typescript_rules {
+            let makes_variables = |it: &ConfiguredRule| {
+                it.severity != Severity::Off && it.entry.meta.name == "no-unused-vars"
+            };
+            config.language.parser_tracks_names = !config.rules.iter().any(makes_variables);
+        }
         // oxlint looks up the severity of a tsgolint report by the rule's bare name, and finds ESLint's rule first if it's on.
         if self.prefers_typescript_rules {
             let is_on = |it: &ConfiguredRule, plugin: Plugin| {

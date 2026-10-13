@@ -649,6 +649,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::String => return self.token_type(TypeNodeKind::StringLit(self.lx.atom)),
             // `parseLiteralExpression` does not scan it again: an invalid escape passes.
             T::NoSubstitutionTemplate => {
+                if self.lx.has_escape && self.reports_like_oxc() {
+                    self.piece_of_template_without_tag();
+                }
                 return self.token_type(TypeNodeKind::StringLit(self.lx.atom));
             }
             // It may be the keyword, which is an error.
@@ -794,7 +797,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             _ if self.is_identifier() => {
                 let name = self.lx.atom;
-                self.note_identifier(name, start);
+                self.note_name_in_type(name, start);
                 self.next_after_name();
                 name
             }
@@ -840,7 +843,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             // "Type expected."
             false => self.missing_identifier(1110, 0),
         };
-        self.note_identifier(first.0, first.1);
+        self.note_name_in_type(first.0, first.1);
         self.s.names.push(first);
         // `checkTypeReferenceNode`: `A.<T>`
         if self.rest_of_entity_name() && !self.newline_before() {
@@ -1169,7 +1172,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.s.names.truncate(base);
             return None;
         }
-        self.note_identifier(first.0, first.1);
+        self.note_name_in_type(first.0, first.1);
         let names = self.s.names.get(base..).unwrap_or_default();
         let name = self.f.entity_name(names.iter().copied());
         self.s.names.truncate(base);
@@ -1392,7 +1395,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         for index in base..self.s.names.len() {
             let (name, pos) = self.s.names[index];
-            self.note_identifier(name, pos);
+            self.note_name_in_type(name, pos);
         }
         let names = self.s.names.get(base..).unwrap_or_default();
         let name = self.f.entity_name(names.iter().copied());
@@ -1650,7 +1653,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         };
         if is_named {
             element.name = self.lx.atom;
-            self.note_identifier(element.name, start);
+            self.note_name_in_type(element.name, start);
             self.next_after_name();
             element.optional = self.eat(T::Question);
             self.expect(T::Colon);

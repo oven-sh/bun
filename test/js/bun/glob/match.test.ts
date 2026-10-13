@@ -24,8 +24,8 @@
 
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { basename, join } from "path";
 
 describe("Glob.match", () => {
   test("WTF", () => {
@@ -2165,6 +2165,205 @@ describe("Glob.match", () => {
   ])("an unclosed group or class is literal: %s with %s is %p", (pattern, path, expected) => {
     expect(new Glob(pattern).match(path)).toBe(expected);
   });
+
+  // If one of these loops for ever again, the test times out.
+  test.each([
+    ["*{/,}/**/*a", "a//"],
+    ["{*,}**/**/*a", "a/"],
+    ["{*,a}**/**/*.ts", "src/"],
+    ["{*,a}**/**/*.ts", "packages/a/src/"],
+    ["**/{/,}/**/*a", "//"],
+    ["{*,}/**/*{a,}.ts", "/a/"],
+    ["{*,}/**/{a,}*.ts", "/a/"],
+    ["{*,}/**/*{@}", "//"],
+    ["c[{]{{},}/**/*{@}", "c{//"],
+    ["**//!(*/)/**/*[ab]*", "a//"],
+    ["{*,}/**/*a", "//"],
+    ["{*,b}/**/*.ts", "a//"],
+    ["{src,*}/**/*.ts", "src//"],
+    ["@(*|b)/**/*.ts", "a//"],
+  ])("a group before `**/*` on a path that ends with `/`: %s doesn't match %s", (pattern, path) => {
+    expect(new Glob(pattern).match(path)).toBeFalse();
+  });
+
+  test.each([
+    ["*{b/c,ab}/d", "ab/c/d", true],
+    ["*{ab,b/c}/d", "ab/c/d", true],
+    ["*{s/lib,libs}/*.ts", "libs/lib/a.ts", true],
+    ["*{-ui/src,my-ui}/*.ts", "my-ui/src/a.ts", true],
+    ["**/*{b/c,ab}/d", "x/ab/c/d", true],
+    ["?*{b/c,ab}/d", "xab/c/d", true],
+    ["*@(b/c|ab)/d", "ab/c/d", true],
+    ["*{a/,b}?/", "ba/b/", true],
+    ["*{b/c,ab}/d", "ab/d", true],
+    ["*{b/c,ab}/d", "xb/c/d", true],
+    ["*{b/c,ab}/d", "ab/c", false],
+    ["a*{b/c,b}/d", "ab/c/d", true],
+    ["*{b/c,a*}/d", "ab/c/d", true],
+  ])("a `*` before a group with a `/` in an alternative: %s with %s is %p", (pattern, path, expected) => {
+    expect(new Glob(pattern).match(path)).toBe(expected);
+  });
+
+  test.each([
+    ["**/{,ab_}*[/_]/?js/[?]", "ab_//1js/?", true],
+    ["**/ab_*[/_]/?js/[?]", "ab_//1js/?", true],
+    ["{*,(}{*[^a]*}", "(/", true],
+    ["*?()****/**/", "c", true],
+    ["*{}****/**/", "c", true],
+    ["*{,}****/**/", "c", true],
+  ])("a group next to a class that matches `/`, or next to `****`: %s with %s is %p", (pattern, path, expected) => {
+    expect(new Glob(pattern).match(path)).toBe(expected);
+  });
+
+  test.each([
+    ["*{a,ba}/", ["a/", "ba/", "xa/", "xba/", "aba/"], ["/", "b/", "xb/", "xba", "xba/a"]],
+    ["*.{ts,tsx,js}", ["a.ts", "a.tsx", "a.js", ".ts", "a.ts.tsx"], ["a.jsx", "a.t", "a.tsx.", "a/b.ts", "ts"]],
+    ["{src,apps,packages}/**", ["src/a", "apps/", "packages/a/b/c.ts"], ["src", "srcs/a", "app/a", "lib/a", "a/src/b"]],
+    ["{src,apps,packages}/**/*.ts", ["src/a.ts", "apps/a/b.ts"], ["src/a.js", "lib/a.ts", "packages.ts", "src.ts"]],
+    ["packages/{a,bcd}/*", ["packages/a/x", "packages/bcd/x"], ["packages/b/x", "packages/ab/x", "packages/a/x/y"]],
+    ["@(ab|cd)e", ["abe", "cde"], ["ab", "ace", "abcde"]],
+    ["x{ab,cd}{ef,gh}", ["xabef", "xcdgh"], ["xabcd", "xab", "xefab"]],
+    [
+      "**/{src,lib}/**/{test,spec}/**/*.{ts,js}",
+      ["src/test/a.ts", "a/lib/b/spec/c/d.js"],
+      ["src/a.ts", "test/src/a.ts"],
+    ],
+    // One alternative is the start of another, so what the group takes depends on what follows it.
+    ["{a,ab}c", ["ac", "abc"], ["a", "ab", "abbc"]],
+    ["*{a,ab}*c", ["ac", "abc", "xabxc"], ["bc", "xa"]],
+    ["{a,ab}{b,bc}", ["ab", "abb", "abc", "abbc"], ["a", "abcb"]],
+  ])("groups of plain words: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    expect(matches.filter(path => !glob.match(path))).toEqual([]);
+    expect(others.filter(path => glob.match(path))).toEqual([]);
+  });
+
+  test("a group can be anywhere in a long pattern", () => {
+    for (let before = 50; before <= 270; before++) {
+      const any = Buffer.alloc(before, "?").toString();
+      const text = Buffer.alloc(before, "a").toString();
+      expect([
+        before,
+        new Glob(any + "+(+(a))+(b)").match(text + "abb"),
+        new Glob(any + "+(+(a))+(b)").match(text + "a"),
+        new Glob(any + "*(a|b)!(a|b)c").match(text + "abxc"),
+        new Glob(any + "*(a|b)!(a|b)c").match(text + "abx"),
+        new Glob(any + "{x*,[yz]}@(1|{2..4})").match(text + "xx3"),
+        new Glob(any + "{x*,[yz]}@(1|{2..4})").match(text + "z5"),
+      ]).toEqual([before, true, false, true, false, true, false]);
+    }
+  });
+
+  test.each([
+    ["+(a|b)", "ab", "", true],
+    ["+(a|b)", "ab", "c", false],
+    ["*(a|b)", "ab", "", true],
+    ["*(a|ab)", "ab", "", true],
+    ["*(a/)", "a/", "", true],
+    ["+(a*)", "ab", "", true],
+    ["+(a*)c", "ab", "", false],
+    ["*(*a)", "ba", "", true],
+    ["@(+(a|b)|c)", "ab", "", true],
+    ["*!(a|b)*!(a|b)", "1", "", true],
+    ["*!(a|b)*!(a|b)x", "1", "", false],
+    ["*{1..9}*{1..9}", "1", "", true],
+    ["*{1..9}*{1..9}x", "1", "", false],
+    ["*{1..9}*{1..9}", "a", "", false],
+    ["+(?)*{1..9}x", "1", "", false],
+    ["*!(.d).ts", "a", ".ts", true],
+    ["*!(.d).ts", "a", ".js", false],
+    ["!(*.d).ts", "a", ".ts", true],
+    ["!(*.d).ts", "a", ".d.ts", false],
+    ["**/{a,b}/**/{a,b}/x", "a/b/", "x", true],
+    ["**/{a,b}/**/{a,b}/x", "a/b/", "y", false],
+    ["*{a,b}*{a,b}c", "ab", "c", true],
+    ["*{a,b}*{a,b}c", "ab", "", false],
+    ["*{*a,*b}x", "ab", "", false],
+    ["{*a,*b}*x", "ab", "", false],
+    ["{src,lib}/**/{test,spec}/**/*.{ts,js}", "src/test/", "x.ts", true],
+    ["{src,lib}/**/{test,spec}/**/*.{ts,js}", "src/test/", "x.css", false],
+  ])("%s with 100 KB of %j and then %j is %p", (pattern, repeated, end, expected) => {
+    const length = 100_000 - (100_000 % repeated.length);
+    expect(new Glob(pattern).match(Buffer.alloc(length, repeated).toString() + end)).toBe(expected);
+  });
+
+  test("10,000 groups in a row", () => {
+    const glob = new Glob(Buffer.alloc(50_000, "{a,b}").toString());
+    expect(glob.match(Buffer.alloc(10_000, "ab").toString())).toBeTrue();
+    expect(glob.match(Buffer.alloc(10_001, "ab").toString())).toBeFalse();
+    expect(glob.match(Buffer.alloc(9_999, "ab").toString())).toBeFalse();
+    expect(glob.match(Buffer.alloc(9_999, "ab").toString() + "c")).toBeFalse();
+  });
+
+  // A `Glob` that is asked often, or about a long path, changes how it matches.
+  describe.each([
+    ["**/*.ts", /^(.*\/)?[^/]*\.ts$/],
+    ["*.{ts,tsx,js}", /^[^/]*\.(ts|tsx|js)$/],
+    ["{a,b,c}/**/*.{js,ts,tsx}", /^[abc]\/(.*\/)?[^/]*\.(js|ts|tsx)$/],
+    ["{src,a}/**", /^(src|a)\//],
+    ["**/*{f,.d}*.ts", /^(.*\/)?[^/]*(f|\.d)[^/]*\.ts$/],
+    ["**/!(*.d).ts", /^(.*\/)?(?![^/]*\.d\.ts$)[^/]*\.ts$/],
+    ["**/+([a-z]).@(ts|js)", /^(.*\/)?[a-z]+\.(ts|js)$/],
+    ["**/?.{ts,css}", /^(.*\/)?[^/]\.(ts|css)$/],
+    ["**/[!/]*.ts", /^(.*\/)?[^/]+\.ts$/],
+    ["!**/*.ts", /^(?!(.*\/)?[^/]*\.ts$)/],
+  ])("%s", (pattern, expected) => {
+    const deep = Buffer.alloc(600, "x/").toString();
+    const folders = ["", "a/", "b/", "c/x/", "d/", "src/", "src/a/b/", "a/é/", ".a/", "a/" + deep, deep];
+    const names = ["f.js", "f.ts", "f.tsx", "f.d.ts", "f.css", "ts", ".ts", "ü.ts"];
+    const paths = folders.flatMap(folder => names.map(name => folder + name));
+
+    test.each([
+      ["short paths first", paths],
+      ["long paths first", [...paths].reverse()],
+    ])("gives the same answers however often it's asked, %s", (_, paths) => {
+      const glob = new Glob(pattern);
+      const matches = paths.filter(path => expected.test(path));
+      expect(matches.length).toBeWithin(1, paths.length);
+      for (let round = 0; round < 3; round++) {
+        expect(paths.filter(path => glob.match(path))).toEqual(matches);
+      }
+    });
+  });
+});
+
+// `Glob#match` treats a segment that starts with `.` like any other. `bun lint` uses the same matcher with minimatch's rules for
+// the patterns in rule options: `import/order` reports the import in each of these files if the pattern matches its path.
+async function matchedLikeMinimatch(pattern: string, dot: boolean, paths: string[]) {
+  const group = `{ pattern = ${JSON.stringify(pattern)}, group = "builtin", position = "before", patternOptions = { dot = ${dot} } }`;
+  const code = (path: string) =>
+    `import fs from "fs";\nimport a from ${JSON.stringify(path)};\nexport default [fs, a];\n`;
+  using dir = tempDir("glob-dot-segments", {
+    "bunfig.toml": `[lint.rules]\n"import/order" = ["error", { pathGroups = [${group}], pathGroupsExcludedImportTypes = [] }]\n`,
+    ...Object.fromEntries(paths.map((path, index) => [`${index}.js`, code(path)])),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "lint", "-f", "json", "."],
+    env: { ...bunEnv, AGENT: "0", CLAUDECODE: undefined, GITHUB_ACTIONS: undefined },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (!stdout.startsWith("[")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+  const results: { filePath: string; messages: { ruleId: string }[] }[] = JSON.parse(stdout);
+  const reported = results.filter(it => it.messages.some(message => message.ruleId === "import/order"));
+  const indexes = reported.map(it => parseInt(basename(it.filePath)));
+  return paths.filter((_, index) => indexes.includes(index));
+}
+
+// The expected paths are what minimatch 10.2.6 matches.
+test.concurrent.each([
+  ["**/.", true, ["a/b/.", "a/.b//.", "/.//."], ["a/b/.", "a/.b//."]],
+  ["**/.", false, ["a/b/.", "a/.b//.", "/.//."], ["a/b/."]],
+  ["**/.ts", true, ["a/b/.ts", "a/.b/.ts", "a/./b/.ts", "a/../b/.ts"], ["a/b/.ts", "a/.b/.ts"]],
+  ["**/.ts", false, ["a/b/.ts", "a/.b/.ts", "a/./b/.ts", "a/../b/.ts"], ["a/b/.ts"]],
+  ["{**,a}/", true, ["a/", "b/", "/../"], ["a/", "b/"]],
+  ["{**,a}/", false, ["a/", "b/", "/../"], ["a/", "b/"]],
+  ["**/!(x).ts", true, ["a/b/c.ts", "a/b/.ts", "a/.b/c.ts", "a/../c.ts"], ["a/b/c.ts", "a/b/.ts", "a/.b/c.ts"]],
+  ["**/!(x).ts", false, ["a/b/c.ts", "a/b/.ts", "a/.b/c.ts", "a/../c.ts"], ["a/b/c.ts"]],
+])("dot segments: %s with dot = %p", async (pattern, dot, paths, expected) => {
+  expect(await matchedLikeMinimatch(pattern, dot, paths)).toEqual(expected);
 });
 
 function returnError(cb: () => any): Error | undefined {

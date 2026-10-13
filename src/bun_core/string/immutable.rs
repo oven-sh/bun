@@ -1483,7 +1483,7 @@ pub(crate) fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
         return Some(0);
     }
 
-    // PERF: scalar loop; consider portable_simd or a highway entry point if hot.
+    // PERF: scalar loop; consider a highway entry point if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127
             || char < 0x20
@@ -1907,7 +1907,7 @@ pub fn get_lines_in_text<const LINE_RANGE_COUNT: usize>(
 }
 
 pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
-    // PERF: scalar loop; consider portable_simd or a simdutf utf16 validator if hot.
+    // PERF: scalar loop; consider a highway kernel or a simdutf utf16 validator if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
             // Wrapping cast.

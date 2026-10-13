@@ -47,7 +47,8 @@ pub use config::{
     LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
 };
 pub use fixer::{
-    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, verify_and_fix,
+    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, is_redeclaration,
+    verify_and_fix,
 };
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use json_v8::parse as json_parse;
@@ -456,10 +457,10 @@ impl<S: RuleSet> Linter<S> {
     ) -> LintResult {
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
-        let mut fatal = parse_errors(file);
+        let (mut fatal, is_of_parser) = syntax::parse_errors_and_stage(file);
         if !fatal.is_empty() {
             let is_oxlint = file.language().is_oxlint;
-            if is_oxlint && syntax::is_flow(file) {
+            if is_oxlint && is_of_parser && syntax::is_flow(file) {
                 return LintResult::default();
             }
             // What oxc refuses, oxlint does not lint. tsgolint reads the file on its own, and oxlint, which has not seen the comments,
@@ -792,6 +793,9 @@ impl<S: RuleSet> Linter<S> {
         }
         let wants_places = options.wants_places || wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
+        for (it, reported) in problems.iter_mut().skip(before_js).zip(1..) {
+            it.reported = reported;
+        }
         file.sink.wants_help.set(options.wants_help);
         file.sink.drops_messages.set(!options.wants_messages);
         (file.sink.drops_texts_of_fixes).set(!options.wants_texts_of_fixes);
@@ -1022,6 +1026,9 @@ impl<S: RuleSet> Linter<S> {
             );
         }
 
+        if file.language().is_oxlint && (of_js > 0 || has_directives) {
+            crate::utils::sort::sort_by_key(&mut problems, |it| it.reported);
+        }
         if !has_directives {
             result.messages = problems;
         } else {
@@ -1111,6 +1118,7 @@ fn to_message(
             })
         }),
         constant_help: diagnostic.constant_help,
+        reported: 0,
     }
 }
 
@@ -1138,6 +1146,7 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
         },
         details: None,
         constant_help: None,
+        reported: 0,
     }
 }
 
@@ -1212,6 +1221,7 @@ impl ThrownError<'_> {
             not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
+            reported: 0,
         })
     }
 }

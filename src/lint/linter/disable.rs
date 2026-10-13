@@ -263,6 +263,7 @@ impl Input<'_, '_> {
             not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
+            reported: 0,
         }
     }
 

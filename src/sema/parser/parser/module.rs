@@ -464,6 +464,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     fn unusual_local_of_export_specifier(&mut self, specifier: &Specifier) {
         let local = specifier.property_name.unwrap_or(specifier.name);
+        if self.options.dialect.oxc && local.text.is_keyword_identifier() {
+            self.f.keyword_identifier_positions.push(local.pos);
+        }
         let is_reported = match self.is_read_as_by_other_parsers() {
             // It is a reference.
             true => local.token == T::String || local.token.is_reserved_word(),

@@ -94,7 +94,7 @@ impl<'a> Checks<'a, '_> {
     /// decorators, `accessor` and `import defer`, and it lets much pass that acorn does not.
     pub(super) fn early_errors_of_oxc(&mut self) {
         self.early_errors_of_oxc_parser();
-        self.regular_expressions();
+        self.as_parser(Self::regular_expressions);
         self.defaults_that_suspend(true);
         self.suspensions_in_static_blocks();
         self.jumps();
@@ -103,8 +103,8 @@ impl<'a> Checks<'a, '_> {
         let file = self.file;
         let (kinds, counts) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
         let has_none = |tag: ExprTag| counts.get(2 * tag as usize) == Some(&0);
-        // The bits from 16 on are for other checks.
-        let has_nothing_rare = !file.has_rare_syntax(0xffff & !rare::SUSPENDS_IN_PARAMETERS)
+        // The bits from 8 on are for other checks.
+        let has_nothing_rare = !file.has_rare_syntax(0x00ff & !rare::SUSPENDS_IN_PARAMETERS)
             && kinds.len() == file.hir.exprs.len()
             && has_none(ExprTag::Super)
             && has_none(ExprTag::NewTarget)
@@ -514,6 +514,9 @@ impl<'a> Checks<'a, '_> {
 
     /// `parseVar`, `parseForStatement`
     fn declarations(&mut self) {
+        if self.lacks(rare::ODD_DECLARATION | rare::ODD_LOOP_HEAD) {
+            return;
+        }
         let (file, hir, bound) = (self.file, &self.file.hir, &self.file.bound);
         for (i, raw) in hir.var_decls.iter().enumerate() {
             let is_pattern = || {
@@ -522,7 +525,9 @@ impl<'a> Checks<'a, '_> {
                     Some(hir::PatKind::Object(_) | hir::PatKind::Array(_))
                 )
             };
-            if raw.init.is_some()
+            // For oxc see `declarations_without_initializer`.
+            if self.is_oxc
+                || raw.init.is_some()
                 || raw.kind == VarKind::Let && !is_pattern()
                 || raw.kind == VarKind::Var && !is_pattern()
             {
@@ -564,7 +569,8 @@ impl<'a> Checks<'a, '_> {
             let Some(list) = it.as_var() else {
                 continue;
             };
-            if list.is_empty() {
+            // For oxc see `declaration_list`, here and below.
+            if list.is_empty() && !self.is_oxc {
                 self.unexpected(self.after_token(it.span().start));
             }
             if matches!(
@@ -585,7 +591,9 @@ impl<'a> Checks<'a, '_> {
                 };
                 let (Some(first), 1) = (list.first(), list.len()) else {
                     // It takes it for the head of a `for`, in which a `;` follows.
-                    self.unexpected(left.span().end);
+                    if !self.is_oxc {
+                        self.unexpected(left.span().end);
+                    }
                     continue;
                 };
                 // Allowed again since ES2017.
@@ -605,9 +613,16 @@ impl<'a> Checks<'a, '_> {
                         " loop variable declaration may not have an initializer",
                     ]
                     .concat();
-                    self.when_read_to(left.span().end, |checks| {
-                        checks.fail(left.span().start, message)
-                    });
+                    let stage = match tag == StmtTag::ForIn && first.var_kind() != VarKind::Var {
+                        true => Stage::Parser,
+                        false => Stage::Semantic,
+                    };
+                    match self.is_oxc {
+                        true => self.report(SyntaxError::of_oxc(left.span(), message).stage(stage)),
+                        false => self.when_read_to(left.span().end, |checks| {
+                            checks.fail(left.span().start, message)
+                        }),
+                    }
                 }
             }
         }
@@ -807,7 +822,10 @@ impl<'a> Checks<'a, '_> {
         if !self.is_oxc {
             return self.unexpected(it.span().start);
         }
-        let message = "Lexical declaration cannot appear in a single-statement context";
+        let message = match it.flags().contains(Flags::AMBIENT) {
+            true => "Declaration cannot appear in a single-statement context",
+            false => "Lexical declaration cannot appear in a single-statement context",
+        };
         self.report(
             SyntaxError::of_oxc(it.span(), message)
                 .help("Wrap this declaration in a block statement")
@@ -966,6 +984,12 @@ impl<'a> Checks<'a, '_> {
             }
             if !is_target || self.is_babel && self.token_at(name) != b"target" {
                 self.fail(name, of_new);
+                continue;
+            }
+            if self.token_at(name) != b"target" && self.is_oxc {
+                let message = "Keywords cannot contain escape characters";
+                let name = self.token_span(name);
+                self.report(SyntaxError::of_oxc(name, message).stage(Stage::Parser));
                 continue;
             }
             if self.token_at(name) != b"target" {
@@ -1415,6 +1439,7 @@ impl<'a> Checks<'a, '_> {
     /// A `#a` has to be declared by a class around it.
     fn private_names(&mut self) {
         let file = self.file;
+        let is_oxc = self.is_oxc;
         if self.lacks(rare::ODD_PRIVATE_NAME) || !strings::contains_char(file.text(), b'#') {
             return;
         }
@@ -1425,8 +1450,13 @@ impl<'a> Checks<'a, '_> {
             tops.outward(node).any(|it| {
                 let from = std::mem::replace(&mut inside, it);
                 match it {
-                    // What a class extends is outside of it.
-                    Node::Class(class) if class.extends().map(Node::Expr) != Some(from) => {
+                    // What a class extends is outside of it. For oxc its decorators are, too.
+                    Node::Class(class)
+                        if match is_oxc {
+                            true => matches!(from, Node::Member(_)),
+                            false => class.extends().map(Node::Expr) != Some(from),
+                        } =>
+                    {
                         let private = |member: Member<'a>| match member.key().map(|it| it.kind()) {
                             Some(KeyKind::Private(declared)) => Some(declared.bytes()),
                             _ => None,
@@ -1463,8 +1493,14 @@ impl<'a> Checks<'a, '_> {
                 }
             } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
                 // Noticed at the end of the outermost class.
+                let mut inside = Node::Expr(it);
                 let outermost = (self.tops.outward(Node::Expr(it)))
-                    .filter(|it| matches!(it, Node::Class(_)))
+                    .filter(|&outer| {
+                        let from = std::mem::replace(&mut inside, outer);
+                        // oxc: what a class extends and its decorators are outside of it.
+                        matches!(outer, Node::Class(_))
+                            && (!is_oxc || matches!(from, Node::Member(_)))
+                    })
                     .last();
                 if self.is_oxc && outermost.is_none() {
                     let message = [
@@ -1491,6 +1527,20 @@ impl<'a> Checks<'a, '_> {
             if !is_left_of_in {
                 self.unexpected(it.span().start);
             } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
+                let mut inside = Node::Expr(it);
+                let is_in_class_body = self.tops.outward(Node::Expr(it)).any(|outer| {
+                    let from = std::mem::replace(&mut inside, outer);
+                    matches!(outer, Node::Class(_)) && matches!(from, Node::Member(_))
+                });
+                if is_oxc && !is_in_class_body {
+                    let message = [
+                        b"Private identifier '",
+                        name.bytes(),
+                        b"' is not allowed outside class bodies",
+                    ];
+                    self.report(SyntaxError::of_oxc(it.span(), message.concat()));
+                    continue;
+                }
                 self.fail(it.span().start, undeclared(name.bytes()));
             }
         }
@@ -1572,7 +1622,7 @@ impl<'a> Checks<'a, '_> {
                             let again = key.span(file);
                             let mut error =
                                 self.redeclared("Identifier", name.bytes(), first, again);
-                            if was_static != member.is_static() {
+                            if was_static != member.is_static() && !file.is_javascript() {
                                 error.message = [
                                     b"Duplicate identifier `",
                                     name.bytes(),
@@ -1603,7 +1653,14 @@ impl<'a> Checks<'a, '_> {
             let (Some(keyword), Some(func)) = (member.constructor_keyword(), member.func()) else {
                 return;
             };
-            if member.is_constructor() && func.is_generator() {
+            if member.is_constructor() && self.is_oxc {
+                if func.is_async() {
+                    self.fail(keyword.start(), "Constructor can't be an async method");
+                }
+                if func.is_generator() {
+                    self.fail(keyword.start(), "Constructor can't be a generator");
+                }
+            } else if member.is_constructor() && func.is_generator() {
                 self.fail(keyword.start(), "Constructor can't be a generator");
             } else if member.is_constructor() && func.is_async() {
                 self.fail(keyword.start(), "Constructor can't be an async method");
@@ -1634,6 +1691,14 @@ impl<'a> Checks<'a, '_> {
             // Not a constructor.
         } else if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter) {
             self.fail(start, "Constructor can't have get/set modifier");
+        } else if self.is_oxc {
+            // It has both to say about `async *constructor() {}`.
+            if member.func().is_some_and(Func::is_async) {
+                self.fail(start, "Constructor can't be an async method");
+            }
+            if member.func().is_some_and(Func::is_generator) {
+                self.fail(start, "Constructor can't be a generator");
+            }
         } else if member.func().is_some_and(Func::is_generator) {
             self.fail(start, "Constructor can't be a generator");
         } else if member.func().is_some_and(Func::is_async) {
@@ -1752,7 +1817,8 @@ impl<'a> Checks<'a, '_> {
                     self.report(
                         SyntaxError::of_oxc(value.span(), "Invalid assignment in object literal")
                             .help(help)
-                            .stage(Stage::Parser),
+                            .stage(Stage::Parser)
+                            .noticed_at(u32::MAX),
                     );
                     continue;
                 }

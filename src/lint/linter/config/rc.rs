@@ -19,7 +19,9 @@ use super::{Config, ConfigObject, Pattern, presets, shape};
 use crate::context::Severity;
 use crate::fix::SuggestionKind;
 use crate::js_plugin;
-use crate::linter::registry::{Registry, oxlint_rule_key, parse_rule_id, plugin_of_oxlint};
+use crate::linter::registry::{
+    Registry, is_oxlint_rule_key, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
+};
 use crate::linter::resolved::find_js_rule;
 use crate::options::Json;
 use crate::paths;
@@ -241,9 +243,41 @@ fn with_eslint_severities(rules: &Json) -> Json {
     Json::Object(entries.collect())
 }
 
+/// The rule `name` of `plugin`, which is a name that [`plugin_of_oxlint`] gives, as oxlint calls it where it refuses its options.
+fn name_in_refusal(plugin: &[u8], name: &[u8]) -> Vec<u8> {
+    match plugin {
+        b"eslint" => name.to_vec(),
+        b"jsx-a11y" => [b"jsx_a11y/", name].concat(),
+        b"react-perf" => [b"react_perf/", name].concat(),
+        plugin => [plugin, b"/", name].concat(),
+    }
+}
+
+/// oxlint's refusal of options for a rule that takes none, whatever they are and even if the rule is off. `key`: as
+/// [`oxlint_rule_key`] writes the rule. `name`: of [`name_in_refusal`].
+fn refuse_needless_options(key: &[u8], name: &[u8], setting: &Json) -> Result<(), ConfigError> {
+    let takes_options = || {
+        fields::FIELDS
+            .binary_search_by(|it| it.0.as_bytes().cmp(key))
+            .is_ok()
+            || has_word(fields::OTHERS_WITH_OPTIONS, key)
+    };
+    if setting.as_array().is_none_or(|it| it.len() < 2)
+        || !is_oxlint_rule_key(key)
+        || takes_options()
+    {
+        return Ok(());
+    }
+    Err(ConfigError::new(&[
+        b"Invalid configuration for rule `",
+        name,
+        b"`:\n  This rule does not accept configuration options.",
+    ]))
+}
+
 /// oxlint's refusal of a property that the rule `key` does not know, in the words of serde. `key`: as [`oxlint_rule_key`] writes the
-/// rule. `setting`: what the file says about it.
-fn refuse_unknown_fields(key: &[u8], setting: &Json) -> Result<(), ConfigError> {
+/// rule. `name`: of [`name_in_refusal`]. `setting`: what the file says about it.
+fn refuse_unknown_fields(key: &[u8], name: &[u8], setting: &Json) -> Result<(), ConfigError> {
     let options = setting.as_array().unwrap_or_default().iter().skip(1);
     for (at, option) in options.take(2).enumerate() {
         let place = (key, at as u8);
@@ -267,7 +301,7 @@ fn refuse_unknown_fields(key: &[u8], setting: &Json) -> Result<(), ConfigError> 
         };
         return Err(ConfigError::new(&[
             b"Invalid configuration for rule `",
-            key,
+            name,
             b"`:\n  unknown field `",
             unknown,
             b"`, ",
@@ -277,8 +311,8 @@ fn refuse_unknown_fields(key: &[u8], setting: &Json) -> Result<(), ConfigError> 
     Ok(())
 }
 
-/// oxlint's refusal of a value that `no-unused-vars` doesn't know for `vars`, `args` or `caughtErrors`. `id`: the rule as the
-/// file names it.
+/// oxlint's refusal of a value that `no-unused-vars` doesn't know for `vars`, `args` or `caughtErrors`. `id`: of
+/// [`name_in_refusal`].
 fn refuse_unknown_values(id: &[u8], setting: &Json) -> Result<(), ConfigError> {
     let refusal = |name: &str, why: &[&[u8]]| {
         let start: [&[u8]; 5] = [
@@ -574,9 +608,11 @@ impl Rc<'_, '_> {
                     if *plugin == *b"eslint"
                         || plugins.iter().any(|it| plugin_of_oxlint(it) == plugin)
                     {
-                        refuse_unknown_fields(&key, setting)?;
+                        let name = name_in_refusal(&plugin, parse_rule_id(&key).1);
+                        refuse_needless_options(&key, &name, setting)?;
+                        refuse_unknown_fields(&key, &name, setting)?;
                         if key == b"no-unused-vars" {
-                            refuse_unknown_values(id, setting)?;
+                            refuse_unknown_values(&name, setting)?;
                         }
                     }
                     *id = key;

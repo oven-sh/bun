@@ -139,6 +139,9 @@ pub struct LanguageOptions {
     /// variable of the function around; the name in a closing tag of JSX is a reference. Not with a plugin in JavaScript:
     /// oxlint hands those the scopes of typescript-eslint.
     pub has_scopes_of_oxc: bool,
+    /// With a configuration of oxlint in which no rule makes the variables of every file: the parser looks out for a name that may
+    /// be declared twice, which is an error for oxlint. See `Dialect::oxc_names`.
+    pub parser_tracks_names: bool,
     /// The configuration is one of ESLint 8: what only that has a say about. There `/* eslint-env mocha */` defines the variables of
     /// an environment, and espree reads the edition of the language that is configured and no later one.
     pub eslint_8: Option<Arc<crate::linter::config::Eslint8>>,
@@ -392,6 +395,7 @@ impl LanguageOptions {
             is_oxlint: false,
             stands_alone: false,
             has_scopes_of_oxc: false,
+            parser_tracks_names: false,
             eslint_8: None,
             eslint_major: 10,
             without_modules: false,
@@ -459,6 +463,7 @@ impl LanguageOptions {
         ParseOptions {
             dialect: Dialect {
                 oxc: !self.refuses_what_parser_refuses,
+                oxc_names: !self.refuses_what_parser_refuses && self.parser_tracks_names,
                 ..match self.parser {
                     Parser::Espree => Dialect::espree(is_script),
                     Parser::TypeScript | Parser::Other => Dialect::typescript_estree(is_script),
@@ -496,6 +501,7 @@ impl Default for LanguageOptions {
             is_oxlint: false,
             stands_alone: false,
             has_scopes_of_oxc: false,
+            parser_tracks_names: false,
             eslint_8: None,
             eslint_major: 10,
             without_modules: false,

@@ -430,6 +430,9 @@ pub struct Dialect {
     /// `await` is a name there, and `<!--` and `-->` start comments, in TypeScript too. An expression in a type, like a
     /// computed key, is in the await and yield context of the code around the type.
     pub oxc: bool,
+    /// With `oxc`: the parser says whether a name may be declared twice in a scope (`rare::MAY_REDECLARE`). It is for a caller
+    /// that would make the scopes of the file for nothing else.
+    pub oxc_names: bool,
 }
 
 impl Dialect {
@@ -442,6 +445,7 @@ impl Dialect {
             script,
             flow: false,
             oxc: false,
+            oxc_names: false,
         }
     }
 

@@ -98,7 +98,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             flags |= Flags::GENERATOR;
         }
         // Its name is read in the context of its body.
-        let saved = self.enter_context(signature_context(flags), ctx::YIELD | ctx::AWAIT);
+        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
+        let saved = self.enter_context(signature_context(flags), cleared);
         let (mut name, mut name_pos) = (Atom::NONE, start);
         if self.is_binding_identifier() {
             (name, name_pos) = (self.lx.atom, self.pos());
@@ -172,7 +173,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // `parseFunctionBlockOrSemicolon`
         let (body, open) = match self.token() {
             T::OpenBrace => {
-                self.declared.parameters = (type_params, params);
+                self.note_parameters(type_params, params);
                 self.function_block(signature_context(flags))
             }
             // `parseBlock` without its `{`
@@ -232,9 +233,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.token() == T::String {
             self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
         }
-        let outer = self.open_function();
+        self.open_function();
         let list = self.statements_until_close_brace();
-        self.close_scope(outer);
+        self.close_scope();
         self.context = saved;
         self.expect_matching((T::OpenBrace, T::CloseBrace), open_at);
         if self.token() == T::Equals {
@@ -770,7 +771,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 return false;
             }
             p.next();
-            p.token() == T::EqualsGreaterThan && !p.newline_before()
+            // oxc takes the arrow function, and reports the line break.
+            p.token() == T::EqualsGreaterThan && (!p.newline_before() || p.options.dialect.oxc)
         });
         if !is_arrow {
             return None;
@@ -932,6 +934,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return None;
         }
         let last = self.token();
+        if last == T::EqualsGreaterThan && self.newline_before() && self.is_for_oxc() {
+            oxc::arrow_after_line_break(&mut self.f.diagnostics, self.lx.start);
+        }
         if last != T::EqualsGreaterThan && !self.recovers() {
             // Before a `{` TypeScript takes it for an arrow function whose `=>` is missing.
             if last == T::OpenBrace && !self.has_failed() && !self.is_ecmascript {
@@ -952,7 +957,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let (body, open) = match last {
             T::EqualsGreaterThan | T::OpenBrace => {
-                self.declared.parameters = (type_params, params);
+                if self.token() == T::OpenBrace {
+                    self.note_parameters(type_params, params);
+                }
                 self.arrow_function_body(flags, allow_return_type)
             }
             // `parseIdentifier`
@@ -1041,7 +1048,6 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         {
             return self.function_block(context);
         }
-        self.declared.parameters = Default::default();
         let saved = self.enter_context(context, ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL);
         let body = self.assignment_expression_or_higher(allow_return_type);
         self.context = saved;
@@ -1068,12 +1074,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             loc: TextRange { pos: full, end },
         });
         let anchor = self.pos();
+        if self.newline_before() && self.is_for_oxc() {
+            oxc::arrow_after_line_break(&mut self.f.diagnostics, anchor);
+        }
         self.next();
         let flags = match is_async {
             true => Flags::ASYNC,
             false => Flags::empty(),
         };
-        self.declared.parameters = (Span::EMPTY, Span::new(param.0, 1));
+        if self.token() == T::OpenBrace {
+            self.note_parameters(Span::EMPTY, Span::new(param.0, 1));
+        }
         let (body, open) = self.arrow_function_body(flags, allow_return_type);
         let func = self.f.add_fn(Func {
             kind: FnKind::Arrow,

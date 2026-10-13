@@ -1073,6 +1073,38 @@ impl<'a> File<'a> {
         Scope::new(self, ScopeId(0))
     }
 
+    /// The symbols whose [`Symbol::declaration_count`] is more than 1. It looks at no other.
+    pub(crate) fn symbols_declared_twice(&'a self) -> impl Iterator<Item = Symbol<'a>> + 'a {
+        let several = self.variables().several.iter();
+        several.map(move |&index| Symbol::at(self, index))
+    }
+
+    /// Whether a block has a declaration of what is a symbol of the function around: a `var`, or a function, as it is for oxc
+    /// outside strict code.
+    pub(crate) fn has_names_that_leave_blocks(&'a self) -> bool {
+        self.variables().has_names_that_leave_blocks
+    }
+
+    /// The symbols of the scopes that hold no `var`, each with the scope, as far as another symbol of the file has the same name.
+    /// `only_of_catch`: only the parameters of `catch` clauses.
+    pub(crate) fn symbols_of_blocks(
+        &'a self,
+        only_of_catch: bool,
+    ) -> impl Iterator<Item = (Scope<'a>, Symbol<'a>)> {
+        let (scopes, variables) = (&self.scope_tree().scopes, self.variables());
+        let blocks = (scopes.iter().zip(0u32..)).filter(move |(it, id)| {
+            it.variable_scope != *id && (!only_of_catch || it.kind == ScopeKind::Catch)
+        });
+        blocks.flat_map(move |(_, id)| {
+            let scope = Scope::new(self, ScopeId(id));
+            let shares_its_name = move |it: &usize| {
+                (variables.list.get(*it)).is_some_and(|it| variables.shares_its_name(it))
+            };
+            let symbols = variables.range_of_scope(id).filter(shares_its_name);
+            symbols.map(move |it| (scope, Symbol::at(self, it as u32)))
+        })
+    }
+
     /// The scope that a name written at `pos` is declared in.
     pub(crate) fn scope_at(&'a self, pos: u32) -> Scope<'a> {
         Scope::new(self, ScopeId(self.scope_tree().scope_at(pos)))

@@ -1052,6 +1052,8 @@ pub mod rare {
     pub const JSDOC_TYPE: u32 = 1 << 9;
     /// There is a type predicate: `a is T`, `asserts a`.
     pub const TYPE_PREDICATE: u32 = 1 << 10;
+    /// A declaration in the head of a `for-in` or a `for-of` has an initializer or a type.
+    pub const ODD_LOOP_HEAD: u32 = 1 << 11;
     /// Something other than a plain name or member is assigned to, incremented or decremented (`[a] = b`, `a?.b = 1`,
     /// `a()++`), or the head of a `for-in` / `for-of` is an expression.
     pub const ODD_TARGET: u32 = 1 << 16;
@@ -1064,6 +1066,9 @@ pub mod rare {
     pub const SUSPENDS_IN_STATIC_BLOCK: u32 = 1 << 24;
     /// `await using a = b`
     pub const AWAIT_USING: u32 = 1 << 25;
+    /// A list of variable declarations is empty or declares with `using`, a `const` or a pattern in it has no initializer and
+    /// isn't ambient, or the head of a `for-in` / `for-of` doesn't declare exactly one variable.
+    pub const ODD_DECLARATION: u32 = 1 << 26;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

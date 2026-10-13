@@ -3566,7 +3566,7 @@ export default {
               },
               "Program:exit"(node) {
                 const { scopes } = context.sourceCode.scopeManager;
-                const names = scopes.flatMap(scope => (scope.type === "global" ? [] : scope.variables.map(it => it.name)));
+                const names = scopes.flatMap(scope => scope.variables.filter(it => it.defs.length > 0).map(it => it.name));
                 const resolved = scopes.flatMap(scope => scope.references.map(it => it.resolved?.name ?? null));
                 const message = JSON.stringify({ statements: node.body.map(it => it.type), segments, names, resolved });
                 context.report({ node, message });
@@ -3588,6 +3588,90 @@ export default {
           resolved: ["v0", null, ...names.slice(1).flatMap((name, i) => [name, `v${i}`]), "v11", "v0"],
         },
       ]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "with an oxlint config the scopes follow the kind of file: strict scopes of TypeScript, and arguments in CommonJS",
+    async () => {
+      const plugin = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
+        Program(node) {
+          const said = context.sourceCode.scopeManager.scopes.map(scope => {
+            const own = scope.variables.filter(it => it.defs.length > 0 || it.name === "arguments");
+            const names = own.map(it => it.name + ":" + it.defs.length + ":" + it.references.length);
+            return scope.type + (scope.isStrict ? "!" : "") + "[" + names + "]";
+          });
+          context.report({ node, message: said.join(" ") });
+        },
+      }) } } };`;
+      const types = [
+        "interface I<T> { m(x: T): void }",
+        "type C<T> = T extends infer U ? U : never;",
+        "type M<T> = { [K in keyof T]: T[K] };",
+        "enum E { A }",
+        "namespace N { function f() {} }",
+        "function g() {}",
+        "",
+      ].join("\n");
+      const declared = "I:1:0,C:1:0,M:1:0,E:1:0,N:1:0,g:1:0";
+      const inner =
+        "type![T:1:1] functionType![x:1:0] type![T:1:1] conditionalType![U:1:1] type![T:1:2] mappedType![K:1:1] tsEnum![A:1:0] tsModule![f:1:0] function![arguments:0:0]";
+      // What oxlint 1.87 says.
+      const expected = {
+        "types.ts": `global[${declared}] ${inner} function[arguments:0:0]`,
+        "types.cts": `global[] function[arguments:0:0,${declared}] ${inner} function[arguments:0:0]`,
+        "types.mts": `global[] module![${declared}] ${inner} function![arguments:0:0]`,
+        "declared.cjs": "global[] function[arguments:1:1]",
+        "declared.js": "global[arguments:1:1]",
+        "implicit.cjs": "global[] function[arguments:0:1,first:1:0]",
+      };
+      const files = {
+        "plugin.mjs": plugin,
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "p/rule": "error" } }),
+        "types.ts": types,
+        "types.cts": types,
+        "types.mts": types,
+        "declared.cjs": "var arguments;\narguments;\n",
+        "declared.js": "var arguments;\narguments;\n",
+        "implicit.cjs": "var first;\narguments;\n",
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json"]);
+      const said = JSON.parse(raw).diagnostics.map((it: { filename: string; message: string }) => [
+        it.filename,
+        it.message,
+      ]);
+      expect(Object.fromEntries(said)).toEqual(expected);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "with an oxlint config markVariableAsUsed marks the variable it names in every kind of file",
+    async () => {
+      const plugin = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
+        Program(node) {
+          context.sourceCode.markVariableAsUsed("first", node);
+        },
+      }) } } };`;
+      const code = "var first = 1;\nvar second = 2;\n";
+      const files = {
+        "plugin.mjs": plugin,
+        ".oxlintrc.json": oxlintrc({
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "p/rule": "error", "no-unused-vars": "error" },
+        }),
+        "a.cjs": code,
+        "b.js": code,
+        "c.mjs": code,
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json"]);
+      const said = JSON.parse(raw).diagnostics.map(
+        (it: { filename: string; message: string }) => `${it.filename} ${it.message.match(/'(\w+)'/)?.[1]}`,
+      );
+      expect(said.sort()).toEqual(["a.cjs second", "b.js second", "c.mjs second"]);
       expect(exitCode).toBe(1);
     },
     timeout,

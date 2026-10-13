@@ -27,6 +27,7 @@ pub(crate) struct Prettier<'e> {
     cwd: Vec<u8>,
     /// What is the same for all files, as `formatWithPrettier` in `worker/prettier.js` reads it.
     run: Vec<(Vec<u8>, Json)>,
+    once: fs::Written,
 }
 
 impl<'e> Prettier<'e> {
@@ -70,6 +71,7 @@ impl<'e> Prettier<'e> {
             host,
             cwd: environment.cwd.clone(),
             run,
+            once: fs::Written::default(),
         }
     }
 
@@ -100,7 +102,7 @@ impl<'e> Prettier<'e> {
             return Ok(false);
         }
         if writes {
-            fs::write_atomically(&self.cwd, path, &formatted)
+            fs::write_atomically(&self.once, &self.cwd, path, &formatted)
                 .map_err(|why| fail(b"Unable to write", &why))?;
         }
         Ok(true)

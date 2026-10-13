@@ -1354,6 +1354,168 @@ pub(super) fn enum_members(f: &mut FileBuilder, members: &[EnumMember]) {
     }
 }
 
+// ───────────────────────────── expressions ─────────────────────────────
+
+/// `a ?? b || c`, from its start to its end.
+#[cold]
+#[inline(never)]
+pub(super) fn mixed_coalesce(errors: &mut Errors, at: (u32, u32)) {
+    let message = "Logical expressions and coalesce expressions cannot be mixed";
+    let found = error(0, at, message, "Wrap either expression by parentheses");
+    errors.push(noticed_at(found, at.1));
+}
+
+/// A `=>` at `at`, at the start of a line.
+#[cold]
+#[inline(never)]
+pub(super) fn arrow_after_line_break(errors: &mut Errors, at: u32) {
+    let message = "Line terminator not permitted before arrow";
+    let help = "Remove the line break before here";
+    errors.push(error(0, (at, at + 2), message, help));
+}
+
+/// `throw` at `keyword`, and the next token on another line.
+#[cold]
+#[inline(never)]
+pub(super) fn line_break_after_throw(errors: &mut Errors, keyword: u32, next: (u32, u32)) {
+    let found = error(0, (keyword, keyword + 5), "Illegal newline after throw", "");
+    errors.push(with_labels(
+        found,
+        "throw starts here",
+        next,
+        "A newline is not expected here",
+    ));
+}
+
+/// Each `return` in the static block with this body that is in no function in it.
+pub(super) fn returns_in_static_block(f: &mut FileBuilder, body: FnBody) {
+    let FnBody::Block(body) = body else {
+        return;
+    };
+    let (stmts, ids, errors) = (&f.stmts, &f.ids, &mut f.diagnostics);
+    let list = |it: IdList<StmtId>| ids.get(it.range()).unwrap_or_default();
+    let mut left: Vec<u32> = list(body).to_vec();
+    while let Some(id) = left.pop() {
+        // An `if` without `else` has none.
+        let Some(it) = stmts.get(id as usize) else {
+            continue;
+        };
+        match it.kind {
+            StmtKind::Return(_) => {
+                let message = "A 'return' statement cannot be used inside a class static block.";
+                errors.push(error(18041, (it.start, it.start + 6), message, ""));
+            }
+            StmtKind::Block(inner) => left.extend_from_slice(list(inner)),
+            StmtKind::If { yes, no, .. } => left.extend([yes.0, no.0]),
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+            | StmtKind::While { body, .. }
+            | StmtKind::DoWhile { body, .. }
+            | StmtKind::Labeled { body, .. } => left.push(body.0),
+            StmtKind::Try {
+                block,
+                handler,
+                finalizer,
+                ..
+            } => left.extend([block.0, handler.0, finalizer.0]),
+            StmtKind::Switch { cases, .. } => {
+                let cases = f.cases.get(cases.range()).unwrap_or_default();
+                cases
+                    .iter()
+                    .for_each(|case| left.extend_from_slice(list(case.body)));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `new import("a")`: from the `import` to the end of the whole.
+#[cold]
+#[inline(never)]
+pub(super) fn new_import(errors: &mut Errors, at: (u32, u32)) {
+    let message = "Cannot use new with dynamic import";
+    let found = error(0, at, message, "Wrap this with parenthesis");
+    errors.push(noticed_at(found, at.1));
+}
+
+/// The arguments of the `import(..)` that starts at `start` and whose `)` is at `close`. oxc's parser gives up at each of these.
+pub(super) fn import_call(
+    f: &mut FileBuilder,
+    src: &[u8],
+    start: u32,
+    args: IdList<ExprId>,
+    close: u32,
+) {
+    let (exprs, errors) = (&f.exprs, &mut f.diagnostics);
+    let args = f.ids.get(args.range()).unwrap_or_default();
+    let mut written = args.iter().filter_map(|&it| exprs.get(it as usize));
+    let (first, second) = (written.next(), written.next());
+    if matches!(
+        first,
+        None | Some(Expr {
+            kind: ExprKind::Missing,
+            ..
+        })
+    ) {
+        let message = "import() requires a specifier.";
+        return errors.push(noticed_at(fatal((start, close + 1), message), close));
+    }
+    let is_spread = |it: &&Expr| matches!(it.kind, ExprKind::Spread(_));
+    if let Some(spread) = [first, second].into_iter().flatten().find(is_spread) {
+        let message = "Argument of dynamic import cannot be a spread element.";
+        return errors.push(Diagnostic {
+            code: 1325,
+            ..fatal((spread.pos, spread.pos + 3), message)
+        });
+    }
+    if let (Some(&second), true) = (args.get(1), args.len() > 2) {
+        let message = "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments";
+        let end = outer_span(f, ExprId(second)).map_or(close, |it| it.1);
+        let comma = skip_trivia(src, end as usize) as u32;
+        let found = noticed_at(fatal((start, comma + 1), message), comma);
+        f.diagnostics.push(found);
+    }
+}
+
+/// A pattern without an initializer, where nothing else gives it a value: `let [a];`.
+#[cold]
+#[inline(never)]
+pub(super) fn pattern_without_initializer(f: &mut FileBuilder, pattern: PatId) {
+    let Some(it) = f.pats.get(pattern.idx()) else {
+        return;
+    };
+    let message = "Missing initializer in destructuring declaration";
+    let help = "Add an initializer (e.g. ` = undefined`) here";
+    f.diagnostics
+        .push(error(0, (it.pos, it.end), message, help));
+}
+
+/// `for (let.a of b)`: `at` is the `let.a`.
+#[cold]
+#[inline(never)]
+pub(super) fn let_before_of(errors: &mut Errors, at: (u32, u32)) {
+    let message = "The left-hand side of a `for...of` statement may not start with `let`";
+    errors.push(noticed_at(error(0, at, message, ""), at.1));
+}
+
+/// A piece of a template without a tag that has an invalid escape: `at` is what is between its delimiters.
+#[cold]
+#[inline(never)]
+pub(super) fn bad_escape_in_template(errors: &mut Errors, at: (u32, u32)) {
+    let message = "Bad escape sequence in untagged template literal";
+    errors.push(error(0, at, message, ""));
+}
+
+/// `for (async of a)`: the `async` is at `at`.
+#[cold]
+#[inline(never)]
+pub(super) fn async_before_of(errors: &mut Errors, at: u32) {
+    let message = "The left-hand side of a `for...of` statement may not be `async`";
+    let help = "Did you mean to use a for await...of statement?";
+    errors.push(error(0, (at, at + 5), message, help));
+}
+
 // ───────────────────────────── types ─────────────────────────────
 
 /// The modifiers of a member of an interface or of a type literal that is no index signature.
@@ -1645,6 +1807,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     pub(super) fn reports_like_oxc(&self) -> bool {
         self.is_typescript_for_oxc
+    }
+
+    /// The same for what no other check has in JavaScript.
+    #[inline(always)]
+    pub(super) fn is_for_oxc(&self) -> bool {
+        self.options.dialect.oxc
     }
 
     #[inline(always)]

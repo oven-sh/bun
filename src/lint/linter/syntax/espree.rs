@@ -104,6 +104,9 @@ const REFUSED_BY_BABEL: [&str; 48] = [
 
 /// Where the parser of oxlint, which takes a JavaScript file for JavaScript, stumbles over TypeScript. It has other words for it.
 pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    if file.hir.diagnostics.is_empty() {
+        return None;
+    }
     let mut checks = Checks {
         file,
         candidates: None,
@@ -456,18 +459,23 @@ pub(super) fn first_error<'a>(
 }
 
 /// `using a = b;` at the top level of a script, in the words of OXC. What CommonJS has is in a function.
-pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
+    if !file.has_rare_syntax(hir::rare::ODD_DECLARATION) {
+        return Vec::new();
+    }
     let is_using = |it: &Stmt| {
         let first = it.as_var().and_then(|list| list.first());
         first.is_some_and(|it| it.var_kind() == VarKind::Using)
     };
-    let first = file.body().iter().find(is_using)?;
-    (is_script(file) && !file.is_declaration_file()).then(|| SyntaxError {
-        at: first.span().start,
-        end: first.span().end,
-        message: b"'using' declarations are not allowed at the top level of a script".to_vec(),
-        ..SyntaxError::default()
+    let mut all = file.body().iter().filter(is_using).peekable();
+    if all.peek().is_none() || !is_script(file) || file.is_declaration_file() {
+        return Vec::new();
+    }
+    all.map(|it| {
+        let message = "'using' declarations are not allowed at the top level of a script";
+        SyntaxError::of_oxc(it.span(), message).help("Wrap this code in a block or use a module")
     })
+    .collect()
 }
 
 /// `export = a` at the top level of a file that exports something else, in the words of OXC.
@@ -524,21 +532,24 @@ pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<Synta
 }
 
 /// `with` where the code is strict for OXC, and anywhere in TypeScript, in its words.
-pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if file.hir.with_bodies.is_empty() {
-        return None;
+        return Vec::new();
     }
     let is_refused = |it: &Stmt<'a>| {
         matches!(it.kind(), StmtKind::With { .. })
             && (!file.is_javascript() || is_strict_mode(Node::Stmt(*it).scope(), file))
     };
     let refused = file.stmts_of_kind(StmtTag::Block).filter(is_refused);
-    Some(SyntaxError {
-        at: refused.map(|it| it.span().start).min()?,
-        end: 0,
-        message: b"'with' statements are not allowed".to_vec(),
-        ..SyntaxError::default()
-    })
+    refused
+        .map(|it| {
+            let start = it.span().start;
+            let keyword = Span::new(start, start + "with".len() as u32);
+            // It is reported on the way out of the statement.
+            SyntaxError::of_oxc(keyword, "'with' statements are not allowed")
+                .noticed_at(it.span().end)
+        })
+        .collect()
 }
 
 /// Those of the checks of [`first_error`] that OXC makes too, for a file that TypeScript's parser has nothing to say about: see
@@ -571,17 +582,6 @@ pub(super) fn errors_of_oxc<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     });
     let mut checks = checks_of_oxc(file, candidates.as_ref());
     checks.early_errors_of_oxc();
-    checks.all
-}
-
-/// Names that are keywords where they are, `eval` and `arguments` where they are written to, in JavaScript. In TypeScript OXC lets
-/// them pass in some of what is only declared, which acorn's checks know nothing about.
-pub(super) fn keywords_as_names_of_oxc<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
-    if !file.is_javascript() || file.hir.keyword_identifier_positions.is_empty() {
-        return Vec::new();
-    }
-    let mut checks = checks_of_oxc(file, None);
-    checks.keywords_as_names();
     checks.all
 }
 
@@ -1248,10 +1248,40 @@ impl<'a, 'c> Checks<'a, 'c> {
                             true => is_strict_mode(scope, file),
                             false => scope.is_strict(),
                         });
-            if is_strict {
+            if is_strict && self.is_oxc {
+                self.octal_of_oxc(it);
+            } else if is_strict {
                 self.error_of_parser(Some(it), it.start);
             }
         }
+    }
+
+    /// An octal literal or escape in strict code, in the words of oxc, which labels the whole literal.
+    fn octal_of_oxc(&mut self, it: &Diagnostic) {
+        let hir = &self.file.hir;
+        let has = |pos: u32, end: u32| pos <= it.start && it.start < end;
+        // The innermost of what it is in.
+        let expression = hir.exprs.iter().filter(|e| has(e.pos, e.end));
+        let expression = expression.map(|e| Span::new(e.pos, e.end));
+        let ty = hir.types.iter().filter(|t| has(t.pos, t.end));
+        let ty = ty.map(|t| Span::new(t.pos, t.end));
+        let literal = expression
+            .chain(ty)
+            .max_by_key(|it| (it.start, u32::MAX - it.end));
+        let literal = literal.unwrap_or_else(|| Span::new(it.start, it.end.max(it.start + 1)));
+        let deprecated = "'0'-prefixed octal literals and octal escape sequences are deprecated";
+        let (message, help) = match it.code {
+            1489 => (
+                "Decimals with leading zeros are not allowed in strict mode",
+                "remove the leading zero",
+            ),
+            1488 => (
+                "Invalid escape sequence",
+                "\\8 and \\9 are not allowed in strict mode",
+            ),
+            _ => (deprecated, "for octal literals use the '0o' prefix instead"),
+        };
+        self.report(SyntaxError::of_oxc(literal, message).help(help));
     }
 
     /// The names that are keywords in some places: one comparison for each identifier of the file.

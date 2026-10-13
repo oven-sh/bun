@@ -18,7 +18,7 @@ use bun_lint::js_plugin::{Host, ParseAgain, Route};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, ResolvedConfig, RuleId, Suggestion, apply_fixes,
-    is_parse_error, may_be_misread,
+    is_parse_error, is_redeclaration, may_be_misread,
 };
 use bun_lint::rule::{Kind, Plugin};
 use bun_lint_graph::Graph;
@@ -330,7 +330,9 @@ impl Context<'_, '_> {
             }
             None => self.verify_as(path, text, config, &how),
         };
-        !result.messages.iter().any(is_parse_error)
+        // oxc's parser takes a name that is declared twice, and oxlint writes `const a = 1; const a = 2;` for two `var`.
+        let is_refused = |it: &LintMessage| is_parse_error(it) && !is_redeclaration(it);
+        !result.messages.iter().any(is_refused)
     }
 
     /// The fixes of `rules` would have left the file at `path` with a syntax error.

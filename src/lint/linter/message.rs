@@ -200,6 +200,10 @@ pub struct LintMessage {
     pub details: Option<Box<Details>>,
     /// [`Diagnostic::constant_help`](crate::context::Diagnostic::constant_help)
     pub constant_help: Option<Help>,
+    /// For oxlint, which prints what its own rules report about a file, by place, then what the rules of JavaScript plugins
+    /// report, in the order in which they report it, then what it says about comments. 0: of a rule that is built in.
+    /// `u32::MAX`: about a comment. Else the how manieth report of a plugin it is.
+    pub reported: u32,
 }
 
 impl LintMessage {
@@ -266,6 +270,7 @@ impl Default for LintMessage {
             not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
+            reported: 0,
         }
     }
 }
@@ -318,6 +323,7 @@ impl<'a> Locator<'a> {
             not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
+            reported: 0,
         }
     }
 }

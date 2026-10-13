@@ -274,7 +274,44 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn expected(&mut self, token: T) {
-        self.error_at_token(1005, &[token.text()]);
+        self.expected_in_list(token, b"");
+    }
+
+    /// The same. For oxc the diagnostic also has what it calls the token that is there and, after an element of a list, what
+    /// closes the list: "Expected `,` or `)` but found `Identifier`".
+    fn expected_in_list(&mut self, token: T, closer: &[u8]) {
+        if !self.options.dialect.oxc {
+            return self.error_at_token(1005, &[token.text()]);
+        }
+        let text = self.lx.text();
+        let has_any = |of: &[u8]| bun_core::strings::index_of_any(text, of).is_some();
+        let number: &[u8] = match text {
+            [b'0', b'x' | b'X', ..] => b"hex",
+            [b'0', b'b' | b'B', ..] => b"binary",
+            [b'0', b'o' | b'O', ..] => b"octal",
+            [b'0', _, ..] if self.token() == T::Number && !has_any(b"89.eE") => b"octal",
+            _ if has_any(b".eE") => b"float",
+            _ => b"decimal",
+        };
+        let found = match self.token() {
+            T::Eof => b"EOF".to_vec(),
+            T::String => b"string".to_vec(),
+            T::Number => number.to_vec(),
+            T::BigInt => [number, b" bigint"].concat(),
+            T::NoSubstitutionTemplate => b"${}".to_vec(),
+            T::TemplateHead => b"${".to_vec(),
+            T::PrivateIdentifier => b"#identifier".to_vec(),
+            // Keywords of its lexer alone.
+            T::Identifier if matches!(text, b"target" | b"meta" | b"source") => text.to_vec(),
+            T::Identifier => b"Identifier".to_vec(),
+            // It splits these.
+            _ if text.starts_with(b">") => b">".to_vec(),
+            _ => text.to_vec(),
+        };
+        match closer {
+            b"" => self.error_at_token(1005, &[token.text(), &found]),
+            _ => self.error_at_token(1005, &[token.text(), &found, closer]),
+        }
     }
 
     /// `parseExpectedMatchingBrackets`, at another token than `close`.
@@ -569,9 +606,24 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.is_list_terminator(kind) {
             return false;
         }
+        let closer: &[u8] = match kind {
+            ListKind::ArgumentExpressions | ListKind::Parameters => b")",
+            ListKind::ArrayBindingElements
+            | ListKind::ArrayLiteralMembers
+            | ListKind::TupleElementTypes => b"]",
+            ListKind::TypeParameters | ListKind::TypeArguments => b">",
+            _ => b"}",
+        };
         match kind {
-            ListKind::EnumMembers => self.error_at_token(1357, &[]),
-            _ => self.expected(T::Comma),
+            // oxc ends these lists where no comma follows.
+            ListKind::VariableDeclarations if self.options.dialect.oxc => {
+                self.expected(T::Semicolon)
+            }
+            ListKind::HeritageClauseElement if self.options.dialect.oxc => {
+                self.expected(T::OpenBrace)
+            }
+            ListKind::EnumMembers if !self.options.dialect.oxc => self.error_at_token(1357, &[]),
+            _ => self.expected_in_list(T::Comma, closer),
         }
         // `{ a; b }`
         if matches!(

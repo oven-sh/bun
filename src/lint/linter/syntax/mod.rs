@@ -43,6 +43,7 @@ struct OfOxc {
     /// The other labels, in oxlint's order: where each is, and what it says there.
     labels: Vec<(Span, Cow<'static, str>)>,
     help: Cow<'static, str>,
+    note: Cow<'static, str>,
     stage: Stage,
     /// Where the error is in the order in which oxlint prints the errors of a file, if that is not where its last label starts.
     /// `u32::MAX`: oxc reports it when it is through with the file.
@@ -95,6 +96,11 @@ impl SyntaxError {
 
     fn help(mut self, text: impl Into<Cow<'static, str>>) -> SyntaxError {
         self.of_oxc.help = text.into();
+        self
+    }
+
+    fn note(mut self, text: impl Into<Cow<'static, str>>) -> SyntaxError {
+        self.of_oxc.note = text.into();
         self
     }
 
@@ -170,16 +176,22 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
 
 /// [`parse_error`], and the others that oxlint prints about the file, in its order. ESLint's parsers throw one.
 pub fn parse_errors<'a>(file: &'a File<'a>) -> Vec<LintMessage> {
+    parse_errors_and_stage(file).0
+}
+
+/// [`parse_errors`], and whether a parser has them. `false`: oxc has parsed the file, and the pass that builds its scopes has them.
+pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage>, bool) {
     let parser = file.language().parser;
     // It has no place.
     if parser == Parser::Espree
         && let Some(message) = espree::editions::refused_options(file)
     {
-        return vec![LintMessage {
+        let refused = LintMessage {
             message: [b"Parsing error: ", &message[..]].concat(),
             is_fatal: true,
             ..LintMessage::default()
-        }];
+        };
+        return (vec![refused], true);
     }
     let of_parser = error_of_parser(file).map(|diagnostic| {
         let mut message = Vec::new();
@@ -198,6 +210,7 @@ pub fn parse_errors<'a>(file: &'a File<'a>) -> Vec<LintMessage> {
         )
     });
     let one = |it: Option<SyntaxError>| it.into_iter().collect::<Vec<_>>();
+    let mut is_of_parser = true;
     let errors = match (parser, of_parser) {
         (_, of_parser) if !file.language().refuses_what_parser_refuses => {
             let of_oxlint = || match file.path() {
@@ -210,9 +223,17 @@ pub fn parse_errors<'a>(file: &'a File<'a>) -> Vec<LintMessage> {
                 [.., b'.', b'c', b't', b's'] => espree::module_syntax_in_commonjs(file, true),
                 _ => None,
             };
-            match of_parser.map(|it| it.1).or_else(of_oxlint) {
+            let of_parser = of_parser.map(|(diagnostic, error)| match diagnostic {
+                Some(it) => oxc::of_typescript(file, it).unwrap_or(error),
+                None => error,
+            });
+            match of_parser.or_else(of_oxlint) {
                 Some(only) => vec![only],
-                None => oxc::errors(file),
+                None => {
+                    let all = oxc::errors(file);
+                    is_of_parser = all.iter().any(|it| it.of_oxc.stage != Stage::Semantic);
+                    all
+                }
             }
         }
         // It converts a tree only if the parser has nothing to say.
@@ -223,9 +244,10 @@ pub fn parse_errors<'a>(file: &'a File<'a>) -> Vec<LintMessage> {
         )),
         (_, of_parser) => one(of_parser.map(|it| it.1)),
     };
-    (errors.into_iter())
+    let messages = (errors.into_iter())
         .map(|it| message_of(file, it))
-        .collect()
+        .collect();
+    (messages, is_of_parser)
 }
 
 fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
@@ -249,10 +271,14 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
         first_label,
         labels,
         help,
+        note,
         ..
     } = error.of_oxc;
-    let has_details =
-        code != 0 || !first_label.is_empty() || !labels.is_empty() || !help.is_empty();
+    let has_details = code != 0
+        || !first_label.is_empty()
+        || !labels.is_empty()
+        || !help.is_empty()
+        || !note.is_empty();
     let details = has_details.then(|| {
         let labels = labels.into_iter();
         Box::new(Details {
@@ -261,8 +287,8 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
                 .map(|(span, text)| (place(span.start), place(span.end), text))
                 .collect(),
             help,
+            note,
             typescript_code: code,
-            ..Details::default()
         })
     });
     LintMessage {
@@ -282,10 +308,12 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
         not_numbers: NotNumbers::default(),
         details,
         constant_help: None,
+        reported: 0,
     }
 }
 
 /// Whether oxlint says nothing about the file, which it cannot parse: it is JavaScript, and its first comment has `@flow`.
+/// What the pass that builds the scopes has to say about a file that oxc can parse, it prints.
 /// oxc looks at the comments that its lexer has passed. Where it gives up, that's those before the token that is wrong.
 pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
     let mut comments = file.comments().map(|it| it.span());

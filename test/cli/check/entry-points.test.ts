@@ -296,7 +296,10 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
     namesTheFile: printed.includes(entry.wrong),
     ran: command === "bun --check" && stdout.includes("it ran"),
     exitCode,
+    // Says why, if the exit code is not the expected one.
+    output: exitCode === (isCorrect ? 0 : 1) ? "" : `${proc.signalCode}\n${(stdout + stderr).slice(-4000)}`,
   }).toEqual({
+    output: "",
     codes: isCorrect ? [] : ["TS2322"],
     namesTheFile: !isCorrect,
     ran: isCorrect && command === "bun --check",

@@ -241,7 +241,8 @@ export function applyReplacements(src: string, length: number) {
         throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);
       }
       // $newCppFunction(file, symbol, argCount, "assertions"): the function is compiled under ASSERT_ENABLED only.
-      const onlyWithAssertions = name === "newCppFunction" && args.length === 4 && args.pop() === "assertions";
+      const onlyWithAssertions = name === "newCppFunction" && args.length === 4 && args[3] === "assertions";
+      if (onlyWithAssertions) args.pop();
       if (
         args.length != (is_create_fn ? 3 : 2) ||
         typeof args[0] !== "string" ||

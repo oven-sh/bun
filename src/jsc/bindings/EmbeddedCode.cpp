@@ -49,3 +49,8 @@ extern "C" void JSC__runOnlyEmbeddedCode()
     RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
     JSC::Options::refuseUntrustedCode() = true;
 }
+
+extern "C" bool JSC__runsOnlyEmbeddedCode()
+{
+    return JSC::Options::refuseUntrustedCode();
+}

@@ -5137,7 +5137,7 @@ impl VirtualMachine {
             ret.path = b"bun:wrap";
             return Ok(());
         }
-        if specifier == MAIN_FILE_NAME && self.entry_point.generated {
+        if specifier == MAIN_FILE_NAME && self.entry_point.contents.is_some() {
             ret.path = MAIN_FILE_NAME;
             return Ok(());
         }

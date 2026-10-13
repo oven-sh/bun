@@ -32,8 +32,6 @@ pub enum Error {
     InvalidNativePlugin,
     #[error("EmptyAST")]
     EmptyAST,
-    #[error("FormatError")]
-    FormatError,
     #[error("ResolveMessage")]
     ResolveMessage,
     #[error("JSError")]
@@ -118,7 +116,6 @@ impl Error {
             Self::MinifyError => "MinifyError",
             Self::InvalidNativePlugin => "InvalidNativePlugin",
             Self::EmptyAST => "EmptyAST",
-            Self::FormatError => "FormatError",
             Self::ResolveMessage => "ResolveMessage",
             Self::Js(bun_core::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",

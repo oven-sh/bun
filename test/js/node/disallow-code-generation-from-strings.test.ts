@@ -1,7 +1,8 @@
 // --disallow-code-generation-from-strings: as Node.js's flag, eval and the Function constructors
 // throw. With "=strict" (Bun's own), nothing in the process turns a string into script.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isGlibc, isLinux, isWindows, nodeExe, tempDir } from "harness";
+import * as internals from "bun:internal-for-testing";
+import { bunEnv, bunExe, isDebug, isGlibc, isLinux, isWindows, nodeExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -559,8 +560,8 @@ describe.concurrent.skipIf(!builtStrict)("a build with =strict as a constant", (
 // is embedded in the executable, and refuses everything else where code is linked, whichever way it came in.
 describe.concurrent("=strict in a compiled executable", () => {
   const notEmbedded = (url?: string) => "EvalError: Refused to run untrusted code" + (url ? ": " + url : "");
-  // evaluateAsProgram of bun:internal-for-testing is compiled under ASSERT_ENABLED only.
-  const hasTestBinding = isDebug || isASAN;
+  // Compiled under ASSERT_ENABLED only.
+  const hasTestBinding = internals.evaluateAsProgram !== undefined;
   const exe = isWindows ? "app.exe" : "app";
 
   const program = {
@@ -599,6 +600,10 @@ describe.concurrent("=strict in a compiled executable", () => {
         dataModule: () => import(["data:text/javascript", ran("dataModule")].join(",")),
         blobModule: () => import(URL.createObjectURL(new Blob([ran("blobModule")], { type: "text/javascript" }))),
         embeddedAsset: () => import(asset),
+        devServer: () => Bun.serve({ port: 0, app: { root: dir, framework: {
+          fileSystemRouterTypes: [{ root: "pages", style: "nextjs-pages", serverEntryPoint: dir + "/framework-server.ts", clientEntryPoint: dir + "/framework-client.ts" }],
+          reactFastRefresh: false,
+        } } }),
       };
       if (process.env.HAS_GLIBC) {
         refused.memfd = async () => {
@@ -618,7 +623,7 @@ describe.concurrent("=strict in a compiled executable", () => {
 
       const works = {
         firstCallLate: async () => {
-          await Bun.sleep(1);
+          await new Promise(resolve => setImmediate(resolve));
           const first = neverCalledAtStartup(20);
           Bun.gc(true);
           return [first, neverCalledAtStartup(21)];
@@ -645,7 +650,7 @@ describe.concurrent("=strict in a compiled executable", () => {
           const { numberOfDFGCompiles } = await import("bun:jsc");
           function hot(a, b) { return a + b; }
           let sum = 0;
-          for (let i = 0; i < 200000 && !numberOfDFGCompiles(hot); i++) sum = hot(sum, 1) | 0;
+          while (!numberOfDFGCompiles(hot)) sum = hot(sum, 1) | 0;
           return numberOfDFGCompiles(hot) > 0;
         },
         dataFilesAtRunTime: async () => [
@@ -659,7 +664,6 @@ describe.concurrent("=strict in a compiled executable", () => {
         },
       };
 
-      // The transpiler throws its own error for a macro that does not load, and leaves the reason to this.
       const unhandled = [];
       process.on("unhandledRejection", reason => unhandled.push(String(reason)));
       (async () => {
@@ -674,6 +678,9 @@ describe.concurrent("=strict in a compiled executable", () => {
     "commonjs.cjs": `module.exports = "commonjs";`,
     "worker.ts": `import { neverCalledAtStartup } from "./late.ts"; postMessage(neverCalledAtStartup(4));`,
     "asset.txt": `(globalThis.ran ??= []).push("embeddedAsset"); export default 1;`,
+    "framework-server.ts": `(globalThis.ran ??= []).push("devServer"); export function render() { return new Response(""); }`,
+    "framework-client.ts": ``,
+    "pages/index.tsx": `export default function () { return new Response(""); }`,
     "with-bytecode.js": `(globalThis.ran ??= []).push("bytecodeFile");`,
     "compile-cached.cjs": `(globalThis.ran ??= []).push("compileCache");`,
     // The transpiler cache takes no file under 4 KB.
@@ -722,8 +729,7 @@ describe.concurrent("=strict in a compiled executable", () => {
     return { stdout, stderr, exitCode };
   }
 
-  // BUN_JSC_refuseUntrustedCode is the engine's name for it. The environment does not turn it off.
-  test.each([{}, { BUN_JSC_refuseUntrustedCode: "0" }])("refuses what is not embedded, with %j", async env => {
+  test("refuses what is not embedded", async () => {
     using dir = tempDir("strict-compiled-refuses", program);
     const cwd = String(dir);
     const transpilerCache = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(cwd, "transpiler-cache") };
@@ -740,12 +746,11 @@ describe.concurrent("=strict in a compiled executable", () => {
       transpilerCache: readdirSync(join(cwd, "transpiler-cache")).length > 0,
     }).toEqual({ bytecode: ["with-bytecode.js", "with-bytecode.js.jsc"], compileCache: true, transpilerCache: true });
 
-    const { stdout, exitCode } = await runCompiled(cwd, ["refused", cwd], { ...transpilerCache, ...env });
     const file = (name: string) => notEmbedded(join(cwd, name));
-    expect(JSON.parse(stdout)).toEqual({
+    const expected = {
       results: {
         pluginJSON: file("x.plugin-json"),
-        macroName: 'BuildMessage: "MacroLoadError" error in macro',
+        macroName: `BuildMessage: Macros cannot run in a compiled executable with ${strict}`,
         importWritten: file("imported.mjs"),
         requireWritten: file("required.cjs"),
         workerWritten: file("worker.mjs"),
@@ -756,6 +761,7 @@ describe.concurrent("=strict in a compiled executable", () => {
         dataModule: refused,
         blobModule: refused,
         embeddedAsset: expect.stringMatching(/^EvalError: Refused to run untrusted code: .*asset-.*\.txt$/),
+        devServer: notEmbedded("bake://server-runtime.js"),
         // The resolver follows the link, to a name that no file has, so this one does not get as far as the engine.
         ...(isGlibc && { memfd: 'BuildMessage: ENOENT reading "/memfd:memfd (deleted)"' }),
         ...(hasTestBinding && {
@@ -764,19 +770,28 @@ describe.concurrent("=strict in a compiled executable", () => {
           evaluateJSONPCall: notEmbedded(),
         }),
       },
-      unhandled: [expect.stringMatching(/^EvalError: Refused to run untrusted code: macro:\/\/\w+\.js$/)],
-    });
-    expect(exitCode).toBe(0);
+      unhandled: [],
+    };
+    // BUN_JSC_refuseUntrustedCode is the engine's name for it. The environment does not turn it off.
+    for (const env of [{}, { BUN_JSC_refuseUntrustedCode: "0" }]) {
+      const { stdout, exitCode } = await runCompiled(cwd, ["refused", cwd], {
+        ...transpilerCache,
+        BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
+        ...env,
+      });
+      expect(JSON.parse(stdout)).toEqual(expected);
+      expect(exitCode).toBe(0);
+    }
   });
 
   test.each([
-    ["ES modules", []],
-    ["ES modules with bytecode", ["--bytecode"]],
-    ["CommonJS", ["--format=cjs"]],
-    ["CommonJS with bytecode", ["--format=cjs", "--bytecode"]],
+    { modules: "ES modules", buildArgs: [] },
+    { modules: "ES modules with bytecode", buildArgs: ["--bytecode"] },
+    { modules: "CommonJS", buildArgs: ["--format=cjs"] },
+    { modules: "CommonJS with bytecode", buildArgs: ["--format=cjs", "--bytecode"] },
   ])(
-    "runs what is embedded: %s",
-    async (_, buildArgs) => {
+    "runs what is embedded: $modules",
+    async ({ buildArgs }) => {
       using dir = tempDir("strict-compiled-runs", program);
       const cwd = String(dir);
       await compile(cwd, buildArgs, strict);
@@ -798,8 +813,8 @@ describe.concurrent("=strict in a compiled executable", () => {
         unhandled: [],
       });
       expect(exitCode).toBe(0);
-      // A debug build takes seconds to make the bytecode of the builtin modules the program uses.
     },
+    // --bytecode also makes the bytecode of the builtin modules the program uses, which took a debug build 5 seconds.
     30_000,
   );
 

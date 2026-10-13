@@ -3575,13 +3575,10 @@ fn get_hardcoded_module(
             }
             // SAFETY: `state` is the live per-thread `RuntimeState` boxed in
             // `init_runtime_state`; no other `&mut` to `entry_point` is held.
-            let ep = unsafe { &(*state).entry_point };
-            if !ep.generated {
-                return None;
-            }
+            let contents = unsafe { (*state).entry_point.contents }?;
             use bun_jsc::resolved_source::Tag;
             Some(ResolvedSource {
-                source_code: own_module_source(ep.contents),
+                source_code: own_module_source(contents),
                 source_url: specifier.clone(),
                 tag: Tag::Esm,
                 ..ResolvedSource::default()

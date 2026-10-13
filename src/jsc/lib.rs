@@ -517,6 +517,11 @@ pub fn run_only_embedded_code() {
     JSC__runOnlyEmbeddedCode();
 }
 
+/// Any thread. For what would otherwise find out from the engine's refusal at a point where it cannot report one.
+pub fn runs_only_embedded_code() -> bool {
+    JSC__runsOnlyEmbeddedCode()
+}
+
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
 /// first VM, which freezes JSC's options.
 pub fn expect_vm_per_thread() {
@@ -1578,6 +1583,7 @@ unsafe extern "C" {
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
     safe fn JSC__runOnlyEmbeddedCode();
+    safe fn JSC__runsOnlyEmbeddedCode() -> bool;
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`

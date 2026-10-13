@@ -168,13 +168,14 @@ Bun makes this check in the engine, at the one place where code is made ready to
 | `import()`, `require()` or `new Worker()` of a JavaScript or TypeScript file on disk                | refused, including a file that the program just wrote |
 | `--preload`, `--import` or `--require` in `BUN_OPTIONS`                                             | refused: Bun prints the error and exits               |
 | `import()` of an embedded file that is not JavaScript, such as an asset                             | refused                                               |
-| [Macros](/bundler/macros), in a file on disk or in text given to `Bun.Transpiler`                   | refused                                               |
+| [Macros](/bundler/macros), in text given to `Bun.Transpiler` or in a file given to `Bun.build()`    | refused: the build error says that macros cannot run  |
+| `Bun.serve()` with the experimental `app` option                                                    | refused                                               |
 | A `.jsc` file beside a script, a `module.enableCompileCache()` entry, a transpiler cache entry      | not used                                              |
 | `import()` or `require()` of a `.json`, `.jsonc`, `.json5`, `.toml`, `.yaml` or `.xml` file on disk | works: Bun makes the value without making code        |
 | `import()` of a database on disk with `{ type: "sqlite" }`                                          | works                                                 |
 | `import()` or `require()` of a `.txt` or `.md` file on disk, or of any file with `{ type: "text" }` | refused: read the file with `Bun.file()` instead      |
 
-Bun knows an embedded module by where its text is in the executable's image, not by what the text says. A file with the same text as an embedded module is refused. At startup, Bun takes away the process's own write access to that part of the image.
+Bun knows an embedded module by where its text is in the executable's image, not by what the text says. A file with the same text as an embedded module is refused. At startup, Bun maps that part of the image read-only.
 
 Without `--compile` there is nothing embedded, so `=strict` keeps loading files from disk.
 
@@ -203,7 +204,7 @@ Each report has the place in the engine that would have refused, the URL of the 
 | `link`     | A function, `eval()` code, script or module was about to run for the first time |
 | `bytecode` | Cached bytecode was about to be decoded                                         |
 
-An executable compiled with `=strict` logs what it refuses when you set the variable. No environment variable turns the refusals off.
+An executable compiled with `=strict` logs what it refuses when you set the variable. No environment variable turns the refusals off. `BUN_BE_BUN` does not start the embedded program at all: see [What the flag does not cover](#what-the-flag-does-not-cover).
 
 ### `data:` URLs written in the source
 
@@ -259,5 +260,6 @@ The option is on in the builds of Bun that we publish.
 - **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level. With the flag and no value, `--preload` in `BUN_OPTIONS` loads a file before the entry point.
 - **The executable file.** Whoever can replace or edit a compiled executable decides what is embedded in it.
 - **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
+- **The process's own memory.** A program that can write to its own memory can change anything, including the embedded modules and Bun itself. On Linux, writing to `/proc/self/mem` with `node:fs` does that, whatever a page's protection is. Native code can do it everywhere.
 - **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`.
 - **Child processes.** A process that the program spawns has its own flags.

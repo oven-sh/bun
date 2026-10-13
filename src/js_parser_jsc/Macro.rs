@@ -110,6 +110,15 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
+        // The engine refuses a macro's entry point, which is text made here. That rejection has no one to catch it.
+        if jsc::runs_only_embedded_code() {
+            log.add_range_error(
+                Some(source),
+                import_range,
+                b"Macros cannot run in a compiled executable with --disallow-code-generation-from-strings=strict",
+            );
+            return Err(crate::Error::MacroFailed);
+        }
         let _store_guard = DisableStoreReset::new();
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {

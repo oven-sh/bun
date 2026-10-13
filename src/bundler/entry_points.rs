@@ -25,9 +25,8 @@ pub struct ClientEntryPoint {
 
 #[derive(Default)]
 pub struct ServerEntryPoint {
-    /// The source of `bun:main`: empty, [`MAIN_SOURCE`] or [`MAIN_SOURCE_WITH_HOT_RELOAD`].
-    pub contents: &'static [u8],
-    pub generated: bool,
+    /// The source of `bun:main`, once there is an entry point: [`MAIN_SOURCE`] or [`MAIN_SOURCE_WITH_HOT_RELOAD`].
+    pub contents: Option<&'static [u8]>,
 }
 
 macro_rules! entry_specifier {
@@ -41,12 +40,11 @@ impl ServerEntryPoint {
     pub const ENTRY_SPECIFIER: &'static [u8] = entry_specifier!().as_bytes();
 
     pub fn generate(entry: &mut ServerEntryPoint, is_hot_reload_enabled: bool) {
-        entry.contents = if is_hot_reload_enabled {
+        entry.contents = Some(if is_hot_reload_enabled {
             MAIN_SOURCE_WITH_HOT_RELOAD.as_bytes()
         } else {
             MAIN_SOURCE.as_bytes()
-        };
-        entry.generated = true;
+        });
     }
 }
 

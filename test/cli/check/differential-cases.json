@@ -18143,6 +18143,12 @@
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"moduleDetection\": \"force\"}, \"files\": [\"issue_v0.ts\", \"issue_v1.ts\", \"issue_v2.ts\", \"issue_v3.ts\", \"issue_v4.ts\", \"order_a.ts\", \"order_b.ts\"]}"
     }
   },
+  "99-W10": {
+    "files": {
+      "a.ts": "type Comp<P> = (p: P) => void;\ntype M<T> = { [k in keyof T]: T };\ntype GetProps<C> = C extends { x: Comp<any> } ? (C['x'] extends new () => 0 ? C : never) : never;\ntype Enh<I, N> = <C extends { x: Comp<GetProps<C>> }>(c: C) => Comp<M<GetProps<C> & N>>;\ndeclare function flow<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C;\ndeclare const hoc: <C extends { x: Comp<any> }>(c: C) => C;\ndeclare const enh: Enh<{}, {}>;\nexport const R = flow(hoc, enh);\ntype F<T> = T extends { a: unknown } ? (T['a'] extends string ? 1 : 2) : 3;\nexport const f1: never = null! as F<{ a: 'x' }>;\nexport const f2: never = null! as F<{ a: 1 }>;\nfunction g<T extends { a: unknown }>(t: T) { const x: never = null! as F<T>; }\nexport const sentinel: number = '';\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": []}, \"files\": [\"a.ts\"]}"
+    }
+  },
   "99-W2": {
     "files": {
       "around_v1.ts": "type Comp<P> = (p: P) => void;\ntype M<T> = { [k in keyof T]: T };\ntype GetProps<C> = C extends Comp<infer P> ? (C extends new () => 0 ? P : never) : never;\ntype Enh<I, N> = <C extends Comp<GetProps<C>>>(c: C) => Comp<M<GetProps<C> & N>>;\ndeclare function flow<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C;\ndeclare const hoc: <C extends Comp<any>>(c: C) => C;\ndeclare const enh: Enh<{}, {}>;\nexport const R = flow(hoc, enh); export const p: never = R;\nexport const sentinel: number = \"\";\n",
@@ -18184,6 +18190,57 @@
       "index.ts": "import { css } from './lib';\n\ncss({ ':hover': { notAProperty: '1' } });\n",
       "lib.d.ts": "type Pseudos = ':hover';\ntype CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };\ntype Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\nexport {};\n",
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"skipLibCheck\": true}, \"files\": [\"index.ts\", \"before.ts\", \"after.ts\"]}"
+    }
+  },
+  "99-W4": {
+    "files": {
+      "index.ts": "import { css } from './lib';\ncss({ ':hover': { notAProperty: '1' } });\n",
+      "lib.ts": "type Pseudos = ':hover';\nexport type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };\nexport type Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": []}, \"files\": [\"lib.ts\", \"index.ts\"]}"
+    }
+  },
+  "99-W5": {
+    "files": {
+      "index.ts": "import { css } from './zlib';\ncss({ ':hover': { notAProperty: '1' } });\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": []}, \"files\": [\"index.ts\", \"zlib.ts\"]}",
+      "zlib.ts": "type Pseudos = ':hover';\nexport type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };\nexport type Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\n"
+    }
+  },
+  "99-W6": {
+    "files": {
+      "before.ts": "css2({ ':hover': { notAProperty: '1' } });\nexport declare function css2(style: Style2): void;\ntype Pseudos2 = ':hover';\nexport type CSSPseudos2 = { [P in Pseudos2]?: Omit<Style2, Pseudos2> };\nexport type Style2 = CSSPseudos2 & { top?: string };\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": []}, \"files\": [\"before.ts\", \"zafter.ts\"]}",
+      "zafter.ts": "import { css2 } from './before';\ncss2({ ':hover': { notAProperty: '2' } });\n"
+    }
+  },
+  "99-W7": {
+    "files": {
+      "index.ts": "import { css, Style } from './lib';\ncss({ ':hover': { notAProperty: '1' } });\nconst p: Partial<Style> = { ':hover': {} };\ndeclare const style: Style;\nconst spread = { ...style };\nconst hover: never = spread[':hover'];\nconst top: never = spread.top;\nconst required: Required<Style> = { top: '' };\nconst picked: never = null! as keyof Partial<Style>;\nconst wrong: Style = { tpo: '' };\nexport const sentinel: number = '';\n",
+      "lib.d.ts": "type Pseudos = ':hover';\nexport type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };\nexport type Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"skipLibCheck\": true}, \"files\": [\"index.ts\"]}"
+    }
+  },
+  "99-W8": {
+    "files": {
+      "index.ts": "import { css } from './lib';\ncss({ ':hover': { notAProperty: '1' } });\n",
+      "lib.ts": "// @ts-nocheck\ntype Pseudos = ':hover';\nexport type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };\nexport type Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": []}, \"files\": [\"lib.ts\", \"index.ts\"]}"
+    }
+  },
+  "99-W9": {
+    "files": {
+      "a.ts": "import { flow, hoc, enh } from './lib';\nexport const R1 = flow(hoc, enh);\nexport const R2 = flow(hoc, enh);\nexport const R3 = flow(enh, enh);\n",
+      "b.ts": "import { flow, hoc, enh } from './lib';\nexport const R4 = flow(hoc, enh);\n// @ts-expect-error\nexport const R5 = flow(hoc, enh);\n",
+      "lib.ts": "type Comp<P> = (p: P) => void;\ntype M<T> = { [k in keyof T]: T };\ntype GetProps<C> = C extends Comp<infer P> ? (C extends new () => 0 ? P : never) : never;\nexport type Enh<I, N> = <C extends Comp<GetProps<C>>>(c: C) => Comp<M<GetProps<C> & N>>;\nexport declare function flow<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C;\nexport declare const hoc: <C extends Comp<any>>(c: C) => C;\nexport declare const enh: Enh<{}, {}>;\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": []}, \"files\": [\"lib.ts\", \"a.ts\", \"b.ts\"]}"
+    }
+  },
+  "99-WB": {
+    "files": {
+      "before.ts": "css2({});\ncss2({ top: 'a' });\ncss2({ ':hover': {} });\ndeclare function css2(style: Style2): void;\ntype Pseudos2 = ':hover';\ntype CSSPseudos2 = { [P in Pseudos2]: Omit<Style2, Pseudos2> };\ntype Style2 = CSSPseudos2 & { top?: string };\nexport {};\n",
+      "index.ts": "import { css, get } from './lib';\ncss({ ':hover': { notAProperty: '1' } });\ncss({});\ncss({ top: 'a' });\nconst s = get();\nconst a: { ':hover': { top?: string } } = s;\nconst b: { top?: string } = s;\nexport const sentinel: number = '';\n",
+      "lib.d.ts": "type Pseudos = ':hover';\ntype CSSPseudos = { [P in Pseudos]: Omit<Style, Pseudos> };\ntype Style = CSSPseudos & { top?: string };\nexport declare function css(style: Style): void;\nexport declare function get(): Style;\nexport {};\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"skipLibCheck\": true}, \"files\": [\"index.ts\", \"before.ts\"]}"
     }
   },
   "99-X1": {

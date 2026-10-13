@@ -4399,47 +4399,52 @@ impl<'p, 's> Checker<'p, 's> {
                 // of it around this one ends later.
                 if !self.stack.contains(&q)
                     && self.p.listed_properties.get(&self.task, &ty).is_none()
-                    && !self.is_listed_by_an_earlier_check(parts)
                 {
                     let listed = self.synth(shape.clone_in(self.arena));
                     (self.p.listed_properties).insert(&self.task, ty, listed, Stored::new());
+                    self.note_listing(parts, true);
                 }
                 self.provisional_shape(shape)
             }
-            Ok(stored) => self.keep_shape(ty, shape, stored),
+            Ok(stored) => {
+                self.note_complete_listing(ty, parts);
+                self.keep_shape(ty, shape, stored)
+            }
             Err(open) => self.cache_shape_provisionally(q, shape, open),
         }
     }
 
-    /// Whether the check of an earlier file has listed the properties of an intersection of
-    /// `parts` already: one checker visits the files in order, and `checkMappedType` resolves the
-    /// template type of a mapped type before anything asks for its members. The task of a later
-    /// file cannot see that, so it is decided from where the constituents in place are declared.
-    fn is_listed_by_an_earlier_check(&self, parts: &[TypeId]) -> bool {
-        let Some(visited) = self.task.file else {
-            return false;
-        };
-        let (files, options) = (self.files(), &self.p.files.options);
-        let (rank, count) = (files.rank_of_file(visited), self.task.checker_count);
+    /// `Finished::listings`: the list of properties of an intersection of `parts` is assigned.
+    /// `is_partial`: only the mapped types whose members are in place are noted, which the list
+    /// lacks. Another task cannot tell which list the tasks before it assign, so
+    /// `Program::validate` compares what each has noted.
+    /// The list of properties of the intersection `ty` is assigned while no constituent has its
+    /// members in place: it is complete, and stays. The entry is `ty` itself.
+    fn note_complete_listing(&mut self, ty: TypeId, parts: &[TypeId]) {
+        if self.p.listed_properties.get(&self.task, &ty).is_none()
+            && self.note_listing(parts, false)
+        {
+            (self.p.listed_properties).insert(&self.task, ty, ty, Stored::new());
+        }
+    }
+
+    fn note_listing(&mut self, parts: &[TypeId], is_partial: bool) -> bool {
         let from = self.resolution_start;
-        parts.iter().any(|&part| {
-            let TypeData::Anon {
-                origin: Origin::Mapped(of, _),
-                ..
+        let mut is_noted = false;
+        for &part in parts {
+            if let TypeData::Anon {
+                origin: Origin::Mapped(file, node),
+                mapper: MapperId::IDENTITY,
             } = *self.data(part)
-            else {
-                return false;
-            };
-            let other = files.rank_of_file(of);
-            let is_checked = !(self.hir(of).kind == FileKind::Declaration
-                && (options.skip_lib_check
-                    || options.skip_default_lib_check && files.module(of).is_lib));
-            of != visited
-                && other < rank
-                && other.checked_rem(count) == rank.checked_rem(count)
-                && is_checked
-                && self.stack[from..].contains(&Query::Shape(part))
-        })
+                && (!is_partial || self.stack[from..].contains(&Query::Shape(part)))
+            {
+                is_noted = true;
+                if !self.task.listings.contains(&(file, node, is_partial)) {
+                    self.task.listings.push((file, node, is_partial));
+                }
+            }
+        }
+        is_noted
     }
 
     fn shape_of_synth(&mut self, object: TypeId) -> Built<'p> {
@@ -4970,7 +4975,7 @@ impl<'p, 's> Checker<'p, 's> {
                 true => TypeId::EMPTY_OBJECT,
                 false => c.reduced_apparent_type_as_object(ty),
             };
-            c.members(if ty.is_never() {
+            c.listed_members(if ty.is_never() {
                 TypeId::EMPTY_OBJECT
             } else {
                 ty
@@ -6507,6 +6512,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getNextBaseConstraint`: the same, as part of the constraint computation in progress.
     pub(super) fn next_base_constraint(&mut self, ty: TypeId) -> Option<TypeId> {
+        // `computeBaseConstraint` of a type parameter assigns `tp.constraint`.
+        if !self.unresolved_renamed_params.is_empty() {
+            self.unresolved_renamed_params.remove(&ty);
+        }
         let data = self.data(ty);
         let is_union_or_intersection =
             matches!(data, TypeData::Union(_) | TypeData::Intersection(_));
@@ -7012,6 +7021,8 @@ impl<'p, 's> Checker<'p, 's> {
             let from = self.resolution_start;
             if (members.iter()).any(|&member| self.stack[from..].contains(&Query::Shape(member))) {
                 self.properties_of_intersection(ty, &members);
+            } else {
+                self.note_complete_listing(ty, &members);
             }
         }
         // `isNeverReducedProperty`

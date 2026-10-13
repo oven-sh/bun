@@ -49,6 +49,7 @@ impl<'s> Program<'s> {
     /// on demand. Retried, it finds those walks published, with what was evaluated along with them.
     pub fn validate(&self, finished: &[Finished<'s>]) -> Vec<bool> {
         let mut serial = self.serial_variances.lock();
+        let mut listings = self.serial_listings.lock();
         let mut walked: Vec<(FileId, Node)> = Vec::new();
         (finished.iter())
             .map(|finished| {
@@ -57,8 +58,21 @@ impl<'s> Program<'s> {
                         .get(&it.sym)
                         .is_some_and(|first| it.conflicts_with(first))
                 });
-                if is_invalid || self.has_walked_across_earlier_walk(finished, &walked) {
+                // A task before it in the serial order assigned the other list: this one would
+                // have found that.
+                let has_another_list = (finished.listings.iter()).any(|it| {
+                    listings
+                        .get(&(it.0, it.1))
+                        .is_some_and(|&first| first != it.2)
+                });
+                if is_invalid
+                    || has_another_list
+                    || self.has_walked_across_earlier_walk(finished, &walked)
+                {
                     return true;
+                }
+                for it in &finished.listings {
+                    listings.entry((it.0, it.1)).or_insert(it.2);
                 }
                 for it in &finished.order_dependent_variances {
                     serial.entry(it.sym).or_insert(it.variances);

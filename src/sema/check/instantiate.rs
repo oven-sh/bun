@@ -295,7 +295,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return kept;
         }
-        self.kept_a_renamed_param.set(false);
+        let around = self.kept_a_renamed_param.replace(false);
         let result = self.instantiate_type_parameters(t, |c, param| match c.data(param) {
             // `tp.constraint == nil && getConstraintDeclaration(tp) == nil`
             TypeData::TypeParam(..) if c.unresolved_renamed_params.contains(&param) => {
@@ -319,7 +319,7 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(self.data(result), TypeData::Cond { .. }) {
             self.restrictive_instantiations.insert(result);
         }
-        if self.kept_a_renamed_param.get() {
+        if self.kept_a_renamed_param.replace(around) {
             self.restrictive_instantiations_kept.insert(t, result);
             self.restrictive_instantiations_kept.insert(result, result);
         }

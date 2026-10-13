@@ -1679,8 +1679,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// mapper)`, which the node determines.
     /// `result.checkType = c.instantiateType(root.checkType, mapper)` of a deferred conditional
     /// type. The pieces are instantiated when they are read, except a check type that the true
-    /// branch of an enclosing conditional type narrows: instantiating that substitution type
-    /// compares the base type with the constraint, and when it does so shows.
+    /// branch of an enclosing conditional type narrows, or an indexed access of one:
+    /// instantiating that substitution type compares the base type with the constraint, and when
+    /// it does so shows.
     fn instantiate_narrowed_check_type(
         &mut self,
         file: FileId,
@@ -1689,7 +1690,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         if let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind {
             let declared = self.type_from_node(file, check);
-            if matches!(self.data(declared), TypeData::Substitution { .. }) {
+            if self.actual_type_variable(declared) != declared {
                 self.instantiate(declared, mapper);
             }
         }
@@ -2631,7 +2632,7 @@ impl<'p, 's> Checker<'p, 's> {
                     true => self.union_as_object(ty),
                     false => ty,
                 };
-                (self.members(owner)).map(|members| Modifiers::Object(owner, members))
+                (self.listed_members(owner)).map(|members| Modifiers::Object(owner, members))
             }
             None => None,
         };

@@ -301,6 +301,9 @@ pub struct PlanOptions {
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most. Each
     /// occupies memory.
     pub projects_at_once: usize,
+    /// A project with at most this many files of its own is small: see `projects_at_once`. As
+    /// many small projects are built at once as there are threads, each by one thread.
+    pub files_of_a_small_project: usize,
     /// `Request::after_file` is only called for the files that are checked, not at the end for the
     /// declaration files and the JSON files that are not. Then nothing reads what the last step
     /// publishes, so it publishes nothing. The declaration files of the project itself, which are
@@ -367,6 +370,7 @@ impl Default for PlanOptions {
             checkers: 0,
             reproduces_symbol_ids: true,
             projects_at_once: 4,
+            files_of_a_small_project: 64,
             after_file_is_for_checked_files: false,
             checks_only_named: false,
             reads_sources_of_references: false,
@@ -2617,6 +2621,8 @@ struct WithOutputs<'h> {
     awaited: Guarded<Vec<usize>>,
     /// `Host::take_unreadable`, for this project: others are read through `disk` at the same time.
     unreadable: Guarded<Vec<Vec<u8>>>,
+    /// 1: the project is small, and is loaded and checked by the thread that builds it.
+    threads: usize,
 }
 
 impl WithOutputs<'_> {
@@ -2757,13 +2763,19 @@ impl Host for WithOutputs<'_> {
         self.disk.parse_package_json(arena, text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        if self.threads == 1 {
+            return self.disk.on_this_thread(count, work);
+        }
         self.disk.parallel(count, work);
+    }
+    fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        self.disk.on_this_thread(count, work);
     }
     fn loaded(&self) {
         self.disk.loaded();
     }
     fn threads(&self) -> usize {
-        self.disk.threads()
+        self.threads
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         self.disk.io_pool()
@@ -2977,6 +2989,15 @@ fn check_with_references(
     // What each project has emitted, once it is built: see `WithOutputs::files`.
     type Emitted = Vec<(Vec<u8>, Arc<Vec<u8>>)>;
     let emitted: Vec<Guarded<Emitted>> = (0..count).map(|_| Guarded::new(Vec::new())).collect();
+    // A thread that waits for the pool to check a handful of files costs more than checking
+    // them: where there are more projects than are built at once, each small one is loaded and
+    // checked by the thread that builds it, and as many of them at once as there are threads.
+    let large_at_once = (request.plan_options.projects_at_once)
+        .min(host.threads())
+        .min(count);
+    let is_small = |index: usize| {
+        count > large_at_once && roots[index].len() <= request.plan_options.files_of_a_small_project
+    };
     // `is_built`: by project, now. `Err`: the projects that have to be built first, besides those
     // that it references.
     let build = |index: usize, is_built: &[bool]| -> Result<Option<Report>, Vec<usize>> {
@@ -3021,6 +3042,7 @@ fn check_with_references(
                 .collect(),
             awaited: Guarded::new(Vec::new()),
             unreadable: Guarded::new(Vec::new()),
+            threads: if is_small(index) { 1 } else { host.threads() },
         };
         for i in (0..index).filter(|&i| is_built[i]) {
             for (path, text) in emitted[i].lock().iter() {
@@ -3142,11 +3164,14 @@ fn check_with_references(
         is_built: Vec<bool>,
         /// By project: what `build` has returned.
         awaited: Vec<Vec<usize>>,
+        /// How many projects that are not small are being built.
+        large: usize,
     }
     let builds = Guarded::new(Builds {
         is_started: vec![false; count],
         is_built: vec![false; count],
         awaited: vec![Vec::new(); count],
+        large: 0,
     });
     let one_is_built = bun_threading::Condvar::new();
     let reports: Vec<Guarded<Option<Report>>> = (0..count).map(|_| Guarded::new(None)).collect();
@@ -3156,7 +3181,9 @@ fn check_with_references(
             let index = loop {
                 let is_ready = |&i: &usize| {
                     let mut first = up_stream[i].iter().chain(&state.awaited[i]);
-                    !state.is_started[i] && first.all(|&it| state.is_built[it])
+                    !state.is_started[i]
+                        && (is_small(i) || state.large < large_at_once)
+                        && first.all(|&it| state.is_built[it])
                 };
                 if let Some(index) = (0..count).find(is_ready) {
                     break index;
@@ -3167,25 +3194,30 @@ fn check_with_references(
                 one_is_built.wait_guarded(&mut state);
             };
             state.is_started[index] = true;
+            state.large += usize::from(!is_small(index));
             let is_built = state.is_built.clone();
             drop(state);
-            match build(index, &is_built) {
+            let built = build(index, &is_built);
+            let mut state = builds.lock();
+            state.large -= usize::from(!is_small(index));
+            match built {
                 Ok(report) => {
                     *reports[index].lock() = report;
-                    builds.lock().is_built[index] = true;
+                    state.is_built[index] = true;
                 }
                 Err(awaited) => {
-                    let mut state = builds.lock();
                     state.awaited[index].extend(awaited);
                     state.is_started[index] = false;
                 }
             }
+            drop(state);
             one_is_built.notify_all();
         }
     };
-    let at_once = (request.plan_options.projects_at_once)
-        .min(host.threads())
-        .min(count);
+    let at_once = match (0..count).any(is_small) {
+        true => host.threads().min(count),
+        false => large_at_once,
+    };
     std::thread::scope(|scope| {
         for _ in 1..at_once {
             // Without the thread, the others build its share.

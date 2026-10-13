@@ -192,6 +192,9 @@ pub struct Program<'s> {
     /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
     /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
     serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
+    /// `Finished::listings` of the valid tasks so far: the first in serial order for each mapped
+    /// type. Written and read at a barrier (`Program::validate`).
+    serial_listings: Guarded<crate::util::FxHashMap<(FileId, crate::hir::TypeNodeId), bool>>,
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
@@ -469,6 +472,7 @@ impl<'s> Program<'s> {
             session,
             closed_a_cycle: Default::default(),
             serial_variances: Guarded::new(map_in(session.arena())),
+            serial_listings: Guarded::new(Default::default()),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,
@@ -2769,7 +2773,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `None`: `currentNode` is what `checkSourceElement` set, see `current_source_element`.
     pub(super) fn current_node(&self) -> Option<CurrentNode> {
         if let Some((file, e, depth)) = self.instantiating_generic_argument
-            && !(self.stack.iter().skip(depth)).any(|&q| self.is_check_expression(q))
+            && !(self.stack.iter().zip(&self.frames).skip(depth))
+                .any(|(&q, frame)| !frame.is_quick_type && self.is_check_expression(q))
         {
             return Some(CurrentNode::Expr(file, e));
         }

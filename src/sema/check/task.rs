@@ -66,6 +66,8 @@ pub struct Task<'s> {
     pub(super) foreign_evaluations: [u32; 14],
     /// See `Finished::order_dependent_variances`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
+    /// See `Finished::listings`.
+    pub(super) listings: Vec<(FileId, crate::hir::TypeNodeId, bool)>,
     /// See `Finished::assignments_walked`. It is added to under `&Checker`.
     pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
     /// The types, signatures, mappers and component lists that the task has created.
@@ -90,6 +92,7 @@ impl<'s> Task<'s> {
             closed_a_cycle: false,
             foreign_evaluations: [0; 14],
             order_dependent_variances: Vec::new(),
+            listings: Vec::new(),
             assignments_walked: RefCell::default(),
             own: OwnStore::new_in(arena),
             buffer: UnsafeCell::new(Buffer::new()),
@@ -160,6 +163,7 @@ impl<'s> Task<'s> {
         self.diagnostics.clear();
         (self.closed_a_cycle, self.foreign_evaluations) = (false, [0; 14]);
         self.order_dependent_variances.clear();
+        self.listings.clear();
         self.assignments_walked.get_mut().clear();
         self.own = OwnStore::new_in(self.arena);
         self.buffer.get_mut().clear();
@@ -227,6 +231,7 @@ impl<'s> Task<'s> {
         let own = self.own.finish(marks);
         let (closed_a_cycle, foreign_evaluations) = (self.closed_a_cycle, self.foreign_evaluations);
         let order_dependent_variances = std::mem::take(&mut self.order_dependent_variances);
+        let listings = std::mem::take(&mut self.listings);
         let assignments_walked = self.assignments_walked.take();
         self.drop_everything();
         Finished {
@@ -236,6 +241,7 @@ impl<'s> Task<'s> {
             closed_a_cycle,
             foreign_evaluations,
             order_dependent_variances,
+            listings,
             assignments_walked,
             own,
             link: Link::default(),
@@ -255,6 +261,11 @@ pub struct Finished<'s> {
     pub foreign_evaluations: [u32; 14],
     /// See `Program::validate`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
+    /// The lists of properties that the task assigned to intersections, by a mapped type among
+    /// their constituents: whether the members of that mapped type were in place, so that the
+    /// list lacks them (`Program::listed_properties`), or it has them all. Which of the two a
+    /// checker keeps depends on which statement gets there first. See `Program::validate`.
+    pub(super) listings: Vec<(FileId, crate::hir::TypeNodeId, bool)>,
     /// The functions and source files that `markNodeAssignments` has walked in the task
     /// (`Program::assignments_marked`), and whether the task was visiting the file. See
     /// `Program::validate`.
@@ -275,6 +286,7 @@ impl Finished<'_> {
         let mut measured = self.order_dependent_variances.iter();
         measured.any(|it| it.compared | it.failed | it.inferred != 0)
             || self.assignments_walked.iter().any(|it| it.2)
+            || self.listings.iter().any(|it| it.2)
     }
 }
 

@@ -204,7 +204,11 @@ impl<'p, 's> Checker<'p, 's> {
                     .is_some_and(|(s, _)| c.sig_type_params(s).is_empty())
             });
             if returns_plain_function
-                && let Some(unique) = c.unique_type_params(&n.inferred_type_params, &type_params)
+                && let Some(unique) = c.unique_type_params(
+                    &n.inferred_type_params,
+                    &type_params,
+                    ((file.0 as usize) << 32) | e.0 as usize,
+                )
             {
                 let instantiated = if unique[..] == type_params[..] {
                     signature

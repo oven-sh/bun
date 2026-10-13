@@ -186,7 +186,13 @@ fn check(
             };
             let given = parts.get(1..).unwrap_or_default();
             match severity {
-                None => {}
+                None => {
+                    let place = written.map(|it| it.place.items.first().unwrap_or(&it.place));
+                    return Err(Mistake {
+                        message: invalid_severity(id, parts.first().unwrap_or(&Json::Null)),
+                        at: place.map(|it| it.at),
+                    });
+                }
                 Some(Severity::Off) => continue,
                 Some(_) => match rule.validate(given) {
                     Ok(()) => continue,

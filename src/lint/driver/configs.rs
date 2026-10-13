@@ -1357,10 +1357,14 @@ impl<'l> Loader<'l> {
             let long = plugin_longhand(specifier).filter(|_| !is_path);
             let package = long.as_deref().unwrap_or(specifier);
             let built_in = |name: &[u8]| {
+                let has_rules = Plugin::spelled(name).any(|it| !it.has_no_rules());
                 let parts: [&[u8]; 7] = [
                     b"The plugin \"",
                     name,
-                    b"\" is built in\n  Its rules work without it, so remove it from plugins\n  To run the package as well, give it another name: { name = \"",
+                    match has_rules {
+                        true => b"\" is built in\n  Its rules work without it, so remove it from plugins\n  To run the package as well, give it another name: { name = \"",
+                        false => b"\" needs another name\n  oxlint keeps that one for its own rules, which bun lint doesn't have: { name = \"",
+                    },
                     name,
                     b"-js\", specifier = \"",
                     package,
@@ -1383,14 +1387,17 @@ impl<'l> Loader<'l> {
             let directory = written.map_or_else(|| self.cwd(), |_| paths::dirname(&bunfig));
             let file = is_path.then(|| paths::resolve(directory, specifier));
             let load = |name: &[u8]| self.js_plugins.load(directory, name, alias);
-            let is_missing = |why: &[u8]| strings::contains(why, b"Cannot find module");
+            // Not a package that it needs.
+            let is_missing = |why: &[u8], name: &[u8]| {
+                strings::contains(why, &[b"Cannot find module '", name, b"'"].concat())
+            };
             // The long name first: `vue` is not eslint-plugin-vue. One that is there and fails is not passed over.
             let (loaded, found_as) = match (&file, &long) {
                 (Some(file), _) => (load(file), &file[..]),
                 (None, None) => (load(specifier), &specifier[..]),
                 (None, Some(long)) => match load(long) {
-                    Err(why) if is_missing(&why) => match load(specifier) {
-                        Err(why) if is_missing(&why) => {
+                    Err(why) if is_missing(&why, long) => match load(specifier) {
+                        Err(why) if is_missing(&why, specifier) => {
                             let parts: [&[u8]; 7] = [
                                 b"Cannot load the plugin \"",
                                 specifier,
@@ -1415,10 +1422,14 @@ impl<'l> Loader<'l> {
             if is_built_in(&plugin.name) {
                 return Err(built_in(&plugin.name));
             }
-            let location = object(vec![
-                (b"directory", Json::String(directory.to_vec())),
+            let mut location = vec![
+                (&b"directory"[..], Json::String(directory.to_vec())),
                 (b"specifier", Json::String(found_as.to_vec())),
-            ]);
+            ];
+            if let Some(file) = &plugin.file {
+                location.push((b"module", Json::String(file.to_vec())));
+            }
+            let location = object(location);
             match plugins.iter().find(|it| it.0.name == plugin.name) {
                 None => plugins.push((plugin, location)),
                 // Named twice, by `--plugin` too.

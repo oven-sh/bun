@@ -1172,6 +1172,8 @@ module.exports = {
     [`plugins = ["eslint-plugin-nope"]`, `Cannot load the plugin "eslint-plugin-nope"\n  Cannot find module`, "2:12"],
     // The package is there and fails. That is what's said, not that there's no package "boom".
     [`plugins = ["boom"]`, `Cannot load the plugin "boom"\n  Error: inside the plugin`, "2:12"],
+    // So is a package that the plugin needs: it isn't the plugin that is missing.
+    [`plugins = ["needs"]`, `Cannot load the plugin "needs"\n  Cannot find module 'not-installed'`, "2:12"],
     [
       `plugins = ["./lint/plugin.js", "./lint/same-name.js"]`,
       `Two plugins are called "local"\n  Give this one another name: { name = "local-2", specifier = "./lint/same-name.js" }\n`,
@@ -1228,6 +1230,8 @@ module.exports = {
       "lint/same-name.js": `export default { meta: { name: "local" }, rules: {} };\n`,
       "node_modules/eslint-plugin-boom/package.json": `{ "name": "eslint-plugin-boom", "main": "index.js" }`,
       "node_modules/eslint-plugin-boom/index.js": `throw new Error("inside the plugin");\n`,
+      "node_modules/eslint-plugin-needs/package.json": `{ "name": "eslint-plugin-needs", "main": "index.js" }`,
+      "node_modules/eslint-plugin-needs/index.js": `require("not-installed");\n`,
       "lint/nameless.js": `export default { rules: {} };\n`,
       "lint/react.js": `export default { meta: { name: "eslint-plugin-react" }, rules: {} };\n`,
       "bunfig.toml": `[lint]\n${lines}\n`,
@@ -1322,6 +1326,23 @@ module.exports = {
       expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
     });
 
+    test.each<[string, Record<string, string>, string[]]>([
+      ["plugins", bunfig(`["demo"]`, {}), []],
+      ["--plugin", {}, ["--plugin", "demo"]],
+    ])("the package that the file imports too is one plugin, as in ESLint: %s", async (_, config, flags) => {
+      const files = {
+        ...project,
+        "eslint.config.js": `
+          import demo from "eslint-plugin-demo";
+          export default [{ plugins: { demo }, rules: { "demo/no-foo": "error" } }];\n`,
+      };
+      expect(await found({ ...files, ...config }, flags)).toEqual({
+        found: ["2:14 demo/no-foo"],
+        stderr: "",
+        exitCode: 1,
+      });
+    });
+
     // Enough of the package `eslint`: it says which rules it would run, and of which plugins it has them.
     const eslint = {
       "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0", main: "index.js" }),
@@ -1372,6 +1393,31 @@ module.exports = {
       stderr: "",
       exitCode: 1,
     });
+  });
+
+  test("a severity that isn't one, by a flag", async () => {
+    const { stdout, stderr, exitCode } = await lint(project, [
+      "--plugin",
+      "demo",
+      "--rule",
+      "demo/no-foo: loud",
+      "src",
+    ]);
+    expect(stderr).toStartWith(`error: "loud" is not a valid severity for demo/no-foo\n`);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+  });
+
+  test("a name that oxlint keeps for rules that bun lint doesn't have", async () => {
+    const files = { ...project, ...packaged("eslint-plugin-jsdoc", "jsdoc"), ".oxlintrc.json": "{}" };
+    const refused = await lint({ ...files, ...bunfig(`["jsdoc"]`, {}) }, ["src"]);
+    expect(refused.stderr).toContain(
+      `error: The plugin "jsdoc" needs another name\n  oxlint keeps that one for its own rules, which bun lint doesn't have: { name = "jsdoc-js", specifier = "eslint-plugin-jsdoc" }\n`,
+    );
+    expect(refused.exitCode).toBe(2);
+    const renamed = bunfig(`[{ name = "jsdoc-js", specifier = "eslint-plugin-jsdoc" }]`, {
+      "jsdoc-js/no-foo": "error",
+    });
+    expect((await found({ ...files, ...renamed })).found).toContain("2:14 jsdoc-js(no-foo)");
   });
 
   test("a rule that is off doesn't have its options checked", async () => {

@@ -52,6 +52,8 @@ pub struct Rule {
 pub struct Plugin {
     /// The prefix of its rules.
     pub name: Box<[u8]>,
+    /// The module that it is what exports, as Node.js writes the path. `None` for one that was found in a configuration.
+    pub file: Option<Box<[u8]>>,
     /// Sorted by [`Rule::id`].
     pub rules: Vec<Arc<Rule>>,
 }

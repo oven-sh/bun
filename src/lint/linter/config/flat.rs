@@ -676,7 +676,18 @@ impl Reader<'_> {
         {
             // ESLint's `Cannot redefine plugin`, for one of the file and a `NamedPlugin`. Those come first.
             let mut named = self.js_locations.iter().take(self.named);
-            if named.any(|it| *it.0 == prefix[..] && it.1 != *location) {
+            // The file can have imported the same package. Then it is one plugin, for ESLint too.
+            let exported = location.get(b"export").and_then(Json::as_array);
+            let is_default = |it: &Json| it.as_str() == Some(b"default");
+            let is_whole = exported.is_some_and(|it| it.len() <= 1 && it.iter().all(is_default));
+            let is_same = |it: &Json| {
+                *it == *location
+                    || is_whole
+                        && it
+                            .get(b"module")
+                            .is_some_and(|it| Some(it) == location.get(b"module"))
+            };
+            if named.any(|it| *it.0 == prefix[..] && !is_same(&it.1)) {
                 return Err(ConfigError::new(&[
                     b"The plugin \"",
                     prefix,

@@ -200,10 +200,10 @@ async function locatedPlugin(location, prefix) {
 async function findPlugin([directory, specifier, alias]) {
   const isLocated = typeof directory === "object";
   const isPath = isLocated || /^\.{0,2}[\\/]/u.test(specifier) || nodePath.isAbsolute(specifier);
-  let plugin;
+  let plugin, file;
   if (isLocated) plugin = await locatedPlugin(directory, alias);
   else {
-    const file = isPath
+    file = isPath
       ? nodePath.resolve(directory, specifier)
       : createRequire(nodePath.join(directory, "noop.js")).resolve(specifier);
     const module = await load(pathToFileURL(file).href);
@@ -224,7 +224,7 @@ async function findPlugin([directory, specifier, alias]) {
       "Plugin must either define `meta.name`, be loaded from an NPM package with a `name` field in `package.json`, or be given an alias in config",
     );
   }
-  return { name, isAlias: alias !== null, plugin };
+  return { name, isAlias: alias !== null, plugin, file };
 }
 
 // Where the objects are that the modules which are loaded export: `{ module, export }`, as `locate` in `evaluate-eslint.js` has it.
@@ -286,7 +286,7 @@ async function loadPlugin([location, position, firstRule]) {
     pluginsByLocation.set(key, (found = await findPlugin(location)));
     loadingTime += performance.now() - started;
   }
-  const { name, isAlias, plugin } = found;
+  const { name, isAlias, plugin, file } = found;
   const described = [];
   const exported = position === null ? exportedObjects() : null;
   // Sorted: a plugin that imports its rules all at once has them in another order each time.
@@ -310,7 +310,7 @@ async function loadPlugin([location, position, firstRule]) {
     }
   });
   if (position !== null) loadedPlugins.add(position);
-  return { name, isAlias, rules: described };
+  return { name, isAlias, file, rules: described };
 }
 
 // ------------- ESLint's `context` -------------

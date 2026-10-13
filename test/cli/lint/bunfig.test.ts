@@ -1438,6 +1438,29 @@ module.exports = {
     expect(eslintrc).toEqual({ found: ["1:31 react/jsx-key"], stderr: "", exitCode: 1 });
   });
 
+  test("next to an .oxlintrc.json: by ESLint's name for it, a flag counts for more, and prettier is a package", async () => {
+    const files = {
+      ...project,
+      ".oxlintrc.json": "{}",
+      "src/a.js": "export const a = [1].map(x => <b>{x}</b>);\nprocess.exit(1);\n",
+    };
+    const [n, long, disabled, prettier] = await Promise.all([
+      found({ ...files, ...bunfig(`["n"]`, { "n/no-process-exit": "error" }) }),
+      found({ ...files, ...bunfig(`["eslint-plugin-n"]`, { "node/no-process-exit": "error" }) }),
+      found({ ...files, ...bunfig(`["react"]`, { "react/jsx-key": "error" }) }, ["--disable-react-plugin"]),
+      found({
+        ...files,
+        ...packaged("eslint-plugin-prettier", "prettier"),
+        ...bunfig(`["prettier"]`, { "prettier/no-foo": "error" }),
+        "src/a.js": "export const foo = 1;\n",
+      }),
+    ]);
+    expect(n).toEqual({ found: ["2:1 node(no-process-exit)"], stderr: "", exitCode: 1 });
+    expect(long).toEqual(n);
+    expect(disabled.found).toEqual([]);
+    expect(prettier.found).toEqual(["1:14 prettier(no-foo)"]);
+  });
+
   test("another plugin can't take a built-in plugin's name next to an .oxlintrc.json", async () => {
     const plugins = `[{ name = "react", specifier = "demo" }]`;
     const { stderr, exitCode } = await lint({ ...project, ...bunfig(plugins, {}), ".oxlintrc.json": "{}" }, ["src"]);

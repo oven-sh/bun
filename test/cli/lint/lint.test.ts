@@ -766,6 +766,28 @@ describe.concurrent("bun lint", () => {
       [typescript, "function f() { type T = { [await g]: 1 }; }", "await@27"],
       ["ts tsx", "function f(): { [await g]: 1 } { return null!; }", "linted"],
       ["mts cts", "function f(): { [await g]: 1 } { return null!; }", "await@17"],
+      // A signature in a type starts nothing: it is in the block.
+      [
+        "ts tsx",
+        "class A { static { type F = { (): { [await g()]: 1 } }; } }",
+        "Cannot use await in class static initialization block @37+5",
+      ],
+      ["mts cts", "class A { static { type F = { (): { [await g()]: 1 } }; } }", "await@37"],
+      [
+        "ts tsx",
+        "class A { static { interface I { m<T extends { [await g()]: 1 }>(): void } } }",
+        "Cannot use await in class static initialization block @48+5",
+      ],
+      ["mts cts", "class A { static { interface I { m<T extends { [await g()]: 1 }>(): void } } }", "await@48"],
+      // The type of a variable is read in the context of the block, where `await` is the operator.
+      [
+        typescript,
+        "class A { static { let v: { get x(): { [await g()]: 1 } }; } }",
+        "Cannot use await in class static initialization block @40+5",
+      ],
+      // A function does, with or without a body.
+      ["ts tsx", "class A { static { abstract class B { abstract m(): { [await g()]: 1 }; } } }", "linted"],
+      ["ts tsx", "class A { static { function f(): { [await g()]: 1 } { return null!; } } }", "linted"],
       [typescript, "function o() { @dec(await g()) class A {} }", "await@20"],
       [typescript, "async function o() { @dec(await g()) class A {} }", "linted"],
       ["ts tsx", "declare const x = await g;", "linted"],

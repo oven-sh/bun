@@ -133,6 +133,7 @@ use crate::socket::windows_named_pipe::WindowsNamedPipe;
 
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
+use bun_http_jsc::websocket_client::websocket_upgrade_client::HandshakeTimer as WebSocketHandshakeTimer;
 use bun_sql_jsc::postgres::PostgresSQLConnection;
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
@@ -1293,6 +1294,12 @@ pub(crate) unsafe fn __bun_fire_timer(
             let c: *mut crate::node::quic::QuicEndpoint =
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
             crate::node::quic::QuicEndpoint::on_timer_fire(c);
+            Ok(())
+        }
+        EventLoopTimerTag::WebSocketHandshakeTimeout => {
+            // SAFETY: §Dispatch — `t` is the `event_loop_timer` field of a live `HandshakeTimer`.
+            let client = unsafe { (*WebSocketHandshakeTimer::from_timer_ptr(t)).fired() };
+            client.handshake_timed_out();
             Ok(())
         }
     };

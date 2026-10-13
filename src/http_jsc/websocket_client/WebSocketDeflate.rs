@@ -60,9 +60,6 @@ const COMPRESSION_BUFFER_SIZE: usize = 4096;
 /// least this large: their output would not fit either.
 const INFLATE_BUFFER_SIZE: usize = 128 * 1024;
 
-// Maximum decompressed message size (128 MB)
-const MAX_DECOMPRESSED_SIZE: usize = 128 * 1024 * 1024;
-
 // DEFLATE trailer bytes added by Z_SYNC_FLUSH
 const DEFLATE_TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 
@@ -123,6 +120,7 @@ impl PerMessageDeflate {
         decompressor: Option<&mut libdeflate_sys::Decompressor>,
         in_buf: &[u8],
         out: &mut Vec<u8>,
+        max_len: usize,
     ) -> Result<(), DecompressError> {
         let initial_len = out.len();
         out.try_reserve_exact(INFLATE_BUFFER_SIZE)
@@ -134,7 +132,7 @@ impl PerMessageDeflate {
                 let result =
                     decompressor.decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);
                 if result.status == libdeflate_sys::Status::Success {
-                    if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
+                    if out.len() - initial_len > max_len {
                         return Err(DecompressError::TooLarge);
                     }
                     return Ok(());
@@ -161,7 +159,7 @@ impl PerMessageDeflate {
             remaining = &remaining[consumed..];
 
             // Check for decompression bomb
-            if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
+            if out.len() - initial_len > max_len {
                 return Err(DecompressError::TooLarge);
             }
 

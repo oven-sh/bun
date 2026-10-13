@@ -116,6 +116,7 @@ function controlPayload(binaryType, data) {
 
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
+let setClientLimits;
 
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
@@ -169,6 +170,8 @@ class BunWebSocket extends EventEmitter {
     // any `perMessageDeflate` that's present and falsy suppresses the extension
     // offer; omitted or truthy keeps the default.
     let disableDeflate = false;
+    let maxPayload = 0;
+    let handshakeTimeout = 0;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
@@ -179,6 +182,15 @@ class BunWebSocket extends EventEmitter {
 
       // Extract from agent if provided (like HttpsProxyAgent)
       const ownOptions = { __proto__: null, ...options };
+      // As in npm ws, `maxPayload | 0` that is not above 0 means no limit: the largest one the native client takes.
+      if ("maxPayload" in ownOptions) {
+        maxPayload = ownOptions.maxPayload | 0;
+        if (maxPayload <= 0) maxPayload = 0x7fffffff;
+      }
+      const timeout = ownOptions.handshakeTimeout;
+      if (timeout !== undefined) {
+        handshakeTimeout = Math.ceil(require("internal/timers").getTimerDuration(timeout, "timeout"));
+      }
       agent = ownOptions.agent;
       let connectOpts;
       if ($isObject(agent)) {
@@ -236,7 +248,17 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+            this.#createWebSocket(
+              url,
+              protocols,
+              headers,
+              method,
+              proxy,
+              tlsOptions,
+              disableDeflate,
+              maxPayload,
+              handshakeTimeout,
+            );
           }
         },
         write() {},
@@ -265,15 +287,35 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+        this.#createWebSocket(
+          url,
+          protocols,
+          headers,
+          method,
+          proxy,
+          tlsOptions,
+          disableDeflate,
+          maxPayload,
+          handshakeTimeout,
+        );
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+    this.#createWebSocket(
+      url,
+      protocols,
+      headers,
+      method,
+      proxy,
+      tlsOptions,
+      disableDeflate,
+      maxPayload,
+      handshakeTimeout,
+    );
   }
 
-  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
+  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate, maxPayload, handshakeTimeout) {
     // The native WebSocket keeps permessage-deflate enabled by default;
     // forward `perMessageDeflate: false` only when the caller asked to disable.
     let wsOptions;
@@ -289,6 +331,10 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
+    if (maxPayload !== 0 || handshakeTimeout !== 0) {
+      setClientLimits ??= $cpp("JSWebSocket.cpp", "createWebSocketClientLimitsSetter");
+      setClientLimits(ws, maxPayload, handshakeTimeout);
+    }
 
     return ws;
   }
@@ -359,98 +405,65 @@ class BunWebSocket extends EventEmitter {
     }
   }
 
-  #onOrOnce(event, listener, once) {
+  // One native listener per event type forwards to the emitter. EventEmitter's once() registers through on().
+  #on(event, listener) {
     if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     if (event === "upgrade" || event === "unexpected-response") {
       this.#ensureHandshakeListener();
-      return once ? super.once(event, listener) : super.on(event, listener);
+      return super.on(event, listener);
     }
     const mask = 1 << eventIds[event];
-    const hasPersistentListener = mask && (this.#eventId & mask) === mask;
-    // Add a native listener if:
-    // 1. For `on()`: no native listener exists yet (will be persistent)
-    // 2. For `once()`: no persistent `on()` listener exists (otherwise the persistent one forwards events)
-    //    If only `once()` listeners exist, each needs its own native listener since they auto-remove
-    if (mask && !hasPersistentListener) {
-      // Only set the eventId bit for persistent `on` listeners, not for `once`
-      if (!once) {
-        this.#eventId |= mask;
-      }
+    if (mask && (this.#eventId & mask) !== mask) {
+      this.#eventId |= mask;
       if (event === "open") {
-        this.#ws.addEventListener(
-          "open",
-          () => {
-            this.emit("open");
-          },
-          once,
-        );
+        this.#ws.addEventListener("open", () => {
+          this.emit("open");
+        });
       } else if (event === "close") {
-        this.#ws.addEventListener(
-          "close",
-          ({ code, reason, wasClean }) => {
-            this.emit("close", code, reason, wasClean);
-          },
-          once,
-        );
+        this.#ws.addEventListener("close", ({ code, reason, wasClean }) => {
+          this.emit("close", code, reason, wasClean);
+        });
       } else if (event === "message") {
-        this.#ws.addEventListener(
-          "message",
-          ({ data }) => {
-            const isBinary = typeof data !== "string";
-            if (isBinary) {
-              this.emit("message", this.#fragments ? [data] : data, isBinary);
-            } else {
-              let encoded = encoder.encode(data);
-              if (this.#binaryType !== "arraybuffer") {
-                encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
-              }
-              this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
+        this.#ws.addEventListener("message", ({ data }) => {
+          const isBinary = typeof data !== "string";
+          if (isBinary) {
+            this.emit("message", this.#fragments ? [data] : data, isBinary);
+          } else {
+            let encoded = encoder.encode(data);
+            if (this.#binaryType !== "arraybuffer") {
+              encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
             }
-          },
-          once,
-        );
+            this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
+          }
+        });
       } else if (event === "error") {
-        this.#ws.addEventListener(
-          "error",
-          err => {
-            if (this.#unexpectedResponseEmitted) return;
-            this.emit("error", err);
-          },
-          once,
-        );
+        this.#ws.addEventListener("error", err => {
+          if (this.#unexpectedResponseEmitted) return;
+          // A limit the constructor set fails with the Error npm ws emits, not with an ErrorEvent.
+          const error = err.error;
+          this.emit("error", error?.$wsPackageError ? error : err);
+        });
       } else if (event === "ping") {
-        this.#ws.addEventListener(
-          "ping",
-          ({ data }) => {
-            this.emit("ping", controlPayload(this.#binaryType, data));
-          },
-          once,
-        );
+        this.#ws.addEventListener("ping", ({ data }) => {
+          this.emit("ping", controlPayload(this.#binaryType, data));
+        });
       } else if (event === "pong") {
-        this.#ws.addEventListener(
-          "pong",
-          ({ data }) => {
-            this.emit("pong", controlPayload(this.#binaryType, data));
-          },
-          once,
-        );
+        this.#ws.addEventListener("pong", ({ data }) => {
+          this.emit("pong", controlPayload(this.#binaryType, data));
+        });
       }
     }
-    return once ? super.once(event, listener) : super.on(event, listener);
+    return super.on(event, listener);
   }
 
   on(event, listener) {
-    return this.#onOrOnce(event, listener, undefined);
-  }
-
-  once(event, listener) {
-    return this.#onOrOnce(event, listener, onceObject);
+    return this.#on(event, listener);
   }
 
   addListener(event, listener) {
-    return this.#onOrOnce(event, listener, undefined);
+    return this.#on(event, listener);
   }
 
   prependListener(event, listener) {
@@ -472,7 +485,7 @@ class BunWebSocket extends EventEmitter {
     if (eventIds[event] === undefined) return;
     const mask = 1 << eventIds[event];
     if ((this.#eventId & mask) === mask) return;
-    this.#onOrOnce(event, noopBridgeListener, undefined);
+    this.#on(event, noopBridgeListener);
     super.off(event, noopBridgeListener);
   }
 

@@ -200,6 +200,7 @@ using namespace JSC;
     macro(write) \
     macro(writer) \
     macro(written) \
+    macro(wsPackageError) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 

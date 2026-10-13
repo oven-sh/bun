@@ -49,10 +49,7 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
-/// Maximum buffered inbound message size (128 MB). A server that declares a
-/// larger frame, or whose continuation fragments accumulate past this, fails
-/// the connection with close code 1009 instead of growing `receive_buffer`
-/// without bound.
+/// Default for `max_receive_length` (128 MB), for a connection whose owner set no limit.
 const MAX_RECEIVE_MESSAGE_LENGTH: usize = 128 * 1024 * 1024;
 /// RFC 6455 §5.5: a control frame's payload is at most 125 bytes.
 const MAX_CONTROL_PAYLOAD: usize = 125;
@@ -100,6 +97,8 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) close_dispatch_pending: RefCell<Option<(u16, bun_core::String)>>,
 
     pub(crate) receive_body_remain: Cell<usize>,
+    /// Largest inbound message in bytes, buffered or inflated: a server that declares more fails with close code 1009.
+    max_receive_length: Cell<usize>,
     pub(crate) receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
     pub(crate) send_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
@@ -313,9 +312,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.release_io_ref();
     }
 
+    /// RFC 6455 §7.1.7: a failure found in what the server sent goes out as a Close frame; any other drops the connection.
     pub(crate) fn terminate(&self, code: ErrorCode) {
         log!("terminate");
-        self.fail(code);
+        let Some(status) = code.close_frame_code() else {
+            return self.fail(code);
+        };
+        // Nothing the server sends from here on is read.
+        self.close_received.set(true);
+        if self.cpp_websocket().is_none() || self.has_pending_close_dispatch() {
+            // Already closing: the Close frame that is out, or queued, stays the last frame.
+            return;
+        }
+        // C++ leaves OPEN here, so no `send()` reaches this client behind the Close frame.
+        self.dispatch_abrupt_close(code);
+        self.send_close_with_body(status, None, &[]);
     }
 
     fn clear_receive_buffers(&self, free: bool) {
@@ -355,7 +366,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         let result = match self.deflate.borrow_mut().as_mut() {
             None => Err(ErrorCode::CompressionUnsupported),
             Some(deflate) => deflate
-                .decompress(rare.libdeflate_decompressor(), data, &mut decompressed)
+                .decompress(
+                    rare.libdeflate_decompressor(),
+                    data,
+                    &mut decompressed,
+                    self.max_receive_length.get(),
+                )
                 .map_err(|err| match err {
                     websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
@@ -698,6 +714,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             _ => {}
         }
 
+        // A data frame with a 7-bit length. `recv_extended_payload_length` checks a longer one.
+        if cursor.state == ReceiveState::NeedBody && self.exceeds_receive_limit(cursor.body_remain)
+        {
+            return self.recv_failed(ErrorCode::MessageTooBig);
+        }
+
         // An empty final message still dispatches ("", ArrayBuffer(0), ...).
         if cursor.body_remain == 0 && cursor.state == ReceiveState::NeedBody && cursor.is_final {
             let _ = self.consume(b"", 0, cursor.last_data_type, true);
@@ -757,7 +779,16 @@ impl<const SSL: bool> WebSocket<SSL> {
             // the server should've set length to zero
             return self.recv_failed(ErrorCode::InvalidControlFrame);
         }
+        if self.exceeds_receive_limit(cursor.body_remain) {
+            return self.recv_failed(ErrorCode::MessageTooBig);
+        }
         Step::Continue
+    }
+
+    /// Asked once per data frame, before its payload is read: buffered bytes plus the bytes it still owes stay constant.
+    fn exceeds_receive_limit(&self, frame_len: usize) -> bool {
+        let buffered_len = self.receive_buffer.borrow().readable_length();
+        buffered_len.saturating_add(frame_len) > self.max_receive_length.get()
     }
 
     /// While `control_frame_started`, `cursor.body_remain` counts bytes buffered so far, not bytes left.
@@ -819,11 +850,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn recv_body(&self, cursor: &mut RecvCursor<'_>) -> Step {
-        let buffered_len = self.receive_buffer.borrow().readable_length();
-        if buffered_len.saturating_add(cursor.body_remain) > MAX_RECEIVE_MESSAGE_LENGTH {
-            return self.recv_failed(ErrorCode::MessageTooBig);
-        }
-
         let (chunk, rest) = cursor
             .data
             .split_at(cursor.body_remain.min(cursor.data.len()));
@@ -1120,11 +1146,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.clear_data();
             return;
         }
-        // shutdown_read/shutdown are deferred to shutdown_after_close_frame()
-        // so the close frame can finish writing first: SHUT_RD on Linux makes
-        // the socket immediately readable (recv → 0), and the resulting on_end
-        // → terminate → cancel(Failure) would RST and discard the buffered
-        // frame.
+        // shutdown is deferred to shutdown_after_close_frame() so the close frame can finish writing first.
         let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
         let header = WebsocketHeader::new(((body_len + 2) & 0x7F) as u8, true, Opcode::Close);
         frame[..2].copy_from_slice(&header.slice());
@@ -1170,7 +1192,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// SHUT_RD + SHUT_WR after the close frame is in the kernel send buffer.
+    /// SHUT_WR after the close frame is in the kernel send buffer.
     /// Marks the socket shut-down so loop.c takes the CLEAN_SHUTDOWN branch on
     /// the subsequent EOF instead of dispatching `on_end → terminate → fail →
     /// cancel → close(Failure)`, which would RST and discard the queued close
@@ -1178,7 +1200,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// writes; tunnel mode operates on a detached socket.
     fn shutdown_after_close_frame(&self) {
         if !SSL && self.tunnel().is_none() {
-            self.tcp.get().shutdown_read();
+            // No SHUT_RD: recv() would return 0 at once, and a close over bytes still in flight resets the server before it reads the close frame.
             self.tcp.get().shutdown();
         }
         // RFC 6455 7.1.1: the server closes the TCP connection first, within reason.
@@ -1430,6 +1452,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             close_received: Cell::new(false),
             close_dispatch_pending: RefCell::new(None),
             receive_body_remain: Cell::new(0),
+            max_receive_length: Cell::new(MAX_RECEIVE_MESSAGE_LENGTH),
             receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             global_this: GlobalRef::from(global_this),
@@ -1462,6 +1485,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         buffered_data: Option<Box<InitialData>>,
     ) -> *mut Self {
         let ws = io_ref.this_ptr();
+        if let Some(limit) = core::num::NonZero::new(outgoing.max_receive_message_length()) {
+            ws.max_receive_length.set(limit.get() as usize);
+        }
         // C++ holds the returned pointer as `m_connectedWebSocket`.
         ws.outgoing_websocket
             .set(Some((BackRef::new(outgoing), io_ref.clone())));
@@ -1918,6 +1944,46 @@ pub enum ErrorCode {
     ProxyAuthenticationRequired = 34,
     ProxyTunnelFailed = 36,
     UnexpectedRsv1 = 37,
+}
+
+impl ErrorCode {
+    /// Status code of the Close frame for this failure of an open connection. `None`: the handshake or the transport failed.
+    fn close_frame_code(self) -> Option<u16> {
+        match self {
+            Self::ControlFrameIsFragmented
+            | Self::InvalidControlFrame
+            | Self::CompressionUnsupported
+            | Self::InvalidCompressedData
+            | Self::UnexpectedMaskFromServer
+            | Self::UnsupportedControlFrame
+            | Self::UnexpectedOpcode
+            | Self::UnexpectedRsv1 => Some(1002),
+            Self::InvalidUtf8 => Some(1007),
+            Self::MessageTooBig => Some(1009),
+            Self::Cancel
+            | Self::InvalidResponse
+            | Self::Expected101StatusCode
+            | Self::MissingUpgradeHeader
+            | Self::MissingConnectionHeader
+            | Self::MissingWebsocketAcceptHeader
+            | Self::InvalidUpgradeHeader
+            | Self::InvalidConnectionHeader
+            | Self::InvalidWebsocketVersion
+            | Self::MismatchWebsocketAcceptHeader
+            | Self::MissingClientProtocol
+            | Self::MismatchClientProtocol
+            | Self::Timeout
+            | Self::Closed
+            | Self::FailedToWrite
+            | Self::FailedToConnect
+            | Self::Ended
+            | Self::FailedToAllocateMemory
+            | Self::TlsHandshakeFailed
+            | Self::ProxyConnectFailed
+            | Self::ProxyAuthenticationRequired
+            | Self::ProxyTunnelFailed => None,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

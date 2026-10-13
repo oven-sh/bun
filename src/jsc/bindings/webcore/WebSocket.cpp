@@ -56,6 +56,7 @@
 
 #include "JSBuffer.h"
 #include "BunClientData.h"
+#include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "WebSocketDeflate.h"
 
@@ -1412,7 +1413,7 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     dispatchEvent(MessageEvent::create(eventNames().handshakeEvent, WTF::move(init), EventIsTrusted::Yes));
 }
 
-void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
+void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, ErrorBeforeClose errorBeforeClose)
 {
     // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, reason = WTF::move(reason)] {
@@ -1436,7 +1437,7 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     // to keep send()/ping()/pong() out of sendWebSocketData() with no kind.
     m_state = CLOSING;
     if (scriptExecutionContext()) {
-        const bool dispatchError = wasConnecting && isConnectionError;
+        const bool dispatchError = errorBeforeClose == ErrorBeforeClose::Always || (wasConnecting && errorBeforeClose == ErrorBeforeClose::WhileConnecting);
         queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [code, dispatchError, reason = WTF::move(reason), clean = wasClean == CleanStatus::Clean](WebSocket& ws) mutable {
             if (ws.m_state == CLOSED)
                 return;
@@ -1450,6 +1451,55 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     } else {
         m_state = CLOSED;
     }
+}
+
+// The events the `ws` package has for a limit it set: 'error' while CLOSING, then CLOSED and a close with 1006 and no reason.
+void WebSocket::didExceedClientLimit(ClientLimit limit)
+{
+    if (m_state == CLOSED)
+        return;
+    m_state = CLOSING;
+    if (!scriptExecutionContext()) {
+        m_state = CLOSED;
+        return;
+    }
+    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [limit](WebSocket& ws) {
+        if (ws.m_state == CLOSED)
+            return;
+        auto* globalObject = ws.scriptExecutionContext()->jsGlobalObject();
+        auto& vm = JSC::getVM(globalObject);
+        ErrorEvent::Init eventInit = {};
+        JSC::JSObject* error = nullptr;
+        switch (limit) {
+        case ClientLimit::MaxReceiveMessageLength:
+            eventInit.message = "Max payload size exceeded"_s;
+            error = Bun::createError(globalObject, Bun::ErrorCode::WS_ERR_UNSUPPORTED_MESSAGE_LENGTH, eventInit.message);
+            break;
+        case ClientLimit::HandshakeTimeout:
+            eventInit.message = "Opening handshake has timed out"_s;
+            error = JSC::createError(globalObject, eventInit.message);
+            break;
+        }
+        error->putDirect(vm, WebCore::builtinNames(vm).wsPackageErrorPrivateName(), JSC::jsBoolean(true));
+        eventInit.error = error;
+        ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+        if (ws.m_state == CLOSED)
+            return;
+        ws.m_state = CLOSED;
+        ws.dispatchEvent(CloseEvent::create(false, 1006, emptyString()));
+    });
+}
+
+void WebSocket::setClientLimits(uint32_t maxReceiveMessageLength, uint32_t handshakeTimeoutMs)
+{
+    m_maxReceiveMessageLength = maxReceiveMessageLength;
+    if (!handshakeTimeoutMs || !m_upgradeClient)
+        return;
+    m_hasHandshakeTimeout = true;
+    if (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS)
+        Bun__WebSocketHTTPSClient__setHandshakeTimeout(m_upgradeClient, handshakeTimeoutMs);
+    else
+        Bun__WebSocketHTTPClient__setHandshakeTimeout(m_upgradeClient, handshakeTimeoutMs);
 }
 
 void WebSocket::didStartClosingHandshake()
@@ -1553,39 +1603,39 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::invalid_response: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid response"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid response"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::expected_101_status_code: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Expected 101 status code"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Expected 101 status code"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::missing_upgrade_header: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Missing upgrade header"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Missing upgrade header"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::missing_connection_header: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Missing connection header"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Missing connection header"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::missing_websocket_accept_header: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Missing websocket accept header"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Missing websocket accept header"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::invalid_upgrade_header: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid upgrade header"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid upgrade header"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::invalid_connection_header: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid connection header"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid connection header"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::invalid_websocket_version: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid websocket version"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid websocket version"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::mismatch_websocket_accept_header: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Mismatch websocket accept header"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Mismatch websocket accept header"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::missing_client_protocol: {
@@ -1600,7 +1650,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         // Opening-handshake timeout: per WHATWG "fail the WebSocket connection"
         // fire error + close(1006). didReceiveClose gates the error event on
         // wasConnecting, so a (currently unreachable) post-open timeout only closes.
-        didReceiveClose(CleanStatus::NotClean, 1006, "Timeout"_s, true);
+        if (m_hasHandshakeTimeout && m_state == CONNECTING)
+            didExceedClientLimit(ClientLimit::HandshakeTimeout);
+        else
+            didReceiveClose(CleanStatus::NotClean, 1006, "Timeout"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::closed: {
@@ -1612,11 +1665,11 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::failed_to_connect: {
-        didReceiveClose(CleanStatus::NotClean, 1006, "Failed to connect"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1006, "Failed to connect"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::ended: {
-        didReceiveClose(CleanStatus::NotClean, 1006, "Connection ended"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1006, "Connection ended"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
 
@@ -1625,61 +1678,64 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::control_frame_is_fragmented: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - control frame is fragmented"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - control frame is fragmented"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::invalid_control_frame: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - invalid control frame"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - invalid control frame"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::compression_unsupported: {
-        didReceiveClose(CleanStatus::Clean, 1011, "Compression not implemented yet"_s);
+        didReceiveClose(CleanStatus::Clean, 1011, "Compression not implemented yet"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::unexpected_mask_from_server: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected mask from server"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected mask from server"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::unsupported_control_frame: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unsupported control frame"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unsupported control frame"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::unexpected_opcode: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected opcode"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - unexpected opcode"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::unexpected_rsv1: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - RSV1 must be clear"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Protocol error - RSV1 must be clear"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::invalid_utf8: {
         // RFC 6455 7.4.1: 1007 is "invalid frame payload data" (for example,
         // non-UTF-8 in a text message); 1003 would mean an unsupported data type.
-        didReceiveClose(CleanStatus::NotClean, 1007, "Server sent invalid UTF8"_s);
+        didReceiveClose(CleanStatus::NotClean, 1007, "Server sent invalid UTF8"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::tls_handshake_failed: {
-        didReceiveClose(CleanStatus::NotClean, 1015, "TLS handshake failed"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1015, "TLS handshake failed"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::message_too_big: {
-        didReceiveClose(CleanStatus::NotClean, 1009, "Message too big"_s);
+        if (m_maxReceiveMessageLength)
+            didExceedClientLimit(ClientLimit::MaxReceiveMessageLength);
+        else
+            didReceiveClose(CleanStatus::NotClean, 1009, "Message too big"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::invalid_compressed_data: {
-        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid compressed data"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid compressed data"_s, ErrorBeforeClose::Always);
         break;
     }
     case Bun::WebSocketErrorCode::proxy_connect_failed: {
-        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy connection failed"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy connection failed"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::proxy_authentication_required: {
-        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy authentication required"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy authentication required"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     case Bun::WebSocketErrorCode::proxy_tunnel_failed: {
-        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy tunnel failed"_s, true);
+        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy tunnel failed"_s, ErrorBeforeClose::WhileConnecting);
         break;
     }
     }
@@ -1797,6 +1853,11 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, WebCor
 extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
 {
     return webSocket->rejectUnauthorized();
+}
+
+extern "C" uint32_t WebSocket__maxReceiveMessageLength(WebCore::WebSocket* webSocket)
+{
+    return webSocket->maxReceiveMessageLength();
 }
 
 extern "C" bool WebSocket__isProxyTLS(WebCore::WebSocket* webSocket)

@@ -250,6 +250,10 @@ public:
         m_offerPerMessageDeflate = offer;
     }
 
+    // `maxPayload` and `handshakeTimeout` of the `ws` module, which sets them right after construction. 0 keeps a default.
+    void setClientLimits(uint32_t maxReceiveMessageLength, uint32_t handshakeTimeoutMs);
+    uint32_t maxReceiveMessageLength() const { return m_maxReceiveMessageLength; }
+
     // C++-only callback mode. When set, didConnect/didReceiveMessage/
     // didClose call these function pointers directly instead of building
     // Event objects and going through dispatchEvent. Fires synchronously
@@ -319,7 +323,18 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
+    // Which failures fire an error event before their close event.
+    enum class ErrorBeforeClose : uint8_t {
+        Never,
+        WhileConnecting,
+        Always,
+    };
+    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, ErrorBeforeClose = ErrorBeforeClose::Never);
+    enum class ClientLimit : uint8_t {
+        MaxReceiveMessageLength,
+        HandshakeTimeout,
+    };
+    void didExceedClientLimit(ClientLimit);
     void failConnectingWebSocket();
 
     void sendWebSocketString(const String& message, const Opcode opcode);
@@ -350,8 +365,10 @@ private:
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };
+    uint32_t m_maxReceiveMessageLength { 0 };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
+    bool m_hasHandshakeTimeout { false };
     // connect()'s claim on the wrapper: held from connect() until the socket reaches CLOSED (or
     // stop()). Posted event tasks keep it alive through queueTaskKeepingObjectAlive().
     RefPtr<PendingActivity<WebSocket>> m_pendingActivity;

@@ -93,5 +93,6 @@ template<> struct JSDOMWrapperConverterTraits<WebSocket> {
 };
 
 JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject);
+JSC::JSValue createWebSocketClientLimitsSetter(Zig::GlobalObject* globalObject);
 
 } // namespace WebCore

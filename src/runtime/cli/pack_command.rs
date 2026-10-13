@@ -394,7 +394,7 @@ fn iterate_included_project_tree(
                     }
 
                     // `index.js` matches only at the root, `**/index.js` at any depth
-                    if glob::r#match(include.glob.slice(), entry_subpath.as_bytes()).matches() {
+                    if include.glob.r#match(entry_subpath.as_bytes()).matches() {
                         included = true;
                     }
                 }
@@ -410,7 +410,7 @@ fn iterate_included_project_tree(
                         continue;
                     }
 
-                    let result = glob::r#match(exclude.glob.slice(), entry_subpath.as_bytes());
+                    let result = exclude.glob.r#match(entry_subpath.as_bytes());
                     if result.is_negated() && !result.matches() {
                         included = false;
                     }
@@ -1221,7 +1221,7 @@ fn is_excluded<'a>(
             } else {
                 entry_name
             };
-            let result = glob::r#match(pattern.glob.slice(), match_path);
+            let result = pattern.glob.r#match(match_path);
             if result.is_negated() {
                 if !result.matches() {
                     ignored = false;
@@ -1234,7 +1234,7 @@ fn is_excluded<'a>(
             } else if result.matches() {
                 ignored = true;
                 walk_only = false;
-                ignore_pattern = pattern.glob.slice();
+                ignore_pattern = pattern.glob.pattern();
                 ignore_kind = ignore.kind;
             }
         }
@@ -1255,7 +1255,7 @@ fn negation_reaches_below(pattern: &Pattern, dir_rel: &[u8]) -> bool {
     if !pattern.flags.contains(PatternFlags::REL_PATH) {
         return false;
     }
-    let mut glob_segments = strings::split(&pattern.glob.slice()[b"!".len()..], b"/");
+    let mut glob_segments = strings::split(&pattern.glob.pattern()[b"!".len()..], b"/");
     for dir_name in strings::split(dir_rel, b"/") {
         match glob_segments.next() {
             Some(b"**") => return true,
@@ -2504,7 +2504,7 @@ fn edit_root_package_json(
 /// A glob pattern used to ignore or include files in the project tree.
 /// Might come from .npmignore, .gitignore, or `files` in package.json
 pub(crate) struct Pattern {
-    pub(crate) glob: CowString,
+    pub(crate) glob: glob::Prepared<CowString>,
     pub(crate) flags: PatternFlags,
 }
 
@@ -2547,16 +2547,19 @@ impl Pattern {
             b""
         };
         Some(Pattern {
-            glob: CowString::init_owned([negation, remain].concat().into_boxed_slice()),
+            glob: glob::Prepared::new(CowString::init_owned(
+                [negation, remain].concat().into_boxed_slice(),
+            )),
             flags,
         })
     }
 
     /// Invert a negated pattern to a positive pattern
     pub(crate) fn as_positive(&self) -> Pattern {
-        debug_assert!(self.flags.contains(PatternFlags::NEGATED) && self.glob.length() > 0);
+        debug_assert!(self.flags.contains(PatternFlags::NEGATED));
         Pattern {
-            glob: self.glob.borrow_subslice(1, None), // remove the leading `!`
+            // remove the leading `!`
+            glob: glob::Prepared::new(self.glob.source().borrow_subslice(1, None)),
             flags: self.flags.difference(PatternFlags::NEGATED),
         }
     }

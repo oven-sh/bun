@@ -9,19 +9,45 @@ impl SyntaxError {
     /// `self` is in what `normalizeEndOfLine` has made of `original`. The same in `original`.
     #[cold]
     pub(crate) fn before_normalizing_end_of_line(self, original: &[u8]) -> SyntaxError {
-        if !bun_core::strings::contains_char(original, b'\r') {
-            return self;
+        SyntaxError(self.0, BeforeNormalizing::new(original).place_of(self.1))
+    }
+}
+
+/// Where the places in what `normalizeEndOfLine` has made of a text are in the text. Asked for one after the other, from the
+/// first to the last, they take one pass over the text.
+pub(crate) struct BeforeNormalizing<'a> {
+    original: &'a [u8],
+    has_returns: bool,
+    /// The last place, and where that is in `original`.
+    last: (usize, usize),
+}
+
+impl<'a> BeforeNormalizing<'a> {
+    pub(crate) fn new(original: &'a [u8]) -> BeforeNormalizing<'a> {
+        BeforeNormalizing {
+            original,
+            has_returns: bun_core::strings::contains_char(original, b'\r'),
+            last: (0, 0),
         }
-        let mut left = self.1 as usize;
-        let mut at = 0;
-        while left > 0 && at < original.len() {
-            at += match original[at..].starts_with(b"\r\n") {
+    }
+
+    pub(crate) fn place_of(&mut self, place: u32) -> u32 {
+        if !self.has_returns {
+            return place;
+        }
+        if (place as usize) < self.last.0 {
+            self.last = (0, 0);
+        }
+        let (mut left, mut at) = (place as usize - self.last.0, self.last.1);
+        while left > 0 && at < self.original.len() {
+            at += match self.original[at..].starts_with(b"\r\n") {
                 true => 2,
                 false => 1,
             };
             left -= 1;
         }
-        SyntaxError(self.0, at as u32)
+        self.last = (place as usize - left, at);
+        at as u32
     }
 }
 

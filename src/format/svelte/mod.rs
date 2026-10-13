@@ -18,7 +18,7 @@ use crate::options::{
     EmbeddedLanguageFormatting, Flavor, FormatOptions, JavaScriptParser, ParseParts,
 };
 use crate::stack::Stack;
-use crate::syntax_error::{Message, SyntaxError};
+use crate::syntax_error::{BeforeNormalizing, Message, SyntaxError};
 
 /// Everything that is allocated to format a text and can be used again for the next one.
 #[derive(Default)]
@@ -38,7 +38,7 @@ pub struct Unformatted {
 }
 
 impl Scratch {
-    /// What has stayed as it is in the component that has been formatted last.
+    /// What has stayed as it is in the component that has been formatted last, from the first to the last.
     pub fn unformatted(&self) -> &[Unformatted] {
         &self.unformatted
     }
@@ -176,12 +176,17 @@ pub fn format(
     if stack.ran_out() {
         return Err(FormatError::NestedTooDeeply);
     }
-    for (message, at) in unformatted.take() {
-        let at = in_file(SyntaxError(Message::UnexpectedToken, at)).1;
-        scratch.unformatted.push(Unformatted { message, at });
-    }
     // Scripts are written first, wherever they are.
-    crate::sort::sort_by_key(&mut scratch.unformatted, |it| it.at);
+    let mut unformatted = unformatted.take();
+    crate::sort::sort_by_key(&mut unformatted, |it| it.1);
+    let before = (normalized.len() - trimmed_start(&normalized).len()) as u32;
+    let mut places = BeforeNormalizing::new(without_mark);
+    scratch
+        .unformatted
+        .extend(unformatted.into_iter().map(|(message, at)| {
+            let at = places.place_of(before + at);
+            Unformatted { message, at }
+        }));
     if original.starts_with(crate::text::BOM) {
         out.extend_from_slice(crate::text::BOM);
     }

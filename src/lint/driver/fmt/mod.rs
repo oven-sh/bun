@@ -96,26 +96,7 @@ impl Problem {
     /// In any other language. `offset`: in `text`, not counting a byte order mark.
     #[cold]
     fn at(text: &[u8], message: &[u8], offset: u32) -> Problem {
-        let text = strings::without_utf8_bom(text);
-        let before = &text[..text.len().min(offset as usize)];
-        let (mut line, mut line_start, mut from) = (1u32, 0, 0);
-        while let Some(found) = strings::index_of_any(&before[from..], b"\n\r") {
-            from += found + 1;
-            // The `\n` of `\r\n` ends the line.
-            if before[from - 1] == b'\n' || text.get(from) != Some(&b'\n') {
-                (line, line_start) = (line + 1, from);
-            }
-        }
-        let rest = &text[line_start..];
-        let end = strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
-        Problem {
-            message: message.to_vec(),
-            at: Some(Place {
-                line,
-                column: strings::utf8_decoded_len_utf16(&before[line_start..]) as u32 + 1,
-                line_text: rest[..end].to_vec(),
-            }),
-        }
+        Places::new(text).problem(message, offset)
     }
 
     /// As Bun prints every other error: the line, a caret, the message, and where it is. `shown`: the name of the file.
@@ -141,6 +122,68 @@ impl Problem {
         };
         printed.push_str("\n\n");
         printed.into_bytes()
+    }
+}
+
+/// The lines and columns of places in a text. Asked for one after the other, from the first to the last, they take one pass
+/// over the text, and what is printed is no longer than the text and the messages: a line is shown with the first problem
+/// that is in it.
+struct Places<'a> {
+    text: &'a [u8],
+    line: u32,
+    line_start: usize,
+    /// Up to where line breaks have been looked for.
+    searched: usize,
+    /// Up to where the line has been measured, and how many UTF-16 code units that is.
+    measured: (usize, u32),
+    /// The line that has been shown last.
+    shown: u32,
+}
+
+impl<'a> Places<'a> {
+    fn new(text: &'a [u8]) -> Places<'a> {
+        Places {
+            text: strings::without_utf8_bom(text),
+            line: 1,
+            line_start: 0,
+            searched: 0,
+            measured: (0, 0),
+            shown: 0,
+        }
+    }
+
+    /// `offset`: in the text, not counting a byte order mark.
+    fn problem(&mut self, message: &[u8], offset: u32) -> Problem {
+        let (text, end) = (self.text, self.text.len().min(offset as usize));
+        if end < self.searched {
+            *self = Places::new(text);
+        }
+        while let Some(found) = strings::index_of_any(&text[self.searched..end], b"\n\r") {
+            self.searched += found + 1;
+            // The `\n` of `\r\n` ends the line.
+            if text[self.searched - 1] == b'\n' || text.get(self.searched) != Some(&b'\n') {
+                (self.line, self.line_start) = (self.line + 1, self.searched);
+                self.measured = (self.searched, 0);
+            }
+        }
+        self.searched = end;
+        let more = strings::utf8_decoded_len_utf16(&text[self.measured.0..end]) as u32;
+        self.measured = (end, self.measured.1 + more);
+        let line_text = match std::mem::replace(&mut self.shown, self.line) == self.line {
+            true => &[][..],
+            false => {
+                let rest = &text[self.line_start..];
+                &rest[..strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len())]
+            }
+        };
+        Problem {
+            message: message.to_vec(),
+            at: Some(Place {
+                line: self.line,
+                column: self.measured.1 + 1,
+                line_text: line_text.to_vec(),
+            }),
+        }
     }
 }
 
@@ -710,9 +753,9 @@ fn format(
             {
                 return Err(Failure::Changed("formatting would change its contents"));
             }
-            let unformatted = scratch.svelte.unformatted().iter();
-            scratch.warnings = unformatted
-                .map(|it| Problem::at(text, &it.message, it.at))
+            let mut places = Places::new(text);
+            scratch.warnings = (scratch.svelte.unformatted().iter())
+                .map(|it| places.problem(&it.message, it.at))
                 .collect();
             return finish(done, out, "Svelte");
         }

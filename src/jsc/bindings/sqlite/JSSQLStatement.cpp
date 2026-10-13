@@ -1469,6 +1469,93 @@ static bool isSkippedInSQLiteQuery(const char c)
     return c == ' ' || c == ';' || (c >= '\t' && c <= '\r');
 }
 
+// SQL text that ends in a NUL. SQLite parses such text in place; it copies text that does not end in one, once for each prepare.
+class NulTerminatedSQL {
+    WTF_MAKE_NONCOPYABLE(NulTerminatedSQL);
+    WTF_MAKE_NONMOVABLE(NulTerminatedSQL);
+
+public:
+    // One SQLite lookaside slot: text that SQLite copied without a malloc is copied here without one.
+    static constexpr size_t inlineCapacity = 1200;
+
+    NulTerminatedSQL() = default;
+    ~NulTerminatedSQL()
+    {
+        if (m_heap) [[unlikely]]
+            WTF::fastFree(m_heap);
+    }
+
+    // false: an exception is pending.
+    [[nodiscard]] bool tryInit(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, sqlite3* db, WTF::StringView view)
+    {
+        if (view.is8Bit() && view.containsOnlyASCII()) {
+            auto text = byteCast<char>(view.span8());
+            m_data = text.data();
+            m_size = text.size();
+            if (m_size < inlineCapacity) {
+                memcpy(m_inline, m_data, m_size);
+                m_inline[m_size] = '\0';
+                m_data = m_inline;
+                return true;
+            }
+        } else {
+            auto converted = view.tryGetUTF8();
+            if (!converted) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return false;
+            }
+            m_converted = WTF::move(converted.value());
+            m_data = m_converted.legacyCStringPointer();
+            m_size = m_converted.length();
+            if (m_size < inlineCapacity)
+                return true;
+        }
+        return tryInitLong(globalObject, scope, db);
+    }
+
+    // nByte -1: SQLite reads up to the NUL and parses the text in place.
+    int prepare(sqlite3* db, const char* head, unsigned int flags, sqlite3_stmt** statement, const char** tail) const
+    {
+        ASSERT(head >= m_data && head <= m_data + m_size);
+        ASSERT(m_isOverLengthLimit || !m_data[m_size]);
+        return sqlite3_prepare_v3(db, head, m_isOverLengthLimit ? static_cast<int>(m_data + m_size - head) : -1, flags, statement, tail);
+    }
+
+    const char* data() const { return m_data; }
+    size_t size() const { return m_size; }
+
+private:
+    // Text of inlineCapacity bytes or more. Converted text has its NUL. Borrowed text is copied to the heap.
+    bool tryInitLong(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, sqlite3* db)
+    {
+        // Over SQLite's length limit, the text stays as it is and prepare() passes its length, as before: SQLite refuses the length before it reads the text.
+        if (m_size > static_cast<size_t>(sqlite3_limit(db, SQLITE_LIMIT_SQL_LENGTH, -1))) [[unlikely]] {
+            m_isOverLengthLimit = true;
+            return true;
+        }
+
+        if (!m_converted.isNull())
+            return true;
+        char* copy = nullptr;
+        if (!WTF::tryFastMalloc(m_size + 1).getValue(copy)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
+        }
+        memcpy(copy, m_data, m_size);
+        copy[m_size] = '\0';
+        m_heap = copy;
+        m_data = copy;
+        return true;
+    }
+
+    const char* m_data { nullptr };
+    size_t m_size { 0 };
+    char* m_heap { nullptr };
+    WTF::UTF8CString m_converted;
+    bool m_isOverLengthLimit { false };
+    char m_inline[inlineCapacity];
+};
+
 // This runs a query one-off
 // without the overhead of a long-lived statement object
 // does not return anything
@@ -1523,20 +1610,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     auto sqlString = jsSqlString->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto utf8 = Bun::UTF8View::tryCreate(lexicalGlobalObject, scope, sqlString);
-    RETURN_IF_EXCEPTION(scope, {});
+    NulTerminatedSQL sqlText;
+    if (!sqlText.tryInit(lexicalGlobalObject, scope, db, sqlString)) [[unlikely]]
+        return {};
 
-    const char* sqlStringHead = utf8->span().data();
-    const char* end = utf8->span().data() + utf8->span().size();
+    const char* sqlStringHead = sqlText.data();
+    const char* end = sqlStringHead + sqlText.size();
 
     bool didSetBindings = false;
     bool didExecuteAny = false;
 
     int rc = SQLITE_OK;
-
-#if ASSERT_ENABLED
-    int maxSqlStringBytes = end - sqlStringHead;
-#endif
 
     bool strict = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kStrictFlag) != 0;
     bool safeIntegers = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kSafeIntegersFlag) != 0;
@@ -1554,12 +1638,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         AutoDestructingSQLiteStatement sql;
         const char* tail = nullptr;
 
-        // Bounds checks
-        ASSERT(end >= sqlStringHead);
-        ASSERT(end - sqlStringHead >= 0);
-        ASSERT(end - sqlStringHead <= maxSqlStringBytes);
-
-        rc = sqlite3_prepare_v3(db, sqlStringHead, end - sqlStringHead, 0, &sql.stmt, &tail);
+        rc = sqlText.prepare(db, sqlStringHead, 0, &sql.stmt, &tail);
 
         if (rc != SQLITE_OK)
             break;
@@ -1714,8 +1793,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     }
     auto sqlString = jsSqlString->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto utf8 = Bun::UTF8View::tryCreate(lexicalGlobalObject, scope, sqlString);
-    RETURN_IF_EXCEPTION(scope, {});
+    NulTerminatedSQL sqlText;
+    if (!sqlText.tryInit(lexicalGlobalObject, scope, db, sqlString)) [[unlikely]]
+        return {};
 
     unsigned int flags = DEFAULT_SQLITE_PREPARE_FLAGS;
     if (prepareFlagsValue.isNumber()) {
@@ -1735,7 +1815,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int64_t currentMemoryUsage = sqlite_malloc_amount;
 
     int rc = SQLITE_OK;
-    rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(utf8->span().data()), utf8->span().size(), flags, &statement, nullptr);
+    rc = sqlText.prepare(db, sqlText.data(), flags, &statement, nullptr);
 
     if (rc != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));

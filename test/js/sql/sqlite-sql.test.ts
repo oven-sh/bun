@@ -1,7 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -915,6 +915,66 @@ describe("Query Execution", () => {
     expect(result2).toHaveLength(1);
     expect(result2[0].id).toBe(2);
   });
+
+  // One string of many statements cost one SQLite copy of the rest of the text for each statement. SQLite parses
+  // text that ends in a NUL in place on every build, so the same text with a NUL at its end shows the count with no
+  // such copy. On Linux without ASAN, malloc is mimalloc, so heapStats() counts what SQLite allocates. A debug build
+  // takes 0.1 s for each heapStats() call.
+  test.skipIf(!isLinux || isASAN || isDebug)(
+    "unsafe() and file() of 800 statements allocate nothing per statement in SQLite",
+    async () => {
+      const statement = "insert into t values (0);";
+      const text = "begin;" + Buffer.alloc(800 * statement.length, statement).toString() + "rollback;";
+      using dir = tempDir("sqlite-many-statements", {
+        "plain.sql": text,
+        "nul.sql": text + "\0",
+        "mallocs.fixture.mjs": `
+          import { SQL } from "bun";
+          import { heapStats } from "bun:jsc";
+          import { readFileSync } from "node:fs";
+          const count = () => heapStats().mimalloc.malloc_normal_count;
+          const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+          await sql.unsafe("create table t (v)");
+          // The fewest of 5 runs: heapStats() and the other threads only add to a count.
+          const during = async fn => {
+            let fewest = Infinity;
+            for (let i = 0; i < 5; i++) {
+              const before = count();
+              await fn();
+              fewest = Math.min(fewest, count() - before);
+            }
+            return fewest;
+          };
+          const plain = readFileSync("plain.sql", "utf8");
+          const nul = readFileSync("nul.sql", "utf8");
+          console.log(JSON.stringify({
+            unsafe: [await during(() => sql.unsafe(plain)), await during(() => sql.unsafe(nul))],
+            file: [await during(() => sql.file("plain.sql")), await during(() => sql.file("nul.sql"))],
+          }));
+          await sql.close();
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "mallocs.fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+      const result: Record<string, unknown> = {};
+      for (const [api, [plain, withNul]] of Object.entries(JSON.parse(stdout) as Record<string, [number, number]>)) {
+        result[api] = { counted: withNul > 0, more: plain - withNul < 300 ? "under 300" : plain - withNul };
+      }
+      expect(result).toEqual({
+        unsafe: { counted: true, more: "under 300" },
+        file: { counted: true, more: "under 300" },
+      });
+    },
+  );
 });
 
 // Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.

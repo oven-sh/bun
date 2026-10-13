@@ -9,13 +9,19 @@
 // answers that nothing matches: the string is not a name in the certificate and
 // it is not a builtin module.
 //
-// An 8-bit ASCII string must stay borrowed: no API here needs a NUL terminator,
-// so a copy of it is waste. The conversion refuses every 8-bit string of 2**30
-// characters before it reads one, ASCII or not. So the last row binds an ASCII
-// string of that length. SQLite takes it or reports that it is too big for
-// SQLite: the limit is 1e9 bytes in the bundled SQLite and 2 GiB in the system
-// SQLite that macOS loads. Each answer shows that SQLite got the string's buffer,
-// where a copy reports "Out of memory".
+// An 8-bit ASCII string must stay borrowed where the API takes a pointer and a
+// length, because a copy of it is waste. The conversion refuses every 8-bit
+// string of 2**30 characters before it reads one, ASCII or not. So the last rows
+// use an ASCII string of that length. As a parameter, SQLite takes it or reports
+// that it is too big for SQLite: the limit is 1e9 bytes in the bundled SQLite
+// and 2 GiB in the system SQLite that macOS loads. Each answer shows that SQLite
+// got the string's buffer, where a copy reports "Out of memory".
+//
+// SQL text is the exception to the borrow: SQLite copies text that has no NUL at
+// its end, so bun:sqlite makes that one copy and adds the NUL. Text over SQLite's
+// SQL length limit is not copied. SQLite refuses its length, and the last two
+// rows show that. If the limit of the loaded SQLite is above 2**30, it takes the
+// text, which is one comment.
 import { decodeURIComponentSIMD } from "bun:internal-for-testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -63,20 +69,45 @@ const fixture = `
 
   text = undefined;
   Bun.gc(true);
+  const ascii = "-".repeat(2 ** 30);
   try {
-    const { n } = cases["Statement#get parameter"]("q".repeat(2 ** 30));
+    const { n } = cases["Statement#get parameter"](ascii);
     console.log("ASCII parameter: " + (n === 2 ** 30 ? "SQLite got the string" : "length " + n));
   } catch (e) {
     const tooBigForSQLite = e.message === "string or blob too big";
     console.log("ASCII parameter: " + (tooBigForSQLite ? "SQLite got the string" : e.name + ": " + e.message));
   }
+  for (const name of ["Database#run", "Database#prepare"]) {
+    try {
+      cases[name](ascii);
+      console.log("ASCII " + name + ": returned");
+    } catch (e) {
+      console.log("ASCII " + name + ": " + e.name + ": " + e.message);
+    }
+  }
 `;
+
+// SQLite lists its compile-time SQL length limit, and a new connection starts with it. The default is 1e9.
+const sqlLengthLimit = (() => {
+  using db = new Database(":memory:");
+  const options = db.query("pragma compile_options").all() as Record<string, string>[];
+  const option = options.map(row => Object.values(row)[0]).find(option => option.startsWith("MAX_SQL_LENGTH="));
+  return option ? Number(option.slice("MAX_SQL_LENGTH=".length)) : 1e9;
+})();
+const asciiSQLTextRows =
+  sqlLengthLimit < 2 ** 30
+    ? ["ASCII Database#run: SQLiteError: statement too long", "ASCII Database#prepare: SQLiteError: statement too long"]
+    : [
+        "ASCII Database#run: Error: Query contained no valid SQL statement; likely empty query.",
+        "ASCII Database#prepare: RangeError: Invalid SQL statement",
+      ];
 
 // The length is what is under test, so the child holds a string of 1 GiB, and a
 // second one while the cookie case joins the header. The test skips on small
-// machines (the gate streams-string-limit.test.ts uses). The child takes about 10
-// seconds in a debug ASAN build, 6 of them in the unoptimized ASCII scan of the
-// last row, so this one test carries its own ceiling. `repeat` is used instead of
+// machines (the gate streams-string-limit.test.ts uses). The child takes about 30
+// seconds in a debug ASAN build: each of the last three rows scans 1 GiB for
+// non-ASCII bytes, unoptimized, in about 7 seconds. So this one test carries its
+// own ceiling. `repeat` is used instead of
 // the harness's `Buffer.alloc(n, fill).toString()`: for one character it takes
 // half the time and it does not hold a second 1 GiB.
 test.skipIf(totalmem() < 8 * 1024 ** 3)(
@@ -105,12 +136,13 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
         "decodeURIComponentSIMD: RangeError: Out of memory",
         "new Bun.CookieMap: RangeError: Out of memory",
         "ASCII parameter: SQLite got the string",
+        ...asciiSQLTextRows,
       ],
       stderr: "",
       exitCode: 0,
     });
   },
-  30_000,
+  60_000,
 );
 
 // The same APIs with a short string that takes the conversion: Latin-1 with a

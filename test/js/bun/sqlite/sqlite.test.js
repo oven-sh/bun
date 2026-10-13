@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -2846,6 +2846,185 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     stderr: "",
     signalCode: null,
     exitCode: 0,
+  });
+});
+
+// SQLite parses SQL text that ends in a NUL in place. It copies any other text before it parses it, once for each
+// prepare. The exec/run loop gave it the rest of the text with no NUL for each statement, so one string of N
+// statements cost N copies of the rest. The copy comes from SQLite's heap, which is how the first test sees it: with
+// a heap limit below the size of the text, the copy fails.
+describe("SQL text reaches SQLite with a NUL at its end, so SQLite parses it in place", () => {
+  const encodings = ["ASCII", "Latin-1", "UTF-16"];
+  const marks = { "ASCII": "", "Latin-1": "\u00e9", "UTF-16": "\u{1F600}" };
+  const marksInChild = `{ "ASCII": "", "Latin-1": "\\u00e9", "UTF-16": "\\u{1F600}" }`;
+
+  async function runInChild(src) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  it.concurrent("text larger than SQLite's heap limit runs", async () => {
+    const results = await runInChild(`
+      const { Database } = require("bun:sqlite");
+      const db = new Database(":memory:");
+      db.run("create table t (v); insert into t values (0)");
+      db.run("pragma hard_heap_limit = 1000000");
+      const attempt = fn => {
+        try {
+          return fn();
+        } catch (e) {
+          return e.message;
+        }
+      };
+      const pad = Buffer.alloc(1_500_000, "x").toString();
+      const update = "update t set v = v + 1;";
+      const results = {};
+      for (const [encoding, mark] of Object.entries(${marksInChild})) {
+        const comment = " -- " + mark + pad;
+        results["run " + encoding] = attempt(() => db.run(update + update + comment).changes);
+        results["exec " + encoding] = attempt(() => db.exec(update + update + update + comment).changes);
+        results["prepare " + encoding] = attempt(() => db.prepare("select 7 as v;" + comment).get().v);
+        results["query " + encoding] = attempt(() => db.query("select 8 as v;" + comment).get().v);
+      }
+      results.updates = db.query("select v from t").get().v;
+      // This statement needs 4 MB of SQLite's heap. It shows whether the limit works in this SQLite.
+      results.control = attempt(() => db.query("select length(hex(zeroblob(2000000))) as n").get().n);
+      results.keepsMemoryStatistics = !db
+        .query("pragma compile_options")
+        .all()
+        .some(row => Object.values(row)[0] === "DEFAULT_MEMSTATUS=0");
+      console.log(JSON.stringify(results));
+    `);
+
+    // SQLite applies the limit only while it keeps memory statistics. A SQLite that was built without them lists
+    // DEFAULT_MEMSTATUS=0, and then this test cannot tell a copy from no copy.
+    const { keepsMemoryStatistics, ...cells } = results;
+    const expected = { updates: 15, control: keepsMemoryStatistics ? "out of memory" : 4000000 };
+    for (const encoding of encodings) {
+      expected["run " + encoding] = 2;
+      expected["exec " + encoding] = 3;
+      expected["prepare " + encoding] = 7;
+      expected["query " + encoding] = 8;
+    }
+    expect(cells).toEqual(expected);
+  });
+
+  const under100 = mallocs => (mallocs < 100 ? "under 100" : mallocs);
+
+  // On Linux without ASAN, malloc is mimalloc, so heapStats() counts what SQLite allocates. A debug build takes
+  // 0.1 s for each heapStats() call.
+  it.concurrent.skipIf(!isLinux || isASAN || isDebug)(
+    "SQLite allocates nothing for the SQL text: 800 statements in one string, or one statement",
+    async () => {
+      const counts = await runInChild(`
+        const { Database, constants } = require("bun:sqlite");
+        const { heapStats } = require("bun:jsc");
+        const count = () => heapStats().mimalloc.malloc_normal_count;
+        const db = new Database(":memory:");
+        // The fewest of 5 runs: heapStats() and the other threads only add to a count.
+        const during = fn => {
+          let fewest = Infinity;
+          for (let i = 0; i < 5; i++) {
+            const before = count();
+            fn();
+            fewest = Math.min(fewest, count() - before);
+          }
+          return fewest;
+        };
+        const times200 = fn => during(() => { for (let i = 0; i < 200; i++) fn(); });
+        const counts = {};
+
+        // Shows that the counter sees SQLite: it saves a statement that does not fit a lookaside slot (1200 bytes) on
+        // the heap, once for each call.
+        const long = "select 1/*" + Buffer.alloc(1300, "x").toString() + "*/";
+        counts.control = times200(() => db.run(long));
+        // The longest text that bun:sqlite copies to the stack.
+        const short = "select 1/*" + Buffer.alloc(1199 - 12, "x").toString() + "*/";
+        counts["run 1199 bytes"] = times200(() => db.run(short));
+
+        const statement = "select 1/*pad*/;";
+        for (const [encoding, mark] of Object.entries(${marksInChild})) {
+          const text = Buffer.alloc(800 * statement.length, statement).toString() + "select 2 --" + mark;
+          for (const api of ["exec", "run"]) counts[api + " " + encoding] = during(() => db[api](text));
+
+          // query() prepares with SQLITE_PREPARE_PERSISTENT. SQLite then takes no lookaside slot, so a copy of the
+          // text is a malloc. The same text with a NUL at its end is parsed in place on every build.
+          const one = "select 3 --" + mark;
+          const withNul = one + "\\0";
+          const prepare = sql => db.prepare(sql, undefined, constants.SQLITE_PREPARE_PERSISTENT).finalize();
+          counts["prepare " + encoding] = [times200(() => prepare(one)), times200(() => prepare(withNul))];
+        }
+        console.log(JSON.stringify(counts));
+      `);
+
+      const result = { controlIsCounted: counts.control >= 200, "run 1199 bytes": under100(counts["run 1199 bytes"]) };
+      const expected = { controlIsCounted: true, "run 1199 bytes": "under 100" };
+      for (const encoding of encodings) {
+        const [plain, withNul] = counts["prepare " + encoding];
+        result["exec " + encoding] = under100(counts["exec " + encoding]);
+        result["run " + encoding] = under100(counts["run " + encoding]);
+        result["prepare " + encoding] = { counted: withNul >= 200, more: under100(plain - withNul) };
+        expected["exec " + encoding] = expected["run " + encoding] = "under 100";
+        expected["prepare " + encoding] = { counted: true, more: "under 100" };
+      }
+      // ASCII text is copied to the stack. Other text is converted on the heap, once for each call.
+      result.asciiPrepareUnderLatin1 = counts["prepare Latin-1"][0] - counts["prepare ASCII"][0] >= 100;
+      expected.asciiPrepareUnderLatin1 = true;
+      expect(result).toEqual(expected);
+    },
+  );
+
+  // Text up to 1199 bytes is copied to the stack with its NUL. Longer text is copied to the heap.
+  describe.each(encodings)("%s text", encoding => {
+    it.each([1198, 1199, 1200, 1201, 1202])("of %d bytes runs whole", bytes => {
+      using db = new Database(":memory:");
+      const mark = marks[encoding];
+      const sized = (head, tail) => {
+        const value = Buffer.alloc(bytes - Buffer.byteLength(head + mark + tail), "x").toString() + mark;
+        return [head + value + tail, value];
+      };
+
+      const [select, selected] = sized("select '", "' as v");
+      const [inserts, inserted] = sized("create table t (v); insert into t values (1); insert into t values ('", "')");
+      expect({
+        bytes: [Buffer.byteLength(select), Buffer.byteLength(inserts)],
+        prepare: db.prepare(select).get(),
+        query: db.query(select).get(),
+        run: db.run(inserts).changes,
+        rows: db.query("select v from t").all(),
+      }).toEqual({
+        bytes: [bytes, bytes],
+        prepare: { v: selected },
+        query: { v: selected },
+        run: 2,
+        rows: [{ v: 1 }, { v: inserted }],
+      });
+    });
+  });
+
+  it("an error in a later statement keeps the statements before it and counts its offset from its own statement", () => {
+    using db = new Database(":memory:");
+    db.run("create table t (v)");
+    let error;
+    try {
+      db.run("insert into t values (1); insert into t values (2);  insert into t valuez (3); insert into t values (4)");
+    } catch (e) {
+      error = e;
+    }
+    expect({
+      message: error?.message,
+      byteOffset: error?.byteOffset,
+      rows: db.query("select v from t").all(),
+      prepareTakesTheFirstStatement: db.prepare("select 1 as a; select 2 as b").get(),
+    }).toEqual({
+      message: 'near "valuez": syntax error',
+      // older versions of macOS don't have the function which returns the byteOffset
+      byteOffset: isMacOS && !isMacOSVersionAtLeast(13) ? -1 : 14,
+      rows: [{ v: 1 }, { v: 2 }],
+      prepareTakesTheFirstStatement: { a: 1 },
+    });
   });
 });
 

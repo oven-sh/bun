@@ -47,8 +47,8 @@ jobs:
 
       - name: Lint
         run: |
-          bunx oxlint@0.15 --format github --deny-warnings
-          bunx prettier --config ../../.prettierrc --check .
+          bun lint --format=github --deny-warnings
+          bun fmt --config ../../.prettierrc --check .
         working-directory: ./packages/bun-plugin-svelte
 
       - name: Check types

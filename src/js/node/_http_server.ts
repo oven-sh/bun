@@ -2454,9 +2454,7 @@ function connectionHeaderHasClose(value) {
   return RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value));
 }
 
-// Node's writeHead: a final response to an Expect: 100-continue request that got no
-// 100 Continue leaves the announced body unsent, so the connection cannot be reused.
-// Node's matchHeader then lets a Connection header of the response other than close win.
+// Node's writeHead and matchHeader: no keep-alive after a final response to an unanswered Expect: 100-continue.
 function clearKeepAliveIfContinueNotSent(res) {
   if (res._expect_continue && !res._sent100) {
     const connection = res[kOutHeaders]?.connection;
@@ -2581,8 +2579,7 @@ function renderNativeHeaders(res) {
       }
     }
 
-    // An implicit header skips writeHead() (callWriteHeadIfObservable), so the
-    // rule that Node.js applies there also runs where the header renders.
+    // writeHead() does not run for an implicit header.
     clearKeepAliveIfContinueNotSent(res);
 
     if (res._removedConnection) {

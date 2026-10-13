@@ -919,13 +919,21 @@ impl GitSubprocess {
                 && strings::contains(stderr, b"not")
                 && strings::contains(stderr, b"found"))
                 || strings::contains(stderr, b"does not exist"));
-        if !ok && !not_found && !matches!(step, Step::Head(..)) {
+        // Everything was fetched, but a ref could not be written: `Dev` next to `dev` on a case-insensitive disk.
+        let some_refs_failed = matches!(step, Step::Fetch(_))
+            && matches!(status, Status::Exited(exit) if exit.code == 1)
+            && this.read_error.get().is_none();
+        if !ok && !not_found && !some_refs_failed && !matches!(step, Step::Head(..)) {
             this.report_failure(status, stderr);
         }
         let name = for_terminal(BStr::new(&this.name));
         match step {
             Step::Fetch(dir) => {
-                if ok {
+                if some_refs_failed && !this.manager().options.log_level.is_silent() {
+                    bun_core::warn!("\"git fetch\" for \"{}\" could not update every ref", name);
+                    Self::mirror_stderr(stderr);
+                }
+                if ok || some_refs_failed {
                     let verify: &[&[u8]] = &[b"rev-parse", b"--verify", b"--quiet", b"HEAD"];
                     Self::spawn_head_repair(this, HeadRepair::Verify, dir, verify);
                 } else {
@@ -1034,6 +1042,10 @@ impl GitSubprocess {
         } else {
             bun_core::warn!("{}", cause);
         }
+        Self::mirror_stderr(stderr);
+    }
+
+    fn mirror_stderr(stderr: &[u8]) {
         if !stderr.is_empty() {
             let ew = Output::error_writer();
             let _ = ew.write_all(stderr);

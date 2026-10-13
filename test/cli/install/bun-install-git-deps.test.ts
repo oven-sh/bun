@@ -3267,6 +3267,41 @@ test.concurrent("bun update follows a default branch that was renamed upstream",
   }
 });
 
+// On a case-insensitive disk git cannot write `Dev` next to `dev`. A leftover lock file has the same effect anywhere:
+// git fetches everything, updates the other refs and exits with 1.
+test.concurrent("a refresh that cannot write one ref still installs from the others", async () => {
+  using dir = tempDir("git-dep-one-ref-fails", {});
+  const root = String(dir);
+  await using server = serveStatic(root);
+  const { bare, project, cache } = await installedFromBranch(root, server.port!, "feature");
+
+  await commitTo(bare, [{ ref: "refs/heads/other", message: "other", files: packageFiles("dep", "other") }]);
+  await moveBranch(bare, "feature", "feature-v2");
+  const heads = join(cache, readdirSync(cache).find(entry => entry.endsWith(".git"))!, "refs", "heads");
+  mkdirSync(heads, { recursive: true });
+  writeFileSync(join(heads, "other.lock"), "");
+
+  const { stderr, exitCode } = await runBun(project, cache, {}, "update");
+  expect(stderr).toContain('warn: "git fetch" for "dep" could not update every ref');
+  expect(stderr).toContain("refs/heads/other");
+  expect(stderr).not.toContain("error: git failed");
+  expect(await installedVersionOf(project, "dep")).toBe("feature-v2");
+  expect(exitCode).toBe(0);
+});
+
+// Nothing was fetched: what the cached clone has may be stale.
+test.concurrent("a refresh that cannot reach the repository fails", async () => {
+  using dir = tempDir("git-dep-refresh-unreachable", {});
+  const root = String(dir);
+  const server = serveStatic(root);
+  const { project, cache } = await installedFromBranch(root, server.port!, "feature");
+  await server.stop(true);
+
+  const { stderr, exitCode } = await runBun(project, cache, {}, "update");
+  expect(stderr).toContain('error: "git fetch" for "dep" failed');
+  expect(exitCode).toBe(1);
+});
+
 // The refresh moves every branch, so no ref keeps the old commit. git collects garbage after a fetch.
 test.concurrent("a commit that bun.lock pins survives a refresh after upstream rebased the branch", async () => {
   using dir = tempDir("git-dep-pinned-gc", {

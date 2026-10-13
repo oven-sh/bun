@@ -88,9 +88,21 @@ FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
+// The getters above whose value goes through Bun::namespaceObjectOf().
+static constexpr bool isNamespaceObjectGetter(std::string_view name) {
+    for (std::string_view namespaceObject : { "CSRF", "JSON5", "JSONC", "markdown", "TOML", "XML", "YAML", "semver", "unsafe" }) {
+        if (name == namespaceObject)
+            return true;
+    }
+    return false;
+}
+
 // definition of the C++ wrapper to call the Rust function
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
-    return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
+    JSC::JSValue value = JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
+    if constexpr (isNamespaceObjectGetter(#name)) \
+        return Bun::namespaceObjectOf(vm, object, value); \
+    return value; \
 } \
 
 FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);

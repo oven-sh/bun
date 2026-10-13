@@ -5,10 +5,16 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // is the name of a global. Each listed object stops changing when its global object is created, along with the
 // functions it holds and, for a constructor, its prototype.
 
-async function run(immutableGlobals: string | undefined, args: string[], cwd?: string, stdin?: string) {
+async function run(
+  immutableGlobals: string | undefined,
+  args: string[],
+  cwd?: string,
+  stdin?: string,
+  env?: Record<string, string>,
+) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
-    env: { ...bunEnv, BUN_JSC_immutableGlobals: immutableGlobals },
+    env: { ...bunEnv, ...env, BUN_JSC_immutableGlobals: immutableGlobals },
     cwd,
     stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
     stdout: "pipe",
@@ -227,6 +233,275 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     expect(exitCode).toBe(0);
   });
 
+  describe("what Bun creates on first use", () => {
+    // Prints which of these are still extensible. None has a global name, and none exists when the option is applied.
+    const fixture = /* js */ `
+      import crypto from "node:crypto";
+      import fs from "node:fs";
+      import { createRequire } from "node:module";
+      const prototypeOf = Object.getPrototypeOf;
+      const require = createRequire(import.meta.url);
+      let nodeError;
+      try { fs.readFileSync(1.5); } catch (error) { nodeError = error; }
+      let element, sinkController;
+      await new HTMLRewriter().on("p", { element(e) { element = e; } }).transform(new Response("<p>")).text();
+      const direct = new ReadableStream({ type: "direct", pull(c) { sinkController = c; c.close(); } });
+      await Bun.write(process.argv[2], new Response(direct));
+      const timeout = setTimeout(() => {}, 0), immediate = setImmediate(() => {});
+      clearTimeout(timeout), clearImmediate(immediate);
+      const subprocess = Bun.spawn([process.execPath, "--version"], { stdout: "ignore" });
+      await subprocess.exited;
+      const objects = {
+        "Headers iterator": prototypeOf(new Headers().entries()),
+        "Headers iterator next()": prototypeOf(new Headers().entries()).next,
+        "FormData iterator": prototypeOf(new FormData().entries()),
+        "URLSearchParams iterator": prototypeOf(new URLSearchParams().entries()),
+        "ReadableStream async iterator": prototypeOf(new ReadableStream().values()),
+        "HTMLRewriter element": prototypeOf(element),
+        "setTimeout() result": prototypeOf(timeout),
+        "setImmediate() result": prototypeOf(immediate),
+        "Bun.CookieMap iterator": prototypeOf(new Bun.CookieMap().entries()),
+        "sink controller": prototypeOf(sinkController),
+        "sink controller write()": prototypeOf(sinkController).write,
+        "Bun.file().writer()": prototypeOf(Bun.file(process.argv[2]).writer()),
+        "Bun.file().writer() constructor": prototypeOf(Bun.file(process.argv[2]).writer()).constructor,
+        "Bun.spawn() result": prototypeOf(subprocess),
+        "Bun.spawn() result kill()": prototypeOf(subprocess).kill,
+        "fs.statSync() result": prototypeOf(fs.statSync(process.argv[2])),
+        "fs.statfsSync() result": prototypeOf(fs.statfsSync(process.argv[2])),
+        "require": prototypeOf(require),
+        "require.resolve": prototypeOf(require.resolve),
+        "ERR_INVALID_ARG_TYPE": prototypeOf(nodeError),
+        "PublicKeyObject's parent": prototypeOf(prototypeOf(crypto.generateKeyPairSync("ed25519").publicKey)),
+        "Bun.password": Bun.password,
+        "Bun.password.hash()": Bun.password.hash,
+        "Bun.dns": Bun.dns,
+        "Bun.semver": Bun.semver,
+        "Bun.TOML": Bun.TOML,
+        "process.versions": process.versions,
+        "process.report": process.report,
+        // State, not API.
+        "Bun.env": Bun.env,
+        "Bun.argv": Bun.argv,
+        "Bun.stdout": Bun.stdout,
+        "process.argv": process.argv,
+        // Globals of their own.
+        "Request.prototype": Request.prototype,
+        "Buffer.prototype": Buffer.prototype,
+        "Object.prototype": Object.prototype,
+        "Function.prototype": Function.prototype,
+      };
+      console.log(JSON.stringify(Object.keys(objects).filter(name => Object.isExtensible(objects[name])), null, 2));
+    `;
+    const belongingTo = {
+      Headers: ["Headers iterator", "Headers iterator next()"],
+      FormData: ["FormData iterator"],
+      URLSearchParams: ["URLSearchParams iterator"],
+      ReadableStream: ["ReadableStream async iterator"],
+      HTMLRewriter: ["HTMLRewriter element"],
+      setTimeout: ["setTimeout() result"],
+      setImmediate: ["setImmediate() result"],
+      Bun: [
+        "Bun.CookieMap iterator",
+        "sink controller",
+        "sink controller write()",
+        "Bun.file().writer()",
+        "Bun.file().writer() constructor",
+        "Bun.spawn() result",
+        "Bun.spawn() result kill()",
+        "fs.statSync() result",
+        "fs.statfsSync() result",
+        "require",
+        "require.resolve",
+        "ERR_INVALID_ARG_TYPE",
+        "PublicKeyObject's parent",
+        "Bun.password",
+        "Bun.password.hash()",
+        "Bun.dns",
+        "Bun.semver",
+        "Bun.TOML",
+      ],
+      process: ["process.versions", "process.report"],
+    };
+    const neverCovered = [
+      "Bun.env",
+      "Bun.argv",
+      "Bun.stdout",
+      "process.argv",
+      "Request.prototype",
+      "Buffer.prototype",
+      "Object.prototype",
+      "Function.prototype",
+    ];
+
+    test.each([
+      [undefined],
+      ["Headers"],
+      ["FormData,URLSearchParams,ReadableStream"],
+      ["HTMLRewriter,setTimeout,setImmediate"],
+      ["Bun"],
+      ["process"],
+      ["Headers,FormData,URLSearchParams,ReadableStream,HTMLRewriter,setTimeout,setImmediate,Bun,process"],
+    ])("is immutable if the global it belongs to is: %s", async immutableGlobals => {
+      using dir = tempDir("immutable-globals", { "fixture.mjs": fixture, "file.txt": "" });
+      const { stdout, stderr, exitCode } = await run(immutableGlobals, ["fixture.mjs", "file.txt"], String(dir));
+      const listed = immutableGlobals?.split(",") ?? [];
+      const expected = Object.entries(belongingTo).flatMap(([owner, names]) => (listed.includes(owner) ? [] : names));
+      expect({ stillExtensible: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stillExtensible: [...expected, ...neverCovered],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("is immutable when a script has given the global it belongs to another value", async () => {
+      const script = `
+        const headers = new Headers();
+        globalThis.Headers = {};
+        console.log(Object.isExtensible(Object.getPrototypeOf(headers.entries())));
+      `;
+      expect(await run("Headers", ["-e", script])).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
+    });
+
+    test("is immutable when a script has defined a global with the name of its class", async () => {
+      const script = `
+        for (const name of ["Subprocess", "Headers Iterator", "Timeout", "Element"]) globalThis[name] = function () {};
+        let element;
+        await new HTMLRewriter().on("p", { element(e) { element = e; } }).transform(new Response("<p>")).text();
+        const objects = [Bun.spawn([process.execPath, "--version"], { stdout: "ignore" }), new Headers().entries(), setTimeout(() => {}), element];
+        console.log(objects.map(object => Object.isExtensible(Object.getPrototypeOf(object))).join());
+      `;
+      expect(await run("Bun,Headers,setTimeout,HTMLRewriter", ["-e", script])).toEqual({
+        stdout: "false,false,false,false\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("setInterval covers what it returns", async () => {
+      const script = `
+        const interval = setInterval(() => {}, 1000);
+        clearInterval(interval);
+        console.log(Object.isExtensible(Object.getPrototypeOf(interval)));
+      `;
+      expect(await run("setInterval", ["-e", script])).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
+    });
+
+    test("`globalThis` covers what belongs to a global nothing has read, and a constructor only its prototype leads to", async () => {
+      // Written so that no global but Response and Request is named.
+      const script = `
+        const prototypeOf = Object.getPrototypeOf;
+        const objects = {
+          "Headers iterator": prototypeOf(new Response("").headers.entries()),
+          "ReadableStream async iterator": prototypeOf(new Response("x").body.values()),
+          "AbortSignal.prototype": prototypeOf(new Request("http://localhost").signal),
+          "AbortSignal": prototypeOf(new Request("http://localhost").signal).constructor,
+          "AbortSignal.timeout": prototypeOf(new Request("http://localhost").signal).constructor.timeout,
+        };
+        console.log(JSON.stringify(Object.keys(objects).filter(name => Object.isExtensible(objects[name]))));
+      `;
+      expect(await run("globalThis", ["-e", script])).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
+    });
+
+    test.each(["Crypto", "crypto", "globalThis"])(
+      "crypto.subtle is there when %s is immutable",
+      async immutableGlobals => {
+        const script = `console.log(typeof crypto.subtle.digest, "subtle" in Crypto.prototype);`;
+        expect(await run(immutableGlobals, ["-e", script])).toEqual({
+          stdout: "function true\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    test("a class that is a global of its own and is first used internally is covered by `globalThis`", async () => {
+      // fetch() needs Response before anything reads globalThis.Response.
+      const script = `
+        const response = await fetch("data:text/plain,hello");
+        console.log(Object.isExtensible(Object.getPrototypeOf(response)));
+      `;
+      expect(await run("globalThis", ["-e", script])).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
+      expect(await run("Bun", ["-e", script])).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+    });
+
+    test("expect.extend() works when Bun is immutable", async () => {
+      using dir = tempDir("immutable-globals", {
+        "extend.test.js": `
+          import { expect, test } from "bun:test";
+          expect.extend({ toBeSeven: received => ({ pass: received === 7, message: () => "not seven" }) });
+          test("custom matcher", () => {
+            expect(7).toBeSeven();
+            expect(8).not.toBeSeven();
+            expect({ n: 7 }).toEqual({ n: expect.toBeSeven() });
+          });
+        `,
+      });
+      const { stderr, exitCode } = await run("Bun", ["test", "extend.test.js"], String(dir));
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("process is an EventEmitter when process is immutable", async () => {
+      const script = `
+        const EventEmitter = require("node:events");
+        let calls = 0;
+        process.on("custom", () => calls++);
+        process.emit("custom");
+        console.log(process instanceof EventEmitter, calls);
+      `;
+      expect(await run("Bun,process", ["-e", script])).toEqual({ stdout: "true 1\n", stderr: "", exitCode: 0 });
+    });
+
+    test("every built-in module loads when Bun and process are immutable", async () => {
+      const { stdout, exitCode } = await run("*,Bun,process", [
+        "-e",
+        `
+          const failed = [];
+          for (const name of [...require("node:module").builtinModules, "node:quic", "bun:ffi", "bun:jsc", "bun:sqlite"]) {
+            try {
+              require(name);
+            } catch (error) {
+              failed.push(name + ": " + error.message);
+            }
+          }
+          console.log(JSON.stringify(failed));
+        `,
+      ]);
+      expect(JSON.parse(stdout)).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("BUN_JSC_logImmutableGlobals reports what is left mutable", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        "Headers,noSuchGlobal",
+        [
+          "-e",
+          `
+            new Headers().entries();
+            new FormData().entries();
+            new Bun.CookieMap().entries();
+            console.log("done");
+          `,
+        ],
+        undefined,
+        undefined,
+        { BUN_JSC_logImmutableGlobals: "1" },
+      );
+      expect({ stdout, log: stderr.split("\n").filter(Boolean), exitCode }).toEqual({
+        stdout: "done\n",
+        log: [
+          "immutableGlobals: noSuchGlobal is not the name of an object in this global object",
+          "immutableGlobals: left mutable: the prototype of FormData, which belongs to FormData",
+          "immutableGlobals: left mutable: the prototype of FormData Iterator, which belongs to FormData",
+          "immutableGlobals: left mutable: the prototype of CookieMap, which belongs to Bun",
+          "immutableGlobals: left mutable: the prototype of CookieMap Iterator, which belongs to Bun",
+        ],
+        exitCode: 0,
+      });
+    });
+  });
+
   test("applies to node:vm contexts, workers and ShadowRealms", async () => {
     const { stdout, stderr, exitCode } = await run("*,Headers", [
       "-e",
@@ -261,7 +536,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("node:vm contexts can be created when `globalThis` is listed", async () => {
+  test.each(["*,globalThis", "Bun", "noSuchGlobal"])("node:vm contexts can be created: %s", async immutableGlobals => {
     using dir = tempDir("immutable-globals-vm", {
       "index.mjs": `
         import vm from "node:vm";
@@ -270,7 +545,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
         console.log(vm.runInNewContext("typeof globalThis"));
       `,
     });
-    expect(await run("*,globalThis", ["index.mjs"], String(dir))).toEqual({
+    expect(await run(immutableGlobals, ["index.mjs"], String(dir))).toEqual({
       stdout: "object\nobject\nobject\n",
       stderr: "",
       exitCode: 0,

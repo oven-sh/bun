@@ -1365,10 +1365,8 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
         return true;
     }
 
-    if (thisObject->m_contextOptions.notContextified) {
-        JSObject* specialSandbox = thisObject->specialSandbox();
+    if (JSObject* specialSandbox = notContextified ? thisObject->specialSandbox() : nullptr)
         RELEASE_AND_RETURN(scope, JSObject::getOwnPropertySlot(specialSandbox, globalObject, propertyName, slot));
-    }
 
     return false;
 }

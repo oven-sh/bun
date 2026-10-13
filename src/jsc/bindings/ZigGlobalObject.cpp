@@ -2129,6 +2129,8 @@ void initLazyClassStructures(GlobalObject* globalObject)
         auto& classStructure = *reinterpret_cast<LazyClassStructure*>(reinterpret_cast<uint8_t*>(globalObject) + entry.offset);
         classStructure.initLater([](LazyClassStructure::Initializer& init) {
             lazyTableEntry<table>(&init.classStructure, init.global).init(init);
+            // createClassStructure() does not recognize a prototype that is a plain object.
+            Bun::didCreatePrototype(init.vm, init.global, init.prototype);
         });
     }
 }
@@ -2525,6 +2527,7 @@ void GlobalObject::finishCreation(VM& vm)
              // Node defines `subtle` on Crypto.prototype with a brand check, not on
              // the instance; the getter above enforces the brand.
              JSObject* prototype = crypto->getPrototypeDirect().getObject();
+             JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(init.vm);
              prototype->putDirectCustomAccessor(
                  init.vm,
                  Identifier::fromString(init.vm, "subtle"_s),
@@ -2614,22 +2617,26 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(Bun::createEnvironmentVariablesMap(static_cast<Zig::GlobalObject*>(init.owner)).getObject());
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_requireFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             auto* prototype = RequireFunctionPrototype::create(init.owner);
+             Bun::didCreatePrototype(init.vm, init.owner, prototype);
              init.set(
                  JSFunction::create(
                      init.vm,
                      init.owner,
                      commonJSRequireCodeGenerator(init.vm),
                      init.owner->globalScope(),
-                     JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
+                     JSFunction::createStructure(init.vm, init.owner, prototype)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_requireResolveFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             auto* prototype = RequireResolveFunctionPrototype::create(init.owner);
+             Bun::didCreatePrototype(init.vm, init.owner, prototype);
              init.set(
                  JSFunction::create(
                      init.vm,
                      init.owner,
                      commonJSRequireResolveCodeGenerator(init.vm),
                      init.owner->globalScope(),
-                     JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
+                     JSFunction::createStructure(init.vm, init.owner, prototype)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_processBindingBuffer), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(

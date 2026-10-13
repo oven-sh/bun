@@ -138,7 +138,13 @@ namespace Bun {
 // Out-of-line `JSC::Structure::create` / `JSC::reifyStaticProperties` for the
 // once-per-class setup paths, so each wrapper class doesn't inline them.
 JSC::Structure* createClassStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype, JSC::TypeInfo, const JSC::ClassInfo*, JSC::IndexingType = JSC::NonArray, unsigned inlineCapacity = 0);
+// BUN_JSC_immutableGlobals covers what exists when the global object is created, and Bun creates most classes on first use: immutable if the global the class belongs to is.
+void didCreatePrototype(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
+// For a constructor that its prototype does not hold as a value (a getter creates it): immutable if the prototype is.
+void didCreateConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* constructor);
 void reifyStaticPropertyTable(JSC::VM&, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>, JSC::JSObject&);
+// For an object `owner` creates on first use that is part of its API (`Bun.password`, `process.versions`), not state (`Bun.env`): immutable if `owner` is. JSC covers only functions.
+JSC::JSValue namespaceObjectOf(JSC::VM&, JSC::JSObject* owner, JSC::JSValue namespaceObject);
 // `JSC::allocateCell` for a fieldless `JSNonFinalObject` subclass living in `vm.plainObjectSpace()` (prototype objects).
 void* allocatePlainObjectCell(JSC::VM&, size_t);
 // `JSC_TO_STRING_TAG_WITHOUT_TRANSITION()`, out of line.

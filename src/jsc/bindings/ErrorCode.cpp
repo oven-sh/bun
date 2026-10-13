@@ -194,6 +194,7 @@ static ErrorCodeCache* errorCache(Zig::GlobalObject* globalObject)
 static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
 {
     auto* prototype = createErrorPrototype(vm, globalObject, type, name, code);
+    Bun::didCreatePrototype(vm, globalObject, prototype);
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 

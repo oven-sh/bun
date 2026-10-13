@@ -320,7 +320,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 #undef STRINGIFY
 #undef STRINGIFY_IMPL
 
-    return object;
+    return namespaceObjectOf(vm, processObject, object);
 }
 
 static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
@@ -334,7 +334,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
-    return release;
+    return namespaceObjectOf(vm, processObject, release);
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -1836,7 +1836,7 @@ static JSValue constructFinalization(VM& vm, JSObject* processObject)
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
-    return callLazyProcessBuilder(vm, globalObject, processObjectInternalsCreateProcessFinalizationCodeGenerator, JSC::ArgList(args));
+    return namespaceObjectOf(vm, processObject, callLazyProcessBuilder(vm, globalObject, processObjectInternalsCreateProcessFinalizationCodeGenerator, JSC::ArgList(args)));
 }
 
 static JSValue constructAllowedNodeEnvironmentFlags(VM& vm, JSObject* processObject)
@@ -2808,7 +2808,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     putDirectNamed(vm, report, "excludeEnv"_s, JSC::jsString(vm, String("SIGUSR2"_s)));
     putDirectNamed(vm, report, "writeReport"_s, JSC::JSFunction::create(vm, globalObject, 1, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public));
     RETURN_IF_EXCEPTION(scope, {});
-    return report;
+    return namespaceObjectOf(vm, processObject, report);
 }
 
 __attribute__((minsize)) static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
@@ -4651,7 +4651,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     putDirectNamed(vm, object, "typescript"_s, jsString(vm, String("transform"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
-    return object;
+    return namespaceObjectOf(vm, processObject, object);
 }
 
 static uint16_t debugPort = 9229;

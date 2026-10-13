@@ -180,7 +180,7 @@ export const pins = {
       x64: "832aeb58d105de1cabc7b982dd2c65de0610f7377df48ae8fc2dd8e97420a15c",
       aarch64: "3fbaaa6a1f147557a4095b9911f8dc2d4c745a11863982f76ee20e248c190a80",
     },
-    // LLVM builds its Linux release on Ubuntu 22.04 (jammy), and its lld and llvm-mt need that release's ICU.
+    // The lld and llvm-mt of LLVM's Linux release are linked against ICU 70, which is Ubuntu 22.04's (jammy's).
     icu: {
       directory: "i/icu",
       name: "libicu70",
@@ -223,7 +223,7 @@ export const pins = {
   androidNdk: {
     version: "r27c",
     apiLevel: 28,
-    // Of the file whose SHA-1 is the one Google publishes, 090e8083a715fdb1a3e402d0763c388abb03fb4e.
+    // Google only publishes a SHA-1, in dl.google.com/android/repository/repository2-3.xml. This is of the file that has it.
     sha256: "59c2f6dc96743b5daf5d1626684640b20a6bd2b1d85b13156b90333741bad5cc",
   },
   // A FreeBSD release moves from download.freebsd.org to the archive when it reaches end of life.
@@ -243,7 +243,7 @@ export const pins = {
       // What docker.io/library/ubuntu:20.04 names: an index with an image for each architecture.
       image: "sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214",
     },
-    // libc's runtime and headers, at the versions of focal-updates. The sums are its Packages indexes'.
+    // libc's runtime and headers, at the newest versions of focal-updates and focal. The sums are their Packages indexes'.
     debs: [
       {
         directory: "g/glibc",

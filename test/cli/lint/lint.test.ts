@@ -4308,6 +4308,40 @@ void p.finally(() => {});
       });
 
       // Recorded from oxlint 1.87.0 with tsgolint.
+      test("no-misused-promises on what a function returns: a type in parentheses, and the type that a callback is given", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": `declare function f(): Promise<void>;
+declare function on(callback: () => () => void): void;
+declare function maybe(callback?: () => () => void): void;
+export function a(): () => void { return f; }
+export function b(): (() => void) { return f; }
+on(() => { return f; });
+maybe(() => { return f; });
+`,
+        };
+        const oxlint = { categories: { correctness: "off" }, rules: { "typescript/no-misused-promises": "error" } };
+        const flags = ["--type-aware", "-f", "json", "a.ts"];
+        const [forOxlint, alone] = await Promise.all([
+          lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
+          lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
+        ]);
+        type Label = { label?: string; span: { line: number; column: number; length: number } };
+        const found = (JSON.parse(forOxlint.raw).diagnostics as { labels: Label[] }[]).map(it =>
+          it.labels.map(({ label, span }) => `${span.line}:${span.column}+${span.length} ${label ?? ""}`.trimEnd()),
+        );
+        const value = "This callback has type \`() => Promise<void>\`.";
+        const context = "This context accepts a \`void\`-returning callback through type \`() => void\`.";
+        expect(found).toEqual([
+          [`4:42+1 ${value}`, `4:22+10 ${context}`, "4:42+1"],
+          [`6:19+1 ${value}`, `2:37+10 ${context}`, "6:19+1"],
+          [`7:22+1 ${value}`, "7:22+1"],
+        ]);
+        const lines = (JSON.parse(alone.raw)[0].messages as { line: number }[]).map(it => it.line);
+        expect(lines).toEqual([4, 5, 6, 7]);
+      });
+
+      // Recorded from oxlint 1.87.0 with tsgolint.
       test("a type-aware rule reports with the severity of the ESLint rule of the same name, if that one is on", async () => {
         const texts = {
           "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),

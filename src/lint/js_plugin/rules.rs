@@ -52,6 +52,13 @@ pub struct Rule {
 pub struct Plugin {
     /// The prefix of its rules.
     pub name: Box<[u8]>,
+    /// `{ module, export }`: the file that it is in, as Node.js writes the path, and where in what that exports. `None` for one
+    /// that was found in a configuration.
+    pub location: Option<Json>,
+    /// `meta.name@meta.version`, as ESLint prints a plugin.
+    pub id: Option<Box<[u8]>>,
+    /// It has nothing of what a plugin has: no `meta`, no `rules`.
+    pub has_nothing: bool,
     /// Sorted by [`Rule::id`].
     pub rules: Vec<Arc<Rule>>,
 }

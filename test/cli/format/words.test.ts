@@ -61,10 +61,10 @@ describe.concurrent("bun fmt --check", () => {
       ["--check"],
     );
     expect(stdout).toBe("a.js\n");
-    expect(stderr).toStartWith("error: broken.js: SyntaxError: ");
-    expect(stderr).toContain("\n> 1 | const = 1;\n");
-    expect(stderr).not.toContain("[error]");
-    expect(stderr).toEndWith("\n1 file needs formatting. Run bun fmt to fix it.\nCould not check 1 file.\n");
+    expect(stderr).toBe(
+      "1 | const = 1;\n          ^\nerror: Variable declaration expected.\n    at broken.js:1:7\n\n" +
+        "1 file needs formatting. Run bun fmt to fix it.\nCould not check 1 file.\n",
+    );
     expect(exitCode).toBe(2);
   });
 
@@ -131,14 +131,14 @@ describe.concurrent("bun fmt --check", () => {
 });
 
 describe.concurrent("bun fmt", () => {
-  test("errors start with Bun's `error:`, or Prettier's `[error]` with a .prettierrc", async () => {
+  test("errors start with `error:`, with a .prettierrc too", async () => {
     const [missing, ofPrettier] = await Promise.all([
       format({ "a.js": formatted }, ["nothing.js"]),
       format({ "a.js": formatted, ".prettierrc": "{}\n" }, ["nothing.js"]),
     ]);
     expect(missing.stderr).toStartWith('error: No files matching the pattern were found: "nothing.js".\n');
     expect(missing.exitCode).toBe(2);
-    expect(ofPrettier.stderr).toStartWith('[error] No files matching the pattern were found: "nothing.js".\n');
+    expect(ofPrettier.stderr).toStartWith('error: No files matching the pattern were found: "nothing.js".\n');
     expect(ofPrettier.exitCode).toBe(2);
   });
 
@@ -151,7 +151,7 @@ describe.concurrent("bun fmt", () => {
     ]);
     expect(refused.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
     expect(allowed.stderr).toStartWith("warn: --plugin has no effect ");
-    expect(ofPrettier.stderr).toStartWith("[error] bun fmt does not include the plugin prettier-plugin-x\n");
+    expect(ofPrettier.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
     expect([refused.exitCode, allowed.exitCode, ofPrettier.exitCode]).toEqual([2, 0, 2]);
   });
 

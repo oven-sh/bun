@@ -8,7 +8,7 @@ use bun_lint_oxlint::ast_util::is_global_reference;
 ///
 /// See `timeout` ("default is `0` (no timeout)"), `signal` and `cancelToken` in "Request Config", and "Request method
 /// aliases" and "Config Defaults", in the documentation of axios.
-pub struct NoUnboundedRequests {
+pub struct AxiosNoUnboundedRequests {
     /// What takes what `axios` takes.
     clients: Exports,
 }
@@ -69,7 +69,7 @@ fn sets_default_timeout(e: Expr) -> bool {
         && matches!(obj.kind(), ExprKind::Dot { name, .. } if name.name().is("defaults")))
 }
 
-fn check_request<'a>(e: Expr<'a>, method: &str, cx: &Cx<'a, NoUnboundedRequests>) {
+fn check_request<'a>(e: Expr<'a>, method: &str, cx: &Cx<'a, AxiosNoUnboundedRequests>) {
     let Some(call) = e.as_call() else {
         return;
     };
@@ -80,7 +80,10 @@ fn check_request<'a>(e: Expr<'a>, method: &str, cx: &Cx<'a, NoUnboundedRequests>
     let Some(position) = position_of_configuration(method, arguments) else {
         return;
     };
-    let properties = match arguments.get(position).map(|it| it.skip_type_wrappers().kind()) {
+    let properties = match arguments
+        .get(position)
+        .map(|it| it.skip_type_wrappers().kind())
+    {
         None => {
             cx.report(call.callee(), NO_TIMEOUT);
             return;
@@ -89,7 +92,11 @@ fn check_request<'a>(e: Expr<'a>, method: &str, cx: &Cx<'a, NoUnboundedRequests>
         // What it has is not to be seen here.
         Some(_) => return,
     };
-    let find = |name: &str| properties.iter().find(|it| it.key().is_some_and(|key| key.is(name)));
+    let find = |name: &str| {
+        properties
+            .iter()
+            .find(|it| it.key().is_some_and(|key| key.is(name)))
+    };
     let has_spread = properties.iter().any(|it| it.kind() == PropKind::Spread);
     if has_spread || find("signal").is_some() || find("cancelToken").is_some() {
         return;
@@ -105,13 +112,15 @@ fn check_request<'a>(e: Expr<'a>, method: &str, cx: &Cx<'a, NoUnboundedRequests>
     }
 }
 
-impl Rule for NoUnboundedRequests {
-    const META: Meta = Meta::plugin(Plugin::Bun, "no-unbounded-requests", Kind::Problem);
+impl Rule for AxiosNoUnboundedRequests {
+    const META: Meta = Meta::plugin(Plugin::Bun, "axios-no-unbounded-requests", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
-        NoUnboundedRequests { clients: exports_option(options, "clients") }
+        AxiosNoUnboundedRequests {
+            clients: exports_option(options, "clients"),
+        }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
@@ -120,7 +129,11 @@ impl Rule for NoUnboundedRequests {
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
-        if file.mentions("defaults") && file.exprs_of_kind(ExprTag::Assign).any(sets_default_timeout) {
+        if file.mentions("defaults")
+            && file
+                .exprs_of_kind(ExprTag::Assign)
+                .any(sets_default_timeout)
+        {
             return;
         }
         if file.mentions("axios") {
@@ -128,6 +141,8 @@ impl Rule for NoUnboundedRequests {
                 check_request(e, method, cx);
             }
         }
-        each_call_of_exports(file, &self.clients, AXIOS, &mut |e, method| check_request(e, method, cx));
+        each_call_of_exports(file, &self.clients, AXIOS, &mut |e, method| {
+            check_request(e, method, cx)
+        });
     }
 }

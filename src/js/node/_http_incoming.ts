@@ -21,7 +21,9 @@ const {
 } = require("internal/http");
 
 const ObjectDefineProperty = Object.defineProperty;
-const ObjectPrototypeLookupGetter = Object.prototype.__lookupGetter__;
+const ObjectPrototypeLookupGetter: (this: unknown, name: PropertyKey) => Function | undefined = (
+  Object.prototype as any
+).__lookupGetter__;
 
 const kHeaders = Symbol("kHeaders");
 // Cache slot for the server dispatcher's keep-alive decision (stamped once

@@ -14,6 +14,8 @@ for (let i = 0; i < 500; i++) {
     await Bun.sleep(1);
   }
   await Bun.sleep(1);
+  // Left alone, garbage piles up until about iteration 1000, and RSS with it.
+  Bun.gc(true);
   const memoryUsage = rss() / 1024 / 1024;
   // memory should be stable after X iterations
   if (i == 250) rssSample = memoryUsage;

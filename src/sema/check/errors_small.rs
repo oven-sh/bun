@@ -10,7 +10,7 @@ use crate::bind::{
 };
 
 /// What `getSymbolAtLocation` returns.
-#[derive(PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum SymbolAtLocation<'p> {
     /// `getMergedSymbol` of a symbol of the binder.
     Symbol(Sym),
@@ -398,7 +398,11 @@ impl<'p> Checker<'p, '_> {
     /// `getSymbolAtLocation` for an identifier or a `this`. The name of a member, of a property of
     /// an object literal, of a label or of a declared type, and the right side of a qualified name
     /// in a type reference, have a symbol that no tested expression has: `None`.
-    fn get_symbol_at_location(&mut self, file: FileId, node: Node) -> Option<SymbolAtLocation<'p>> {
+    pub(super) fn get_symbol_at_location(
+        &mut self,
+        file: FileId,
+        node: Node,
+    ) -> Option<SymbolAtLocation<'p>> {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         if node.is_none() || hir.is_in_with(hir.start(node)) {
             return None;
@@ -653,13 +657,13 @@ impl<'p> Checker<'p, '_> {
     ) -> Option<SymbolAtLocation<'p>> {
         let ty = self.reduced(ty);
         let ty = self.apparent_type(ty);
-        let members = self.members(ty)?;
+        let members = self.structured_members(ty)?;
         let info = self.applicable_index_info_for_name(&members, name)?;
         if let Some(declaration) = info.declaration {
             return Some(SymbolAtLocation::Index(ty, declaration));
         }
         let key_type = self.string_literal(name, false);
-        let is_declared = members.shape().index.iter().any(|info| {
+        let is_declared = members.index_infos().iter().any(|info| {
             info.declaration.is_some() && self.is_applicable_index_type(key_type, info.key)
         });
         is_declared.then_some(SymbolAtLocation::IndexOfSeveral)
@@ -698,12 +702,29 @@ impl<'p> Checker<'p, '_> {
         if self.is_valid_spread_type(ty) {
             return;
         }
-        // JSX reports on the spread expression, an object literal on the whole `SpreadAssignment`.
+        let at = self.place_of_spread(file, owner, p);
+        self.error_at(at, 2698, &[]);
+    }
+
+    /// JSX reports on the spread expression, an object literal on the whole `SpreadAssignment`.
+    fn place_of_spread(&self, file: FileId, owner: ExprId, p: PropId) -> (FileId, u32, u32) {
+        let hir = self.hir(file);
         if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
-            self.error_at(self.span_of_parenthesized_expr(file, prop.value), 2698, &[]);
-        } else {
-            self.error(file, p, 2698, &[]);
+            return self.span_of_parenthesized_expr(file, hir[p].value);
         }
+        let (start, end) = self.get_error_range_for_node(file, hir.node(p));
+        (file, start, end)
+    }
+
+    /// 2698 for the spread `p` in `owner`, whose type is not valid in `CheckModeInferential`. The
+    /// argument is checked again without it, so what its frames report is dropped. The call infers
+    /// once.
+    pub(super) fn report_spread_in_inference(&mut self, file: FileId, owner: ExprId, p: PropId) {
+        let at = self.place_of_spread(file, owner, p);
+        let diagnostic = self.new_diagnostic(at, 2698, &[]);
+        let is_call = |q: &&Query| matches!(q, Query::Call(..));
+        let call = self.stack.iter().rev().find(is_call).copied();
+        self.add_diagnostic_of(call, diagnostic);
     }
 
     /// `allTypesAssignableToKind(ty, TypeFlagsPrimitive)`

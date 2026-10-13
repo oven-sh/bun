@@ -1,0 +1,10 @@
+describe("a", () => {
+  it("b", async () => {
+    const spy = vi.fn().mockImplementationOnce(function (this: any, _to, _from) {
+      expect(typeof this.counter).toBe("number");
+    });
+    element.addEventListener.mockImplementation(function (this: HTMLAnchorElementLike) {
+      clicked.push(this);
+    });
+  });
+});

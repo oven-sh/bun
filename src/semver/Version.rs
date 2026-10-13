@@ -101,6 +101,56 @@ impl VersionType<u32> {
     }
 }
 
+impl VersionType<u64> {
+    /// `semver.coerce(text)` of node-semver: the first thing in `text` that looks like a version,
+    /// up to its third number. `None` where that returns `null`: nothing looks like one, or one of
+    /// the numbers begins with a `0` that is not all of it, or is over `Number.MAX_SAFE_INTEGER`.
+    pub fn coerce(text: &[u8]) -> Option<Self> {
+        /// `MAX_SAFE_COMPONENT_LENGTH`
+        const LONGEST: usize = 16;
+        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+        fn digits(text: &[u8]) -> usize {
+            text.iter().take_while(|it| it.is_ascii_digit()).count()
+        }
+        /// `(?:\.(\d{1,16}))?` before what is no digit: the digits, and what follows them.
+        fn part(text: &[u8]) -> Option<(&[u8], &[u8])> {
+            let text = text.strip_prefix(b".")?;
+            let length = digits(text);
+            (1..=LONGEST)
+                .contains(&length)
+                .then(|| text.split_at(length))
+        }
+        fn number(digits: &[u8]) -> Option<u64> {
+            if matches!(digits, [b'0', _, ..]) {
+                return None;
+            }
+            u64::parse_ascii(digits).filter(|it| *it <= MAX_SAFE_INTEGER)
+        }
+        let mut rest = text;
+        loop {
+            // A number begins where no digit is before it: one that is too long is passed over.
+            let start = rest.iter().take_while(|it| !it.is_ascii_digit()).count();
+            let (_, from) = rest.split_at(start);
+            let (major, after) = from.split_at(digits(from));
+            if major.is_empty() {
+                return None;
+            }
+            if major.len() > LONGEST {
+                rest = after;
+                continue;
+            }
+            let minor = part(after);
+            let patch = minor.and_then(|it| part(it.1));
+            return Some(Self {
+                major: number(major)?,
+                minor: minor.map_or(Some(0), |it| number(it.0))?,
+                patch: patch.map_or(Some(0), |it| number(it.0))?,
+                ..Default::default()
+            });
+        }
+    }
+}
+
 impl<T: VersionInt> VersionType<T> {
     pub fn order_fn(ctx: &[u8], lhs: Self, rhs: Self) -> Ordering {
         lhs.order(rhs, ctx, ctx)
@@ -1237,5 +1287,44 @@ mod tests {
         assert_eq!(a2.tag.build.slice(&buf), b"build.aaaaaaaa");
         assert_eq!(b2.tag.pre.slice(&buf), b"canary.20240315");
         assert_eq!(b2.tag.build.slice(&buf), b"build.bbbbbbbb");
+    }
+
+    /// What node-semver 6.3.1 and 7.8.5 say.
+    #[test]
+    fn coerce() {
+        let cases: &[(&[u8], Option<[u64; 3]>)] = &[
+            (b"0", Some([0, 0, 0])),
+            (b"v1", Some([1, 0, 0])),
+            (b"x 16.3 y", Some([16, 3, 0])),
+            (b"16.3.0-alpha", Some([16, 3, 0])),
+            (b"1.2.3.4", Some([1, 2, 3])),
+            (b"1.2.3\n4", Some([1, 2, 3])),
+            (b"a1b2", Some([1, 0, 0])),
+            (b"1.", Some([1, 0, 0])),
+            (b"1..2", Some([1, 0, 0])),
+            (b".1", Some([1, 0, 0])),
+            (b"1.2.33333333333333333", Some([1, 2, 0])),
+            (b"1.22222222222222222.3", Some([1, 0, 0])),
+            (b"12345678901234567.1", Some([1, 0, 0])),
+            (b"99999999999999999.2.3 4.5", Some([2, 3, 0])),
+            (
+                b"1.2.3456789012345678.9",
+                Some([1, 2, 3_456_789_012_345_678]),
+            ),
+            (b"9007199254740991", Some([9_007_199_254_740_991, 0, 0])),
+            (b"9007199254740992", None),
+            (b"1.9007199254740992", None),
+            (b"01.2.3", None),
+            (b"1.02.3", None),
+            (b"1.2.03", None),
+            (b"00", None),
+            (b"", None),
+            (b"abc", None),
+            (b"12345678901234567", None),
+        ];
+        for (text, want) in cases {
+            let have = Version::coerce(text).map(|it| [it.major, it.minor, it.patch]);
+            assert_eq!(have, *want, "{}", bstr::BStr::new(text));
+        }
     }
 }

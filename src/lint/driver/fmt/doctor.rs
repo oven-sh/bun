@@ -118,6 +118,9 @@ pub(super) fn report(
     let options = sorted(std::mem::take(&mut *configs.unsupported_options.lock()));
     let mut notes = std::mem::take(&mut *configs.warnings.lock());
     notes.extend(configs.note().map(<[u8]>::to_vec));
+    if configs.turns_svelte_off() {
+        notes.push(b"Svelte files are not formatted (svelte = false)".to_vec());
+    }
 
     let loaded = modules.packages();
     let is_not_supported = |name: &[u8]| plugins.not_supported.iter().any(|it| it == name);

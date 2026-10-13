@@ -514,7 +514,16 @@ impl Feature {
                 .set(name, &text)
                 .is_err()
             {
-                return refuse(value.loc, &[b"Invalid ", name, b" value: ", &text, b"."]);
+                let hint: &[u8] = match name {
+                    b"svelte.sortOrder" => {
+                        b"\n  Use \"none\", or all four parts in the order you want: \"options-scripts-markup-styles\""
+                    }
+                    _ => b"",
+                };
+                return refuse(
+                    value.loc,
+                    &[b"Invalid ", name, b" value: ", &text, b".", hint],
+                );
             }
             parts.push((name, text));
         }

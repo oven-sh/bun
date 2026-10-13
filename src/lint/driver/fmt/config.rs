@@ -1675,10 +1675,20 @@ impl<'c> Configs<'c> {
         })
     }
 
-    /// Whether what the plugin `name` does is done here.
+    /// Whether the plugin `name` is not needed: what it does is done here, or a flag or `[fmt]` says who formats Svelte.
     pub(crate) fn is_built_in(&self, name: &[u8]) -> bool {
+        let is_up_to_flags = || {
+            matches!(self.options.config_precedence, Precedence::CliOverride)
+                && self.svelte_of_flags(None).is_some()
+        };
         is_built_in_plugin(name)
-            || (package_of(name) == PLUGIN_FOR_SVELTE && self.has_svelte_plugin_of_bun())
+            || (package_of(name) == PLUGIN_FOR_SVELTE
+                && (self.has_svelte_plugin_of_bun() || is_up_to_flags()))
+    }
+
+    /// Whether `--no-svelte` or `svelte = false` in `[fmt]` is there. An override can still turn it on for some files.
+    pub(crate) fn turns_svelte_off(&self) -> bool {
+        self.svelte_of_flags(None) == Some(false)
     }
 
     /// Whether a flag or the config asks for a part of the file at `path`, which has `scope`, or for where the cursor ends up.

@@ -233,36 +233,25 @@ impl PatchStamp {
             .is_ok_and(|contents| Self::held(tag, &contents) == Some(patch_hash))
     }
 
-    /// `node_modules/<temporary name>`: outside the folder that `bun patch --commit` diffs, on its filesystem.
-    fn aside(extname: &[u8]) -> ZBox {
-        let mut name_buf = [0u8; 64];
-        let name = FileSystem::tmpname(extname, &mut name_buf, bun_core::fast_random())
-            .expect("a temporary name fits in 64 bytes");
-        let mut buf = bun_paths::path_buffer_pool::get();
-        ZBox::from_bytes(
-            path::resolve_path::join_z_buf::<path::platform::Auto>(
-                &mut buf.0,
-                &[b"node_modules", name.as_bytes()],
-            )
-            .as_bytes(),
-        )
-    }
-
-    /// Swaps [`Self::file`] of the copy for one without the patch hash. Returns where the original waits for [`Self::put_back`].
-    pub(crate) fn take_out(
+    /// [`Self::file`] of the copy in `folder` without the patch hash of the copy, and the mode of that file. `None` when the copy holds none.
+    pub(crate) fn without_hash(
         folder: &[u8],
         unpatched_folder: &[u8],
         tag: ResolutionTag,
-    ) -> sys::Result<Option<ZBox>> {
+    ) -> sys::Result<Option<(Vec<u8>, sys::Mode)>> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut buf.0,
             &[folder, Self::file(tag).as_bytes()],
         );
-        let Ok(contents) = sys::File::read_from(Fd::cwd(), path.as_bytes()) else {
-            return sys::Result::Ok(None);
+        let contents = match sys::File::read_from(Fd::cwd(), path.as_bytes()) {
+            sys::Result::Ok(contents) => contents,
+            sys::Result::Err(e) if e.get_errno() == sys::Errno::ENOENT => {
+                return sys::Result::Ok(None);
+            }
+            sys::Result::Err(e) => return sys::Result::Err(e),
         };
-        let Some(unstamped) = Self::unstamped(tag, &contents) else {
+        let Some(without_hash) = Self::unstamped(tag, &contents) else {
             return sys::Result::Ok(None);
         };
         // A hash that the unpatched package holds too is a key of the package itself, not the mark of a patch.
@@ -271,46 +260,8 @@ impl PatchStamp {
         {
             return sys::Result::Ok(None);
         }
-
-        // The original is renamed, never rewritten: it can share its inode with the cache, and a rename back cannot fail for space.
-        let replacement = Self::aside(b"without-patch-hash");
-        let original = Self::aside(b"with-patch-hash");
         let mode = sys::stat(path)?.st_mode as sys::Mode;
-        let written = sys::File::openat(
-            Fd::cwd(),
-            replacement.as_bytes(),
-            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-            mode,
-        )
-        .and_then(|file| file.write_all(&unstamped))
-        .and_then(|()| sys::renameat(Fd::cwd(), path, Fd::cwd(), original.as_zstr()));
-        if let Err(e) = written {
-            let _ = sys::unlink(replacement.as_zstr());
-            return sys::Result::Err(e);
-        }
-        if let Err(e) = sys::renameat(Fd::cwd(), replacement.as_zstr(), Fd::cwd(), path) {
-            let _ = sys::unlink(replacement.as_zstr());
-            return sys::renameat(Fd::cwd(), original.as_zstr(), Fd::cwd(), path)
-                .and(sys::Result::Err(e));
-        }
-        sys::Result::Ok(Some(original))
-    }
-
-    pub(crate) fn put_back(
-        folder: &[u8],
-        tag: ResolutionTag,
-        original: Option<ZBox>,
-    ) -> sys::Result<()> {
-        let Some(original) = original else {
-            return sys::Result::Ok(());
-        };
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-            &mut buf.0,
-            &[folder, Self::file(tag).as_bytes()],
-        );
-        sys::renameat(Fd::cwd(), original.as_zstr(), Fd::cwd(), path)
-            .map_err(|e| e.with_path(original.as_bytes()))
+        sys::Result::Ok(Some((without_hash, mode)))
     }
 
     /// Records `patch_hash` in the patched copy at `package_dir`.

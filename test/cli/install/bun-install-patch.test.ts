@@ -9,7 +9,7 @@ import {
   runBunInstall,
   tempDir,
 } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 
@@ -1185,7 +1185,21 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  // bunEnv with `path` as the only PATH. Windows spells the variable `Path`.
+  const envWithPath = (path: string) => ({
+    ...Object.fromEntries(Object.entries(bunEnv).filter(([name]) => name.toUpperCase() !== "PATH")),
+    PATH: path,
+  });
+
+  // A `git` for `bun patch --commit` to find. Not for Windows, where a shell script is not an executable.
+  async function gitThat(dir: string, script: string) {
+    const git = join(dir, "git-shim", "git");
+    await Bun.write(git, `#!/bin/sh\n${script}\n`);
+    await $`chmod +x ${git}`;
+    return envWithPath(dirname(git));
   }
 
   async function bun(cwd: string, args: string[], env?: NodeJS.Dict<string>) {
@@ -1394,6 +1408,40 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       expect(patch).not.toContain("package.json");
     });
 
+  // The copy keeps its patch hash while git runs, so an install after a dead commit leaves the copy alone.
+  test.skipIf(isWindows).concurrent("a `bun patch --commit` that is killed in the diff keeps the edits", async () => {
+    const { packageDir, noDeps } = await patchedProject("hoisted");
+
+    await bun(packageDir, ["patch", "no-deps"]);
+    await Bun.write(join(noDeps, "second.txt"), "second\n");
+    const killsBun = await gitThat(packageDir, "kill -9 $PPID");
+    const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"], killsBun);
+    expect(commit.signalCode).toBe("SIGKILL");
+
+    await install(packageDir);
+    expect(await Bun.file(join(noDeps, "second.txt")).text()).toBe("second\n");
+  });
+
+  // The commit moves a nested node_modules out of the package for the diff.
+  test
+    .skipIf(isWindows)
+    .concurrent("a `bun patch --commit` that fails in the diff leaves the package whole", async () => {
+      const { packageDir, noDeps } = await patchedProject("hoisted");
+
+      await bun(packageDir, ["patch", "no-deps"]);
+      await Bun.write(join(noDeps, "second.txt"), "second\n");
+      const nested = join(noDeps, "node_modules", "nested", "index.js");
+      await Bun.write(nested, "module.exports = 1;\n");
+      const fails = await gitThat(packageDir, "echo no diff today >&2\nexit 1");
+      const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"], fails);
+      expect(commit.stderr).toContain("failed to make diff no diff today");
+      expect(commit.exitCode).toBe(1);
+      expect(await Bun.file(nested).text()).toBe("module.exports = 1;\n");
+
+      await install(packageDir);
+      expect(await Bun.file(join(noDeps, "second.txt")).text()).toBe("second\n");
+    });
+
   // The hoisted linker reads `.bun-tag` of a git dependency, not its package.json.
   test.concurrent("a git dependency is installed again as committed", async () => {
     const gitEnv = {
@@ -1479,12 +1527,9 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 
       await bun(packageDir, ["patch", "no-deps"]);
       await Bun.write(join(noDeps, "second.txt"), "second\n");
-      // With no git to run, the commit stops before it writes a patch. Windows spells the variable `Path`.
-      const noPath = Object.fromEntries(Object.entries(bunEnv).filter(([name]) => name.toUpperCase() !== "PATH"));
-      const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"], {
-        ...noPath,
-        PATH: join(packageDir, "no-git-here"),
-      });
+      // With no git to run, the commit stops before it writes a patch.
+      const noGit = envWithPath(join(packageDir, "no-git-here"));
+      const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"], noGit);
       expect(commit.stderr).toContain("git must be installed");
       expect(commit.exitCode).toBe(1);
 

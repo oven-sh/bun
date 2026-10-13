@@ -1479,7 +1479,7 @@ impl<'l> Loader<'l> {
             let plugin = loaded.map_err(cannot_load)?;
             // `a/b/rule` would be the rule `b/rule` of `a`.
             let name = &plugin.name[..];
-            let slashes = name.iter().filter(|it| **it == b'/').count();
+            let slashes = strings::count_char(name, b'/');
             if name.is_empty() || slashes > usize::from(name.starts_with(b"@")) {
                 let parts: [&[u8]; 5] = [
                     b"\"",

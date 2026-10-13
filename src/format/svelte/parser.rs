@@ -2053,5 +2053,8 @@ pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
         js,
     };
     parser.run()?;
+    // What has been parsed as TypeScript is printed as that. To Svelte `data-lang="ts"` says so too, to the plugin it does not,
+    // and `f<T>(a)` becomes `f < T > a`.
+    parser.tree.says_typescript |= parser.is_typescript;
     Ok(parser.tree)
 }

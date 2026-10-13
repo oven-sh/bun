@@ -341,9 +341,9 @@ impl Check<'_, '_> {
             end: node.end,
         };
         let mut fragments: [Option<Option<FragmentId>>; 3] = [None; 3];
-        let mut how = match is_pre {
-            true => Text::Preformatted,
-            false => Text::WordsInBlock,
+        let mut how = match around {
+            Text::Preformatted | Text::Code => around,
+            _ => Text::WordsInBlock,
         };
         match &node.kind {
             // The rest has been read with the fragment.
@@ -365,6 +365,7 @@ impl Check<'_, '_> {
                 fragments[0] = Some(Some(element.fragment));
                 let is_regular = element.kind == ElementKind::RegularElement;
                 how = match element.name {
+                    _ if around == Text::Code => Text::Code,
                     b"script" | b"style" | b"template" if is_regular => Text::Code,
                     _ if is_pre => Text::Preformatted,
                     name if is_regular

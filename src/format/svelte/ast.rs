@@ -258,7 +258,7 @@ pub(crate) struct Tree<'a> {
     pub(crate) css: Option<Id>,
     /// Those between attributes.
     pub(crate) comments: Vec<Comment>,
-    /// `_svelte_ts` of the plugin: a `<script>` or a `<style>` says `lang="ts"`.
+    /// `_svelte_ts` of the plugin: a `<script>` or a `<style>` says `lang="ts"`. Or `ts` of Svelte.
     pub(crate) says_typescript: bool,
 }
 

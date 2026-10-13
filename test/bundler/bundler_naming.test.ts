@@ -415,6 +415,36 @@ describe("bundler", () => {
     },
     run: { file: "/out/[nonexistent]-entry.js", stdout: "1" },
   });
+  // Without `root`, the root is the directory that the entry point names share. "@scope" and
+  // "routes" are not directories here, and the build used to stop when it opened them.
+  for (const backend of ["api", "cli"] as const) {
+    // Named from the file that the package resolved to: [dir] is from the working directory.
+    itBundled(`naming/PackageEntryPointWithoutItsDirectory/${backend}`, {
+      backend,
+      files: {
+        "/node_modules/@scope/pkg/package.json": `{ "name": "@scope/pkg", "version": "1.0.0", "main": "index.js" }`,
+        "/node_modules/@scope/pkg/index.js": `console.log(1);`,
+      },
+      entryPointsRaw: ["@scope/pkg"],
+      run: { file: "/out/node_modules/@scope/pkg/index.js", stdout: "1" },
+    });
+  }
+  // Named from the entry points as typed: [dir] is from the working directory.
+  itBundled("naming/PluginEntryPointsWithoutTheirDirectory", {
+    files: {},
+    entryPointsRaw: ["routes/home.js", "routes/admin/users.js"],
+    plugins(builder) {
+      builder.onResolve({ filter: /^routes\// }, args => ({ path: args.path, namespace: "routes" }));
+      builder.onLoad({ filter: /.*/, namespace: "routes" }, args => ({
+        contents: `console.log(${JSON.stringify(args.path)});`,
+        loader: "js",
+      }));
+    },
+    run: [
+      { file: "/out/routes/home.js", stdout: "routes/home.js" },
+      { file: "/out/routes/admin/users.js", stdout: "routes/admin/users.js" },
+    ],
+  });
 });
 
 // Bun.build({ naming: "[name" }) used to SIGABRT; validation now rejects it.

@@ -2572,19 +2572,27 @@ impl<'a> Transpiler<'a> {
 
             let _reset = bun_ast::StoreResetGuard::new();
 
-            let result = match self.resolver.resolve(
-                top_level_dir,
-                entry,
-                bun_ast::ImportKind::EntryPointBuild,
-            ) {
-                Ok(r) => r,
-                Err(err) => {
-                    bun_core::pretty_error!(
-                        "Error resolving \"{}\": {}\n",
-                        bstr::BStr::new(entry),
-                        err.name(),
-                    );
-                    continue;
+            let result = if self.options.missing_default_root_dir.is_empty() {
+                match self.resolver.resolve(
+                    top_level_dir,
+                    entry,
+                    bun_ast::ImportKind::EntryPointBuild,
+                ) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        bun_core::pretty_error!(
+                            "Error resolving \"{}\": {}\n",
+                            bstr::BStr::new(entry),
+                            err.name(),
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                // A name that does not resolve fails this build, as its missing root did.
+                match self.resolve_entry_point(entry) {
+                    Ok(r) => r,
+                    Err(_) => continue,
                 }
             };
 

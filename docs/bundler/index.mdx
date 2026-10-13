@@ -1050,7 +1050,7 @@ The root directory of the project.
   </Tab>
 </Tabs>
 
-If unspecified, Bun uses the first common ancestor of all entrypoint files as the root. Consider the following file structure:
+If unspecified, Bun uses the first common ancestor of all entrypoint files as the root. If that directory does not exist, for example when the entrypoint is a package name or a path that a plugin resolves, Bun uses the current working directory as the root. Consider the following file structure:
 
 ```text title="file system" icon="folder-tree"
 .

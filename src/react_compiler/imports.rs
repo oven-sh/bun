@@ -6,15 +6,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use crate::collections::{IndexMap, IndexSet};
+use crate::collections::{IndexMap, IndexSet, sort_slice_by};
 
-use crate::diagnostics::{
-    CompilerError, CompilerErrorDetail, ErrorCategory, Position, SourceLocation,
-};
+use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::{
     ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
 };
+use bun_core::strings::locale_compare;
 
 use crate::hir::environment::OutputMode;
 use crate::options::ReactCompilerOptions;
@@ -23,39 +22,41 @@ use crate::program::Host;
 /// An import specifier tracked by ProgramContext.
 /// Corresponds to NonLocalImportSpecifier in the TS compiler.
 #[derive(Debug, Clone, Copy)]
-pub struct NonLocalImportSpecifier {
-    pub name_ref: bun_ast::Ref,
-    pub module: &'static str,
-    pub imported: &'static str,
+pub(crate) struct NonLocalImportSpecifier {
+    pub(crate) name_ref: bun_ast::Ref,
+    pub(crate) imported: &'static str,
 }
 
 /// Context for the program being compiled.
 /// Tracks compiled functions, generated names, and import requirements.
 /// Equivalent to ProgramContext class in Imports.ts.
-pub struct ProgramContext {
-    pub opts: ReactCompilerOptions,
-    pub filename: Option<String>,
-    pub code: Option<String>,
-    pub react_runtime_module: &'static str,
-    pub output_mode: OutputMode,
-    pub has_module_scope_opt_out: bool,
+pub(crate) struct ProgramContext {
+    pub(crate) opts: ReactCompilerOptions,
+    pub(crate) filename: Option<String>,
+    pub(crate) code: Option<String>,
+    pub(crate) react_runtime_module: &'static str,
+    pub(crate) output_mode: OutputMode,
+    pub(crate) has_module_scope_opt_out: bool,
 
     // Pre-resolved import local names for codegen
-    pub instrument_fn_name: Option<String>,
-    pub instrument_gating_name: Option<String>,
-    pub hook_guard_name: Option<String>,
+    pub(crate) instrument_fn_name: Option<String>,
+    pub(crate) instrument_gating_name: Option<String>,
+    pub(crate) hook_guard_name: Option<String>,
 
     // Variable renames from lowering, to be applied back to the Babel AST
-    pub renames: Vec<crate::hir::environment::BindingRename>,
+    pub(crate) renames: Vec<crate::hir::environment::BindingRename>,
+
+    /// `OutputMode::Lint`: upstream's `env.logErrors()`. What a validation reports that does not
+    /// keep the function from being compiled.
+    pub(crate) logged: CompilerError,
 
     // Internal state
-    already_compiled: IndexSet<u32>,
     known_referenced_names: IndexSet<String>,
     imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
 }
 
 impl ProgramContext {
-    pub fn new(
+    pub(crate) fn new(
         opts: ReactCompilerOptions,
         filename: Option<String>,
         code: Option<String>,
@@ -73,26 +74,15 @@ impl ProgramContext {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: Vec::new(),
-            already_compiled: IndexSet::new(),
+            logged: CompilerError::new(),
             known_referenced_names: IndexSet::new(),
             imports: IndexMap::new(),
         }
     }
 
-    /// Check if a function at the given start position has already been compiled.
-    /// This is a workaround for Babel not consistently respecting skip().
-    pub fn is_already_compiled(&self, start: u32) -> bool {
-        self.already_compiled.contains(&start)
-    }
-
-    /// Mark a function at the given start position as compiled.
-    pub fn mark_compiled(&mut self, start: u32) {
-        self.already_compiled.insert(start);
-    }
-
     /// Initialize known referenced names from scope bindings.
     /// Call this after construction to seed conflict detection with program scope bindings.
-    pub fn init_from_scope(&mut self, symbols: &[Symbol]) {
+    pub(crate) fn init_from_scope(&mut self, symbols: &[Symbol]) {
         // Register ALL bindings (not just program-scope) so that UID generation
         // avoids name conflicts with any binding in the file. This matches
         // Babel's generateUid() which checks all scopes.
@@ -108,7 +98,7 @@ impl ProgramContext {
     /// For hook names (use*), preserves the original name to avoid breaking
     /// hook-name-based type inference. For other names, prefixes with underscore
     /// similar to Babel's generateUid.
-    pub fn new_uid(&mut self, name: &str) -> String {
+    pub(crate) fn new_uid(&mut self, name: &str) -> String {
         if is_hook_name(name) {
             // Don't prefix hooks with underscore, since InferTypes might
             // type HookKind based on callee naming convention.
@@ -142,7 +132,7 @@ impl ProgramContext {
     }
 
     /// Add the memo cache import (the `c` function from the compiler runtime).
-    pub fn add_memo_cache_import(&mut self, host: &mut dyn Host) -> NonLocalImportSpecifier {
+    pub(crate) fn add_memo_cache_import(&mut self, host: &mut dyn Host) -> NonLocalImportSpecifier {
         self.add_import_specifier(host, self.react_runtime_module, "c", Some("_c"))
     }
 
@@ -150,7 +140,7 @@ impl ProgramContext {
     ///
     /// If `name_hint` is provided, it will be used as the basis for the local
     /// name; otherwise `specifier` is used.
-    pub fn add_import_specifier(
+    pub(crate) fn add_import_specifier(
         &mut self,
         host: &mut dyn Host,
         module: &'static str,
@@ -168,7 +158,6 @@ impl ProgramContext {
         let name_ref = host.new_import_item(name.as_bytes());
         let binding = NonLocalImportSpecifier {
             name_ref,
-            module,
             imported: specifier,
         };
 
@@ -181,31 +170,19 @@ impl ProgramContext {
     }
 
     /// Register a name as referenced so future uid generation avoids it.
-    pub fn add_new_reference(&mut self, name: String) {
+    pub(crate) fn add_new_reference(&mut self, name: String) {
         self.known_referenced_names.insert(name);
     }
 
     /// Get the set of known referenced names for seeding per-function Environment UID generation.
-    pub fn known_referenced_names(&self) -> &IndexSet<String> {
+    pub(crate) fn known_referenced_names(&self) -> &IndexSet<String> {
         &self.known_referenced_names
     }
 
     /// Merge UID names generated during a function compilation back into the program context,
     /// so subsequent function compilations avoid collisions.
-    pub fn merge_uid_known_names(&mut self, names: &IndexSet<String>) {
+    pub(crate) fn merge_uid_known_names(&mut self, names: &IndexSet<String>) {
         self.known_referenced_names.extend(names.iter().cloned());
-    }
-
-    /// Check if there are any pending imports to add to the program.
-    pub fn has_pending_imports(&self) -> bool {
-        !self.imports.is_empty()
-    }
-
-    /// Get an immutable view of the generated imports.
-    pub fn imports(
-        &self,
-    ) -> &IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>> {
-        &self.imports
     }
 }
 
@@ -237,7 +214,7 @@ pub(crate) fn validate_restricted_imports(
                 "Import from module {}",
                 bun_core::BStr::new(import.path.text)
             ));
-            detail.loc = convert_loc(import.range.loc);
+            detail.loc = crate::lowering::convert_loc(import.range.loc);
             error.push_error_detail(detail);
         }
     }
@@ -247,21 +224,6 @@ pub(crate) fn validate_restricted_imports(
     } else {
         None
     }
-}
-
-fn convert_loc(loc: Loc) -> Option<SourceLocation> {
-    if loc.start < 0 {
-        return None;
-    }
-    let pos = Position {
-        line: 0,
-        column: 0,
-        index: Some(loc.start as u32),
-    };
-    Some(SourceLocation {
-        start: pos,
-        end: pos,
-    })
 }
 
 /// Insert import declarations into the program body.
@@ -282,16 +244,16 @@ pub(crate) fn add_imports_to_program(
 
     let mut new_stmts: Vec<Stmt> = Vec::new();
     let mut sorted_modules: Vec<_> = context.imports.iter().collect();
-    sorted_modules.sort_unstable_by(|(a, _), (b, _)| {
-        a.bytes()
-            .map(|c| c.to_ascii_lowercase())
-            .cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
+    sort_slice_by(&mut sorted_modules, |(a, _), (b, _)| {
+        locale_compare(a.as_bytes(), b.as_bytes())
     });
 
     for (module_name, imports_map) in sorted_modules {
         let sorted_imports = {
             let mut sorted: Vec<_> = imports_map.values().collect();
-            sorted.sort_unstable_by_key(|s| s.imported);
+            sort_slice_by(&mut sorted, |a, b| {
+                locale_compare(a.imported.as_bytes(), b.imported.as_bytes())
+            });
             sorted
         };
 
@@ -360,7 +322,7 @@ fn is_hook_name(name: &str) -> bool {
 /// Upstream's `CompilerTarget::MetaInternal { runtime_module }` arm is
 /// intentionally not ported — `ReactCompilerOptions.target` only accepts a
 /// version string.
-pub(crate) fn get_react_compiler_runtime_module(target: Option<&str>) -> &'static str {
+fn get_react_compiler_runtime_module(target: Option<&str>) -> &'static str {
     match target {
         Some("19") => "react/compiler-runtime",
         Some("17") | Some("18") => "react-compiler-runtime",

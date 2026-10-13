@@ -20,23 +20,43 @@ exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists:
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0005 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0006 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0006 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0006 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0007 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0007 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0007 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0008 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0008 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0008 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0009 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0009 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0009 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0010 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0010 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0010 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
@@ -60,23 +80,48 @@ exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: t
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0015 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0016 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0016 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0016 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0017 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0017 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0017 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0018 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0018 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0018 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0019 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0019 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0019 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0020 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0020 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0020 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
@@ -100,23 +145,43 @@ exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.loc
 
 exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0025 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0026 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0026 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0026 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0027 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0027 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0027 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0028 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0028 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0028 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0029 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0029 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0029 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0030 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0030 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0030 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
@@ -140,23 +205,43 @@ exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0035 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0036 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0036 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0036 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0037 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0037 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0037 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0038 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0038 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0038 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0039 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0039 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0039 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0040 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0040 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0040 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
@@ -180,23 +265,48 @@ exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: 
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0045 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0046 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0046 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0046 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0047 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0047 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0047 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0048 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0048 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0048 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0049 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0049 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0049 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0050 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0050 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0050 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
@@ -220,23 +330,43 @@ exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lo
 
 exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0055 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0056 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0056 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0056 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0057 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0057 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0057 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0058 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0058 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0058 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0059 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0059 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0059 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
-exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0060 (with modules): requested-packages: install without args 1`] = `[]`;
+exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0060 (with modules): requested-packages: install without args 1`] = `
+[
+  "left-pad",
+]
+`;
 
 exports[`bun install no args --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0060 (with modules): requested-tarballs: install without args 1`] = `[]`;
 
@@ -299,6 +429,7 @@ exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists:
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -313,6 +444,7 @@ exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists:
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -322,6 +454,7 @@ exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists:
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -336,6 +469,7 @@ exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists:
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -345,6 +479,7 @@ exports[`bun install is-even --linker=hoisted (scanner: local) (bun.lock exists:
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -409,6 +544,8 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -423,6 +560,8 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -432,6 +571,8 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -446,6 +587,8 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -455,6 +598,8 @@ exports[`bun install is-even --linker=hoisted (scanner: npm) (bun.lock exists: f
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -509,6 +654,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -518,6 +664,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -527,6 +674,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -536,6 +684,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -545,6 +694,7 @@ exports[`bun install is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -609,6 +759,7 @@ exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -623,6 +774,7 @@ exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -632,6 +784,7 @@ exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -646,6 +799,7 @@ exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -655,6 +809,7 @@ exports[`bun install is-even --linker=isolated (scanner: local) (bun.lock exists
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -719,6 +874,8 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -733,6 +890,8 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -742,6 +901,8 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -756,6 +917,8 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -765,6 +928,8 @@ exports[`bun install is-even --linker=isolated (scanner: npm) (bun.lock exists: 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -819,6 +984,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -828,6 +994,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -837,6 +1004,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -846,6 +1014,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -855,6 +1024,7 @@ exports[`bun install is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -864,6 +1034,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -878,6 +1049,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -887,6 +1059,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -901,6 +1074,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -910,6 +1084,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -919,6 +1094,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -933,6 +1109,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -942,6 +1119,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -956,6 +1134,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -965,6 +1144,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: local) (bun.loc
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -974,6 +1154,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -988,6 +1169,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -997,6 +1179,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1011,6 +1194,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1020,6 +1204,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1029,6 +1214,8 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1043,6 +1230,8 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1052,6 +1241,8 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1066,6 +1257,8 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1075,6 +1268,8 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock 
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1084,6 +1279,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1093,6 +1289,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1102,6 +1299,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1111,6 +1309,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1120,6 +1319,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1129,6 +1329,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1138,6 +1339,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1147,6 +1349,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1156,6 +1359,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1165,6 +1369,7 @@ exports[`bun install left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly)
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1174,6 +1379,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1188,6 +1394,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1197,6 +1404,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1211,6 +1419,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1220,6 +1429,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1229,6 +1439,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1243,6 +1454,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1252,6 +1464,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1266,6 +1479,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1275,6 +1489,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: local) (bun.lo
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1284,6 +1499,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1298,6 +1514,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1307,6 +1524,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1321,6 +1539,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1330,6 +1549,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1339,6 +1559,8 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1353,6 +1575,8 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1362,6 +1586,8 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1376,6 +1602,8 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1385,6 +1613,8 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm) (bun.lock
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -1394,6 +1624,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1403,6 +1634,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1412,6 +1644,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1421,6 +1654,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1430,6 +1664,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1439,6 +1674,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1448,6 +1684,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1457,6 +1694,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1466,6 +1704,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1475,6 +1714,7 @@ exports[`bun install left-pad,is-even --linker=isolated (scanner: npm.bunfigonly
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -1983,21 +2223,14 @@ exports[`bun update no args --linker=isolated (scanner: npm.bunfigonly) (bun.loc
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0241 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
-exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0241 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0241 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (no-TTY) 0242 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2006,21 +2239,14 @@ exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0243 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
-exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0243 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0243 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:n) 0244 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2029,7 +2255,6 @@ exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0245 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2043,12 +2268,7 @@ exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 ]
 `;
 
-exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0246 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0246 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0247 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2068,12 +2288,7 @@ exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 ]
 `;
 
-exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0248 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0248 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0249 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2098,21 +2313,14 @@ exports[`bun update is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0251 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
-exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0251 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0251 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0252 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2121,21 +2329,14 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0253 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
-exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0253 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0253 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0254 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2144,7 +2345,6 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0255 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2159,12 +2359,7 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 ]
 `;
 
-exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0256 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0256 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0257 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2186,12 +2381,7 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 ]
 `;
 
-exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0258 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0258 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0259 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2218,7 +2408,6 @@ exports[`bun update is-even --linker=hoisted (scanner: npm) (bun.lock exists: fa
 exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: none) (no-TTY) 0261 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2227,7 +2416,6 @@ exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock
 exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (no-TTY) 0262 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2236,7 +2424,6 @@ exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock
 exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (TTY:y) 0263 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2245,7 +2432,6 @@ exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock
 exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (TTY:n) 0264 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2254,7 +2440,6 @@ exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock
 exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0265 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2313,21 +2498,14 @@ exports[`bun update is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0271 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
-exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0271 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0271 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (no-TTY) 0272 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2336,21 +2514,14 @@ exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists:
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0273 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
-exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0273 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0273 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:n) 0274 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2359,7 +2530,6 @@ exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists:
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0275 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2373,12 +2543,7 @@ exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists:
 ]
 `;
 
-exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0276 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0276 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0277 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2398,12 +2563,7 @@ exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists:
 ]
 `;
 
-exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0278 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0278 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0279 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2428,21 +2588,14 @@ exports[`bun update is-even --linker=isolated (scanner: local) (bun.lock exists:
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0281 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
-exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0281 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0281 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0282 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2451,21 +2604,14 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0283 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
-exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0283 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0283 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0284 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2474,7 +2620,6 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0285 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2489,12 +2634,7 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 ]
 `;
 
-exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0286 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0286 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0287 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2516,12 +2656,7 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 ]
 `;
 
-exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0288 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0288 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0289 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2548,7 +2683,6 @@ exports[`bun update is-even --linker=isolated (scanner: npm) (bun.lock exists: f
 exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: none) (no-TTY) 0291 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2557,7 +2691,6 @@ exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.loc
 exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (no-TTY) 0292 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2566,7 +2699,6 @@ exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.loc
 exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (TTY:y) 0293 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2575,7 +2707,6 @@ exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.loc
 exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (TTY:n) 0294 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2584,7 +2715,6 @@ exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.loc
 exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0295 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
 ]
 `;
 
@@ -2643,22 +2773,15 @@ exports[`bun update is-even --linker=isolated (scanner: npm.bunfigonly) (bun.loc
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0301 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0301 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0301 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (no-TTY) 0302 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2668,22 +2791,15 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0303 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0303 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0303 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:n) 0304 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2693,7 +2809,6 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0305 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2708,12 +2823,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0306 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0306 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0307 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2733,12 +2843,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0308 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0308 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0309 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2763,22 +2868,15 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0311 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0311 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0311 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0312 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2788,22 +2886,15 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0313 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0313 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0313 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0314 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2813,7 +2904,6 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0315 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2829,12 +2919,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0316 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0316 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0317 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2856,12 +2941,7 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0318 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0318 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0319 (with modules): requested-packages: update with args 1`] = `
 [
@@ -2888,7 +2968,6 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: none) (no-TTY) 0321 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2898,7 +2977,6 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (no-TTY) 0322 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2908,7 +2986,6 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (TTY:y) 0323 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2918,7 +2995,6 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (TTY:n) 0324 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2928,7 +3004,6 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) 
 exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0325 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -2988,22 +3063,15 @@ exports[`bun update left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0331 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0331 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: none) (no-TTY) 0331 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (no-TTY) 0332 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3013,22 +3081,15 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0333 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0333 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:y) 0333 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: warn) (TTY:n) 0334 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3038,7 +3099,6 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0335 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3053,12 +3113,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0336 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0336 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0337 (with modules): requested-packages: update with args 1`] = `
 [
@@ -3078,12 +3133,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0338 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0338 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0339 (with modules): requested-packages: update with args 1`] = `
 [
@@ -3108,22 +3158,15 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0341 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0341 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: none) (no-TTY) 0341 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (no-TTY) 0342 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3133,22 +3176,15 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0343 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0343 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:y) 0343 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: warn) (TTY:n) 0344 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3158,7 +3194,6 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0345 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3174,12 +3209,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0346 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0346 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0347 (with modules): requested-packages: update with args 1`] = `
 [
@@ -3201,12 +3231,7 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 ]
 `;
 
-exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0348 (with modules): requested-tarballs: update with args 1`] = `
-[
-  "/is-even-1.0.0.tgz",
-  "/is-odd-1.0.0.tgz",
-]
-`;
+exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0348 (with modules): requested-tarballs: update with args 1`] = `[]`;
 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0349 (with modules): requested-packages: update with args 1`] = `
 [
@@ -3233,7 +3258,6 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: none) (no-TTY) 0351 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3243,7 +3267,6 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm.bunfigonly)
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (no-TTY) 0352 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3253,7 +3276,6 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm.bunfigonly)
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (TTY:y) 0353 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3263,7 +3285,6 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm.bunfigonly)
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: warn) (TTY:n) 0354 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3273,7 +3294,6 @@ exports[`bun update left-pad,is-even --linker=isolated (scanner: npm.bunfigonly)
 exports[`bun update left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0355 (with modules): requested-packages: update with args 1`] = `
 [
   "is-even",
-  "is-odd",
   "left-pad",
 ]
 `;
@@ -3389,6 +3409,7 @@ exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: fal
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3403,6 +3424,7 @@ exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: fal
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3412,6 +3434,7 @@ exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: fal
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3426,6 +3449,7 @@ exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: fal
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3435,6 +3459,7 @@ exports[`bun add is-even --linker=hoisted (scanner: local) (bun.lock exists: fal
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3499,6 +3524,8 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3513,6 +3540,8 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3522,6 +3551,8 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3536,6 +3567,8 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3545,6 +3578,8 @@ exports[`bun add is-even --linker=hoisted (scanner: npm) (bun.lock exists: false
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3599,6 +3634,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3608,6 +3644,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3617,6 +3654,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3626,6 +3664,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3635,6 +3674,7 @@ exports[`bun add is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3699,6 +3739,7 @@ exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: fa
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3713,6 +3754,7 @@ exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: fa
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3722,6 +3764,7 @@ exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: fa
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3736,6 +3779,7 @@ exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: fa
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3745,6 +3789,7 @@ exports[`bun add is-even --linker=isolated (scanner: local) (bun.lock exists: fa
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3809,6 +3854,8 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3823,6 +3870,8 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3832,6 +3881,8 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3846,6 +3897,8 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3855,6 +3908,8 @@ exports[`bun add is-even --linker=isolated (scanner: npm) (bun.lock exists: fals
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -3909,6 +3964,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3918,6 +3974,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3927,6 +3984,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3936,6 +3994,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3945,6 +4004,7 @@ exports[`bun add is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3954,6 +4014,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3968,6 +4029,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3977,6 +4039,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -3991,6 +4054,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4000,6 +4064,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4009,6 +4074,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4023,6 +4089,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4032,6 +4099,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4046,6 +4114,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4055,6 +4124,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: local) (bun.lock ex
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4064,6 +4134,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4078,6 +4149,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4087,6 +4159,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4101,6 +4174,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4110,6 +4184,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4119,6 +4194,8 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4133,6 +4210,8 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4142,6 +4221,8 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4156,6 +4237,8 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4165,6 +4248,8 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exis
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4174,6 +4259,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4183,6 +4269,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4192,6 +4279,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4201,6 +4289,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4210,6 +4299,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4219,6 +4309,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4228,6 +4319,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4237,6 +4329,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4246,6 +4339,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4255,6 +4349,7 @@ exports[`bun add left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bu
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4264,6 +4359,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4278,6 +4374,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4287,6 +4384,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4301,6 +4399,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4310,6 +4409,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4319,6 +4419,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4333,6 +4434,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4342,6 +4444,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4356,6 +4459,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4365,6 +4469,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: local) (bun.lock e
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4374,6 +4479,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4388,6 +4494,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4397,6 +4504,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4411,6 +4519,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4420,6 +4529,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4429,6 +4539,8 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4443,6 +4555,8 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4452,6 +4566,8 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4466,6 +4582,8 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4475,6 +4593,8 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exi
 [
   "is-even",
   "is-odd",
+  "left-pad",
+  "test-security-scanner",
 ]
 `;
 
@@ -4484,6 +4604,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4493,6 +4614,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4502,6 +4624,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4511,6 +4634,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4520,6 +4644,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4529,6 +4654,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4538,6 +4664,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4547,6 +4674,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4556,6 +4684,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4565,6 +4694,7 @@ exports[`bun add left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (b
 [
   "is-even",
   "is-odd",
+  "left-pad",
 ]
 `;
 
@@ -4590,23 +4720,53 @@ exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: 
 
 exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0485 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0486 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0486 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0486 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0487 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0487 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0487 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0488 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0488 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0488 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0489 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0489 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0489 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0490 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0490 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0490 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4630,23 +4790,58 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: tr
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0495 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0496 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0496 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0496 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0497 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0497 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0497 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0498 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0498 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0498 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0499 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0499 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0499 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0500 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0500 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0500 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4670,23 +4865,53 @@ exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0505 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0506 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0506 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0506 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0507 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0507 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0507 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0508 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0508 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0508 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0509 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0509 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0509 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0510 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0510 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0510 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4710,23 +4935,53 @@ exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists:
 
 exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0515 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0516 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0516 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0516 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0517 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0517 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0517 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0518 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0518 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0518 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0519 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0519 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0519 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0520 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0520 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0520 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4750,23 +5005,58 @@ exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: t
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0525 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0526 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0526 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0526 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0527 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0527 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0527 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0528 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0528 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0528 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0529 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0529 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0529 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0530 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0530 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0530 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4790,23 +5080,53 @@ exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.loc
 
 exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0535 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0536 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0536 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0536 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0537 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0537 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0537 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0538 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0538 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0538 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0539 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0539 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0539 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0540 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0540 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun remove is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0540 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4830,23 +5150,48 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0545 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0546 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0546 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0546 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0547 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0547 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0547 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0548 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0548 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0548 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0549 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0549 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0549 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0550 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0550 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0550 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4870,23 +5215,53 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock e
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0555 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0556 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0556 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0556 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0557 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0557 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0557 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0558 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0558 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0558 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0559 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0559 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0559 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0560 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0560 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0560 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4910,23 +5285,48 @@ exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) 
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0565 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0566 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0566 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0566 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0567 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0567 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0567 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0568 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0568 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0568 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0569 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0569 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0569 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0570 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0570 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0570 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4950,23 +5350,48 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.loc
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0575 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0576 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0576 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0576 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0577 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0577 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0577 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0578 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0578 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0578 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0579 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0579 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0579 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0580 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0580 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0580 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -4990,23 +5415,53 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock 
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0585 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0586 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0586 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0586 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0587 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0587 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0587 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0588 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0588 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0588 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0589 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0589 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0589 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0590 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0590 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0590 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -5030,23 +5485,48 @@ exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly)
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0595 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0596 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0596 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0596 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0597 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0597 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0597 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0598 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0598 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0598 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0599 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0599 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0599 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
-exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0600 (with modules): requested-packages: remove with args 1`] = `[]`;
+exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0600 (with modules): requested-packages: remove with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun remove left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0600 (with modules): requested-tarballs: remove with args 1`] = `[]`;
 
@@ -5070,23 +5550,53 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exist
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0605 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0606 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0606 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0606 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0607 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0607 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0607 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0608 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0608 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0608 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0609 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0609 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0609 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0610 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0610 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0610 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5110,23 +5620,58 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists:
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0615 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0616 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0616 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0616 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0617 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0617 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0617 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0618 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0618 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0618 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0619 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0619 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0619 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0620 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0620 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0620 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5150,23 +5695,53 @@ exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.l
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0625 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0626 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0626 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0626 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0627 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0627 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0627 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0628 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0628 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0628 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0629 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0629 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0629 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0630 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0630 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0630 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5190,23 +5765,53 @@ exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exis
 
 exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0635 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0636 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0636 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0636 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0637 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0637 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0637 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0638 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0638 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0638 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0639 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0639 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0639 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0640 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0640 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0640 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5230,23 +5835,58 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0645 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0646 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0646 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0646 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0647 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0647 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0647 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0648 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0648 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0648 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0649 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0649 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0649 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0650 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0650 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0650 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5270,23 +5910,53 @@ exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0655 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0656 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0656 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0656 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0657 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0657 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0657 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0658 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0658 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0658 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0659 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0659 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0659 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0660 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0660 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "left-pad",
+]
+`;
 
 exports[`bun uninstall is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0660 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5310,23 +5980,48 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.l
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0665 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0666 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0666 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0666 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0667 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0667 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0667 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0668 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0668 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0668 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0669 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0669 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0669 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0670 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0670 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0670 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5350,23 +6045,53 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.loc
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0675 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0676 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0676 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0676 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0677 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0677 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0677 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0678 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0678 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0678 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0679 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0679 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0679 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0680 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0680 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0680 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5390,23 +6115,48 @@ exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonl
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0685 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0686 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0686 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0686 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0687 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0687 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0687 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0688 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0688 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0688 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0689 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0689 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0689 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0690 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0690 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=hoisted (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0690 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5430,23 +6180,48 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0695 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0696 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0696 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: none) (no-TTY) 0696 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0697 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0697 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (no-TTY) 0697 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0698 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0698 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:y) 0698 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0699 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0699 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: warn) (TTY:n) 0699 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0700 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0700 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: local) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0700 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5470,23 +6245,53 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lo
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0705 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0706 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0706 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: none) (no-TTY) 0706 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0707 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0707 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (no-TTY) 0707 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0708 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0708 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:y) 0708 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0709 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0709 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: warn) (TTY:n) 0709 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0710 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0710 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+  "test-security-scanner",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0710 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
@@ -5510,22 +6315,47 @@ exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigon
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: true) (advisories: fatal) (no-TTY) 0715 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0716 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0716 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: none) (no-TTY) 0716 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0717 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0717 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (no-TTY) 0717 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0718 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0718 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:y) 0718 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0719 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0719 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: warn) (TTY:n) 0719 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;
 
-exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0720 (with modules): requested-packages: uninstall with args 1`] = `[]`;
+exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0720 (with modules): requested-packages: uninstall with args 1`] = `
+[
+  "is-even",
+  "is-odd",
+]
+`;
 
 exports[`bun uninstall left-pad,is-even --linker=isolated (scanner: npm.bunfigonly) (bun.lock exists: false) (advisories: fatal) (no-TTY) 0720 (with modules): requested-tarballs: uninstall with args 1`] = `[]`;

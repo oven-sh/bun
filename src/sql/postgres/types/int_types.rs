@@ -9,7 +9,7 @@ pub type short = u16;
 pub type Short = short;
 pub(crate) type PostgresShort = u16;
 
-pub fn int32<T>(value: T) -> [u8; 4]
+pub(crate) fn int32<T>(value: T) -> [u8; 4]
 where
     int4: TryFrom<T>,
 {

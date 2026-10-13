@@ -234,6 +234,35 @@ describe("apply", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("to a path containing a NUL byte throws EINVAL and leaves the source in place", async () => {
+      const tempdir = tempDirWithFiles("patch-test", { "from.txt": "hello!" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           import { existsSync } from "node:fs";
+           const dir = ${JSON.stringify(tempdir)};
+           const patchfile = "rename from from.txt\\nrename to to\\u0000.txt\\n";
+           try {
+             patchInternals.apply(patchfile, dir);
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }
+           console.log("from-exists: " + existsSync(dir + "/from.txt"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim().split("\n")).toEqual(["caught: EINVAL", "from-exists: true"]);
+      expect(exitCode).toBe(0);
+    });
+
     test("folders", async () => {
       const files = {
         "a/foo/hey.txt": "hello!",

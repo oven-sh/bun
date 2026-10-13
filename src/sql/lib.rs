@@ -1,4 +1,4 @@
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case, non_camel_case_types)]
 #![warn(unused_must_use)]
 
 pub mod error;
@@ -146,10 +146,8 @@ pub mod postgres {
         pub mod field_type;
         #[path = "PortalOrPreparedStatement.rs"]
         pub mod portal_or_prepared_statement;
-        #[path = "TransactionStatusIndicator.rs"]
-        pub mod transaction_status_indicator;
         #[path = "zHelpers.rs"]
-        pub mod z_helpers;
+        pub(crate) mod z_helpers;
 
         #[path = "Authentication.rs"]
         pub mod authentication;

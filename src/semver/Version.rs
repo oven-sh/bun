@@ -101,12 +101,62 @@ impl VersionType<u32> {
     }
 }
 
+impl VersionType<u64> {
+    /// `semver.coerce(text)` of node-semver: the first thing in `text` that looks like a version,
+    /// up to its third number. `None` where that returns `null`: nothing looks like one, or one of
+    /// the numbers begins with a `0` that is not all of it, or is over `Number.MAX_SAFE_INTEGER`.
+    pub fn coerce(text: &[u8]) -> Option<Self> {
+        /// `MAX_SAFE_COMPONENT_LENGTH`
+        const LONGEST: usize = 16;
+        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+        fn digits(text: &[u8]) -> usize {
+            text.iter().take_while(|it| it.is_ascii_digit()).count()
+        }
+        /// `(?:\.(\d{1,16}))?` before what is no digit: the digits, and what follows them.
+        fn part(text: &[u8]) -> Option<(&[u8], &[u8])> {
+            let text = text.strip_prefix(b".")?;
+            let length = digits(text);
+            (1..=LONGEST)
+                .contains(&length)
+                .then(|| text.split_at(length))
+        }
+        fn number(digits: &[u8]) -> Option<u64> {
+            if matches!(digits, [b'0', _, ..]) {
+                return None;
+            }
+            u64::parse_ascii(digits).filter(|it| *it <= MAX_SAFE_INTEGER)
+        }
+        let mut rest = text;
+        loop {
+            // A number begins where no digit is before it: one that is too long is passed over.
+            let start = rest.iter().take_while(|it| !it.is_ascii_digit()).count();
+            let (_, from) = rest.split_at(start);
+            let (major, after) = from.split_at(digits(from));
+            if major.is_empty() {
+                return None;
+            }
+            if major.len() > LONGEST {
+                rest = after;
+                continue;
+            }
+            let minor = part(after);
+            let patch = minor.and_then(|it| part(it.1));
+            return Some(Self {
+                major: number(major)?,
+                minor: minor.map_or(Some(0), |it| number(it.0))?,
+                patch: patch.map_or(Some(0), |it| number(it.0))?,
+                ..Default::default()
+            });
+        }
+    }
+}
+
 impl<T: VersionInt> VersionType<T> {
     pub fn order_fn(ctx: &[u8], lhs: Self, rhs: Self) -> Ordering {
         lhs.order(rhs, ctx, ctx)
     }
 
-    pub fn is_zero(self) -> bool {
+    pub(crate) fn is_zero(self) -> bool {
         self.patch == T::ZERO && self.minor == T::ZERO && self.major == T::ZERO
     }
 
@@ -114,13 +164,15 @@ impl<T: VersionInt> VersionType<T> {
         Self::parse(SlicedString { buf: slice, slice })
     }
 
-    pub fn clone_into(self, slice: &[u8], buf: &mut &mut [u8]) -> Self {
+    /// Copies the tag strings into `buf` at `*offset` (advancing it); the
+    /// returned version's strings are offsets into the whole of `buf`.
+    pub fn clone_into(self, slice: &[u8], buf: &mut [u8], offset: &mut usize) -> Self {
         Self {
             major: self.major,
             minor: self.minor,
             patch: self.patch,
             _tag_padding: Default::default(),
-            tag: self.tag.clone_into(slice, buf),
+            tag: self.tag.clone_into(slice, buf, offset),
         }
     }
 
@@ -406,7 +458,7 @@ impl<T: VersionInt> VersionType<T> {
         true
     }
 
-    pub fn order_without_tag(lhs: Self, rhs: Self) -> Ordering {
+    pub(crate) fn order_without_tag(lhs: Self, rhs: Self) -> Ordering {
         if lhs.major < rhs.major {
             return Ordering::Less;
         }
@@ -667,8 +719,8 @@ fn valid_pre_or_build_tag_character(c: u8) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Formatter<'a, T: VersionInt> {
-    pub version: VersionType<T>,
-    pub input: &'a [u8],
+    pub(crate) version: VersionType<T>,
+    pub(crate) input: &'a [u8],
 }
 
 impl<'a, T: VersionInt> fmt::Display for Formatter<'a, T> {
@@ -695,10 +747,10 @@ impl<'a, T: VersionInt> fmt::Display for Formatter<'a, T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct DiffFormatter<'a, T: VersionInt> {
-    pub version: VersionType<T>,
-    pub buf: &'a [u8],
-    pub other: VersionType<T>,
-    pub other_buf: &'a [u8],
+    pub(crate) version: VersionType<T>,
+    pub(crate) buf: &'a [u8],
+    pub(crate) other: VersionType<T>,
+    pub(crate) other_buf: &'a [u8],
 }
 
 impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
@@ -932,7 +984,7 @@ pub struct Tag {
 // TODO: support multiple tags
 
 impl Tag {
-    pub fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);
 
@@ -995,7 +1047,7 @@ impl Tag {
         }
     }
 
-    pub fn order(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if !self.pre.is_empty() && !rhs.pre.is_empty() {
             return self.order_pre(rhs, lhs_buf, rhs_buf);
         }
@@ -1008,7 +1060,7 @@ impl Tag {
         self.build.order(&rhs.build, lhs_buf, rhs_buf)
     }
 
-    pub fn order_without_build(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order_without_build(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if !self.pre.is_empty() && !rhs.pre.is_empty() {
             return self.order_pre(rhs, lhs_buf, rhs_buf);
         }
@@ -1016,29 +1068,21 @@ impl Tag {
         self.pre.order(&rhs.pre, lhs_buf, rhs_buf)
     }
 
-    pub fn clone_into(self, slice: &[u8], buf: &mut &mut [u8]) -> Tag {
-        let pre: SemverString;
-        let build: SemverString;
-
-        if self.pre.is_inline() {
-            pre = self.pre.value;
-        } else {
-            let pre_slice = self.pre.slice(slice);
-            buf[..pre_slice.len()].copy_from_slice(pre_slice);
-            // reshaped for borrowck —
-            // capture the init args before advancing `buf`.
-            pre = SemverString::init(buf, &buf[0..pre_slice.len()]);
-            *buf = &mut core::mem::take(buf)[pre_slice.len()..];
-        }
-
-        if self.build.is_inline() {
-            build = self.build.value;
-        } else {
-            let build_slice = self.build.slice(slice);
-            buf[..build_slice.len()].copy_from_slice(build_slice);
-            build = SemverString::init(buf, &buf[0..build_slice.len()]);
-            *buf = &mut core::mem::take(buf)[build_slice.len()..];
-        }
+    /// Copies `pre`/`build` into `buf` at `*offset` (advancing it); the
+    /// returned strings are offsets into the whole of `buf`.
+    pub fn clone_into(self, slice: &[u8], buf: &mut [u8], offset: &mut usize) -> Tag {
+        let mut copy = |s: ExternalString| -> SemverString {
+            if s.is_inline() {
+                return s.value;
+            }
+            let bytes = s.slice(slice);
+            let start = *offset;
+            *offset += bytes.len();
+            buf[start..*offset].copy_from_slice(bytes);
+            SemverString::init(buf, &buf[start..*offset])
+        };
+        let pre = copy(self.pre);
+        let build = copy(self.build);
 
         Tag {
             pre: ExternalString {
@@ -1066,11 +1110,14 @@ impl Tag {
         self.pre.hash == rhs.pre.hash
     }
 
-    pub fn parse(sliced_string: SlicedString) -> TagResult {
+    pub(crate) fn parse(sliced_string: SlicedString) -> TagResult {
         Self::parse_with_pre_count(sliced_string, 0)
     }
 
-    pub fn parse_with_pre_count(sliced_string: SlicedString, initial_pre_count: u32) -> TagResult {
+    pub(crate) fn parse_with_pre_count(
+        sliced_string: SlicedString,
+        initial_pre_count: u32,
+    ) -> TagResult {
         let input = sliced_string.slice;
         let mut build_count: u32 = 0;
         let mut pre_count: u32 = initial_pre_count;
@@ -1182,8 +1229,8 @@ impl Tag {
 
 #[derive(Copy, Clone, Default)]
 pub struct TagResult {
-    pub tag: Tag,
-    pub len: u32,
+    pub(crate) tag: Tag,
+    pub(crate) len: u32,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1195,7 +1242,7 @@ pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
     pub version: Partial<T>,
-    pub len: u32,
+    pub(crate) len: u32,
 }
 
 impl<T: VersionInt> Default for ParseResult<T> {
@@ -1205,6 +1252,79 @@ impl<T: VersionInt> Default for ParseResult<T> {
             valid: true,
             version: Partial::default(),
             len: 0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Version;
+    use crate::sliced_string::SlicedString;
+
+    fn parse(s: &[u8]) -> Version {
+        let r = Version::parse(SlicedString::init(s, s));
+        assert!(r.valid);
+        r.version.min()
+    }
+
+    #[test]
+    fn clone_into_offsets_are_relative_to_the_whole_buffer() {
+        let a_src: &[u8] = b"1.0.0-canary.20240101+build.aaaaaaaa";
+        let b_src: &[u8] = b"1.0.0-canary.20240315+build.bbbbbbbb";
+        let a = parse(a_src);
+        let b = parse(b_src);
+
+        let mut buf = vec![0u8; 128];
+        let mut offset = 0usize;
+        let a2 = a.clone_into(a_src, &mut buf, &mut offset);
+        let b2 = b.clone_into(b_src, &mut buf, &mut offset);
+        assert_eq!(
+            offset,
+            2 * ("canary.20240101".len() + "build.aaaaaaaa".len())
+        );
+
+        assert_eq!(a2.tag.pre.slice(&buf), b"canary.20240101");
+        assert_eq!(a2.tag.build.slice(&buf), b"build.aaaaaaaa");
+        assert_eq!(b2.tag.pre.slice(&buf), b"canary.20240315");
+        assert_eq!(b2.tag.build.slice(&buf), b"build.bbbbbbbb");
+    }
+
+    /// What node-semver 6.3.1 and 7.8.5 say.
+    #[test]
+    fn coerce() {
+        let cases: &[(&[u8], Option<[u64; 3]>)] = &[
+            (b"0", Some([0, 0, 0])),
+            (b"v1", Some([1, 0, 0])),
+            (b"x 16.3 y", Some([16, 3, 0])),
+            (b"16.3.0-alpha", Some([16, 3, 0])),
+            (b"1.2.3.4", Some([1, 2, 3])),
+            (b"1.2.3\n4", Some([1, 2, 3])),
+            (b"a1b2", Some([1, 0, 0])),
+            (b"1.", Some([1, 0, 0])),
+            (b"1..2", Some([1, 0, 0])),
+            (b".1", Some([1, 0, 0])),
+            (b"1.2.33333333333333333", Some([1, 2, 0])),
+            (b"1.22222222222222222.3", Some([1, 0, 0])),
+            (b"12345678901234567.1", Some([1, 0, 0])),
+            (b"99999999999999999.2.3 4.5", Some([2, 3, 0])),
+            (
+                b"1.2.3456789012345678.9",
+                Some([1, 2, 3_456_789_012_345_678]),
+            ),
+            (b"9007199254740991", Some([9_007_199_254_740_991, 0, 0])),
+            (b"9007199254740992", None),
+            (b"1.9007199254740992", None),
+            (b"01.2.3", None),
+            (b"1.02.3", None),
+            (b"1.2.03", None),
+            (b"00", None),
+            (b"", None),
+            (b"abc", None),
+            (b"12345678901234567", None),
+        ];
+        for (text, want) in cases {
+            let have = Version::coerce(text).map(|it| [it.major, it.minor, it.patch]);
+            assert_eq!(have, *want, "{}", bstr::BStr::new(text));
         }
     }
 }

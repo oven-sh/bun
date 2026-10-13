@@ -203,6 +203,21 @@ test("writing to file in append mode works", async () => {
   expect((await readFile(tempFile)).toString()).toEqual("test\ntest\ntest\n");
 });
 
+test("appendFile with flag 'ax' rejects with EEXIST on an existing file", async () => {
+  const dir = tempDirWithFiles("appendfile-exclusive-flag", { "existing.txt": "keep" });
+  const existing = join(dir, "existing.txt");
+  await expectReject(() => fsPromises.appendFile(existing, "more", { flag: "ax" }), {
+    code: "EEXIST",
+    syscall: "open",
+  });
+  expect(await readFile(existing, "utf8")).toEqual("keep");
+
+  const fresh = join(dir, "fresh.txt");
+  await fsPromises.appendFile(fresh, "first", { flag: "ax" });
+  await fsPromises.appendFile(fresh, "second", { flag: "a" });
+  expect(await readFile(fresh, "utf8")).toEqual("firstsecond");
+});
+
 test("errors from fs.promises include async stack frames", async () => {
   async function level3() {
     await readFile("/nonexistent-path/does-not-exist.txt");
@@ -404,8 +419,9 @@ it("teardown waits for every concurrent in-flight write", async () => {
 });
 
 // node rejects abortable fs APIs with an AbortError (an Error whose code is the
-// string "ABORT_ERR" and whose cause is signal.reason), never with the raw
-// DOMException held in signal.reason (whose .code is the number 20).
+// string "ABORT_ERR", whose message has no trailing period, and whose cause is
+// signal.reason), never with the raw DOMException held in signal.reason (whose
+// .code is the number 20 and whose message ends in a period).
 describe("AbortSignal rejections use node's AbortError shape", () => {
   function expectNodeAbortError(err, reason) {
     expect(err).toBeInstanceOf(Error);
@@ -413,7 +429,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     expect({ name: err.name, code: err.code, message: err.message }).toEqual({
       name: "AbortError",
       code: "ABORT_ERR",
-      message: "The operation was aborted.",
+      message: "The operation was aborted",
     });
     expect(err.cause).toBe(reason);
   }

@@ -32,12 +32,14 @@ impl MarkedArgumentBuffer {
         where
             F: FnOnce(&mut MarkedArgumentBuffer) -> R,
         {
-            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below.
-            let ctx = unsafe { &mut *ctx };
-            let f = ctx.f.take().unwrap();
+            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below; nothing
+            // `f` runs can reach it.
+            let f = unsafe { (*ctx).f.take() }.unwrap();
             // SAFETY: `args` is the live stack-allocated `MarkedArgumentBuffer` C++
             // hands us for the duration of this callback.
-            ctx.r = Some(f(unsafe { &mut *args }));
+            let r = f(unsafe { &mut *args });
+            // SAFETY: as above.
+            unsafe { (*ctx).r = Some(r) };
         }
         let mut ctx = Ctx {
             f: Some(f),
@@ -90,10 +92,12 @@ macro_rules! marked_argument_buffer_wrap {
             ) {
                 // SAFETY: `this` is the `&mut ctx` passed to `MarkedArgumentBuffer::run` below;
                 // `marked_argument_buffer` is the live stack-allocated buffer C++ hands us.
-                let this = unsafe { &mut *this };
-                this.result = $function(this.global_this, this.callframe, unsafe {
-                    &mut *marked_argument_buffer
-                });
+                let result = $function(
+                    unsafe { (*this).global_this },
+                    unsafe { (*this).callframe },
+                    unsafe { &mut *marked_argument_buffer },
+                );
+                unsafe { (*this).result = result };
             }
 
             let mut ctx = Context {

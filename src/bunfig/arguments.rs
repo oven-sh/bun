@@ -15,24 +15,60 @@ use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::bunfig::Bunfig;
 
+/// Reads what a bunfig has for `bun lint` or `bun fmt`, which know their flags. It is called with the whole file.
+/// `Err`: what is wrong, and where.
+pub type ToolReader<'a> = dyn FnMut(&bun_ast::Expr) -> Result<(), (bun_ast::Loc, Vec<u8>)> + 'a;
+
+/// What the process ends with if its bunfig cannot be used. For `bun lint` and `bun fmt` that is what ESLint and
+/// Prettier end with if their configuration cannot.
+fn exit_code_of_failure(cmd: CommandTag) -> u32 {
+    match cmd {
+        CommandTag::LintCommand | CommandTag::FormatCommand => 2,
+        _ => 1,
+    }
+}
+
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
+/// `None` when `dir/path` does not fit: nothing could be opened at such a path anyway.
+fn join_config_path<'buf>(
+    dir: &[u8],
+    path: &[u8],
+    buf: &'buf mut PathBuffer,
+) -> Option<&'buf ZStr> {
+    let max_len = buf.len() - 1;
+    let len = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+        dir,
+        &mut buf[..max_len],
+        &[path],
+    )?
+    .len();
+    buf[len] = 0;
+    Some(ZStr::from_buf(&buf[..], len))
+}
+
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    let paths: [&[u8]; 1] = [b".bunfig.toml"];
+    let dir = env_var::XDG_CONFIG_HOME
+        .get()
+        .or_else(|| env_var::HOME.get())?;
+    join_config_path(dir, b".bunfig.toml", buf)
+}
 
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            data_dir, &mut **buf, &paths,
-        ));
+fn unreadable_config(
+    cmd: CommandTag,
+    auto_loaded: bool,
+    err: &bun_sys::Error,
+    config_path: &[u8],
+) -> Result<(), crate::Error> {
+    if auto_loaded {
+        return Ok(());
     }
-
-    if let Some(home_dir) = env_var::HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            home_dir, &mut **buf, &paths,
-        ));
-    }
-
-    None
+    bun_core::pretty_errorln!(
+        "{}\nwhile reading config \"{}\"",
+        err,
+        BStr::new(config_path),
+    );
+    Global::exit(exit_code_of_failure(cmd));
 }
 
 fn load_bunfig(
@@ -40,21 +76,12 @@ fn load_bunfig(
     auto_loaded: bool,
     config_path: &ZStr,
     ctx: Context<'_>,
+    tool: Option<&mut ToolReader<'_>>,
 ) -> Result<(), crate::Error> {
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
-            Err(err) => {
-                if auto_loaded {
-                    return Ok(());
-                }
-                bun_core::pretty_errorln!(
-                    "{}\nwhile reading config \"{}\"",
-                    err,
-                    BStr::new(config_path.as_bytes()),
-                );
-                Global::exit(1);
-            }
+            Err(err) => return unreadable_config(cmd, auto_loaded, &err, config_path.as_bytes()),
         };
 
     bun_ast::stmt::data::Store::create();
@@ -77,7 +104,7 @@ fn load_bunfig(
         unsafe { (*log_ptr).level = lvl };
     });
     ctx.debug.loaded_bunfig = true;
-    Bunfig::parse(cmd, &source, ctx)
+    Bunfig::parse(cmd, &source, ctx, tool)
 }
 
 fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
@@ -86,9 +113,9 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
     }
     ctx.has_loaded_global_config = true;
 
-    let mut config_buf = PathBuffer::uninit();
+    let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        load_bunfig(cmd, true, path, ctx)?;
+        load_bunfig(cmd, true, path, ctx, None)?;
     }
     Ok(())
 }
@@ -98,6 +125,16 @@ pub fn load_config_path(
     auto_loaded: bool,
     config_path: &ZStr,
     ctx: Context<'_>,
+) -> Result<(), crate::Error> {
+    load_config_path_for_tool(cmd, auto_loaded, config_path, ctx, None)
+}
+
+fn load_config_path_for_tool(
+    cmd: CommandTag,
+    auto_loaded: bool,
+    config_path: &ZStr,
+    ctx: Context<'_>,
+    tool: Option<&mut ToolReader<'_>>,
 ) -> Result<(), crate::Error> {
     // `cmd.read_global_config()` is evaluated at runtime (see
     // the note on `Parser::parse` in src/bunfig/bunfig.rs);
@@ -118,19 +155,28 @@ pub fn load_config_path(
         }
     }
 
-    load_bunfig(cmd, auto_loaded, config_path, ctx)
+    load_bunfig(cmd, auto_loaded, config_path, ctx, tool)
 }
 
 #[cold]
-fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
+fn report_bunfig_load_failure(cmd: CommandTag, log: *mut bun_ast::Log, err: crate::Error) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
+    let is_of_tool = matches!(cmd, CommandTag::LintCommand | CommandTag::FormatCommand);
     if log.has_any() {
+        // `bun lint` and `bun fmt` print relative paths everywhere else, so do that here too.
+        let locations = log.msgs.iter_mut().filter(|_| is_of_tool);
+        for location in locations.filter_map(|it| it.data.location.as_mut()) {
+            location.file = bun_paths::basename(&location.file[..]).to_vec().into();
+        }
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        if is_of_tool {
+            Global::exit(exit_code_of_failure(cmd));
+        }
         Output::print_error("\n");
     }
     Output::err(err, "failed to load bunfig", ());
-    Global::crash();
+    Global::exit(exit_code_of_failure(cmd));
 }
 
 pub fn load_config(
@@ -138,12 +184,21 @@ pub fn load_config(
     user_config_path_: Option<&[u8]>,
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
+    load_config_for_tool(cmd, user_config_path_, ctx, None)
+}
+
+/// As [`load_config`], for `bun lint` and `bun fmt`: `tool` is called with the file, if there is one.
+pub fn load_config_for_tool(
+    cmd: CommandTag,
+    user_config_path_: Option<&[u8]>,
+    ctx: Context<'_>,
+    tool: Option<&mut ToolReader<'_>>,
+) -> Result<(), crate::Error> {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
     if user_config_path_.is_none() {
-        if let Some(graph) = StandaloneModuleGraph::get() {
-            // SAFETY: `get()` returns a non-null process-global pointer when Some.
-            if unsafe { (*graph).flags }.contains(
+        if let Some(graph) = StandaloneModuleGraph::get_ref() {
+            if graph.flags.contains(
                 bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_AUTOLOAD_BUNFIG,
             ) {
                 return Ok(());
@@ -151,14 +206,14 @@ pub fn load_config(
         }
     }
 
-    let mut config_buf = PathBuffer::uninit();
+    let mut config_buf = bun_paths::path_buffer_pool::get();
     if cmd.read_global_config() {
         if !ctx.has_loaded_global_config {
             ctx.has_loaded_global_config = true;
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    report_bunfig_load_failure(ctx.log, err);
+                    report_bunfig_load_failure(cmd, ctx.log, err);
                 }
             }
         }
@@ -178,7 +233,14 @@ pub fn load_config(
                         || (!ctx.positionals.is_empty()
                             && options::DEFAULT_LOADERS
                                 .contains_key(bun_paths::extension(&ctx.positionals[0])))
-                )))
+                ))
+            // "bun [run] --filter/--workspaces/--parallel/--sequential": these
+            // dispatch to their own runners right after argument parsing and
+            // never reach the lazy load in `RunCommand::exec_with_cfg`. Loading
+            // here keeps the `[run]` flags applied later in `Arguments::parse`
+            // (`--bun`, `--elide-lines`, ...) ahead of the file.
+            || (matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand)
+                && (ctx.parallel || ctx.sequential || ctx.workspaces || !ctx.filters.is_empty())))
     {
         config_path_ = b"bunfig.toml";
         auto_loaded = true;
@@ -187,14 +249,15 @@ pub fn load_config(
     if config_path_.is_empty() {
         return Ok(());
     }
-    let config_path_len: usize;
-    if config_path_[0] == b'/' {
-        config_buf[..config_path_.len()].copy_from_slice(config_path_);
-        config_buf[config_path_.len()] = 0;
-        config_path_len = config_path_.len();
+    let config_path: Option<&ZStr> = if config_path_[0] == b'/' {
+        if config_path_.len() < config_buf.len() {
+            Some(resolve_path::z(config_path_, &mut config_buf))
+        } else {
+            None
+        }
     } else {
         if ctx.args.absolute_working_dir.is_none() {
-            let mut secondbuf = PathBuffer::uninit();
+            let mut secondbuf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut *secondbuf) {
                 Ok(n) => n,
                 Err(_) => return Ok(()),
@@ -202,26 +265,24 @@ pub fn load_config(
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }
 
-        // Reshaped for borrowck: `join_abs_string_buf` ties the
-        // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
-        // and `config_buf`. We only need the length to NUL-terminate and
-        // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
-        // the `&mut ctx` call below.
-        config_path_len = {
-            let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
-            let parts: [&[u8]; 2] = [awd, config_path_];
-            let joined =
-                resolve_path::join_abs_string_buf::<platform::Auto>(awd, &mut *config_buf, &parts);
-            joined.len()
-        };
-        config_buf[config_path_len] = 0;
-    }
-    // SAFETY: `config_buf[config_path_len] == 0` (written above on both arms);
-    // `config_buf` outlives the call.
-    let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
+        join_config_path(
+            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            config_path_,
+            &mut config_buf,
+        )
+    };
+    let Some(config_path) = config_path else {
+        return unreadable_config(
+            cmd,
+            auto_loaded,
+            &bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                .with_path(config_path_),
+            config_path_,
+        );
+    };
 
-    if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        report_bunfig_load_failure(ctx.log, err);
+    if let Err(err) = load_config_path_for_tool(cmd, auto_loaded, config_path, ctx, tool) {
+        report_bunfig_load_failure(cmd, ctx.log, err);
     }
     Ok(())
 }

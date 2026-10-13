@@ -82,14 +82,14 @@ impl<'a> fmt::Display for QueryFormatter<'a> {
 }
 
 impl Query {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
         QueryFormatter {
             query: self,
             buffer: buf,
         }
     }
 
-    pub fn eql(&self, rhs: &Query) -> bool {
+    pub(crate) fn eql(&self, rhs: &Query) -> bool {
         let mut lhs = self;
         let mut rhs = rhs;
         loop {
@@ -111,7 +111,7 @@ impl Query {
         }
     }
 
-    pub fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
         let mut node = self;
         loop {
             if !node.range.satisfies(version, query_buf, version_buf) {
@@ -124,7 +124,7 @@ impl Query {
         }
     }
 
-    pub fn satisfies_pre(
+    pub(crate) fn satisfies_pre(
         &self,
         version: Version,
         query_buf: &[u8],
@@ -156,7 +156,7 @@ impl Query {
 pub struct List {
     pub head: Query,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<Query>>,
+    pub(crate) tail: Option<NonNull<Query>>,
 
     // OR
     pub next: Option<Box<List>>,
@@ -241,14 +241,14 @@ impl<'a> fmt::Display for ListFormatter<'a> {
 }
 
 impl List {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
         ListFormatter {
             list: self,
             buffer: buf,
         }
     }
 
-    pub fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
         let mut node = self;
         loop {
             if node.head.satisfies(version, list_buf, version_buf) {
@@ -261,7 +261,12 @@ impl List {
         }
     }
 
-    pub fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies_pre(
+        &self,
+        version: Version,
+        list_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
         debug_assert!(version.tag.has_pre());
 
         // `version` has a prerelease tag:
@@ -286,7 +291,7 @@ impl List {
         }
     }
 
-    pub fn eql(&self, rhs: &List) -> bool {
+    pub(crate) fn eql(&self, rhs: &List) -> bool {
         let mut lhs = self;
         let mut rhs = rhs;
         loop {
@@ -308,7 +313,7 @@ impl List {
         }
     }
 
-    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if !self.head.range.has_left() && !self.head.range.has_right() {
             self.head.range = *range;
             return Ok(());
@@ -337,13 +342,14 @@ pub(crate) type FlagsBitSet = IntegerBitSet<3>;
 pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
-    pub const BUILD: usize = 0;
+    pub(crate) const BUILD: usize = 0;
+    pub(crate) const SKIPPED: usize = 2;
 }
 
 pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<List>>,
+    pub(crate) tail: Option<NonNull<List>>,
     /// Borrowed view into the caller's source buffer.
     /// Stored as a raw fat pointer
     /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
@@ -494,7 +500,7 @@ impl Group {
         self.head.head.range.left.version
     }
 
-    pub fn or_version(&mut self, version: Version) -> Result<(), AllocError> {
+    pub(crate) fn or_version(&mut self, version: Version) -> Result<(), AllocError> {
         if self.tail.is_none() && !self.head.head.range.has_left() {
             self.head.head.range.left.version = version;
             self.head.head.range.left.op = RangeOp::Eql;
@@ -517,7 +523,7 @@ impl Group {
         Ok(())
     }
 
-    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         let tail: &mut List = match self.tail {
             // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
@@ -555,12 +561,36 @@ impl Group {
             self.head.satisfies(version, group_buf, version_buf)
         }
     }
+
+    /// True when `parse` found no comparator at all (e.g. the input was only unrecognised words).
+    pub fn is_empty(&self) -> bool {
+        self.head.next.is_none()
+            && self.head.head.next.is_none()
+            && !self.head.head.range.has_left()
+    }
+
+    /// True when `parse` passed over a part of the input that is not a comparator (`>=1 && <2`, `1.2.3.4`, `latest`).
+    /// npm refuses such a range.
+    pub fn has_skipped(&self) -> bool {
+        self.flags.is_set(Flags::SKIPPED)
+    }
+
+    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators.
+    #[inline]
+    pub fn satisfies_including_prerelease(
+        &self,
+        version: Version,
+        group_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
+        self.head.satisfies(version, group_buf, version_buf)
+    }
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct Token {
-    pub tag: TokenTag,
-    pub wildcard: Wildcard,
+    pub(crate) tag: TokenTag,
+    pub(crate) wildcard: Wildcard,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -586,7 +616,7 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub fn to_range(self, version: &version::Partial<u64>) -> Range {
+    pub(crate) fn to_range(self, version: &version::Partial<u64>) -> Range {
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -804,6 +834,22 @@ impl Token {
     }
 }
 
+impl Range {
+    /// `^version`
+    pub fn caret(version: Version) -> Range {
+        Token {
+            tag: TokenTag::Caret,
+            wildcard: Wildcard::None,
+        }
+        .to_range(&version::Partial {
+            major: Some(version.major),
+            minor: Some(version.minor),
+            patch: Some(version.patch),
+            tag: version.tag,
+        })
+    }
+}
+
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
@@ -917,11 +963,15 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     i += 1;
                 }
                 skip_round = true;
+                list.flags.set(Flags::SKIPPED);
             }
         }
 
         if !skip_round {
             let parse_result = Version::parse(sliced.sub(&input[i..]));
+            if !parse_result.valid {
+                list.flags.set(Flags::SKIPPED);
+            }
             let version = parse_result.version.min();
             if version.tag.has_build() {
                 list.flags.set(Flags::BUILD);
@@ -974,6 +1024,9 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
             if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
+                if !second_parsed.valid {
+                    list.flags.set(Flags::SKIPPED);
+                }
                 let mut second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
                     list.flags.set(Flags::BUILD);
@@ -1067,6 +1120,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 // foo/bar@1.2.3@--canary.24) as well as a dangling "-" after a skipped
                 // tag, like "1 || - foo".
                 token.wildcard = Wildcard::None;
+                list.flags.set(Flags::SKIPPED);
                 continue;
             } else if count == 0 && token.tag == TokenTag::Version {
                 match parse_result.wildcard {
@@ -1092,4 +1146,48 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     }
 
     Ok(list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+    use crate::SlicedString;
+
+    #[test]
+    fn has_skipped() {
+        let cases = [
+            ("", false),
+            ("*", false),
+            (">=16", false),
+            (">= 16.x", false),
+            ("^18 || >=20", false),
+            ("16 - 18", false),
+            ("v16", false),
+            (">=v16.0.0", false),
+            ("~>16", false),
+            ("1.2.3-rc.1+build", false),
+            ("foo-bar", true),
+            ("latest", true),
+            ("lts/*", true),
+            (">=14 && <17", true),
+            (">=16, <18", true),
+            (">=16 npm", true),
+            ("16.0.0.0", true),
+            ("16-18", true),
+            (">=", true),
+            (">=1.2.3<2.0.0", true),
+            ("-18", true),
+            ("-x", true),
+            ("16 || -18", true),
+            ("16 || - 18.0.0", true),
+            ("01.2.3", false),    // npm refuses it
+            ("1.0.0rc1", false),  // npm refuses it
+            ("^16 | ^18", false), // npm refuses it
+        ];
+        for (text, expected) in cases {
+            let bytes = text.as_bytes();
+            let group = parse(bytes, SlicedString::init(bytes, bytes)).unwrap();
+            assert_eq!(group.has_skipped(), expected, "{text:?}");
+        }
+    }
 }

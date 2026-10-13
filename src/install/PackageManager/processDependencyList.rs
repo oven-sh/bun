@@ -27,13 +27,13 @@ use crate::{
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GitResolver<'a> {
-    pub resolved: &'a [u8],
-    pub resolution: &'a Resolution,
-    pub dep_id: DependencyID,
+    pub(crate) resolved: &'a [u8],
+    pub(crate) resolution: &'a Resolution,
+    pub(crate) dep_id: DependencyID,
     /// Owned scratch buffer that
     /// `Package::parse_with_json` may assign when the package.json `name`
     /// field is missing (see `ResolverContext::set_new_name`).
-    pub new_name: Vec<u8>,
+    pub(crate) new_name: Vec<u8>,
 }
 
 impl<'a> ResolverContext for GitResolver<'a> {
@@ -125,7 +125,7 @@ impl<'a> ResolverContext for TarballResolver<'a> {
 
 impl PackageManager {
     /// Returns true if we need to drain dependencies
-    pub fn process_extracted_tarball_package(
+    pub(crate) fn process_extracted_tarball_package(
         &mut self,
         package_id: &mut PackageID,
         dep_id: DependencyID,
@@ -346,7 +346,7 @@ impl PackageManager {
         }
     }
 
-    pub fn process_dependency_list_item(
+    pub(crate) fn process_dependency_list_item(
         &mut self,
         item: &TaskCallbackContext,
         any_root: Option<&Cell<bool>>,
@@ -400,7 +400,7 @@ impl PackageManager {
         Ok(())
     }
 
-    pub fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
+    pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
         while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
             // Clone the dependency row out of the buffer before re-borrowing
             // `self` for enqueue.
@@ -421,7 +421,7 @@ impl PackageManager {
         Ok(())
     }
 
-    pub fn process_dependency_list<C>(
+    pub(crate) fn process_dependency_list<C>(
         &mut self,
         dep_list: TaskCallbackList,
         ctx: C,

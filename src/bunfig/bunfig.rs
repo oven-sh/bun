@@ -6,7 +6,7 @@
 //! (`api::TransformOptions`), `ctx.install` (`api::BunInstall`), and the rest
 //! of `ContextData`.
 
-#![allow(clippy::collapsible_if, clippy::needless_return)]
+#![allow(clippy::collapsible_if)]
 
 use bun_collections::VecExt;
 use core::sync::atomic::Ordering;
@@ -27,10 +27,8 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-pub use bun_options_types::offline_mode::OfflineMode;
-
 // TODO: replace api.TransformOptions with Bunfig
-pub struct Bunfig;
+pub(crate) struct Bunfig;
 
 /// Owned clone of an `EString` payload (transcoding UTF-16 → UTF-8 if needed).
 #[inline]
@@ -141,7 +139,7 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Parser<'a> {
+struct Parser<'a, 'tool> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -152,9 +150,11 @@ pub(crate) struct Parser<'a> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
+    /// Reads `[lint]` and `[fmt]`.
+    tool: Option<&'a mut crate::ToolReader<'tool>>,
 }
 
-impl<'a> Parser<'a> {
+impl<'a> Parser<'a, '_> {
     fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
@@ -185,7 +185,7 @@ impl<'a> Parser<'a> {
         Err(crate::Error::InvalidBunfig)
     }
 
-    pub(crate) fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
+    fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
             _ => self.add_error_format(
@@ -213,7 +213,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub(crate) fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
+    fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
         if expr.data.tag() != token {
             return self.add_error_format(
                 expr.loc,
@@ -348,7 +348,7 @@ impl<'a> Parser<'a> {
     // already derives `enum_map::Enum`, which conflicts). Monomorphising over
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
-    pub(crate) fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
+    fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
         bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
         let json = self.json;
@@ -407,6 +407,12 @@ impl<'a> Parser<'a> {
             if let Some(expr) = json.get(b"smol") {
                 self.expect(&expr, ExprTag::EBoolean)?;
                 self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
+            }
+        }
+
+        if let Some(read) = self.tool.as_deref_mut() {
+            if let Err((loc, message)) = read(&json) {
+                self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
             }
         }
 
@@ -956,8 +962,6 @@ impl<'a> Parser<'a> {
             if let Some(value) = expr.as_string(self.bump) {
                 if value == b"react" {
                     jsx_runtime = api::JsxRuntime::Classic;
-                } else if value == b"solid" {
-                    jsx_runtime = api::JsxRuntime::Solid;
                 } else if value == b"react-jsx" {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = false;
@@ -967,7 +971,7 @@ impl<'a> Parser<'a> {
                 } else {
                     self.add_error(
                         expr.loc,
-                        b"Invalid jsx runtime, only 'react', 'solid', 'react-jsx', and 'react-jsxDEV' are supported",
+                        b"Invalid jsx runtime, only 'react', 'react-jsx', and 'react-jsxDEV' are supported",
                     )?;
                 }
             }
@@ -1097,10 +1101,11 @@ impl<'a> Parser<'a> {
 }
 
 impl Bunfig {
-    pub fn parse(
+    pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
         ctx: &mut ContextData,
+        tool: Option<&mut crate::ToolReader<'_>>,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
@@ -1172,6 +1177,7 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
+            tool,
         };
         parser.parse(cmd)
     }
@@ -1182,44 +1188,56 @@ impl Bunfig {
 // Split into a second `impl` block purely to keep `parse(cmd)` readable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-impl<'a> Parser<'a> {
-    fn parse_registry_url_string(&mut self, str: &E::EString) -> crate::Result<api::NpmRegistry> {
+impl<'a> Parser<'a, '_> {
+    fn parse_registry_url(&mut self, url: &[u8]) -> crate::Result<api::NpmRegistry> {
         // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
         // The api `Parser` is generic over log/source and never reads them for
         // this path, so we just hand it our reborrowed handles.
-        let bytes = str.string(self.bump)?;
         Ok(bun_api::npm_registry::Parser {
             log: &mut *self.log,
             source: self.source,
         }
-        .parse_registry_url_string_impl(bytes)?)
+        .parse_registry_url_string_impl(url)?)
     }
 
     fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
-        let mut registry = api::NpmRegistry::default();
+        // `user:pass@` / `:token@` in the URL are credentials, as in the string form.
+        let mut registry = match obj.get(b"url") {
+            Some(url) => {
+                self.expect_string(&url)?;
+                let url = url.as_string(self.bump).expect("infallible: type checked");
+                self.parse_registry_url(url)?
+            }
+            None => api::NpmRegistry::default(),
+        };
 
-        if let Some(url) = obj.get(b"url") {
-            self.expect_string(&url)?;
-            registry.url = url
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
+        let username = obj.get(b"username");
+        let password = obj.get(b"password");
+        let token = obj.get(b"token");
+
+        // Keys replace the URL's credentials as a set: from_api would favor a URL token over keys.
+        if username.is_some() || password.is_some() || token.is_some() {
+            registry = api::NpmRegistry {
+                url: registry.url,
+                ..Default::default()
+            };
         }
-        if let Some(username) = obj.get(b"username") {
+
+        if let Some(username) = username {
             self.expect_string(&username)?;
             registry.username = username
                 .as_string(self.bump)
                 .expect("infallible: type checked")
                 .into();
         }
-        if let Some(password) = obj.get(b"password") {
+        if let Some(password) = password {
             self.expect_string(&password)?;
             registry.password = password
                 .as_string(self.bump)
                 .expect("infallible: type checked")
                 .into();
         }
-        if let Some(token) = obj.get(b"token") {
+        if let Some(token) = token {
             self.expect_string(&token)?;
             registry.token = token
                 .as_string(self.bump)
@@ -1232,7 +1250,10 @@ impl<'a> Parser<'a> {
 
     fn parse_registry(&mut self, expr: &Expr) -> crate::Result<api::NpmRegistry> {
         match &expr.data {
-            ExprData::EString(s) => self.parse_registry_url_string(s),
+            ExprData::EString(s) => {
+                let url = s.string(self.bump)?;
+                self.parse_registry_url(url)
+            }
             ExprData::EObject(o) => self.parse_registry_object(o),
             _ => {
                 self.add_error(
@@ -1531,9 +1552,7 @@ impl<'a> Parser<'a> {
         let remap = |e: FromExprError| -> crate::Error {
             match e {
                 FromExprError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-                FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
-                    crate::Error::InvalidBunfig
-                }
+                FromExprError::UnexpectedExpr => crate::Error::InvalidBunfig,
             }
         };
         if let Some(public_hoist_pattern_expr) = install_obj.get(b"publicHoistPattern") {
@@ -1547,6 +1566,13 @@ impl<'a> Parser<'a> {
                 api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
                     .map_err(remap)?,
             );
+        }
+        if let Some(v) = install_obj.get(b"hoist").and_then(|e| e.as_bool()) {
+            install.hoist = Some(v);
+        }
+
+        if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
+            install.offline = Some(v);
         }
 
         Ok(())
@@ -1610,6 +1636,33 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 self.add_error(minify.loc, b"Expected minify to be boolean or object")?;
+            }
+        }
+
+        if let Some(sourcemap) = serve_obj.get(b"sourcemap") {
+            if let Some(v) = sourcemap.as_bool() {
+                self.ctx.args.serve_sourcemap = Some(if v {
+                    api::SourceMapMode::Linked
+                } else {
+                    api::SourceMapMode::None
+                });
+            } else if let Some(s) = sourcemap.as_string(self.bump) {
+                match s {
+                    b"none" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::None),
+                    b"linked" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Linked),
+                    b"inline" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Inline),
+                    b"external" => {
+                        self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::External)
+                    }
+                    _ => {
+                        self.add_error(
+                            sourcemap.loc,
+                            b"Expected sourcemap to be one of 'none', 'linked', 'inline', or 'external'",
+                        )?;
+                    }
+                }
+            } else {
+                self.add_error(sourcemap.loc, b"Expected sourcemap to be boolean or string")?;
             }
         }
 

@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -76,7 +76,7 @@ export default [
     sharedThis: true,
     construct: true,
     constructNeedsThis: true,
-    finalize: true,
+    refCounted: true,
     final: false,
     JSType: "0b11101110",
     configurable: false,
@@ -93,7 +93,7 @@ export default [
         fn: "constructError",
       },
     },
-    values: ["stream"],
+    values: ["stream", "transform"],
     proto: {
       url: {
         getter: "getURL",

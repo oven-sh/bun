@@ -5,10 +5,6 @@
 //! watcher thread reaches — they forward to the inherent
 //! `DevServer::{on_file_update, on_watch_error}` bodies in `../DevServer.rs`.
 
-// `feature = "bake_debugging_features"` is not yet a declared cargo feature; the
-// struct field gate must mirror `mod.rs` so the initializer below stays in sync.
-#![allow(unexpected_cfgs)]
-
 use super::{DevServer, HotReloadEvent, WatcherAtomics};
 
 // ──────────────────────────────────────────────────────────────────────────

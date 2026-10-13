@@ -167,7 +167,7 @@ impl WebsocketHeader {
         }
     }
 
-    pub const fn frame_size(byte_length: usize) -> usize {
+    pub(crate) const fn frame_size(byte_length: usize) -> usize {
         Self::HEADER_LENGTH + byte_length + Self::length_byte_count(byte_length)
     }
 

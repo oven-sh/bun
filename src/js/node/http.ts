@@ -9,9 +9,7 @@ const { Server, ServerResponse } = require("node:_http_server");
 
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
-// Like Node.js's lib/_http_client.js creating its debuglog('http'): emits the
-// sensitive-data process warning when NODE_DEBUG enables the http section.
-require("node:util").debuglog("http");
+if (process.env.NODE_DEBUG) require("node:util").debuglog("http");
 
 const { WebSocket, CloseEvent, MessageEvent } = globalThis;
 
@@ -91,7 +89,7 @@ function noopRestore() {}
 // (The fetch() global dispatcher half is not applicable here.)
 function setGlobalProxyFromEnv(env = process.env) {
   validateObject(env, "proxyEnv");
-  const { parseProxyUrl } = require("internal/http");
+  const { parseProxyUrl, redactInvalidProxyUrl } = require("internal/http");
   const httpProxy = parseProxyUrl(env, "http:");
   const httpsProxy = parseProxyUrl(env, "https:");
 
@@ -100,10 +98,10 @@ function setGlobalProxyFromEnv(env = process.env) {
   }
 
   if (httpProxy !== null && URL.canParse(httpProxy) === false) {
-    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${httpProxy}`);
+    throw $ERR_PROXY_INVALID_CONFIG(redactInvalidProxyUrl(httpProxy));
   }
   if (httpsProxy !== null && URL.canParse(httpsProxy) === false) {
-    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${httpsProxy}`);
+    throw $ERR_PROXY_INVALID_CONFIG(redactInvalidProxyUrl(httpsProxy));
   }
 
   let originalHttpsAgent, originalHttpAgent;

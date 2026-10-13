@@ -1,5 +1,8 @@
 name: Auto Assign Types Issues
 
+permissions:
+  contents: read
+
 on:
   issues:
     types: [labeled]
@@ -15,5 +18,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
         run: |
-          gh issue edit ${{ github.event.issue.number }} --add-assignee alii
+          gh issue edit "$ISSUE" --add-assignee alii

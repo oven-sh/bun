@@ -47,7 +47,7 @@ impl Angle {
         }
 
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
                 let value = dim.num.value;
@@ -170,16 +170,12 @@ impl Angle {
         self.add(other)
     }
 
-    pub(crate) fn add(self, rhs: Angle) -> Angle {
+    fn add(self, rhs: Angle) -> Angle {
         Angle::op(self, rhs, (), |_: (), a: f32, b: f32| a + b)
     }
 
     pub(crate) fn try_add(self, rhs: Angle) -> Option<Angle> {
         Some(Angle::Deg(self.to_degrees() + rhs.to_degrees()))
-    }
-
-    pub(crate) fn eql(self, rhs: Angle) -> bool {
-        self.to_degrees() == rhs.to_degrees()
     }
 
     pub(crate) fn mul_f32(self, other: f32) -> Angle {
@@ -196,7 +192,7 @@ impl Angle {
         crate::generic::partial_cmp_f32(self.to_degrees(), other.to_degrees())
     }
 
-    pub(crate) fn op<C>(self, other: Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Angle {
+    fn op<C>(self, other: Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Angle {
         // PERF: not sure if this is faster
         match (self, other) {
             (Angle::Deg(a), Angle::Deg(b)) => Angle::Deg(op_fn(ctx, a, b)),

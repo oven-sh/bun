@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <wtf/Expected.h>
+#include <expected>
 
 namespace WebCore {
 
@@ -44,7 +44,7 @@ public:
     ReturnType&& releaseReturnValue();
 
 private:
-    Expected<ReturnType, CallbackResultType> m_value;
+    std::expected<ReturnType, CallbackResultType> m_value;
 };
 
 template<> class CallbackResult<void> {

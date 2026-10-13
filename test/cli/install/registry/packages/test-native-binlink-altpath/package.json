@@ -2,26 +2,70 @@
   "_id": "test-native-binlink-altpath",
   "name": "test-native-binlink-altpath",
   "dist-tags": {
-    "latest": "1.0.0"
+    "latest": "3.0.0"
   },
   "versions": {
     "1.0.0": {
       "name": "test-native-binlink-altpath",
       "version": "1.0.0",
-      "_id": "test-native-binlink-altpath@1.0.0",
       "bin": {
         "altpath-cmd": "bin/altpath-cmd.exe"
-      },
-      "optionalDependencies": {
-        "test-native-binlink-altpath-target": "1.0.0"
       },
       "scripts": {
         "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
       },
+      "optionalDependencies": {
+        "test-native-binlink-altpath-target": "1.0.0"
+      },
+      "_id": "test-native-binlink-altpath@1.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
       "dist": {
-        "integrity": "sha512-hnh5o7AF7OIk+0CDgxqj9dyDEbCA3iMYDFU061+WcR6RpPW5lhis6okUJ9LO4HStQ2yjAsgZHzW0SDOpv0JKlQ==",
-        "shasum": "69359d5eba1439c9a383e8bb16819f86eb958747",
+        "integrity": "sha512-hoQk8jPTiIXAsEF5mFu/eWDaC2Ukfmr3wgp+iZCwwUYVKO71mZo5f8tTsxGHuTeum4OJNI3kquGuyD5S/hsp5g==",
+        "shasum": "0cdd82118edc6b3b78f71fca56e87f56f705411a",
         "tarball": "http://localhost:4873/test-native-binlink-altpath/-/test-native-binlink-altpath-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "test-native-binlink-altpath",
+      "version": "2.0.0",
+      "bin": {
+        "altpath-cmd": "bin/launcher.exe"
+      },
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "optionalDependencies": {
+        "test-native-binlink-altpath-target": "2.0.0"
+      },
+      "_id": "test-native-binlink-altpath@2.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-Hob6RQGgiiUiHFOhf2fEcNMKTtAajqGKFezF9QO4FyQiDPoKMnsez+bq1OFRd14cljKRpzkGQLc8ThrS9NDWPA==",
+        "shasum": "96413d257a744148d4e7f9c6b842951f1e2deafa",
+        "tarball": "http://localhost:4873/test-native-binlink-altpath/-/test-native-binlink-altpath-2.0.0.tgz"
+      }
+    },
+    "3.0.0": {
+      "name": "test-native-binlink-altpath",
+      "version": "3.0.0",
+      "bin": {
+        "altpath-cmd": "bin/altpath-cmd"
+      },
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "optionalDependencies": {
+        "test-native-binlink-altpath-target": "3.0.0"
+      },
+      "_id": "test-native-binlink-altpath@3.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-bnb+im55UONXVPIeHxltNdFANN4xWDkobPTm1aPMj66cHj0CKQzDL5EPwJBlAQm9HFnCb5EaNPqk87JYQBDysA==",
+        "shasum": "a7754b7851528cc3f175c180619bfc66a235a413",
+        "tarball": "http://localhost:4873/test-native-binlink-altpath/-/test-native-binlink-altpath-3.0.0.tgz"
       }
     }
   }

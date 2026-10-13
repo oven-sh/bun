@@ -18,10 +18,10 @@ use bun_sys::Fd;
 #[derive(Clone, Copy)]
 pub struct CompileTarget {
     pub os: OperatingSystem,
-    pub arch: Architecture,
-    pub baseline: bool,
-    pub version: Version,
-    pub libc: Libc,
+    pub(crate) arch: Architecture,
+    pub(crate) baseline: bool,
+    pub(crate) version: Version,
+    pub(crate) libc: Libc,
 }
 
 impl Default for CompileTarget {
@@ -62,7 +62,7 @@ pub enum Libc {
 
 impl Libc {
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub(crate) const fn npm_name(self) -> &'static str {
+    const fn npm_name(self) -> &'static str {
         match self {
             Libc::Default => "",
             Libc::Musl => "-musl",
@@ -99,7 +99,7 @@ pub enum ParseError {
 }
 
 impl CompileTarget {
-    pub fn eql(&self, other: &CompileTarget) -> bool {
+    pub(crate) fn eql(&self, other: &CompileTarget) -> bool {
         self.os == other.os
             && self.arch == other.arch
             && self.baseline == other.baseline
@@ -109,6 +109,12 @@ impl CompileTarget {
 
     pub fn is_default(&self) -> bool {
         self.eql(&CompileTarget::default())
+    }
+
+    /// Same os, arch and libc as this bun (a different bun version for this platform still counts).
+    pub fn is_host_platform(&self) -> bool {
+        let host = CompileTarget::default();
+        self.os == host.os && self.arch == host.arch && self.libc == host.libc
     }
 
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
@@ -123,7 +129,7 @@ impl CompileTarget {
         self.to_npm_registry_url_with_url(buf, b"https://registry.npmjs.org")
     }
 
-    pub fn to_npm_registry_url_with_url<'a>(
+    pub(crate) fn to_npm_registry_url_with_url<'a>(
         &self,
         buf: &'a mut [u8],
         registry_url: &[u8],

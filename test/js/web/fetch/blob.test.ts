@@ -4,7 +4,7 @@ import { mkfifo } from "mkfifo";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import fs from "node:fs";
-import { devNull } from "node:os";
+import { devNull, totalmem } from "node:os";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -1170,7 +1170,7 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     exitCode: 0,
   };
 
-  test("a pipe part throws instead of blocking", async () => {
+  test.concurrent("a pipe part throws instead of blocking", async () => {
     expect(await constructInChild("Bun.stdin")).toEqual(refused);
   });
 
@@ -1191,7 +1191,7 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     }
   });
 
-  test.skipIf(isWindows)("only the null device is an empty part", async () => {
+  test.concurrent.skipIf(isWindows)("only the null device is an empty part", async () => {
     using dir = tempDir("blob-null-device-link", { "f.bin": "ABC" });
     const link = path.join(String(dir), "null");
     fs.symlinkSync("/dev/null", link);
@@ -1200,7 +1200,7 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     expect(await constructInChild("Bun.file('/dev/zero')")).toEqual(refused);
   });
 
-  test.skipIf(isWindows)("a FIFO part throws and leaves its writer waiting", async () => {
+  test.concurrent.skipIf(isWindows)("a FIFO part throws and leaves its writer waiting", async () => {
     using dir = tempDir("blob-fifo-part", {});
     const fifo = path.join(String(dir), "fifo");
     mkfifo(fifo);
@@ -1224,7 +1224,7 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
   });
 
   // procfs gives a stat size of 0 for a file that has bytes, so the read must go on to the end of the file.
-  test.skipIf(!isLinux)("reads a file whose stat size is 0 to its end", async () => {
+  test.concurrent.skipIf(!isLinux)("reads a file whose stat size is 0 to its end", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1253,12 +1253,12 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     });
   });
 
-  // The rule of fs.readFile: on Linux a read as large as the RAM fails at once, before the OOM killer acts.
-  // The sparse file has 4 TiB, which is more than the RAM of a machine.
-  test.skipIf(!isLinux)("a part as large as the RAM throws ENOMEM and reads nothing", async () => {
+  // The join holds a part twice: in the buffer of the read and in the joined buffer.
+  // The sparse file is 3/4 of the RAM, so one copy fits and two copies do not.
+  test.concurrent.skipIf(!isLinux)("a part too large for the RAM throws ENOMEM and reads nothing", async () => {
     using dir = tempDir("blob-file-part-huge", { "sparse.bin": "x" });
     const sparse = path.join(String(dir), "sparse.bin");
-    fs.truncateSync(sparse, 2 ** 42);
+    fs.truncateSync(sparse, Math.floor(totalmem() * 0.75));
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

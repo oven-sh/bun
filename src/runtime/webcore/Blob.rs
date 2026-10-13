@@ -3580,11 +3580,8 @@ fn push_file_part(
     if cap == 0 {
         return Ok(());
     }
-    // The rule of `fs.readFile`: on Linux, a read as large as the RAM fails before the OOM killer acts.
-    if cfg!(any(target_os = "linux", target_os = "android"))
-        && file_len > 0
-        && cap >= bun_core::get_total_memory_size()
-    {
+    // The join holds a part twice (this buffer, then the joined one), so half the RAM is the most that fits.
+    if file_len > 0 && cap >= bun_core::get_total_memory_size() / 2 {
         return Err(throw(bun_sys::Error::oom()));
     }
     let initial = if file_len > 0 { cap } else { 8192.min(cap) }.min(8 << 30);

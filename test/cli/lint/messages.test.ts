@@ -144,7 +144,7 @@ describe.concurrent("bun fmt", () => {
     expect(two.stderr).toEndWith(
       `error: sortTailwindcss, experimentalTailwindcss are not supported yet and have no effect${hint}`,
     );
-    expect(allowed.stderr).toEndWith("[warn] sortTailwindcss is not supported yet and has no effect");
+    expect(allowed.stderr).toEndWith("warn: sortTailwindcss is not supported yet and has no effect");
     expect([one.exitCode, two.exitCode, allowed.exitCode]).toEqual([2, 2, 0]);
   });
 

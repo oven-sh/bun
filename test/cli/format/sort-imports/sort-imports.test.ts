@@ -92,9 +92,9 @@ describe.concurrent("when imports are sorted", () => {
     const result = await format({ ".prettierrc.json": config, "a.ts": unsorted, "b.ts": unsorted }, ["a.ts", "b.ts"]);
     expect(result.files).toEqual([unsorted, unsorted]);
     expect(result.stderr).toBe(
-      `[warn] Ignored unknown option { importOrder: ["^[./]"] }.\n` +
-        `[warn] Ignored unknown option { importOrderSeparation: true }.\n` +
-        `[warn] Ignored unknown option { organizeImportsTypeOrder: "last" }.\n`,
+      `warn: Ignored unknown option { importOrder: ["^[./]"] }.\n` +
+        `warn: Ignored unknown option { importOrderSeparation: true }.\n` +
+        `warn: Ignored unknown option { organizeImportsTypeOrder: "last" }.\n`,
     );
     expect(result.exitCode).toBe(0);
   });

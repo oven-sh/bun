@@ -256,7 +256,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     const inMany = await format({ ".oxfmtrc.json": files[".oxfmtrc.json"], ...many }, []);
     expect(inMany.stderr).toMatch(/was not found from \S*[\\/]b\n/);
     const allowed = await format(files, ["a.jsx", "b.js"], ["--allow-unsupported"]);
-    expect(allowed.stderr).toContain("[warn] sortTailwindcss: the tailwindcss package was not found from ");
+    expect(allowed.stderr).toContain("warn: sortTailwindcss: the tailwindcss package was not found from ");
     expect(allowed.files).toEqual([`${input}a;\n`, "b;\n"]);
     expect(allowed.exitCode).toBe(0);
   });
@@ -372,7 +372,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(refused.stderr).toContain("error: sortTailwindcss: the tailwindcss package was not found from ");
     expect(refused).toMatchObject({ stdout: "", exitCode: 2 });
     const allowed = await formatIn(String(dir), [], ["--allow-unsupported", ...from], `${input}a  ;\n`);
-    expect(allowed.stderr).toContain("[warn] sortTailwindcss: the tailwindcss package was not found from ");
+    expect(allowed.stderr).toContain("warn: sortTailwindcss: the tailwindcss package was not found from ");
     expect(allowed).toMatchObject({ stdout: `${input}a;\n`, exitCode: 0 });
   });
 
@@ -446,8 +446,10 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
         lists.push({ files: stdout.split("\n").filter(it => it.endsWith(".jsx")), stdout, stderr, exitCode });
       }
       expect(lists[0].files).toEqual(allows ? names.toSorted() : ["four/a.jsx", "one/a.jsx", "two/a.jsx"]);
+      // One error, or one warning, for all of them.
+      expect(lists[0].stderr).toContain(`${allows ? "warn:" : "error:"} sortTailwindcss: `);
       expect(lists[0].stderr).toContain(
-        `${allows ? "[warn]" : "error:"} sortTailwindcss: ${join(String(dir), "three/tailwind.config.js").replaceAll("\\", "/")}: It has no such plugin.`,
+        `\nsortTailwindcss: ${join(String(dir), "three/tailwind.config.js").replaceAll("\\", "/")}: It has no such plugin.\n`,
       );
       expect(lists[0].stderr).toContain(
         allows ? "Classes were not sorted in 7 files." : "7 files with classes were not formatted.",
@@ -572,11 +574,11 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(result).toMatchObject({ stderr: "", files: [after || before], exitCode: 0 });
     });
 
-    // The plugin says the same, behind the directory of the config and without the `[warn]`.
+    // The plugin says the same, behind the directory of the config and without the `warn:`.
     const deprecated = (name: string) =>
-      `[warn] Deprecated: Use the \`tailwindStylesheet\` option for v4 projects instead of \`${name}\`.\n`;
+      `warn: Deprecated: Use the \`tailwindStylesheet\` option for v4 projects instead of \`${name}\`.\n`;
     const both =
-      "[warn] You have specified a Tailwind CSS stylesheet and a Tailwind CSS config at the same time. Use stylesheetPath unless you are using v3. Preferring the stylesheet.\n";
+      "warn: You have specified a Tailwind CSS stylesheet and a Tailwind CSS config at the same time. Use stylesheetPath unless you are using v3. Preferring the stylesheet.\n";
     test.each<[object, string]>([
       [{ tailwindStylesheet: "./css/app.css" }, ""],
       [{ tailwindStylesheet: "css/app.css" }, ""],
@@ -669,15 +671,15 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       const without = await format({ ...project, ".prettierrc": JSON.stringify(options), "a.jsx": input }, ["a.jsx"]);
       expect(without).toMatchObject({
         stderr:
-          '[warn] Ignored unknown option { tailwindFunctions: ["cn"] }.\n' +
-          '[warn] Ignored unknown option { tailwindConfig: "./x.js" }.\n' +
-          "[warn] Ignored unknown option { tailwindPreserveWhitespace: true }.\n",
+          'warn: Ignored unknown option { tailwindFunctions: ["cn"] }.\n' +
+          'warn: Ignored unknown option { tailwindConfig: "./x.js" }.\n' +
+          "warn: Ignored unknown option { tailwindPreserveWhitespace: true }.\n",
         files: [input],
         exitCode: 0,
       });
       const unknown = await format({ ...project, ...config({ tailwindOther: 1 }), "a.jsx": input }, ["a.jsx"]);
       expect(unknown).toMatchObject({
-        stderr: "[warn] Ignored unknown option { tailwindOther: 1 }.\n",
+        stderr: "warn: Ignored unknown option { tailwindOther: 1 }.\n",
         files: [sorted],
         exitCode: 0,
       });
@@ -919,7 +921,7 @@ export async function createSorter({ configPath, stylesheetPath }) {
       ])("has to be installed for that: %#", async (files, said) => {
         const result = await format({ ...files, "a.jsx": input }, ["a.jsx"]);
         for (const line of said)
-          expect(result.stderr).toContain(line.startsWith(" ") ? `\n${line}\n` : `error: sortTailwindcss: ${line}\n`);
+          expect(result.stderr).toContain(line.startsWith(" ") ? `\n${line}\n` : `error: sortTailwindcss: ${line}`);
         expect(result.files).toEqual([input]);
         expect(result.exitCode).toBe(2);
       });

@@ -1575,7 +1575,7 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads });
     expect(allowed.files).toEqual({ ...left, "c.js": formatted });
-    expect(allowed.stderr.split("\n")).toContain(`[warn] ${text}`);
+    expect(allowed.stderr.split("\n")).toContain(`warn: ${text}`);
     expect(allowed.exitCode).toBe(0);
   });
 
@@ -1650,7 +1650,7 @@ exports.format = async (text, options) => {
           "d.js": "d;\n",
         });
         expect(result.stderr).toContain("Used your installed Prettier for 2 files");
-        expect(result.stderr).not.toContain("[warn]");
+        expect(result.stderr).not.toContain("warn:");
         expect(result.exitCode).toBe(0);
         // The flag is for what cannot be done, and this can.
         const withFlag = await format(project, ["--allow-unsupported"], { reads: names });
@@ -1670,7 +1670,7 @@ exports.format = async (text, options) => {
         expect(left.exitCode).toBe(2);
         const allowed = await format(alone, ["--allow-unsupported"], { reads: ["package.json"] });
         expect(allowed.files).toEqual({ "package.json": '{\n  "a": 1\n}\n' });
-        expect(allowed.stderr).toContain(`[warn] Not installed: prettier, ${plugin}`);
+        expect(allowed.stderr).toContain(`warn: Not installed: prettier, ${plugin}`);
         expect(allowed.exitCode).toBe(0);
       },
       timeout,
@@ -1795,8 +1795,8 @@ exports.format = async (text, { parser }) => {
       });
       expect(result.raw).toBe("");
       expect(result.stderr.split("\n")).toEqual([
-        "[warn] Not installed: prettier, prettier-plugin-svelte",
-        "[warn]   Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+        "warn: Not installed: prettier, prettier-plugin-svelte",
+        "  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
         "error: 1 file was not formatted because bun fmt does not support its language yet: 1 svelte",
         "  Use --allow-unsupported to make this a warning.",
       ]);
@@ -1834,8 +1834,8 @@ exports.format = async (text, { parser }) => {
         const result = await format(project, [...flags, "--stdin-filepath", "c.svelte"], { stdin });
         expect(result.raw).toBe("");
         expect(result.stderr.split("\n")).toEqual([
-          `[warn] Not installed: ${missing}`,
-          "[warn]   Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+          `warn: Not installed: ${missing}`,
+          "  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
           `error: ${unsupported}`,
           "  Use --allow-unsupported to make this a warning.",
         ]);
@@ -1849,7 +1849,7 @@ exports.format = async (text, { parser }) => {
         const args = ["--allow-unsupported", ...flags, "--stdin-filepath", "c.svelte"];
         const result = await format(project, args, { stdin });
         expect(result.raw).toBe(raw);
-        expect(result.stderr.split("\n").at(-1)).toBe(`[warn] ${unsupported}`);
+        expect(result.stderr.split("\n").at(-1)).toBe(`warn: ${unsupported}`);
         expect(result.exitCode).toBe(0);
       });
     });
@@ -1980,7 +1980,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         const result = await format(others, [], { reads: ["a.svelte"] });
         expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
         expect(result.stderr).toContain(
-          "[warn] Not installed: prettier-plugin-svelte\n[warn]   Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+          "warn: Not installed: prettier-plugin-svelte\n  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
         );
         expect(result.stderr).toContain("does not support its language yet: 1 .svelte\n");
         expect(result.exitCode).toBe(2);
@@ -2161,9 +2161,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const unknown = '"nonsense": 1, "other": [1, "a"], "tailwindConfig": "x", "$schema": "y"';
     const result = await format({ ".prettierrc": `{ ${unknown} }`, "a.js": ugly }, ["a.js"], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe(formatted);
-    expect(result.stderr).toContain("[warn] Ignored unknown option { nonsense: 1 }.");
-    expect(result.stderr).toContain('[warn] Ignored unknown option { other: [1, "a"] }.');
-    expect(result.stderr).toContain('[warn] Ignored unknown option { tailwindConfig: "x" }.');
+    expect(result.stderr).toContain("warn: Ignored unknown option { nonsense: 1 }.");
+    expect(result.stderr).toContain('warn: Ignored unknown option { other: [1, "a"] }.');
+    expect(result.stderr).toContain('warn: Ignored unknown option { tailwindConfig: "x" }.');
     expect(result.stderr).not.toContain("$schema");
     expect(result.exitCode).toBe(0);
     const withPlugin = await format(
@@ -2204,7 +2204,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const allowed = await format(files, ["--allow-unsupported"], { reads });
     expect(allowed.files).toEqual({ "a.js": formatted, "b.astro": files["b.astro"], "other/c.js": formatted });
     expect(allowed.stderr).toMatch(
-      /\[warn\] prettier-plugin-brace-style, \.\/own\.js in \S+\.prettierrc have no effect because bun fmt does not include those plugins\n/,
+      /warn: prettier-plugin-brace-style, \.\/own\.js in \S+\.prettierrc have no effect because bun fmt does not include those plugins\n/,
     );
     expect(allowed.exitCode).toBe(0);
     const flag = await format({ "a.js": ugly }, ["--plugin", "prettier-plugin-brace-style"], { reads: ["a.js"] });
@@ -4881,7 +4881,7 @@ try {
         const result = await format({ ".prettierrc": `{ "nope": 1 }` }, args, { stdin: js });
         expect(result).toMatchObject({
           raw: printed,
-          stderr: "[warn] Ignored unknown option { nope: 1 }.",
+          stderr: "warn: Ignored unknown option { nope: 1 }.",
           exitCode: 0,
         });
       },

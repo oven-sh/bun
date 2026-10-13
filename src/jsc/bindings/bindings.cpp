@@ -2486,13 +2486,15 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
 }
 void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
-    auto iter = headers->createIterator();
+    // copyTo isomorphic-encodes: one byte per code unit.
+    auto& map = headers->internalHeaders();
     size_t i = 0;
-    while (auto* entry = iter.nextEntry()) {
-        // copyTo isomorphic-encodes: one byte per code unit.
-        i += entry->key->length();
-        i += entry->value->length();
-    }
+    for (auto& header : map.commonHeaders())
+        i += WTF::httpHeaderNameStringImpl(header.key).length() + header.value.length();
+    for (auto& header : map.uncommonHeaders())
+        i += header.key.length() + header.value.length();
+    for (auto& cookie : map.getSetCookieHeaders())
+        i += WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie).length() + cookie.length();
 
     *count = headers->size();
     *buf_len = i;

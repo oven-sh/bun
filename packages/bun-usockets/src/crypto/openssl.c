@@ -2673,8 +2673,6 @@ restart:
             if (!s || ssl_gone(s)) return NULL;
             if (s->flags.allow_half_open &&
                 !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN)) {
-              /* Our side is over as well, and what it lost is an error: the one that the peer's FIN would close with, if it comes. */
-              if (s->ssl_send_rejected) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
               /* close_notify only ended the peer's write side; ours may
                * still flush queued bytes, and the app's own end() completes
                * the shutdown (ssl_handle_shutdown sees RECEIVED_SHUTDOWN and
@@ -2782,13 +2780,6 @@ restart:
    * close the socket. */
   ssl_flush_pending_events(s);
   if (ssl_gone(s)) return NULL;
-
-  /* The kernel named a dead peer, and need not report an end behind what that peer sent: the writable event looks again,
-   * once the owner has had this read. The peer can still be sending after the errno that the retries gave up on, and
-   * on a unix socket, where its shutdown(SHUT_RD) is our EPIPE. */
-  if (s->ssl_send_rejected && !s->unclassified_send_failures && !bsd_socket_is_unix(us_poll_fd(&s->p))) {
-    us_internal_rearm_writable(s);
-  }
 
   return s;
 }

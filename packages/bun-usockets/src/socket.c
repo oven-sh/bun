@@ -549,12 +549,8 @@ static int us_internal_classify_failed_send(struct us_socket_t *s) {
      * connection (buffered bytes never drain and no error ever
      * surfaces). After the limit, report the errno like the peer-gone
      * class so the caller can fail the write. */
-    if (us_internal_send_errno_is_peer_gone(errno)) {
-        /* Not the errno that the retries were for. */
-        s->unclassified_send_failures = 0;
-        return errno;
-    }
-    if (s->unclassified_send_failures < US_UNCLASSIFIED_SEND_RETRY_LIMIT) {
+    if (!us_internal_send_errno_is_peer_gone(errno) &&
+        s->unclassified_send_failures < US_UNCLASSIFIED_SEND_RETRY_LIMIT) {
         s->unclassified_send_failures++;
         return 0;
     }

@@ -1141,6 +1141,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: PropFlags::empty(),
                         source: PropSource::Symbol(member),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     };
                     let source = Self::copy_of(TypeId::ANY, &[&declared], true, self.arena);
                     (PropFlags::empty(), source)
@@ -1152,6 +1153,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags,
                 source,
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             };
             if let Some(&earlier) = index_of_name.get(&value) {
                 shape.props[earlier] = literal_prop;
@@ -1633,14 +1635,9 @@ impl<'p, 's> Checker<'p, 's> {
         // FOR SPEED: few object types have signatures, and `signatures` stores a list for every
         // type it is asked for.
         if self.is_object_type(source)
-            && self.members(source).is_some_and(|members| {
-                let shape = members.shape();
-                if construct {
-                    shape.construct.is_empty()
-                } else {
-                    shape.call.is_empty()
-                }
-            })
+            && self
+                .members(source)
+                .is_some_and(|members| !members.has_signatures_of_kind(construct))
         {
             return;
         }
@@ -1860,13 +1857,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `inferFromIndexTypes`
     fn infer_from_index_types(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
-        let (Some(sm), Some(tm)) = (
-            self.members(source),
-            self.members_of_reduced_apparent_type(target),
-        ) else {
+        let apparent = self.reduced_apparent_type_as_object(target);
+        let (Some(sm), Some(tm)) = (self.members(source), self.structured_members(apparent)) else {
             return;
         };
-        if tm.shape().index.is_empty() {
+        if tm.index_infos().is_empty() {
             return;
         }
         let is_mapped = |c: &Self, t: TypeId| {
@@ -1892,7 +1887,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.apparent_type_of_intersection(source)
         };
         if self.is_object_type_with_inferable_index(looks) {
-            for info in &tm.shape().index {
+            for info in tm.index_infos() {
                 let expected = self.instantiate(info.value, tm.mapper);
                 let mut types = Parts::new();
                 for prop in &sm.shape().props {
@@ -1906,7 +1901,7 @@ impl<'p, 's> Checker<'p, 's> {
                         });
                     }
                 }
-                for other in &sm.shape().index {
+                for other in self.structured(sm).index_infos() {
                     if other.key == info.key || self.is_applicable_index_type(other.key, info.key) {
                         types.push(self.instantiate(other.value, sm.mapper));
                     }
@@ -1917,8 +1912,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        for info in &tm.shape().index {
-            if let Some(source_info) = self.applicable_index_info(&sm, info.key) {
+        for info in tm.index_infos() {
+            let indexed = self.structured(sm);
+            if let Some(source_info) = self.applicable_index_info(&indexed, info.key) {
                 let expected = self.instantiate(info.value, tm.mapper);
                 self.infer_with_priority(n, source_info.value, expected, priority);
             }
@@ -2002,21 +1998,10 @@ impl<'p, 's> Checker<'p, 's> {
                     .iter()
                     .map(|p| self.type_of_prop_with_missing(p, sm.mapper))
                     .collect();
-                // `enumNumberIndexInfo`, the only index signature of an enum object, contributes nothing.
-                if !matches!(
-                    self.data(source),
-                    TypeData::Anon {
-                        origin: Origin::EnumObject(_),
-                        ..
-                    }
-                ) {
-                    types.extend(
-                        sm.shape()
-                            .index
-                            .iter()
-                            .map(|i| self.instantiate(i.value, sm.mapper)),
-                    );
-                }
+                let indexed = self.structured(sm);
+                let infos = indexed.index_infos().iter();
+                let infos = infos.filter(|info| !info.is_enum_number_index_info);
+                types.extend(infos.map(|i| self.instantiate(i.value, sm.mapper)));
                 let all = self.union(&types);
                 let template = self.mapped_template(target);
                 self.infer_types(n, all, template);
@@ -2035,9 +2020,9 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         let members = self.members_of_reduced_apparent_type(source)?;
         // It requires a string index signature, or properties that are not all omitted.
-        if !(members
-            .shape()
-            .index
+        if !(self
+            .structured(members)
+            .index_infos()
             .iter()
             .any(|i| i.key == TypeId::STRING)
             || !members.shape().props.is_empty() && self.is_partially_inferable(source))
@@ -2162,9 +2147,9 @@ impl<'p, 's> Checker<'p, 's> {
         let adds_readonly = self.mapped_origin(target).is_some_and(|(file, node, _)| {
             self.mapped_decl(file, node).readonly == MappedModifier::Add
         });
-        if let Some(info) = members
-            .shape()
-            .index
+        if let Some(info) = self
+            .structured(members)
+            .index_infos()
             .iter()
             .find(|i| i.key == TypeId::STRING)
         {
@@ -2183,14 +2168,15 @@ impl<'p, 's> Checker<'p, 's> {
             // Properties that the rest of the constraint filters out would not have passed through
             // the mapping.
             if let Some(limited) = limited
-                && let Some(key) = self.key_type_of_name(prop.name)
+                && let Some(key) = self.key_type_of_prop(source, prop)
                 && !self.is_assignable(key, limited)
             {
                 continue;
             }
             // `links.propertyType = c.getTypeOfSymbol(prop)`
             self.type_of_prop_with_missing(prop, members.mapper);
-            let mut flags = PropFlags::empty();
+            // It has the `nameType` and the `Declarations` of `prop`, and no `ValueDeclaration`.
+            let mut flags = self.name_flag_of_copy(source, prop, true);
             if !adds_optional && prop.flags.contains(PropFlags::OPTIONAL) {
                 flags |= PropFlags::OPTIONAL;
             }
@@ -2205,6 +2191,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.list_of(Self::declared_properties(&[prop], self.arena)),
                 ),
                 mapper: MapperId::IDENTITY,
+                name_type: self.name_type_of_copy(source, prop),
             });
         }
         shape
@@ -2288,8 +2275,10 @@ impl<'p, 's> Checker<'p, 's> {
             self.reverse_mapped_source_stack,
             self.reverse_mapped_target_stack,
         ) = (sources, targets);
-        let result = if self.reverse_expanding != 3 && self.reverse_mapped_source_stack.len() < 24 {
+        let before = (self.unmarked_refusals, self.limits, self.refused_at);
+        let result = if self.reverse_expanding != 3 {
             // `inferReverseMappedTypeWorker`: `T[P]` is what is inferred.
+            self.reverse_mapped_inferences_from.push(self.stack.len());
             let param = self.mapped_type_param(target);
             let element = self.indexed_access(of, param);
             let template = self.mapped_template(target);
@@ -2298,17 +2287,26 @@ impl<'p, 's> Checker<'p, 's> {
             let inferred = self
                 .type_from_inference(&inner.candidates[0])
                 .unwrap_or(TypeId::UNKNOWN);
-            Some(self.get_widened_type(inferred))
+            let widened = self.get_widened_type(inferred);
+            self.reverse_mapped_inferences_from.pop();
+            Some(widened)
         } else {
             None
         };
         self.reverse_mapped_source_stack.pop();
         self.reverse_mapped_target_stack.pop();
         self.reverse_expanding = saved;
-        match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.reverse_mapped_cache).insert(&self.task, key, result, stored),
-            Err(_) => result,
+        // `c.reverseMappedCache[key] = t` at every return, whatever is in progress: the outermost call
+        // for a key assigns last. Not a result cut short by a request or a limit that tsgo has not.
+        let is_cut_short = before != (self.unmarked_refusals, self.limits, self.refused_at);
+        let stored = match self.end_scope_by_counters(scope) {
+            Ok(stored) => Some(stored),
+            Err(_) => (!is_cut_short).then(Stored::new),
+        };
+        if let Some(stored) = stored {
+            (self.p.reverse_mapped_cache).rewrite(&self.task, key, result, stored);
         }
+        result
     }
 
     /// `getRestTypeAtPosition`

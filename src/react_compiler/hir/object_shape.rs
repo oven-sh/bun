@@ -8,7 +8,7 @@
 //! Defines the shape registry used by Environment to resolve property types
 //! and function call signatures for built-in objects, hooks, and user-defined types.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::Effect;
 use crate::hir::Type;
@@ -143,7 +143,7 @@ impl ShapeRegistry {
     pub fn new() -> Self {
         Self {
             base: None,
-            entries: HashMap::new(),
+            entries: HashMap::default(),
             next_anon: 0,
         }
     }
@@ -152,7 +152,7 @@ impl ShapeRegistry {
     pub fn with_base(base: &'static HashMap<&'static str, ObjectShape>) -> Self {
         Self {
             base: Some(base),
-            entries: HashMap::new(),
+            entries: HashMap::default(),
             next_anon: 0,
         }
     }

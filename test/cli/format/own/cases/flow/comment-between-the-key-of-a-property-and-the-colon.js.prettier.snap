@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+// @flow
+export type HostDispatcher = {
+  f /* flushSyncWork */: () => boolean | void,
+  r /* requestFormReset */: (form: HTMLFormElement) => void,
+  g /* a */: number,
+  h: /* a */ number,
+  i /* a */?: number,
+  +j /* a */: number,
+  k: number, // a
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// @flow
+export type HostDispatcher = {
+  f /* flushSyncWork */: () => boolean | void,
+  r /* requestFormReset */: (form: HTMLFormElement) => void,
+  g /* a */: number,
+  h: /* a */ number,
+  i /* a */?: number,
+  +j /* a */: number,
+  k: number, // a
+};
+
+===================== End =====================

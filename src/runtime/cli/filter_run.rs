@@ -121,7 +121,7 @@ impl<'a> ProcessHandle<'a> {
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
-            let envp = crate::cli::check_command::with_package_script(
+            let envp = crate::cli::script_or_command::with_package_script(
                 unsafe { &mut *env_of_script },
                 &handle.config.script_name,
                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(

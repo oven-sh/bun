@@ -104,7 +104,7 @@ impl Check<'_, '_> {
     fn pattern(&mut self, pattern: Option<Pattern>) {
         self.reader.mark(u8::from(pattern.is_some()));
         if let Some(pattern) = pattern {
-            self.span(pattern.span);
+            (self.reader).count(&without_repeated_keys(pattern.span.of(self.text)));
             // The span of a name does not have it.
             match pattern.annotation {
                 Some(annotation) if annotation.end > pattern.span.end => self.span(annotation),
@@ -484,6 +484,30 @@ impl Check<'_, '_> {
         next.push(Next::End);
         next.extend((fragments.into_iter().rev().flatten()).map(|it| Next::Fragment(it, how)));
     }
+}
+
+/// `pattern` without the keys that are the names behind them: `{ a: a }` is `{ a }`.
+#[optimize(size)]
+fn without_repeated_keys(pattern: &[u8]) -> Cow<'_, [u8]> {
+    let is_in_name = |it: &u8| strings::is_regexp_word_byte(*it) || *it == b'$' || !it.is_ascii();
+    let (mut out, mut copied, mut from) = (Vec::new(), 0, 0);
+    while let Some(found) = strings::index_of_char_usize(&pattern[from..], b':') {
+        let colon = from + found;
+        from = colon + 1;
+        let before = pattern[copied..colon].trim_ascii_end();
+        let key = before.len() - before.iter().rev().take_while(|it| is_in_name(it)).count();
+        let behind = pattern[from..].trim_ascii_start();
+        let name = &behind[..behind.iter().take_while(|it| is_in_name(it)).count()];
+        if !name.is_empty() && &before[key..] == name {
+            out.extend_from_slice(&before[..key]);
+            copied = from;
+        }
+    }
+    if copied == 0 {
+        return Cow::Borrowed(pattern);
+    }
+    out.extend_from_slice(&pattern[copied..]);
+    Cow::Owned(out)
 }
 
 /// `text` with the characters in the place of `&nbsp;` and of `&#xA0;` and the like, if they are white space to JavaScript.

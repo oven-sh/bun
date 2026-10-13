@@ -4,6 +4,7 @@ use super::errors_enums_names::{Location, is_ambient_enum, is_declared_before_us
 use super::errors_names_and_exports::fully_qualified_name_of;
 use super::*;
 use crate::bind::{Decl, PatParent, ScopeId, ScopeKind};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -836,7 +837,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        own.sort_unstable_by_key(|own| own.0);
+        own.shared_sort_unstable_by_key(|own| own.0);
         let this = match s.kind {
             ScopeKind::Class(c) => Some(self.files().sym(file, bound.class_symbol[c.idx()])),
             ScopeKind::Interface(i) => {
@@ -1752,6 +1753,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getConstraintOfTypeParameter`. Returns `None` for a circular constraint.
     pub fn constraint_of_type_param(&mut self, param: TypeId) -> Option<TypeId> {
+        if !self.unresolved_renamed_params.is_empty() {
+            self.unresolved_renamed_params.remove(&param);
+        }
         if let Some(kept) = self.p.type_param_constraints.get(&self.task, &param) {
             return kept;
         }
@@ -1800,6 +1804,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getConstraintFromTypeParameter`: the same, whether or not it is circular.
     pub(super) fn constraint_from_type_param(&mut self, param: TypeId) -> Option<TypeId> {
+        if !self.unresolved_renamed_params.is_empty() {
+            self.unresolved_renamed_params.remove(&param);
+        }
         let (file, tp, around) = match *self.data(param) {
             TypeData::TypeParam(file, tp, around) => (file, tp, around),
             TypeData::ThisParam(sym) => return Some(self.declared_type(sym)),
@@ -1947,8 +1954,14 @@ impl<'p, 's> Checker<'p, 's> {
             _ => Span::new(tp.0, 1),
         };
         let mapping = self.types().mapping(around);
-        let is_new_name =
-            |pair: &(TypeId, TypeId)| matches!(self.data(pair.0), TypeData::StringLit { .. });
+        // The entries of a renamed clone: its new name, and the serial that tells its clones apart
+        // (`renamed_type_param`, `unique_type_params`).
+        let is_new_name = |pair: &(TypeId, TypeId)| {
+            matches!(
+                self.data(pair.0),
+                TypeData::StringLit { .. } | TypeData::NumberLit { .. }
+            )
+        };
         let before_renaming = if mapping.iter().any(is_new_name) {
             let kept = (mapping.iter().copied())
                 .filter(|pair| !is_new_name(pair))
@@ -2298,7 +2311,16 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::UNRESOLVED
             };
         }
-        let ty = self.declared_type_uncached(sym);
+        let flags = self.files().flags(sym);
+        let is_type_alias = flags.contains(SymFlags::TYPE_ALIAS);
+        // Where `declared_type_uncached` comes to `getDeclaredTypeOfEnum`, which assigns the declared types of the members too.
+        let is_enum = flags.intersects(SymFlags::ENUM)
+            && !flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE | SymFlags::TYPE_ALIAS);
+        let (ty, member_types) = if is_enum {
+            self.get_declared_type_of_enum(sym)
+        } else {
+            (self.declared_type_uncached(sym), Vec::new())
+        };
         let left = self.leave(Query::Declared(sym));
         // `getDeclaredTypeOfTypeAlias`: `popTypeResolution` fails.
         if self.left_a_cycle {
@@ -2309,22 +2331,45 @@ impl<'p, 's> Checker<'p, 's> {
                 let err = self.new_diagnostic(at, 2456, &[Arg::Sym(sym)]);
                 self.add_diagnostic_of(Some(Query::Declared(sym)), err);
             }
-            // The value of an inner evaluation above a `resolution_start` barrier stays, if one was stored. It gets the flag.
-            let known = self.p.declared_types.get(&self.task, &sym);
-            let ty = known.map_or(TypeId::ERROR, |(known, _)| known);
-            return self
-                .p
-                .declared_types
-                .rewrite(&self.task, sym, (ty, true), stored)
-                .0;
+            // `if links.declaredType == nil`: the value of an inner evaluation above a `resolution_start` barrier stays, and
+            // `links.typeParameters` stays as that evaluation left it.
+            return match self.p.declared_types.get(&self.task, &sym) {
+                Some((known, _)) => known,
+                None => {
+                    let error = (TypeId::ERROR, true);
+                    self.p
+                        .declared_types
+                        .insert(&self.task, sym, error, stored)
+                        .0
+                }
+            };
         }
         match left {
-            // `getDeclaredTypeOfEnum` assigns `links.declaredType` whatever a nested call has
-            // assigned.
-            Ok(stored) if self.files().flags(sym).intersects(SymFlags::ENUM) => {
+            // `getDeclaredTypeOfEnum` assigns `declaredType` of the enum and of each of its members, whatever a nested
+            // call has assigned.
+            Ok(stored) if is_enum => {
+                for &(member, member_type) in &member_types {
+                    (self.p.declared_types).rewrite(
+                        &self.task,
+                        member,
+                        (member_type, false),
+                        stored,
+                    );
+                }
                 self.p
                     .declared_types
                     .rewrite(&self.task, sym, (ty, false), stored);
+            }
+            // `getDeclaredTypeOfTypeAlias` assigns `links.typeParameters` after a `popTypeResolution` that succeeds, and
+            // keeps the `declaredType` of an inner evaluation above a `resolution_start` barrier.
+            Ok(stored) if is_type_alias => {
+                if let Some((known, _)) = self.p.declared_types.get(&self.task, &sym) {
+                    (self.p.declared_types).rewrite(&self.task, sym, (known, false), stored);
+                    return known;
+                }
+                self.p
+                    .declared_types
+                    .insert(&self.task, sym, (ty, false), stored);
             }
             Ok(stored) => {
                 self.p
@@ -2392,8 +2437,34 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getDeclaredTypeOfEnum`: the union of its member types. An enum without members gets a
     /// distinct type.
     pub fn enum_type(&mut self, sym: Sym) -> TypeId {
-        let mut members = Vec::new();
-        let mut values = crate::util::FxHashSet::default();
+        self.get_declared_type_of_enum(sym).0
+    }
+
+    /// `getEnumLiteralType`: one type for each value of an enum, named after the member that asks for it first.
+    fn get_enum_literal_type(&mut self, value: EnumValue, enum_symbol: Sym, symbol: Sym) -> TypeId {
+        let key = (enum_symbol, enum_value_key(value));
+        if let Some(&known) = self.enum_literal_types.get(&key) {
+            return known;
+        }
+        // What a run of another task, whose results are published, assigned to the member for the value.
+        let assigned = (self.p.declared_types.get(&self.task, &symbol)).filter(|&(assigned, _)| {
+            matches!(*self.data(assigned), TypeData::EnumLit { value: of, .. } if enum_value_key(of) == key.1)
+        });
+        let ty = match assigned {
+            Some((assigned, _)) => assigned,
+            None => self.intern(TypeData::EnumLit {
+                member: symbol,
+                value,
+                fresh: false,
+            }),
+        };
+        self.enum_literal_types.insert(key, ty);
+        ty
+    }
+
+    /// `getDeclaredTypeOfEnum`, with what it assigns to `declaredType` of each member, in its regular form.
+    fn get_declared_type_of_enum(&mut self, sym: Sym) -> (TypeId, Vec<(Sym, TypeId)>) {
+        let mut member_types = Vec::new();
         for (file, decl) in declarations_of(self.files(), sym) {
             let Decl::Enum(e) = decl else { continue };
             for m in self.hir(file)[e].members.iter() {
@@ -2404,40 +2475,34 @@ impl<'p, 's> Checker<'p, 's> {
                 let member = self
                     .files()
                     .sym(file, self.bound(file).enum_member_symbol[m.idx()]);
-                match self.enum_member_value(file, m) {
-                    // `getEnumLiteralType`: members with the same value share one type, which is
-                    // named after the first of them.
-                    Some(value) => {
-                        if values.insert(enum_value_key(value)) {
-                            members.push(self.intern(TypeData::EnumLit {
-                                member,
-                                value,
-                                fresh: false,
-                            }));
-                        }
-                    }
+                let member_type = match self.enum_member_value(file, m) {
+                    Some(value) => self.get_enum_literal_type(value, sym, member),
                     // `createComputedEnumType`
-                    None => members.push(self.intern(TypeData::Enum {
+                    None => self.intern(TypeData::Enum {
                         symbol: member,
                         fresh: false,
-                    })),
-                }
+                    }),
+                };
+                member_types.push((member, member_type));
             }
         }
-        if members.is_empty() {
-            return self.intern(TypeData::Enum {
+        if member_types.is_empty() {
+            let enum_type = self.intern(TypeData::Enum {
                 symbol: sym,
                 fresh: false,
             });
+            return (enum_type, member_types);
         }
+        let members: Vec<TypeId> = member_types.iter().map(|it| it.1).collect();
         let union = self.union(&members);
-        if self.is_union(union) {
+        let enum_type = if self.is_union(union) {
             // `getUnionKey`
             self.get_symbol_id(sym);
             self.with_alias(union, sym, &[])
         } else {
             union
-        }
+        };
+        (enum_type, member_types)
     }
 
     /// `getBaseTypeOfEnumLikeType`: the enum type that `member` belongs to.
@@ -2459,43 +2524,48 @@ impl<'p, 's> Checker<'p, 's> {
         self.declared_type(parent)
     }
 
-    /// `getDeclaredTypeOfEnumMember`, in its regular form.
+    /// `getDeclaredTypeOfEnumMember`, in its regular form. Only `getDeclaredTypeOfEnum` assigns it.
     pub fn enum_member_type(&mut self, member: Sym) -> TypeId {
+        if let Some((known, _)) = self.p.declared_types.get(&self.task, &member) {
+            return known;
+        }
         for (file, decl) in declarations_of(self.files(), member) {
-            if let Decl::EnumMember(m) = decl {
-                // `getDeclaredTypeOfEnum` skips a member without a bindable name
-                // (`hasBindableName`), which gets the type of the enum.
-                if self.hir(file)[m].name.is_none() {
-                    return self.enum_type_of_member(member);
-                }
-                // `createComputedEnumType`: a member without a value gets a distinct type.
-                let Some(value) = self.enum_member_value(file, m) else {
-                    return self.intern(TypeData::Enum {
-                        symbol: member,
-                        fresh: false,
-                    });
-                };
-                // `getEnumLiteralType`: the type the enum has for the value.
-                let key = enum_value_key(value);
-                let owner = self.enum_type_of_member(member);
-                let shared =
-                    self.parts(owner)
-                        .iter()
-                        .copied()
-                        .find(|&part| match *self.data(part) {
-                            TypeData::EnumLit { value, .. } => enum_value_key(value) == key,
-                            _ => false,
-                        });
-                return shared.unwrap_or_else(|| {
-                    self.intern(TypeData::EnumLit {
-                        member,
-                        value,
-                        fresh: false,
-                    })
-                });
+            let Decl::EnumMember(m) = decl else { continue };
+            let enum_type = self.enum_type_of_member(member);
+            if let Some((known, _)) = self.p.declared_types.get(&self.task, &member) {
+                return known;
             }
+            // `hasBindableName`: `links.declaredType = enumType`
+            if self.hir(file)[m].name.is_none() {
+                return enum_type;
+            }
+            // Nothing that the run assigned is stored: its result is provisional, or a class, an interface or an alias has
+            // the name of the enum. What it assigned to the member is among the constituents.
+            let parts = self.parts(enum_type);
+            let computed = parts.iter().copied().find(|&part| {
+                matches!(*self.data(part), TypeData::Enum { symbol, .. } if symbol == member)
+            });
+            if let Some(computed) = computed {
+                return computed;
+            }
+            let value = self.enum_member_value(file, m).map(enum_value_key);
+            let literal = parts.iter().copied().find(|&part| match *self.data(part) {
+                TypeData::EnumLit { value: of_part, .. } => Some(enum_value_key(of_part)) == value,
+                _ => false,
+            });
+            return literal.unwrap_or(enum_type);
         }
         TypeId::UNRESOLVED
+    }
+
+    /// `getEnumMemberValue(ast.GetDeclarationOfKind(symbol, ast.KindEnumMember)).Value`
+    pub(super) fn enum_member_value_of_symbol(&mut self, member: Sym) -> Option<EnumValue> {
+        let (file, m) =
+            declarations_of(self.files(), member).find_map(|(file, decl)| match decl {
+                Decl::EnumMember(m) => Some((file, m)),
+                _ => None,
+            })?;
+        self.enum_member_value(file, m)
     }
 
     pub fn enum_member_value(&mut self, file: FileId, member: EnumMemberId) -> Option<EnumValue> {
@@ -2537,7 +2607,14 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(known) => known,
                 None if self.enter(Query::Enum(file, member)) => {
                     let result = self.compute_enum_member_value(file, member, auto_value, previous);
-                    if let Ok(stored) = self.leave(Query::Enum(file, member)) {
+                    let q = Query::Enum(file, member);
+                    // `computeEnumMemberValues` assigns the value whatever `flowLoopStack` holds, and
+                    // `NodeCheckFlagsEnumValuesComputed` keeps the initializer from being checked again.
+                    let stored = match self.leave(q) {
+                        Ok(stored) => Some(stored),
+                        Err(_) => self.incomplete_flow_result(q),
+                    };
+                    if let Some(stored) = stored {
                         self.p
                             .enum_values
                             .insert(&self.task, (file, member), result, stored);
@@ -2753,12 +2830,56 @@ impl<'p, 's> Checker<'p, 's> {
         self.resolve_type_from_node(file, node)
     }
 
+    /// `resolutions_below` for a type node: the frames down to the nearest one that is neither a
+    /// type resolution nor a type node, a conditional type or a declaration whose name is a
+    /// pattern. `getTypeFromTypeNode` and `getConditionalType` push nothing, and nothing between
+    /// a resolution and the node calls `checkExpressionCached`.
+    fn resolutions_below_type_node(&self) -> (usize, usize) {
+        let passes = |q: Query| {
+            matches!(q, Query::TypeNode(..) | Query::Cond(..) | Query::Pat(..))
+                || self.is_resolution(q)
+        };
+        let mut frames = self.stack.iter();
+        let from = frames.rposition(|&q| !passes(q)).map_or(0, |i| i + 1);
+        (from, self.stack.len())
+    }
+
     #[inline(never)]
     fn resolve_type_from_node(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
-        if let Some(raw) = self.provisional(Query::TypeNode(file, node)) {
+        let q = Query::TypeNode(file, node);
+        let is_type_query = matches!(self.hir(file)[node].kind, TypeNodeKind::Typeof { .. });
+        // `getTypeFromTypeQueryNode` has no re-entrancy guard, and its operand is checked with
+        // `flowLoopStack` as it is: a back edge of a loop that leads to the node again ends at
+        // that loop, as in `recheck_in_flow_loop`.
+        let in_flow_loop = is_type_query && self.is_flow_loop_or_exhaustive_state_in_progress();
+        if in_flow_loop {
+            let resolutions = self.resolutions_below_type_node();
+            self.quick_initializers.push(resolutions);
+        }
+        let provisional = self.provisional(q);
+        let pushed_at = match provisional {
+            None if in_flow_loop && self.may_be_in_flight(q) => {
+                let first = self.stack.iter().rposition(|&it| it == q);
+                first.and_then(|first| self.flow_loop_pushed_since(first))
+            }
+            _ => None,
+        };
+        let resolution_start = self.resolution_start;
+        if pushed_at.is_some() {
+            self.resolution_start = self.stack.len();
+        }
+        let entered = provisional.is_none() && self.enter(q);
+        self.resolution_start = resolution_start;
+        if entered && let Some(pushed_at) = pushed_at {
+            self.taint_from(pushed_at);
+        }
+        if in_flow_loop {
+            self.quick_initializers.pop();
+        }
+        if let Some(raw) = provisional {
             return TypeId(raw as u32);
         }
-        if !self.enter(Query::TypeNode(file, node)) {
+        if !entered {
             // `getTypeFromTypeNode` does not detect re-entry: tsgo recurses until it hits an instantiation limit.
             return self.excessively_deep();
         }
@@ -2776,7 +2897,26 @@ impl<'p, 's> Checker<'p, 's> {
                     .rewrite(&self.task, (file, node), ty, stored);
             }
             Err(open) => {
-                self.cache_provisionally(Query::TypeNode(file, node), u64::from(ty.0), open);
+                // `getTypeFromTypeQueryNode` assigns `links.resolvedType` whatever `flowLoopStack`
+                // holds.
+                let left_frame = self.left_frame;
+                let stored = if is_type_query {
+                    self.incomplete_flow_result(Query::TypeNode(file, node))
+                } else {
+                    None
+                };
+                match stored {
+                    Some(stored) => {
+                        self.p
+                            .type_node_types
+                            .rewrite(&self.task, (file, node), ty, stored);
+                    }
+                    None => {
+                        self.left_frame = left_frame;
+                        let q = Query::TypeNode(file, node);
+                        self.cache_provisionally(q, u64::from(ty.0), open);
+                    }
+                }
             }
         }
         ty
@@ -3146,7 +3286,12 @@ impl<'p, 's> Checker<'p, 's> {
                 expr,
             } => {
                 // `getTypeFromTypeQueryNode`: `getRegularTypeOfLiteralType(getWidenedType(t))`
+                // `checkExpressionWithTypeArguments` is no `checkExpressionCached`: the resolutions
+                // that ask for the node hide no loop from the operand.
+                let resolutions = self.resolutions_below_type_node();
+                self.quick_initializers.push(resolutions);
                 let narrowed = self.type_of_expr(file, expr);
+                self.quick_initializers.pop();
                 let narrowed = self.get_widened_type(narrowed);
                 // `checkPropertyAccessExpressionOrQualifiedName`: the missing name of `typeof a.`
                 // resolves to no property, so the result is the error type.
@@ -3399,6 +3544,23 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `getDeclaredTypeOfSymbol(sym)` for a type alias, then `typeAliasLinks.Get(sym)`: `declaredType`, and whether
+    /// `typeParameters` is nil whatever the alias declares. `getDeclaredTypeOfTypeAlias` assigns it after a
+    /// `popTypeResolution` that succeeds: not while the alias is being resolved, and not after a cycle.
+    fn type_alias_links(&mut self, sym: Sym) -> (TypeId, bool) {
+        let declared = self.declared_type(sym);
+        let has_no_type_parameters = match self.p.declared_types.get(&self.task, &sym) {
+            Some((_, has_no_type_parameters)) => has_no_type_parameters,
+            // `pushTypeResolution` has just failed.
+            None => {
+                declared == TypeId::ERROR
+                    && self.found_cycle
+                    && self.is_resolving(Query::Declared(sym))
+            }
+        };
+        (declared, has_no_type_parameters)
+    }
+
     /// The type argument count checks of `getTypeFromClassOrInterfaceReference`,
     /// `getTypeFromTypeAliasReference` and `checkNoTypeArguments`. Returns the number of type
     /// parameters of `sym`. `None`: `actual` is not a valid number of type arguments, and the
@@ -3413,13 +3575,11 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<usize> {
         let flags = self.files().flags(sym);
         let is_class_or_interface = flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
-        // `getDeclaredTypeOfTypeAlias`: a circular alias (2456) never gets its type parameters.
-        let is_cycle = !is_class_or_interface && flags.contains(SymFlags::TYPE_ALIAS) && {
-            self.declared_type(sym);
-            let declared = self.p.declared_types.get(&self.task, &sym);
-            declared.is_some_and(|(_, is_circular)| is_circular)
-        };
-        let (least, most) = if is_cycle {
+        // `getTypeFromTypeAliasReference`: without `links.typeParameters` it comes to `checkNoTypeArguments`.
+        let has_no_type_parameters = !is_class_or_interface
+            && flags.contains(SymFlags::TYPE_ALIAS)
+            && self.type_alias_links(sym).1;
+        let (least, most) = if has_no_type_parameters {
             (0, 0)
         } else {
             self.type_argument_arity(sym)
@@ -3955,7 +4115,11 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         if flags.contains(SymFlags::TYPE_ALIAS) {
-            let params = self.local_type_params_of_symbol(sym);
+            let (declared, has_no_type_parameters) = self.type_alias_links(sym);
+            let params = match has_no_type_parameters {
+                true => SmallVec::new(),
+                false => self.local_type_params_of_symbol(sym),
+            };
             if params.is_empty() {
                 // `getDeclaredTypeOfTypeAlias`: `type BuiltinIteratorReturn = intrinsic`
                 if self.is_declared_intrinsic(sym)
@@ -3967,7 +4131,7 @@ impl<'p, 's> Checker<'p, 's> {
                         TypeId::ANY
                     };
                 }
-                return self.declared_type(sym);
+                return declared;
             }
             let args = self.fill_type_args(&params, args);
             if let Some(kind) = self.intrinsic_alias(sym) {
@@ -4663,15 +4827,39 @@ impl<'p, 's> Checker<'p, 's> {
                 ret: TypeId::UNRESOLVED,
                 ref of,
                 is_union,
+                ref type_params,
                 ..
             } if of.len() > 1 => self.resolve_return_type(sig, |c| {
                 let returns: Vec<TypeId> = of.iter().map(|&member| c.sig_return(member)).collect();
-                if is_union {
+                let combined = if is_union {
                     c.union_reduced(&returns)
                 } else {
                     c.intersection(&returns)
+                };
+                // `sig.mapper`, the `paramMapper` of `combineUnionOrIntersectionMemberSignatures`:
+                // the type parameters of each later signature become those of the first. Applied
+                // after the union is reduced, so `Promise<A> | PromiseLike<B>` stays two types.
+                let mut pairs = Vec::new();
+                for &member in of.iter() {
+                    let own = c.sig_type_params(member);
+                    if !own.is_empty() && !type_params.is_empty() && own[..] != type_params[..] {
+                        pairs.extend(own.iter().copied().zip(type_params.iter().copied()));
+                    }
+                }
+                if pairs.is_empty() {
+                    combined
+                } else {
+                    let mapper = c.types().mapper(pairs);
+                    c.instantiate(combined, mapper)
                 }
             }),
+            // `getOptionalCallSignature`: the clone has no `resolvedReturnType`.
+            SigData::WithReturn {
+                sig: of,
+                ret: TypeId::UNRESOLVED,
+            } if self.is_optional_call_signature_of(of) => {
+                self.resolve_return_type(sig, |c| c.return_type_of_optional_call_signature(of))
+            }
             SigData::Synth { ret, .. } | SigData::WithReturn { ret, .. } => ret,
             // `case sig.target != nil`
             SigData::Decl { file, func, mapper } if self.is_instantiating(mapper) => self
@@ -4689,6 +4877,64 @@ impl<'p, 's> Checker<'p, 's> {
                 self.instantiate(declared, mapper)
             }
         }
+    }
+
+    /// `getOptionalCallSignature`: `cloneSignature(sig)`, which has the declaration of `sig` and no
+    /// `resolvedReturnType`, so `sig_return` resolves it under an entry of its own. Only for the
+    /// declared signature or an instantiation of it: the clone of any other gets its return type
+    /// from `sig.target`, as `sig` does.
+    /// Whether `WithReturn { sig: of, ret: UNRESOLVED }` is the clone that `optional_call_signature`
+    /// makes, which is of a call signature. With a construct signature it is that of a mixin
+    /// whose return type was refused, and stays unresolved.
+    pub(super) fn is_optional_call_signature_of(&self, of: SigId) -> bool {
+        matches!(*self.types().sig(of), SigData::Decl { file, func, .. }
+        if !matches!(
+            self.hir(file)[func].kind,
+            FnKind::Constructor | FnKind::ConstructSignature | FnKind::ConstructorType
+        ))
+    }
+
+    pub(super) fn optional_call_signature(&self, sig: SigId) -> SigId {
+        if let SigData::Decl { file, func, mapper } = *self.types().sig(sig)
+            && self.is_of_declared_signature(file, func, mapper)
+        {
+            return self.types().intern_sig(SigData::WithReturn {
+                sig,
+                ret: TypeId::UNRESOLVED,
+            });
+        }
+        sig
+    }
+
+    /// Whether the signature of `func` that has `mapper` is the declared one (`sig.target == nil`)
+    /// or an instantiation of it: no outer type parameter is mapped to another type.
+    fn is_of_declared_signature(&self, file: FileId, func: FnId, mapper: MapperId) -> bool {
+        let own = self.hir(file)[func].type_params;
+        let mapping = self.types().mapping(mapper);
+        (mapping.iter()).all(|&(from, to)| from == to || self.is_declared_among(from, file, own))
+    }
+
+    /// `getReturnTypeOfSignature` between `pushTypeResolution` and `popTypeResolution`, for the
+    /// clone of `of` that `getOptionalCallSignature` makes.
+    fn return_type_of_optional_call_signature(&mut self, of: SigId) -> TypeId {
+        if let SigData::Decl { file, func, mapper } = *self.types().sig(of)
+            && self.is_of_declared_signature(file, func, mapper)
+        {
+            let declared = if self.is_instantiating(mapper) {
+                // `instantiateSignatureEx` of a candidate: `sig.target` is the clone of the
+                // declared signature.
+                let target = self.sig_of_fn(file, func);
+                let target = self.optional_call_signature(target);
+                self.sig_return(target)
+            } else {
+                // `getReturnTypeFromAnnotation`, else `getReturnTypeFromBody` once more: the
+                // declared signature, which may be in progress below, is not entered.
+                self.return_type_of_fn_uncached(file, func, CheckMode::empty())
+            };
+            return self.instantiate_result_of_sig(declared, file, func, mapper);
+        }
+        // The clone has `sig.target` and `sig.composite` of the original.
+        self.sig_return(of)
     }
 
     /// `getReturnTypeOfSignature` for a signature that is not the declared signature of a

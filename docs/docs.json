@@ -309,7 +309,43 @@
           }
         ]
       },
-
+      {
+        "tab": "Linter",
+        "icon": "badge-check",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "circle-play",
+            "pages": ["/lint/index"]
+          },
+          {
+            "group": "Rules",
+            "icon": "scroll-text",
+            "pages": ["/lint/rules/index", "/lint/plugins"]
+          },
+          {
+            "group": "Migrate",
+            "icon": "arrow-right",
+            "pages": ["/guides/lint/migrate-from-eslint", "/guides/lint/migrate-from-oxlint"]
+          }
+        ]
+      },
+      {
+        "tab": "Formatter",
+        "icon": "braces",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "circle-play",
+            "pages": ["/format/index"]
+          },
+          {
+            "group": "Migrate",
+            "icon": "arrow-right",
+            "pages": ["/guides/format/migrate-from-prettier", "/guides/format/migrate-from-oxfmt"]
+          }
+        ]
+      },
       {
         "tab": "Guides",
         "icon": "map",
@@ -498,6 +534,16 @@
               "/guides/test/testing-library",
               "/guides/test/happy-dom",
               "/guides/test/svelte-test"
+            ]
+          },
+          {
+            "group": "Linter & Formatter",
+            "icon": "sparkles",
+            "pages": [
+              "/guides/lint/migrate-from-eslint",
+              "/guides/lint/migrate-from-oxlint",
+              "/guides/format/migrate-from-prettier",
+              "/guides/format/migrate-from-oxfmt"
             ]
           },
           {

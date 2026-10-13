@@ -19,7 +19,7 @@
 import { decodeURIComponentSIMD } from "bun:internal-for-testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tls } from "harness";
 import crypto from "node:crypto";
 import Module from "node:module";
 import { totalmem } from "node:os";
@@ -150,4 +150,166 @@ test.each([
     decode: "A" + text,
     cookie: "A" + text,
   });
+});
+
+// A 16-bit string with an unpaired surrogate, with a UTF-8 form of about 1.43 GB.
+// The conversion measures the string and converts it into a buffer of that size.
+// The measured size does not count the 3 bytes of U+FFFD for the surrogate, so the
+// conversion then needs 3 bytes for each code unit, which is a few bytes more. It
+// used to grow the first buffer for that, and a buffer grows by 1.5x: past the
+// 2**31 - 1 bytes that it can hold. The process aborted (`panic(main thread):
+// abort() called`, exit code 134), also inside try / catch. Now the conversion
+// allocates the exact size, and SQLite gets the statement. It reports that the
+// statement is too long, or takes it where the system SQLite has a higher limit.
+//
+// The surrogate is not the last code unit of the statement: the arm64 code can
+// count 4 bytes for an unpaired surrogate at the very end, and then the first
+// buffer is large enough.
+const illFormedFixture = `
+  const { Database } = require("bun:sqlite");
+  const { DatabaseSync } = require("node:sqlite");
+
+  const sql = "select '" + "\\u65e5".repeat(477_218_588) + "\\ud800'";
+  const db = new Database(":memory:");
+  const nodeDb = new DatabaseSync(":memory:");
+  const tooLongForSQLite = e => e.code === "SQLITE_TOOBIG" || (e.code === "ERR_SQLITE_ERROR" && e.errcode === 18);
+
+  const cases = {
+    "Database#prepare": () => db.prepare(sql),
+    "DatabaseSync#prepare": () => nodeDb.prepare(sql),
+  };
+  for (const [name, run] of Object.entries(cases)) {
+    try {
+      run();
+      console.log(name + ": SQLite got the statement");
+    } catch (e) {
+      console.log(name + ": " + (tooLongForSQLite(e) ? "SQLite got the statement" : e.name + ": " + e.message));
+    }
+  }
+`;
+
+// The child needs 5 GB, and a debug build or an ASAN build takes minutes for it.
+// This test and the first one are not concurrent: together they need more memory
+// than either asks the machine to have.
+test.skipIf(isDebug || isASAN || totalmem() < 12 * 1024 ** 3)(
+  "a long 16-bit string with an unpaired surrogate converts instead of aborting",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", illFormedFixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: ["Database#prepare: SQLite got the statement", "DatabaseSync#prepare: SQLite got the statement"],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  60_000,
+);
+
+// The same step with strings of a few megabytes. WebKit's debug builds can refuse
+// every allocation over a given size (JSC's maxSingleAllocationSize option), and
+// an allocation that cannot fail aborts the process when it is refused. With a
+// limit of 4 MiB:
+//   a  the second buffer is 3,000,003 bytes. It used to be 1.5x the first: 4,500,000.
+//   c  the second buffer is 6,000,000 bytes. Its allocation can fail now, and the
+//      conversion reports that.
+// The option does nothing in a release build of WebKit.
+const secondBufferFixture = `
+  const { Database } = require("bun:sqlite");
+  const db = new Database(":memory:");
+  const texts = {
+    a: "\\u65e5".repeat(999_999) + "\\ud800a",
+    c: "a".repeat(1_999_998) + "\\u65e5\\ud800",
+  };
+  for (const [name, text] of Object.entries(texts)) {
+    const cases = {
+      "Date.parse": () => Date.parse(text),
+      "Database#prepare": () => db.prepare("select 1 where '" + text + "' = ''"),
+    };
+    for (const [api, run] of Object.entries(cases)) {
+      try {
+        const result = run();
+        console.log(name + " " + api + ": " + (typeof result === "number" ? result : "prepared"));
+      } catch (e) {
+        console.log(name + " " + api + ": " + e.name + ": " + e.message);
+      }
+    }
+  }
+`;
+
+test.skipIf(!isDebug)("the second buffer for an unpaired surrogate has the exact size, and can fail", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", secondBufferFixture],
+    env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * 1024 * 1024) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      "a Date.parse: NaN",
+      "a Database#prepare: prepared",
+      "c Date.parse: RangeError: Out of memory",
+      "c Database#prepare: RangeError: Out of memory",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The second conversion writes U+FFFD for the unpaired surrogate. The first buffer
+// is inside the conversion's 1,024 bytes of stack, or an allocation. So is the
+// second, with 3 bytes for each code unit. Each length here is next to one of
+// those limits (341 and 1,024 code units). Two native consumers get the bytes and
+// show them: SQLite returns them in hex, and a URL percent-encodes them. The two
+// use different entry points of the conversion. Buffer.from() and
+// encodeURIComponent() have encoders of their own.
+test("an unpaired surrogate converts to U+FFFD on each side of the conversion's buffer sizes", () => {
+  using db = new Database(":memory:");
+  const converted: Record<string, string> = {};
+  const expected: Record<string, string> = {};
+  const hex = (text: string) => Buffer.from(text).toString("hex").toUpperCase();
+  // Each text here is "a" and characters that are not ASCII, so both encoders escape the same bytes.
+  const percentEncoded = (text: string) => encodeURIComponent(text.toWellFormed());
+  const url = new URL("http://example.com/");
+  const usernameOf = (text: string) => ((url.username = text), url.username);
+  const ascii = (length: number) => Buffer.alloc(length, "a").toString("latin1");
+  const utf16 = (pattern: string, length: number) =>
+    Buffer.alloc(length * 2, Buffer.from(pattern, "utf16le")).toString("utf16le");
+
+  // SQLite converts the text of a statement. The statement has the length under test, so its text is shorter.
+  const prefix = "SELECT hex(CAST('";
+  const suffix = "' AS BLOB)) AS hex";
+  for (const length of [340, 341, 342, 343, 1021, 1022, 1023, 1024, 1025, 4096]) {
+    for (const [consumer, textLength] of [
+      ["SQLite", length - prefix.length - suffix.length],
+      ["URL", length],
+    ] as const) {
+      // A debug build takes 80 ms to set a username of this length.
+      if (consumer === "URL" && length === 4096) continue;
+      const texts = {
+        "3 bytes for each, unpaired surrogate at the end": utf16("\u65e5", textLength - 1) + "\ud800",
+        "3 bytes for each, unpaired surrogate in the middle":
+          utf16("\u65e5", textLength >> 1) + "\udbff" + utf16("\u65e5", textLength - (textLength >> 1) - 1),
+        "unpaired surrogate at the start, then ASCII": "\udc00" + ascii(textLength - 1),
+        "ASCII, then two unpaired surrogates": ascii(textLength - 2) + "\udfff\ud800",
+      };
+      for (const [name, text] of Object.entries(texts)) {
+        const row = `${name}, ${length} code units, ${consumer}`;
+        if (consumer === "SQLite") {
+          converted[row] = (db.prepare(prefix + text + suffix).get() as { hex: string }).hex;
+          expected[row] = hex(text);
+        } else {
+          converted[row] = usernameOf(text);
+          expected[row] = percentEncoded(text);
+        }
+      }
+    }
+  }
+
+  expect(converted).toEqual(expected);
 });

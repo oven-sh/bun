@@ -130,12 +130,12 @@ type Reply = {
   requests: number;
 };
 
-// Whether `raw` holds a whole reply to a GET request: a 204, or a body with a Content-Length or in chunks.
+// Whether `raw` holds a whole reply to a GET request: a 204, a 304, or a body with a Content-Length or in chunks.
 function isWhole(raw: string) {
   const end = raw.indexOf("\r\n\r\n");
   if (end === -1) return false;
   const head = raw.slice(0, end);
-  if (head.startsWith("HTTP/1.1 204 ")) return true;
+  if (/^HTTP\/1\.1 (204|304) /.test(head)) return true;
   const length = /^content-length: (\d+)$/im.exec(head);
   return length ? raw.length >= end + 4 + Number(length[1]) : raw.endsWith("0\r\n\r\n");
 }
@@ -544,10 +544,20 @@ describe("writeHead(status, headers) with no header set before sends the header 
   ];
   for (const transport of inConstructor) {
     test(`a subclass that calls writeHead() in its constructor: ${transport.name}`, async () => {
-      const { headers, body } = await respond(res => res.end("ok"), { transport });
+      // The request asks for keep-alive. `close` in the argument closes the connection: the second request gets no answer.
+      // A socket that is not a net.Socket is ended and not destroyed, so there the server still reads the second request.
+      const { all, body, requests } = await respond(res => res.end("ok"), {
+        transport,
+        request: KEEP_ALIVE,
+        then: GET,
+      });
       assert.deepStrictEqual(
-        { headers, body },
-        { headers: ["X-A: 1", "Set-Cookie: a=1", "set-cookie: b=2", "Content-Length: 2"], body: "ok" },
+        { headers: all.filter(line => !/^date:/i.test(line)), body, requests },
+        {
+          headers: ["X-A: 1", "Set-Cookie: a=1", "set-cookie: b=2", "Content-Length: 2", "Connection: close"],
+          body: "ok",
+          requests: transport === inConstructor[3] ? 2 : 1,
+        },
       );
     });
   }
@@ -1031,28 +1041,33 @@ for (const [name, form] of forms) {
       );
     });
 
-    test("204 with Transfer-Encoding: chunked has no body and closes the connection", async () => {
-      // The request asks for keep-alive. The second request gets no answer: the connection is closed.
-      const { status, all, body, requests, result } = await respond(
-        res => {
-          res.writeHead(204, form("Transfer-Encoding", "chunked"));
-          const after = { chunkedEncoding: res.chunkedEncoding, shouldKeepAlive: res.shouldKeepAlive };
-          res.end();
-          return after;
-        },
-        { request: KEEP_ALIVE, then: GET },
-      );
-      assert.deepStrictEqual(
-        { status, headers: all.filter(line => !/^date:/i.test(line)), body, requests, result },
-        {
-          status: "HTTP/1.1 204 No Content",
-          headers: ["Transfer-Encoding: chunked", "Connection: close"],
-          body: "",
-          requests: 1,
-          result: { chunkedEncoding: false, shouldKeepAlive: false },
-        },
-      );
-    });
+    for (const [statusCode, statusLine] of [
+      [204, "HTTP/1.1 204 No Content"],
+      [304, "HTTP/1.1 304 Not Modified"],
+    ] as const) {
+      test(`${statusCode} with Transfer-Encoding: chunked has no body and closes the connection`, async () => {
+        // The request asks for keep-alive. The second request gets no answer: the connection is closed.
+        const { status, all, body, requests, result } = await respond(
+          res => {
+            res.writeHead(statusCode, form("Transfer-Encoding", "chunked"));
+            const after = { chunkedEncoding: res.chunkedEncoding, shouldKeepAlive: res.shouldKeepAlive };
+            res.end();
+            return after;
+          },
+          { request: KEEP_ALIVE, then: GET },
+        );
+        assert.deepStrictEqual(
+          { status, headers: all.filter(line => !/^date:/i.test(line)), body, requests, result },
+          {
+            status: statusLine,
+            headers: ["Transfer-Encoding: chunked", "Connection: close"],
+            body: "",
+            requests: 1,
+            result: { chunkedEncoding: false, shouldKeepAlive: false },
+          },
+        );
+      });
+    }
 
     test("204 with Transfer-Encoding: chunked and Trailer: writeHead() throws, and the connection closes", async () => {
       const { result, requests } = await respond(
@@ -1160,13 +1175,22 @@ for (const [name, form] of forms) {
     });
 
     test("Keep-Alive replaces the Keep-Alive of the server", async () => {
-      const { all, requests } = await respond(
-        res => res.writeHead(200, form("Keep-Alive", "timeout=7", "Content-Length", "2")).end("ok"),
+      const { all, requests, result } = await respond(
+        res => {
+          res.writeHead(200, form("Keep-Alive", "timeout=7", "Content-Length", "2"));
+          const defaultKeepAlive = (res as any)._defaultKeepAlive;
+          res.end("ok");
+          return defaultKeepAlive;
+        },
         { request: KEEP_ALIVE, then: GET },
       );
       assert.deepStrictEqual(
-        { headers: all.filter(line => !/^date:/i.test(line)), requests },
-        { headers: ["Keep-Alive: timeout=7", "Content-Length: 2", "Connection: keep-alive"], requests: 2 },
+        { headers: all.filter(line => !/^date:/i.test(line)), requests, result },
+        {
+          headers: ["Keep-Alive: timeout=7", "Content-Length: 2", "Connection: keep-alive"],
+          requests: 2,
+          result: false,
+        },
       );
     });
 
@@ -1378,6 +1402,46 @@ for (const [name, form] of forms) {
       assert.deepStrictEqual(
         { headers, body, result },
         { headers: ["Content-Length: 0"], body: "", result: ["ERR_INVALID_CHAR", undefined] },
+      );
+    });
+
+    test("a response that waits behind another one does not count a header that a value's toString() sets", async () => {
+      // That header is stored and not sent.
+      let first: http.ServerResponse;
+      const lengths: Record<string, number> = {};
+      await respond(
+        (res, req) => {
+          if (req.url === "/first") {
+            first = res;
+            return;
+          }
+          if (req.url === "/last") {
+            res.end();
+            first.end();
+            return;
+          }
+          const value = {
+            toString() {
+              if (req.url === "/late" && !res.hasHeader("X-Late")) res.setHeader("X-Late", "not sent");
+              return "1";
+            },
+          };
+          res.writeHead(200, form("X-A", value));
+          res.write("ok");
+          lengths[req.url!] = res.writableLength;
+          res.end();
+        },
+        {
+          request:
+            "GET /first HTTP/1.1\r\nHost: x\r\n\r\n" +
+            "GET /plain HTTP/1.1\r\nHost: x\r\n\r\n" +
+            "GET /late HTTP/1.1\r\nHost: x\r\n\r\n" +
+            "GET /last HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        },
+      );
+      assert.deepStrictEqual(
+        { same: lengths["/late"] === lengths["/plain"], counted: lengths["/plain"] > 2 },
+        { same: true, counted: true },
       );
     });
 
@@ -1913,11 +1977,11 @@ if (typeof Bun !== "undefined") {
       res.sendDate = false;
       res.writeHead(200, { "X-A": "1" });
       (res as any).headersSent = false;
-      const thrown = code(() => res.writeHead(200, { "X-B": "2" }));
+      const thrown = message(() => res.writeHead(200, { "X-B": "2" }));
       assert.deepStrictEqual(
         { thrown, head: (res as any)._header },
         {
-          thrown: "ERR_HTTP_HEADERS_SENT",
+          thrown: "Cannot write headers after they are sent to the client",
           head: "HTTP/1.1 200 OK\r\nX-A: 1\r\nConnection: keep-alive\r\nTransfer-Encoding: chunked\r\n\r\n",
         },
       );

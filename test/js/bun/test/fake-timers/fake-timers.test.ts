@@ -1,7 +1,7 @@
 import { RedisClient, SQL } from "bun";
 import { heapStats } from "bun:jsc";
 import { setSystemTime } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -195,39 +195,48 @@ describe("getTimerCount", () => {
     expect(() => vi.getTimerCount()).toThrow("Fake timers are not active");
   });
 
-  // Timers inserted with decreasing deadlines form one long chain of child
-  // links in the pairing heap. getTimerCount() and runOnlyPendingTimers()
-  // walk every node, and that walk used to recurse once per node, so a few
-  // hundred thousand timers overflowed the 8 MB main stack (SIGSEGV, no
-  // trace). The child runs with a 1 MB stack so that 60k timers are enough.
-  test.skipIf(isWindows)(
-    "walks a deep timer heap without overflowing the stack",
-    async () => {
-      const N = 60_000;
-      const script = `
-        import { jest } from "bun:test";
-        jest.useFakeTimers();
-        let fired = 0;
-        const N = ${N};
-        for (let i = 0; i < N; i++) setTimeout(() => fired++, N - i);
-        console.log("count", jest.getTimerCount());
-        jest.runOnlyPendingTimers();
-        console.log("fired", fired, "left", jest.getTimerCount());
-        jest.useRealTimers();
-      `;
-      await using proc = Bun.spawn({
-        cmd: ["sh", "-c", 'ulimit -s 1024 && exec "$0" -e "$1"', bunExe(), script],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe(`count ${N}\nfired ${N} left 0\n`);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-    },
-    60_000,
-  );
+  // getTimerCount() and runOnlyPendingTimers() each walk the whole timer heap.
+  // A walk that recurses once per node overflows the native stack (SIGSEGV).
+  // Only Linux applies `ulimit -s` to the main thread's stack.
+  test.skipIf(!isLinux)("walks a deep timer heap without overflowing the stack", async () => {
+    // A debug build takes 0.1 ms to create a timer, and its bigger frames overflow sooner.
+    const N = isDebug ? 5_000 : 10_000;
+    const script = `
+      import { jest } from "bun:test";
+      jest.useFakeTimers();
+      // Decreasing deadlines link the timers into one chain of child nodes.
+      // A Bun.sleep() timer fires without a call into JS.
+      const sleeps = [];
+      for (let i = 0; i < ${N}; i++) sleeps.push(Bun.sleep(${N} - i));
+      let pending, left;
+      // The deepest JS frame leaves native code about 128 KB of stack.
+      (function dive() {
+        try {
+          dive();
+        } catch {
+          pending ??= jest.getTimerCount();
+          left ??= jest.runOnlyPendingTimers().getTimerCount();
+        }
+      })();
+      jest.useRealTimers();
+      await Promise.all(sleeps);
+      console.log("pending", pending, "left", left);
+    `;
+    await using proc = Bun.spawn({
+      // JavaScriptCore caps JS frames at 5 MB of stack. Under a smaller stack,
+      // the recursion above ends at the real end of the stack.
+      cmd: ["sh", "-c", 'ulimit -s 4096 && exec "$0" -e "$1"', bunExe(), script],
+      // The environment is on that stack too, and JavaScriptCore does not count
+      // it. A 65 KB commit message in the CI environment would take half of the 128 KB.
+      env: { BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`pending ${N} left 0\n`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 describe("clearAllTimers", () => {
   test("clears all pending timers", () => {

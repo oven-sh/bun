@@ -18,7 +18,7 @@ Bridge JavaScript and Rust through `.classes.ts` definitions and Rust implementa
 ```typescript
 export default [
   define({
-    name: "Glob",
+    name: "Matcher",
     construct: true,
     finalize: true,
     hasPendingActivity: true,
@@ -45,16 +45,16 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[bun_jsc::JsClass]
-pub struct Glob {
+pub struct Matcher {
     pattern: Box<[u8]>,
     has_pending_activity: AtomicUsize,
 }
 
-impl Glob {
-    pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Glob>> {
+impl Matcher {
+    pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Matcher>> {
         let arg = frame.argument(0);
         let pattern = bun_core::String::from_js(arg, global)?.to_utf8_bytes().into();
-        Ok(Box::new(Glob { pattern, has_pending_activity: AtomicUsize::new(0) }))
+        Ok(Box::new(Matcher { pattern, has_pending_activity: AtomicUsize::new(0) }))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -88,7 +88,7 @@ A missing or mis-typed hook is a **compile error** in `cargo check -p bun_runtim
 The codegen also emits a `js_$T` module with the cached-value accessors. Re-export it when you need `*_set_cached` / `*_get_cached` or `detach_ptr`:
 
 ```rust
-pub use crate::generated_classes::js_Glob as js;
+pub use crate::generated_classes::js_Image as js;
 // or
 bun_jsc::impl_js_class_via_generated!(Archive => crate::generated_classes::js_Archive);
 ```

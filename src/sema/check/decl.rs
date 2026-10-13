@@ -1753,6 +1753,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getConstraintOfTypeParameter`. Returns `None` for a circular constraint.
     pub fn constraint_of_type_param(&mut self, param: TypeId) -> Option<TypeId> {
+        if !self.unresolved_renamed_params.is_empty() {
+            self.unresolved_renamed_params.remove(&param);
+        }
         if let Some(kept) = self.p.type_param_constraints.get(&self.task, &param) {
             return kept;
         }
@@ -1801,6 +1804,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getConstraintFromTypeParameter`: the same, whether or not it is circular.
     pub(super) fn constraint_from_type_param(&mut self, param: TypeId) -> Option<TypeId> {
+        if !self.unresolved_renamed_params.is_empty() {
+            self.unresolved_renamed_params.remove(&param);
+        }
         let (file, tp, around) = match *self.data(param) {
             TypeData::TypeParam(file, tp, around) => (file, tp, around),
             TypeData::ThisParam(sym) => return Some(self.declared_type(sym)),
@@ -1948,8 +1954,14 @@ impl<'p, 's> Checker<'p, 's> {
             _ => Span::new(tp.0, 1),
         };
         let mapping = self.types().mapping(around);
-        let is_new_name =
-            |pair: &(TypeId, TypeId)| matches!(self.data(pair.0), TypeData::StringLit { .. });
+        // The entries of a renamed clone: its new name, and the serial that tells its clones apart
+        // (`renamed_type_param`, `unique_type_params`).
+        let is_new_name = |pair: &(TypeId, TypeId)| {
+            matches!(
+                self.data(pair.0),
+                TypeData::StringLit { .. } | TypeData::NumberLit { .. }
+            )
+        };
         let before_renaming = if mapping.iter().any(is_new_name) {
             let kept = (mapping.iter().copied())
                 .filter(|pair| !is_new_name(pair))

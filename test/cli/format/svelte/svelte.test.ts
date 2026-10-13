@@ -1221,6 +1221,40 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ]);
   });
 
+  test.skipIf(!hasRunner)("--debug-check does not take what looks like such a key for one", async () => {
+    const each = (pattern: string) => `{#each b as ${pattern}}c{/each}\n`;
+    const pairs = [
+      [each("{ a: a }"), each("{ a }"), "same"],
+      [each("{ d: { a: a }, e: [{ f: f }] }"), each("{ d: { a }, e: [{ f }] }"), "same"],
+      // In a string.
+      [each('{ "a:a": a }'), each('{ "a": a }'), "different"],
+      // In a default.
+      [each("{ x = c ? a : a }"), each("{ x = c ? a : 1 }"), "different"],
+      [each("{ x = c ? a : a }"), each("{ x = c ? a }"), "different"],
+      [each("{ x = { a: a } }"), each("{ x = { a } }"), "different"],
+      // A computed key.
+      [each("{ [a]: a }"), each("{ a }"), "different"],
+    ];
+    using dir = tempDir("bun-format-svelte", {
+      ...Object.fromEntries(
+        pairs.flatMap((it, index) => it.slice(0, 2).map((text, which) => [`${index}.${which}`, text])),
+      ),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", "--debug-check-svelte", ...pairs.flatMap((_, index) => [`${index}.0`, `${index}.1`])],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: pairs.map(it => it[2]),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("--debug-check does not take an expression that is spelled like the name of its directive for the name", async () => {
     const text = "<p class:a-b={a-b}>c</p>\n";
     const checked = await format({ "a.svelte": text }, ["a.svelte"], ["--debug-check"]);

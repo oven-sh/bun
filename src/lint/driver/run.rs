@@ -970,10 +970,6 @@ impl Run<'_> {
             return self.out;
         }
         let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
-        // The options in a configuration file are written for the working directory, as its tool reads them.
-        if is_native {
-            store.start_at(&options.start_of_bunfig(&environment.cwd));
-        }
         let format = match self.format(is_oxlint, is_native) {
             Ok(format) => format,
             Err(error) => return self.refuse(&error),
@@ -1356,7 +1352,7 @@ impl Run<'_> {
 
         let suppressed = match options.stdin {
             true => Suppressed::default(),
-            false => match self.apply_suppressions(&mut results, is_oxlint) {
+            false => match self.apply_suppressions(&mut results, is_oxlint, is_native) {
                 Ok(suppressed) => suppressed,
                 Err(Fatal(error)) => return self.fail(&error),
             },
@@ -1588,6 +1584,7 @@ impl Run<'_> {
         &self,
         results: &mut [FileResult],
         is_oxlint: bool,
+        is_native: bool,
     ) -> Result<Suppressed, Fatal> {
         let (options, cwd) = (self.options, &self.environment.cwd);
         let location = options
@@ -1600,7 +1597,8 @@ impl Run<'_> {
             suppressions::DEFAULT_FILE_NAME
         };
         // One file for a run from any directory of the project: the names in it start where bunfig.toml is. Without a word about
-        // where it is, it is the nearest from the working directory up to there, and the names start beside it.
+        // where it is, it is the nearest from the working directory up to there, and the names start beside it. A new one is
+        // where ESLint or oxlint, whose configuration there is, would look for it.
         let project = options.start_of_bunfig(cwd);
         let start = match &location {
             Some(_) if options.is_suppressions_location_of_flag => cwd.clone(),
@@ -1608,7 +1606,16 @@ impl Run<'_> {
             None => paths::ancestors(cwd)
                 .take_while(|it| it.starts_with(&project))
                 .find(|it| fs::is_file(&paths::join(it, default)))
-                .map_or_else(|| project.clone(), <[u8]>::to_vec),
+                .map_or_else(
+                    || {
+                        if is_native {
+                            project.clone()
+                        } else {
+                            cwd.clone()
+                        }
+                    },
+                    <[u8]>::to_vec,
+                ),
         };
         let path = match &location {
             Some(location) => paths::resolve(cwd, location),

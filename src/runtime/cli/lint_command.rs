@@ -5,7 +5,7 @@
 
 use bstr::BStr;
 
-use bun_core::{Global, Output, ZStr};
+use bun_core::{Global, Output, ZStr, strings};
 use bun_lint_driver::cli::{Options, UsageError};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
 use bun_sys::File;
@@ -352,6 +352,10 @@ impl LintCommand {
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
             // `[fmt]` is for the rule that holds a file against what `bun fmt` prints: it is the one that `bun fmt` would read.
             let (mut defaults, mut of_bun_format) = (None, None);
+            // In `--rule`, `-D`, `-W`.
+            let names_a_format_rule = args.iter().any(|it| {
+                strings::contains(it, b"bun/format") || strings::contains(it, b"prettier/prettier")
+            });
             read_bunfigs(
                 ctx,
                 Tag::LintCommand,
@@ -367,7 +371,7 @@ impl LintCommand {
                     Ok(match (&defaults, &of_bun_format) {
                         (Some(_), Some(_)) => Above::Unwanted,
                         (Some(it), None) if it.names_a_format_rule() => Above::Needed,
-                        (Some(_), None) if options.names_a_format_rule() => Above::Needed,
+                        (Some(_), None) if names_a_format_rule => Above::Needed,
                         (Some(_), None) => Above::Optional,
                         (None, _) => Above::Needed,
                     })

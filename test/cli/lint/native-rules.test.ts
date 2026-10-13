@@ -1082,7 +1082,7 @@ export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaF
 
 describe.concurrent("unknown rules", () => {
   const source = { "a.js": "debugger;\n" };
-  const cases: [written: string, said: string][] = [
+  const cases: [written: string, said: string, saidToFlag?: string][] = [
     // Typos in a core rule, a plugin rule, and a plugin name.
     ["no-vra", `Unknown rule "no-vra"\n  Did you mean "no-var"?`],
     ["eslint/no-vra", `Unknown rule "eslint/no-vra"\n  Did you mean "eslint/no-var"?`],
@@ -1112,7 +1112,20 @@ describe.concurrent("unknown rules", () => {
     [
       "foo/bar-baz",
       `Unknown rule "foo/bar-baz"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]`,
+      `Unknown rule "foo/bar-baz"\n  To use a rule from an ESLint plugin, load the plugin with --plugin`,
     ],
+    // The plugin is there already.
+    [
+      "react/only-in-the-package",
+      `Unknown rule "react/only-in-the-package"\n  react is built in and has no rule of that name\n  To run a rule of the package, load it under another name in [lint]: plugins = [{ name = "react-js", specifier = "eslint-plugin-react" }]`,
+    ],
+    [
+      "typescript/only-in-the-package",
+      `Unknown rule "typescript/only-in-the-package"\n  typescript is built in and has no rule of that name\n  To run a rule of the package, load it under another name in [lint]: plugins = [{ name = "typescript-js", specifier = "@typescript-eslint/eslint-plugin" }]`,
+    ],
+    // No package has them.
+    ["bun/only-in-the-package", `Unknown rule "bun/only-in-the-package"`],
+    ["eslint/only-in-the-package", `Unknown rule "eslint/only-in-the-package"`],
     ["perfectly-fine", `Unknown rule "perfectly-fine"`],
     // Rules that bun lint leaves out on purpose.
     ["indent", `"indent" is a formatting rule\n  bun fmt does that`],
@@ -1128,7 +1141,7 @@ describe.concurrent("unknown rules", () => {
     ],
   ];
 
-  test.each(cases)("%s is rejected", async (written, said) => {
+  test.each(cases)("%s is rejected", async (written, said, saidToFlag = said) => {
     const [inFile, byFlag] = await Promise.all([
       lint({
         ...source,
@@ -1143,7 +1156,7 @@ describe.concurrent("unknown rules", () => {
     });
     expect(byFlag).toEqual({
       stdout: "",
-      stderr: `error: ${said}\n`,
+      stderr: `error: ${saidToFlag}\n`,
       exitCode: 2,
     });
   });

@@ -3,7 +3,7 @@
 
 use crate::bunfig::RuleOfBunfig;
 use crate::cli::Options;
-use crate::configs::{CATEGORIES, is_category, severity_name};
+use crate::configs::{CATEGORIES, is_category, plugin_longhand, severity_name};
 use crate::print_config::object;
 use crate::{Linter, fs, paths};
 use bun_core::strings;
@@ -94,11 +94,17 @@ fn unknown_rule_of(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
     message
 }
 
-/// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
-pub(crate) const ADD_THE_PLUGIN: &[u8] =
-    b"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]";
+/// Who names a rule that there isn't.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum NamedBy {
+    Bunfig,
+    Flag,
+    Explain,
+}
 
-pub(crate) fn unknown_rule(registry: &Registry, id: &[u8]) -> Vec<u8> {
+/// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
+pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) -> Vec<u8> {
+    let prefix = parse_rule_id(id).0;
     match registry.why_missing(id) {
         Missing::Formatting => {
             [b"\"", id, b"\" is a formatting rule\n  bun fmt does that"].concat()
@@ -113,11 +119,44 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8]) -> Vec<u8> {
             b", add it to plugins in [lint]",
         ]
         .concat(),
-        // It has the prefix of a plugin that isn't built in.
-        Missing::Unknown(None) if !parse_rule_id(id).0.is_empty() => {
-            [b"Unknown rule \"", id, b"\"", ADD_THE_PLUGIN].concat()
+        Missing::Unknown(None) => {
+            // `react` is also a name for the rules of react-hooks.
+            let is_its_own = |it: &Plugin| it.prefix().as_bytes() == prefix;
+            let built_in = (Plugin::spelled(prefix).find(is_its_own))
+                .or_else(|| Plugin::spelled(prefix).next());
+            let hint: Vec<u8> = match (built_in, named_by) {
+                _ if prefix.is_empty() => Vec::new(),
+                // No package has them.
+                (Some(Plugin::Eslint), _) => Vec::new(),
+                (Some(plugin), _) if plugin.is_always_there() => Vec::new(),
+                (Some(_), NamedBy::Explain) => Vec::new(),
+                (Some(plugin), _) => {
+                    let package = plugin.prefix().as_bytes();
+                    let package = plugin_longhand(package).unwrap_or_else(|| package.to_vec());
+                    let parts: [&[u8]; 7] = [
+                        b"\n  ",
+                        prefix,
+                        b" is built in and has no rule of that name\n  To run a rule of the package, load it under another name in [lint]: plugins = [{ name = \"",
+                        prefix,
+                        b"-js\", specifier = \"",
+                        &package,
+                        b"\" }]",
+                    ];
+                    parts.concat()
+                }
+                (None, NamedBy::Bunfig) => {
+                    b"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]".to_vec()
+                }
+                (None, NamedBy::Flag) => {
+                    b"\n  To use a rule from an ESLint plugin, load the plugin with --plugin".to_vec()
+                }
+                // Whether the plugin is loaded or not, its rules are explained where it is.
+                (None, NamedBy::Explain) => {
+                    b"\n  --explain has the built-in rules. For a rule from a plugin, see the plugin's docs".to_vec()
+                }
+            };
+            [b"Unknown rule \"", id, b"\"", &hint[..]].concat()
         }
-        Missing::Unknown(None) => [b"Unknown rule \"", id, b"\""].concat(),
         Missing::Unknown(Some(close)) => [
             b"Unknown rule \"",
             id,
@@ -234,7 +273,11 @@ fn check(
                 continue;
             }
             return Err(Mistake {
-                message: unknown_rule(registry, id),
+                message: unknown_rule(
+                    registry,
+                    id,
+                    written.map_or(NamedBy::Flag, |_| NamedBy::Bunfig),
+                ),
                 at: written.map(|it| it.key_at),
             });
         }

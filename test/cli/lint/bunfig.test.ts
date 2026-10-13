@@ -747,6 +747,25 @@ rules = { "no-console" = "off" }
     expect(await lintAt(String(dir), ".", [])).toMatchObject({ found: [], exitCode: 0 });
   });
 
+  test.each(configs.slice(1))(
+    "next to %s a new suppressions file is where that tool looks for it",
+    async (name, config) => {
+      using dir = tempDir("bun-lint", {
+        "package.json": `{ "type": "module" }`,
+        "bunfig.toml": `[lint.rules]\n"no-debugger" = "error"\n`,
+        ...Object.fromEntries(Object.entries(config).map(([path, text]) => [`project/${path}`, text])),
+        "project/src/a.js": "debugger;\n",
+      });
+      expect(await lintAt(String(dir), "project", ["--suppress-all"])).toMatchObject({ found: [], exitCode: 0 });
+      const file = name === ".oxlintrc.json" ? "oxlint-suppressions.json" : "eslint-suppressions.json";
+      expect(existsSync(join(String(dir), "project", file))).toBe(true);
+      expect(existsSync(join(String(dir), file))).toBe(false);
+      for (const cwd of ["project", "project/src"]) {
+        expect(await lintAt(String(dir), cwd, [])).toMatchObject({ found: [], exitCode: 0 });
+      }
+    },
+  );
+
   test("--suppressions-location, and the names in that file, start in the working directory", async () => {
     using dir = tempDir("bun-lint", {
       "bunfig.toml": `[lint]\nsuppressionsLocation = "unused.json"\n[lint.rules]\n"no-debugger" = "error"\n`,
@@ -790,27 +809,54 @@ rules = { "no-console" = "off" }
     expect(await lintIn("packages/app", files, flag)).toMatchObject({ found: [], exitCode: 0 });
   });
 
-  test("a path in the options of a rule starts where bunfig.toml is", async () => {
+  const standIn = {
+    "node_modules/eslint-plugin-import/package.json": `{ "name": "eslint-plugin-import", "version": "2.31.0", "main": "index.js", "type": "commonjs" }`,
+    "node_modules/eslint-plugin-import/index.js": `const rule = { meta: { schema: false }, create() { return {}; } };\nmodule.exports = { meta: { name: "eslint-plugin-import" }, rules: { "no-restricted-paths": rule, "no-unassigned-import": rule } };\n`,
+  };
+
+  test.each(configs)("a path in the options of a rule starts where bunfig.toml is: %s", async (name, config) => {
     const files = {
-      "bunfig.toml": `[lint.rules]
+      ...standIn,
+      ...config,
+      "package.json": `{ "type": "module" }`,
+      "bunfig.toml": `[lint]
+plugins = ["import"]
+
+[lint.rules]
 "import/no-restricted-paths" = ["error", { zones = [{ target = "./src/client", from = "./src/server" }] }]
-"import/no-unassigned-import" = ["error", { allow = ["src/client/*.css"] }]
+
+[[lint.overrides]]
+files = ["**/*.js"]
+rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css", "**/*.svg"] }] }
 `,
       "src/server/s.js": "export const s = 1;\n",
       "src/client/style.css": "a {}\n",
-      "src/client/c.js": `import "./style.css";\nimport { s } from "../server/s.js";\nexport const c = s;\n`,
+      "src/client/c.js": `import "./style.css";\nimport "./a.svg";\nimport { s } from "../server/s.js";\nexport const c = s;\n`,
     };
+    // oxlint holds \`allow\` against what is written in the import.
+    const expected = ["src/client/c.js:3 import/no-restricted-paths"];
+    if (name === ".oxlintrc.json") expected.unshift("src/client/c.js:1 import/no-unassigned-import");
     for (const [cwd, args] of [
-      [".", []],
+      [".", ["src"]],
       ["src", []],
       ["src/client", []],
       ["src/server", ["../client"]],
     ] as const) {
-      expect(await lintIn(cwd, files, [...args])).toMatchObject({
-        found: ["src/client/c.js:2 import/no-restricted-paths"],
-        exitCode: 1,
-      });
+      expect(await lintIn(cwd, files, [...args])).toMatchObject({ found: expected, exitCode: 1 });
     }
+  });
+
+  test("a path in the options of --rule starts in the working directory", async () => {
+    const files = {
+      "bunfig.toml": `[lint]\nquiet = false\n`,
+      "project/src/server/s.js": "export const s = 1;\n",
+      "project/src/client/c.js": `import { s } from "../server/s.js";\nexport const c = s;\n`,
+    };
+    const rule = `import/no-restricted-paths: [error, { zones: [{ target: ./src/client, from: ./src/server }] }]`;
+    expect(await lintIn("project", files, ["--rule", rule])).toMatchObject({
+      found: ["project/src/client/c.js:1 import/no-restricted-paths"],
+      exitCode: 1,
+    });
   });
 
   test.each([
@@ -829,8 +875,7 @@ rules = { "no-console" = "off" }
     const files = {
       "bunfig.toml": `[lint]\nmaxWarnings = 10\n`,
       "package.json": `{ "type": "module" }`,
-      "node_modules/eslint-plugin-import/package.json": `{ "name": "eslint-plugin-import", "version": "2.31.0", "main": "index.js", "type": "commonjs" }`,
-      "node_modules/eslint-plugin-import/index.js": `module.exports = { meta: { name: "eslint-plugin-import" }, rules: { "no-restricted-paths": { meta: { schema: false }, create() { return {}; } } } };\n`,
+      ...standIn,
       [`packages/app/${name}`]: config(rules),
       "packages/app/src/server/s.js": "export const s = 1;\n",
       "packages/app/src/client/c.js": `import { s } from "../server/s.js";\nexport const c = s;\n`,
@@ -862,6 +907,7 @@ rules = { "no-console" = "off" }
     ["[lint.rules]", `[lint.rules]\n"bun/format" = "error"\n`, []],
     ["[[lint.overrides]]", `[[lint.overrides]]\nfiles = ["*.js"]\nrules = { "bun/format" = "error" }\n`, []],
     ["--rule", `[lint]\nquiet = false\n`, ["--rule", "bun/format: error"]],
+    ["-D", `[lint]\nquiet = false\n`, ["-D", "bun/format"]],
   ])("with bun/format in %s, a bunfig.toml above that cannot be used is not passed over", async (_, bunfig, args) => {
     const files = {
       "bunfig.toml": "[fmt]\nsemi = false\n",
@@ -1595,6 +1641,18 @@ module.exports = {
       "2:32",
     ],
     [`plugins = ["./lint/throws.js"]`, `Cannot load the plugin "./lint/throws.js"\n  Error: boom`, "2:12"],
+    // Nothing of how a plugin is read.
+    [
+      `plugins = ["./lint/null-rule.js"]`,
+      `Cannot load the plugin "./lint/null-rule.js"\n  TypeError: The rule "r" must be an object: null\n    at bunfig.toml`,
+      "2:12",
+    ],
+    // It is installed.
+    [
+      `plugins = ["no-main"]`,
+      `Cannot load the plugin "no-main"\n  eslint-plugin-no-main is installed, but its entry point cannot be found\n  Check "main" and "exports" in its package.json\n`,
+      "2:12",
+    ],
     [
       `plugins = ["./lint/nameless.js"]`,
       `Cannot load the plugin "./lint/nameless.js"\n  Error: Plugin must either define \`meta.name\``,
@@ -1639,6 +1697,8 @@ module.exports = {
     const files = {
       ...project,
       "lint/throws.js": `throw new Error("boom");\n`,
+      "lint/null-rule.js": `export default { meta: { name: "nulls" }, rules: { r: null } };\n`,
+      "node_modules/eslint-plugin-no-main/package.json": `{ "name": "eslint-plugin-no-main", "main": "missing.js" }`,
       "lint/same-name.js": `export default { meta: { name: "local" }, rules: {} };\n`,
       "lint/no-name.js": `export default { meta: { name: "" }, rules: {} };\n`,
       "lint/ünï✓.js": `export default { meta: { name: "odd" }, rules: {} };\n`,
@@ -1656,6 +1716,18 @@ module.exports = {
     expect(stderr).toContain(`error: ${message}`);
     expect(stderr).toEndWith(`\n    at bunfig.toml:${at}`);
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+  });
+
+  test("an AggregateError is printed with what it is made of", async () => {
+    const files = {
+      ...project,
+      "lint/several.js": `throw new AggregateError([new Error("one"), new Error("two")], "several");\n`,
+      "bunfig.toml": `[lint]\nplugins = ["./lint/several.js"]\n`,
+    };
+    const { stderr, exitCode } = await lint(files, ["src"]);
+    expect(stderr).toContain(`error: Cannot load the plugin "./lint/several.js"\n  AggregateError: several\n`);
+    expect(stderr).toEndWith(`\n  Error: one\n  Error: two\n    at bunfig.toml:2:12`);
+    expect(exitCode).toBe(2);
   });
 
   test("the name of a built-in plugin does nothing without a config file, and turns it on for one further down", async () => {

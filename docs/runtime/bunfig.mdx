@@ -410,7 +410,7 @@ rules = { "no-console" = "off" }
 
 `bun lint` uses the nearest `bunfig.toml` that has a `[lint]` section, from the working directory up, so it finds the same problems from any directory of the project.
 
-Paths and patterns in the section are relative to the file. So are the patterns in a config file that `config` names and the file names in the file that `suppressionsLocation` names. Paths in rule options are too, unless there is an ESLint or oxlint config: then they are relative to the working directory, as in those tools.
+Paths and patterns in the section are relative to the file, including the ones in the options of the `import` rules. So are the patterns in a config file that `config` names and the file names in the file that `suppressionsLocation` names.
 
 With `bun --config=<path> lint`, everything but `plugins` is relative to the working directory.
 

@@ -939,6 +939,67 @@ impl Options {
         self
     }
 
+    /// `rules`, of which bunfig.toml has the first `written`. The rules read the paths and the patterns in their options from the
+    /// working directory. In these they are written from where the file is.
+    pub(crate) fn from_the_working_directory(
+        &self,
+        rules: &[(Vec<u8>, Json)],
+        written: usize,
+        is_oxlint: bool,
+    ) -> Vec<(Vec<u8>, Json)> {
+        let mut rules = rules.to_vec();
+        let directory = paths::dirname(&self.bunfig);
+        if directory == b"." || self.is_bunfig_named {
+            return rules;
+        }
+        fn start_at(directory: &[u8], value: &mut Json) {
+            match value {
+                Json::Array(all) => all.iter_mut().for_each(|it| start_at(directory, it)),
+                Json::String(it) => {
+                    let (not, written) = match it.strip_prefix(b"!") {
+                        Some(rest) => (&b"!"[..], paths::from_native(rest)),
+                        None => (&b""[..], paths::from_native(it)),
+                    };
+                    // `**/a` is the same from everywhere.
+                    if !paths::is_absolute(&written) && !written.starts_with(b"**/") {
+                        *it = [not, &paths::join_normalized(directory, &written)].concat();
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (id, setting) in rules.iter_mut().take(written) {
+            let keys: &[&[u8]] = match &id[..] {
+                b"import/no-restricted-paths" => &[b"basePath"],
+                // oxlint holds them against what is written in the import.
+                b"import/no-unassigned-import" if !is_oxlint => &[b"allow"],
+                b"import/no-unused-modules" => &[b"src", b"ignoreExports"],
+                b"import/no-extraneous-dependencies" => &[
+                    b"packageDir",
+                    b"devDependencies",
+                    b"optionalDependencies",
+                    b"peerDependencies",
+                    b"bundledDependencies",
+                ],
+                _ => continue,
+            };
+            let Json::Array(parts) = setting else {
+                continue;
+            };
+            let Some(Json::Object(options)) = parts.get_mut(1) else {
+                continue;
+            };
+            // What its zones start at, which is the working directory if nothing is said.
+            if keys == [b"basePath"] && !options.iter().any(|it| it.0 == b"basePath") {
+                options.push((b"basePath".to_vec(), Json::String(b".".to_vec())));
+            }
+            for (_, value) in options.iter_mut().filter(|it| keys.contains(&&it.0[..])) {
+                start_at(directory, value);
+            }
+        }
+        rules
+    }
+
     /// Whether a rule is named that holds a file against what `bun fmt` prints, and so needs `[fmt]`.
     pub fn names_a_format_rule(&self) -> bool {
         let of_overrides = self.overrides.iter().flat_map(|it| &it.rules);

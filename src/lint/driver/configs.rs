@@ -438,7 +438,7 @@ pub(crate) fn severity_name(severity: Severity) -> Json {
 }
 
 /// `normalizePackageName(name, "eslint-plugin")`, if that is another name.
-fn plugin_longhand(name: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn plugin_longhand(name: &[u8]) -> Option<Vec<u8>> {
     let long = match name {
         [b'@', scoped @ ..] => match strings::index_of_char_usize(scoped, b'/') {
             None => [name, b"/eslint-plugin"].concat(),
@@ -496,7 +496,11 @@ fn rules_of(options: &Options) -> Vec<(Vec<u8>, Json)> {
     for (severity, rule) in filters {
         merge(&mut rules, vec![(rule.clone(), severity_name(*severity))]);
     }
-    merge(&mut rules, options.rule.clone());
+    let written = options.rules_of_bunfig.len();
+    merge(
+        &mut rules,
+        options.from_the_working_directory(&options.rule, written, false),
+    );
     rules
 }
 
@@ -979,7 +983,13 @@ impl<'l> Loader<'l> {
                 Shape::Legacy => {}
             }
             if !it.rules.is_empty() {
-                entries.push((b"rules", Json::Object(it.rules.clone())));
+                let is_oxlint = shape == Shape::Oxlint;
+                let rules = (self.options).from_the_working_directory(
+                    &it.rules,
+                    it.places.len(),
+                    is_oxlint,
+                );
+                entries.push((b"rules", Json::Object(rules)));
             }
             match (it.globals.is_empty(), Json::Object(it.globals.clone())) {
                 (true, _) => {}
@@ -1236,7 +1246,9 @@ impl<'l> Loader<'l> {
                 Json::Array(vec![Json::String(b"**/*".to_vec())]),
             )];
             if !options.rule.is_empty() {
-                last.push((b"rules", Json::Object(options.rule.clone())));
+                let written = options.rules_of_bunfig.len();
+                let rules = options.from_the_working_directory(&options.rule, written, true);
+                last.push((b"rules", Json::Object(rules)));
             }
             if let Some(globals) = globals_of(options) {
                 last.push((b"globals", globals));
@@ -1494,6 +1506,23 @@ impl<'l> Loader<'l> {
                                 && Plugin::spelled(&short).any(Plugin::is_always_there) =>
                         {
                             continue;
+                        }
+                        // It is there, and what its package.json says that it starts with is not.
+                        Err(why)
+                            if is_missing(&why, specifier)
+                                && paths::ancestors(directory).any(|it| {
+                                    let package = [b"node_modules/", &long[..], b"/package.json"];
+                                    fs::is_file(&paths::join(it, &package.concat()))
+                                }) =>
+                        {
+                            let parts: [&[u8]; 5] = [
+                                b"Cannot load the plugin \"",
+                                specifier,
+                                b"\"\n  ",
+                                long,
+                                b" is installed, but its entry point cannot be found\n  Check \"main\" and \"exports\" in its package.json",
+                            ];
+                            return Err(mistake(parts.concat()));
                         }
                         Err(why) if is_missing(&why, specifier) => {
                             let parts: [&[u8]; 7] = [

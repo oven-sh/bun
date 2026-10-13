@@ -1,6 +1,10 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
+
+// On a debug build a fixture takes 4 to 6 s and `bun bd test` allows 5 s. CI passes its own --timeout.
+if (isDebug) setDefaultTimeout(60_000);
 
 const fixture = join(import.meta.dir, "v8-heap-snapshot-fixture.ts");
 
@@ -75,18 +79,33 @@ test("v8.getHeapSnapshot()", async () => {
   expect(await runFixture("get-heap-snapshot")).toEqual({ chunks: true, emptyChunks: 0, ...structure });
 });
 
+// Node creates the snapshot file with mode 0600 (WriteSnapshot in src/heap_utils.cc).
+// Windows has no permission bits to check.
+const permissions = (path: string) => (statSync(path).mode & 0o777).toString(8);
+
 test("v8.writeHeapSnapshot()", async () => {
   // Without a path the snapshot is written to the cwd, so give it one we own.
   using dir = tempDir("v8-heap-snapshot", {});
   const { filename, ...rest } = await runFixture("write-default", { cwd: String(dir) });
   expect(filename).toMatch(/^Heap-\d{8}-\d{6}-\d+-\d+\.heapsnapshot$/);
   expect(rest).toEqual(structure);
+  if (!isWindows) expect(permissions(join(String(dir), filename))).toBe("600");
 });
 
 test("v8.writeHeapSnapshot() with path", async () => {
   using dir = tempDir("v8-heap-snapshot", {});
   const path = join(String(dir), "test.heapsnapshot");
   expect(await runFixture("write-path", { args: [path] })).toEqual({ returnedPath: path, ...structure });
+  if (!isWindows) expect(permissions(path)).toBe("600");
+});
+
+// As in Node, the mode only applies when the call creates the file.
+test.skipIf(isWindows)("v8.writeHeapSnapshot() keeps the mode of an existing file", async () => {
+  using dir = tempDir("v8-heap-snapshot", { "test.heapsnapshot": "not a snapshot" });
+  const path = join(String(dir), "test.heapsnapshot");
+  chmodSync(path, 0o644);
+  expect(await runFixture("write-path", { args: [path] })).toEqual({ returnedPath: path, ...structure });
+  expect(permissions(path)).toBe("644");
 });
 
 test("v8 heap snapshot labels Web Streams internal edges", async () => {

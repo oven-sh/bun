@@ -366,7 +366,8 @@ function writeHeapSnapshot(path, _options) {
   if (!fs) {
     fs = require("node:fs");
   }
-  fs.writeFileSync(path, Bun.generateHeapSnapshot("v8"), "utf-8");
+  // 0600 on create, like Node's WriteSnapshot: https://github.com/nodejs/node/blob/v26.3.0/src/heap_utils.cc#L361-L372
+  fs.writeFileSync(path, Bun.generateHeapSnapshot("v8"), { encoding: "utf-8", mode: 0o600 });
 
   return path;
 }

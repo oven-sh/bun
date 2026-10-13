@@ -269,6 +269,14 @@ export const cases: Case[] = [
   js("capitalized-comments", "<!-- lower\na;\n--> lower\na;\n<!--lower\na;\n<!-- \u00e9cole"),
   // Every `@ts-ignore` of the comment, after any number of `/`. A `<!--` becomes a `//`.
   ts("prefer-ts-expect-error", "// @ts-ignore @ts-ignore\na;\n//// @ts-ignore\na;\n/* / * @ts-ignore @ts-ignore */\na;\n<!-- @ts-ignore\na;"),
+  // tsgolint lints what the fixes of oxlint's own rules wrote: after `this.b! = 1` the property is written to.
+  {
+    ...typed(
+      "prefer-readonly",
+      "export class A { private b: number | undefined = 0; c() { this.b!! = 1; return this.b; } }",
+    ),
+    also: ["typescript/no-extra-non-null-assertion"],
+  },
 ];
 
 /** The directory of a case, which has a configuration file of its own. */

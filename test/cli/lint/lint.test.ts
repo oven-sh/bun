@@ -4807,6 +4807,71 @@ describe.concurrent("bun lint", () => {
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
+      // tsgolint's fix writes code that does not parse, or that does something else. `bun lint` makes the same report and
+      // leaves the code, or writes the code that does the same.
+      test("a fix of tsgolint that changes what the code does is not copied", async () => {
+        const shapes: [rule: string, file: string, text: string, fixed?: string, options?: object][] = [
+          // One match where `match` gave all of them.
+          ["prefer-regexp-exec", "a.ts", "declare const s: string;\nexport const a = s.match(new RegExp(/x/g));\n"],
+          // `p` is `/b+/` there, and tsgolint writes `s.includes('abc')`.
+          [
+            "prefer-includes",
+            "a.ts",
+            "declare const s: string;\nlet p = /abc/;\np = /b+/;\nexport const a = p.test(s);\n",
+          ],
+          [
+            "prefer-string-starts-ends-with",
+            "a.ts",
+            "declare const s: string;\nlet p = /^a/;\np = /b/;\nexport const a = p.test(s);\n",
+          ],
+          // `<Icons["default"] />` does not parse.
+          [
+            "dot-notation",
+            "a.tsx",
+            "declare const Icons: { default: () => null };\nexport const a = <Icons.default />;\n",
+            undefined,
+            { allowKeywords: false },
+          ],
+          // An `await` in a parameter does not parse.
+          [
+            "no-misused-spread",
+            "a.ts",
+            "declare const p: Promise<{ a: 1 }>;\nexport async function f(o = { ...p }) {\n  return o;\n}\n",
+          ],
+          // tsgolint writes `ready && obj?.count`, without the `?? 0`.
+          [
+            "prefer-optional-chain",
+            "a.ts",
+            "declare const ready: boolean;\ndeclare const obj: { count: number | null } | undefined;\nexport const a = ready && obj && (obj.count ?? 0);\n",
+            "declare const ready: boolean;\ndeclare const obj: { count: number | null } | undefined;\nexport const a = ready && (obj?.count ?? 0);\n",
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        shapes.forEach(([rule, file, text, , options], index) => {
+          const it = {
+            rule: `typescript/${rule}`,
+            file,
+            text,
+            typed: true,
+            options,
+            compilerOptions: { jsx: "preserve" },
+          };
+          for (const [path, text] of Object.entries(filesOf(it))) files[`${index}/${path}`] = text;
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = shapes.map((_, index) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${index}/`))
+            .map((it: { code: string }) => it.code),
+        );
+        expect(reported).toEqual(shapes.map(([rule]) => [`typescript(${rule})`]));
+        const reads = shapes.map(([, file], index) => `${index}/${file}`);
+        const result = await lint(files, ["--fix-dangerously", "--type-aware"], { reads });
+        expect(result.files).toEqual(
+          Object.fromEntries(shapes.map(([, file, text, fixed], index) => [`${index}/${file}`, fixed ?? text])),
+        );
+      });
+
       test("the options that oxlint accepts are accepted", async () => {
         // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has
         // options for many rules.

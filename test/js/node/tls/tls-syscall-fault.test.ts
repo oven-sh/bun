@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import https from "node:https";
 import net, { type AddressInfo } from "node:net";
@@ -281,25 +281,28 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
   });
 
   // node:https stops reading behind backed-up pipelined responses, and only their drain lifts that pause. With both
-  // directions down the hangup is level-triggered: left open, the socket takes a whole core.
-  test("send → ECONNRESET for a backed-up pipelined response closes the connection at the client's FIN", async () => {
-    const dispatched = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-    const closed = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-    let requests = 0;
-    await using pipelined = https.createServer({ key: certs.key, cert: certs.cert }, (_req, res) => {
-      const request = requests++;
-      res.on("close", () => closed[request].resolve());
-      // More than the kernel takes for a client that does not read.
-      res.end(Buffer.alloc(16 * 1024 * 1024, "r"));
-      dispatched[request].resolve();
-    });
-    await once(pipelined.listen(0, "127.0.0.1"), "listening");
-    // A process of its own, so that only the server's sends fail.
-    await using client = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const raw = require("node:net").connect({ port: ${(pipelined.address() as AddressInfo).port}, host: "127.0.0.1", allowHalfOpen: true });
+  // directions down the hangup is level-triggered: left open, the socket takes a whole core. Only epoll reports a
+  // hangup. With kqueue the paused socket has no filter left, and the connection stays open without an event.
+  test.skipIf(!isLinux)(
+    "send → ECONNRESET for a backed-up pipelined response closes the connection at the client's FIN",
+    async () => {
+      const dispatched = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      const closed = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      let requests = 0;
+      await using pipelined = https.createServer({ key: certs.key, cert: certs.cert }, (_req, res) => {
+        const request = requests++;
+        res.on("close", () => closed[request].resolve());
+        // More than the kernel takes for a client that does not read.
+        res.end(Buffer.alloc(16 * 1024 * 1024, "r"));
+        dispatched[request].resolve();
+      });
+      await once(pipelined.listen(0, "127.0.0.1"), "listening");
+      // A process of its own, so that only the server's sends fail.
+      await using client = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const raw = require("node:net").connect({ port: ${(pipelined.address() as AddressInfo).port}, host: "127.0.0.1", allowHalfOpen: true });
         const [inner, outer] = require("node:stream").duplexPair();
         outer.on("data", chunk => raw.write(chunk));
         raw.on("error", () => {}).on("data", chunk => outer.write(chunk));
@@ -314,31 +317,32 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
             else socket.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n", () => console.log("sent"));
           }
         });`,
-      ],
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const answers = client.stdout.getReader();
-    const tell = async (line: string) => {
-      client.stdin.write(line + "\n");
-      await client.stdin.flush();
-    };
-    await answers.read();
-    for (const request of dispatched) {
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const answers = client.stdout.getReader();
+      const tell = async (line: string) => {
+        client.stdin.write(line + "\n");
+        await client.stdin.flush();
+      };
+      await answers.read();
+      for (const request of dispatched) {
+        await tell("request");
+        await Promise.all([answers.read(), request.promise]);
+      }
+      // The reads have stopped, so this one stays in the kernel.
       await tell("request");
-      await Promise.all([answers.read(), request.promise]);
-    }
-    // The reads have stopped, so this one stays in the kernel.
-    await tell("request");
-    await answers.read();
-    fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1 });
-    // Room in the server's send buffer is its writable event.
-    await tell("read");
-    await Promise.all(closed.map(response => response.promise));
-    expect(requests).toBe(2);
-  });
+      await answers.read();
+      fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1 });
+      // Room in the server's send buffer is its writable event.
+      await tell("read");
+      await Promise.all(closed.map(response => response.promise));
+      expect(requests).toBe(2);
+    },
+  );
 
   // The write was reported as done, so no pending write carries the error past the peer's close_notify.
   test("send → EPIPE for ciphertext of a half-open socket is an error behind the peer's end", async () => {

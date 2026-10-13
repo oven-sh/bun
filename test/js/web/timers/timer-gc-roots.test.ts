@@ -141,6 +141,8 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
       await round();
       await round();
       const after = process.memoryUsage().rss;
+      const live = require("bun:jsc").heapStats().objectTypeCounts.AbortSignal || 0;
+      if (live >= 50) throw new Error(live + " AbortSignal wrappers are still alive");
       console.log(JSON.stringify({ deltaMiB: (after - before) / (1024 * 1024) }));
       process.exit(0);
     `;

@@ -1342,9 +1342,11 @@ impl<'l> Loader<'l> {
     /// Loads what `plugins` in bunfig.toml and `--plugin` name. They add to whatever the configuration is.
     fn named_plugins(&self, flavor: Flavor) -> Result<Vec<NamedPlugin>, Fatal> {
         let checked = self.load_named_plugins(flavor).and_then(|plugins| {
-            // What is wrong with their rules in bunfig.toml is said of bunfig.toml.
-            if flavor != Flavor::BuiltIn {
-                native::check_rules(self.linter, self.options, &plugins, true)?;
+            // What is wrong with their rules in bunfig.toml is said of bunfig.toml. ESLint 8 takes more than the others: any options
+            // for a rule without a schema, and a rule that does not exist is a finding.
+            if matches!(flavor, Flavor::Eslint | Flavor::Oxlint) {
+                let is_eslint = flavor == Flavor::Eslint;
+                native::check_rules(self.linter, self.options, &plugins, Some(is_eslint))?;
             }
             Ok(plugins)
         });
@@ -1362,6 +1364,13 @@ impl<'l> Loader<'l> {
             }
             let mistake = |message: Vec<u8>| native::Mistake::new(message, written.map(|it| it.at));
             let is_built_in = |name: &[u8]| self.is_built_in(flavor, name);
+            // `a/b/rule` would be the rule `b/rule` of `a`.
+            let is_name = |name: &[u8]| {
+                let slashes = strings::count_char(name, b'/');
+                !name.is_empty()
+                    && slashes <= usize::from(name.starts_with(b"@"))
+                    && !strings::contains_char(name, b':')
+            };
             let is_path = is_path_of_plugin(specifier);
             // As with ESLint, `perfectionist` is eslint-plugin-perfectionist.
             let long = plugin_longhand(specifier).filter(|_| !is_path);
@@ -1405,18 +1414,21 @@ impl<'l> Loader<'l> {
             if !is_path && is_built_in(alias.unwrap_or(&short)) {
                 let has_rules = Plugin::spelled(&short).any(|it| !it.has_no_rules());
                 match (flavor, alias) {
-                    (Flavor::BuiltIn, _) | (_, Some(_)) => {
-                        return Err(built_in(alias.unwrap_or(&short)));
-                    }
+                    (_, Some(alias)) => return Err(built_in(alias)),
+                    // All its rules are there anyway. A configuration file further down may need it.
+                    (Flavor::BuiltIn, None) => continue,
                     (Flavor::Oxlint, None) if !has_rules => return Err(built_in(&short)),
                     // It turns the plugin on, as in the file: see `built_in_plugins`.
                     (Flavor::Eslint, None) => {
-                        match self.js_plugins.load(directory, package, Some(&short)) {
-                            Ok(it) => {
+                        // It is loaded when a rule is asked of it.
+                        match self.js_plugins.resolve(directory, package) {
+                            Ok(file) => {
                                 let mut packages = self.packages_of_built_in.lock();
-                                if let Some(location) = it.location.clone()
-                                    && !packages.iter().any(|it| it.0 == short)
-                                {
+                                if !packages.iter().any(|it| it.0 == short) {
+                                    let location = object(vec![
+                                        (b"module", Json::String(file)),
+                                        (b"export", strings_of(&[b"default".to_vec()])),
+                                    ]);
                                     packages.push((short, location));
                                 }
                             }
@@ -1439,7 +1451,8 @@ impl<'l> Loader<'l> {
             let file = is_path.then(|| paths::resolve(directory, specifier));
             // ESLint calls a plugin what its flag calls it.
             let of_flag =
-                (flavor == Flavor::Eslint && written.is_none() && !is_path).then_some(&short[..]);
+                (flavor == Flavor::Eslint && written.is_none() && !is_path && is_name(&short))
+                    .then_some(&short[..]);
             let load = |name: &[u8]| self.js_plugins.load(directory, name, alias.or(of_flag));
             // The long name first: `vue` is not eslint-plugin-vue. One that is there and fails is not passed over.
             let (loaded, found_as) = match (&file, &long) {
@@ -1447,6 +1460,13 @@ impl<'l> Loader<'l> {
                 (None, None) => (load(specifier), &specifier[..]),
                 (None, Some(long)) => match load(long) {
                     Err(why) if is_missing(&why, long) => match load(specifier) {
+                        // Its rules are there with every configuration, unless a package of the project hides them.
+                        Err(why)
+                            if is_missing(&why, specifier)
+                                && Plugin::spelled(&short).any(Plugin::is_always_there) =>
+                        {
+                            continue;
+                        }
                         Err(why) if is_missing(&why, specifier) => {
                             let parts: [&[u8]; 7] = [
                                 b"Cannot load the plugin \"",
@@ -1477,10 +1497,8 @@ impl<'l> Loader<'l> {
                 },
             };
             let plugin = loaded.map_err(cannot_load)?;
-            // `a/b/rule` would be the rule `b/rule` of `a`.
             let name = &plugin.name[..];
-            let slashes = strings::count_char(name, b'/');
-            if name.is_empty() || slashes > usize::from(name.starts_with(b"@")) {
+            if !is_name(name) {
                 let parts: [&[u8]; 5] = [
                     b"\"",
                     name,
@@ -1564,7 +1582,11 @@ impl<'l> Loader<'l> {
             object(vec![
                 (
                     b"plugins",
-                    entries(&|it| it.1.get(b"module").cloned().unwrap_or(Json::Null)),
+                    entries(&|it| {
+                        it.0.id
+                            .as_ref()
+                            .map_or(Json::Null, |it| Json::String(it.to_vec()))
+                    }),
                 ),
                 (b"$jsPlugins", entries(&|it| it.1.clone())),
             ])
@@ -1598,7 +1620,7 @@ impl<'l> Loader<'l> {
         }
         self.check_flags(Flavor::BuiltIn, None)?;
         let plugins = self.named_plugins(Flavor::BuiltIn)?;
-        native::check_rules(self.linter, self.options, &plugins, false)
+        native::check_rules(self.linter, self.options, &plugins, None)
             .map_err(|it| self.fatal(it))?;
         // The repository first, so that a file gets the same answer from every directory in it, even from a `test` folder that
         // has a package.json of its own.

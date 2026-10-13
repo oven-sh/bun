@@ -112,11 +112,11 @@ plugins = [{ name = "sort", specifier = "eslint-plugin-perfectionist" }]
 "sort/sort-imports" = "error"
 ```
 
-You don't load the plugins that are built in, such as `react`, `import`, or `unicorn`. Their [rules](/lint/rules) work without it.
+You don't load the plugins that are built in, such as `react`, `import`, or `unicorn`. Their [rules](/lint/rules) work without it. Next to an ESLint or oxlint config, naming one turns it on, as `plugins` in that file does.
 
 A config file can't use the processors or languages of a plugin that is loaded this way. For those, import the plugin in the config file.
 
-For one run, use `--plugin`:
+For one run, use `--plugin`. Next to an ESLint config its prefix is the name you give the flag, as in ESLint:
 
 ```bash terminal icon="terminal"
 bun lint --plugin perfectionist --rule 'perfectionist/sort-imports: error'

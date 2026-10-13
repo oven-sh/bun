@@ -195,28 +195,43 @@ async function locatedPlugin(location, prefix) {
   return exported[location.index].plugins[prefix];
 }
 
+const isPathOfPlugin = specifier => /^\.{0,2}[\\/]/u.test(specifier) || nodePath.isAbsolute(specifier);
+
+// The file that `specifier` is: a path, relative to `directory`, or a package that is looked for from there.
+function fileOfPlugin(directory, specifier) {
+  const wanted = isPathOfPlugin(specifier) ? nodePath.resolve(directory, specifier) : specifier;
+  let file;
+  try {
+    file = createRequire(nodePath.join(directory, "noop.js")).resolve(wanted);
+  } catch (error) {
+    // A package that can only be imported.
+    try {
+      file = Bun.resolveSync(wanted, directory);
+    } catch {
+      throw error;
+    }
+  }
+  // `fs` is what it is called.
+  if (!nodePath.isAbsolute(file)) throw new Error(`Cannot find module '${specifier}'`);
+  // One file is one plugin, however it is written.
+  return realpathSync(file);
+}
+
 async function findPlugin([directory, specifier, alias]) {
   const isLocated = typeof directory === "object";
-  const isPath = isLocated || /^\.{0,2}[\\/]/u.test(specifier) || nodePath.isAbsolute(specifier);
+  const isPath = isLocated || isPathOfPlugin(specifier);
   let plugin, file, path;
   if (isLocated) plugin = await locatedPlugin(directory, alias);
   else {
-    const wanted = isPath ? nodePath.resolve(directory, specifier) : specifier;
-    try {
-      file = createRequire(nodePath.join(directory, "noop.js")).resolve(wanted);
-    } catch (error) {
-      // A package that can only be imported.
-      try {
-        file = Bun.resolveSync(wanted, directory);
-      } catch {
-        throw error;
-      }
-    }
-    // One file is one plugin, however it is written.
-    file = realpathSync(file);
+    file = fileOfPlugin(directory, specifier);
     const module = await load(pathToFileURL(file).href);
-    path = module.default == null ? [] : ["default"];
     plugin = module.default ?? module;
+    // Where it is in what `require` returns: that is what is asked where a plugin is located.
+    let required;
+    try {
+      required = require(file);
+    } catch {}
+    path = required === plugin ? [] : ["default"];
   }
   if (plugin === null || typeof plugin !== "object") {
     throw new TypeError(`A plugin must export an object: ${JSON.stringify(alias ?? specifier)}`);
@@ -288,8 +303,12 @@ function ruleAt(location) {
   }
 }
 
+// For `position`: the file is asked for, and nothing is loaded.
+const ONLY_RESOLVE = -1;
+
 // `position`, `firstRule`: `null` as long as the other side does not know the plugin.
 async function loadPlugin([location, position, firstRule]) {
+  if (position === ONLY_RESOLVE) return { file: fileOfPlugin(location[0], location[1]) };
   const key = JSON.stringify(location);
   let found = pluginsByLocation.get(key);
   if (found === undefined) {
@@ -321,7 +340,15 @@ async function loadPlugin([location, position, firstRule]) {
     }
   });
   if (position !== null) loadedPlugins.add(position);
-  return { name, isAlias, file, export: path, hasNothing, rules: described };
+  // ESLint's `getObjectId`
+  const { name: called, version } = plugin.meta ?? {};
+  const id =
+    typeof called !== "string" || !called
+      ? null
+      : typeof version === "string" && version
+        ? `${called}@${version}`
+        : called;
+  return { name, isAlias, id, file, export: path, hasNothing, rules: described };
 }
 
 // ------------- ESLint's `context` -------------

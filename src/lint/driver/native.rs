@@ -142,12 +142,13 @@ pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
 /// Returns the first mistake in `[lint.rules]`, `--rule`, `-A` / `-W` / `-D` or the `rules` of `[[lint.overrides]]`: an unknown
 /// rule, an invalid severity, or options the rule doesn't take. Turning off a rule that Bun left out on purpose is fine.
 /// `plugins`: the JavaScript plugins that are loaded.
-/// `only_of_plugins`: there is a configuration file, whose tool has its own words about the other rules.
+/// `only_of_plugins`: there is a configuration file, whose tool has its own words about the other rules. `Some(true)`: it is
+/// ESLint, which does not look at a rule that is off.
 pub(crate) fn check_rules(
     linter: &Linter,
     options: &Options,
     plugins: &[NamedPlugin],
-    only_of_plugins: bool,
+    only_of_plugins: Option<bool>,
 ) -> Result<(), Mistake> {
     let check = |rules: &[(Vec<u8>, Json)], places: &[RuleOfBunfig]| {
         check(linter, plugins, rules, places, only_of_plugins)
@@ -168,7 +169,7 @@ fn check(
     plugins: &[NamedPlugin],
     rules: &[(Vec<u8>, Json)],
     places: &[RuleOfBunfig],
-    only_of_plugins: bool,
+    only_of_plugins: Option<bool>,
 ) -> Result<(), Mistake> {
     let registry = linter.registry();
     for (at, (id, setting)) in rules.iter().enumerate() {
@@ -183,6 +184,9 @@ fn check(
         let (prefix, name) = parse_rule_id(id);
         if let Some((plugin, _)) = plugins.iter().find(|it| *it.0.name == *prefix) {
             let Some(rule) = plugin.rule(name) else {
+                if only_of_plugins == Some(true) && severity == Some(Severity::Off) {
+                    continue;
+                }
                 return Err(Mistake {
                     message: unknown_rule_of(plugin, id, name),
                     at: written.map(|it| it.key_at),
@@ -220,7 +224,7 @@ fn check(
                 },
             }
         }
-        if only_of_plugins {
+        if only_of_plugins.is_some() {
             continue;
         }
         let found = registry.find_by_any_name(id);

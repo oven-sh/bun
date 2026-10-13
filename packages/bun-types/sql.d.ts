@@ -158,6 +158,11 @@ declare module "bun" {
     class SQLiteError extends SQLError {
       public readonly code: string;
       public readonly errno: number;
+      /**
+       * The UTF-8 byte offset of the token that the error refers to, counted
+       * from the start of the query text. `-1` if the error refers to no
+       * token, or if the offset is not known.
+       */
       public readonly byteOffset?: number | undefined;
 
       constructor(message: string, options: { code: string; errno: number; byteOffset?: number | undefined });

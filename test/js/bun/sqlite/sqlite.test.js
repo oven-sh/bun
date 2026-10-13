@@ -1286,6 +1286,118 @@ it("syntax error sets the byteOffset", () => {
   }
 });
 
+// The system SQLite of macOS before 13 has no sqlite3_error_offset. Bun reports -1 there.
+const hasErrorOffset = !(isMacOS && !isMacOSVersionAtLeast(13));
+
+// sqlite3_error_offset counts from the pointer that sqlite3_prepare_v3 received. run() and exec() prepare each
+// statement from where the one before it ended, after the blanks and `;` that bun skips, so the offset of the
+// statement in the text has to be added.
+it.each(["run", "exec"])("%s() counts byteOffset from the start of the SQL text", method => {
+  const byteOffsetOf = (sql, how = method) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE users (id, name)");
+    try {
+      db[how](sql);
+    } catch (e) {
+      return e.byteOffset;
+    }
+    return "no error";
+  };
+  // The UTF-8 byte index of the token that the error names.
+  const at = (sql, token) => (hasErrorOffset ? Buffer.from(sql).indexOf(token) : -1);
+
+  // The first statement of the text fails. prepare() compiles it from the start of the text and agrees.
+  const first = [
+    ["SELECT nmae FROM users", "nmae"],
+    ["\n    SELECT nmae FROM users", "nmae"],
+    [" !", "!"],
+    [";;; SELECT nmae FROM users", "nmae"],
+    ["-- comment\nSELECT nmae FROM users", "nmae"],
+    ["/* comment */ SELECT nmae FROM users", "nmae"],
+    ["\n\t SELECT 'abc", "'abc"],
+  ];
+  expect(first.map(([sql]) => ({ sql, byteOffset: byteOffsetOf(sql), prepare: byteOffsetOf(sql, "prepare") }))).toEqual(
+    first.map(([sql, token]) => ({ sql, byteOffset: at(sql, token), prepare: at(sql, token) })),
+  );
+
+  // A later statement fails. The offset counts the statements, blanks, comments and non-ASCII text before it.
+  const later = [
+    ["DELETE FROM users; SELECT nmae FROM users", "nmae"],
+    ["DELETE FROM users; DELETE FROM users; SELECT nmae FROM users", "nmae"],
+    ["DELETE FROM users; -- comment\n SELECT nmae FROM users", "nmae"],
+    ["SELECT 'é😀'; SELECT nmae FROM users", "nmae"],
+    ["SELECT ';'; SELECT nmae FROM users", "nmae"],
+    ["CREATE TRIGGER t AFTER INSERT ON users BEGIN DELETE FROM users; END; SELECT nmae FROM users", "nmae"],
+    ["SELECT 1; SELECT * FROM users!!", "!!"],
+    ["SELECT 1; !!", "!!"],
+    ["SELECT 1; SELECT 'abc", "'abc"],
+    // SQLite rejects a vertical tab. Bun skips it in front of a statement.
+    ["\vSELECT nmae FROM users", "nmae"],
+  ];
+  expect(later.map(([sql]) => ({ sql, byteOffset: byteOffsetOf(sql) }))).toEqual(
+    later.map(([sql, token]) => ({ sql, byteOffset: at(sql, token) })),
+  );
+
+  // An error that names no token has no offset, wherever its statement is.
+  const noToken = ["SELECT 1;\n\n  SELECT * FROM nope", "SELECT 1; SELECT (", "\n  INSERT INTO users VALUES (1, 2, 3)"];
+  expect(noToken.map(sql => ({ sql, byteOffset: byteOffsetOf(sql) }))).toEqual(
+    noToken.map(sql => ({ sql, byteOffset: -1 })),
+  );
+
+  // An error that does not come from SQLite has no byteOffset property.
+  expect(byteOffsetOf(" ; ")).toBeUndefined();
+});
+
+// sqlite3_step prepares a statement again when the schema changed after sqlite3_prepare_v3. A failed re-prepare
+// reports its offset from the start of that statement, and sqlite3_finalize of the statement resets it to -1.
+it.each(["run", "exec"])("%s() keeps the byteOffset of a failed re-prepare in sqlite3_step", method => {
+  const sql = "\n    SELECT name FROM users WHERE id = $id";
+  const noSuchColumn = {
+    message: "no such column: name",
+    byteOffset: hasErrorOffset ? Buffer.from(sql).indexOf("name") : -1,
+  };
+  const attempt = (db, bindings) => {
+    try {
+      db[method](sql, bindings);
+    } catch (e) {
+      return { message: e.message, byteOffset: e.byteOffset };
+    }
+    return "no error";
+  };
+  const withSchemaChange = changeSchema => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE users (id, name)");
+    // The getter runs after sqlite3_prepare_v3 and before sqlite3_step.
+    return attempt(db, {
+      get $id() {
+        changeSchema(db);
+        return 1;
+      },
+    });
+  };
+
+  const dropNameColumn = "DROP TABLE users; CREATE TABLE users (id)";
+
+  // The statement starts to run and finds the new schema.
+  expect(withSchemaChange(db => db.run(dropNameColumn))).toEqual(noSuchColumn);
+  // ANALYZE expires the statement before its first step.
+  expect(withSchemaChange(db => db.run(dropNameColumn + "; ANALYZE"))).toEqual(noSuchColumn);
+
+  // Another connection changes the schema. The first call prepares against the schema that this connection
+  // has cached and fails in sqlite3_step. The next calls fail in sqlite3_prepare_v3.
+  using dir = tempDir("sqlite-reprepare-offset", {});
+  const file = path.join(String(dir), "users.sqlite");
+  using reader = new Database(file);
+  using writer = new Database(file);
+  reader.run("CREATE TABLE users (id, name)");
+  writer.run(dropNameColumn);
+  expect([attempt(reader, { $id: 1 }), attempt(reader, { $id: 1 }), attempt(reader, { $id: 1 })]).toEqual([
+    noSuchColumn,
+    noSuchColumn,
+    noSuchColumn,
+  ]);
+});
+
 // A statement that failed in sqlite3_step was forgotten when any text followed it, even a newline:
 // the next sqlite3_prepare_v3 replaced the error, and the rest of the text ran (#37415).
 it.each(["run", "exec"])("%s() stops and throws at the first statement that fails, whatever follows it", method => {

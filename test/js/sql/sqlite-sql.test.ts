@@ -1,7 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
+import { isDebug, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -2098,6 +2098,43 @@ describe("Error handling", () => {
       })
       .catch(e => e);
     expect({ error: describeError(transaction), rows: await rows() }).toEqual({ error: unique, rows: [1, 3] });
+  });
+
+  test("byteOffset counts from the start of the query text", async () => {
+    await sql`CREATE TABLE offsets (id, name)`;
+    // The system SQLite of macOS before 13 has no sqlite3_error_offset. Bun reports -1 there.
+    const hasErrorOffset = !(isMacOS && !isMacOSVersionAtLeast(13));
+    const at = (text: string, token: string) => (hasErrorOffset ? Buffer.from(text).indexOf(token) : -1);
+    const byteOffsetOf = async (query: PromiseLike<unknown>) => {
+      try {
+        await query;
+      } catch (error: any) {
+        return error.byteOffset;
+      }
+      return "no error";
+    };
+
+    // A query that cannot return rows runs through Database.run, which prepares one statement at a time.
+    const indented = "\n      DELETE FROM offsets WHERE nmae = 1";
+    const second = "DELETE FROM offsets WHERE name = 'é'; DELETE FROM offsets WHERE nmae = 1";
+    // A query that can return rows runs through Database.prepare, which always counted from the start.
+    const select = "\n      SELECT nmae FROM offsets";
+    using dir = tempDir("sqlite-sql-offsets", { "statements.sql": second });
+
+    expect({
+      tagged: await byteOffsetOf(sql`
+      DELETE FROM offsets WHERE nmae = 1`),
+      unsafe: await byteOffsetOf(sql.unsafe(second)),
+      file: await byteOffsetOf(sql.file(join(String(dir), "statements.sql"))),
+      transaction: await byteOffsetOf(sql.begin(tx => tx.unsafe(second))),
+      select: await byteOffsetOf(sql.unsafe(select)),
+    }).toEqual({
+      tagged: at(indented, "nmae"),
+      unsafe: at(second, "nmae"),
+      file: at(second, "nmae"),
+      transaction: at(second, "nmae"),
+      select: at(select, "nmae"),
+    });
   });
 });
 

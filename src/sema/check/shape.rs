@@ -4394,10 +4394,72 @@ impl<'p, 's> Checker<'p, 's> {
         // A constituent whose members are in place does not have all of them yet.
         let is_in_place = self.non_cacheable_mark() != counters;
         match self.leave(q) {
-            Ok(_) if is_in_place => self.provisional_shape(shape),
-            Ok(stored) => self.keep_shape(ty, shape, stored),
+            Ok(_) if is_in_place => {
+                // `d.resolvedProperties = props`: the list stays as it is, unless an evaluation
+                // of it around this one ends later.
+                if !self.stack.contains(&q)
+                    && self.p.listed_properties.get(&self.task, &ty).is_none()
+                    && self.note_listing(ty, parts, true)
+                {
+                    let listed = self.synth(shape.clone_in(self.arena));
+                    (self.p.listed_properties).insert(&self.task, ty, listed, Stored::new());
+                }
+                self.provisional_shape(shape)
+            }
+            Ok(stored) => {
+                self.note_complete_listing(ty, parts);
+                self.keep_shape(ty, shape, stored)
+            }
             Err(open) => self.cache_shape_provisionally(q, shape, open),
         }
+    }
+
+    /// `Finished::listings`: the list of properties of an intersection of `parts` is assigned.
+    /// `is_partial`: only the mapped types whose members are in place are noted, which the list
+    /// lacks. Another task cannot tell which list the tasks before it assign, so
+    /// `Program::validate` compares what each has noted.
+    /// The list of properties of the intersection `ty` is assigned while no constituent has its
+    /// members in place: it is complete, and stays. The entry is `ty` itself.
+    fn note_complete_listing(&mut self, ty: TypeId, parts: &[TypeId]) {
+        if self.p.listed_properties.get(&self.task, &ty).is_none()
+            && self.note_listing(ty, parts, false)
+        {
+            (self.p.listed_properties).insert(&self.task, ty, ty, Stored::new());
+        }
+    }
+
+    /// `Finished::listings`: the list of properties of the intersection `ty` is assigned.
+    /// `is_partial`: the members of a mapped type among `parts` are in place, so the list lacks
+    /// them. Another task cannot tell which list the tasks before it assign, so
+    /// `Program::validate` compares what each has noted, by the type alias that names `ty`: an
+    /// intersection without one keeps no list of its own. `false`: nothing is noted.
+    fn note_listing(&mut self, ty: TypeId, parts: &[TypeId], is_partial: bool) -> bool {
+        let Some(alias) = self.listing_alias(ty, parts, is_partial) else {
+            return false;
+        };
+        if !self.task.listings.contains(&(alias, is_partial)) {
+            self.task.listings.push((alias, is_partial));
+        }
+        true
+    }
+
+    /// The type alias that names the intersection `ty` of `parts`, when the list of properties
+    /// that `ty` keeps is noted (`note_listing`): it has a mapped type that is written where it
+    /// is, and for a partial list the members of one are in place.
+    fn listing_alias(&self, ty: TypeId, parts: &[TypeId], is_partial: bool) -> Option<Sym> {
+        let &(alias, ref type_arguments) = self.stored_alias(ty)?;
+        let from = self.resolution_start;
+        let has_mapped_type = type_arguments.is_empty()
+            && parts.iter().any(|&part| {
+                matches!(
+                    self.data(part),
+                    TypeData::Anon {
+                        origin: Origin::Mapped(..),
+                        mapper: MapperId::IDENTITY,
+                    }
+                ) && (!is_partial || self.stack[from..].contains(&Query::Shape(part)))
+            });
+        has_mapped_type.then_some(alias)
     }
 
     fn shape_of_synth(&mut self, object: TypeId) -> Built<'p> {
@@ -4928,7 +4990,7 @@ impl<'p, 's> Checker<'p, 's> {
                 true => TypeId::EMPTY_OBJECT,
                 false => c.reduced_apparent_type_as_object(ty),
             };
-            c.members(if ty.is_never() {
+            c.listed_members(if ty.is_never() {
                 TypeId::EMPTY_OBJECT
             } else {
                 ty
@@ -6465,6 +6527,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getNextBaseConstraint`: the same, as part of the constraint computation in progress.
     pub(super) fn next_base_constraint(&mut self, ty: TypeId) -> Option<TypeId> {
+        // `computeBaseConstraint` of a type parameter assigns `tp.constraint`.
+        if !self.unresolved_renamed_params.is_empty() {
+            self.unresolved_renamed_params.remove(&ty);
+        }
         let data = self.data(ty);
         let is_union_or_intersection =
             matches!(data, TypeData::Union(_) | TypeData::Intersection(_));
@@ -6955,6 +7021,27 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.begin_scope();
         self.never_in_progress.push(ty);
         self.never_in_progress_from.push(self.stack.len());
+        // `getPropertiesOfUnionOrIntersectionType` asks each member for its properties. For an
+        // instantiable member that is `getReducedApparentType`: its base constraint is resolved
+        // here, with the errors and the cycles of that.
+        if let TypeData::Intersection(members) = self.data(ty) {
+            let members: SmallVec<[TypeId; 4]> = members.iter().copied().collect();
+            for &member in &members {
+                if self.is_instantiable(member) {
+                    self.apparent_type(member);
+                }
+            }
+            // It lists the properties: while the members of a constituent are in place, the
+            // list it assigns lacks them.
+            let from = self.resolution_start;
+            if (members.iter()).any(|&member| self.stack[from..].contains(&Query::Shape(member))) {
+                self.properties_of_intersection(ty, &members);
+            } else if self.listing_alias(ty, &members, false).is_some() {
+                // `getReducedType` assigns the list. It is the complete one, and it is kept: a
+                // later read while a constituent has its members in place finds it.
+                self.properties_of_intersection(ty, &members);
+            }
+        }
         // `isNeverReducedProperty`
         let is_never = self.has_property_in_several_members(ty)
             && match self.may_have_never_reduced_property(ty, false) {

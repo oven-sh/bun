@@ -617,9 +617,12 @@ fn collect_possible_jest_call_node<'a>(
         .map(|id| Expr::from_raw(file, *id))
         .filter(is_global)
         .for_each(|it| found.add_calls_of(it, u32::MAX, u32::MAX, frameworks));
-    utils::sort::sort_unstable_by_key(&mut found.calls, |it| {
-        (it.span.start, std::cmp::Reverse(it.span.end))
-    });
+    // A test file has hundreds, so not through a call for each comparison.
+    let keys = found.calls.iter().enumerate();
+    let mut keys: Vec<u128> = keys.map(|(at, it)| it.span.sort_key(0, at)).collect();
+    keys.sort();
+    let mut order: Vec<u32> = keys.iter().map(|&key| key as u32).collect();
+    utils::sort::apply_permutation_in_place(&mut found.calls, &mut order);
     found
 }
 

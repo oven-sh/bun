@@ -160,6 +160,10 @@ impl std::fmt::Debug for OfGroup {
 impl std::panic::RefUnwindSafe for OfGroup {}
 
 impl Orders for OfGroup {
+    fn has_tailwind(&self) -> bool {
+        self.which.is_ok()
+    }
+
     fn ranks_of(&self, classes: &[u8]) -> Option<Vec<Rank>> {
         let mut known = self.classes.known.lock();
         let which = match &self.which {
@@ -299,7 +303,10 @@ pub(crate) fn option_of_plugin(
 
 /// What the plugin says about its options, which are `entries` of `sortTailwindcss`.
 pub(crate) fn warning_of_plugin(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
-    let get = |key: &[u8]| entries.iter().find(|it| it.0 == key)?.1.as_str();
+    let get = |key: &[u8]| {
+        let path = entries.iter().find(|it| it.0 == key)?.1.as_str()?;
+        (!path.is_empty()).then_some(path)
+    };
     let is_sheet = |path: &&[u8]| path.ends_with(b".css");
     let old: &[u8] = match (get(b"stylesheet"), get(b"entryPoint"), get(b"config")) {
         (Some(_), _, Some(config)) | (_, Some(_), Some(config)) if !is_sheet(&config) => {
@@ -333,7 +340,8 @@ pub(crate) fn for_file(
             .collect()
     };
     let path_at = |key: &[u8]| {
-        let path = get(key)?.as_str()?;
+        // The plugin takes an empty one for none.
+        let path = get(key)?.as_str().filter(|it| !it.is_empty())?;
         Some(paths::resolve(base, &paths::from_native(path)))
     };
     let is_on = |key: &[u8]| get(key).and_then(Json::as_bool) == Some(true);
@@ -423,12 +431,6 @@ impl Classes {
         let known = self.known.lock();
         let mut found = known.by_directory.iter().filter(|it| it.1.is_some());
         found.any(|it| it.0.ends_with(PLUGIN))
-    }
-
-    /// Whether the package has been looked for from the directory of `path`, in vain.
-    pub(crate) fn has_no_package_for(&self, path: &[u8]) -> bool {
-        let known = self.known.lock();
-        matches!(known.by_directory.get(paths::dirname(path)), Some(None))
     }
 
     /// Asks Tailwind about the classes that are not known. `Err`: for the user: there are files for which it cannot be

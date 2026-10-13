@@ -268,7 +268,9 @@ impl<'e> ForRules<'e> {
         let kind = Kind::with_options(path, &resolved.options);
         tailwind::only_where_sorted(&mut resolved.options, kind);
         // As `bun fmt`, which then leaves the classes as they are.
-        if *allows_unsupported && configs.classes.has_no_package_for(path) {
+        if *allows_unsupported
+            && (resolved.options.tailwind.as_deref()).is_some_and(|it| !it.orders.has_tailwind())
+        {
             resolved.options.tailwind = None;
         }
         let mut scratch = self.scratches.lock().pop().unwrap_or_default();

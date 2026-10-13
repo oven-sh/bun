@@ -347,7 +347,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(result.stderr.split("\n").filter(line => line.startsWith("[error]"))).toEqual([
         `[error] caf\uFFFD/b.jsx: ${unknown} It was not formatted.`,
         `[error] sortTailwindcss: ${String(dir)}/caf\uFFFD/node_modules/tailwindcss: cannot load Tailwind CSS from a path that is not UTF-8`,
-        "[error] 1 file was not formatted.",
+        "[error] 1 file with classes was not formatted.",
       ]);
       expect(result.files).toEqual([sorted]);
       expect(readFileSync(inside("/b.jsx"), "utf8")).toBe(`${input}b  ;\n`);
@@ -449,7 +449,9 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(lists[0].stderr).toContain(
         `[${allows ? "warn" : "error"}] sortTailwindcss: ${join(String(dir), "three/tailwind.config.js").replaceAll("\\", "/")}: It has no such plugin.`,
       );
-      expect(lists[0].stderr).toContain(allows ? "Classes were not sorted in 7 files." : "7 files were not formatted.");
+      expect(lists[0].stderr).toContain(
+        allows ? "Classes were not sorted in 7 files." : "7 files with classes were not formatted.",
+      );
       expect(Array.from(lists[0].stderr.matchAll(/(\w+)\/tailwind\.config\.js: /g), it => it[1])).toEqual([
         "a",
         "b",
@@ -589,6 +591,11 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(result).toMatchObject({ stderr, files: [reversed], exitCode: 0 });
     });
 
+    test.each(["tailwindStylesheet", "tailwindEntryPoint", "tailwindConfig"])("an empty %s is none", async name => {
+      const result = await format({ ...project, ...config({ [name]: "" }), "a.jsx": input }, ["a.jsx"]);
+      expect(result).toMatchObject({ stderr: "", files: [sorted], exitCode: 0 });
+    });
+
     test("a path is relative to the working directory if the config is the one that --config names", async () => {
       const files = {
         "config/.prettierrc": config({ tailwindStylesheet: "./app.css" })[".prettierrc"],
@@ -630,6 +637,26 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
         'Invalid tailwindPreserveWhitespace value. Expected true or false, but received "yes".',
       ],
       [{ tailwindStylesheet: 1 }, "Invalid tailwindStylesheet value. Expected a string, but received 1."],
+      [{ tailwindStylesheet: null }, "Invalid tailwindStylesheet value. Expected a string, but received null."],
+      [{ tailwindConfig: null }, "Invalid tailwindConfig value. Expected a string, but received null."],
+      [{ tailwindEntryPoint: null }, "Invalid tailwindEntryPoint value. Expected a string, but received null."],
+      [{ tailwindPackageName: null }, "Invalid tailwindPackageName value. Expected a string, but received null."],
+      [
+        { tailwindFunctions: null },
+        "Invalid tailwindFunctions value. Expected an array of a string, but received null.",
+      ],
+      [
+        { tailwindAttributes: null },
+        "Invalid tailwindAttributes value. Expected an array of a string, but received null.",
+      ],
+      [
+        { tailwindPreserveWhitespace: null },
+        "Invalid tailwindPreserveWhitespace value. Expected true or false, but received null.",
+      ],
+      [
+        { tailwindPreserveDuplicates: null },
+        "Invalid tailwindPreserveDuplicates value. Expected true or false, but received null.",
+      ],
     ])("a value of the wrong type is refused: %j", async (options, refusal) => {
       const result = await format({ ...project, ...config(options), "a.jsx": input }, ["a.jsx"]);
       expect(result.stderr).toBe(`[error] ${refusal}\n`);
@@ -660,9 +687,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       const files = { ".prettierrc": JSON.stringify({ plugins: [plugin, "prettier-plugin-other"] }), "a.jsx": input };
       const result = await format({ ...project, ...files }, ["a.jsx"], ["--log-level=log", "--check"]);
       expect(result.stderr).toContain("plugins that bun fmt does not include: prettier-plugin-other\n");
-      expect(result.stderr).toMatch(
-        /\[warn\] prettier-plugin-other in \S+ has no effect because bun fmt does not include that plugin\n/,
-      );
+      // That it has no effect is said in a run that goes on without it.
+      expect(result.stderr).not.toContain("has no effect");
       // Nothing is said about files that have not been looked at.
       expect(result.stdout).toBe("Checking formatting...\n");
       expect(result.files).toEqual([input]);
@@ -897,6 +923,23 @@ export async function createSorter({ configPath, stylesheetPath }) {
         expect(result.files).toEqual([input]);
         expect(result.exitCode).toBe(2);
       });
+    });
+
+    // Each stream has what Prettier's has.
+    test("--check says on standard output that an error occurred, and on standard error what it is", async () => {
+      const files = { ...config({}), "tailwind.config.js": 'throw new Error("boom");\n', "a.jsx": input };
+      using dir = tempDir("bun-format-tailwind", { ...version3, ...installed, ...files });
+      const result = await formatIn(String(dir), [], ["--log-level=log", "--check", "a.jsx"]);
+      expect(result.stdout).toBe(
+        "Checking formatting...\nError occurred when checking code style in the above file.\n",
+      );
+      expect(result.stderr.split("\n")).toEqual([
+        `[error] a.jsx: ${unknown} It was not formatted.`,
+        expect.stringMatching(/^\[error\] sortTailwindcss: \S+tailwind\.config\.js: boom$/),
+        "[error] 1 file with classes was not formatted.",
+        "",
+      ]);
+      expect(result.exitCode).toBe(2);
     });
 
     test("a flag or [fmt] counts for more", async () => {

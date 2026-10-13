@@ -288,9 +288,9 @@ fn merged(a: &[u64], b: &[u64]) -> Vec<u64> {
     all
 }
 
-/// Puts `nodes`, which are by where the node starts, in the order in which a walk enters the nodes, those of one node by the rule. In
-/// the high half of each is where the node starts, in the low half the place in `diagnostics` and in `found`, which has the nodes, each with what decides among
-/// what one rule reports about it.
+/// Puts `nodes`, which are by where the node starts, in the order in which a walk enters the nodes, those of one node by the
+/// rule. In the high half of each is where the node starts, in the low half the place in `diagnostics` and in `found`, which has
+/// the nodes, each with what decides among what one rule reports about it.
 fn sort_as_entered<'a>(
     file: &'a File<'a>,
     diagnostics: &[Diagnostic],

@@ -875,7 +875,7 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
         }
         None => match files::language_of(path) {
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
-            Language::Supported if configs.is_changed_by_plugin(scope, path) => Language::Other,
+            Language::Supported if configs.is_read_by_plugin(scope, path) => Language::Other,
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
                 Language::Supported
             }
@@ -1112,7 +1112,16 @@ impl Run<'_> {
         }
         // As for a file. Who gets the text back with 0 takes it for formatted.
         let allows = self.options.allow_unsupported;
-        if language == Language::Other {
+        // It is the plugin that is missing, not the language.
+        let plugin = (configs.plugin_that_reads(&scope, &path))
+            .filter(|_| files::language_of(&path) == Language::Supported);
+        if let (Language::Other, Some(plugin)) = (language, plugin) {
+            self.say_not_installed(&not_installed);
+            if !allows {
+                self.say_left_for_plugins(1, &[plugin]);
+                return self.out;
+            }
+        } else if language == Language::Other {
             self.say_unsupported(&mut [(ending_of(&path), 1)], &not_installed);
             if allows && !only_looks {
                 self.out.stdout = text;
@@ -1479,10 +1488,8 @@ impl Run<'_> {
                     handed_over.push((index, target));
                 }
                 Language::Other => {
-                    if configs
-                        .plugin_that_reads(&target.scope, &target.path)
-                        .is_some()
-                    {
+                    let plugin = configs.plugin_that_reads(&target.scope, &target.path);
+                    if plugin.is_some() {
                         for package in [&b"prettier"[..]]
                             .into_iter()
                             .chain(configs.packages_of_plugins(&target.scope, Some(&target.path)))
@@ -1491,6 +1498,20 @@ impl Run<'_> {
                                 not_installed.push(package);
                             }
                         }
+                    }
+                    // It is the plugin that is missing, not the language.
+                    if let Some(plugin) = plugin
+                        && files::language_of(&target.path) == Language::Supported
+                    {
+                        if options.allow_unsupported {
+                            work.push((index, target));
+                        } else {
+                            left_for_plugins.0 += 1;
+                            if !left_for_plugins.1.contains(&plugin) {
+                                left_for_plugins.1.push(plugin);
+                            }
+                        }
+                        continue;
                     }
                     let kind = ending_of(&target.path);
                     match others.iter_mut().find(|it| it.0 == kind) {
@@ -1639,8 +1660,8 @@ impl Run<'_> {
                 let said = match (options.allow_unsupported, count) {
                     (true, 1) => "\nClasses were not sorted in 1 file.".to_owned(),
                     (true, _) => format!("\nClasses were not sorted in {count} files."),
-                    (false, 1) => "\n1 file was not formatted.".to_owned(),
-                    (false, _) => format!("\n{count} files were not formatted."),
+                    (false, 1) => "\n1 file with classes was not formatted.".to_owned(),
+                    (false, _) => format!("\n{count} files with classes were not formatted."),
                 };
                 error.extend_from_slice(said.as_bytes());
                 if options.allow_unsupported {
@@ -1861,6 +1882,8 @@ impl Run<'_> {
         // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
         if !others.is_empty() {
             self.say_unsupported(&mut others, &not_installed);
+        } else {
+            self.say_not_installed(&not_installed);
         }
         self.out
     }
@@ -1876,6 +1899,21 @@ impl Run<'_> {
         );
         let end = format!("\n  Use --allow-unsupported to format {it} without the plugins.");
         self.error(&[text.as_bytes(), &names.join(&b", "[..]), end.as_bytes()].concat());
+    }
+
+    /// The packages that would have to be installed for more files to go to the project's own Prettier.
+    fn say_not_installed(&mut self, not_installed: &[&[u8]]) {
+        if !not_installed.is_empty() {
+            let plugins = not_installed.join(&b", "[..]);
+            self.warn(
+                &[
+                    &b"Not installed: "[..],
+                    &plugins,
+                    b"\n  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+                ]
+                .concat(),
+            );
+        }
     }
 
     /// `others`: the endings of the files in another language, and how many have each. `not_installed`: the packages that would
@@ -1895,17 +1933,7 @@ impl Run<'_> {
             "{count} {noun} not formatted because bun fmt does not support {its} language yet: "
         );
         let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
-        if !not_installed.is_empty() {
-            let plugins = not_installed.join(&b", "[..]);
-            self.warn(
-                &[
-                    &b"Not installed: "[..],
-                    &plugins,
-                    b"\n  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
-                ]
-                .concat(),
-            );
-        }
+        self.say_not_installed(not_installed);
         match self.options.allow_unsupported {
             true => self.warn(&text),
             false => {

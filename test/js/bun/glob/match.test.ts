@@ -2773,6 +2773,23 @@ describe("Glob.match", () => {
   );
 
   test.each([
+    ["**/*[!a]*{a,b}", ["/abc/aa", "x//abc/aa", "b/x//abc/aa"], ["/abc/ac", "c/cc"]],
+    ["**/*[^b]*@(a|b)", ["abc/b", "x/abc/b"], ["abc/c", "b"]],
+    ["*[^b]*{a,b}/x", ["abc/ab/x", "ca/x"], ["cc/x", "abc/cc/x"]],
+    ["a/**/*[^/]*[!a]*{a,b}", ["a/bcaa", "a/x/bc/a"], ["a/aa", "b/bcaa"]],
+    ["**/*[!a]*[^/]/**/*{,b}/*", ["b/./.a/é", "2/x//y/z", "a}/n/../"], ["a/a", "aa"]],
+    ["**/*[^b]**a*/**/{a,b}*/*", ["1/a/aa/aa", "1/a/aa/aa/x"], ["1/c/cc/cc"]],
+    ["**/*[!a]*[+-9]/**/*/{*a,b}/b", ["a,b/2/ba//a/b", "x/2/ba//a/b"], ["x/2/c/c/c"]],
+    ["**/*[!a]*[!a]/**/*/{,b}/*/*", ["ab/ab/x//x/+", "ab/ab/x//x/y"], ["aa/aa"]],
+  ])("a group after a `*` and a class that can match a separator: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
+  test.each([
     ["\\{a,b\\}", ["{a,b}"], ["a", "b", "{a,b", "{a,b}x", ""]],
     ["\\*.ts", ["*.ts"], ["a.ts", ".ts", "*.tsx", "x*.ts"]],
     ["a\\[b\\].ts", ["a[b].ts"], ["ab.ts", "a[b]xts", "a[b].t"]],

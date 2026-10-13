@@ -395,6 +395,20 @@ describe.concurrent("prettier/prettier", () => {
       `a.js:1:1: ${unchecked} [Error/bun(format)]`,
       `b.js:1:1: ${unchecked} [Error/bun(format)]`,
     ]);
+    // The plugin of Prettier brings a Tailwind CSS along, which `bun fmt` asks if the project has none.
+    const { ".oxfmtrc.json": _, ...rest } = classes;
+    const plugin = "prettier-plugin-tailwindcss";
+    expect(
+      await reportsOf({
+        ...rest,
+        ".prettierrc": `{ "plugins": ["${plugin}"] }`,
+        [`node_modules/${plugin}/package.json`]: "{}",
+      }),
+    ).toEqual([`a.js:1:1: ${unchecked} [Error/bun(format)]`, `b.js:1:1: ${unchecked} [Error/bun(format)]`]);
+    // A package of another name that is not there is as good as none.
+    expect(
+      await reportsOf({ ...rest, ".prettierrc": `{ "plugins": ["${plugin}"], "tailwindPackageName": "@acme/tw" }` }),
+    ).toEqual(["a.js:1:31: Delete `··` [Error/bun(format)]"]);
   });
 
   // It is linted script by script, under the name of the file. `--fix` once made one comment of this script.

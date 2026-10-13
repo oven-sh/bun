@@ -389,7 +389,7 @@ fn settings(json: &Json, is_oxfmt: bool) -> Settings {
         let is_option = OPTIONS.contains(&&name[..]);
         let text = match value {
             // As JSON, a string too: the plugin that sorts classes refuses a value of the wrong type.
-            Json::Bool(_) | Json::Number(_) | Json::String(_)
+            Json::Null | Json::Bool(_) | Json::Number(_) | Json::String(_)
                 if !is_oxfmt && name.starts_with(b"tailwind") =>
             {
                 let mut text = Vec::new();
@@ -1292,7 +1292,8 @@ impl<'c> Configs<'c> {
                 missing.push(name);
             }
         }
-        if !missing.is_empty() {
+        // Without the flag the files are left alone because of them, which is said at the end.
+        if !missing.is_empty() && self.options.allow_unsupported {
             let end: &[u8] = match missing.len() {
                 1 => b" has no effect because bun fmt does not include that plugin",
                 _ => b" have no effect because bun fmt does not include those plugins",
@@ -1612,11 +1613,6 @@ impl<'c> Configs<'c> {
     /// Whether Prettier reads the file at `path`, which has `scope`, with a plugin that adds a language.
     pub(crate) fn is_read_by_plugin(&self, scope: &Scope, path: &[u8]) -> bool {
         (self.endings_of_plugins(scope, path)).any(|ending| path.ends_with(ending))
-    }
-
-    /// The same for a file that is formatted here too, without the plugin, if that is allowed.
-    pub(crate) fn is_changed_by_plugin(&self, scope: &Scope, path: &[u8]) -> bool {
-        !self.options.allow_unsupported && self.is_read_by_plugin(scope, path)
     }
 
     /// The plugin that adds the language of the file at `path`, which has `scope`, if Prettier reads it with one.

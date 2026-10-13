@@ -1597,6 +1597,10 @@ exports.format = async (text, options) => {
         expect(result.stderr).toContain("Used your installed Prettier for 2 files");
         expect(result.stderr).not.toContain("[warn]");
         expect(result.exitCode).toBe(0);
+        // The flag is for what cannot be done, and this can.
+        const withFlag = await format(project, ["--allow-unsupported"], { reads: names });
+        expect(withFlag.files).toEqual(result.files);
+        expect(withFlag.stderr).toContain("Used your installed Prettier for 2 files");
 
         // Without Prettier only those files are left, and with the flag they are formatted without the plugin.
         const { ".prettierrc": config, "package.json": text } = project;
@@ -1604,9 +1608,14 @@ exports.format = async (text, options) => {
         const left = await format(alone, [], { reads: ["package.json", "d.js"] });
         expect(left.files).toEqual({ "package.json": text, "d.js": "d;\n" });
         expect(left.stderr).toContain(`Not installed: prettier, ${plugin}`);
+        expect(left.stderr).toContain(
+          `[error] 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: ${plugin}\n[error]   Use --allow-unsupported to format it without the plugins.\n`,
+        );
+        expect(left.stderr).not.toContain("language");
         expect(left.exitCode).toBe(2);
         const allowed = await format(alone, ["--allow-unsupported"], { reads: ["package.json"] });
         expect(allowed.files).toEqual({ "package.json": '{\n  "a": 1\n}\n' });
+        expect(allowed.stderr).toContain(`[warn] Not installed: prettier, ${plugin}`);
         expect(allowed.exitCode).toBe(0);
       },
       timeout,

@@ -4285,6 +4285,215 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     ],
   ],
   [
+    "a rule that is called with a type annotation reports at its colon",
+    {
+      "categories": { "correctness": "off" },
+      "plugins": ["typescript"],
+      "rules": {
+        "typescript/prefer-function-type": "error",
+        "typescript/method-signature-style": "error",
+        "typescript/no-explicit-any": "error",
+        "id-length": "error",
+        "func-style": "error",
+      },
+    },
+    [
+      [
+        "ts",
+        "export interface I {\n  m(c: ((...a: any[]) => any) | { new (...a: any[]): any }): void;\n}",
+        [
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 17+1",
+          "typescript(method-signature-style) | Use a property signature instead of a method signature. | Replace the method signature with a property whose type is a function type. | 23+64",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 23+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 25+1",
+          "typescript(prefer-function-type) | Enforce using function types instead of interfaces with call signatures. | The function type form `new (...a: any[]) => any` is generally preferred when possible for being more succinct. | 55+22",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 33+1",
+          "typescript(no-explicit-any) | Unexpected `any`. Specify a different type. | Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct. | 36+3",
+          "typescript(no-explicit-any) | Unexpected `any`. Specify a different type. | Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct. | 46+3",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 63+1",
+          "typescript(no-explicit-any) | Unexpected `any`. Specify a different type. | Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct. | 66+3",
+          "typescript(no-explicit-any) | Unexpected `any`. Specify a different type. | Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct. | 74+3",
+        ],
+      ],
+      [
+        "ts",
+        "export const a: { (b: any): any } = (b: any) => b;",
+        [
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 13+1",
+          "typescript(prefer-function-type) | Enforce using function types instead of interfaces with call signatures. | The function type form `(b: any) => any` is generally preferred when possible for being more succinct. | 18+13",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 19+1",
+          "typescript(no-explicit-any) | Unexpected `any`. Specify a different type. | Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct. | 22+3",
+          "typescript(no-explicit-any) | Unexpected `any`. Specify a different type. | Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct. | 28+3",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 37+1",
+          "typescript(no-explicit-any) | Unexpected `any`. Specify a different type. | Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct. | 40+3",
+        ],
+      ],
+      [
+        "ts",
+        "export function f(a: { (b: any): void }): { (c: any): void } {\n  return a;\n}",
+        [
+          "eslint(func-style) | Expected a function expression. | Enforce the consistent use of either `function` declarations or expressions assigned to variables | 7+69",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 16+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 18+1",
+          "typescript(prefer-function-type) | Enforce using function types instead of interfaces with call signatures. | The function type form `(b: any) => void` is generally preferred when possible for being more succinct. | 23+14",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 24+1",
+          "typescript(no-explicit-any) | Unexpected `any`. Specify a different type. | Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct. | 27+3",
+          "typescript(prefer-function-type) | Enforce using function types instead of interfaces with call signatures. | The function type form `(c: any) => void` is generally preferred when possible for being more succinct. | 44+14",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 45+1",
+          "typescript(no-explicit-any) | Unexpected `any`. Specify a different type. | Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct. | 48+3",
+        ],
+      ],
+    ],
+  ],
+  [
+    "import/newline-after-import reports a statement that requires when oxlint comes to the last call in it",
+    {
+      "categories": { "correctness": "off" },
+      "plugins": ["import", "typescript", "unicorn"],
+      "rules": {
+        "import/newline-after-import": "error",
+        "import/first": "error",
+        "typescript/no-require-imports": "error",
+        "typescript/no-var-requires": "error",
+        "unicorn/prefer-module": "error",
+        "id-length": "error",
+        "func-style": "error",
+        "no-undef": "error",
+      },
+    },
+    [
+      [
+        "js",
+        'const a = require("a");\nconst b = require("b");\nfoo(a, b);\nconst c = require("c");\nbar(c);',
+        [
+          "eslint(no-undef) | 'require' is not defined. | Either define 'require' or remove the reference to it. If 'require' is a global variable, add it to the 'globals' configuration. | 10+7",
+          "eslint(no-undef) | 'require' is not defined. | Either define 'require' or remove the reference to it. If 'require' is a global variable, add it to the 'globals' configuration. | 34+7",
+          "eslint(no-undef) | 'require' is not defined. | Either define 'require' or remove the reference to it. If 'require' is a global variable, add it to the 'globals' configuration. | 69+7",
+          "eslint(no-undef) | 'bar' is not defined. | Either define 'bar' or remove the reference to it. If 'bar' is a global variable, add it to the 'globals' configuration. | 83+3",
+          "eslint(no-undef) | 'foo' is not defined. | Either define 'foo' or remove the reference to it. If 'foo' is a global variable, add it to the 'globals' configuration. | 48+3",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 6+1",
+          'typescript(no-require-imports) | Expected "import" statement instead of "require" call | Do not use CommonJS `require` calls | 10+12',
+          "typescript(no-var-requires) | Require statement not part of import statement. | Use ES module imports or `import = require` instead. | 10+12",
+          'unicorn(prefer-module) | Do not use "require". | Prefer ES modules over CommonJS globals. | 10+7',
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 30+1",
+          "import(newline-after-import) | Expected 1 empty line after require statement not followed by another require. | Add empty line(s) after require | 24+23",
+          'typescript(no-require-imports) | Expected "import" statement instead of "require" call | Do not use CommonJS `require` calls | 34+12',
+          "typescript(no-var-requires) | Require statement not part of import statement. | Use ES module imports or `import = require` instead. | 34+12",
+          'unicorn(prefer-module) | Do not use "require". | Prefer ES modules over CommonJS globals. | 34+7',
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 65+1",
+          "import(newline-after-import) | Expected 1 empty line after require statement not followed by another require. | Add empty line(s) after require | 59+23",
+          'typescript(no-require-imports) | Expected "import" statement instead of "require" call | Do not use CommonJS `require` calls | 69+12',
+          "typescript(no-var-requires) | Require statement not part of import statement. | Use ES module imports or `import = require` instead. | 69+12",
+          'unicorn(prefer-module) | Do not use "require". | Prefer ES modules over CommonJS globals. | 69+7',
+        ],
+      ],
+      [
+        "js",
+        'import x from "x";\nconst a = require("a");\nfoo(a, x);\nfunction f() {\n  const d = require("d");\n  return d;\n}\nf();',
+        [
+          "eslint(no-undef) | 'require' is not defined. | Either define 'require' or remove the reference to it. If 'require' is a global variable, add it to the 'globals' configuration. | 29+7",
+          "eslint(no-undef) | 'require' is not defined. | Either define 'require' or remove the reference to it. If 'require' is a global variable, add it to the 'globals' configuration. | 81+7",
+          "eslint(no-undef) | 'foo' is not defined. | Either define 'foo' or remove the reference to it. If 'foo' is a global variable, add it to the 'globals' configuration. | 43+3",
+          "import(newline-after-import) | Expected 1 empty line after import statement not followed by another import. | Add empty line(s) after import | 0+18",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 7+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 25+1",
+          "import(newline-after-import) | Expected 1 empty line after require statement not followed by another require. | Add empty line(s) after require | 19+23",
+          'typescript(no-require-imports) | Expected "import" statement instead of "require" call | Do not use CommonJS `require` calls | 29+12',
+          "typescript(no-var-requires) | Require statement not part of import statement. | Use ES module imports or `import = require` instead. | 29+12",
+          'unicorn(prefer-module) | Do not use "require". | Prefer ES modules over CommonJS globals. | 29+7',
+          "eslint(func-style) | Expected a function expression. | Enforce the consistent use of either `function` declarations or expressions assigned to variables | 54+54",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 63+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 77+1",
+          'typescript(no-require-imports) | Expected "import" statement instead of "require" call | Do not use CommonJS `require` calls | 81+12',
+          "typescript(no-var-requires) | Require statement not part of import statement. | Use ES module imports or `import = require` instead. | 81+12",
+          'unicorn(prefer-module) | Do not use "require". | Prefer ES modules over CommonJS globals. | 81+7',
+        ],
+      ],
+      [
+        "js",
+        'const a = require("a"), b = require("b");\nfoo(a, b);\nif (a) {\n  const c = require("c");\n  bar(c);\n}',
+        [
+          "eslint(no-undef) | 'require' is not defined. | Either define 'require' or remove the reference to it. If 'require' is a global variable, add it to the 'globals' configuration. | 10+7",
+          "eslint(no-undef) | 'require' is not defined. | Either define 'require' or remove the reference to it. If 'require' is a global variable, add it to the 'globals' configuration. | 28+7",
+          "eslint(no-undef) | 'require' is not defined. | Either define 'require' or remove the reference to it. If 'require' is a global variable, add it to the 'globals' configuration. | 74+7",
+          "eslint(no-undef) | 'bar' is not defined. | Either define 'bar' or remove the reference to it. If 'bar' is a global variable, add it to the 'globals' configuration. | 90+3",
+          "eslint(no-undef) | 'foo' is not defined. | Either define 'foo' or remove the reference to it. If 'foo' is a global variable, add it to the 'globals' configuration. | 42+3",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 6+1",
+          'typescript(no-require-imports) | Expected "import" statement instead of "require" call | Do not use CommonJS `require` calls | 10+12',
+          "typescript(no-var-requires) | Require statement not part of import statement. | Use ES module imports or `import = require` instead. | 10+12",
+          'unicorn(prefer-module) | Do not use "require". | Prefer ES modules over CommonJS globals. | 10+7',
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 24+1",
+          "import(newline-after-import) | Expected 1 empty line after require statement not followed by another require. | Add empty line(s) after require | 0+41",
+          'typescript(no-require-imports) | Expected "import" statement instead of "require" call | Do not use CommonJS `require` calls | 28+12',
+          "typescript(no-var-requires) | Require statement not part of import statement. | Use ES module imports or `import = require` instead. | 28+12",
+          'unicorn(prefer-module) | Do not use "require". | Prefer ES modules over CommonJS globals. | 28+7',
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 70+1",
+          'typescript(no-require-imports) | Expected "import" statement instead of "require" call | Do not use CommonJS `require` calls | 74+12',
+          "typescript(no-var-requires) | Require statement not part of import statement. | Use ES module imports or `import = require` instead. | 74+12",
+          'unicorn(prefer-module) | Do not use "require". | Prefer ES modules over CommonJS globals. | 74+7',
+        ],
+      ],
+      [
+        "js",
+        'import x from "x";\nfoo(x);\nimport y from "y";\nbar(y);\nconst z = require("z");\nbaz(z);',
+        [
+          "import(first) | Import statements must come first | Move import statement to the top of the file | 27+18",
+          "eslint(no-undef) | 'require' is not defined. | Either define 'require' or remove the reference to it. If 'require' is a global variable, add it to the 'globals' configuration. | 64+7",
+          "eslint(no-undef) | 'foo' is not defined. | Either define 'foo' or remove the reference to it. If 'foo' is a global variable, add it to the 'globals' configuration. | 19+3",
+          "eslint(no-undef) | 'bar' is not defined. | Either define 'bar' or remove the reference to it. If 'bar' is a global variable, add it to the 'globals' configuration. | 46+3",
+          "eslint(no-undef) | 'baz' is not defined. | Either define 'baz' or remove the reference to it. If 'baz' is a global variable, add it to the 'globals' configuration. | 78+3",
+          "import(newline-after-import) | Expected 1 empty line after import statement not followed by another import. | Add empty line(s) after import | 0+18",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 7+1",
+          "import(newline-after-import) | Expected 1 empty line after import statement not followed by another import. | Add empty line(s) after import | 27+18",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 34+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 60+1",
+          "import(newline-after-import) | Expected 1 empty line after require statement not followed by another require. | Add empty line(s) after require | 54+23",
+          'typescript(no-require-imports) | Expected "import" statement instead of "require" call | Do not use CommonJS `require` calls | 64+12',
+          "typescript(no-var-requires) | Require statement not part of import statement. | Use ES module imports or `import = require` instead. | 64+12",
+          'unicorn(prefer-module) | Do not use "require". | Prefer ES modules over CommonJS globals. | 64+7',
+        ],
+      ],
+    ],
+  ],
+  [
+    "react/exhaustive-deps goes through the dependencies that are declared in the order of oxlint's hash table",
+    { "categories": { "correctness": "off" }, "plugins": ["react"], "rules": { "react/exhaustive-deps": ["error"] } },
+    [
+      [
+        "tsx",
+        "import MutableStore from 'store';\n        let z = {};\n\n        function MyComponent(props) {\n          let x = props.foo;\n          {\n            let y = props.bar;\n            const fn = useCallback(() => {\n              // nothing\n            }, [MutableStore.hello.world, props.foo, x, y, z, global.stuff]);\n          }\n        }",
+        [
+          "react-hooks(exhaustive-deps) | React Hook useCallback has an unnecessary dependency: MutableStore. | Consider removing it from the dependency array. Outer scope values aren't valid dependencies because mutating them doesn't re-render the component. | 249+24",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has an unnecessary dependency: z. | Consider removing it from the dependency array. Outer scope values aren't valid dependencies because mutating them doesn't re-render the component. | 292+1",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has an unnecessary dependency: global. | Consider removing it from the dependency array. Outer scope values aren't valid dependencies because mutating them doesn't re-render the component. | 295+12",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: MutableStore.hello.world | Either include it or remove the dependency array. | 248+60",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: z | Either include it or remove the dependency array. | 248+60",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: global.stuff | Either include it or remove the dependency array. | 248+60",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: y | Either include it or remove the dependency array. | 248+60",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: x | Either include it or remove the dependency array. | 248+60",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: props.foo | Either include it or remove the dependency array. | 248+60",
+          "react-hooks(exhaustive-deps) | React hook useCallback depends on `z`, which changes every render | Try memoizing this variable with `useRef` or `useCallback`. | 292+1 it will always cause this hook to re-evaluate | 46+1 `z` is declared here",
+        ],
+      ],
+      [
+        "tsx",
+        "import MutableStore from 'store';\n        let z = {};\n\n        function MyComponent(props) {\n          let x = props.foo;\n          {\n            let y = props.bar;\n            const fn = useCallback(() => {\n              // nothing\n            }, [MutableStore?.hello?.world, props.foo, x, y, z, global?.stuff]);\n          }\n        }",
+        [
+          "react-hooks(exhaustive-deps) | React Hook useCallback has an unnecessary dependency: MutableStore. | Consider removing it from the dependency array. Outer scope values aren't valid dependencies because mutating them doesn't re-render the component. | 249+26",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has an unnecessary dependency: z. | Consider removing it from the dependency array. Outer scope values aren't valid dependencies because mutating them doesn't re-render the component. | 294+1",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has an unnecessary dependency: global. | Consider removing it from the dependency array. Outer scope values aren't valid dependencies because mutating them doesn't re-render the component. | 297+13",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: MutableStore.hello.world | Either include it or remove the dependency array. | 248+63",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: z | Either include it or remove the dependency array. | 248+63",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: global.stuff | Either include it or remove the dependency array. | 248+63",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: y | Either include it or remove the dependency array. | 248+63",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: x | Either include it or remove the dependency array. | 248+63",
+          "react-hooks(exhaustive-deps) | React Hook useCallback has unnecessary dependency: props.foo | Either include it or remove the dependency array. | 248+63",
+          "react-hooks(exhaustive-deps) | React hook useCallback depends on `z`, which changes every render | Try memoizing this variable with `useRef` or `useCallback`. | 294+1 it will always cause this hook to re-evaluate | 46+1 `z` is declared here",
+        ],
+      ],
+    ],
+  ],
+  [
     "cases of oxlint's own tests that it does not report in the order of the text",
     {
       "categories": { "correctness": "off" },
@@ -5799,6 +6008,46 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
 
   test.each(tables)("%s", async (_, config, table) => {
     await expectErrors(table, config);
+  });
+
+  // As oxlint 1.87 prints them: it makes an offset of the line and the column, and a line and a column of that.
+  test("-f unix has what a plugin reports past the end of a line in the line where that is", async () => {
+    const plugin = `
+      const places = { "a.js": [[2, 6]], "b.js": [[2, 20], [3, 11], [5, 3]] };
+      export default { meta: { name: "pl" }, rules: { r: { create(context) { return { Program() {
+        for (const [line, column] of places[context.filename.slice(-4)]) {
+          context.report({ loc: { line, column }, message: "at " + line + ":" + column });
+        }
+      } }; } } } };`;
+    using dir = tempDir("bun-lint-oxc-errors", {
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        jsPlugins: ["./plugin.js"],
+        rules: { "pl/r": "warn" },
+        ignorePatterns: ["plugin.js"],
+      }),
+      "plugin.js": plugin,
+      "a.js": "a;\nbb;\ncccccc;\n",
+      // The lines end in `\n`, `\r\n`, `\r` and `\n`, and one is empty.
+      "b.js": "let a = 1;\n/*😀*/ let b;\r\nlet é = 2;\rx\n\nlast",
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "unix", "a.js", "b.js"],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean).sort()).toEqual([
+      "4 problems",
+      "a.js:3:3: at 2:6 [Warning/pl(r)]",
+      "b.js:3:7: at 2:20 [Warning/pl(r)]",
+      "b.js:4:1: at 3:11 [Warning/pl(r)]",
+      "b.js:6:3: at 5:3 [Warning/pl(r)]",
+    ]);
   });
 
   // oxlint sorts all the messages of a file by the range of their fix before it applies the fixes, and prints what is left in that

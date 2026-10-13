@@ -134,9 +134,11 @@ describe.concurrent("globals", () => {
     ];
     const words = ["test", "spec", "e2e", "cy", "tes", "tests", "Test", "atest"];
     const extensions = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"];
+    // To Windows and macOS `a.Test.js` is the file `a.test.js`.
+    const folderOf = (word: string) => (word === "Test" ? "cased/" : "");
     const names = stems.flatMap(stem =>
       separators.flatMap(separator =>
-        words.flatMap(word => extensions.map(extension => `${stem}${separator}${word}.${extension}`)),
+        words.flatMap(word => extensions.map(extension => `${folderOf(word)}${stem}${separator}${word}.${extension}`)),
       ),
     );
     names.push("a.test.js.js", "a.test.jsx.ts", "a.test.d.ts", "a.test..js", "a.spec.ts.mts");

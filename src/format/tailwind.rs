@@ -17,6 +17,9 @@ pub type Rank = Option<u32>;
 pub trait Orders: std::fmt::Debug + Send + Sync + std::panic::RefUnwindSafe {
     /// The rank of each of `classes`, which have one blank between them. `None`: that is not known yet.
     fn ranks_of(&self, classes: &[u8]) -> Option<Vec<Rank>>;
+
+    /// Whether there is a Tailwind that can be asked.
+    fn has_tailwind(&self) -> bool;
 }
 
 /// Names, and patterns for names, which are written `"/^tw/"`.

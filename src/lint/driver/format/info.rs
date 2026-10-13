@@ -130,16 +130,24 @@ impl<'r> Source<'r> {
     }
 
     /// [`Info::start`]
+    #[inline]
     pub(super) fn start(&self, message: &LintMessage) -> Position {
         // In a line after the first, which may start with a byte order mark, and before its end, the line is the one that
-        // ESLint counts, and the column is known with the offset.
+        // ESLint counts, and the column is known with the offset. A column can be past the end of its line.
         if message.line > 1 && self.lines.is_none() {
             let (at, column) = self.offsets.at(message.line, message.column);
-            if self.text.get(at).is_some_and(|it| *it != b'\n') {
+            let next_line = self.offsets.lines.start_of(message.line + 1);
+            let is_in_line = at < next_line.map_or(usize::MAX, |it| it as usize);
+            if is_in_line && self.text.get(at).is_some_and(|it| *it != b'\n') {
                 let line = message.line as usize;
                 return Position { line, column };
             }
         }
+        self.start_by_offset(message)
+    }
+
+    #[cold]
+    fn start_by_offset(&self, message: &LintMessage) -> Position {
         (self.span(message)).map_or_else(Default::default, |it| self.position(it.0))
     }
 

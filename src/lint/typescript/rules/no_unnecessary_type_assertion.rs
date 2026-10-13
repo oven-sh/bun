@@ -772,7 +772,7 @@ fn tsgolint_is_property_in_inferred_callback_return(node: Expr) -> bool {
 fn tsgolint_has_generic_inference_parameter_at_argument<'a>(
     call: Expr<'a>,
     arg_index: usize,
-    element_path: impl Iterator<Item = usize>,
+    element_path: &mut dyn Iterator<Item = usize>,
 ) -> bool {
     let Some(declaration) = call.resolved_signature().and_then(|it| it.declaration()) else {
         return false;
@@ -859,8 +859,8 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
         }
         let arg_index = call.args().iter().position(|it| it == argument).unwrap_or_else(|| call.args().len());
         let (arg_index, left_out) = if is_spread { (arg_index + element_index, 1) } else { (arg_index, 0) };
-        let element_path = element_path.into_iter().rev().skip(left_out);
-        return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, element_path);
+        let mut element_path = element_path.into_iter().rev().skip(left_out);
+        return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, &mut element_path);
     }
     false
 }
@@ -1099,7 +1099,7 @@ fn is_asserted_type_expected_of_a_call_in_the_arguments(expression: Expr) -> boo
     let mut calls = CallThatInfers::default();
     for (index, argument) in it.args().iter().enumerate() {
         // Nor does what a parameter without a type variable expects.
-        if !is_by_index || tsgolint_has_generic_inference_parameter_at_argument(call, index, std::iter::empty()) {
+        if !is_by_index || tsgolint_has_generic_inference_parameter_at_argument(call, index, &mut std::iter::empty()) {
             walk_node(Node::Expr(argument), &mut calls);
         }
     }

@@ -1225,7 +1225,12 @@ mod _impl {
                 .throw());
         }
 
-        Ok(JSValue::from(boringssl::c::constant_time_eq(l, r)))
+        let equal = if l.len() < bun_highway::CONSTANT_TIME_EQ_MIN_LEN {
+            boringssl::c::constant_time_eq(l, r)
+        } else {
+            bun_highway::constant_time_eq(l, r)
+        };
+        Ok(JSValue::from(equal))
     }
 
     #[bun_jsc::host_fn]

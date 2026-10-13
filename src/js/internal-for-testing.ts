@@ -27,6 +27,7 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // behind `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
+// constantTimeEq (behind `crypto.timingSafeEqual` from 64 bytes): `haystack` and `arg` of one length, 1 = equal.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -38,7 +39,8 @@ export const highwayStringsForTesting: (
     | "memmem"
     | "memrmem"
     | "memmem16"
-    | "memrmem16",
+    | "memrmem16"
+    | "constantTimeEq",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);

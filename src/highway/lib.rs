@@ -98,6 +98,8 @@ unsafe extern "C" {
         skip_mask: bool,
     );
 
+    fn highway_constant_time_eq(a: *const u8, b: *const u8, len: usize) -> bool;
+
     fn highway_copy_u16_to_u8(input: *const u16, count: usize, output: *mut u8);
 
     fn highway_copy_ascii_prefix(src: *const u8, len: usize, dst: *mut u8) -> usize;
@@ -726,6 +728,20 @@ pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: boo
             skip_mask,
         );
     }
+}
+
+/// Below one AVX-512 vector, the dispatch call of [`constant_time_eq`] costs more than a byte loop.
+pub const CONSTANT_TIME_EQ_MIN_LEN: usize = 64;
+
+/// Constant-time equality: the time depends on the length only. Different lengths compare unequal.
+#[inline(always)]
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    // SAFETY: both slices are readable for `a.len()` bytes (the lengths are
+    // equal); the kernel only reads, so `a` and `b` may overlap.
+    unsafe { highway_constant_time_eq(a.as_ptr(), b.as_ptr(), a.len()) }
 }
 
 /// Useful for single-line JavaScript comments.

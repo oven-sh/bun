@@ -35,15 +35,18 @@ pub(crate) fn write_function<'a>(
         false => "function",
     };
     let is_declared = matches!(func.owner(), Node::Stmt(statement) if statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT));
+    // The head of a snippet of Svelte: the plugin takes `function ` and the body off again.
+    let is_only_head = f.options().in_html.root == HtmlRoot::SvelteExpression
+        && matches!(func.owner(), Node::Stmt(statement) if matches!(statement.parent(), Node::File(_)));
     let head = format_with(|f| {
         write!(
             f,
             [
                 is_declared.then_some("declare "),
                 func.is_async().then_some("async "),
-                keyword,
+                (!is_only_head).then_some(keyword),
                 func.is_generator().then_some("*"),
-                space(),
+                (!is_only_head).then_some(space()),
                 func.name().map(|name| identifier(name, node)),
                 group(&type_parameters(func.type_params(), Node::Func(func))),
                 FormatCommentsBehindParenthesis(func),
@@ -99,6 +102,9 @@ pub(crate) fn write_function<'a>(
         }))
     );
 
+    if is_only_head {
+        return;
+    }
     if func.has_body() {
         write!(
             f,

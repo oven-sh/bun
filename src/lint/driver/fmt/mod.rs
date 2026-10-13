@@ -19,7 +19,7 @@ use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
-use bun_format::options::{Code, Then};
+use bun_format::options::{Code, Goal, ParsePart, Then};
 use bun_format::pragma::BeforeParsing;
 use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
@@ -411,6 +411,7 @@ struct Scratches {
     graphql: bun_format::graphql::Scratch,
     handlebars: bun_format::handlebars::Scratch,
     html: bun_format::html::Scratch,
+    svelte: bun_format::svelte::Scratch,
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
@@ -480,6 +481,56 @@ fn parse_code(
         memory,
     };
     with_file(&how, code.text, |file, _, _| then(file));
+}
+
+/// For the expressions in a component of Svelte.
+fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
+    let names = Session::new();
+    let (atoms, plain) = (Interner::new_in(&names), Resolved::default());
+    let how = |path| How {
+        path,
+        is_script: false,
+        is_flow: false,
+        resolved: &plain,
+        verifies: false,
+        atoms: &atoms,
+        memory: &names,
+    };
+    let [javascript, typescript] =
+        [&b"dummy.js"[..], b"dummy.ts"].map(|path| (path, how(path).language_and_dialect()));
+    let mut parts = bun_sema_parser::Parts::of(text);
+    then(&mut |part, then| {
+        let (path, (language, dialect, _)) = match part.is_typescript {
+            true => &typescript,
+            false => &javascript,
+        };
+        let part = bun_sema_parser::Part {
+            goal: match part.goal {
+                Goal::Expression => bun_sema_parser::Goal::Expression,
+                Goal::Declaration => bun_sema_parser::Goal::Declaration,
+                Goal::Type => bun_sema_parser::Goal::Type,
+            },
+            from: part.from,
+            until: part.until,
+        };
+        let is_javascript = language.parser != Parser::TypeScript;
+        parts.parse(
+            *dialect,
+            is_javascript,
+            part,
+            |summary, atoms, code, end| {
+                let mut recycled = Recycled::of_this_thread();
+                if let Summary::InPlace(hir) = summary
+                    && let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled)
+                {
+                    then(
+                        &File::new(path, &*hir, bound, atoms, language, None).with_text(code),
+                        end,
+                    );
+                }
+            },
+        )
+    });
 }
 
 /// Whether the two texts are the same value. What cannot be read as a value, with a key twice, is not looked at.
@@ -619,6 +670,29 @@ fn format(
                 return Err(Failure::Changed("formatting would change its contents"));
             }
             return finish(done, out, "TOML");
+        }
+        Some(Kind::Svelte) => {
+            let plain = Resolved::default();
+            let parse = |code: Code<'_>, then: Then<'_>| {
+                parse_code(code, &plain, (atoms, memory), then);
+            };
+            let parse = Some(&parse as bun_format::options::JavaScriptParser<'_>);
+            let done = bun_format::svelte::format(
+                name,
+                text,
+                options,
+                parse,
+                &mut scratch.svelte,
+                &mut out,
+            );
+            if verifies
+                && done.is_ok()
+                && out != text
+                && !bun_format::svelte::has_same_content(text, &out, options, parse)
+            {
+                return Err(Failure::Changed("formatting would change its contents"));
+            }
+            return finish(done, out, "Svelte");
         }
         Some(Kind::Handlebars) => {
             let done =
@@ -839,6 +913,7 @@ pub fn format_for_tests(
         options: FormatOptions {
             format_javascript: Some(format_block),
             parse_javascript: Some(parse_javascript),
+            parse_parts: Some(parse_parts),
             ..options.clone()
         },
         formats_what_has_errors: true,
@@ -891,12 +966,20 @@ struct Run<'r> {
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
     // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
     match configs.parser_for(scope, path) {
+        Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
+            Language::Other
+        }
         Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
-            files::language_for_oxfmt(path, configs.formats_svelte(scope, path))
+            files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
         }
         None => match files::language_of(path) {
+            Language::Unknown
+                if path.ends_with(b".svelte") && configs.formats_svelte(scope, Some(path)) =>
+            {
+                Language::Supported
+            }
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
             Language::Supported if configs.is_read_by_plugin(scope, path) => Language::Other,
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
@@ -1226,7 +1309,8 @@ impl Run<'_> {
             }
             return self.out;
         };
-        let Some(kind) = Kind::of_parser(&parser) else {
+        let is_formatted = |kind: &Kind| *kind != Kind::Svelte || options.options.svelte.is_on;
+        let Some(kind) = Kind::of_parser(&parser).filter(is_formatted) else {
             if !configs.names_other_plugins(&scope, None) {
                 self.error(&cannot_resolve_parser(&parser));
                 self.out.exit_code = match (self.is_native, forgives) {

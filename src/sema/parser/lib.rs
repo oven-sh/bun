@@ -26,8 +26,8 @@ pub use parser::keyword_suggestion;
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
 pub use summarize::{
-    COUNTS, Counts, Summary, ThreadCaches, summarize, summarize_as, summarize_in, with_summary,
-    with_summary_in_place,
+    COUNTS, Counts, Parts, Summary, ThreadCaches, summarize, summarize_as, summarize_in,
+    with_summary, with_summary_in_place,
 };
 
 /// Why a text is not parsed.
@@ -147,6 +147,30 @@ pub struct Options {
     /// what the checker asks about them. Only [`parse`] does it, and only for TypeScript's dialect.
     pub reads_jsdoc: bool,
     pub dialect: bun_sema::resolve::Dialect,
+    /// Not the whole text is parsed.
+    pub part: Option<Part>,
+}
+
+/// A part of a text, as acorn's `parseExpressionAt` reads one: nothing is said about what follows it, and nothing of that
+/// is read but one token. The file has one statement.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Part {
+    pub goal: Goal,
+    /// Where it starts.
+    pub from: u32,
+    /// Where the text ends for the parser.
+    pub until: u32,
+}
+
+/// What a [`Part`] is.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Goal {
+    /// `parseExpression`: an expression statement.
+    Expression,
+    /// `var`, `let` or `const` and their declarations, with or without a `;` behind them.
+    Declaration,
+    /// `parseType`: the type of a type alias without a name.
+    Type,
 }
 
 /// What a thread keeps from one file to the next: the caches of names, and the capacity of every
@@ -204,6 +228,9 @@ pub struct Parsed {
     pub file: Box<FileBuilder>,
     /// `await` was read as a keyword at the top level.
     pub has_top_level_await: bool,
+    /// The end of the last token of [`Options::part`], or of the text, and the end of the token behind it: the last that has
+    /// been looked at.
+    pub end: (u32, u32),
 }
 
 /// The HIR of `text`. Names are interned in `atoms`.

@@ -660,7 +660,7 @@ export class OptionalType extends Type {
       const inner = this.payload.rustFromExtern("value", scope);
       return inner === "value" ? `${expr}.get()` : `${expr}.get().map(|value| ${inner})`;
     }
-    if (this.payload instanceof Utf8Type) return `${expr}.get_optional()`;
+    if (this.payload instanceof Utf8Type || this.payload instanceof BytesType) return `${expr}.get_optional()`;
     return `{ let value = ${expr}; if value.is_null() { None } else { Some(${this.payload.rustFromExtern("value", scope)}) } }`;
   }
   rustResultFieldType(scope: RustScope): string {

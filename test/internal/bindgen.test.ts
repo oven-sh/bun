@@ -524,6 +524,17 @@ describe("buffers", () => {
     }
   });
 
+  it("tells an absent buffer from an empty one", () => {
+    expect(bindgen.sumBytesOptional(null)).toBe(null);
+    expect(bindgen.sumBytesOptional(undefined)).toBe(null);
+    expect(bindgen.sumBytesOptional()).toBe(null);
+    expect(bindgen.sumBytesOptional(new Uint8Array(0))).toBe(0);
+    expect(bindgen.sumBytesOptional(new Uint8Array([1, 2]))).toBe(3);
+    const detached = new Uint8Array([1, 2]);
+    detached.buffer.transfer();
+    expect(bindgen.sumBytesOptional(detached)).toBe(0);
+  });
+
   it("reads the bytes after every other argument is converted", () => {
     const transferred = new Uint8Array([1, 2, 3]);
     const transfers = { toString: () => (transferred.buffer.transfer(), "\x01") };

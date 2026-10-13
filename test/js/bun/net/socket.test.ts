@@ -6466,7 +6466,9 @@ it("socket and tls options are not read from Object.prototype", async () => {
   };
   Object.assign(Object.prototype, polluted);
   try {
-    expect(() => Bun.listen({ socket: { data() {} } } as any)).toThrow();
+    expect(() => Bun.listen({ socket: { data() {} } } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: 'Expected either "hostname" or "unix"' }),
+    );
     using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     expect(server.port).toBeGreaterThan(1);
     expect(server.hostname).toBe("127.0.0.1");

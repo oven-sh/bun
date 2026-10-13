@@ -103,6 +103,10 @@ pub fn sum_bytes(bytes: &[u8]) -> u32 {
     sum(bytes)
 }
 
+pub fn sum_bytes_optional(bytes: Option<&[u8]>) -> Option<u32> {
+    bytes.map(sum)
+}
+
 pub fn sum_bytes_then_text(bytes: &[u8], text: &[u8]) -> u32 {
     sum(bytes) + sum(text)
 }

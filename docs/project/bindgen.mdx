@@ -362,4 +362,4 @@ thread when the work completes.
 ## Tests
 
 - `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. What that schema does not use is covered by the suites of the APIs that do.
-- `test/internal/bindgen-compile-fail.test.ts`: programs rustc must reject, one per hazard, and the right way to write each. Add a case when adding to `bindgen.rs`. It needs a Rust toolchain: the `cargo clippy` job of `rust-lints.yml` runs it, the test lanes skip it.
+- `test/internal/bindgen-compile-fail.test.ts`: programs rustc must reject, one per hazard, and the right way to write each. Add a case when adding to `bindgen.rs`. It runs `cargo check`, so it is skipped unless `BUN_CODEGEN_DIR` is set (`BUN_CODEGEN_DIR=$PWD/build/debug/codegen bun bd test bindgen-compile-fail`). The `cargo clippy` job of `rust-lints.yml` runs it.

@@ -5,7 +5,7 @@
 // The cases are type-checked against the metadata `cargo check` leaves behind; nothing is linked.
 import { which } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -13,10 +13,11 @@ const cargo = which("cargo");
 const rustc = which("rustc");
 const repoRoot = join(import.meta.dir, "..", "..");
 const cases = join(import.meta.dir, "bindgen-compile-fail");
-const codegenDir = process.env.BUN_CODEGEN_DIR ?? join(dirname(bunExe()), "codegen");
-// The test lanes run a prebuilt binary: no toolchain, no vendored crates, no generated code. The `cargo clippy` job of
-// .github/workflows/rust-lints.yml has all three and runs this file.
+// Opt-in, as for `cargo check`: BUN_CODEGEN_DIR=$PWD/build/debug/codegen. The first run compiles `bun_jsc`'s dependencies.
+// The `cargo clippy` job of .github/workflows/rust-lints.yml runs this file.
+const codegenDir = process.env.BUN_CODEGEN_DIR ?? "";
 const canCheck =
+  !!codegenDir &&
   !!cargo &&
   !!rustc &&
   existsSync(join(repoRoot, "vendor", "lolhtml", "Cargo.toml")) &&

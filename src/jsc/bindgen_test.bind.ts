@@ -64,6 +64,7 @@ export const range = b.fn({ args: { length: b.u32 }, returns: b.array(b.u32) });
 export const words = b.fn({ args: { text: b.string.utf8 }, returns: b.array(b.string.utf8) });
 
 export const sumBytes = b.fn({ args: { bytes: b.bufferSource.bytes }, returns: b.u32 });
+export const sumBytesOptional = b.fn({ args: { bytes: b.bufferSource.bytes.nullable }, returns: b.u32.nullable });
 /** Converting `text` can run JavaScript. */
 export const sumBytesThenText = b.fn({
   args: { bytes: b.bufferSource.bytes, text: b.string.loose.utf8 },

@@ -1718,9 +1718,16 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
 
     if let Some(runner) = jest::Jest::runner() {
         if runner.test_options.coverage.skip_test_files {
-            let name_without_extension = &slice[0..slice.len() - ext.len()];
-            for suffix in scanner::TEST_NAME_SUFFIXES {
-                if strings::ends_with(name_without_extension, suffix) {
+            if scanner::has_test_suffix(&slice[0..slice.len() - ext.len()]) {
+                return false;
+            }
+            // The suffix rule stays on: `bun test ./x.test.ts` runs whether or not it matches `filePatterns`.
+            if !runner.test_options.file_patterns.is_empty() {
+                let rel_path = resolve_path::relative(FileSystem::instance().top_level_dir, slice);
+                if scanner::matches_any_file_pattern(
+                    runner.test_options.file_patterns.iter().map(|p| &**p),
+                    rel_path,
+                ) {
                     return false;
                 }
             }
@@ -1728,6 +1735,38 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     }
 
     true
+}
+
+/// Comma-separated `"a", "b"` list of the configured `filePatterns`.
+struct QuotedList<'a>(&'a [Box<[u8]>]);
+
+impl core::fmt::Display for QuotedList<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for (i, pattern) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "\"{}\"", bstr::BStr::new(pattern))?;
+        }
+        Ok(())
+    }
+}
+
+/// One line that says which files count as test files.
+fn print_test_file_rule(file_patterns: &[Box<[u8]>], as_note: bool) {
+    if as_note {
+        pretty_error!("<blue>note<r><d>:<r> ");
+    }
+    if file_patterns.is_empty() {
+        pretty_errorln!(
+            "Tests need \".test\", \"_test\", \".spec\" or \"_spec\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
+        );
+    } else {
+        pretty_errorln!(
+            "Tests need to match \"filePatterns\" in bunfig.toml: {}",
+            QuotedList(file_patterns)
+        );
+    }
 }
 
 pub(crate) struct TestCommand;
@@ -1827,6 +1866,13 @@ impl TestCommand {
         let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
             .test_options
             .path_ignore_patterns
+            .iter()
+            .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+            .collect();
+        // SAFETY: same as `path_ignore_patterns_view`.
+        let file_patterns_view: Vec<&'static [u8]> = ctx
+            .test_options
+            .file_patterns
             .iter()
             .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
             .collect();
@@ -2019,6 +2065,8 @@ impl TestCommand {
         // frame, underlying bytes live in `ctx` (process-lifetime).
         scanner.path_ignore_patterns =
             unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
+        // SAFETY: same as `path_ignore_patterns` above.
+        scanner.file_patterns = unsafe { bun_ptr::detach_lifetime(&file_patterns_view[..]) };
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -2453,18 +2501,29 @@ impl TestCommand {
 
             // "bun test" - positionals[0] == "test"
             // Therefore positionals starts at [1].
+            let file_patterns = &ctx.test_options.file_patterns;
             if ctx.positionals.len() < 2 {
                 if Output::is_ai_agent() {
                     // Be very clear to ai.
-                    Output::err_generic(
-                        "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
-                        (bun_fmt::quote(FileSystem::instance().top_level_dir),),
-                    );
+                    if file_patterns.is_empty() {
+                        Output::err_generic(
+                            "0 test files matching **{{.test,.spec,_test,_spec}}.{{js,ts,jsx,tsx}} in --cwd={}",
+                            (bun_fmt::quote(FileSystem::instance().top_level_dir),),
+                        );
+                    } else {
+                        Output::err_generic(
+                            "0 test files matching [test] filePatterns {} in --cwd={}",
+                            (
+                                QuotedList(file_patterns),
+                                bun_fmt::quote(FileSystem::instance().top_level_dir),
+                            ),
+                        );
+                    }
                 } else {
                     // Be friendlier to humans.
-                    pretty_errorln!(
-                        "<yellow>No tests found!<r>\n\nTests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>\n"
-                    );
+                    pretty_errorln!("<yellow>No tests found!<r>");
+                    pretty_errorln!("");
+                    print_test_file_rule(file_patterns, false);
                 }
             } else {
                 if Output::is_ai_agent() {
@@ -2499,9 +2558,8 @@ impl TestCommand {
                     Output::print_start_end(ctx.start_time, bun::time::nano_timestamp());
                 }
 
-                pretty_errorln!(
-                    "\n\n<blue>note<r><d>:<r> Tests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
-                );
+                pretty_error!("\n\n");
+                print_test_file_rule(file_patterns, true);
 
                 // print a helpful note
                 if let Some(i) = has_file_like {

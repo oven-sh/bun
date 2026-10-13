@@ -54,14 +54,14 @@ bun test <version> (<revision>)"
 exports[`CLAUDECODE flag handles no test files found: no-tests-normal 1`] = `
 "No tests found!
 
-Tests need ".test", "_test_", ".spec" or "_spec_" in the filename (ex: "MyApp.test.ts")
+Tests need ".test", "_test", ".spec" or "_spec" in the filename (ex: "MyApp.test.ts")
 
 Learn more about bun test: https://bun.com/docs/cli/test
 bun test <version> (<revision>)"
 `;
 
 exports[`CLAUDECODE flag handles no test files found: no-tests-quiet 1`] = `
-"error: 0 test files matching **{.test,.spec,_test_,_spec_}.{js,ts,jsx,tsx} in --cwd="<dir>"
+"error: 0 test files matching **{.test,.spec,_test,_spec}.{js,ts,jsx,tsx} in --cwd="<dir>"
 
 bun test <version> (<revision>)"
 `;

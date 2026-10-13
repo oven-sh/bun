@@ -24,6 +24,9 @@ pub(crate) struct Scanner<'a> {
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
     pub(crate) path_ignore_patterns: &'a [&'a [u8]],
+    /// `[test] filePatterns`, matched like `path_ignore_patterns`. When
+    /// non-empty it replaces the [`TEST_NAME_SUFFIXES`] rule for discovered files.
+    pub(crate) file_patterns: &'a [&'a [u8]],
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
@@ -81,6 +84,7 @@ impl<'a> Scanner<'a> {
             exclusion_names: &[],
             filter_names: &[],
             path_ignore_patterns: &[],
+            file_patterns: &[],
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
             fs: transpiler.fs,
@@ -244,14 +248,21 @@ impl<'a> Scanner<'a> {
         if !NEEDS_TEST_SUFFIX {
             return true;
         }
-        let name_without_extension = &name[..name.len() - extname.len()];
-        for suffix in TEST_NAME_SUFFIXES {
-            if strings::ends_with(name_without_extension, suffix) {
-                return true;
-            }
+        // With `filePatterns`, `matches_file_patterns` decides once the absolute path exists.
+        if !self.file_patterns.is_empty() {
+            return true;
         }
+        has_test_suffix(&name[..name.len() - extname.len()])
+    }
 
-        false
+    /// Returns true if `file_patterns` is empty, or if the path relative to the
+    /// project root matches one of them.
+    pub(crate) fn matches_file_patterns(&self, abs_path: &[u8]) -> bool {
+        if self.file_patterns.is_empty() {
+            return true;
+        }
+        let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
+        matches_any_file_pattern(self.file_patterns.iter().copied(), rel_path)
     }
 
     pub(crate) fn does_absolute_path_match_filter(&self, name: &[u8]) -> bool {
@@ -401,6 +412,10 @@ impl<'a> Scanner<'a> {
                 };
                 let path = &self.open_dir_buf[..path_len];
 
+                if !self.matches_file_patterns(path) {
+                    return;
+                }
+
                 if !self.does_absolute_path_match_filter(path) {
                     let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);
                     if !self.does_path_match_filter(rel_path) {
@@ -424,3 +439,30 @@ impl<'a> Scanner<'a> {
 }
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
+
+/// The default test-file rule, shared by discovery and the coverage `skip_test_files` check.
+pub(crate) fn has_test_suffix(name_without_extension: &[u8]) -> bool {
+    TEST_NAME_SUFFIXES
+        .iter()
+        .any(|suffix| strings::ends_with(name_without_extension, suffix))
+}
+
+/// `[test] filePatterns` rule: the project-root-relative path matches a glob
+/// and no `!`-negated glob rejects it.
+pub(crate) fn matches_any_file_pattern<'p>(
+    patterns: impl IntoIterator<Item = &'p [u8]>,
+    rel_path: &[u8],
+) -> bool {
+    let mut matched = false;
+    for pattern in patterns {
+        let result = bun_glob::r#match(pattern, rel_path);
+        if result.is_negated() {
+            if !result.matches() {
+                return false;
+            }
+        } else if result.matches() {
+            matched = true;
+        }
+    }
+    matched
+}

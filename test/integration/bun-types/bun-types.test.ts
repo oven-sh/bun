@@ -852,19 +852,48 @@ describe("@types/bun integration test", () => {
           import { SQL } from "bun";
           import { Database, type DatabaseOptions } from "bun:sqlite";
 
-          declare const settings: { readonly?: boolean; create?: boolean; readwrite?: boolean };
+          declare const settings: {
+            readonly?: boolean;
+            create?: boolean;
+            readwrite?: boolean;
+            safeIntegers?: boolean;
+            strict?: boolean;
+          };
           const options: SQL.SQLiteOptions = {
             adapter: "sqlite",
             filename: ":memory:",
             readonly: settings.readonly,
             create: settings.create,
             readwrite: settings.readwrite,
+            safeIntegers: settings.safeIntegers,
+            strict: settings.strict,
           };
           new SQL(options);
+          new SQL("sqlite://data.db?mode=ro", {
+            readonly: settings.readonly,
+            create: settings.create,
+            readwrite: settings.readwrite,
+          });
+          new SQL(new URL("file:///data.db?mode=ro"), {
+            adapter: "sqlite",
+            safeIntegers: settings.safeIntegers,
+            strict: settings.strict,
+          });
+          new SQL({
+            adapter: "sqlite",
+            filename: "file:///data.db?mode=ro",
+            readonly: settings.readonly,
+            strict: settings.strict,
+          });
 
-          // The options of Bun.SQL and of bun:sqlite stay assignable to each other.
-          new Database(":memory:", options);
+          // The option types of Bun.SQL and of bun:sqlite stay assignable to each other.
+          // This checks the types only: the two APIs do not choose the same mode for every object.
           declare const databaseOptions: DatabaseOptions;
+          declare const bytes: Uint8Array;
+          new Database(":memory:", options);
+          new Database(":memory:", { readonly: settings.readonly, strict: settings.strict });
+          Database.deserialize(bytes, databaseOptions);
+          Database.deserialize(bytes, { readonly: settings.readonly, safeIntegers: settings.safeIntegers });
           const sqliteOptions: SQL.SQLiteOptions = databaseOptions;
         `,
       },

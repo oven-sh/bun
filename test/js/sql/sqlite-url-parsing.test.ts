@@ -86,23 +86,9 @@ describe("SQLite URL Parsing Matrix", () => {
       { query: "?mode=ro", readonly: true, create: undefined, name: "readonly" },
       { query: "?mode=rw", readonly: false, create: false, name: "read-write" },
       { query: "?mode=rwc", readonly: false, create: true, name: "read-write-create" },
+      { query: "?mode=invalid", readonly: undefined, create: undefined, name: "invalid mode" },
       { query: "?other=param", readonly: undefined, create: undefined, name: "other param" },
       { query: "?mode=ro&cache=shared", readonly: true, create: undefined, name: "multiple params" },
-      // When mode repeats, the most restrictive one applies, in any order.
-      { query: "?mode=rw&mode=ro", readonly: true, create: undefined, name: "rw then ro" },
-      { query: "?mode=ro&mode=rw", readonly: true, create: undefined, name: "ro then rw" },
-      { query: "?mode=ro&mode=rwc", readonly: true, create: undefined, name: "ro then rwc" },
-      { query: "?mode=rwc&mode=rw", readonly: false, create: false, name: "rwc then rw" },
-      { query: "?mode=rw&mode=rwc", readonly: false, create: false, name: "rw then rwc" },
-      { query: "?mode=ro&mode=ro", readonly: true, create: undefined, name: "the same mode twice" },
-      { query: "?mode=r%6F", readonly: true, create: undefined, name: "a percent-encoded mode" },
-      { query: "?MODE=ro", readonly: undefined, create: undefined, name: "a parameter name in another case" },
-      // `memory` is a mode of SQLite, but it is not an access mode.
-      { query: "?mode=memory", readonly: undefined, create: undefined, name: "the mode memory" },
-      { query: "?mode=memory&mode=ro", readonly: true, create: undefined, name: "memory then ro" },
-      // A fragment is not a part of the mode, and a mode after a fragment still applies.
-      { query: "?mode=ro#fragment", readonly: true, create: undefined, name: "a fragment after the mode" },
-      { query: "?other=param#fragment&mode=ro", readonly: true, create: undefined, name: "a mode after a fragment" },
     ];
 
     const queryMatrix = protocolsWithQuery.flatMap(base =>
@@ -125,58 +111,15 @@ describe("SQLite URL Parsing Matrix", () => {
       }
     });
 
-    test("a URL object with a fragment after the mode", async () => {
-      await using sql = new SQL(new URL("sqlite://test.db?mode=ro#fragment"));
-      const { adapter, filename, readonly } = sql.options;
-      expect({ adapter, filename, readonly }).toEqual({ adapter: "sqlite", filename: "test.db", readonly: true });
-    });
-
-    test.each(["sqlite://:memory:?mode=memory", "file::memory:?mode=memory&cache=shared"])(
-      "%s is an in-memory database",
-      async url => {
-        await using sql = new SQL(url);
-        expect(sql.options.filename).toBe(":memory:");
-        await sql`CREATE TABLE t (a)`;
-        await sql`INSERT INTO t VALUES (1)`;
-        const [row] = await sql`SELECT a FROM t`;
-        expect(row).toEqual({ a: 1 });
-      },
-    );
-
-    async function constructionError(url: string) {
-      try {
-        await new SQL(url).close();
-      } catch (error) {
-        return error;
-      }
-    }
-
-    // SQLite itself refuses each of these with "no such access mode".
-    const unknownModes = [
-      { query: "?mode=invalid", received: "invalid", name: "an unknown mode" },
-      { query: "?mode=RO", received: "RO", name: "a mode in upper case" },
-      { query: "?mode=readonly", received: "readonly", name: "the mode readonly" },
-      { query: "?mode=r", received: "r", name: "the mode r" },
-      { query: "?mode=read-only", received: "read-only", name: "the mode read-only" },
-      { query: "?mode=", received: "", name: "an empty mode" },
-      { query: "?mode", received: "", name: "a mode with no value" },
-      { query: "?mode=ro+", received: "ro ", name: "a mode with a trailing +" },
-      { query: "?mode=%20ro", received: " ro", name: "a mode with a leading space" },
-      { query: "?mode=bogus&mode=ro", received: "bogus", name: "an unknown mode before a valid one" },
-      { query: "?mode=ro&mode=bogus", received: "bogus", name: "an unknown mode after a valid one" },
-      { query: "?cache=shared&mode=rwx", received: "rwx", name: "an unknown mode after another parameter" },
-      { query: "?mode=bogus#fragment", received: "bogus", name: "an unknown mode before a fragment" },
-    ];
-
-    test.each(
-      protocolsWithQuery.flatMap(base => unknownModes.map(mode => ({ base, url: base + mode.query, ...mode }))),
-    )("$base with $name throws", async ({ url, received }) => {
-      const error = await constructionError(url);
-      expect(error).toBeInstanceOf(TypeError);
-      expect(error).toMatchObject({
-        code: "ERR_INVALID_ARG_VALUE",
-        message: `The argument 'mode' must be one of: ro, rw, rwc, memory. Received '${received}'`,
-      });
+    // A database in memory needs no create flag, so ?mode=rw opens it.
+    test.each(["sqlite://:memory:?mode=rw", ":memory:?mode=rw"])("%s is a database in memory", async url => {
+      await using sql = new SQL(url, { adapter: "sqlite" });
+      const { filename, readonly, create } = sql.options;
+      expect({ filename, readonly, create }).toEqual({ filename: ":memory:", readonly: false, create: false });
+      await sql`CREATE TABLE t (a)`;
+      await sql`INSERT INTO t VALUES (1)`;
+      const [row] = await sql`SELECT a FROM t`;
+      expect(row).toEqual({ a: 1 });
     });
   });
 

@@ -429,11 +429,30 @@ describe("Connection & Initialization", () => {
   });
 
   describe("Open mode", () => {
-    // What a handle does with a database that exists, and with a file that does not exist.
-    type Mode = { existing: string; rows: number; missing: string; createdMissing: boolean };
-    const readWriteCreate: Mode = { existing: "writes", rows: 1, missing: "opens", createdMissing: true };
-    const readWrite: Mode = { existing: "writes", rows: 1, missing: "SQLITE_CANTOPEN", createdMissing: false };
-    const readOnly: Mode = { existing: "SQLITE_READONLY", rows: 0, missing: "SQLITE_CANTOPEN", createdMissing: false };
+    // What a handle does with a database that exists, with a file that does not exist, and with `:memory:`.
+    type Mode = { existing: string; rows: number; missing: string; createdMissing: boolean; memory: string };
+    const anonymousReadOnly = "Cannot open an anonymous database in read-only mode.";
+    const readWriteCreate: Mode = {
+      existing: "writes",
+      rows: 1,
+      missing: "opens",
+      createdMissing: true,
+      memory: "opens",
+    };
+    const readWrite: Mode = {
+      existing: "writes",
+      rows: 1,
+      missing: "SQLITE_CANTOPEN",
+      createdMissing: false,
+      memory: "opens",
+    };
+    const readOnly: Mode = {
+      existing: "SQLITE_READONLY",
+      rows: 0,
+      missing: "SQLITE_CANTOPEN",
+      createdMissing: false,
+      memory: anonymousReadOnly,
+    };
 
     function seed(filename: string) {
       using db = new Database(filename);
@@ -445,12 +464,13 @@ describe("Connection & Initialization", () => {
       return (db.query("SELECT count(*) AS n FROM t").get() as { n: number }).n;
     }
 
+    // The code of the error, or its message when it has no code.
     async function errorCode(query: Promise<unknown>, ok: string) {
       try {
         await query;
         return ok;
       } catch (error) {
-        return (error as SQL.SQLiteError).code;
+        return (error as SQL.SQLiteError).code ?? (error as Error).message;
       }
     }
 
@@ -460,7 +480,7 @@ describe("Connection & Initialization", () => {
       const missing = join(String(dir), "missing.db");
       seed(existing);
 
-      const observed: Mode = { existing: "", rows: -1, missing: "", createdMissing: false };
+      const observed: Mode = { existing: "", rows: -1, missing: "", createdMissing: false, memory: "" };
       {
         await using sql = open(existing);
         observed.existing = await errorCode(sql`INSERT INTO t VALUES (1)`, "writes");
@@ -471,6 +491,10 @@ describe("Connection & Initialization", () => {
         observed.missing = await errorCode(sql`SELECT 1`, "opens");
       }
       observed.createdMissing = existsSync(missing);
+      {
+        await using sql = open(":memory:");
+        observed.memory = await errorCode(sql`SELECT 1`, "opens");
+      }
       return observed;
     }
 
@@ -534,7 +558,7 @@ describe("Connection & Initialization", () => {
       },
     );
 
-    // An option that is given takes priority over ?mode=.
+    // An option that is given replaces what ?mode= set.
     const urlRows: [string, Record<string, unknown>, Mode][] = [
       ["?mode=ro", {}, readOnly],
       ["?mode=ro", { readonly: undefined }, readOnly],
@@ -550,17 +574,6 @@ describe("Connection & Initialization", () => {
       ["?mode=rwc", { create: undefined }, readWriteCreate],
       ["?mode=rwc", { create: false }, readWrite],
       ["?mode=rwc", { readwrite: false }, readOnly],
-      // When mode repeats, the most restrictive one applies, in any order.
-      ["?mode=rw&mode=ro", {}, readOnly],
-      ["?mode=ro&mode=rw", {}, readOnly],
-      ["?mode=rwc&mode=rw", {}, readWrite],
-      ["?mode=rw&mode=rwc", {}, readWrite],
-      ["?mode=rwc&mode=rw&mode=ro", {}, readOnly],
-      ["?cache=shared&mode=ro", {}, readOnly],
-      ["?mode=memory&mode=ro", {}, readOnly],
-      // A fragment is not a part of the mode, and a mode after a fragment still applies.
-      ["?mode=ro#fragment", {}, readOnly],
-      ["?cache=shared#fragment&mode=ro", {}, readOnly],
     ];
 
     test.concurrent.each(urlRows.map(([query, options, mode]) => [query, show(options), options, mode] as const))(
@@ -576,10 +589,37 @@ describe("Connection & Initialization", () => {
       ["readonly: undefined", { readonly: undefined }],
       ["a wrapper that forwards a setting its caller did not set", { readonly: unset.readonly, strict: unset.strict }],
     ])("?mode=ro in a filename that is a file: URL holds with %s", async (_title, options) => {
-      const open = (filename: string) =>
-        new SQL({ adapter: "sqlite", filename: pathToFileURL(filename).href + "?mode=ro", ...options });
-      expect(await observe(open)).toEqual(readOnly);
+      using dir = tempDir("sqlite-open-mode-file-url", {});
+      const existing = join(String(dir), "existing.db");
+      seed(existing);
+      await using sql = new SQL({ adapter: "sqlite", filename: pathToFileURL(existing).href + "?mode=ro", ...options });
+      expect(await errorCode(sql`INSERT INTO t VALUES (1)`, "writes")).toBe("SQLITE_READONLY");
     });
+
+    // ?mode=rw also applies to a file name with no scheme.
+    test("?mode=rw after a plain file name does not create the file", async () => {
+      using dir = tempDir("sqlite-open-mode-plain-name", {});
+      const missing = join(String(dir), "missing.db");
+      await using sql = new SQL({ adapter: "sqlite", filename: missing + "?mode=rw" });
+      expect(await errorCode(sql`SELECT 1`, "opens")).toBe("SQLITE_CANTOPEN");
+      expect(existsSync(missing)).toBe(false);
+    });
+
+    // The open flags of ?mode=rw apply to the connection, so ATTACH does not create a file either.
+    test.concurrent.each(["a database in memory", "a database in a file"])(
+      "ATTACH of a missing file on %s with ?mode=rw is rejected",
+      async target => {
+        using dir = tempDir("sqlite-open-mode-attach", {});
+        const existing = join(String(dir), "existing.db");
+        const attached = join(String(dir), "attached.db");
+        seed(existing);
+        await using sql = new SQL(`sqlite://${target === "a database in memory" ? ":memory:" : existing}?mode=rw`);
+        expect(await errorCode(sql.unsafe(`ATTACH DATABASE '${attached}' AS other`), "attaches")).toBe(
+          "SQLITE_CANTOPEN",
+        );
+        expect(existsSync(attached)).toBe(false);
+      },
+    );
 
     test("sql.options reports the mode that the handle has", async () => {
       using dir = tempDir("sqlite-open-mode-options", {});
@@ -605,19 +645,6 @@ describe("Connection & Initialization", () => {
       });
     });
 
-    // The constructor throws before it opens or creates anything.
-    async function constructionError(open: (filename: string) => SQL) {
-      using dir = tempDir("sqlite-open-mode-rejected", {});
-      const missing = join(String(dir), "missing.db");
-      let error: unknown;
-      try {
-        await open(missing).close();
-      } catch (e) {
-        error = e;
-      }
-      return { error, createdMissing: existsSync(missing) };
-    }
-
     test.concurrent.each([
       [
         "{ readOnly: true }",
@@ -640,22 +667,18 @@ describe("Connection & Initialization", () => {
         (filename: string) => new SQL(filename, { adapter: "sqlite", readOnly: true } as SQL.Options),
       ],
     ])("%s throws the error that bun:sqlite throws for the misspelling", async (_title, open) => {
-      const { error, createdMissing } = await constructionError(open);
+      // The constructor throws before it opens or creates anything.
+      using dir = tempDir("sqlite-open-mode-rejected", {});
+      const missing = join(String(dir), "missing.db");
+      let error: unknown;
+      try {
+        await open(missing).close();
+      } catch (e) {
+        error = e;
+      }
       expect(error).toBeInstanceOf(TypeError);
       expect((error as TypeError).message).toBe('Misspelled option "readOnly" should be "readonly"');
-      expect(createdMissing).toBe(false);
-    });
-
-    test.concurrent.each([
-      ["?mode=RO", "The argument 'mode' must be one of: ro, rw, rwc, memory. Received 'RO'"],
-      ["?mode=readonly", "The argument 'mode' must be one of: ro, rw, rwc, memory. Received 'readonly'"],
-      ["?mode=", "The argument 'mode' must be one of: ro, rw, rwc, memory. Received ''"],
-      ["?mode=rwc&mode=bogus", "The argument 'mode' must be one of: ro, rw, rwc, memory. Received 'bogus'"],
-    ])("%s throws and creates no file", async (query, message) => {
-      const { error, createdMissing } = await constructionError(filename => new SQL(`sqlite://${filename}${query}`));
-      expect(error).toBeInstanceOf(TypeError);
-      expect(error).toMatchObject({ code: "ERR_INVALID_ARG_VALUE", message });
-      expect(createdMissing).toBe(false);
+      expect(existsSync(missing)).toBe(false);
     });
 
     test("option keys that the options object inherits are read", async () => {

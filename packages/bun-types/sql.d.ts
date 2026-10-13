@@ -184,12 +184,6 @@ declare module "bun" {
        * - `./dev.db`
        * - `:memory:`
        *
-       * A `sqlite:` or `file:` URL can end with a `?mode=` query parameter:
-       * `ro` (read-only), `rw` (read-write) or `rwc` (read-write, and create
-       * the file if it does not exist). The `memory` mode of SQLite has no
-       * effect, and any other value throws an error. The `readonly` and
-       * `create` options take priority over `mode`.
-       *
        * @default ":memory:"
        */
       filename?: URL | ":memory:" | (string & {}) | undefined;
@@ -218,8 +212,7 @@ declare module "bun" {
        * Open the database for reading and writing.
        *
        * When `false`, the database opens in read-only mode, the same as
-       * `readonly: true`. `true` does not override `?mode=ro` in
-       * {@link filename} or `readonly: true`.
+       * `readonly: true`.
        *
        * @default true
        */

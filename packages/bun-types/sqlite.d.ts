@@ -564,7 +564,7 @@ declare module "bun:sqlite" {
      */
     static deserialize(
       serialized: NodeJS.TypedArray | ArrayBufferLike,
-      options?: { readonly?: boolean; strict?: boolean; safeIntegers?: boolean },
+      options?: Pick<DatabaseOptions, "readonly" | "strict" | "safeIntegers">,
     ): Database;
 
     /**

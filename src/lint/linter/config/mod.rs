@@ -1741,7 +1741,7 @@ impl Config {
         if !self.js_plugins.is_empty() {
             // ESLint looks for a rule in the plugins that the objects for the file have.
             let has = |it: &&Arc<js_plugin::Plugin>| {
-                self.accepts_all_plugins || plugins.contains(&&it.name[..])
+                self.accepts_all_plugins || self.has_every_rule || plugins.contains(&&it.name[..])
             };
             config.js_plugins = js_plugins.iter().filter(has).cloned().collect();
             let sources: Vec<&Json> = indices

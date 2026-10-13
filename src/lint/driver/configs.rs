@@ -1339,6 +1339,10 @@ impl<'l> Loader<'l> {
             let mistake = |message: Vec<u8>| native::Mistake::new(message, written.map(|it| it.at));
             let is_built_in =
                 |name: &[u8]| Plugin::of_oxlint_prefix(name).is_some() || name == b"eslint";
+            let is_path = specifier.starts_with(b".") || paths::is_absolute(specifier);
+            // As with ESLint, `perfectionist` is eslint-plugin-perfectionist.
+            let long = plugin_longhand(specifier).filter(|_| !is_path);
+            let package = long.as_deref().unwrap_or(specifier);
             let built_in = |name: &[u8]| {
                 let parts: [&[u8]; 7] = [
                     b"The plugin \"",
@@ -1346,13 +1350,12 @@ impl<'l> Loader<'l> {
                     b"\" is built in\n  Its rules work without it, so remove it from plugins\n  To run the package as well, give it another name: { name = \"",
                     name,
                     b"-js\", specifier = \"",
-                    specifier,
+                    package,
                     b"\" }",
                 ];
                 mistake(parts.concat())
             };
             let alias = written.and_then(|it| it.alias.as_deref());
-            let is_path = specifier.starts_with(b".") || paths::is_absolute(specifier);
             // By its name, before anything is looked for: `plugins = ["react"]` is what turns it on in oxlint.
             let short = plugin_shorthand(specifier);
             if !is_path && is_built_in(alias.unwrap_or(&short)) {
@@ -1365,8 +1368,6 @@ impl<'l> Loader<'l> {
             // A path in bunfig.toml is relative to that file.
             let bunfig = paths::resolve(self.cwd(), &options.bunfig);
             let directory = written.map_or(self.cwd(), |_| paths::dirname(&bunfig));
-            // As with ESLint, `perfectionist` is eslint-plugin-perfectionist.
-            let long = plugin_longhand(specifier).filter(|_| !is_path);
             let names = [Some(&specifier[..]), long.as_deref()];
             let mut tried = names.into_iter().flatten().map(|name| {
                 let loaded = self.js_plugins.load(directory, name, alias);

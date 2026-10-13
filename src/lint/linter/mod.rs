@@ -602,6 +602,10 @@ impl<S: RuleSet> Linter<S> {
         let mut off: Vec<RuleId> = Vec::new();
         if config.has_every_rule {
             let is_on = |id: &RuleId| match is_plain {
+                _ if matches!(id, RuleId::Js(_)) => (running_js.iter()).any(|it| {
+                    it.severity != Severity::Off
+                        && RuleId::Js(Arc::clone(&it.configured.rule)) == *id
+                }),
                 true => (config
                     .rules
                     .iter()

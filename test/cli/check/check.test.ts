@@ -15760,7 +15760,11 @@ describe.concurrent("--check", () => {
       ];
       const results = await Promise.all(spellings.map(args => run(String(dir), args)));
       expect(
-        results.map(it => [it.stdout, /^Found 1 error, checked [\d,]+ files \[time\]$/.test(it.stderr), it.exitCode]),
+        results.map(it => [
+          it.stdout,
+          /^Found 1 error in 1 file, checked [\d,]+ files \[time\]$/.test(it.stderr),
+          it.exitCode,
+        ]),
       ).toEqual(
         results.map(() => [
           `selected.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
@@ -15823,7 +15827,9 @@ describe.concurrent("--check", () => {
           run(String(dir), [...command, "--check", "--threads"]),
         ]),
       );
-      expect(results.map(it => [it.stdout, it.exitCode])).toEqual(results.map(() => ["", 1]));
+      expect(
+        results.map((it, i) => [i % 3 === 2 ? it.stdout.includes("Usage:") : it.stdout === "", it.exitCode]),
+      ).toEqual(results.map(() => [true, 1]));
       expect(results.map(it => it.stderr.split("\n")[0])).toEqual(
         commands.flatMap(() => [
           `error: --threads takes a number above zero, not "0"`,
@@ -16953,11 +16959,19 @@ describe.concurrent("--check", () => {
         workspaces: ["packages/*"],
         scripts: { one: "echo one ran", two: "echo two ran" },
       }),
-      "packages/a/package.json": JSON.stringify({ name: "a", scripts: { build: "echo a ran" } }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        scripts: { build: "echo a ran", test: "echo a ran", run: "echo a ran" },
+      }),
       "a.ts": `export const a: number = "1";\n`,
+      "a.test.ts": `import { a } from "./a";\nvoid a;\n`,
     });
+    const filtered = ["build", "test", "run"].flatMap(script => [
+      ["--check", "--filter", "*", script],
+      ["--filter=*", "--check", script],
+    ]);
     const results = await Promise.all([
-      run(String(dir), ["--check", "--filter", "*", "build"]),
+      ...filtered.map(args => run(String(dir), args)),
       run(String(dir), ["run", "--check", "--parallel", "one", "two"]),
       run(String(dir), ["run", "--check", "--sequential", "one", "two"]),
     ]);
@@ -16966,11 +16980,17 @@ describe.concurrent("--check", () => {
       it.stderr.includes("TS2322"),
       (it.stdout + it.stderr).includes("ran"),
     ]);
-    expect(seen).toEqual([
-      [1, true, false],
-      [1, true, false],
-      [1, true, false],
+    expect(seen).toEqual(results.map(() => [1, true, false]));
+    const direct = await Promise.all([
+      run(String(dir), ["test", "--check", "--filter", "*"]),
+      run(String(dir), ["test", "--check", "--filter=*", "a.test.ts"]),
     ]);
+    expect(direct.map(it => [/^bun test v[^\n]+$/.test(it.stdout), it.stderr.includes("TS2322"), it.exitCode])).toEqual(
+      direct.map(() => [true, true, 1]),
+    );
+    writeFileSync(join(String(dir), "a.ts"), `export const a: number = 1;\n`);
+    const checked = await Promise.all(filtered.map(args => run(String(dir), args)));
+    expect(checked.map(it => [it.stdout.includes("a ran"), it.exitCode])).toEqual(checked.map(() => [true, 0]));
   });
 
   test("bun test --watch --check watches the tsconfig.json of every project", async () => {

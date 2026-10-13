@@ -821,11 +821,15 @@ pub(crate) fn checked_command_name() -> Option<Option<&'static [u8]>> {
             ..parsing_options(CommandTag::AutoCommand)
         },
     );
-    Some(
-        parsed
-            .ok()
-            .and_then(|args| args.positionals().first().copied()),
-    )
+    Some(parsed.ok().and_then(|args| {
+        // --filter owns a workspace script, even when its name is a built-in command.
+        // AutoCommand routes the parsed filter to the workspace script runner instead.
+        if !args.options(b"--filter").is_empty() {
+            None
+        } else {
+            args.positionals().first().copied()
+        }
+    }))
 }
 
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────

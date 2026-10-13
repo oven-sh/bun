@@ -463,7 +463,7 @@ bun test --check --threads 2 --no-pretty
 
 `--threads`, `--project`, `--pretty`, `--no-pretty`, `--all`, and `--timing` also work with `--check`.
 `bun build --check` supports `--threads` and `--project`; it uses the build's error format.
-Use the long `--project` name here: `-p` still means `--print`. Options after a file or script name belong to that program.
+Use the long `--project` name here: `-p` still means `--print`. With `bun run`, options after a file or script name belong to that program.
 
 Inside the `check` script, and in any script it starts, `bun check` is the type checker. That makes `"check": "bun check"` work.
 

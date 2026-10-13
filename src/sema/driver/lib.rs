@@ -4122,149 +4122,159 @@ fn check_named_files(
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
     // Returns the invalid tasks.
     // `ahead`: by task. Empty: every task checks whole files.
-    let run_round = |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested| {
-        // After the last step the published state is read by the loop over the files that are not
-        // checked, which runs with `after_file`, and by a caller that goes on to query the program.
-        // The tasks of split files read the ranges, and nothing else of the step before theirs.
-        let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
-            || request.retains_everything
-            || request.after_file.is_some()
-                && !request.plan_options.after_file_is_for_checked_files;
-        let tasks = step.len();
-        let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
-        // The largest first, so that no thread begins it when the others are nearly done.
-        let mut start_order: Vec<usize> = (0..tasks).collect();
-        match request.order {
-            1 if is_one_thread => {}
-            1 => start_order.shared_sort_by_key(|&i| Reverse(weight_of(i))),
-            order => start_order.shared_sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
-        }
-        let outcomes: Vec<Guarded<Option<Outcome>>> =
-            (0..tasks).map(|_| Guarded::new(None)).collect();
-        let (started, busy) = (Instant::now(), AtomicU64::new(0));
-        host.parallel(tasks, &|i| {
-            let (index, began) = (start_order[i], Instant::now());
-            let cost_before = request.task_clock.map(|clock| clock());
-            let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
-            let outcome = match ahead.get(index).copied().flatten() {
-                Some(range) => check_ahead(files[0], range, expected, [number, index]),
-                None => check_chunk(&files, expected, Some((number, index, is_read_later))),
-            };
-            *outcomes[index].lock() = Some(outcome);
-            let elapsed = began.elapsed();
-            busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-            let cost = match (request.task_clock, cost_before) {
-                (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
-                _ => elapsed,
-            };
-            task_times.lock().push((cost, files.len(), step[index][0]));
-        });
-        let in_tasks = started.elapsed();
-        // The barrier. Everything from here on is in task order.
-        let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
-            .map(|mut outcome| outcome.get_mut().take().unwrap())
-            .collect();
-        let mut finished: Vec<Finished> = (outcomes.iter_mut())
-            .map(|outcome| outcome.finished.take().unwrap())
-            .collect();
-        // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
-        let mut invalid: Vec<Task> = Vec::new();
-        let (mut ranges_dropped, mut ranges_by_obstacle) = (0, [0; 3]);
-        if checker_count == 0 {
-            // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
-            let mut is_invalid = program.validate(&finished);
-            // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
-            // evaluates what is missing.
-            let tolerated = request.plan_options.split_tolerates & 7;
-            for (is_invalid, outcome) in is_invalid.iter_mut().zip(&outcomes) {
-                *is_invalid |= outcome.obstacles & !tolerated != 0;
-                for (bit, count) in ranges_by_obstacle.iter_mut().enumerate() {
-                    *count += usize::from((outcome.obstacles >> bit) & 1);
-                }
+    // `is_retry`: the valid tasks publish, so that the tasks retried after them find what they stored.
+    let run_round =
+        |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested, is_retry: bool| {
+            // After the last step the published state is read by the loop over the files that are not
+            // checked, which runs with `after_file`, and by a caller that goes on to query the program.
+            // The tasks of split files read the ranges, and nothing else of the step before theirs.
+            let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
+                || is_retry
+                || request.retains_everything
+                || request.after_file.is_some()
+                    && !request.plan_options.after_file_is_for_checked_files;
+            let tasks = step.len();
+            let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
+            // The largest first, so that no thread begins it when the others are nearly done.
+            let mut start_order: Vec<usize> = (0..tasks).collect();
+            match request.order {
+                1 if is_one_thread => {}
+                1 => start_order.shared_sort_by_key(|&i| Reverse(weight_of(i))),
+                order => start_order.shared_sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
             }
-            let mut at = is_invalid.iter();
-            finished.retain(|_| !*at.next().unwrap());
-            let mut at = is_invalid.iter().zip(step).enumerate();
-            outcomes.retain(|_| {
-                let (index, (&is_invalid, task)) = at.next().unwrap();
-                if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
-                    ranges_dropped += 1;
-                } else if is_invalid {
-                    if let Some(progress) = request.progress {
-                        let bytes = task.iter().map(|&file| bytes_of(file)).sum();
-                        progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
-                        progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
-                    }
-                    invalid.push(task.clone());
-                }
-                !is_invalid
+            let outcomes: Vec<Guarded<Option<Outcome>>> =
+                (0..tasks).map(|_| Guarded::new(None)).collect();
+            let (started, busy) = (Instant::now(), AtomicU64::new(0));
+            host.parallel(tasks, &|i| {
+                let (index, began) = (start_order[i], Instant::now());
+                let cost_before = request.task_clock.map(|clock| clock());
+                let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
+                let outcome = match ahead.get(index).copied().flatten() {
+                    Some(range) => check_ahead(files[0], range, expected, [number, index]),
+                    None => check_chunk(&files, expected, Some((number, index, is_read_later))),
+                };
+                *outcomes[index].lock() = Some(outcome);
+                let elapsed = began.elapsed();
+                busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+                let cost = match (request.task_clock, cost_before) {
+                    (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
+                    _ => elapsed,
+                };
+                task_times.lock().push((cost, files.len(), step[index][0]));
             });
-        }
-        for outcome in &mut outcomes {
-            free_trees(std::mem::take(&mut outcome.trees_to_free));
-        }
-        let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
-        for finished in &finished {
-            for (sum, &more) in foreign_evaluations
-                .iter_mut()
-                .zip(&finished.foreign_evaluations)
-            {
-                *sum += u64::from(more);
+            let in_tasks = started.elapsed();
+            // The barrier. Everything from here on is in task order.
+            let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
+                .map(|mut outcome| outcome.get_mut().take().unwrap())
+                .collect();
+            let mut finished: Vec<Finished> = (outcomes.iter_mut())
+                .map(|outcome| outcome.finished.take().unwrap())
+                .collect();
+            // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
+            let mut invalid: Vec<Task> = Vec::new();
+            let (mut ranges_dropped, mut ranges_by_obstacle) = (0, [0; 3]);
+            if checker_count == 0 {
+                // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
+                let mut is_invalid = program.validate(&finished, is_read_later);
+                // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
+                // evaluates what is missing.
+                let tolerated = request.plan_options.split_tolerates & 7;
+                for (is_invalid, outcome) in is_invalid.iter_mut().zip(&outcomes) {
+                    *is_invalid |= outcome.obstacles & !tolerated != 0;
+                    for (bit, count) in ranges_by_obstacle.iter_mut().enumerate() {
+                        *count += usize::from((outcome.obstacles >> bit) & 1);
+                    }
+                }
+                let mut at = is_invalid.iter();
+                finished.retain(|_| !*at.next().unwrap());
+                let mut at = is_invalid.iter().zip(step).enumerate();
+                outcomes.retain(|_| {
+                    let (index, (&is_invalid, task)) = at.next().unwrap();
+                    if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
+                        ranges_dropped += 1;
+                    } else if is_invalid {
+                        if let Some(progress) = request.progress {
+                            let bytes = task.iter().map(|&file| bytes_of(file)).sum();
+                            progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
+                            progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
+                        }
+                        invalid.push(task.clone());
+                    }
+                    !is_invalid
+                });
             }
-        }
-        let linking = Instant::now();
-        let records = program.link(&mut finished, &in_parallel);
-        let (in_link, publishing) = (linking.elapsed(), Instant::now());
-        let entries = program.publish(&mut finished, &in_parallel, request.digests);
-        let in_publish = publishing.elapsed();
-        let not_published = outcomes
-            .iter()
-            .map(|it| it.generic_relation_entries_not_published);
-        let generic_relation_entries_not_published = not_published.sum();
-        outcomes.into_iter().for_each(&accept);
-        let mut slowest = std::mem::take(&mut *task_times.lock());
-        slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
-        if request.task_clock.is_none() {
-            slowest.truncate(5);
-        }
-        let path_of = |file: usize| {
-            program.files.modules[to_check[file].idx()]
-                .file_name()
-                .to_vec()
+            for outcome in &mut outcomes {
+                free_trees(std::mem::take(&mut outcome.trees_to_free));
+            }
+            let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
+            for finished in &finished {
+                for (sum, &more) in foreign_evaluations
+                    .iter_mut()
+                    .zip(&finished.foreign_evaluations)
+                {
+                    *sum += u64::from(more);
+                }
+            }
+            let linking = Instant::now();
+            let records = program.link(&mut finished, &in_parallel);
+            let (in_link, publishing) = (linking.elapsed(), Instant::now());
+            let entries = program.publish(&mut finished, &in_parallel, request.digests);
+            let in_publish = publishing.elapsed();
+            let not_published = outcomes
+                .iter()
+                .map(|it| it.generic_relation_entries_not_published);
+            let generic_relation_entries_not_published = not_published.sum();
+            outcomes.into_iter().for_each(&accept);
+            let mut slowest = std::mem::take(&mut *task_times.lock());
+            slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
+            if request.task_clock.is_none() {
+                slowest.truncate(5);
+            }
+            let path_of = |file: usize| {
+                program.files.modules[to_check[file].idx()]
+                    .file_name()
+                    .to_vec()
+            };
+            steps.lock().push(StepReport {
+                slowest_tasks: (slowest.into_iter())
+                    .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
+                    .collect(),
+                tasks,
+                ranges: ahead.iter().flatten().count(),
+                ranges_dropped,
+                ranges_by_obstacle,
+                files: step.iter().map(Vec::len).sum(),
+                in_tasks,
+                in_link,
+                in_publish,
+                idle: (in_tasks * threads as u32)
+                    .saturating_sub(Duration::from_nanos(busy.into_inner())),
+                entries,
+                records,
+                generic_relation_entries_not_published,
+                foreign_evaluations,
+            });
+            invalid
         };
-        steps.lock().push(StepReport {
-            slowest_tasks: (slowest.into_iter())
-                .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
-                .collect(),
-            tasks,
-            ranges: ahead.iter().flatten().count(),
-            ranges_dropped,
-            ranges_by_obstacle,
-            files: step.iter().map(Vec::len).sum(),
-            in_tasks,
-            in_link,
-            in_publish,
-            idle: (in_tasks * threads as u32)
-                .saturating_sub(Duration::from_nanos(busy.into_inner())),
-            entries,
-            records,
-            generic_relation_entries_not_published,
-            foreign_evaluations,
-        });
-        invalid
-    };
     // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
     // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
     let run_step = |number: usize, step: &[Task], expected: Requested| {
-        let mut invalid = run_round(number, step, plan.ahead_of(number), expected);
+        program.compare_listings();
+        let mut invalid = run_round(number, step, plan.ahead_of(number), expected, false);
+        let mut retried = 0;
         while !invalid.is_empty() {
             let mut files = invalid.concat();
             files.shared_sort_unstable();
+            // A round of retries that left every file invalid.
+            if retried != 0 && files.len() >= retried {
+                program.stop_comparing_listings();
+            }
+            retried = files.len();
             let again = match is_one_thread {
                 true => Plan::of_one_thread(files, &size_of, &request.plan_options),
                 false => Plan::cut(files, &size_of, &request.plan_options),
             };
-            invalid = run_round(number, &again, &[], expected);
+            invalid = run_round(number, &again, &[], expected, true);
         }
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.

@@ -5499,6 +5499,59 @@ ss.length = 2;
       expect(exitCode).toBe(1);
     });
 
+    // `tsc` assigns the list of properties of `Style` once, and while the members of the mapped type are being resolved the
+    // list lacks them. Two tasks of the last step each assign one, and not the same: the files are large enough for a task
+    // each. The second task is checked again, and has to find what the first one assigned.
+    test.each([
+      [
+        "the whole list",
+        ["x.ts", "y.ts"],
+        [
+          "x.ts(4,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.",
+          "y.ts(2,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, \":hover\">'.",
+        ],
+      ],
+      [
+        "the list without the mapped type",
+        ["y.ts", "x.ts"],
+        [
+          "x.ts(4,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.",
+        ],
+      ],
+    ])("two tasks of the last step keep different lists of an intersection: %s first", async (_, order, expected) => {
+      const constants = (prefix: string) =>
+        Array.from({ length: 2000 }, (_, i) => `export const ${prefix}${i} = ${i};\n`).join("");
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            ...{ strict: true, noEmit: true, target: "es2022", module: "esnext", moduleResolution: "bundler" },
+            ...{ types: [], skipLibCheck: true },
+          },
+          files: [...order, "z0.ts", "z1.ts"],
+        }),
+        "lib.d.ts": `type Pseudos = ':hover';
+export type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };
+export type Style = CSSPseudos & { top?: string };
+export declare function css(style: Style): void;
+`,
+        "x.ts": `import { Style } from './lib';
+export const key: keyof Style = 'top';
+export const whole: Style = { top: '' };
+export const wrong: Style = { tpo: '' };
+${constants("x")}`,
+        "y.ts": `import { css } from './lib';
+css({ ':hover': { notAProperty: '1' } });
+${constants("y")}`,
+        "z0.ts": constants("z0_"),
+        "z1.ts": constants("z1_"),
+      });
+      for (const threads of [[], ["--threads=4"], ["--threads=1"]]) {
+        const { stdout, exitCode } = await check(dir, threads);
+        expect({ threads, lines: stdout.split("\n") }).toEqual({ threads, lines: expected });
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("an assertion to a union is explained by the member that the comparison in progress selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

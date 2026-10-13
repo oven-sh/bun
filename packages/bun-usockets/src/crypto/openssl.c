@@ -2669,12 +2669,12 @@ restart:
           if (ssl_wants_eof_dispatch(s)) {
             s = ssl_deliver_eof(s);
             if (!s || ssl_gone(s)) return NULL;
-            if (s->flags.allow_half_open &&
+            if (s->flags.allow_half_open && !s->ssl_send_rejected &&
                 !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN)) {
               /* close_notify only ended the peer's write side; ours may
                * still flush queued bytes, and the app's own end() completes
                * the shutdown (ssl_handle_shutdown sees RECEIVED_SHUTDOWN and
-               * finishes immediately). With SENT_SHUTDOWN both directions are
+               * finishes immediately). With SENT_SHUTDOWN, or past a rejected send, both directions are
                * closed and nothing is left to hold open: fall through so the
                * deferred graceful close (code 0, no FIN sent) completes here
                * instead of waiting for a FIN that may never come. */

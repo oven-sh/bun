@@ -5,6 +5,7 @@ import { once } from "node:events";
 import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import { join } from "node:path";
+import { duplexPair } from "node:stream";
 import tls from "node:tls";
 
 const skip = !fault.available() || isWindows;
@@ -209,6 +210,38 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect(received).toBe("a,b,c,d");
   });
 
+  // macOS answers EPROTOTYPE for a connection that is going down, and EPIPE at the retry.
+  test("send → ECONNRESET at the retry of another errno closes once what a silent peer sent is read", async () => {
+    // Half-open, it does not answer the FIN.
+    await using silent = tls.createServer({ key: certs.key, cert: certs.cert, allowHalfOpen: true });
+    await once(silent.listen(0, "127.0.0.1"), "listening");
+    const accepted = once(silent, "secureConnection") as Promise<[tls.TLSSocket]>;
+    const handshake = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<Error | undefined>();
+    let received = "";
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: (silent.address() as AddressInfo).port,
+      tls: { ca: certs.cert },
+      socket: {
+        handshake: () => handshake.resolve(),
+        data: (_socket, chunk) => void (received += chunk),
+        close: (_socket, error) => closed.resolve(error),
+      },
+    });
+    const [[peer]] = await Promise.all([accepted, handshake.promise]);
+    peer.on("error", () => {});
+    socket.pause();
+    await new Promise<void>(resolve => peer.write("late", () => resolve()));
+    fault.set({ syscall: "send", action: "errno", errno: "EINVAL", fd: (socket as any).fd });
+    socket.write("x");
+    fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd: (socket as any).fd });
+    socket.write("x");
+    socket.resume();
+    expect({ error: (await closed.promise)?.code, received }).toEqual({ error: "ECONNRESET", received: "late" });
+    peer.destroy();
+  });
+
   // The write was reported as done with its tail still in userspace, so only the close can carry the error.
   test.each([
     ["closes with the error", false],
@@ -271,6 +304,43 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
         errors: [{ name: "Error", code: "ECONNRESET", syscall: "write", message: "write ECONNRESET" }],
       });
     });
+  });
+
+  // Both directions are over then, and allowHalfOpen has nothing left to keep open.
+  test("send → ECONNRESET for the rest of a half-open write closes at a close_notify that no FIN follows", async () => {
+    // TLS over a stream whose end does not reach the connection, which does not answer the FIN either.
+    const [inner, outer] = duplexPair();
+    const connections: net.Socket[] = [];
+    await using listener = net.createServer({ allowHalfOpen: true }, raw => {
+      connections.push(raw);
+      raw.on("error", () => {}).on("data", chunk => outer.write(chunk));
+      outer.on("data", chunk => raw.write(chunk));
+    });
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    const peer = new tls.TLSSocket(inner, { isServer: true, key: certs.key, cert: certs.cert });
+    peer.on("error", () => {});
+    const writer = connect({ port: (listener.address() as AddressInfo).port, allowHalfOpen: true });
+    const seen = observe(writer);
+    const received = collect(writer);
+    await once(writer, "secureConnect");
+    writer.pause();
+    peer.end("late");
+    await once(peer, "finish");
+    const written = Promise.withResolvers<Error | null | undefined>();
+    fault.set({ syscall: "send", action: "short", bytes: 128 * 1024, fd: fdOf(writer) });
+    writer.write(Buffer.alloc(256 * 1024, "a"), written.resolve);
+    fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", after: 1, repeat: -1, fd: fdOf(writer) });
+    writer.resume();
+    await seen.closed;
+    expect({ received: received().toString(), written: (await written.promise)?.message, events: seen.events }).toEqual(
+      {
+        received: "late",
+        written: "write ECONNRESET",
+        events: ["end", "error", "close(hadError=true)"],
+      },
+    );
+    peer.destroy();
+    for (const raw of connections) raw.destroy();
   });
 
   // The write fails with the close of the engine, which reads first. A reader that stopped may be waiting for the write.

@@ -8,21 +8,28 @@ use crate::print_config::object;
 use crate::{Linter, fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::js_plugin::Plugin as JsPlugin;
 use bun_lint::linter::{
-    Missing, Registry, RuleId, Step, mistake_in_options, oxlint_category, severity_of, write_json,
+    Missing, Registry, RuleId, Step, mistake_in_options, oxlint_category, parse_rule_id,
+    severity_of, write_json,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::{Meta, Plugin};
+use std::sync::Arc;
 
-/// An invalid rule setting.
+/// An invalid rule setting, or a plugin that can't be used.
 pub(crate) struct Mistake {
     /// The text printed after `error: `.
     pub(crate) message: Vec<u8>,
-    /// Byte offset in the bunfig. `None` if the setting came from `--rule`.
+    /// Byte offset in the bunfig. `None` if it came from the command line.
     at: Option<usize>,
 }
 
 impl Mistake {
+    pub(crate) fn new(message: Vec<u8>, at: Option<usize>) -> Mistake {
+        Mistake { message, at }
+    }
+
     /// Formats the error like Bun's other errors, with a code frame from `bunfig` ([`Options::bunfig`]).
     pub(crate) fn print(&self, cwd: &[u8], bunfig: &[u8], colors: bool) -> Vec<u8> {
         let text = fs::read(&paths::resolve(cwd, bunfig)).unwrap_or_default();
@@ -56,6 +63,36 @@ impl Mistake {
         printed.push('\n');
         printed.into_bytes()
     }
+}
+
+/// Error message for `id`, which is `name` with the prefix of `plugin`, which has no such rule. Goes after `error: `.
+fn unknown_rule_of(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
+    let skipped = plugin.name.len() + 1;
+    let closest = (plugin.rules.iter())
+        .map(|it| {
+            (
+                strings::edit_distance(
+                    name.iter().copied(),
+                    it.id.get(skipped..).unwrap_or_default(),
+                ),
+                &it.id,
+            )
+        })
+        .min_by_key(|it| it.0)
+        .filter(|it| it.0 <= name.len().max(3) / 3);
+    let mut message = [b"Unknown rule \"", id, b"\"\n  "].concat();
+    match closest {
+        Some((_, closest)) => message.extend([b"Did you mean \"", &closest[..], b"\"?"].concat()),
+        None => message.extend(
+            [
+                b"The plugin \"",
+                &plugin.name[..],
+                b"\" has no rule by that name",
+            ]
+            .concat(),
+        ),
+    }
+    message
 }
 
 /// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
@@ -96,20 +133,28 @@ pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
 
 /// Returns the first mistake in `[lint.rules]`, `--rule`, `-A` / `-W` / `-D` or the `rules` of `[[lint.overrides]]`: an unknown
 /// rule, an invalid severity, or options the rule doesn't take. Turning off a rule that Bun left out on purpose is fine.
-pub(crate) fn check_rules(linter: &Linter, options: &Options) -> Result<(), Mistake> {
+/// `plugins`: the JavaScript plugins that are loaded.
+pub(crate) fn check_rules(
+    linter: &Linter,
+    options: &Options,
+    plugins: &[Arc<JsPlugin>],
+) -> Result<(), Mistake> {
+    let check =
+        |rules: &[(Vec<u8>, Json)], places: &[RuleOfBunfig]| check(linter, plugins, rules, places);
     let filters = options.filters.iter().filter(|it| !is_category(&it.1));
     let filters: Vec<(Vec<u8>, Json)> = filters
         .map(|(severity, rule)| (rule.clone(), severity_name(*severity)))
         .collect();
-    check(linter, &filters, &[])?;
-    check(linter, &options.rule, &options.rules_of_bunfig)?;
+    check(&filters, &[])?;
+    check(&options.rule, &options.rules_of_bunfig)?;
     let mut overrides = options.overrides.iter();
-    overrides.try_for_each(|it| check(linter, &it.rules, &it.places))
+    overrides.try_for_each(|it| check(&it.rules, &it.places))
 }
 
 /// `places` has the bunfig.toml locations of the first `places.len()` rules. The rest came from `--rule`.
 fn check(
     linter: &Linter,
+    plugins: &[Arc<JsPlugin>],
     rules: &[(Vec<u8>, Json)],
     places: &[RuleOfBunfig],
 ) -> Result<(), Mistake> {
@@ -123,6 +168,40 @@ fn check(
             setting => std::slice::from_ref(setting),
         };
         let severity = parts.first().and_then(severity_of);
+        let (prefix, name) = parse_rule_id(id);
+        if let Some(plugin) = plugins.iter().find(|it| *it.name == *prefix) {
+            let Some(rule) = plugin.rule(name) else {
+                return Err(Mistake {
+                    message: unknown_rule_of(plugin, id, name),
+                    at: written.map(|it| it.key_at),
+                });
+            };
+            let given = parts.get(1..).unwrap_or_default();
+            match severity {
+                None => {}
+                Some(Severity::Off) => continue,
+                Some(_) => match rule.validate(given) {
+                    Ok(()) => continue,
+                    Err(lines) => {
+                        // ESLint indents with tabs.
+                        let lines: Vec<u8> = (strings::trim(&lines, b"\n").iter())
+                            .flat_map(|it| {
+                                if *it == b'\t' {
+                                    &b"  "[..]
+                                } else {
+                                    std::slice::from_ref(it)
+                                }
+                            })
+                            .copied()
+                            .collect();
+                        return Err(Mistake {
+                            message: [b"Invalid options for ", &id[..], b"\n", &lines].concat(),
+                            at: written.map(|it| it.place.find(&[Step::Index(1)], false)),
+                        });
+                    }
+                },
+            }
+        }
         let found = registry.find_by_any_name(id);
         if found.or_else(|| registry.base_of(id)).is_none() {
             let is_left_out = !matches!(registry.why_missing(id), Missing::Unknown(_));

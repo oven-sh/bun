@@ -121,7 +121,7 @@ const OF_ESLINT: &[Param] = &[
         "--parser-options <options>...   Set parser options: <b>--parser-options projectService:true<r>"
     ),
     clap::param!("--parser <name>                 Parse files with this package"),
-    clap::param!("--plugin <name>...              Load these plugins"),
+    clap::param!("--plugin <name>...              Load ESLint plugins: paths or package names"),
     clap::param!(
         "--native-plugin-rules <plugins>  Use the built-in rules for these plugins only: <b>import,react-hooks<r> <d>(default: all)<r>"
     ),
@@ -439,6 +439,8 @@ pub struct Options {
     /// `[lint.settings]` from bunfig.toml. Same as `settings` in an ESLint or oxlint config. There's no flag for it.
     pub settings: Vec<(Vec<u8>, Json)>,
     pub plugin: Vec<Vec<u8>>,
+    /// About the first entries of `plugin`, which came from `plugins` in `[lint]`.
+    pub plugins_of_bunfig: Vec<crate::bunfig::PluginOfBunfig>,
     pub rule: Vec<(Vec<u8>, Json)>,
     /// bunfig.toml locations for the first entries of `rule`, which came from `[lint.rules]`.
     pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
@@ -556,6 +558,7 @@ impl Default for Options {
             parser_options: Vec::new(),
             settings: Vec::new(),
             plugin: Vec::new(),
+            plugins_of_bunfig: Vec::new(),
             rule: Vec::new(),
             rules_of_bunfig: Vec::new(),
             bunfig: b"bunfig.toml".to_vec(),

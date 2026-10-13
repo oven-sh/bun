@@ -856,7 +856,7 @@ impl Config {
         base_path: &[u8],
         json: &Json,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, None, false)
+        Self::from_flat(registry, base_path, json, None, None)
     }
 
     /// The same, with the plugins that are not implemented here. An object has beside `plugins` the key `$jsPlugins`, with
@@ -868,17 +868,19 @@ impl Config {
         json: &Json,
         load_plugin: &mut LoadLocatedPlugin<'_>,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, Some(load_plugin), false)
+        Self::from_flat(registry, base_path, json, Some(load_plugin), None)
     }
 
     /// Builds the config for projects with no ESLint or oxlint config. `json` has the shape of a flat config, but doesn't
     /// have to declare plugins. See [`ResolvedConfig::has_every_rule`](crate::linter::ResolvedConfig).
+    /// `js_plugins`: what `plugins` in bunfig.toml and `--plugin` name, already loaded.
     pub fn without_a_file(
         registry: &Registry,
         base_path: &[u8],
         json: &Json,
+        js_plugins: Vec<Arc<js_plugin::Plugin>>,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, None, true)
+        Self::from_flat(registry, base_path, json, None, Some(js_plugins))
     }
 
     fn from_flat(
@@ -886,18 +888,18 @@ impl Config {
         base_path: &[u8],
         json: &Json,
         load_plugin: Option<&mut LoadLocatedPlugin<'_>>,
-        has_every_rule: bool,
+        without_a_file: Option<Vec<Arc<js_plugin::Plugin>>>,
     ) -> Result<Config, ConfigError> {
         let mut reader = Reader {
             registry,
             base_path: paths::absolute(base_path),
             prefers_typescript_rules: false,
-            has_every_rule,
+            has_every_rule: without_a_file.is_some(),
             objects: Vec::new(),
             notes: Vec::new(),
             advice: Vec::new(),
             unknown_rules: Vec::new(),
-            js_plugins: Vec::new(),
+            js_plugins: without_a_file.unwrap_or_default(),
             js_plugin_places: Vec::new(),
             js_locations: Vec::new(),
             defaults: 0,

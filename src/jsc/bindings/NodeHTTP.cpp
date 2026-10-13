@@ -36,6 +36,7 @@ extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, Enc
 extern "C" EncodedJSValue Server__setMaxHeadersCount(JSC::JSGlobalObject*, EncodedJSValue, uint32_t);
 
 // Bit layout must stay in sync with kDispatchBits* in src/js/node/_http_server.ts.
+// The parser's verdict on the request (HttpParser::sawConnectionClose): the connection closes after its response.
 static constexpr uint32_t kDispatchConnClose = 1 << 0;
 static constexpr uint32_t kDispatchConnUpgrade = 1 << 1;
 static constexpr uint32_t kDispatchHasUpgrade = 1 << 2;
@@ -83,7 +84,7 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
 // as [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
 // req.headers can be materialized lazily (Bun__NodeHTTP__buildRawHeadersArray)
 // only when user code reads them.
-static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, bool connectionClose, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     {
         std::string_view fullURLStdStr = request->getFullUrl();
@@ -100,10 +101,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    uint32_t bits = 0;
-    // llhttp's F_CONNECTION_CLOSE / F_CONNECTION_UPGRADE: a whole list item.
-    if (request->hasConnectionClose(true))
-        bits |= kDispatchConnClose;
+    uint32_t bits = connectionClose ? kDispatchConnClose : 0;
+    // llhttp's F_CONNECTION_UPGRADE: a whole list item.
     if (request->hasConnectionToken("upgrade") || request->isUpgradeRequest())
         bits |= kDispatchConnUpgrade;
     for (auto it = request->begin(); it != request->end(); ++it) {
@@ -299,7 +298,8 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     // Typical request header sections are a few hundred bytes; the inline
     // capacity keeps the capture heap-allocation-free for the common case.
     WTF::Vector<uint8_t, 1024> flatHeaders;
-    assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
+    // The parser took its verdict on this request before it dispatched it.
+    assignHeadersFromUWebSocketsForCall(request, response->getHttpResponseData()->sawConnectionClose, methodString, args, flatHeaders, globalObject, vm);
 
     auto* httpResponseData = response->getHttpResponseData();
     // Pipelined: an earlier response is in flight, so this one is queued and gets the connection at its turn (startPipelinedResponse).
@@ -465,6 +465,8 @@ static constexpr uint32_t kAutoHeaderDate = 1 << 0;
 static constexpr uint32_t kAutoHeaderConnKeepAlive = 1 << 1;
 static constexpr uint32_t kAutoHeaderConnClose = 1 << 2;
 static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
+// Not a header line: node:http wants the connection to stay open behind this response.
+static constexpr uint32_t kAutoHeaderPersist = 1 << 7;
 // Node's _storeHeader emits chunked Transfer-Encoding after Connection/Keep-Alive, so it
 // cannot ride in the flat array (written first). Carry as an auto-header bit, rendered last.
 static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
@@ -510,6 +512,10 @@ static std::string_view keepAliveHeaderBlob(uint32_t timeoutSecs)
 template<bool isSSL>
 static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs)
 {
+    // The writer decides before the Connection line: a response that cannot keep the connection open says close.
+    if (!response->getHttpResponseData()->keepAliveBehindHead(autoHeaderBits & kAutoHeaderPersist) && (autoHeaderBits & kAutoHeaderConnKeepAlive)) {
+        autoHeaderBits = (autoHeaderBits & ~(kAutoHeaderConnKeepAlive | kAutoHeaderKeepAliveTimeout)) | kAutoHeaderConnClose;
+    }
     if (autoHeaderBits & kAutoHeaderDate) {
         auto line = cachedDateHeaderLine();
         response->uWS::template AsyncSocket<isSSL>::write(line.data(), (int)line.length());

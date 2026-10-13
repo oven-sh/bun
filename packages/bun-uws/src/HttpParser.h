@@ -714,7 +714,7 @@ struct HttpResponseData;
          * framing. Every byte until the peer's FIN is body (llhttp's
          * body_identity_eof); onEnd delivers the fin and clears this. */
         bool nodeHttpBodyUntilEof = false;
-        /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
+        /* A request on this connection had Connection: close or was HTTP/1.0 (node:http: HTTP/1.0 without keep-alive), or a Bun.serve response closed it (RFC 9112 9.6). */
         bool sawConnectionClose = false;
     private:
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
@@ -1283,7 +1283,13 @@ struct HttpResponseData;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-            if (req->isAncient() || req->hasConnectionClose(IsNodeHttp)) {
+            if constexpr (IsNodeHttp) {
+                /* llhttp_should_keep_alive (https://github.com/nodejs/llhttp/blob/v9.4.2/src/native/http.c#L156-L170). Not llhttp, for HTTP/1.0: a close item wins (RFC 9112 9.6), and a Transfer-Encoding field closes (RFC 9112 6.1, below). */
+                if (req->hasConnectionClose(true)
+                        || (req->isAncient() && (!req->hasConnectionToken("keep-alive") || req->getHeader("transfer-encoding").data() != nullptr))) {
+                    sawConnectionClose = true;
+                }
+            } else if (req->isAncient() || req->hasConnectionClose(false)) {
                 sawConnectionClose = true;
             }
             /* RFC 9112 6.3
@@ -1343,7 +1349,7 @@ struct HttpResponseData;
              * after processing the message. Bun.serve rejects such a request outright,
              * consistent with the TE+CL and non-chunked TE rejections below. node:http
              * follows llhttp, which dispatches the request (the HTTP/1.0 request already
-             * marks the connection for close via isAncient). */
+             * marks the connection for close: the verdict above reads Transfer-Encoding). */
             if (!IsNodeHttp && req->ancientHttp && transferEncoding.has) [[unlikely]] {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING);
             }

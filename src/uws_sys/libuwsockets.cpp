@@ -1161,7 +1161,7 @@ extern "C"
       bool headers_open = !(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED));
       if (close_connection)
       {
-        if (headers_open && !(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
+        if (headers_open && !data->isLastResponse())
         {
           uwsRes->writeHeader("Connection", "close");
         }
@@ -1189,7 +1189,7 @@ extern "C"
       bool headers_open = !(data->state & (uWS::HttpResponseData<false>::HTTP_WRITE_CALLED | uWS::HttpResponseData<false>::HTTP_END_CALLED));
       if (close_connection)
       {
-        if (headers_open && !(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
+        if (headers_open && !data->isLastResponse())
         {
           uwsRes->writeHeader("Connection", "close");
         }

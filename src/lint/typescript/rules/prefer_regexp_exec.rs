@@ -128,11 +128,17 @@ fn get_static_argument_value(mut node: Expr<'_>) -> StaticArgumentValue<'_> {
     }
 }
 
-/// `new RegExp(/a/g)`: tsgolint takes it for a pattern without flags. Its fix would give one match where `match` gave all.
+/// `new RegExp(/a/g)`, also with `undefined` for the flags: tsgolint takes it for a pattern without flags. Its fix would give
+/// one match where `match` gave all.
 fn is_reg_exp_of_global_literal(node: Expr) -> bool {
     as_reg_exp_constructor_call(node).is_some_and(|call| {
         let args = call.args();
-        args.get(1).is_none()
+        let keeps_flags_of_literal = match args.get(1).map(|flags| flags.kind()) {
+            None | Some(ExprKind::Unary { op: UnOp::Void, .. }) => true,
+            Some(ExprKind::Ident(name)) => name.is("undefined"),
+            Some(_) => false,
+        };
+        keeps_flags_of_literal
             && matches!(args.first().map(|it| it.kind()), Some(ExprKind::Regex(literal)) if strings::contains_char(literal.flags(), b'g'))
     })
 }

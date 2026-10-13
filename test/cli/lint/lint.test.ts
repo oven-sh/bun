@@ -4813,6 +4813,11 @@ describe.concurrent("bun lint", () => {
         const shapes: [rule: string, file: string, text: string, fixed?: string, options?: object][] = [
           // One match where `match` gave all of them.
           ["prefer-regexp-exec", "a.ts", "declare const s: string;\nexport const a = s.match(new RegExp(/x/g));\n"],
+          [
+            "prefer-regexp-exec",
+            "a.ts",
+            "declare const s: string;\nexport const a = s.match(new RegExp(/x/g, undefined));\n",
+          ],
           // `p` is `/b+/` there, and tsgolint writes `s.includes('abc')`.
           [
             "prefer-includes",

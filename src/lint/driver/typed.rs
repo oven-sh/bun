@@ -806,7 +806,7 @@ pub(crate) fn lint(
                 {
                     context.note_broken_fixes(file.path, fixed.applied);
                     // What oxlint's own rules fixed is written before tsgolint lints.
-                    let (is_fixed, fixes) = (state.is_after_own_fixes, state.fixes);
+                    let (is_fixed, fixes) = (state.is_fixed, state.fixes);
                     *state = Fixing {
                         current: if is_fixed {
                             Some(text.clone())

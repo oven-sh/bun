@@ -488,6 +488,30 @@ let a = 1;
     expect(result.exitCode).toBe(2);
   });
 
+  test("--parser svelte is refused while it is off", async () => {
+    const message =
+      "error: Cannot use --parser svelte while Svelte is off (--no-svelte, or svelte = false in bunfig.toml).\n";
+    const [flags, key, on] = await Promise.all([
+      format({ "a.svelte": input }, ["--no-svelte", "--parser=svelte", "a.svelte"]),
+      format({ ...bunfig("svelte = false"), "a.svelte": input }, ["--parser=svelte", "a.svelte"]),
+      format({ ...bunfig("svelte = false"), "a.svelte": input }, ["--svelte", "--parser=svelte", "a.svelte"]),
+    ]);
+    for (const result of [flags, key]) {
+      expect(result).toMatchObject({ stderr: message, stdout: "", files: { "a.svelte": input }, exitCode: 2 });
+    }
+    expect(on).toMatchObject({ stderr: "", files: { "a.svelte": formatted }, exitCode: 0 });
+  });
+
+  test("allowShorthand = false writes out a name only if it can be a variable", async () => {
+    const config = { "bunfig.toml": "[fmt.svelte]\nallowShorthand = false\n" };
+    const before = "<p {b} class:c style:d class:e-f style:--g class:if class:static>y</p>\n<input bind:value />\n";
+    const after =
+      "<p b={b} class:c={c} style:d={d} class:e-f style:--g class:if class:static>y</p>\n<input bind:value={value} />\n";
+    const once = await format({ ...config, "a.svelte": before });
+    expect(once).toMatchObject({ stderr: "", files: { "a.svelte": after }, exitCode: 0 });
+    expect(await format({ ...config, "a.svelte": after })).toMatchObject({ stderr: "", files: { "a.svelte": after } });
+  });
+
   test("so are the code blocks in Markdown", async () => {
     const block = (code: string) => "```svelte\n" + code + "```\n";
     const [plain, off] = await Promise.all([

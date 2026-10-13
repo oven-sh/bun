@@ -207,12 +207,31 @@ Not checked:    other tools' configs, CI files, Git hooks
 ${"bunfig.toml" in files ? "Using bunfig.toml ([fmt])\n" : ""}
     2 files are formatted natively
 
+You can remove: prettier, prettier-plugin-svelte
+Not checked:    other tools' configs, CI files, Git hooks
+
+note: Svelte files are not formatted (svelte = false)
+`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("says that some files are left alone if only an override turns it off", async () => {
+      const { stdout, exitCode } = await doctor({
+        ...project("4.1.1"),
+        "old/b.svelte": "<p>b</p>\n",
+        "bunfig.toml": '[[fmt.overrides]]\nfiles = "old/**"\noptions = { svelte = false }\n',
+      });
+      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+Using bunfig.toml ([fmt])
+
+    3 files are formatted natively
+
 Built-in plugins: prettier-plugin-svelte
 
 You can remove: prettier, prettier-plugin-svelte
 Not checked:    other tools' configs, CI files, Git hooks
 
-note: Svelte files are not formatted (svelte = false)
+note: Some Svelte files are not formatted (svelte = false in an override)
 `);
       expect(exitCode).toBe(0);
     });

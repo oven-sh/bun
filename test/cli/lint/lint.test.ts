@@ -4272,6 +4272,41 @@ describe.concurrent("bun lint", () => {
         expect(results.map(it => it.exitCode)).toEqual(rows.map(() => 1));
       });
 
+      // Recorded from oxlint 1.87.0 with tsgolint. typescript-eslint passes over `finally`, which waits for the Promise.
+      test("no-misused-promises reports an async function that is handed to finally()", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": `declare const p: Promise<number>;
+declare function f(): Promise<void>;
+void p.finally(async () => {});
+void p.finally(f);
+void p
+  .then(() => 1)
+  // oxlint-disable-next-line typescript/no-misused-promises
+  .finally(async () => {});
+void p.finally(() => {});
+`,
+        };
+        const rule = { "no-misused-promises": ["error", { checksVoidReturn: { attributes: false } }] };
+        const oxlint = {
+          categories: { correctness: "off" },
+          rules: { "typescript/no-misused-promises": rule["no-misused-promises"] },
+        };
+        const flags = ["--type-aware", "--report-unused-disable-directives", "-f", "json", "a.ts"];
+        const [forOxlint, alone] = await Promise.all([
+          lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
+          lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
+        ]);
+        expect(places(forOxlint.raw)).toEqual([
+          "a.ts:3 typescript(no-misused-promises) error",
+          "a.ts:4 typescript(no-misused-promises) error",
+        ]);
+        const found = JSON.parse(alone.raw)[0].messages as { line: number; message: string }[];
+        expect(found.map(it => `${it.line} ${it.message}`)).toEqual([
+          "7 Unused oxlint-disable directive (no problems were reported from 'typescript/no-misused-promises').",
+        ]);
+      });
+
       // Recorded from oxlint 1.87.0 with tsgolint.
       test("a type-aware rule reports with the severity of the ESLint rule of the same name, if that one is on", async () => {
         const texts = {

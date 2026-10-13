@@ -603,7 +603,8 @@ impl NoMisusedPromises {
                 parameter_type: None,
             })
             .collect();
-        if arguments.is_empty() || is_promise_finally_method(node) {
+        // tsgolint reports it.
+        if arguments.is_empty() || !cx.language().is_oxlint && is_promise_finally_method(node) {
             return;
         }
         void_function_arguments(node, call, &mut arguments);

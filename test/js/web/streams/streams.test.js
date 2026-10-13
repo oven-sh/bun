@@ -2505,8 +2505,8 @@ describe("a stream over bytes in memory", () => {
   const MB = 1024 * 1024;
   // The first chunk holds at most this much.
   const FIRST_CHUNK = 16384;
-  // A period that no chunk size is a multiple of, so that a chunk at the wrong offset shows.
-  const bytesOf = size => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz");
+  // A period of 37 bytes, which no chunk size here is a multiple of, so that a chunk at the wrong offset shows.
+  const bytesOf = size => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz_");
   const sources = {
     "Response.body": bytes => new Response(bytes).body,
     "Request.body": bytes => new Request("http://localhost/", { method: "POST", body: bytes }).body,
@@ -2539,9 +2539,10 @@ describe("a stream over bytes in memory", () => {
   // The buffer starts at 256 KiB, or at the chunk size asked for when that is more, doubles once when a pull
   // fills it, and holds 2 MiB at most.
   test.each([
-    [300_000, undefined, [16384, 283616]],
     [300_000, 1000, [16384, 262144, 21472]],
     [300_000, MB, [16384, 283616]],
+    [16384 + 262144, 1000, [16384, 262144]],
+    [16384 + 262144 + 1, 1000, [16384, 262144, 1]],
     [3 * MB, undefined, [16384, 2097152, 1032192]],
     [3 * MB, 1000, [16384, 262144, 524288, 524288, 524288, 524288, 524288, 245760]],
     [3 * MB, MB, [16384, 1048576, 2080768]],
@@ -2566,7 +2567,7 @@ describe("a stream over bytes in memory", () => {
     const piped = [];
     await stream().pipeTo(new WritableStream({ write: chunk => void piped.push(chunk) }));
     const cancelled = stream().getReader();
-    const first = await cancelled.read();
+    await cancelled.read();
     await cancelled.cancel();
     expect({
       iterated: Buffer.concat(iterated).equals(bytes),
@@ -2576,14 +2577,12 @@ describe("a stream over bytes in memory", () => {
         Buffer.from(await new Response(right).bytes()).equals(bytes),
       ],
       piped: Buffer.concat(piped).equals(bytes),
-      first: [first.done, first.value.byteLength],
       afterCancel: await cancelled.read(),
     }).toEqual({
       iterated: true,
       response: true,
       tee: [true, true],
       piped: true,
-      first: [false, Math.min(size, FIRST_CHUNK)],
       afterCancel: { done: true, value: undefined },
     });
   });

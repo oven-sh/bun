@@ -321,8 +321,7 @@ static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t r
 
 extern "C" size_t Bun__ByteBlobLoader__remaining(void* source);
 
-// A blob knows how many bytes it has left. A slab of that size is filled whole and handed over as it is, where
-// a larger one is allocated to be copied out of. One byte is enough to be told that nothing is left.
+// A slab the size of what a blob has left is filled whole and handed over uncopied; one byte finds out that nothing is left.
 static size_t nativeSlabSize(JSNativeStreamSourceAdapter* adapter)
 {
     if (auto* blob = dynamicDowncast<WebCore::JSBlobInternalReadableStreamSource>(adapter->handle()))

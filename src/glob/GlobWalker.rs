@@ -768,7 +768,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // `<` `>` `"` are NT wildcards; treating them as literals would over-match,
         // but they are invalid in Windows filenames so such a pattern never matches
         // anyway.
-        if strings::index_of_any(slice, b"?[{\\!<>\"").is_some() {
+        // A filter with `:`, `|` or a control character fails the whole query with EINVAL.
+        if strings::index_of_any(slice, b"?[{\\!<>\":|").is_some()
+            || slice.iter().any(|&b| b < 0x20)
+        {
             return None;
         }
 

@@ -119,7 +119,7 @@ private:
 
     JSValue cloneArray(JSArray* array)
     {
-        // No named property, Array.prototype of this global, and no hole to read through to it.
+        // No named property, and Array.prototype of this global. A hole stays a hole, as it does when serialized.
         Structure* structure = array->structure();
         if (!m_globalObject->isOriginalArrayStructure(structure))
             return {};
@@ -127,13 +127,6 @@ private:
         if (shape != UndecidedShape && shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape)
             return {};
         unsigned length = array->length();
-        if (shape == UndecidedShape && length)
-            return {};
-        // Numbers have nothing to clone in them: a hole is all there is to look for, and the rest is one copy.
-        if (shape == Int32Shape && containsHole(array->butterfly()->contiguous().data(), length))
-            return {};
-        if (shape == DoubleShape && containsHole(array->butterfly()->contiguousDouble().data(), length))
-            return {};
 
         Structure* cloneStructure = m_globalObject->arrayStructureForIndexingTypeDuringAllocation(IsArray | shape);
         if (hasAnyArrayStorage(cloneStructure->indexingType())) [[unlikely]]
@@ -143,6 +136,9 @@ private:
             return {};
         remember(array, clone);
 
+        if (shape == UndecidedShape)
+            return clone;
+        // Numbers have nothing to clone in them.
         if (shape == Int32Shape || shape == DoubleShape) {
             static_assert(sizeof(double) == sizeof(JSValue));
             memcpy(static_cast<void*>(clone->butterfly()->contiguous().data()), static_cast<const void*>(array->butterfly()->contiguous().data()), length * sizeof(JSValue));
@@ -152,7 +148,7 @@ private:
         for (unsigned i = 0; i < length; ++i) {
             JSValue value = array->butterfly()->contiguous().at(array, i).get();
             if (!value)
-                return {};
+                continue;
             if (value.isCell()) {
                 value = this->clone(value);
                 if (!value)
@@ -179,12 +175,14 @@ private:
 
     void remember(JSObject* object, JSObject* clone)
     {
-        unsigned index = m_sources.size();
-        m_sources.append(object);
+        unsigned index = static_cast<unsigned>(m_clones.size());
         m_clones.appendWithCrashOnOverflow(clone);
-        if (!m_indexes.isEmpty())
+        if (!m_indexes.isEmpty()) {
             m_indexes.add(object, index);
-        else if (m_sources.size() > linearSearchLimit) {
+            return;
+        }
+        m_sources.append(object);
+        if (m_sources.size() > linearSearchLimit) {
             for (unsigned i = 0; i < m_sources.size(); ++i)
                 m_indexes.add(m_sources[i], i);
         }

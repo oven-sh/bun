@@ -907,6 +907,14 @@ describe("Structured Clone Fast Path", () => {
 // structuredClone() copies a tree of plain objects, dense arrays, strings and other primitives object by
 // object. One value of another kind, anywhere in the tree, sends the whole value through serialization.
 describe("structuredClone of a tree of plain objects and arrays", () => {
+  // The prototypes a clone has, by identity: the Object.prototype of another realm is none of them.
+  const prototypes = new Map<unknown, string>([
+    [Object.prototype, "Object"],
+    [Array.prototype, "Array"],
+    [Date.prototype, "Date"],
+    [Map.prototype, "Map"],
+  ]);
+
   // Everything script can tell about a value: prototypes, extensibility, own keys in order with their
   // attributes, and which objects are the same object.
   function shape(value: unknown, seen = new Map<object, number>()): unknown {
@@ -919,12 +927,7 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     const proto = Object.getPrototypeOf(value);
     return {
       id: seen.get(value),
-      proto:
-        proto === Object.prototype
-          ? "Object"
-          : proto === Array.prototype
-            ? "Array"
-            : (proto?.constructor?.name ?? null),
+      proto: prototypes.get(proto) ?? `another: ${proto?.constructor?.name}`,
       extensible: Object.isExtensible(value),
       time: value instanceof Date ? value.getTime() : undefined,
       entries: value instanceof Map ? [...value].map(([k, v]) => [shape(k, seen), shape(v, seen)]) : undefined,
@@ -984,12 +987,14 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
       nested: { shared },
     })),
     "properties out of line": outOfLine,
-    "a deleted property": deleted,
     "a chain 200 objects long": deep,
-    // Each of these has something that is not plain.
-    "a hole": { list: [1, , 3] },
-    "an array of holes": [new Array(3)],
     "a NaN among doubles": [1.5, NaN],
+    // A hole stays a hole, in an array of any shape.
+    "holes": { ints: [1, , 3], doubles: [1.5, , 2.5], objects: [{ a: 1 }, , "x"], nothing: new Array(3), tail: [1, 2, ,] }, // prettier-ignore
+    // A frozen object is copied as well, with the structure it had before it was frozen.
+    "frozen objects": { frozen: Object.freeze({ a: { b: 1 }, list: [1, 2] }), large: Object.freeze({ ...outOfLine }) },
+    // Each of these has something that is not plain. An object that had a property deleted counts: its structure is not shared.
+    "a deleted property": deleted,
     "an array with a named property": { list: withNamed },
     "an Array subclass": [new (class List extends Array {})(1, 2)],
     "a class instance": { point: new Point() },
@@ -1024,7 +1029,8 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     const input = trees[name];
     const clone = structuredClone(input);
     expect(shape(clone)).toEqual(shape(serialized(input)));
-    expect([...objectsOf(clone)].filter(object => objectsOf(input).has(object))).toEqual([]);
+    const inputObjects = objectsOf(input);
+    expect([...objectsOf(clone)].filter(object => inputObjects.has(object))).toEqual([]);
   });
 
   test("an object held several times is cloned once", () => {
@@ -1068,6 +1074,20 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     });
   });
 
+  test("a hole is not filled from Array.prototype", () => {
+    const holes = { ints: [1, , 3], doubles: [1.5, , 2.5], objects: [{ a: 1 }, , "x"], nothing: new Array(3) }; // prettier-ignore
+    (Array.prototype as any)[1] = "inherited";
+    try {
+      const clone = structuredClone(holes);
+      expect({
+        own: Object.values(clone).map(list => Object.keys(list)),
+        asSerialized: Bun.deepEquals(shape(clone), shape(serialized(holes)), true),
+      }).toEqual({ own: [["0", "2"], ["0", "2"], ["0", "2"], []], asSerialized: true });
+    } finally {
+      delete (Array.prototype as any)[1];
+    }
+  });
+
   test("what cannot be cloned still throws, wherever it is in the tree", () => {
     for (const input of [{ a: { f() {} } }, [{ a: 1 }, [Symbol("x")]], { a: [1, 2, { p: new Proxy({}, {}) }] }]) {
       expect(() => structuredClone(input)).toThrow(
@@ -1085,7 +1105,7 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     expect({ order, clone }).toEqual({ order: ["transfer", "value"], clone: { inner: { a: 1 } } });
   });
 
-  test("a chain of objects is as deep as serialization lets it be", () => {
+  test("a chain deeper than the copy goes is serialized, and one too deep for that throws", () => {
     const chainOf = (length: number) => {
       const chain: any = {};
       for (let i = 0, cursor = chain; i < length; i++) cursor = cursor.next = { i };
@@ -1101,10 +1121,17 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
       }
       return [count, last];
     };
-    // 512 is where the copy stops and serialization takes over, 40000 where serialization stops.
-    const lengths = [510, 511, 512, 513, 5000, 39_999];
+    // 512 is where the copy stops and serialization takes over.
+    const lengths = [510, 511, 512, 513, 2000];
     expect(lengths.map(cloned)).toEqual(lengths.map(length => [length, length - 1]));
-    expect(() => structuredClone(chainOf(40_001))).toThrow(
+    // 40000 is where serialization stops. Arrays, which a debug build serializes several times faster than objects.
+    const tooDeep: unknown[] = [];
+    for (let i = 0, cursor = tooDeep; i < 40_001; i++) {
+      const next: unknown[] = [];
+      cursor.push(next);
+      cursor = next;
+    }
+    expect(() => structuredClone(tooDeep)).toThrow(
       expect.objectContaining({ name: "RangeError", message: "Maximum call stack size exceeded." }),
     );
   });

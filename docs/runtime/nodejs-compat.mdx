@@ -123,6 +123,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 🟡 Missing `Module#load()`, `registerHooks`, `findPackageJSON`, `stripTypeScriptTypes`, `getSourceMapsSupport`/`setSourceMapsSupport`. Overriding `require.cache`, `require.extensions` and `module._resolveFilename` is supported. `syncBuiltinESMExports`, `module._load`, `module._pathCache` and `module.register` are no-ops (we recommend [`Bun.plugin`](/runtime/plugins) instead). `findSourceMap` always returns `undefined`.
 
+On Windows, `require()` loads native addons through namespaced paths so addons can use long installation paths. The module cache keeps the resolved filename. Node-API uses `module.filename` for the addon's URL, including Node's UNC path spelling. Compiled addons report their extracted file path.
+
 ### [`node:net`](https://nodejs.org/api/net.html)
 
 🟢 Fully implemented, including `BlockList`, `SocketAddress`, `autoSelectFamily`, Unix domain sockets and `server.listen({ fd })`. `new net.Socket({ fd })` cannot read from an existing file descriptor (only write-only wrapping works). `server.listen(handle)` only accepts `{ fd }`. Missing `blockList.toJSON()`/`fromJSON()`.

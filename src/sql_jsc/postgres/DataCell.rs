@@ -16,7 +16,6 @@ pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
 bun_core::declare_scope!(Postgres, visible);
-bun_core::declare_scope!(PostgresDataCell, visible);
 
 /// Text-format `date` / `timestamp` / `timestamptz` (scalar or array element) to epoch ms.
 fn parse_date_time_text(
@@ -825,8 +824,8 @@ fn from_bytes(
         }
         T::numeric => {
             if binary {
-                // this is probrably good enough for most cases
-                let mut numeric_buffer: Vec<u8> = Vec::new();
+                use crate::postgres::types::numeric::{Buffer, parse_binary_numeric};
+                let mut numeric_buffer = Buffer::new();
 
                 // if is binary format lets display as a string because JS cant handle it in a safe way
                 let result = parse_binary_numeric(bytes, &mut numeric_buffer)
@@ -989,170 +988,6 @@ fn pg_ntoh16(x: u16) -> u16 {
 #[inline]
 fn pg_ntoh32(x: u32) -> u32 {
     x.swap_bytes()
-}
-
-enum PGNummericString<'a> {
-    Static(&'static [u8]),
-    Dynamic(&'a [u8]),
-}
-
-impl<'a> PGNummericString<'a> {
-    fn slice(&self) -> &[u8] {
-        match self {
-            PGNummericString::Static(value) => value,
-            PGNummericString::Dynamic(value) => value,
-        }
-    }
-}
-
-fn parse_binary_numeric<'a>(
-    input: &[u8],
-    result: &'a mut Vec<u8>,
-) -> crate::Result<PGNummericString<'a>> {
-    // Reference: https://github.com/postgres/postgres/blob/50e6eb731d98ab6d0e625a0b87fb327b172bbebd/src/backend/utils/adt/numeric.c#L7612-L7740
-    if input.len() < 8 {
-        return Err(crate::Error::InvalidBuffer);
-    }
-    // Manual cursor over &[u8].
-    let mut cursor = input;
-    macro_rules! read_be {
-        ($ty:ty) => {{
-            const N: usize = size_of::<$ty>();
-            if cursor.len() < N {
-                return Err(crate::Error::InvalidBuffer);
-            }
-            let v = <$ty>::from_be_bytes(cursor[..N].try_into().expect("infallible: size matches"));
-            cursor = &cursor[N..];
-            v
-        }};
-    }
-
-    // Read header values using big-endian
-    // ndigits is uint16 in numeric_recv: a value of 131072 digits has 32768 words.
-    let ndigits: u16 = read_be!(u16);
-    let weight: i16 = read_be!(i16);
-    let sign: u16 = read_be!(u16);
-    let dscale: i16 = read_be!(i16);
-    bun_core::scoped_log!(
-        PostgresDataCell,
-        "ndigits: {}, weight: {}, sign: {}, dscale: {}",
-        ndigits,
-        weight,
-        sign,
-        dscale
-    );
-
-    // Handle special cases
-    match sign {
-        0xC000 => return Ok(PGNummericString::Static(b"NaN")),
-        0xD000 => return Ok(PGNummericString::Static(b"Infinity")),
-        0xF000 => return Ok(PGNummericString::Static(b"-Infinity")),
-        0x4000 | 0x0000 => {}
-        _ => return Err(crate::Error::InvalidSign),
-    }
-
-    // Postgres sends every zero with no digit groups. `dscale` still carries
-    // the display scale, so a numeric(10, 4) zero is "0.0000".
-    if ndigits == 0 {
-        if dscale <= 0 {
-            return Ok(PGNummericString::Static(b"0"));
-        }
-        result.extend_from_slice(b"0.");
-        result.resize(
-            result.len() + usize::try_from(dscale).expect("int cast"),
-            b'0',
-        );
-        return Ok(PGNummericString::Dynamic(result.as_slice()));
-    }
-
-    // Add negative sign if needed
-    if sign == 0x4000 {
-        result.push(b'-');
-    }
-
-    // Calculate decimal point position
-    let mut decimal_pos: i32 = (weight as i32 + 1) * 4;
-    if decimal_pos <= 0 {
-        decimal_pos = 1;
-    }
-    let _ = decimal_pos; // computed but unused below
-    // Output all digits before the decimal point
-
-    if weight < 0 {
-        result.push(b'0');
-    } else {
-        let mut idx: usize = 0;
-        let mut first_non_zero = false;
-
-        while idx <= weight as usize {
-            // Compare in i32 to avoid usize→i16 truncation.
-            let digit: u16 = if i32::try_from(idx).expect("int cast") < i32::from(ndigits) {
-                read_be!(u16)
-            } else {
-                0
-            };
-            bun_core::scoped_log!(PostgresDataCell, "digit: {}", digit);
-            // Postgres numeric_recv rejects `d < 0 || d >= NBASE` (NBASE = 10000).
-            if digit >= 10000 {
-                return Err(crate::Error::InvalidBuffer);
-            }
-            let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
-            let digit_len = 4usize;
-            if !first_non_zero {
-                // In the first digit, suppress extra leading decimal zeroes
-                let mut start_idx: usize = 0;
-                while start_idx < digit_len && digit_str[start_idx] == b'0' {
-                    start_idx += 1;
-                }
-                if start_idx == digit_len {
-                    idx += 1;
-                    continue;
-                }
-                let digit_slice = &digit_str[start_idx..digit_len];
-                result.extend_from_slice(digit_slice);
-                first_non_zero = true;
-            } else {
-                result.extend_from_slice(&digit_str[0..digit_len]);
-            }
-            idx += 1;
-        }
-    }
-    // If requested, output a decimal point and all the digits that follow it.
-    // We initially put out a multiple of DEC_DIGITS (4) digits, then truncate.
-    //
-    // This mirrors Postgres' get_str_from_var: two independent counters —
-    // `d` walks base-10000 digits (advances by 1), `i` counts decimal places
-    // emitted (advances by DEC_DIGITS). Conflating them drops leading-zero
-    // groups when weight <= -3 and shifts significant digits left.
-    if dscale > 0 {
-        result.push(b'.');
-        let end: usize = result.len() + usize::try_from(dscale).expect("int cast");
-        let mut d: i32 = weight as i32 + 1;
-        let mut i: i32 = 0;
-        while i < dscale as i32 {
-            let digit: u16 = if d >= 0 && d < ndigits as i32 && cursor.len() >= 2 {
-                let v =
-                    u16::from_be_bytes(cursor[..2].try_into().expect("infallible: size matches"));
-                cursor = &cursor[2..];
-                v
-            } else {
-                0
-            };
-            bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
-            if digit >= 10000 {
-                return Err(crate::Error::InvalidBuffer);
-            }
-            let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
-            result.extend_from_slice(&digit_str);
-            d += 1;
-            i += 4;
-        }
-        if result.len() > end {
-            result.truncate(end);
-        }
-    }
-    // reshaped for borrowck — return borrowed slice of `result`
-    Ok(PGNummericString::Dynamic(result.as_slice()))
 }
 
 // The binary-parse return type varies per tag, so it is split into per-tag fns.

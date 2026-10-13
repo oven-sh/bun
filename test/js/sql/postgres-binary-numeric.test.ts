@@ -37,6 +37,46 @@ const cases: string[] = [
   // --- zero: the server sends ndigits = 0 and keeps the scale in dscale ----
   "0.0000",
   "0.00000000000000000000",
+  // --- the first integer word prints 1 to 4 digits, a later word prints 4 --
+  "9",
+  "10",
+  "99",
+  "100",
+  "999",
+  "1000",
+  "9990001",
+  "-10000001",
+  "50000",
+  "900000000.00",
+  // --- 256 is the word 0x0100: one zero byte does not make a zero word ------
+  "256",
+  // --- the fraction ends inside a word --------------------------------------
+  "1.00020",
+  "-42.00",
+  "-0.12345",
+  "-0.0001",
+  "-0.001",
+  "-0.01",
+  "-0.00001",
+  // --- 64 characters, then 65: the decoder prints up to 64 on the stack -----
+  "5." + Buffer.alloc(62, "0").toString(),
+  "5." + Buffer.alloc(63, "0").toString(),
+  "-5." + Buffer.alloc(61, "0").toString(),
+  "-5." + Buffer.alloc(62, "0").toString(),
+  "0." + Buffer.alloc(62, "0").toString(),
+  "0." + Buffer.alloc(63, "0").toString(),
+  // --- special values: the server sends the sign word alone -----------------
+  "NaN",
+  "Infinity",
+  "-Infinity",
+];
+
+// Values at the limits of the type: 131072 digits before the decimal point,
+// 16383 after it.
+const longCases: [name: string, literal: string][] = [
+  ["5 and 131068 zeros", "5" + Buffer.alloc(131068, "0").toString()],
+  ["a zero with 16383 decimal places", "0." + Buffer.alloc(16383, "0").toString()],
+  ["minus 131068 nines and .9999", "-" + Buffer.alloc(131068, "9").toString() + ".9999"],
 ];
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
@@ -48,6 +88,16 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     });
     const [row] = await sql`SELECT ${literal}::numeric AS n`;
     expect(row.n).toBe(literal);
+  });
+
+  test.each(longCases)("binary NUMERIC decodes %s", async (_, literal) => {
+    await container.ready;
+    await using sql = new SQL({
+      url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+      max: 1,
+    });
+    const [row] = await sql`SELECT ${literal}::numeric AS n`;
+    expect({ length: row.n.length, same: row.n === literal }).toEqual({ length: literal.length, same: true });
   });
 
   // A value of 131072 digits has 32768 digit words. The count is an unsigned

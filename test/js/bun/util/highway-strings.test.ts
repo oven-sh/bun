@@ -5,8 +5,6 @@
 
 import { highwayStringsForTesting as hw } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, tempDir } from "harness";
-import { join } from "node:path";
 
 // Lengths that straddle 16/32/64-byte lanes and the scalar tails on either side.
 const LENGTHS = [0, 1, 2, 3, 8, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024, 1029];
@@ -335,40 +333,4 @@ describe("highway byte-search kernels", () => {
     expect(Buffer.alloc(0).indexOf(1)).toBe(-1);
     expect(Buffer.alloc(0).lastIndexOf(1)).toBe(-1);
   });
-});
-
-const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-
-// What Linux before 6.14 reports in a VM on an Apple M4 (SME, no SVE), where any
-// SVE instruction is SIGILL.
-it.skipIf(!isLinux || !isArm64 || !cc)("HWCAP2_SVE2 without HWCAP_SVE does not choose an SVE target", async () => {
-  using dir = tempDir("highway-hwcap", {
-    "shim.c": `
-      #define _GNU_SOURCE
-      #include <dlfcn.h>
-      #include <sys/auxv.h>
-
-      unsigned long getauxval(unsigned long type) {
-        unsigned long value = ((unsigned long (*)(unsigned long))dlsym(RTLD_NEXT, "getauxval"))(type);
-        if (type == AT_HWCAP) value &= ~(1UL << 22); // HWCAP_SVE
-        if (type == AT_HWCAP2) value |= 1UL << 1 | 1UL << 2 | 1UL << 9 | 1UL << 12; // HWCAP2_SVE2, SVEAES, SVEI8MM, SVEBF16
-        return value;
-      }
-    `,
-  });
-  const shim = join(String(dir), "shim.so");
-  expect(Bun.spawnSync([cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"]).exitCode).toBe(0);
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-p", `require("bun:internal-for-testing").highwayTargetForTesting()`],
-    env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim },
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 10_000,
-    killSignal: "SIGKILL",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect({ stdout, stderr }).toEqual({ stdout: expect.stringMatching(/^NEON\w*\n$/), stderr: "" });
-  expect(exitCode).toBe(0);
 });

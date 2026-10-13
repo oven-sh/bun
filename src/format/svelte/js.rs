@@ -284,6 +284,55 @@ impl Js for FromParser<'_> {
         )
     }
 
+    fn ends_of_expressions(&mut self, text: &[u8], at: usize, until: usize) -> Vec<usize> {
+        // On the right of a `=`, where a `{` starts an object. What is missing at the end is made up.
+        const BEFORE: &[u8] = b"_=";
+        let program = [BEFORE, text.get(at..until).unwrap_or_default()].concat();
+        let mut ends = Vec::new();
+        self.parse.call(self.path(), &program, false, &mut |file| {
+            let Some(StmtKind::Expr(whole)) = file.body().iter().next().map(|it| it.kind()) else {
+                return;
+            };
+            let mut open = vec![whole];
+            while let Some(e) = open.pop() {
+                if let Some(end) = (e.outer_span().end as usize).checked_sub(BEFORE.len()) {
+                    ends.push(at + end);
+                }
+                if e.is_parenthesized() {
+                    continue;
+                }
+                match e.kind() {
+                    ExprKind::Binary { left, right, .. } => open.extend([left, right]),
+                    ExprKind::Assign { target, value, .. } => open.extend([target, value]),
+                    ExprKind::Cond { test, no, .. } => open.extend([test, no]),
+                    ExprKind::Unary { operand: it, .. }
+                    | ExprKind::Await(it)
+                    | ExprKind::Spread(it)
+                    | ExprKind::NonNull(it)
+                    | ExprKind::AsConst(it)
+                    | ExprKind::Yield {
+                        value: Some(it), ..
+                    }
+                    | ExprKind::Dot { obj: it, .. }
+                    | ExprKind::Index { obj: it, .. }
+                    | ExprKind::As { expr: it, .. }
+                    | ExprKind::Satisfies { expr: it, .. }
+                    | ExprKind::Instantiation { expr: it, .. } => open.push(it),
+                    ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
+                        open.push(call.callee());
+                    }
+                    ExprKind::Fn(function) => {
+                        if let FnBody::Expr(body) = function.body() {
+                            open.push(body);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+        ends
+    }
+
     fn statement_at(&mut self, text: &[u8], at: usize) -> Result<Statement, usize> {
         // `type` can be a name.
         if text.get(at..).is_some_and(|it| it.starts_with(b"type")) {

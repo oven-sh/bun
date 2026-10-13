@@ -1260,8 +1260,12 @@ impl<'a, 'o> Printer<'a, 'o> {
         };
         // The plugin puts every value in double quotes: `a='"'` becomes `a="""`. And `<script lang=ts'>`, which is TypeScript to
         // Svelte, becomes `lang="ts'"`, which is not: it looks at the text.
-        let quotes: &[u8] = match self.tree[owner].kind {
-            Kind::Script { .. } | Kind::StyleSheet { .. } => b"\"'",
+        let quotes: &[u8] = match (&self.tree[owner].kind, &self.tree[id].kind) {
+            (Kind::Script { .. } | Kind::StyleSheet { .. }, Kind::Attribute { name, .. })
+                if name.ends_with(b"lang") =>
+            {
+                b"\"'"
+            }
             _ => b"\"",
         };
         if let Kind::Attribute { value, .. } | Kind::StyleDirective { value, .. } =

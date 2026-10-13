@@ -11,6 +11,7 @@ use crate::syntax_error::{Message, SyntaxError};
 use bun_core::strings;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
+use std::cell::Cell;
 
 /// `Err`: where Svelte throws.
 type Result<T> = std::result::Result<T, SyntaxError>;
@@ -56,6 +57,9 @@ pub(crate) trait Js {
         text: &[u8],
         at: usize,
     ) -> std::result::Result<ParsedExpression, usize>;
+    /// `text` has no expression at `at`, because of what is at `until`. Returns where what is before that could end: where
+    /// something ends that is in no brackets and the like.
+    fn ends_of_expressions(&mut self, text: &[u8], at: usize, until: usize) -> Vec<usize>;
     /// One statement.
     fn statement_at(&mut self, text: &[u8], at: usize) -> std::result::Result<Statement, usize>;
     /// One type. Returns where it is.
@@ -342,6 +346,10 @@ struct Parser<'a, 'j> {
     tree: Tree<'a>,
     /// `stack`, without the root.
     stack: Vec<Id>,
+    /// For each of `stack`: `parent_is_head` and `parent_is_shadowroot_template` for what is in it.
+    is_in: Vec<(bool, bool)>,
+    /// From where the next `>` has been looked for, and where it is. The length of the text: nowhere.
+    next_end_of_tag: Cell<(usize, usize)>,
     fragments: Vec<FragmentId>,
     /// `meta_tags`
     seen_meta_tags: Vec<ElementKind>,
@@ -457,6 +465,28 @@ impl<'a> Parser<'a, '_> {
     }
 
     fn push(&mut self, id: Id, fragment: FragmentId) {
+        let (is_in_head, is_in_template) = self.is_in.last().copied().unwrap_or_default();
+        let element = self.element(id);
+        self.is_in.push((
+            match element.map(|it| it.kind) {
+                Some(ElementKind::SvelteHead) => true,
+                Some(ElementKind::RegularElement | ElementKind::Component) => false,
+                _ => is_in_head,
+            },
+            is_in_template
+                || element.is_some_and(|element| {
+                    element.kind == ElementKind::RegularElement
+                        && element.attributes.iter().any(|&it| {
+                            matches!(
+                                self.tree[it].kind,
+                                Kind::Attribute {
+                                    name: b"shadowrootmode",
+                                    ..
+                                }
+                            )
+                        })
+                }),
+        ));
         self.stack.push(id);
         self.fragments.push(fragment);
     }
@@ -464,6 +494,7 @@ impl<'a> Parser<'a, '_> {
     fn pop(&mut self) {
         self.fragments.pop();
         self.stack.pop();
+        self.is_in.pop();
     }
 
     fn element(&self, id: Id) -> Option<&Element<'a>> {
@@ -691,32 +722,12 @@ impl<'a> Parser<'a, '_> {
 
     /// `parent_is_head`
     fn parent_is_head(&self) -> bool {
-        for &id in self.stack.iter().rev() {
-            match self.element(id).map(|it| it.kind) {
-                Some(ElementKind::SvelteHead) => return true,
-                Some(ElementKind::RegularElement | ElementKind::Component) => return false,
-                _ => {}
-            }
-        }
-        false
+        self.is_in.last().is_some_and(|it| it.0)
     }
 
     /// `parent_is_shadowroot_template`
     fn parent_is_shadowroot_template(&self) -> bool {
-        self.stack.iter().any(|&id| {
-            self.element(id).is_some_and(|element| {
-                element.kind == ElementKind::RegularElement
-                    && element.attributes.iter().any(|&it| {
-                        matches!(
-                            self.tree[it].kind,
-                            Kind::Attribute {
-                                name: b"shadowrootmode",
-                                ..
-                            }
-                        )
-                    })
-            })
-        })
+        self.is_in.last().is_some_and(|it| it.1)
     }
 
     /// `</name>`, from behind the `/` on. `start`: where the `<` is.
@@ -965,7 +976,14 @@ impl<'a> Parser<'a, '_> {
         match &rest[10..] {
             [b'>', ..] => Some(11),
             behind if strings::js_whitespace_len(behind) > 0 => {
-                Some(10 + strings::index_of_char_usize(behind, b'>')? + 1)
+                let from = self.index + 10;
+                let (looked_from, mut end) = self.next_end_of_tag.get();
+                if !(looked_from..=end).contains(&from) {
+                    end =
+                        strings::index_of_char_usize(behind, b'>').map_or(self.len, |it| from + it);
+                    self.next_end_of_tag.set((from, end));
+                }
+                (end < self.len).then(|| end + 1 - self.index)
             }
             _ => None,
         }
@@ -1419,26 +1437,29 @@ impl<'a> Parser<'a, '_> {
     }
 
     /// The expression of `{#each`.
-    fn read_expression_of_each(&mut self, start: usize) -> Result<ParsedExpression> {
-        // `{#each x as { y = z }}` is no expression. What is from an `as` on is hidden until there is one.
-        let len = self.len;
-        let parsed = loop {
-            match self.read_whole_expression() {
-                Ok(parsed) => break Ok(parsed),
-                Err(error) => {
-                    let mut end = (error.1 as usize).saturating_sub(2).min(self.len);
-                    while end > start && !self.template()[end..].starts_with(b"as") {
-                        end -= 1;
-                    }
-                    if end <= start {
-                        break Err(error);
-                    }
-                    self.len = end;
-                }
-            }
+    fn read_expression_of_each(&mut self) -> Result<ParsedExpression> {
+        let index = self.index;
+        let error = match self.read_whole_expression() {
+            Ok(parsed) => return Ok(parsed),
+            Err(error) => error,
         };
+        // `{#each x as { y = z }}` is no expression. Svelte hides what is from the last `as` before the error on, tries again, and
+        // so on, until what is left is an expression. It is one where something ends that is in nothing else, so the last such
+        // place with an `as` behind it is where that ends up.
+        let (template, until) = (self.template(), error.1 as usize);
+        let ends = self.js.ends_of_expressions(template, index, until);
+        let end = ends.into_iter().filter_map(|it| {
+            let word = behind_trivia(&template[..until], it);
+            (template[word..until].starts_with(b"as")).then_some(word)
+        });
+        let Some(end) = end.max() else {
+            return Err(error);
+        };
+        let len = std::mem::replace(&mut self.len, end);
+        self.index = index;
+        let parsed = self.read_whole_expression();
         self.len = len;
-        parsed
+        parsed.or(Err(error))
     }
 
     /// `open`
@@ -1459,7 +1480,7 @@ impl<'a> Parser<'a, '_> {
         }
         if self.eat(b"each") {
             self.require_whitespace()?;
-            let parsed = self.read_expression_of_each(start)?;
+            let parsed = self.read_expression_of_each()?;
             let mut expression = parsed.expression;
             self.allow_whitespace();
             // A context has to follow: `{#each list as item}`.
@@ -2010,12 +2031,42 @@ fn behind_white_space(text: &[u8], mut at: usize) -> Option<usize> {
     (at > start).then_some(at)
 }
 
+/// Where the first of `bytes` is in a text from some place on. It is looked for again only from a place that is not between
+/// where it has been looked for last and where it has been found.
+struct Next<'a> {
+    text: &'a [u8],
+    bytes: &'static [u8],
+    looked_from: usize,
+    /// The length of the text: nowhere.
+    found: usize,
+}
+
+impl<'a> Next<'a> {
+    fn new(text: &'a [u8], bytes: &'static [u8]) -> Next<'a> {
+        Next {
+            text,
+            bytes,
+            looked_from: 0,
+            found: strings::index_of_any(text, bytes).unwrap_or(text.len()),
+        }
+    }
+
+    fn from(&mut self, at: usize) -> usize {
+        if !(self.looked_from..=self.found).contains(&at) {
+            let found = strings::index_of_any(&self.text[at..], self.bytes);
+            (self.looked_from, self.found) = (at, found.map_or(self.text.len(), |it| at + it));
+        }
+        self.found
+    }
+}
+
 /// `(?:[^=>'"/]+=(?:"[^"]*"|'[^']*'|[^>\s]+)\s+)*lang=..` at `start`: the value of the `lang` behind attributes that have
-/// values, in which there can be a `>`. `failed`: from where there is no match, in the whole text.
+/// values, in which there can be a `>`. `failed`: from where there is no match, in the whole text. `end_of_name`: of
+/// `[^=>'"/]+`.
 fn lang_behind_attributes<'a>(
     text: &'a [u8],
     (start, last_end): (usize, usize),
-    failed: &mut FxHashSet<usize>,
+    (failed, end_of_name): (&mut FxHashSet<usize>, &mut Next<'a>),
 ) -> Option<&'a [u8]> {
     // Where an attribute may start, and what is tried next there: a value in quotes, one without, no more attributes.
     let mut stack = vec![(start, 0u8)];
@@ -2031,14 +2082,11 @@ fn lang_behind_attributes<'a>(
             continue;
         }
         stack.push((at, way + 1));
-        let name = strings::index_of_any(&text[at..], b"=>'\"/").filter(|&len| len > 0);
-        let Some(value) = name
-            .map(|len| at + len)
-            .filter(|&it| text[it] == b'=')
-            .map(|it| it + 1)
-        else {
+        let equals = end_of_name.from(at);
+        if equals == at || text.get(equals) != Some(&b'=') {
             continue;
-        };
+        }
+        let value = equals + 1;
         let end = match (way, text.get(value)) {
             (0, Some(quote @ (b'"' | b'\''))) => {
                 strings::index_of_char_usize(&text[value + 1..], *quote).map(|len| value + len + 2)
@@ -2068,6 +2116,7 @@ fn is_typescript(text: &[u8]) -> bool {
     // A `<script` before this has some of the attributes of one before it, and no `lang=` among those is it.
     let mut checked_until = 0;
     let mut failed = FxHashSet::default();
+    let (mut end_of_tag, mut end_of_name) = (Next::new(text, b">"), Next::new(text, b"=>'\"/"));
     let Some(last_end) = strings::last_index_of_char(text, b'>') else {
         return false;
     };
@@ -2088,7 +2137,9 @@ fn is_typescript(text: &[u8]) -> bool {
             continue;
         };
         // No tag ends from here on.
-        let Some(end) = strings::index_of_char_usize(&text[attributes..], b'>') else {
+        let Some(end) = (end_of_tag.from(attributes).checked_sub(attributes))
+            .filter(|it| attributes + it < text.len())
+        else {
             return false;
         };
         // `[^>]*lang=..`: the last `lang=` before the first `>` that has a value, whatever it is in.
@@ -2103,11 +2154,28 @@ fn is_typescript(text: &[u8]) -> bool {
             }
         }
         checked_until = checked_until.max(attributes + end);
-        if let Some(lang) = lang_behind_attributes(text, (attributes, last_end), &mut failed) {
+        let known = (&mut failed, &mut end_of_name);
+        if let Some(lang) = lang_behind_attributes(text, (attributes, last_end), known) {
             return lang == b"ts";
         }
     }
     false
+}
+
+/// Where what is behind the white space and the comments at `at` starts.
+fn behind_trivia(text: &[u8], mut at: usize) -> usize {
+    loop {
+        let rest = strings::trim_js_whitespace_start(&text[at..]);
+        at = text.len() - rest.len();
+        at += match rest {
+            [b'/', b'/', ..] => strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len()),
+            [b'/', b'*', inner @ ..] => match strings::index_of(inner, b"*/") {
+                Some(len) => len + 4,
+                None => return at,
+            },
+            _ => return at,
+        };
+    }
 }
 
 /// `parse(text, { modern: true })`
@@ -2124,6 +2192,8 @@ pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
         is_typescript: is_typescript(text),
         tree,
         stack: Vec::new(),
+        is_in: Vec::new(),
+        next_end_of_tag: Cell::new((0, 0)),
         fragments: vec![fragment],
         seen_meta_tags: Vec::new(),
         last_auto_closed_tag: None,

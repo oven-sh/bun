@@ -150,7 +150,7 @@ impl FileSystemRouter {
                 // path in the resolver's spelling of its directory, which is normalized.
                 let Some(joined) =
                     path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                        Fs::FileSystem::instance().top_level_dir,
+                        Fs::FileSystem::instance().top_level_dir(),
                         &mut out_buf,
                         &[root_dir_path_.slice()],
                     )
@@ -908,7 +908,7 @@ impl MatchedRoute {
             if let Some(ref base_dir) = this.base_dir {
                 base_dir.leak()
             } else {
-                Fs::FileSystem::get().top_level_dir
+                Fs::FileSystem::get().top_level_dir()
             },
             &origin_url,
             if let Some(ref prefix) = this.asset_prefix {

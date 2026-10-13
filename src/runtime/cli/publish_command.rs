@@ -142,7 +142,7 @@ impl<'a> Context<'a> {
     ) -> Result<Context<'a>, FromTarballError> {
         let mut abs_buf = bun_paths::path_buffer_pool::get();
         let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
-            FileSystem::instance().top_level_dir,
+            FileSystem::instance().top_level_dir(),
             &mut abs_buf,
             &[tarball_path],
         );

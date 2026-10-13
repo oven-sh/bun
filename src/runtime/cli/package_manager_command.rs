@@ -362,7 +362,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // SAFETY: `FileSystem::instance()` is initialised during
             // `PackageManager::init` (CLI startup); the singleton lives for
             // process lifetime.
-            let top_level_dir: &[u8] = Fs::FileSystem::get().top_level_dir;
+            let top_level_dir: &[u8] = Fs::FileSystem::get().top_level_dir();
             let output_path = Path::resolve_path::join_abs::<Path::platform::Auto>(
                 top_level_dir,
                 pm.options.bin_path.as_bytes(),

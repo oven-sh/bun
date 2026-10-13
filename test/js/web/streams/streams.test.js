@@ -2586,6 +2586,36 @@ describe("a stream over bytes in memory", () => {
       afterCancel: { done: true, value: undefined },
     });
   });
+
+  // The string, its copy in the Response, and no 256 KiB buffer on top. An ASAN build does not allocate through mimalloc.
+  test.skipIf(isASAN).concurrent.each([100, 100_000])(
+    "reading a body of %d bytes asks the allocator for little more than the body",
+    async size => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { heapStats } = require("bun:jsc");
+           const body = Buffer.alloc(${size}, "a").toString();
+           async function read() {
+             const reader = new Response(body).body.getReader();
+             for (let result = await reader.read(); !result.done; result = await reader.read());
+           }
+           await read();
+           const before = heapStats().mimalloc.malloc_requested;
+           for (let i = 0; i < 50; i++) await read();
+           console.log(Math.round((heapStats().mimalloc.malloc_requested - before) / 50));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(Number(stdout)).toBeLessThan(2 * size + 64 * 1024);
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 it("Bun.file().stream() of a small file does not double-close the controller", async () => {

@@ -82,7 +82,11 @@ public:
 
     String fastGet(HTTPHeaderName name) const { return m_headers.get(name); }
     bool fastHas(HTTPHeaderName name) const { return m_headers.contains(name); }
-    bool fastRemove(HTTPHeaderName name) { return m_headers.remove(name); }
+    bool fastRemove(HTTPHeaderName name)
+    {
+        ++m_updateCounter;
+        return m_headers.remove(name);
+    }
 
     const Vector<String, 0>& getSetCookieHeaders() const { return m_headers.getSetCookieHeaders(); }
 
@@ -90,12 +94,27 @@ public:
     public:
         explicit Iterator(FetchHeaders&);
         Iterator(FetchHeaders&, bool lowerCaseKeys);
+        Iterator(Iterator&&) = default;
+        Iterator(const Iterator&) = delete;
         std::optional<KeyValuePair<String, String>> next();
 
+        // Points into the headers: valid until they change or nextEntry() is called again.
+        struct Entry {
+            const String* key { nullptr };
+            const String* value { nullptr };
+            std::optional<HTTPHeaderName> name;
+        };
+        const Entry* nextEntry();
+
     private:
+        void collectEntries();
+
         Ref<FetchHeaders> m_headers;
         size_t m_currentIndex { 0 };
-        Vector<String> m_keys;
+        // Sorted by key. A null key, always last, stands for the Set-Cookie headers.
+        Vector<Entry> m_entries;
+        Vector<String> m_lowercasedKeys;
+        Entry m_setCookieEntry;
         uint64_t m_updateCounter { 0 };
         size_t m_cookieIndex { 0 };
         bool m_lowerCaseKeys { true };
@@ -110,7 +129,11 @@ public:
         return Iterator(*this, true);
     }
 
-    void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTF::move(headers); }
+    void setInternalHeaders(HTTPHeaderMap&& headers)
+    {
+        ++m_updateCounter;
+        m_headers = WTF::move(headers);
+    }
     const HTTPHeaderMap& internalHeaders() const { return m_headers; }
 
     void setGuard(Guard);

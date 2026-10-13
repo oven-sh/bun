@@ -1901,51 +1901,38 @@ type HookOptions = {
   timeout?: number;
 };
 
+// Port of Node's createSubtest shift (test.js:1013-1025) and of the Test
+// constructor's fn and name defaults (test.js:575-581).
 function parseTestArgs(arg0: unknown, arg1: unknown, arg2: unknown) {
-  let name: string;
-  let options: TestOptions;
-  let fn: TestFn;
+  let name: unknown = arg0;
+  let options: unknown = arg1;
+  let fn: unknown = arg2;
 
-  if (typeof arg0 === "function") {
-    name = arg0.name || kDefaultName;
-    fn = arg0 as TestFn;
-    if (typeof arg1 === "object") {
-      options = (arg1 ?? kDefaultOptions) as TestOptions;
-    } else {
-      options = kDefaultOptions;
-    }
-  } else if (typeof arg0 === "string") {
-    name = arg0;
-    if (typeof arg1 === "object") {
-      options = (arg1 ?? kDefaultOptions) as TestOptions;
-      if (typeof arg2 === "function") {
-        fn = arg2 as TestFn;
-      } else {
-        fn = kDefaultFunction;
-      }
-    } else if (typeof arg1 === "function") {
-      fn = arg1 as TestFn;
-      options = kDefaultOptions;
-    } else {
-      fn = kDefaultFunction;
-      options = kDefaultOptions;
-    }
-  } else if (typeof arg0 === "object" && arg0 !== null) {
-    options = arg0 as TestOptions;
-    if (typeof arg1 === "function") {
-      fn = arg1 as TestFn;
-      name = fn.name || kDefaultName;
-    } else {
-      fn = kDefaultFunction;
-      name = kDefaultName;
-    }
-  } else {
-    name = kDefaultName;
-    fn = kDefaultFunction;
-    options = kDefaultOptions;
+  if (typeof name === "function") {
+    fn = name;
+  } else if (name !== null && typeof name === "object") {
+    fn = options;
+    options = name;
+  } else if (typeof options === "function") {
+    fn = options;
   }
 
-  return { name, options, fn };
+  // Node also spreads `options` over `{ fn, name }` (test.js:1038), so
+  // `options.fn` or `options.name` replaces the positional one (documented
+  // since v26.7.0). That is not ported: the positional arguments win.
+  if (options === null || typeof options !== "object") {
+    options = kDefaultOptions;
+  }
+  // Node defaults fn first. The name comes first here: kDefaultFunction's
+  // inferred name is "kDefaultFunction", Node's noop (Function.prototype) has none.
+  if (typeof name !== "string" || name === "") {
+    name = (typeof fn === "function" && (fn as Function).name) || kDefaultName;
+  }
+  if (typeof fn !== "function") {
+    fn = kDefaultFunction;
+  }
+
+  return { name: name as string, options: options as TestOptions, fn: fn as TestFn };
 }
 
 // Shared by test and hook options: Node validates both the same way.

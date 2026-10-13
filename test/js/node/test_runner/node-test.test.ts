@@ -323,6 +323,45 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  // 35-positional-args.js is the largest fixture (52 node:test cases), so these
+  // two get the same headroom as the three at the top.
+  test.concurrent(
+    "should read the name, the options and the function slot by slot like node",
+    async () => {
+      const { exitCode, stderr } = await runTests(["35-positional-args.js"]);
+      // A body that must not run cannot check its own name, so those names are pinned here.
+      expect(stderr).toContain("(skip) skipSpelling");
+      expect(stderr).toContain("(skip) skippedByOptions");
+      expect(stderr).toContain("(todo) todoSpelling");
+      expect(stderr).toContain("(todo) todoByOptions");
+      // A test without a function is named "<anonymous>", never after the internal default function.
+      expect(stderr.match(/^\(pass\) <anonymous>/gm)).toHaveLength(8);
+      expect(stderr).not.toContain("kDefaultFunction");
+      expect(stderr).toContain("45 pass");
+      expect(stderr).toContain("4 skip");
+      expect(stderr).toContain("3 todo");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should match the name pattern against a name taken from the function",
+    async () => {
+      const { exitCode, stderr } = await runTests(["35-positional-args.js"], {}, ["-t", "pickme"]);
+      expect(stderr).toContain("(pass) pickme");
+      expect(stderr).toContain("1 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("0 fail"),
+      });
+    },
+    30_000,
+  );
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

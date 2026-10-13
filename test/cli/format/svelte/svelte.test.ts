@@ -1774,7 +1774,10 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       // In a default.
       [each("{ x = c ? a : a }"), each("{ x = c ? a : 1 }"), "different"],
       [each("{ x = c ? a : a }"), each("{ x = c ? a }"), "different"],
-      [each("{ x = { a: a } }"), each("{ x = { a } }"), "different"],
+      // In an object it is one: the second is printed as the first.
+      [each("{ x = { a: a } }"), each("{ x = { a } }"), "same"],
+      [each("{ x = { a: b } }"), each("{ x = { b } }"), "different"],
+      [each("{ x = { [a]: a } }"), each("{ x = { a } }"), "different"],
       // A computed key.
       [each("{ [a]: a }"), each("{ a }"), "different"],
     ];

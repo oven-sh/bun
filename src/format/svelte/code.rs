@@ -67,8 +67,8 @@ fn starts_like_a_tag<'a>(mut e: Expr<'a>, brace: Brace, f: &Formatter<'a>) -> bo
     }
 }
 
-/// `textToDoc(forceIntoExpression(text), ..)`, and what is done to the document. Returns whether a `//` comment is the last
-/// thing that is written. `None`: nothing is written.
+/// `textToDoc(forceIntoExpression(text), ..)`, and what is done to the document. Returns whether the last thing that is
+/// written is a comment at the end of a line. `None`: nothing is written.
 fn write_js_expression(
     f: &mut Formatter<'_>,
     js: &Js<'_>,
@@ -97,8 +97,10 @@ fn write_js_expression(
                 return false;
             };
             let comments = f.comments().unprinted_comments();
-            ends_with_line_comment =
-                (comments.last()).is_some_and(|it| it.is_line() && it.span.start >= e.span().end);
+            // One on a line of its own is printed at the end of a line too, and so is all that follows one that is.
+            ends_with_line_comment = (comments.iter())
+                .filter(|it| it.span.start >= e.span().end)
+                .any(|it| it.is_line() || it.preceded_by_newline());
             let is_in_parentheses =
                 (js.follows).is_some_and(|brace| starts_like_a_tag(e, brace, f));
             let content = format_with(|f| {

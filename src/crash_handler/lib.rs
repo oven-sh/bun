@@ -1721,6 +1721,8 @@ mod draft {
     #[cold]
     #[inline(never)]
     fn rust_panic_hook(info: &std::panic::PanicHookInfo<'_>) {
+        highway_use_static_target_if_none_chosen();
+
         // Re-entry guard: if the hook itself panics (formatter, write, …), the
         // recursive entry sees stage>0, prints a one-liner, and returns so the
         // inner unwind tears the process down rather than looping.

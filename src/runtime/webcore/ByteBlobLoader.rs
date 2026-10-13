@@ -73,6 +73,9 @@ impl readable_stream::SourceContext for ByteBlobLoader {
 bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn parent; }
 
 impl ByteBlobLoader {
+    /// The most `drain` takes at once.
+    const DRAIN_SIZE: blob::SizeType = 16384;
+
     pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // In-place init — `self` is a pre-allocated slot inside `Source`.
         let store = blob.store.get().as_ref().unwrap().clone();
@@ -99,6 +102,16 @@ impl ByteBlobLoader {
     }
 
     pub(crate) fn on_start(&mut self) -> streams::Start {
+        // What one `drain` would take is the whole stream: hand it over as the only chunk, so that
+        // the consumer does not allocate a slab to pull into just to learn that nothing is left.
+        if self.remain <= Self::DRAIN_SIZE {
+            let bytes = self.drain();
+            if !bytes.is_empty() {
+                self.done = true;
+                self.clear_data();
+                return streams::Start::OwnedAndDone(bytes);
+            }
+        }
         // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
         streams::Start::ChunkSize(self.chunk_size)
     }
@@ -205,7 +218,7 @@ impl ByteBlobLoader {
         };
         let temporary = store.shared_view();
         let temporary = &temporary[self.offset as usize..];
-        let take = 16384usize.min(temporary.len().min(self.remain as usize));
+        let take = (Self::DRAIN_SIZE as usize).min(temporary.len().min(self.remain as usize));
         let temporary = &temporary[..take];
 
         // A single owning copy (avoids a `ManuallyDrop` borrow dance).

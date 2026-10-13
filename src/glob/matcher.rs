@@ -236,6 +236,7 @@ fn match_from_first_byte<const WINDOWS: bool>(
     if is_plain && path.first() != Some(&first) {
         return MatchResult::NO;
     }
+
     if let Some(shape) = shape {
         let uses = shape.uses.load(Ordering::Relaxed);
         // From now on a `Walk` decides.
@@ -252,9 +253,26 @@ fn match_from_first_byte<const WINDOWS: bool>(
             true => match_literal_for_windows(glob, shape, path, dots),
             false => match_literal_for_posix(glob, shape, path, dots),
         },
-        b'!' | b'\\' | b'?' | b'[' | 0x80.. => match WINDOWS {
+        // An escaped character that stands for itself is as good as a literal.
+        b'\\'
+            if glob.get(1).is_some_and(|it| {
+                path.first() != Some(it)
+                    && !matches!(it, b'b' | b'n' | b'r' | b't' | b'/' | b'\\' | 0x80..)
+            }) =>
+        {
+            MatchResult::NO
+        }
+        b'!' => match WINDOWS {
+            true => match_negated_for_windows(glob, shape, path, dots),
+            false => match_negated_for_posix(glob, shape, path, dots),
+        },
+        b'\\' | b'?' | b'[' | 0x80.. => match WINDOWS {
             true => match_escapes_for_windows(glob, shape, path, Start::of(dots)),
             false => match_escapes_for_posix(glob, shape, path, Start::of(dots)),
+        },
+        b'{' if dots == Dots::Match && glob.ends_with(b"*}") => match WINDOWS {
+            true => match_braces_for_windows(glob, shape, path),
+            false => match_braces_for_posix(glob, shape, path),
         },
         _ => match WINDOWS {
             true => match_for_windows(glob, shape, path, Start::of(dots), None),
@@ -302,6 +320,36 @@ fn match_escapes_for_windows(
     start: Start,
 ) -> MatchResult {
     match_escapes::<true>(glob, shape, path, start)
+}
+
+#[inline(never)]
+fn match_negated_for_posix(
+    glob: &[u8],
+    shape: Option<&Shape>,
+    path: &[u8],
+    dots: Dots,
+) -> MatchResult {
+    match_negated::<false>(glob, shape, path, dots)
+}
+
+#[inline(never)]
+fn match_negated_for_windows(
+    glob: &[u8],
+    shape: Option<&Shape>,
+    path: &[u8],
+    dots: Dots,
+) -> MatchResult {
+    match_negated::<true>(glob, shape, path, dots)
+}
+
+#[inline(never)]
+fn match_braces_for_posix(glob: &[u8], shape: Option<&Shape>, path: &[u8]) -> MatchResult {
+    match_braces::<false>(glob, shape, path)
+}
+
+#[inline(never)]
+fn match_braces_for_windows(glob: &[u8], shape: Option<&Shape>, path: &[u8]) -> MatchResult {
+    match_braces::<true>(glob, shape, path)
 }
 
 #[inline(never)]
@@ -398,6 +446,93 @@ fn match_literal<const WINDOWS: bool>(
         (true, false) => match_escapes_for_posix(glob, shape, path, start),
         (false, true) => match_for_windows(glob, shape, path, start, None),
         (false, false) => match_for_posix(glob, shape, path, start, None),
+    }
+}
+
+/// [`match_literal`] for a pattern that starts with `!`.
+#[inline(always)]
+fn match_negated<const WINDOWS: bool>(
+    glob: &[u8],
+    shape: Option<&Shape>,
+    path: &[u8],
+    dots: Dots,
+) -> MatchResult {
+    let glob_start = negations(glob);
+    let negated = glob_start % 2 == 1;
+    let mut taken = 0;
+    while let Some(&wanted) = glob.get(glob_start + taken) {
+        let is_same = match path.get(taken) {
+            Some(&found) if IS_PLAIN[wanted as usize] => found == wanted,
+            Some(&found) if wanted == b'/' => is_separator::<WINDOWS>(found),
+            None if IS_PLAIN[wanted as usize] || wanted == b'/' => false,
+            _ => break,
+        };
+        if !is_same {
+            return MatchResult {
+                matches: negated,
+                negated,
+            };
+        }
+        taken += 1;
+    }
+    let Some(next) = glob.get(glob_start + taken) else {
+        return MatchResult {
+            matches: (taken == path.len()) != negated,
+            negated,
+        };
+    };
+    let start = Start {
+        glob_start: glob_start as u32,
+        glob_index: (glob_start + taken) as u32,
+        path_index: taken as u32,
+        ..Start::of(dots)
+    };
+    match (matches!(next, b'\\' | b'?' | b'[' | 0x80..), WINDOWS) {
+        (true, true) => match_escapes_for_windows(glob, shape, path, start),
+        (true, false) => match_escapes_for_posix(glob, shape, path, start),
+        (false, true) => match_for_windows(glob, shape, path, start, None),
+        (false, false) => match_for_posix(glob, shape, path, start, None),
+    }
+}
+
+/// The pattern is like `{src/**,lib/**}`. If it's short, each alternative is matched as a pattern of its own.
+#[inline(always)]
+fn match_braces<const WINDOWS: bool>(
+    glob: &[u8],
+    shape: Option<&Shape>,
+    path: &[u8],
+) -> MatchResult {
+    let text = Text {
+        path,
+        path_index: 0,
+        is_committed: true,
+        is_windows: WINDOWS,
+        matches: |pattern, text| match_on::<WINDOWS>(pattern, text).matches(),
+    };
+    let written = match_written_out(glob, 0, &text);
+    #[cfg(debug_assertions)]
+    if let Some(written) = written {
+        written.check(glob, 0, path, WINDOWS);
+    }
+    let start = match written {
+        Some(Written::Rest(matches)) => {
+            return MatchResult {
+                matches,
+                negated: false,
+            };
+        }
+        Some(Written::Segment(false, ..)) => return MatchResult::NO,
+        Some(Written::Segment(true, glob_index, path_index)) => Start {
+            glob_index,
+            path_index,
+            seen: Seen::Choice,
+            ..Start::of(Dots::Match)
+        },
+        None => Start::of(Dots::Match),
+    };
+    match WINDOWS {
+        true => match_for_windows(glob, shape, path, start, None),
+        false => match_for_posix(glob, shape, path, start, None),
     }
 }
 

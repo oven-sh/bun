@@ -6,7 +6,7 @@ use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
 use crate::options::Json;
-use crate::oxlint_order::Kinds;
+use crate::oxlint_order::Called;
 use crate::rule::{Meta, Plugin, When};
 use crate::rule_set::RuleBits;
 use crate::runner::{Listeners, RuleEntry};
@@ -215,7 +215,7 @@ pub(super) struct Slot {
     /// With a configuration of oxlint: when oxlint reports what the rule reports.
     pub(super) when: When,
     /// With a configuration of oxlint: the kinds of node that it calls the rule with.
-    pub(super) kinds: Kinds,
+    pub(super) kinds: Called,
     /// With a configuration of oxlint: the number that it gives the rule.
     pub(super) oxlint_number: u16,
     pub(super) severity: Severity,

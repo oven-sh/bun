@@ -2629,6 +2629,8 @@ describe("Glob.match", () => {
     ["*\\*", ["*", "ab*"], ["ab", "a*b"]],
     ["*\\[a\\]", ["[a]", "x[a]"], ["xa", "x[a"]],
     ["*?.ts", ["a.ts", "index.ts", "é.ts"], [".ts", "a.js", "a/.ts"]],
+    ["*?", ["a", "ab", "é", "😀"], ["", "/", "a/", "a/b"]],
+    ["?*", ["a", "ab", "é", "😀x"], ["", "/", "/a", "a/b"]],
     ["*??", ["ab", "abc", "éé"], ["", "a", "a/b"]],
     ["*?[ab]/x", ["ca/x", "xxcb/x"], ["a/x", "cc/x", "ca/y"]],
     ["*?[^/]_*1", ["_xa_aab1", "ab_1"], ["a_1", "ab_2"]],
@@ -2730,6 +2732,22 @@ describe("Glob.match", () => {
       expect(differs).toEqual([]);
     },
   );
+
+  test.each([
+    ["*[éa]", "é", "ü"],
+    ["*\\é", "é", "ü"],
+    ["*[語a]", "語", "誰"],
+  ])("%s tells characters apart after a long path", (pattern, matching, other) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 40; round++) glob.match("x");
+    const long = Buffer.alloc(600, "x").toString();
+    expect([long + matching, long + other, "x" + matching, "x" + other].map(path => glob.match(path))).toEqual([
+      true,
+      false,
+      true,
+      false,
+    ]);
+  });
 
   test("a group can be anywhere in a long pattern", () => {
     for (let before = 50; before <= 270; before++) {

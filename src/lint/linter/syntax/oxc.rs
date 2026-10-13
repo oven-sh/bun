@@ -1750,6 +1750,21 @@ fn second_readings<'a>(file: &'a File<'a>) -> impl Iterator<Item = &'a Diagnosti
     all.filter(|it| it.kind == DiagnosticKind::OxcSecondReading)
 }
 
+/// What oxc says about a statement that it reads again. `errors`: those of the parser here.
+#[optimize(size)]
+fn second_reading<'a>(file: &'a File<'a>, errors: &[Diagnostic]) -> Vec<SyntaxError> {
+    let (mut said, stop) = super::in_words_of_oxc(file, errors);
+    // What the parser has noted in oxc's words comes before the error of TypeScript's parser that it is about.
+    let before = errors.get(..stop.map_or(errors.len(), |it| it.0));
+    let mut noted = before.unwrap_or_default().iter();
+    let noted = noted.find(|it| it.kind == DiagnosticKind::OxcFatal);
+    if let Some(noted) = noted.and_then(|it| oxc_typescript::of_parser(file, it)) {
+        said.pop();
+        said.push(noted);
+    }
+    said
+}
+
 fn can_be_forgotten(it: &SyntaxError) -> bool {
     it.of_oxc.stage == Stage::Parser && !matches!(it.order(), 0 | u32::MAX)
 }
@@ -1786,7 +1801,7 @@ fn read_again_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
         };
         kept.truncate(all.iter().filter(is_from_first_reading).count());
         let second = second_readings(file).find(|it| it.start == span.start);
-        said_last = second.map_or_else(Vec::new, |it| super::in_words_of_oxc(file, &it.related).0);
+        said_last = second.map_or_else(Vec::new, |it| second_reading(file, &it.related));
         let read_to = match (second, said_last.last()) {
             (Some(_), Some(last)) => {
                 given_up.push(*span);

@@ -65,7 +65,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && self.reports_like_oxc()
         {
             // `declare function ();`, `function <T>() {}`: oxc wants no name there.
-            (Atom::NONE, start.pos)
+            (Atom::NONE, self.pos())
         } else if !flags.contains(Flags::DEFAULT) {
             let full = self.full_start();
             match self.missing_identifier(0, 0) {

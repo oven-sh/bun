@@ -947,8 +947,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             // To oxc's lexer `</` is a `<`, and a regular expression after it.
             let is_before_open_regex = p.token() == T::LessThanSlash && {
                 let rest = p.lx.src.get(p.lx.end as usize..).unwrap_or_default();
-                let line = rest.split(|it| matches!(it, b'\n' | b'\r')).next();
-                !line.is_some_and(|it| it.contains(&b'/'))
+                let stop = bun_core::strings::index_of_any(rest, b"/\n\r");
+                stop.and_then(|at| rest.get(at)) != Some(&b'/')
             };
             errors(p) == before
                 && !is_before_open_regex

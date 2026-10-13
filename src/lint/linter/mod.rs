@@ -79,7 +79,7 @@ use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
-use crate::oxlint_order::Kinds;
+use crate::oxlint_order::Called;
 use crate::rule::{Meta, When};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::runner::{Enabled, Listeners, RuleEntry, each_bit};
@@ -206,7 +206,7 @@ struct Running<'r, S> {
     /// [`Slot::when`]
     when: When,
     /// [`Slot::kinds`]
-    kinds: Kinds,
+    kinds: Called,
     /// [`Slot::oxlint_number`]
     oxlint_number: u16,
     rule: RuleRef<'r, S>,
@@ -406,7 +406,7 @@ impl<S: RuleSet> Linter<S> {
                     let order = crate::oxlint_order::of(rule.reported_as());
                     (order.when, order.number, order.kinds)
                 }
-                false => (rule.entry.meta.reports, 0, Kinds::default()),
+                false => (rule.entry.meta.reports, 0, Called::default()),
             };
             let at = at as u32;
             let severity = rule.severity;
@@ -878,7 +878,20 @@ impl<S: RuleSet> Linter<S> {
                 Some((it.when, it.kinds, it.oxlint_number))
             }
         };
-        let wants_keys = prepared.needs_modules;
+        // A file is linted again if it names a module.
+        let names_a_module = || {
+            use crate::ast::{ExprTag, StmtTag};
+            let statements = [
+                StmtTag::Import,
+                StmtTag::ImportEquals,
+                StmtTag::ExportNamed,
+                StmtTag::ExportStar,
+            ];
+            file.has_stmts(statements)
+                || file.has_exprs([ExprTag::ImportCall])
+                || file.mentions("require")
+        };
+        let wants_keys = follows_run && prepared.needs_modules && names_a_module();
         let about = |rule: u16| {
             let meta = ran(rule as usize)?.reported_as();
             let (when, kinds, number) = slot_of(rule as usize)?;
@@ -1690,7 +1703,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 configured: existing,
                 severity,
                 when: entry.meta.reports,
-                kinds: Kinds::default(),
+                kinds: Called::default(),
                 oxlint_number: u16::MAX,
                 rule,
                 refusal,

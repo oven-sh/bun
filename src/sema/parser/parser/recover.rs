@@ -245,10 +245,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         (self.has_await_in_name, self.has_await_identifier) = (false, false);
         let before = self.checkpoint();
         let had_plain_await = self.has_plain_top_level_await;
+        let reparsed_rest = self.reparses_rest_of_file;
         let statement = self.statement();
         if self.has_await_identifier
             && self.options.is_module_or_script
             && !had_plain_await
+            && !reparsed_rest
             && !self.f.has_module_syntax
             && let Some(statement) = self.first_reading_of_oxc(&before, statement)
         {
@@ -274,14 +276,21 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
         let said_before = before.file.diagnostics as usize;
         let said = self.f.diagnostics.get(said_before..).unwrap_or_default();
-        let second: Vec<Diagnostic> = said.iter().filter(is_of_parser).cloned().collect();
+        let gives_up =
+            |it: &&Diagnostic| matches!(it.kind, DiagnosticKind::Parse | DiagnosticKind::OxcFatal);
+        let second: Vec<Diagnostic> = said.iter().filter(gives_up).cloned().collect();
         let start = self.f.stmts.get(statement.idx())?.start;
         let is_import_meta = |it: &Expr| it.pos < start && matches!(it.kind, ExprKind::ImportMeta);
-        if second.is_empty() || self.has_failed() || self.f.exprs.iter().any(is_import_meta) {
+        if !second.iter().any(|it| is_of_parser(&it))
+            || self.has_failed()
+            || self.f.exprs.iter().any(is_import_meta)
+        {
             return None;
         }
         self.rollback(before);
         self.has_plain_top_level_await = false;
+        (self.has_await_in_statement, self.was_await_refused) = (false, false);
+        self.reparses_rest_of_file = false;
         let saved = self.enter_context(0, ctx::AWAIT);
         let statement = self.statement();
         self.context = saved;

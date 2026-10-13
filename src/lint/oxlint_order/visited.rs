@@ -8,11 +8,12 @@
 //! shape. A report keeps the node that it was given, so most start there. One for a token or a name starts where the last
 //! ended: see [`Places::innermost_around`]. The way up is short, or it is remembered: [`AncestorMemo`].
 
-use super::{Kinds, kind_named};
+use super::{Called, Kinds, kind_named};
 use crate::ast::{
-    BinOp, ExprKind, ExprTag, File, FnKind, Node, Packed, Pat, PatKind, PropKind, StmtKind,
-    StmtTag, UnOp,
+    BinOp, ExprKind, ExprTag, File, Flags, FnKind, MemberKind, Node, Packed, Pat, PatKind,
+    PropKind, StmtKind, StmtTag, UnOp,
 };
+use crate::context::Diagnostic;
 use crate::semantic::Declaration;
 use crate::span::Span;
 use crate::utils::ancestor_memo::AncestorMemo;
@@ -67,6 +68,53 @@ struct Known {
     leaves: Kinds,
     /// What has no node here and is in one that has: a body, an opening tag.
     parts: Kinds,
+    /// A bit for each `ExprTag` and for each `StmtTag` that is one of `leaves`.
+    leaf_exprs: u64,
+    leaf_stmts: u64,
+    method_definition: u8,
+    property_definition: u8,
+    accessor_property: u8,
+}
+
+/// A bit for each place in `table` that has one of `kinds`.
+fn bits(table: &[u8], kinds: &Kinds) -> u64 {
+    let places = table.iter().zip(0u32..).filter(|it| kinds.has(*it.0));
+    places.fold(0, |all, it| all | (1 << it.1))
+}
+
+pub(super) fn called(kinds: Kinds) -> Called {
+    let known = &*KNOWN;
+    let bit = |kind: u8, at: u32| u64::from(kinds.has(kind)) << at;
+    // All the bits from `first` up to `last`, if the rule is called with `kind`.
+    let range = |kind: u8, first: u32, last: u32| match kinds.has(kind) {
+        true => ((1u32 << (last + 1)) - 1) & !((1 << first) - 1),
+        false => 0,
+    };
+    Called {
+        kinds,
+        exprs: bits(&known.exprs, &kinds),
+        exprs_without_jsx: bit(known.identifier_reference, ExprTag::Ident as u32)
+            | bit(known.string_literal, ExprTag::String as u32),
+        stmts: bits(&known.stmts, &kinds),
+        binaries: range(known.binary_expression, 0, BinOp::Instanceof as u32)
+            | range(
+                known.logical_expression,
+                BinOp::And as u32,
+                BinOp::Nullish as u32,
+            )
+            | range(
+                known.sequence_expression,
+                BinOp::Comma as u32,
+                BinOp::Comma as u32,
+            ),
+        unaries: range(known.unary_expression, 0, UnOp::Delete as u32)
+            | range(
+                known.update_expression,
+                UnOp::PreInc as u32,
+                UnOp::PostDec as u32,
+            ),
+        is_odd: kinds.has_any_of(&known.parts) || kinds.are_among(&known.declarations),
+    }
 }
 
 static KNOWN: LazyLock<Known> = LazyLock::new(|| {
@@ -201,6 +249,13 @@ static KNOWN: LazyLock<Known> = LazyLock::new(|| {
         jsx_opening_element: kind("JSXOpeningElement"),
         ts_interface_body: kind("TSInterfaceBody"),
         ts_enum_body: kind("TSEnumBody"),
+        leaf_exprs: bits(&exprs, &leaves)
+            | (1 << ExprTag::Ident as u32)
+            | (1 << ExprTag::String as u32),
+        leaf_stmts: bits(&stmts, &leaves),
+        method_definition: kind("MethodDefinition"),
+        property_definition: kind("PropertyDefinition"),
+        accessor_property: kind("AccessorProperty"),
         declarations,
         leaves,
         parts,
@@ -292,6 +347,26 @@ impl Known {
             Node::Func(it) => match it.kind() {
                 FnKind::Arrow => self.arrow_function_expression,
                 FnKind::Decl | FnKind::Expr => self.function,
+                FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
+                    match it.owner() {
+                        // A signature.
+                        Node::Member(owner) if !matches!(owner.parent(), Node::Class(_)) => {
+                            by_name()
+                        }
+                        _ => self.function,
+                    }
+                }
+                _ => by_name(),
+            },
+            Node::Member(it) if matches!(it.parent(), Node::Class(_)) => match it.kind() {
+                MemberKind::Property if it.flags().contains(Flags::ACCESSOR) => {
+                    self.accessor_property
+                }
+                MemberKind::Property => self.property_definition,
+                MemberKind::Method
+                | MemberKind::Getter
+                | MemberKind::Setter
+                | MemberKind::Constructor => self.method_definition,
                 _ => by_name(),
             },
             Node::Class(_) => self.class,
@@ -443,8 +518,10 @@ fn value_of(node: Node) -> Option<Node> {
 pub(super) struct Places<'a> {
     file: &'a File<'a>,
     known: &'static Known,
-    /// Where the last search ended.
+    has_no_jsx: bool,
+    /// Where the last search ended, and where what it was for starts.
     last: Node<'a>,
+    last_start: u32,
     /// For each rule that has gone far up: what it has found there.
     far: FxHashMap<u16, AncestorMemo<'a, Found<'a>>>,
 }
@@ -454,16 +531,73 @@ impl<'a> Places<'a> {
         Places {
             file,
             known: &KNOWN,
+            has_no_jsx: file.hir.jsx.is_empty(),
             last: Node::File(file),
+            last_start: 0,
             far: FxHashMap::default(),
         }
     }
 
+    /// [`Places::of`] for most of what is reported: `node`, which `it` has, is an expression or a statement that oxlint calls the
+    /// rule with. `None`: it is not, or it takes more than a look to tell.
+    #[inline]
+    pub(super) fn at_a_look(
+        &self,
+        called: &Called,
+        node: Packed,
+        it: &Diagnostic,
+    ) -> Option<Place> {
+        if called.is_odd {
+            return None;
+        }
+        let (is_leaf, span) = match node.unpack(self.file) {
+            Node::Expr(e) => {
+                let tag = e.tag();
+                let tags = called.exprs
+                    | if self.has_no_jsx {
+                        called.exprs_without_jsx
+                    } else {
+                        0
+                    };
+                let is_called_with = (tags >> tag as u32) & 1 != 0
+                    || match tag {
+                        ExprTag::Binary => (called.binaries >> e.binary_op()? as u32) & 1 != 0,
+                        ExprTag::Unary => (called.unaries >> e.unary_op()? as u32) & 1 != 0,
+                        _ => false,
+                    };
+                if !is_called_with {
+                    return None;
+                }
+                let span = if it.states_node { e.span() } else { it.span };
+                ((self.known.leaf_exprs >> tag as u32) & 1 != 0, span)
+            }
+            // With an `export` before it, it is in another node, which starts there.
+            Node::Stmt(statement) if !statement.is_exported() => {
+                let tag = statement.tag();
+                if (called.stmts >> tag as u32) & 1 == 0 || statement.is_with() {
+                    return None;
+                }
+                let span = if it.states_node {
+                    statement.span()
+                } else {
+                    it.span
+                };
+                ((self.known.leaf_stmts >> tag as u32) & 1 != 0, span)
+            }
+            _ => return None,
+        };
+        Some(Place {
+            span,
+            node: (!is_leaf).then_some((node, ITSELF)),
+        })
+    }
+
     /// The innermost node around `label`.
     ///
-    /// It goes up from where the last search ended, and then down. What is asked for comes by where it starts, the longer first,
-    /// which is the order in which a walk enters the nodes. So a node that is left is not come back to, and all the searches
-    /// together go along each edge of the tree once up and once down.
+    /// It goes up from `last`, and then down. That is where the last search ended, or a node that starts after what that was for and
+    /// no later than `label`. What is asked for comes by where it starts, the longer first, which is the order in which a walk
+    /// enters the nodes. So a node that is left is not come back to, and all the searches together go along each edge of the
+    /// tree once up and once down.
     fn innermost_around(&self, label: Span) -> Node<'a> {
         let is_around = |it: Node| {
             let span = it.span();
@@ -567,10 +701,22 @@ impl<'a> Places<'a> {
         Some(self.find(rule, kinds, node, None))
     }
 
-    /// [`Places::of`] for a token, a name or a span. To be asked by where they start, the longer first.
-    pub(super) fn search(&mut self, rule: u16, kinds: &Kinds, label: Span) -> Place {
+    /// [`Places::of`] for a token, a name or a span. To be asked by where they start, the longer first. `near`: a node that starts
+    /// no later, and where.
+    pub(super) fn search(
+        &mut self,
+        rule: u16,
+        kinds: &Kinds,
+        label: Span,
+        near: Option<(u32, Packed)>,
+    ) -> Place {
+        if let Some((start, node)) = near
+            && start > self.last_start
+        {
+            self.last = node.unpack(self.file);
+        }
         let from = self.innermost_around(label);
-        self.last = from;
+        (self.last, self.last_start) = (from, label.start);
         self.find(rule, kinds, from, Some(label))
     }
 }

@@ -61,6 +61,24 @@ impl Kinds {
     }
 }
 
+/// With what oxlint calls a rule: the kinds of node, and what follows from them for the nodes here, so that one look at most
+/// nodes tells whether the rule is called with them.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct Called {
+    kinds: Kinds,
+    /// A bit for each `ExprTag` that is of one of the kinds wherever it is.
+    exprs: u64,
+    /// The same for those that are so in a file without JSX.
+    exprs_without_jsx: u64,
+    /// A bit for each `StmtTag`.
+    stmts: u64,
+    /// A bit for each `BinOp` and for each `UnOp`.
+    binaries: u32,
+    unaries: u32,
+    /// It is called with a part of a node here, or with declarations alone: it takes more than a look.
+    is_odd: bool,
+}
+
 /// What oxlint does with a rule.
 #[derive(Copy, Clone)]
 pub(crate) struct Order {
@@ -68,18 +86,22 @@ pub(crate) struct Order {
     /// Its place among all the rules, by the plugin and the name. A rule that oxlint has not comes after its rules.
     pub(crate) number: u16,
     /// For [`Entering`]: the kinds of node that it is called with.
-    pub(crate) kinds: Kinds,
+    pub(crate) kinds: Called,
 }
 
 pub(crate) fn of(rule: &Meta) -> Order {
     let key = key(rule.plugin, rule.name.as_bytes());
     let found = TABLE.rules.binary_search_by_key(&key, |it| it.key);
     match found.ok().and_then(|at| TABLE.rules.get(at)) {
-        Some(it) => it.order,
+        Some(it) => Order {
+            when: it.when,
+            number: it.number,
+            kinds: visited::called(it.kinds),
+        },
         None => Order {
             when: Entering,
             number: u16::MAX,
-            kinds: Kinds::default(),
+            kinds: Called::default(),
         },
     }
 }
@@ -129,7 +151,9 @@ fn key(plugin: Plugin, name: &[u8]) -> u32 {
 struct Rule {
     /// [`key`], by which they are sorted.
     key: u32,
-    order: Order,
+    when: When,
+    number: u16,
+    kinds: Kinds,
 }
 
 /// [`RULES`] and [`KINDS`], taken apart.
@@ -159,11 +183,9 @@ static TABLE: LazyLock<Table> = LazyLock::new(|| {
     let mut rules: Vec<Rule> = (all.iter().zip(0u16..))
         .map(|(it, number)| Rule {
             key: key(it.2, it.1),
-            order: Order {
-                when: it.3,
-                number,
-                kinds: it.4,
-            },
+            when: it.3,
+            number,
+            kinds: it.4,
         })
         .collect();
     sort::sort_unstable_by_key(&mut rules, |it| it.key);
@@ -177,7 +199,7 @@ static TABLE: LazyLock<Table> = LazyLock::new(|| {
 #[derive(Copy, Clone)]
 pub(crate) struct Ran {
     pub(crate) when: When,
-    pub(crate) kinds: Kinds,
+    pub(crate) kinds: Called,
     /// [`once`]
     pub(crate) once: Once,
     /// [`is_port`]
@@ -241,8 +263,26 @@ const END: u32 = DEPTH + 15;
 /// Deeper than any node: what is reported stands in for a node that is not found.
 const DEEPEST: u128 = (1 << 15) - 1;
 
-/// Puts `nodes` in the order in which a walk enters the nodes, those of one node by the rule. In the high half of each is where
-/// the node starts, in the low half the place in `diagnostics` and in `found`, which has the nodes, each with what decides among
+/// Two lists that are in order, as one.
+fn merged(a: &[u64], b: &[u64]) -> Vec<u64> {
+    let mut all = Vec::with_capacity(a.len() + b.len());
+    let (mut rest_of_a, mut rest_of_b) = (a, b);
+    while let ([first_of_a, after_a @ ..], [first_of_b, after_b @ ..]) = (rest_of_a, rest_of_b) {
+        if first_of_a <= first_of_b {
+            all.push(*first_of_a);
+            rest_of_a = after_a;
+        } else {
+            all.push(*first_of_b);
+            rest_of_b = after_b;
+        }
+    }
+    all.extend_from_slice(rest_of_a);
+    all.extend_from_slice(rest_of_b);
+    all
+}
+
+/// Puts `nodes`, which are by where the node starts, in the order in which a walk enters the nodes, those of one node by the rule. In
+/// the high half of each is where the node starts, in the low half the place in `diagnostics` and in `found`, which has the nodes, each with what decides among
 /// what one rule reports about it.
 fn sort_as_entered<'a>(
     file: &'a File<'a>,
@@ -250,7 +290,6 @@ fn sort_as_entered<'a>(
     found: &[(Place, u32)],
     nodes: &mut [u64],
 ) {
-    nodes.sort_unstable();
     let key = |at: u32, depth_of: &dyn Fn(&Place) -> u128| {
         let (it, (place, within)) = (diagnostics.get(at as usize)?, found.get(at as usize)?);
         Some(
@@ -357,49 +396,63 @@ pub(crate) fn in_run_order<'a>(
             }
             Some(When::Last) => last.push(with_place(by_place, at)),
             _ => {
-                nodes.push(at.into());
-                if has_place == 0 {
-                    continue;
-                }
                 // A rule that says which node it is goes through the node as oxlint's does.
                 place.1 = match it.states_node || ran.is_some_and(|it| it.is_port) {
                     true => at,
                     false => it.span.start,
                 };
-                let kinds = ran.map_or_else(Kinds::default, |it| it.kinds);
-                let label = match (it.node, details.and_then(|it| it.listened_on)) {
-                    (None, Some(stated)) => stated,
-                    _ => it.span,
+                let called = ran.map_or_else(Called::default, |it| it.kinds);
+                let stated = details.and_then(|it| it.listened_on);
+                let label = stated.filter(|_| it.node.is_none()).unwrap_or(it.span);
+                let known = match it.node {
+                    _ if has_place == 0 => Some(nowhere),
+                    Some(node) => (places.at_a_look(&called, node, it))
+                        .or_else(|| places.of(it.rule, &called.kinds, label, it.node)),
+                    // The name is the node.
+                    None if it.states_node && stated.is_none() => Some(Place {
+                        span: label,
+                        node: None,
+                    }),
+                    None => places.of(it.rule, &called.kinds, label, None),
                 };
-                if it.states_node
-                    && it.node.is_none()
-                    && details.is_none_or(|it| it.listened_on.is_none())
-                {
-                    place.0.span = label;
-                    continue;
-                }
-                match places.of(it.rule, &kinds, label, it.node) {
-                    Some(found) => place.0 = found,
+                match known {
+                    Some(known) => {
+                        place.0 = known;
+                        nodes.push((u64::from(known.span.start) << 32) | u64::from(at));
+                    }
                     None => searched.push(with_place(as_entered(label), at)),
                 }
             }
         }
     }
-    searched.sort_unstable();
-    for (label, at) in searched
-        .into_iter()
-        .map(|it| ((it >> 32) as u64, it as u32))
-    {
-        let label = Span::new((label >> 32) as u32, u32::MAX - label as u32);
-        if let (Some(it), Some(place)) = (diagnostics.get(at as usize), found.get_mut(at as usize))
-        {
-            let kinds = ask(it.rule).map_or_else(Kinds::default, |it| it.kinds);
-            place.0 = places.search(it.rule, &kinds, label);
+    nodes.sort_unstable();
+    if !searched.is_empty() {
+        searched.sort_unstable();
+        let mut late: Vec<u64> = Vec::with_capacity(searched.len());
+        // How many of `nodes` start no later than what is searched for.
+        let mut before = 0;
+        for (label, at) in (searched.into_iter()).map(|it| ((it >> 32) as u64, it as u32)) {
+            let label = Span::new((label >> 32) as u32, u32::MAX - label as u32);
+            while (nodes.get(before)).is_some_and(|it| (it >> 32) as u32 <= label.start) {
+                before += 1;
+            }
+            // The last of them is close by.
+            let near = before.checked_sub(1).and_then(|it| {
+                let (start, at) = nodes.get(it).map(|it| ((it >> 32) as u32, *it as u32))?;
+                let node = found.get(at as usize)?.0.node.map(|it| it.0);
+                Some((start, node.or(diagnostics.get(at as usize)?.node)?))
+            });
+            let (Some(it), Some(place)) =
+                (diagnostics.get(at as usize), found.get_mut(at as usize))
+            else {
+                continue;
+            };
+            let kinds = ask(it.rule).map_or_else(Kinds::default, |it| it.kinds.kinds);
+            place.0 = places.search(it.rule, &kinds, label, near);
+            late.push((u64::from(place.0.span.start) << 32) | u64::from(at));
         }
-    }
-    for it in &mut nodes {
-        let start = found.get(*it as usize).map_or(0, |it| it.0.span.start);
-        *it |= u64::from(start) << 32;
+        late.sort_unstable();
+        nodes = merged(&nodes, &late);
     }
     sort_as_entered(file, diagnostics, &found, &mut nodes);
     once.sort_unstable();

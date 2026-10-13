@@ -37,7 +37,7 @@ fn text_of(it: &Diagnostic, index: usize) -> Cow<'static, str> {
 
 /// An error that the parser has written down for oxc.
 #[optimize(size)]
-fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
+pub(super) fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
     let stage = match it.kind {
         DiagnosticKind::Oxc => Stage::Parser,
         DiagnosticKind::OxcFatal => Stage::Fatal,

@@ -11054,6 +11054,10 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
   const rejected: Record<string, [code: string, ...errors: string[]][]> = {
     "ts": [
       [
+        "await <T,>(x) => 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
+      ],
+      [
         "function f(a?, b, c? = 1) {}",
         "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
         "TS(1015) A parameter cannot have a question mark and an initializer. @18+1",
@@ -14832,6 +14836,44 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["class A { p\\u0075blic a; }", "Keywords cannot contain escape characters @10+11"],
       ["let a = b \\u0061s c;", "Keywords cannot contain escape characters @10+7"],
       ["let a: k\\u0065yof b;", "Keywords cannot contain escape characters @7+10"],
+      ["f(await); g(await); export {};", "Unexpected token @17+1"],
+      ["f(await); g(await); h(await); export {};", "Unexpected token @27+1"],
+      ["await (x); await; export {};", "Unexpected token @16+1"],
+      ["f(await); a; export {};", "Unexpected token @7+1"],
+      ["f(await); new.target; g(await); export {};", "Unexpected token @29+1"],
+      [
+        "new.target; f(await); g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; f(await); g(await); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected token @29+1",
+      ],
+      [
+        "new.target, f(await); g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target, f(await); new.target; g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["typeof await; function f() { await(x); } import.meta;", "The keyword 'await' is reserved @29+5"],
+      ["await / x, class await {}; import.meta;", "Unterminated regular expression @6+34", "Unexpected token @6+34"],
+      ["await / x; import.meta;", "Unterminated regular expression @6+18", "Unexpected token @6+18"],
+      ["await / x\nimport.meta;", "Unterminated regular expression @6+4", "Unexpected token @6+17"],
+      [
+        "await / x / y; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "f(await); let a; let a; g(await (x)); export {};",
+        'Identifier `a` has already been declared @14+1 "`a` has already been declared here", 21+1 "It can not be redeclared here"',
+      ],
+      [
+        "f(await); g(await (x)); let a; let a; export {};",
+        'Identifier `a` has already been declared @28+1 "`a` has already been declared here", 35+1 "It can not be redeclared here"',
+      ],
     ],
     "d.ts": [
       ["const a: number = 1;", "TS(1039) Initializers are not allowed in ambient contexts. @18+1"],
@@ -15143,7 +15185,6 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["let zz; let zz; <a b={} />;", "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @21+2"],
       ["< />;", "Unexpected token @2+1"],
       ["await <a />; import.meta;", "Unexpected token @10+1"],
-      ["await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
       [
         "await <T,>(x) => 1; import.meta;",
         "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
@@ -18203,6 +18244,9 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
         "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
       ],
       ["await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
+      ["yi\\u0065ld; export {};", "The keyword 'yield' is reserved @0+10"],
+      ["await < a; import.meta;", "Unexpected token @9+1"],
+      ["await (x), class await {}; import.meta;", "Cannot use `await` as an identifier in an async context @17+5"],
       ["await <a />; import.meta;", "Unexpected token @10+1"],
       ["await <a />; new.target; import.meta;", "Unexpected token @10+1"],
       ["await /k/; import.meta;", "Unexpected token @9+1"],
@@ -18292,6 +18336,44 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["import a fr\\u006fm 'a';", "Keywords cannot contain escape characters @9+9"],
       ["import * \\u0061s a from 'a';", "Keywords cannot contain escape characters @9+7"],
       ["export { a \\u0061s b }; var a;", "Keywords cannot contain escape characters @11+7"],
+      ["f(await); g(await); export {};", "Unexpected token @17+1"],
+      ["f(await); g(await); h(await); export {};", "Unexpected token @27+1"],
+      ["await (x); await; export {};", "Unexpected token @16+1"],
+      ["f(await); a; export {};", "Unexpected token @7+1"],
+      ["f(await); new.target; g(await); export {};", "Unexpected token @29+1"],
+      [
+        "new.target; f(await); g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; f(await); g(await); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected token @29+1",
+      ],
+      [
+        "new.target, f(await); g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target, f(await); new.target; g(await (x)); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["typeof await; function f() { await(x); } import.meta;", "The keyword 'await' is reserved @29+5"],
+      ["await / x, class await {}; import.meta;", "Unterminated regular expression @6+34", "Unexpected token @6+34"],
+      ["await / x; import.meta;", "Unterminated regular expression @6+18", "Unexpected token @6+18"],
+      ["await / x\nimport.meta;", "Unterminated regular expression @6+4", "Unexpected token @6+17"],
+      [
+        "await / x / y; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "f(await); let a; let a; g(await (x)); export {};",
+        'Identifier `a` has already been declared @14+1 "`a` has already been declared here", 21+1 "It can not be redeclared here"',
+      ],
+      [
+        "f(await); g(await (x)); let a; let a; export {};",
+        'Identifier `a` has already been declared @28+1 "`a` has already been declared here", 35+1 "It can not be redeclared here"',
+      ],
     ],
     "cjs": [
       ["await /k/;", "Unexpected token @9+1"],
@@ -19242,6 +19324,16 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "export declare function <T>(a: T): T;",
       "export default function <T>() {}",
       "\\u{61}wait;",
+      "f(await); g(await (x)); export {};",
+      "f(await); await (x); export {};",
+      "await; await (x); export {};",
+      "f(await); new.target; g(await (x)); export {};",
+      "f(await); new.target; new.target; g(await (x)); export {};",
+      "f(await), new.target; g(await (x)); export {};",
+      "await = 1; await (x); import.meta;",
+      "await.a; await (x); import.meta;",
+      "await / x; await (y); import.meta;",
+      "await < x; await (y); import.meta;",
     ],
     "ts tsx mts": [
       "using a = b; await using c = d; export {};",
@@ -19579,6 +19671,16 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "\\u{61}wait (x);",
       "function f() { \\u{61}wait; }",
       "yi\\u0065ld;",
+      "f(await); g(await (x)); export {};",
+      "f(await); await (x); export {};",
+      "await; await (x); export {};",
+      "f(await); new.target; g(await (x)); export {};",
+      "f(await); new.target; new.target; g(await (x)); export {};",
+      "f(await), new.target; g(await (x)); export {};",
+      "await = 1; await (x); import.meta;",
+      "await.a; await (x); import.meta;",
+      "await / x; await (y); import.meta;",
+      "await < x; await (y); import.meta;",
     ],
     "cts": [
       "for (var a = 1 in {}) {}",
@@ -19651,13 +19753,7 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
     // The second `await` is a reference, so oxc reads the statement again once it knows that the file is a module.
     ["js", "x = { await, b: await }; import.meta;", 'Expected `:` but found `,` @11+1 "`:` expected"'],
     // After a name `<` compares. oxc reads the statement again, where an element starts.
-    ["js", "await < a; import.meta;", "Unexpected token @9+1"],
     ["js", "await < a > b; import.meta;", "Unexpected token @11+17"],
-    [
-      "ts",
-      "await <T,>(x) => 1; import.meta;",
-      "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
-    ],
     // `-->` at the start of a line.
     [
       "js",
@@ -19672,8 +19768,6 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "l\\u0065t a;",
       "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
     ],
-    // The name as it is spelled.
-    ["js", "yi\\u0065ld; export {};", "The keyword 'yield' is reserved @0+10"],
     // `new.target` in a declaration file.
     [
       "d.ts",
@@ -19704,8 +19798,8 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "Invalid Character `;` @2+0",
       "Unexpected new.target expression @4+10 help: new.target is only allowed in constructors, functions, and class field initializers",
     ],
-    // The second reading has `await` as a keyword.
-    ["js", "await (x), class await {}; import.meta;", "Cannot use `await` as an identifier in an async context @17+5"],
+    // In a .tsx file `</` is one token here, and a `<` before a regular expression to oxc.
+    ["tsx", "await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
     // Type parameters that do not start.
     ["ts", "declare function <;", "Unexpected token @18+1"],
   ];

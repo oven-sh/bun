@@ -236,11 +236,11 @@ fn with_tree<'h, R>(
     )
 }
 
-/// Parses `text` and calls `then` with the file, with its tree, and with the first error in it.
+/// Parses `text` and calls `then` with the file, with its tree if `how.verifies`, and with the first error in it.
 fn with_file<R>(
     how: &How,
     text: &[u8],
-    then: impl for<'a> FnOnce(&'a File<'a>, &Program<'a>, Refused<'a>) -> R,
+    then: impl for<'a> FnOnce(&'a File<'a>, Option<&Program<'a>>, Refused<'a>) -> R,
 ) -> R {
     let (path, session) = (how.path, how.memory);
     let arena = session.arena();
@@ -259,9 +259,10 @@ fn with_file<R>(
             && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
         {
             let file = File::new(path, &**hir, bound, atoms, language, None).with_text(text);
+            let program = how.verifies.then(|| Program::new(&**hir, text, atoms));
             return then(
                 &file,
-                &Program::new(&**hir, text, atoms),
+                program.as_ref(),
                 Refused {
                     first_error: hir.diagnostics.first(),
                     is_nested_too_deeply: hir.ran_out_of_stack,
@@ -275,11 +276,12 @@ fn with_file<R>(
             before_es2020: false,
             before_es2017: false,
         };
+        let program = how.verifies.then(|| Program::new(&hir, text, atoms));
         if needs_symbols {
             let bound = bind(&hir, bind_options, atoms, arena);
             return then(
                 &File::new(path, &hir, &bound, atoms, language, None),
-                &Program::new(&hir, text, atoms),
+                program.as_ref(),
                 Refused {
                     first_error: hir.diagnostics.first(),
                     is_nested_too_deeply: hir.ran_out_of_stack || bound.ran_out_of_stack,
@@ -289,7 +291,7 @@ fn with_file<R>(
         let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
         then(
             &File::new(path, &hir, bound, atoms, language, None),
-            &Program::new(&hir, text, atoms),
+            program.as_ref(),
             Refused {
                 first_error: hir.diagnostics.first(),
                 is_nested_too_deeply: hir.ran_out_of_stack || bound.ran_out_of_stack,
@@ -692,7 +694,7 @@ fn format(
 }
 
 fn print<'a>(
-    (file, program): (&'a File<'a>, &Program<'a>),
+    (file, program): (&'a File<'a>, Option<&Program<'a>>),
     refused: Refused<'_>,
     how: &How,
     scratch: &mut Scratches,
@@ -754,7 +756,9 @@ fn print<'a>(
     if how.resolved.omits_final_newline {
         without_final_newline(&mut out);
     }
-    if how.verifies && out != file.text() {
+    if let Some(program) = program
+        && out != file.text()
+    {
         let is_same = with_tree(how, &out, |after, atoms, _| {
             let after = match &after {
                 Summary::InPlace(hir) => Program::new(&**hir, &out, atoms),

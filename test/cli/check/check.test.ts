@@ -2806,6 +2806,96 @@ const kind: number = Shape.kind;
       `);
     });
 
+    test("uniform union literals keep narrowing in mutable locations", async () => {
+      using dir = project({
+        "a.ts": `
+function backup(opts: { status?: string }) {
+  if (opts.status !== "ok" && opts.status !== "failed") throw new Error();
+  const result = { ...opts, status: opts.status };
+  const accepted: { status: "ok" | "failed" } = result;
+  // @ts-expect-error: narrowing does not permit another status.
+  result.status = "other";
+}
+function strictEquality(value: string | undefined) {
+  if (value === "ok") {
+    const result = { value };
+    const accepted: { value: "ok" } = result;
+    // @ts-expect-error: the regular literal must remain narrow.
+    result.value = "other";
+  }
+}
+function numberEquality(value: string | number) {
+  if (value === 1) {
+    const accepted: { value: 1 } = { value };
+  }
+}
+function bigintEquality(value: bigint | undefined) {
+  if (value === 1n) {
+    const accepted: { value: 1n } = { value };
+  }
+}
+function switchEquality(value: string | undefined) {
+  switch (value) {
+    case "ok": {
+      const accepted: { value: "ok" } = { value };
+      break;
+    }
+  }
+}
+function looseEquality(value: string | undefined) {
+  if (value == "ok") {
+    const result = { value };
+    // @ts-expect-error: loose equality retains literal freshness.
+    const rejected: { value: "ok" } = result;
+  }
+}
+function nonUnion(value: string) {
+  if (value === "ok") {
+    const result = { value };
+    // @ts-expect-error: a non-union still retains literal freshness.
+    const rejected: { value: "ok" } = result;
+  }
+}
+enum First { A = "a", B = "b" }
+enum Second { A = "a", B = "b" }
+function sameEnum(value: First | undefined) {
+  if (value === First.A) {
+    const accepted: { value: First.A } = { value };
+  }
+}
+function mixedLiteral(value: First.A | "a" | undefined) {
+  if (value === First.A) {
+    // @ts-expect-error: the string literal is also comparable.
+    const rejected: First.A = value;
+  }
+}
+function mixedEnums(value: First.A | Second.A | undefined) {
+  if (value === First.A) {
+    const accepted: First.A = value;
+  }
+}
+declare const key: unique symbol;
+function symbolEquality(value: symbol | undefined) {
+  if (value === key) {
+    // @ts-expect-error: symbol is not a set of unique-symbol literals.
+    const rejected: typeof key = value;
+  }
+}
+export {};
+
+namespace N1 { export enum E { A = 1, B = 2 } }
+namespace N2 { export enum E { A = 1, B = 2 } }
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+function distinctEnums(value: N1.E | N2.E) {
+  if (value === N1.E.A) {
+    const accepted: Equal<typeof value, N1.E.A | N2.E.A> = true;
+  }
+}
+`,
+      });
+      expect(await check(dir)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
     test("generics, overloads, narrowing and conditional types", async () => {
       using dir = project({
         "a.ts": `

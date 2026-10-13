@@ -35,14 +35,9 @@ pub(crate) fn write_empty_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'
     }
 }
 
-/// Without semicolons, whether the statement has to start with one so that it is not read as the
-/// continuation of the line before: it starts with `(`, `[`, `` ` ``, `+`, `-`, `/` or `<`.
-pub(crate) fn expression_statement_needs_semicolon<'a>(
-    statement: Stmt<'a>,
-    expression: Expr<'a>,
-    f: &Formatter<'a>,
-) -> bool {
-    if matches!(
+/// Whether `statement` is after the end of another, and not after the head of one.
+fn can_follow_a_statement(statement: Stmt<'_>) -> bool {
+    !matches!(
         statement.ast_parent(),
         AstNodes::IfStatement(_)
             | AstNodes::DoWhileStatement(_)
@@ -52,8 +47,47 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(
             | AstNodes::ForOfStatement(_)
             | AstNodes::WithStatement(_)
             | AstNodes::LabeledStatement(_)
-    ) || statement.directive().is_some()
+    ) && statement.directive().is_none()
+}
+
+/// Without semicolons, whether a `(` that is written before `e`, and that [`expression_statement_needs_semicolon`] does not
+/// know about, has to have a `;` before it: a statement starts with `e`. Prettier writes none.
+pub(crate) fn parenthesis_before_needs_semicolon<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let in_html = f.options().in_html;
+    if !f.options().semicolons.is_as_needed()
+        || in_html.is_inline_event_handler
+        || in_html.root == HtmlRoot::VueEventBinding
     {
+        return false;
+    }
+    let mut top = e;
+    loop {
+        match top.parent() {
+            // Which writes one before this one.
+            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Cond { .. }) => return false,
+            Node::Expr(parent)
+                if (ExpressionLeftSide::from(parent).left()).is_some_and(|it| it.expr == top) =>
+            {
+                top = parent;
+            }
+            Node::Stmt(statement) => {
+                return matches!(statement.kind(), StmtKind::Expr(it) if it == top)
+                    && can_follow_a_statement(statement)
+                    && !expression_statement_needs_semicolon(statement, top, f);
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// Without semicolons, whether the statement has to start with one so that it is not read as the
+/// continuation of the line before: it starts with `(`, `[`, `` ` ``, `+`, `-`, `/` or `<`.
+pub(crate) fn expression_statement_needs_semicolon<'a>(
+    statement: Stmt<'a>,
+    expression: Expr<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    if !can_follow_a_statement(statement) {
         return false;
     }
     match expression.kind() {

@@ -1,4 +1,4 @@
-//! The project's own Prettier, for `bun format`: files in a language that only one of its plugins reads. See
+//! The project's own Prettier, for `bun fmt`: files in a language that only one of its plugins reads. See
 //! `worker/prettier.js`.
 
 use super::eslint::{NOT_INSTALLED, OUT_OF_STEP};

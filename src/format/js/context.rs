@@ -61,6 +61,8 @@ impl<'a> JsFormatContext<'a> {
         options: FormatOptions,
         comments: &'a [Comment],
     ) -> Self {
+        let tailwind = options.tailwind.as_deref();
+        let of_plugin = (tailwind.filter(|it| it.follows_plugin)).map(TailwindContext::of_plugin);
         Self {
             file: None,
             has_tree_of_babel: false,
@@ -68,7 +70,7 @@ impl<'a> JsFormatContext<'a> {
             comments: Comments::new(SourceText::new(source), comments),
             cached_elements: FxHashMap::default(),
             quote_needed_stack: Vec::new(),
-            tailwind_contexts: Vec::new(),
+            tailwind_contexts: of_plugin.into_iter().collect(),
             is_quiet: false,
             cursor: CursorRegion::NONE,
             stack_check: bun_core::StackCheck::init(),
@@ -161,7 +163,7 @@ impl<'a> JsFormatContext<'a> {
     /// if there is a context.
     #[inline]
     pub(crate) fn disable_tailwind_context(&mut self, is_disabled: bool) -> Option<bool> {
-        let context = self.tailwind_contexts.last_mut()?;
+        let context = (self.tailwind_contexts.last_mut()).filter(|it| !it.follows_plugin)?;
         Some(std::mem::replace(&mut context.is_disabled, is_disabled))
     }
 }

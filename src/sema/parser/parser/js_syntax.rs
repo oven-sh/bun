@@ -31,7 +31,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[cold]
     #[inline(never)]
     pub(crate) fn js_error(&mut self, at: (u32, u32), code: u32, what: &[u8]) {
-        if self.options.is_javascript && !self.has_context(ctx::TYPE) && !self.is_flow {
+        if self.options.is_javascript && !self.has_context(ctx::TYPE) && !self.is_flow() {
             let args: &[&[u8]] = if what.is_empty() { &[] } else { &[what] };
             self.flag(DiagnosticKind::Js, code, at, args);
         }
@@ -114,7 +114,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         };
         if !is_class_declaration {
             // `js_error` says nothing in Flow, whose parsers refuse this too.
-            return match self.is_flow {
+            return match self.is_flow() {
                 true => self.fail(),
                 false => self.js_error(first, 1206, b""),
             };
@@ -142,6 +142,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let Some(&stmt) = self.f.stmts.get(id.idx()).filter(|_| !self.has_failed()) else {
             return;
         };
+        if self.options.dialect.oxc && super::is_an_external_module_indicator(&self.f, id) {
+            self.module_statements.0 += 1;
+        }
         match stmt.kind {
             // `parseAmbientExternalModuleDeclaration` does not perform this check.
             StmtKind::Module(m) if !matches!(self.f[m].name, ModuleName::Ident(_)) => return,
@@ -211,7 +214,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         match member.kind {
             MemberKind::IndexSignature => self.check_js_decorators(member.modifiers, false),
-            kind => self.check_js_modifiers(member.modifiers, kind == MemberKind::Constructor),
+            // oxc takes a decorator before a constructor.
+            kind => self.check_js_modifiers(
+                member.modifiers,
+                kind == MemberKind::Constructor && !self.options.dialect.oxc,
+            ),
         }
     }
 }

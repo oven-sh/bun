@@ -11,6 +11,16 @@ pub(crate) struct FrontMatter {
     pub(crate) value: (usize, usize),
 }
 
+/// Whether a line of `raw`, which is front matter, has `---` behind white space. Formatted, that can be at the start of the
+/// line, where it ends the front matter. Prettier formats it. Here it stays as it is.
+pub(crate) fn has_indented_delimiter(raw: &[u8]) -> bool {
+    use bun_core::strings;
+    strings::contains(raw, b" ---")
+        && strings::split(raw, b"\n").skip(1).any(|line| {
+            line.starts_with(b" ") && strings::trim_js_whitespace_start(line).starts_with(b"---")
+        })
+}
+
 pub(crate) fn parse(text: &[u8]) -> Option<FrontMatter> {
     let delimiter = text.get(..3).filter(|it| matches!(*it, b"---" | b"+++"))?;
     let first_line_break = 3 + bun_core::strings::index_of_char_usize(&text[3..], b'\n')?;

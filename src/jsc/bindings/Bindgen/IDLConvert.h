@@ -10,12 +10,18 @@ template<> struct IDLHumanReadableName<Bindgen::IDLStrictUTF8String> : BaseIDLHu
     static constexpr auto humanReadableName = std::to_array("string");
 };
 template<> struct IDLHumanReadableName<Bindgen::IDLLooseUTF8String> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
+template<> struct IDLHumanReadableName<Bindgen::IDLStrictStringOrStringObject> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
 template<> struct IDLHumanReadableName<Bindgen::IDLBufferSourceBytes> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
 template<> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource> : IDLHumanReadableName<Bindgen::IDLBufferSourceBytes> {};
 
 namespace Bindgen {
+
+inline bool isStringObject(JSC::JSValue value)
+{
+    return value.isCell() && (value.asCell()->type() == JSC::StringObjectType || value.asCell()->type() == JSC::DerivedStringObjectType);
+}
 
 // std::nullopt for anything else, a shared buffer included. A detached or out-of-bounds view is empty.
 inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::JSValue value)
@@ -51,13 +57,29 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictUTF8String> : Bun::D
     {
         if (value.isString()) [[likely]]
             return Bun::Bindgen::JSStringUTF8View::create(globalObject, JSC::asString(value));
-        if (!value.isCell() || (value.asCell()->type() != JSC::StringObjectType && value.asCell()->type() != JSC::DerivedStringObjectType))
+        if (!Bun::Bindgen::isStringObject(value))
             return std::nullopt;
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::JSString* string = value.toString(&globalObject);
         RETURN_IF_EXCEPTION(scope, Bun::Bindgen::JSStringUTF8View {});
         RELEASE_AND_RETURN(scope, Bun::Bindgen::JSStringUTF8View::create(globalObject, string));
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwNotString(globalObject, scope);
+    }
+};
+
+template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject> : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictStringOrStringObject> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<WTF::String> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
+    {
+        if (value.isString() || Bun::Bindgen::isStringObject(value)) [[likely]]
+            return value.toWTFString(&globalObject);
+        return std::nullopt;
     }
 
     template<Bun::IDLConversionContext Ctx>

@@ -374,6 +374,22 @@ export class StringType extends Type {
   }
 }
 
+/** UTF-8 to keep: the JS string's own buffer, shared, when it is 8-bit ASCII, otherwise a transcoded copy. */
+export class OwnedUtf8Type extends StringType {
+  toRust(): string {
+    throw new TypeError("b.string.utf8.owned cannot have a default");
+  }
+  rustType(): string {
+    return "bun_core::Utf8Bytes<'static>";
+  }
+  rustFromExtern(expr: string): string {
+    return `${super.rustFromExtern(expr)}.into_utf8()`;
+  }
+  rustToJS(): string {
+    throw new TypeError("return b.string.utf8");
+  }
+}
+
 /** UTF-8 bytes for the duration of the call: `Bun::Bindgen::JSStringUTF8View`. */
 export class Utf8Type extends Type {
   get rustIsCopy(): boolean {
@@ -384,6 +400,11 @@ export class Utf8Type extends Type {
   constructor(idlType: string) {
     super();
     this.idlType = idlType;
+  }
+  /** `bun_core::Utf8Bytes<'static>`, for a body that stores the string. */
+  get owned(): OwnedUtf8Type {
+    const isLoose = this.idlType === "::Bun::Bindgen::IDLLooseUTF8String";
+    return new OwnedUtf8Type(isLoose ? "::WebCore::IDLDOMString" : "::Bun::Bindgen::IDLStrictStringOrStringObject");
   }
   get borrowsFrame(): boolean {
     return true;

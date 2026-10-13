@@ -111,6 +111,7 @@ describe("strings", () => {
     expect(bindgen.utf8Echo(text)).toBe(text);
     expect(bindgen.utf8EchoLoose(text)).toBe(text);
     expect(bindgen.utf8Optional(text)).toBe(text);
+    expect(bindgen.utf8Owned(text)).toBe(text);
     expect(bindgen.stringEcho(text)).toBe(text);
   });
 
@@ -123,10 +124,14 @@ describe("strings", () => {
     expect(bindgen.utf8Echo(new String("boxed"))).toBe("boxed");
     class Path extends String {}
     expect(bindgen.utf8Echo(new Path("derived"))).toBe("derived");
+    expect(bindgen.utf8Owned(new String("boxed"))).toBe("boxed");
+    expect(bindgen.utf8Owned(new Path("derived"))).toBe("derived");
     for (const value of [1, true, null, undefined, {}, [], Symbol("s"), { toString: () => "no" }]) {
-      expect(() => bindgen.utf8Echo(value)).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: "text must be a string" }),
-      );
+      for (const echo of [bindgen.utf8Echo, bindgen.utf8Owned]) {
+        expect(() => echo(value)).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: "text must be a string" }),
+        );
+      }
     }
   });
 

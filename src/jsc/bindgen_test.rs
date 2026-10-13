@@ -48,6 +48,10 @@ pub fn utf8_optional(text: Option<&[u8]>) -> Option<&[u8]> {
     text
 }
 
+pub fn utf8_owned(text: bun_core::Utf8Bytes<'static>) -> bun_core::Utf8Bytes<'static> {
+    text
+}
+
 pub fn string_echo(text: bun_core::String) -> bun_core::String {
     text
 }

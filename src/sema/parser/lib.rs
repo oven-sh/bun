@@ -12,7 +12,6 @@
 //! first has refused.
 
 #![forbid(unsafe_code)]
-#![feature(portable_simd)]
 
 mod lexer;
 mod names;
@@ -138,6 +137,9 @@ pub struct Options {
     pub is_json: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
+    /// For oxc, in a file whose name does not say what it is: until something says that it is a module, an `await` at the top
+    /// level is a name unless a word or a literal follows it.
+    pub is_module_or_script: bool,
     /// Goes on after a syntax error as TypeScript's parser does, and reports it.
     pub recovers: bool,
     /// The tags of JSDoc comments are read as TypeScript's parser reads them: in a JavaScript file
@@ -152,7 +154,9 @@ pub struct Options {
 #[derive(Default)]
 pub struct Scratch {
     names: names::Names,
+    stops: bun_highway::ScannerStopsBuffer,
     stacks: parser::Stacks,
+    declared: parser::Declared,
     /// A file that is no longer needed: its lists are for the next one, and so is the box. A file is large, and goes from
     /// hand to hand.
     recycled: Option<Box<FileBuilder>>,
@@ -161,6 +165,8 @@ pub struct Scratch {
     jsdoc_wanted: u8,
     /// Of the text that was parsed last.
     html_opens: lexer::HtmlOpens,
+    /// The text that was parsed last has an `await` at its top level, and each of them can be a name: `await (a)`.
+    has_only_ambiguous_awaits: bool,
 }
 
 impl Scratch {
@@ -201,7 +207,7 @@ pub struct Parsed {
 }
 
 /// The HIR of `text`. Names are interned in `atoms`.
-pub fn parse(
+pub(crate) fn parse(
     text: &[u8],
     options: Options,
     atoms: &dyn Intern,
@@ -227,7 +233,7 @@ pub fn parse(
 
 /// The HIR of `text`, with atoms that are the file's own: `Scratch::atoms` knows them until the next
 /// file is parsed.
-pub fn parse_with_own_atoms(
+pub(crate) fn parse_with_own_atoms(
     text: &[u8],
     options: Options,
     scratch: &mut Scratch,

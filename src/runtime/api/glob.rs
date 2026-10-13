@@ -13,7 +13,9 @@ use crate::generated_bindgen::glob::{GlobClass, GlobScanArgument, GlobScanOption
 
 /// `Bun.Glob`, declared in `Glob.bind.ts`.
 pub(crate) struct Glob {
-    pattern: Box<[u8]>,
+    /// An ASCII pattern is the JavaScript string's own buffer, not a copy.
+    pattern: bun_core::Utf8Bytes<'static>,
+    shape: bun_glob::matcher::Shape,
 }
 
 pub(crate) enum ScanError<'a> {
@@ -380,11 +382,11 @@ impl Glob {
         // Match the walker's root choice (`Iterator::init`): an absolute
         // pattern roots at its literal prefix and ignores the cwd, a relative
         // pattern roots at the cwd. A `/$bunfs/` root walks the graph.
-        let pattern_is_absolute = resolve_path::is_absolute(&self.pattern)
-            || (cfg!(windows) && resolve_path::is_absolute_posix(&self.pattern));
+        let pattern_is_absolute = resolve_path::is_absolute(self.pattern.slice())
+            || (cfg!(windows) && resolve_path::is_absolute_posix(self.pattern.slice()));
         let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some()
             && if pattern_is_absolute {
-                bun_standalone_graph::is_bun_standalone_file_path(&self.pattern)
+                bun_standalone_graph::is_bun_standalone_file_path(self.pattern.slice())
             } else {
                 match_opts
                     .cwd
@@ -394,11 +396,11 @@ impl Glob {
 
         if in_standalone_graph {
             return Ok(AnyGlobWalker::Standalone(
-                init_walker::<StandaloneAccessor>(&self.pattern, &match_opts)?,
+                init_walker::<StandaloneAccessor>(self.pattern.slice(), &match_opts)?,
             ));
         }
         Ok(AnyGlobWalker::Fs(init_walker::<walk::SyscallAccessor>(
-            &self.pattern,
+            self.pattern.slice(),
             &match_opts,
         )?))
     }
@@ -407,14 +409,21 @@ impl Glob {
 impl GlobClass for Glob {
     type Error<'a> = ScanError<'a>;
 
-    fn constructor<'a>(pattern: &'a [u8]) -> Self {
+    fn constructor<'a>(pattern: bun_core::Utf8Bytes<'static>) -> Self {
         Glob {
-            pattern: Box::from(pattern),
+            shape: bun_glob::matcher::Shape::of(pattern.slice()),
+            pattern,
         }
     }
 
     fn r#match<'a>(&self, str: &'a [u8]) -> bool {
-        bun_glob::r#match(&self.pattern, str).matches()
+        bun_glob::matcher::match_prepared::<{ cfg!(windows) }>(
+            self.pattern.slice(),
+            &self.shape,
+            str,
+            bun_glob::Dots::Match,
+        )
+        .matches()
     }
 
     fn scan<'a>(

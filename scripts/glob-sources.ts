@@ -52,6 +52,10 @@ const patterns = {
   js: {
     paths: ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"],
   },
+  /** one page per lint rule, read by generate-lint-docs.ts */
+  lintRuleDocs: {
+    paths: ["docs/lint/rules/*/**/*.mdx"],
+  },
   /** the codegen scripts themselves */
   jsCodegen: {
     paths: ["src/codegen/*.ts"],

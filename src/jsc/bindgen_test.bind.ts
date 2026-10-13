@@ -26,6 +26,7 @@ export const requiredAndOptionalArg = b.fn({
 export const utf8Echo = b.fn({ args: { text: b.string.utf8 }, returns: b.string.utf8 });
 export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns: b.string.utf8 });
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
+export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
 
 export const TestColor = b.enumeration(["red", ["green", "lime"], "blue"]);

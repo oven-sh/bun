@@ -115,6 +115,7 @@ what WebIDL does. Too few arguments throw `ERR_MISSING_ARGS`.
 | `b.f64`                                          | `f64`                            | a number                                                      |
 | `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
+| `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsValue<'a, ArrayBuffer>`       | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.bytes`                           | `&'a [u8]`                       | the same; see [Buffers](#buffers)                             |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | a typed array, `DataView` or `ArrayBuffer`                    |
@@ -156,6 +157,10 @@ in the generated function's frame, which holds 128 bytes and is sized for the wo
 case up front: beyond 64 Latin-1 characters or 42 UTF-16 code units it allocates.
 Nothing needs freeing. An unpaired surrogate becomes U+FFFD. `.loose` comes before
 `.utf8`.
+
+`b.string.utf8.owned` is for a body that stores the string: a
+`bun_core::Utf8Bytes<'static>`, which shares the JS string's buffer when it is 8-bit
+and ASCII and is a transcoded copy otherwise.
 
 `b.string` shares the JS string's storage and can be stored. It belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
@@ -264,7 +269,7 @@ The keys are mostly those of `.classes.ts`, with types. `klass` is `static` and 
 export const Glob = b.class({
   rustPath: "crate::api::glob::Glob",
   construct: {
-    args: { pattern: b.string.utf8 },
+    args: { pattern: b.string.utf8.owned },
   },
   proto: {
     match: {
@@ -279,16 +284,16 @@ generates a trait, which the struct implements:
 
 ```rust
 pub(crate) struct Glob {
-    pattern: Box<[u8]>,
+    pattern: bun_core::Utf8Bytes<'static>,
 }
 
 impl GlobClass for Glob {
-    fn constructor<'a>(pattern: &'a [u8]) -> Self {
-        Glob { pattern: Box::from(pattern) }
+    fn constructor<'a>(pattern: bun_core::Utf8Bytes<'static>) -> Self {
+        Glob { pattern }
     }
 
     fn r#match<'a>(&self, str: &'a [u8]) -> bool {
-        bun_glob::r#match(&self.pattern, str).matches()
+        bun_glob::r#match(self.pattern.slice(), str).matches()
     }
 }
 ```

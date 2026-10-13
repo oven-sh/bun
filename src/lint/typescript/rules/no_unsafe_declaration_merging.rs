@@ -26,12 +26,13 @@ fn check_unsafe_declaration<'a>(
         return;
     }
     if variable.declarations().len() > 1 && variable.declarations().any(is_unsafe_kind) {
-        cx.report(name, UNSAFE_MERGING);
+        cx.report(name, UNSAFE_MERGING)
+            .hint("TypeScript does not check that the class sets what the interface declares.");
     }
 }
 
 impl Rule for NoUnsafeDeclarationMerging {
-    const META: Meta = Meta::typescript("no-unsafe-declaration-merging", Kind::Problem).recommended();
+    const META: Meta = Meta::typescript("no-unsafe-declaration-merging", Kind::Problem).recommended().hints();
     const ON: On = On::new().stmts(&[StmtTag::Class, StmtTag::Interface]);
     type State<'a> = ();
 

@@ -8,7 +8,8 @@ use super::selector_parser::{SelectorId, Selectors};
 use super::value_parser::{ValueId, Values};
 use crate::stack::Stack;
 use crate::syntax_error::{Message, Refusal, Refused};
-use crate::text::{self, ByteSet};
+use crate::text;
+use bun_core::strings;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -584,8 +585,7 @@ impl<'a> Context<'a> {
                 None => Cow::Borrowed(value),
             });
         } else {
-            static BANG: ByteSet = ByteSet::new(b"!");
-            let has_bang = BANG.find(value, 0).is_some();
+            let has_bang = strings::contains_char(value, b'!');
             if has_bang && let Some(at) = find_directive(value, b"!default") {
                 node.scss_default = true;
                 node.raw_scss_default = Some(&value[at..])

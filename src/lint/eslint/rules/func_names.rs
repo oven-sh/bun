@@ -72,7 +72,9 @@ fn guess_function_name<'a>(func: Func<'a>, known: &mut GuessedNames<'a>) -> Opti
         }
         _ => None,
     });
-    found.flatten().filter(|name| is_valid_identifier_name(name.bytes()))
+    found
+        .flatten()
+        .filter(|name| is_valid_identifier_name(name.bytes()))
 }
 
 /// oxlint's fix: the function gets the name, unless that means something in the function.
@@ -105,9 +107,7 @@ fn has_inferred_name(e: Expr) -> bool {
         Node::Prop(it) => it.value() == Some(e) && !it.is_jsx_attribute(),
         Node::Member(it) => it.init() == Some(e) && !it.flags().contains(Flags::ACCESSOR),
         Node::Expr(parent) => match parent.kind() {
-            ExprKind::Assign { target, value, .. } => {
-                value == e && target.tag() == ExprTag::Ident
-            }
+            ExprKind::Assign { target, value, .. } => value == e && target.tag() == ExprTag::Ident,
             _ => false,
         },
         Node::Param(it) => it.default() == Some(e) && is_identifier(it.pat()),
@@ -168,7 +168,10 @@ impl FuncNames {
                         !e.is_parenthesized()
                             && matches!(e.parent(), Node::Expr(it) if it.as_call().is_some_and(|it| it.callee() == e))
                     };
-                    if symbol.references().any(|it| it.expr().is_some_and(is_called)) {
+                    if symbol
+                        .references()
+                        .any(|it| it.expr().is_some_and(is_called))
+                    {
                         return;
                     }
                     NAMED
@@ -183,12 +186,16 @@ impl FuncNames {
         let head = ast_utils::get_function_head_loc(func);
         // For oxlint it starts with the function, not with the member that the function is the value of.
         let (start, name) = match cx.language().is_oxlint {
-            true => (func.estree_span().start, utils::oxlint::get_function_name_with_kind(func)),
+            true => (
+                func.estree_span().start,
+                utils::oxlint::get_function_name_with_kind(func),
+            ),
             false => (head.start, ast_utils::get_function_name_with_kind(func)),
         };
         // `"FunctionExpression:exit"`
         let report = cx
             .report(Span::new(start, head.end), message)
+            .called_with(func)
             .on_exit(func.kind() == FnKind::Expr)
             .data("name", name);
         if cx.language().is_oxlint {

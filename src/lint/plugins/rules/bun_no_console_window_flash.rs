@@ -9,7 +9,7 @@ pub struct NoConsoleWindowFlash;
 
 const CONSOLE_WINDOW: Message = Message::new(
     "consoleWindow",
-    "On Windows a console window opens for this process and closes again. Set `windowsHide: true`.",
+    "On Windows, this process briefly opens a console window. Set `windowsHide: true`.",
 );
 
 impl Rule for NoConsoleWindowFlash {

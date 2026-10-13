@@ -543,7 +543,7 @@ impl Rule for OneVar {
             return all().for_each(check);
         }
         let mut sorted: Vec<Stmt> = all().collect();
-        sorted.sort_unstable_by_key(|it| (it.span().end, Reverse(it.span().start)));
+        utils::sort::sort_unstable_by_key(&mut sorted, |it| (it.span().end, Reverse(it.span().start)));
         sorted.into_iter().for_each(&mut check);
     }
 }

@@ -1981,7 +1981,7 @@ pub enum GenericComponent<Impl: SelectorImpl> {
         local_name: Impl::LocalName,
         local_name_lower: Impl::LocalName,
     },
-    /// Used only when local_name is already lowercase.
+    /// `[name op value]` with no namespace prefix. The name can have any letter case.
     AttributeInNoNamespace {
         local_name: Impl::LocalName,
         operator: attrs::AttrSelectorOperator,
@@ -1989,7 +1989,7 @@ pub enum GenericComponent<Impl: SelectorImpl> {
         case_sensitivity: attrs::ParsedCaseSensitivity,
         never_matches: bool,
     },
-    /// Use a Box in the less common cases with more data to keep size_of::<Component>() small.
+    /// An `ns|` or `*|` attribute selector, in a Box to keep size_of::<Component>() small.
     AttributeOther(Box<attrs::AttrSelectorWithOptionalNamespace<Impl>>),
 
     /// Pseudo-classes
@@ -3505,7 +3505,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     let attribute_flags = parse_attribute_flags(input)?;
 
     let value: Impl::AttrValue = std::ptr::from_ref::<[u8]>(value_str);
-    let (local_name_lower, local_name_is_ascii_lowercase): (Impl::LocalName, bool) = 'brk: {
+    let local_name_lower: Impl::LocalName = 'brk: {
         let first_uppercase = 'a: {
             for (i, &b) in local_name.iter().enumerate() {
                 if b >= b'A' && b <= b'Z' {
@@ -3517,22 +3517,20 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
         if let Some(first_uppercase) = first_uppercase {
             let str_ = &local_name[first_uppercase..];
             let lowered: *const [u8] = arena_lowercase(input.arena(), str_);
-            break 'brk (Ident { v: lowered }, false);
+            break 'brk Ident { v: lowered };
         } else {
-            break 'brk (
-                Ident {
-                    v: std::ptr::from_ref::<[u8]>(local_name),
-                },
-                true,
-            );
+            break 'brk Ident {
+                v: std::ptr::from_ref::<[u8]>(local_name),
+            };
         }
     };
     let case_sensitivity: attrs::ParsedCaseSensitivity =
         attribute_flags.to_case_sensitivity(local_name_lower.v(), namespace.is_some());
-    if namespace.is_some() && !local_name_is_ascii_lowercase {
+    // lightningcss boxes uppercase names (`|| !local_name_is_ascii_lowercase`) for its matcher.
+    if let Some(namespace) = namespace {
         Ok(GenericComponent::AttributeOther(Box::new(
             attrs::AttrSelectorWithOptionalNamespace::<Impl> {
-                namespace,
+                namespace: Some(namespace),
                 local_name: Ident {
                     v: std::ptr::from_ref::<[u8]>(local_name),
                 },

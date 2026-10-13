@@ -861,6 +861,26 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     }
   });
 
+  test("white space that other options make text stays", async () => {
+    const rows: [object, string, string][] = [
+      // The plugin has a line in an element with nothing in it, which breaks with the start tag.
+      [
+        { bracketSameLine: true },
+        "<pre>b<div {@attach () => { c; d }}></div>e</pre>\n",
+        "<pre>b<div\n    {@attach () => {\n      c;\n      d;\n    }}></div>e</pre>\n",
+      ],
+      // The rows are as they are written: see "rows that are closed by the next".
+      [{ htmlWhitespaceSensitivity: "strict" }, "<table><tr><td>b<tr>  </table>\n", "<table><tr><td>b<tr> </table>\n"],
+    ];
+    for (const [options, before, after] of rows) {
+      const config = { ".prettierrc": JSON.stringify({ plugins, ...options }) };
+      const result = await format({ ...config, "a.svelte": before, "b.svelte": after }, ["a.svelte", "b.svelte"]);
+      expect(result).toMatchObject({ stderr: "", files: [after, after], exitCode: 0 });
+      const checked = await format({ ...config, "a.svelte": before }, ["a.svelte"], ["--debug-check"]);
+      expect(checked).toMatchObject({ stderr: "", files: [before], exitCode: 0 });
+    }
+  });
+
   test("what is an expression to Svelte is one in a <textarea> and in the value of an attribute", async () => {
     // The plugin takes what is in a `<style>` out of the text wherever it finds the letters, so it does not see these.
     const files = {

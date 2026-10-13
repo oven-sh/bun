@@ -666,6 +666,29 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["b\u00A0<script></script>\n", "<script></script>\n\nb&nbsp;\n", "<script></script>\n\nb\u00A0\n"],
       ["b\u2028<script></script>\n", "<script></script>\n\nb&#x2028;\n", "<script></script>\n\nb\u2028\n"],
       ["b\u00A0<style></style>\n", "b\u00A0\n\n<style></style>\n", null],
+      // At the start of the file it would be a byte order mark.
+      ["\n\uFEFFb\n", "&#xFEFF;b\n", "b\n"],
+      // What goes with a comment that goes with a script.
+      [
+        "b<!-- d -->\n<script></script>c\n",
+        "<!-- d -->\n<script></script>\n\nb c\n",
+        "<!-- d -->\n<script></script>\n\nbc\n",
+      ],
+      [
+        "<b>y</b><!-- d -->\n<script></script><i>z</i>\n",
+        "<!-- d -->\n<script></script>\n\n<b>y</b>\n<i>z</i>\n",
+        "<!-- d -->\n<script></script>\n\n<b>y</b><i>z</i>\n",
+      ],
+      [
+        "b<script></script> <!-- #endregion -->c\n",
+        "<script></script>\n\n<!-- #endregion -->\n\nb c\n",
+        "<script></script>\n\n<!-- #endregion -->\n\nbc\n",
+      ],
+      [
+        "b<!-- d --> <svelte:options runes />c\n",
+        "<!-- d -->\n<svelte:options runes />\n\nb c\n",
+        "<!-- d -->\n<svelte:options runes />\n\nbc\n",
+      ],
       [
         "<pre><span>let</span><span> </span><span>y</span></pre>\n",
         "<pre><span>let</span><span> </span><span>y</span></pre>\n",
@@ -814,12 +837,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  test("a start tag that ends with a `//` comment has its `>` on the next line, with bracketSameLine too", async () => {
+  test("a start tag that ends with a comment at the end of a line has its `>` on the next, with bracketSameLine too", async () => {
     const config = { ".prettierrc": JSON.stringify({ plugins, bracketSameLine: true }) };
     const rows = [
       ['<div b="c" // d\n>y</div>\n', '<div\n  b="c" // d\n>\n  y\n</div>\n'],
       ['<span b="c" // d\n>y</span>\n', '<span\n  b="c" // d\n>y</span>\n'],
       ['<B b="c" // d\n/>\n', '<B\n  b="c" // d\n/>\n'],
+      ['<div\n  b="c"\n  /* d */>y</div>\n', '<div\n  b="c"\n  /* d */\n>\n  y\n</div>\n'],
+      ['<span\n  b="c"\n  /* d */>y</span>\n', '<span\n  b="c"\n  /* d */\n>y</span>\n'],
       [
         '<div><script b="c" // d\n>let e</script></div>\n',
         '<div>\n  <script\n    b="c" // d\n  >\n    let e;\n  </script>\n</div>\n',

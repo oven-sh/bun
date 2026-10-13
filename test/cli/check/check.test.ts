@@ -2872,7 +2872,9 @@ export {};
         }
       }
       using dir = project({
-        "a.ts": source + `
+        "a.ts":
+          source +
+          `
 declare const a: A0;
 const accepted: B0 = a;
 // @ts-expect-error: the recursive shape differs near the root.
@@ -8170,11 +8172,9 @@ export declare const o: { readonly L: unique symbol };
     });
 
     // 200 comparisons deep. The stack frames of a debug build are several times larger, and it runs out of stack first.
-    test.skipIf(isDebug || isASAN)(
-      "deep relation elaboration preserves an incompatible payload",
-      async () => {
-        using dir = project({
-          "a.ts": `interface T0<A> { a: A; next: T1<A[]> | null; take(x: T1<A>): void }
+    test.skipIf(isDebug || isASAN)("deep relation elaboration preserves an incompatible payload", async () => {
+      using dir = project({
+        "a.ts": `interface T0<A> { a: A; next: T1<A[]> | null; take(x: T1<A>): void }
 interface T1<A> { a: A; next: T2<A[]> | null; take(x: T2<A>): void }
 interface T2<A> { a: A; next: T3<A[]> | null; take(x: T3<A>): void }
 interface T3<A> { a: A; next: T4<A[]> | null; take(x: T4<A>): void }
@@ -8227,15 +8227,14 @@ interface T49<A> { a: A; next: T0<A[]> | null; take(x: T0<A>): void }
 export const u: T0<unknown> = null! as T0<string>;
 export const v: T0<string> = null! as T0<unknown>;
 `,
-        });
-        const { stdout, exitCode } = await check(dir);
-        expect(stdout).toMatchInlineSnapshot(`
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
         "a.ts(52,14): error TS2322: Type 'T0<unknown>' is not assignable to type 'T0<string>'.
           Type 'unknown' is not assignable to type 'string'."
       `);
-        expect(exitCode).toBe(1);
-      },
-    );
+      expect(exitCode).toBe(1);
+    });
 
     test("a constant in a nested loop whose initializer calls a method of the loop variable", async () => {
       using dir = project({
@@ -17790,30 +17789,25 @@ describe.concurrent("--check", () => {
     });
 
     // The instantiation limit is per statement; repeated deep comparisons must not hide a later payload error.
-    test.skipIf(isDebug || isASAN).each([130])(
-      "%i deep comparisons do not hide the next error",
-      async n => {
-        using dir = project({
-          "tsconfig.json": JSON.stringify({
-            compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, exactOptionalPropertyTypes: true },
-          }),
-          "index.ts": `interface Sub { a: 1; b: 2 } interface Sup { a: 1 }\n${range(n)
-            .map(
-              i =>
-                `export function f${i}() { interface G<in out T> { r: G<T[]> | null } let s!: G<Sub>, S!: G<Sup>; S = s; }`,
-            )
-            .join(
-              "\n",
-            )}\nexport function last() { interface G<T> { p: T } let s!: G<string>, S!: G<number>; S = s; }\n`,
-        });
-        const { stdout, exitCode } = await check(dir);
-        const errors = stdout
-          .split("\n")
-          .flatMap(line => /^index\.ts\((\d+),\d+\): error (TS\d+)/.exec(line)?.slice(1, 3).join(" ") ?? []);
-        expect(errors).toEqual([...range(n).map(i => `${i + 2} TS2322`), `${n + 2} TS2322`]);
-        expect(exitCode).toBe(1);
-      },
-    );
+    test.skipIf(isDebug || isASAN).each([130])("%i deep comparisons do not hide the next error", async n => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, exactOptionalPropertyTypes: true },
+        }),
+        "index.ts": `interface Sub { a: 1; b: 2 } interface Sup { a: 1 }\n${range(n)
+          .map(
+            i =>
+              `export function f${i}() { interface G<in out T> { r: G<T[]> | null } let s!: G<Sub>, S!: G<Sup>; S = s; }`,
+          )
+          .join("\n")}\nexport function last() { interface G<T> { p: T } let s!: G<string>, S!: G<number>; S = s; }\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      const errors = stdout
+        .split("\n")
+        .flatMap(line => /^index\.ts\((\d+),\d+\): error (TS\d+)/.exec(line)?.slice(1, 3).join(" ") ?? []);
+      expect(errors).toEqual([...range(n).map(i => `${i + 2} TS2322`), `${n + 2} TS2322`]);
+      expect(exitCode).toBe(1);
+    });
 
     // A parser as PEG.js generates it, as in the release bundle of Yarn: rules that call each other in a ring and collect
     // what they get in arrays, in loops. It took seven times as long for each alternative of the last rule.

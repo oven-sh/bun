@@ -90,7 +90,8 @@ test("every option is read before a cwd that is too long is reported", () => {
   const options = {
     get cwd() {
       read.push("cwd");
-      return Buffer.alloc(5000, "a").toString();
+      // Over MAX_PATH_BYTES everywhere: Windows has the largest, 98302.
+      return Buffer.alloc(100_000, "a").toString();
     },
     get dot() {
       read.push("dot");

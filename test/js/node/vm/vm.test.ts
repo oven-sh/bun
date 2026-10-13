@@ -1871,6 +1871,181 @@ describe("defineProperty errors use vm-realm global", () => {
   });
 });
 
+// The DFG and the FTL call a native accessor directly. They passed it the global object of the function whose code
+// the access belongs to, where every other path passes the global object of the realm that holds the accessor. A
+// function that belongs to a context, inlined into a function of the Bun global, then handed the context's global
+// object to an accessor of an object of the main realm, and Bun's accessors read their own global through that
+// argument.
+describe.concurrent("a native accessor of a main-realm object read by a function that belongs to a context", () => {
+  // Compile on the main thread so that the tier-up point does not depend on scheduling.
+  const env = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" };
+  // With one level of inlining the wrong call needs the FTL. At this threshold (64000 by default) the FTL compiles the
+  // calling function after about 700 calls, so a debug build gets there quickly. The DFG keeps its threshold: the FTL
+  // has to find a settled inline cache in the DFG code. Without the fix these cases go wrong between iteration 400
+  // and 800.
+  const ftl = { BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "8000" };
+  // With two levels the DFG makes the wrong call by itself, at about iteration 2070 without the fix.
+  const dfgOnly = { BUN_JSC_useFTLJIT: "0" };
+  const iterations = 3000;
+
+  const cases: [name: string, tiers: Record<string, string>, script: string, expected: string][] = [
+    [
+      // A hand-written accessor that reads the bytes of its receiver.
+      "StringDecoder#lastChar",
+      ftl,
+      /*js*/ `
+        const vm = require("node:vm");
+        const { StringDecoder } = require("node:string_decoder");
+        const read = vm.runInNewContext("(function (decoder) { return decoder.lastChar; })");
+        const call = decoder => read(decoder);
+        const decoder = new StringDecoder("utf8");
+        let last;
+        for (let i = 0; i < ${iterations}; i++) last = call(decoder);
+        console.log(Buffer.isBuffer(last), last.length);
+      `,
+      "true 4",
+    ],
+    [
+      // A generated getter that makes its value on the first read.
+      "Request#signal",
+      ftl,
+      /*js*/ `
+        const vm = require("node:vm");
+        const read = vm.runInNewContext("(function (request) { return request.signal; })");
+        const call = request => read(request);
+        let signal;
+        for (let i = 0; i < ${iterations}; i++) signal = call(new Request("http://example.com/"));
+        console.log(signal instanceof AbortSignal);
+      `,
+      "true",
+    ],
+    [
+      // A generated getter that keeps its value on the receiver: the Response must not keep a Headers of the context.
+      "Response#headers",
+      ftl,
+      /*js*/ `
+        const vm = require("node:vm");
+        const read = vm.runInNewContext("(function (response) { return response.headers; })");
+        const call = response => read(response);
+        let headers;
+        for (let i = 0; i < ${iterations}; i++) headers = call(new Response("x"));
+        console.log(headers instanceof Headers);
+      `,
+      "true",
+    ],
+    [
+      // An accessor of JavaScriptCore itself, so no Bun global is involved: the getter throws a TypeError unless the
+      // RegExp constructor it is read from belongs to the realm it is called with.
+      "RegExp.$1",
+      ftl,
+      /*js*/ `
+        const vm = require("node:vm");
+        const read = vm.runInNewContext("(function (constructor) { return constructor.$1; })");
+        const call = constructor => read(constructor);
+        /(host)/.test("host");
+        let last;
+        for (let i = 0; i < ${iterations}; i++) last = call(RegExp);
+        console.log(last);
+      `,
+      "host",
+    ],
+    [
+      // A plain custom accessor, which the DFG calls through another node than the generated getters.
+      "import.meta.env",
+      ftl,
+      /*js*/ `
+        import vm from "node:vm";
+        const read = vm.runInNewContext("(function (meta) { return meta.env; })");
+        const call = meta => read(meta);
+        let env;
+        for (let i = 0; i < ${iterations}; i++) env = call(import.meta);
+        console.log(env === process.env);
+      `,
+      "true",
+    ],
+    [
+      // A setter: node:buffer keeps INSPECT_MAX_BYTES on the global object it is called with.
+      "the buffer.INSPECT_MAX_BYTES setter",
+      ftl,
+      /*js*/ `
+        const vm = require("node:vm");
+        const buffer = require("node:buffer");
+        const write = vm.runInNewContext("(function (module, value) { module.INSPECT_MAX_BYTES = value; })");
+        const call = (module, value) => write(module, value);
+        for (let i = 1; i <= ${iterations}; i++) call(buffer, i);
+        console.log(buffer.INSPECT_MAX_BYTES);
+      `,
+      String(iterations),
+    ],
+    [
+      // What a server does: the handler belongs to a context and reads an accessor of each Request. server.fetch()
+      // runs the handler as a request does, without a socket for each call.
+      "Request#signal in a Bun.serve handler",
+      ftl,
+      /*js*/ `
+        const vm = require("node:vm");
+        const read = vm.runInNewContext("(function (request) { return typeof request.signal; })");
+        const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: request => new Response(read(request)) });
+        for (let i = 0; i < ${iterations}; i++) server.fetch(new Request(server.url));
+        const answers = await Promise.all(
+          Array.from({ length: 4 }, () => fetch(server.url).then(response => response.text())),
+        );
+        server.stop(true);
+        console.log(answers.join(" "));
+      `,
+      "object object object object",
+    ],
+    [
+      "Response#headers through two levels of inlining, with no FTL",
+      dfgOnly,
+      /*js*/ `
+        const vm = require("node:vm");
+        const read = vm.runInNewContext("(function (response) { return response.headers; })");
+        const middle = response => read(response);
+        function outer() {
+          let headers;
+          for (let i = 0; i < ${2 * iterations}; i++) headers = middle(new Response("x"));
+          return headers;
+        }
+        console.log(outer() instanceof Headers);
+      `,
+      "true",
+    ],
+    [
+      "the buffer.INSPECT_MAX_BYTES setter through two levels of inlining, with no FTL",
+      dfgOnly,
+      /*js*/ `
+        const vm = require("node:vm");
+        const buffer = require("node:buffer");
+        const write = vm.runInNewContext("(function (module, value) { module.INSPECT_MAX_BYTES = value; })");
+        const middle = (module, value) => write(module, value);
+        function outer() {
+          for (let i = 1; i <= ${2 * iterations}; i++) middle(buffer, i);
+        }
+        outer();
+        console.log(buffer.INSPECT_MAX_BYTES);
+      `,
+      String(2 * iterations),
+    ],
+  ];
+
+  test.each(cases)("%s", async (_, tiers, script, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...env, ...tiers },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 test("Loader is not defined in vm context", () => {
   // Test with empty context - internal Loader should not leak through
   const emptyContext = createContext({});

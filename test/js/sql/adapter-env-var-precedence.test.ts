@@ -1068,12 +1068,37 @@ describe("SQL adapter environment variable precedence", () => {
       }
 
       await using db = new sql(`sqlite://${filename}`, { readonly: true });
-      await expect(db`INSERT INTO t VALUES (1)`.execute()).rejects.toThrow("attempt to write a readonly database");
+      await expect(db`INSERT INTO t VALUES (1)`.execute()).rejects.toMatchObject({
+        name: "SQLiteError",
+        code: "SQLITE_READONLY",
+        message: "attempt to write a readonly database",
+      });
       expect(await db`SELECT count(*) AS n FROM t`).toEqual([{ n: 0 }]);
     });
 
     test("new sql(url, options) rejects an invalid option", () => {
-      expect(() => new sql("postgres://u:p@h:5432/db", { max: 0 })).toThrow("options.max");
+      expect(() => new sql("postgres://u:p@h:5432/db", { max: 0 })).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "The property 'options.max' must be a non-negative integer between 1 and 2^31. Received 0",
+        }),
+      );
+    });
+
+    test.each([null, 42])("new sql(url, %p) throws the same TypeError as new SQL", options => {
+      const url = "postgres://u:p@h:5432/db";
+      let fromClass: unknown;
+      try {
+        new SQL(url, options as never);
+      } catch (error) {
+        fromClass = error;
+      }
+
+      expect(fromClass).toBeInstanceOf(TypeError);
+      expect(() => new sql(url, options as never)).toThrow(
+        expect.objectContaining({ name: "TypeError", message: (fromClass as TypeError).message }),
+      );
     });
 
     test("new sql(url) does not take its options from Array.prototype", async () => {
@@ -1096,9 +1121,7 @@ describe("SQL adapter environment variable precedence", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toBe("");
-      expect(stdout).toBe("[10,3]\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[10,3]\n", stderr: "", exitCode: 0 });
     });
 
     test("one argument is the URL or the options, and no argument reads the environment", async () => {

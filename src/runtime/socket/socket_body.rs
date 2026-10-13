@@ -2339,7 +2339,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the actual
         // error code. `close_after_fatal_send` passes one too: the errno of a
         // failed send that a read would also return. No producer can
-        // yield EPERM(1)/ENOENT(2): recv never returns them and the other two
+        // yield EPERM(1)/ENOENT(2): recv never returns them and the others
         // clamp them away. So values >2 are read errors and 0/1/2 are
         // self-initiated closes that must not surface as a JS read error
         // (matching Node's onStreamRead, which only sees errors that came

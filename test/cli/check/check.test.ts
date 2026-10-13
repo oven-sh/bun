@@ -1641,6 +1641,32 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(stdout).toBe(`pkg/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
     });
 
+    test("files whose names have dots in unusual places, in one directory", async () => {
+      using dir = project({
+        "src/.a.ts": `export const a: string = 1;\n`,
+        "src/..b.ts": `export const b: string = 1;\n`,
+        "src/c..c.ts": `export const c: string = 1;\n`,
+        "src/d.d.ts": `export declare const d: string;\n`,
+        "src/main.ts": `import { a } from "./.a";
+import { b } from "./..b";
+import { c } from "./c..c";
+import { d } from "./d";
+export const all: number[] = [a, b, c, d];
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["src/main.ts"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "src/..b.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/.a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/c..c.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/main.ts(5,31): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/main.ts(5,34): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/main.ts(5,37): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/main.ts(5,40): error TS2322: Type 'string' is not assignable to type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("a path on the command line is relative to the working directory, as in tsc", async () => {
       using dir = project({
         "packages/server/tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["src"] }),

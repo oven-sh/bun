@@ -1,6 +1,6 @@
 //! Single source of truth for one-pass relative-path classification.
-//! Callers OR `has_sep`/`has_dot` for "needs resolution" routing and gate
-//! `..`-clamp work on `climbs_above_start`.
+//! Callers route on `has_sep` and the two dot facts for "needs resolution" and
+//! gate `..`-clamp work on `climbs_above_start`.
 
 use crate::PathChar;
 use crate::component_iterator::PathFormat;
@@ -12,6 +12,8 @@ pub struct RelPathFacts {
     pub has_sep: bool,
     /// Any `.` anywhere (including inside names like `a.b`).
     pub has_dot: bool,
+    /// Any component that is dots and nothing else: `.`, `..`, `...`.
+    pub has_dots_only_component: bool,
     /// `..` resolution climbs above the segment's own start: the running
     /// component depth (name +1, `..` −1, `.`/empty 0) ever goes negative.
     pub climbs_above_start: bool,
@@ -24,6 +26,7 @@ pub fn classify_rel_t<T: PathChar>(rel: &[T], fmt: PathFormat) -> RelPathFacts {
     let mut facts = RelPathFacts {
         has_sep: false,
         has_dot: false,
+        has_dots_only_component: false,
         climbs_above_start: false,
     };
     let mut depth = 0isize; // net component depth so far
@@ -32,6 +35,7 @@ pub fn classify_rel_t<T: PathChar>(rel: &[T], fmt: PathFormat) -> RelPathFacts {
     for &c in rel {
         if fmt.is_sep(c) {
             facts.has_sep = true;
+            facts.has_dots_only_component |= dots > 0 && !other;
             if other || dots > 2 {
                 depth += 1;
             } else if dots == 2 {
@@ -49,6 +53,7 @@ pub fn classify_rel_t<T: PathChar>(rel: &[T], fmt: PathFormat) -> RelPathFacts {
             other = true;
         }
     }
+    facts.has_dots_only_component |= dots > 0 && !other;
     if dots == 2 && !other {
         depth -= 1; // trailing `..` component applies its −1 too
     }

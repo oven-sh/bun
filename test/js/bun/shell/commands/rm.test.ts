@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -143,6 +143,18 @@ foo/
       expect(exitCode).toBe(1);
       expect(await fileExists(`${tempdir}/sub_dir_files`)).toBeTrue();
     }
+  });
+
+  test("directories whose names have dots in unusual places", async () => {
+    using tempdir = tempDir("rm-dots", {
+      ".a/..b/c..c/d.d/file.txt": "",
+      ".a/..b/file.txt": "",
+      "keep.me/file.txt": "",
+    });
+    const { stderr, exitCode } = await $`rm -r .a`.cwd(String(tempdir));
+    expect(stderr.toString()).toBe("");
+    expect(readdirSync(String(tempdir))).toEqual(["keep.me"]);
+    expect(exitCode).toBe(0);
   });
 
   // The DirTask parent/child hand-off had a lost-wakeup window between

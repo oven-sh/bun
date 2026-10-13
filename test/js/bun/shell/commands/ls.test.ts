@@ -474,6 +474,35 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
   });
+
+  test("directories whose names have dots in unusual places", async () => {
+    using tempdir = tempDir("ls-dots", {
+      ".a/in.a": "",
+      "..b/in.b": "",
+      "c..c/in.c": "",
+      "d.d/in.d": "",
+    });
+    const inside = async (name: string) => {
+      const [listed, entered] = await Promise.all([
+        $`ls ${name}`.cwd(String(tempdir)).text(),
+        $`cd ${name} && ls`.cwd(String(tempdir)).text(),
+      ]);
+      return [listed, entered];
+    };
+    expect(await Promise.all([".a", "..b", "c..c", "d.d"].map(inside))).toEqual([
+      ["in.a\n", "in.a\n"],
+      ["in.b\n", "in.b\n"],
+      ["in.c\n", "in.c\n"],
+      ["in.d\n", "in.d\n"],
+    ]);
+  });
+
+  test.if(!isPosix)("a name with a dot after the letter of the drive", async () => {
+    using tempdir = tempDir("ls-drive", { "d.d/in.d": "" });
+    const drive = String(tempdir).slice(0, 2);
+    expect(drive).toMatch(/^[A-Za-z]:$/);
+    expect(await $`ls ${drive}d.d`.cwd(String(tempdir)).text()).toBe("in.d\n");
+  });
 });
 
 function packagejson() {

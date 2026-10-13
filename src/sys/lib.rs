@@ -6367,7 +6367,8 @@ fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<(usize, bool)> {
 
 /// `normalizePathWindows` — convert a (possibly relative) path into an NT
 /// object name for `NtCreateFile` against `dir_fd`: absolute inputs become
-/// `\??\C:\…`, dirfd-relative inputs resolve to absolute `\Device\…` names.
+/// `\??\C:\…`, a single name stays relative to `dir_fd`, and other
+/// dirfd-relative inputs resolve to absolute `\Device\…` names.
 #[cfg(windows)]
 pub fn normalize_path_windows<'a>(
     dir_fd: Fd,
@@ -6497,14 +6498,21 @@ pub fn normalize_path_windows_opts<'a>(
         path
     };
 
-    // Routing = any separator or `.`; clamp relevance = `..` resolving above
-    // the dirfd. One pass via the shared classifier.
+    // Clamp relevance = `..` resolving above the dirfd. One pass via the
+    // shared classifier.
     let facts = bun_paths::classify_rel_t(rel, bun_paths::PathFormat::Windows);
-    let saw_sep_or_dot = facts.has_sep || facts.has_dot;
 
-    // Relative path with no separators or `.` can be passed straight through
-    // to `NtCreateFile` against `RootDirectory`.
-    if !saw_sep_or_dot {
+    // A single name is passed straight through to `NtCreateFile` against
+    // `RootDirectory`, which rejects `.` and `..`. With a `:`, `a.b` keeps the
+    // meaning it has under the base: `C:a.b` is `a.b`, and `:a.b` is not a
+    // stream of the directory. Win32 resolves a name against the cwd, not
+    // `dir_fd`.
+    let is_single_name = !facts.has_sep
+        && (!facts.has_dot
+            || (opts.add_nt_prefix
+                && !facts.has_dots_only_component
+                && !bun_core::strings::contains_char_t(path, b':')));
+    if is_single_name {
         if path.len() >= buf.len() {
             return Err(too_long());
         }
@@ -9754,18 +9762,13 @@ mod normalize_path_windows_tests {
     }
 
     #[test]
-    fn dot_in_name_resolves_under_base() {
+    fn dot_in_name_passes_through() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_dotname");
         let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
             let _ = close(fd);
         });
-        // Dot without separator routes to fd resolution (not the bare
-        // passthrough) and needs no `..` clamp.
-        assert_eq!(
-            normalize(*dir, "a.b"),
-            format!("{}\\a.b", normalize(*dir, "."))
-        );
+        assert_eq!(normalize(*dir, "a.b"), "a.b");
     }
 
     #[test]
@@ -9789,7 +9792,7 @@ mod normalize_path_windows_tests {
     #[test]
     fn bare_component_passes_through() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        // No separator and no `.` → passthrough, relative to RootDirectory.
+        // A single name → passthrough, relative to RootDirectory.
         let got = normalize(Fd::INVALID, "foo");
         assert_eq!(got, "foo");
     }

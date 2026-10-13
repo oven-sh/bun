@@ -95,15 +95,12 @@ const tryBuild = (): string | null => {
   return bin;
 };
 
-test.skipIf(!isLinux)("bun install survives Android-style seccomp (openat2/fchmodat2 SIGSYS)", async () => {
-  const helperBin = tryBuild();
-  if (helperBin == null) {
-    // bun:test has no runtime-skip; log loudly so CI output distinguishes
-    // this from a real pass.
-    console.warn("SKIP bun install android seccomp: cc or seccomp headers not available");
-    return;
-  }
+// Decided before the test runs, so a host that cannot run it reports a skip and not a pass.
+const helperBin = isLinux ? tryBuild() : null;
+// The helper exits 77 where it is not allowed to install its filter.
+const canFilter = helperBin != null && spawnSync(helperBin, ["true"], { stdio: "pipe" }).status !== 77;
 
+test.skipIf(!canFilter)("bun install survives Android-style seccomp (openat2/fchmodat2 SIGSYS)", async () => {
   using dir = tempDir("install-android-seccomp", {
     "package.json": JSON.stringify({
       name: "app",
@@ -123,17 +120,13 @@ test.skipIf(!isLinux)("bun install survives Android-style seccomp (openat2/fchmo
   });
 
   await using proc = Bun.spawn({
-    cmd: [helperBin, bunExe(), "install"],
+    cmd: [helperBin!, bunExe(), "install"],
     cwd: String(dir),
     env: { ...bunEnv, ANDROID_ROOT: join(String(dir), "system"), ANDROID_DATA: "/data" },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode === 77) {
-    console.warn("SKIP bun install android seccomp: seccomp not permitted in this environment");
-    return;
-  }
 
   // Without the runtime Android detection the install dies with SIGSYS
   // (exit 159) in bin linking.

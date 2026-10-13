@@ -5234,6 +5234,52 @@ describe("a send that the kernel rejects", () => {
     expect(await outcome.promise).toBe(sent);
   });
 
+  // The client is a process of its own and the server does next to nothing, so the reset arrives in the middle of the sends.
+  // At the reset of the server, Windows drops what is still unread in the kernel.
+  it.skipIf(isWindows).each(["its own socket", "tls.connect({ socket })"])(
+    "leaves an upload over %s the answer that came before the reset",
+    async transport => {
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: COMMON_CERT,
+        socket: {
+          data(socket) {
+            socket.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 8\r\nConnection: close\r\n\r\nrefused\n");
+            socket.terminate();
+          },
+        },
+      });
+      await using client = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const body = Buffer.alloc(4 * 1024 * 1024, "a");
+          const options = { host: "${server.hostname}", port: ${server.port}, rejectUnauthorized: false };
+          const createConnection = ${transport === "its own socket"}
+            ? undefined
+            : () => require("node:tls").connect({ ...options, socket: require("node:net").connect(options) });
+          const headers = { "Content-Length": body.length };
+          // The server is slow to answer its first connection.
+          for (let i = 0; i < 4; i++) {
+            const request = require("node:https").request({ ...options, method: "POST", headers, createConnection });
+            request.on("response", response => {
+              response.setEncoding("utf8").on("data", chunk => console.log(response.statusCode, chunk.trim()));
+            });
+            request.on("error", () => {}).end(body);
+            await new Promise(resolve => request.on("close", resolve));
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
+      expect(stdout.trim().split("\n")).toEqual(Array(4).fill("403 refused"));
+      expect(exitCode).toBe(0);
+    },
+  );
+
   it.each([true, false])("in the handshake is a 'tlsClientError' (allowHalfOpen: %p)", async allowHalfOpen => {
     const clientHello = Promise.withResolvers<Buffer>();
     await using recorder = net.createServer(socket => socket.on("error", () => {}).once("data", clientHello.resolve));

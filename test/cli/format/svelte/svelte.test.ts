@@ -871,25 +871,26 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   });
 
   describe("what only TypeScript has", () => {
-    // The text, and the column of what is refused in a component without `lang="ts"`.
-    const rows: [string, number][] = [
-      ["{(a: number) => a}", 6],
-      ["{(a?) => a}", 4],
-      ["{(a): number => a}", 7],
-      ["{<T,>(a) => a}", 3],
-      ["{<T>a}", 2],
-      ["{function (this: A) {}}", 12],
-      ["{class { private a }}", 10],
-      ["{class A<T> {}}", 10],
-      ["{class A implements B {}}", 10],
-      ["{(a) => { let b: number; }}", 18],
-      ["{() => { type A = 1 }}", 15],
-      ["{() => { enum A {} }}", 15],
-      ["{@const a: number = 1}", 10],
-      ["{let a: number = 1}", 9],
-      ["{#each a as b: number}c{/each}", 14],
-      ["{#snippet a(b: number)}c{/snippet}", 16],
-      ["<p on:click={(a: Event) => a}>b</p>", 18],
+    // The text, the column of what is refused in a component without `lang="ts"`, and what the text is formatted to in one with it.
+    const rows: [string, number, string][] = [
+      ["{(a: number)  =>  a}", 6, "{(a: number) => a}"],
+      ["{(a?)  => a}", 4, "{(a?) => a}"],
+      ["{(a): number  => a}", 7, "{(a): number => a}"],
+      ["{<T,>(a)  => a}", 3, "{<T,>(a) => a}"],
+      ["{<T>a}", 2, "{<T>a}"],
+      ["{function (this: A)  {}}", 12, "{function (this: A) {}}"],
+      ["{class { private a }}", 10, "{class {\n  private a;\n}}"],
+      ["{class A<T>  {}}", 10, "{class A<T> {}}"],
+      ["{class A implements B  {}}", 10, "{class A implements B {}}"],
+      ["{(a) => { let b: number; }}", 18, "{(a) => {\n  let b: number;\n}}"],
+      ["{() => { type A = 1 }}", 15, "{() => {\n  type A = 1;\n}}"],
+      ["{() => { enum A {} }}", 15, "{() => {\n  enum A {}\n}}"],
+      // It is printed as an expression, which a declarator with a type is not: it stays as it is written.
+      ["{@const a: number  =  1}", 10, "{@const a: number  =  1}"],
+      ["{let a: number  =  1}", 9, "{let a: number = 1}"],
+      ["{#each a  as b: number}c{/each}", 15, "{#each a as b: number}c{/each}"],
+      ["{#snippet a(b: number,  c)}d{/snippet}", 16, "{#snippet a(b: number, c)}d{/snippet}"],
+      ["<p on:click={(a: Event)  => a}>b</p>", 18, "<p on:click={(a: Event) => a}>b</p>"],
     ];
     const names = rows.map((_, index) => `${index}.svelte`);
 
@@ -911,7 +912,11 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const files = Object.fromEntries(
         rows.map(([text], index) => [names[index], `<script lang="ts"></script>\n\n${text}\n`]),
       );
-      expect(await format(files, names)).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(await format(files, names)).toMatchObject({
+        stderr: "",
+        files: rows.map(it => `<script lang="ts"></script>\n\n${it[2]}\n`),
+        exitCode: 0,
+      });
     });
 
     test("ends an expression where acorn stops before it", async () => {
@@ -1079,6 +1084,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   test("--debug-check names a component that passes, and writes nothing", async () => {
     const result = await format({ "a.svelte": input }, ["a.svelte"], ["--log-level=log", "--debug-check"]);
     expect(result).toMatchObject({ stdout: "a.svelte\n", stderr: "", files: [input], exitCode: 0 });
+  });
+
+  test("--debug-check knows that a key can go that is the name behind it", async () => {
+    const text = "{#each a as { b: b, c: { d: d } }}e{/each}\n";
+    const checked = await format({ "a.svelte": text }, ["a.svelte"], ["--debug-check"]);
+    expect(checked).toMatchObject({ stderr: "", files: [text], exitCode: 0 });
+    expect((await format({ "a.svelte": text }, ["a.svelte"])).files).toEqual([
+      "{#each a as { b, c: { d } }}e{/each}\n",
+    ]);
   });
 
   test("--debug-check does not take an expression that is spelled like the name of its directive for the name", async () => {

@@ -955,12 +955,11 @@ static void appendRawHeadValue(RawHeadWalk& walk, JSString* name, StringView nam
         Bun::ERR::INVALID_CHAR(scope, globalObject, "header content"_s, nameView.toString());
         return;
     }
-    JSValue number = value;
     if (value.isObject()) {
         // Node checks String(value) and sends `name + ": " + value`, which asks valueOf() first. A text that differs is checked too.
-        number = value.toPrimitive(globalObject);
+        JSValue primitive = value.toPrimitive(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
-        JSString* sent = number.toString(globalObject);
+        JSString* sent = primitive.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         auto sentText = sent->view(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
@@ -969,10 +968,10 @@ static void appendRawHeadValue(RawHeadWalk& walk, JSString* name, StringView nam
                 Bun::ERR::INVALID_CHAR(scope, globalObject, "header content"_s, nameView.toString());
                 return;
             }
-            RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, nameView, sent, sentText, number));
+            RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, nameView, sent, sentText, value));
         }
     }
-    RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, nameView, line, text, number));
+    RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, nameView, line, text, value));
 }
 
 // processHeader() of Node's _http_outgoing.js, without its Content-Disposition step: that step is for a head that Node writes as UTF-8, and a handle writes one byte for each character.
@@ -1055,7 +1054,7 @@ static void appendRawHeaderOfObject(RawHeadWalk& walk, JSObject* object, Propert
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
     bool hasOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot);
     RETURN_IF_EXCEPTION(scope, void());
-    if (!hasOwn || (slot.attributes() & PropertyAttribute::DontEnum))
+    if (!hasOwn)
         return;
     JSValue value = object->type() == ProxyObjectType ? object->get(globalObject, name) : slot.getValue(globalObject, name);
     RETURN_IF_EXCEPTION(scope, void());

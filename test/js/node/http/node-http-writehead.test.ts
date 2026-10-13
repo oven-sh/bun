@@ -301,6 +301,13 @@ describe("writeHead(status, headers) with no header set before sends the header 
     ]);
   });
 
+  test("a Cookie array of one element is not joined, and one of no element is no line", async () => {
+    const { headers } = await respond(res =>
+      res.writeHead(200, flat("Cookie", [], "cookie", [null], "X-A", "1")).end(),
+    );
+    assert.deepStrictEqual(headers, ["cookie: null", "X-A: 1", "Transfer-Encoding: chunked"]);
+  });
+
   test("an object: only its own properties are headers", async () => {
     const { headers } = await respond(res =>
       res.writeHead(200, Object.assign(Object.create({ "X-Inherited": "1" }), { "X-A": "1" })).end(),
@@ -335,6 +342,38 @@ describe("writeHead(status, headers) with no header set before sends the header 
     }
     const lines = ["X-A: 1", "X-B: 2", "Transfer-Encoding: chunked"];
     assert.deepStrictEqual(sent, [lines, lines, lines]);
+  });
+
+  test("a Proxy of an object: the value of a header is what the get trap gives", async () => {
+    const { headers, result } = await respond(res => {
+      const traps: string[] = [];
+      const proxy = new Proxy(
+        { "X-A": "1" },
+        {
+          ownKeys(target) {
+            traps.push("ownKeys");
+            return Reflect.ownKeys(target);
+          },
+          getOwnPropertyDescriptor(target, key) {
+            traps.push(`getOwnPropertyDescriptor ${String(key)}`);
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+          get(target, key, receiver) {
+            traps.push(`get ${String(key)}`);
+            return key === "X-A" ? "from get" : Reflect.get(target, key, receiver);
+          },
+        },
+      );
+      res.writeHead(200, proxy).end();
+      return traps;
+    });
+    assert.deepStrictEqual(
+      { headers, result },
+      {
+        headers: ["X-A: from get", "Transfer-Encoding: chunked"],
+        result: ["ownKeys", "getOwnPropertyDescriptor X-A", "getOwnPropertyDescriptor X-A", "get X-A"],
+      },
+    );
   });
 
   test("an object: a getter is read, and a property that is not enumerable or has a Symbol for its name is not a header", async () => {
@@ -944,7 +983,7 @@ describe("writeHead(status, headers) with no header set before reads the argumen
     assert.strictEqual(result, "ERR_HTTP_INVALID_HEADER_VALUE");
   });
 
-  test("an object: a property that the walk deletes is not sent, one that it adds is not sent, one that it changes is sent", async () => {
+  test("an object: a property that the walk deletes is not sent, one that it adds is not sent, one that it changes or hides is sent", async () => {
     const { headers } = await respond(res => {
       const object: Record<string, unknown> = {
         "X-A": {
@@ -952,15 +991,50 @@ describe("writeHead(status, headers) with no header set before reads the argumen
             delete object["X-B"];
             object["X-C"] = "changed";
             object["X-New"] = "new";
+            Object.defineProperty(object, "X-D", { enumerable: false });
             return "1";
           },
         },
         "X-B": "2",
         "X-C": "3",
+        "X-D": "4",
       };
       res.writeHead(200, object as any).end();
     });
-    assert.deepStrictEqual(headers, ["X-A: 1", "X-C: changed", "Transfer-Encoding: chunked"]);
+    assert.deepStrictEqual(headers, ["X-A: 1", "X-C: changed", "X-D: 4", "Transfer-Encoding: chunked"]);
+  });
+
+  test("an object for a value is asked for a string, then for the value that is sent, and a Content-Length for a number too", async () => {
+    const { headers, body, result } = await respond(res => {
+      const hints: string[] = [];
+      const value = (name: string) => ({
+        [Symbol.toPrimitive](hint: string) {
+          hints.push(`${name} ${hint}`);
+          return hint === "number" ? 7 : "5";
+        },
+      });
+      res.writeHead(200, { "X-A": value("X-A"), "Content-Length": value("Content-Length") } as any);
+      const contentLength = (res as any)._contentLength;
+      res.end("12345");
+      return { hints, contentLength };
+    });
+    assert.deepStrictEqual(
+      { headers, body, result },
+      {
+        headers: ["X-A: 5", "Content-Length: 5"],
+        body: "12345",
+        result: {
+          hints: [
+            "X-A string",
+            "X-A default",
+            "Content-Length string",
+            "Content-Length default",
+            "Content-Length number",
+          ],
+          contentLength: 7,
+        },
+      },
+    );
   });
 
   test("a value whose toString() calls writeHead() does not make the outer call throw", async () => {

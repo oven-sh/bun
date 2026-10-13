@@ -1016,24 +1016,15 @@ impl Run<'_> {
         }
     }
 
-    /// Prettier's `logger.error`
+    /// An error looks the same whichever config there is.
     fn error(&mut self, text: &[u8]) {
-        if self.options.log_level >= LogLevel::Error && self.is_native {
+        if self.options.log_level >= LogLevel::Error {
             pretty!(
                 &mut self.out.stderr,
                 self.colors(),
                 "<red>error<r><d>:<r> {}\n",
                 BStr::new(text)
             );
-        } else if self.options.log_level >= LogLevel::Error {
-            for line in strings::split(text, b"\n") {
-                pretty!(
-                    &mut self.out.stderr,
-                    self.colors(),
-                    "[<red>error<r>] {}\n",
-                    BStr::new(line)
-                );
-            }
         }
         self.out.exit_code = 2;
     }

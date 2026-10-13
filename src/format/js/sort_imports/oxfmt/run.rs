@@ -12,7 +12,7 @@ use std::sync::Arc;
 impl SortImports {
     fn as_oxfmt(&self) -> Option<&Options> {
         match &self.how {
-            How::Oxfmt(options) => Some(options),
+            How::Oxfmt(options) | How::Native(options) => Some(options),
             _ => None,
         }
     }
@@ -413,7 +413,10 @@ fn transform<'a>(
     out: &mut Vec<FormatElement>,
 ) {
     let is_boundary = |line: &Line| match line {
-        Line::Import { .. } => false,
+        Line::Import { index, .. } => {
+            options.stops_at_side_effects
+                && (imports.get(*index as usize)).is_some_and(|it| it.import.is_side_effect())
+        }
         Line::Empty => options.partition_by_newline,
         Line::Comment(_) => options.partition_by_comment,
     };

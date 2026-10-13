@@ -38,11 +38,11 @@ fn not_installed(path: &[u8], config: &ResolvedConfig) -> Vec<u8> {
     [
         b"Cannot lint ",
         path,
-        b": ",
+        b" because ",
         what,
         b" \"",
         name.as_deref().unwrap_or_default(),
-        b"\" runs in ESLint, and the package \"eslint\" is not installed. Run `bun add -d eslint`.",
+        b"\" needs eslint, which is not installed\n  Run bun add -d eslint",
     ]
     .concat()
 }
@@ -88,11 +88,11 @@ impl Context<'_, '_> {
         if !config.is_javascript() {
             return thrown(
                 [
-                    b"The processor of ",
+                    b"The processor for ",
                     file.path,
-                    b" returns text in the language \"",
+                    b" returned code in the language \"",
                     config.language_name.as_deref().unwrap_or_default(),
-                    b"\". Only JavaScript and TypeScript can be linted.",
+                    b"\", but bun lint only supports JavaScript and TypeScript",
                 ]
                 .concat(),
             );

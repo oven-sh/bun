@@ -274,6 +274,7 @@ impl<'s> Checker<'_, 's> {
         }
         self.never_check_with_bodies(file);
         self.never_check_specifier_expressions(file);
+        self.never_check_options_of_import_types(file);
     }
 
     /// Whether `pos` is in a range given to `never_check`.

@@ -459,6 +459,32 @@ impl Names {
         (entry.words == words).then_some((Atom(entry.atom), entry.kind))
     }
 
+    /// The same if it is not, for the name of `len` bytes at `start` in `source`.
+    #[inline]
+    pub(crate) fn short_name_elsewhere(
+        &mut self,
+        words: [u64; 2],
+        source: &[u8],
+        (start, len): (usize, u32),
+        atoms: &dyn Intern,
+    ) -> (Atom, T) {
+        let bit = short_place(words);
+        let at = bit & self.short_mask;
+        // Mostly the file has not had the name yet, and its place is free.
+        if self.is_own
+            && self.short[at].words == [0; 2]
+            && let (None, kind) = self.known_short(words)
+        {
+            self.mention(&words[0].to_le_bytes()[..(len as usize).min(8)], bit);
+            self.spans.push((start as u32, len));
+            let atom = self.spans.len() as u32 - 1;
+            self.short[at] = Short { words, atom, kind };
+            return (Atom(atom), kind);
+        }
+        let text = Text::of_source(source, start, start + len as usize);
+        self.short_elsewhere(words, text, atoms)
+    }
+
     /// The same if it is not.
     pub(crate) fn short_elsewhere(
         &mut self,

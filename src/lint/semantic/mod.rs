@@ -38,7 +38,7 @@
 //! | `scope.variables`, `scope.set.get(name)` | [`Scope::symbols`], [`Scope::get`] |
 //! | `scope.references`, `scope.through` | [`Scope::references`], [`Scope::through`] |
 //! | `scope.upper`, `scope.childScopes`, `scope.variableScope` | [`Scope::parent`], [`Scope::children`], [`Scope::variable_scope`] |
-//! | `findVariable(scope, name)`, `getVariableByName` | [`Scope::resolve`] |
+//! | `findVariable(scope, name)`, `getVariableByName` | [`Scope::resolve`]. With the globals and the second variable of a class: [`Scope::find_variable`] |
 //!
 //! Where the model differs from ESLint's:
 //! - **Globals that the file does not declare are not symbols**: what the configuration, the
@@ -49,16 +49,78 @@
 //!   variable for the name in the scope of the class, which the references inside the class
 //!   resolve to. The name of a class *expression* is a symbol of the scope of the class, as in
 //!   ESLint.
+//! - With a configuration of oxlint the top level of every file is the scope of a module. For
+//!   typescript-eslint, which oxlint hands to a plugin, that of a script is the global scope and
+//!   that of a `.cjs` or `.cts` file the scope of a function, which has an `arguments`.
 //! - `x as const` has no reference to a type `const`.
-//! - References are in source order, but for the names of a destructuring pattern, which come
-//!   before what is in its defaults and computed keys, as in ESLint. ESLint has them in the order
-//!   it visits them, which also differs from the source in this: the type parameters of a function
-//!   after its parameters and its return type, the type of a variable after its initializer, the
-//!   decorators of a member after the member, the index of `a[b]` in a pattern before `a`.
+//! - `(a.b as T)++` has one reference to `T`. typescript-eslint visits the type twice.
+//! - In `[a as T] = b` the `T` is a type that is read. typescript-eslint takes every name in the
+//!   type of an assertion in a destructuring pattern for a variable that is written.
+//!
+//! # ESLint's variables
+//!
+//! A rule that is ported from one that asks "what does this name resolve to" or "what is written
+//! to this variable" can ask [`Variable`], which is ESLint's `Variable` one for one. It undoes the
+//! first two differences above, and has the `arguments` of the third:
+//!
+//! | ESLint | here |
+//! | --- | --- |
+//! | `reference.resolved` | [`Reference::variable`] |
+//! | `scope.set.get(name)` | [`Scope::variable`] |
+//! | `findVariable(scope, name)` | [`Scope::find_variable`] |
+//! | `variable.name`, `scope`, `defs`, `references` | [`Variable::name`], [`Variable::scope`], [`Variable::declarations`], [`Variable::references`] |
+//!
+//! It is a view of the symbols and costs nothing until it is asked.
+//!
+//! # Two analyses
+//!
+//! oxlint analyses a file twice. Its own rules see the scopes of oxc. A rule of a plugin in JavaScript sees those of
+//! typescript-eslint's scope manager, which differ: see
+//! [`has_scopes_of_oxc`](crate::language::LanguageOptions::has_scopes_of_oxc). So it is here with a configuration of
+//! oxlint. A rule that oxlint has sees the scopes of oxc. A plugin in JavaScript, and a rule that is implemented here and that
+//! oxlint lacks, which it could only run as a rule of such a plugin, see those of typescript-eslint. The runner tells the
+//! file which rule is at work, and a rule notices nothing. Each analysis is made when it is asked for the first time, so a
+//! file pays for both only where rules of both kinds ask. What one kind of rule marks ([`Symbol::mark_used`]) the other
+//! does not see, as in oxlint: `markVariableAsUsed` in a plugin does not silence its `no-unused-vars`.
+//!
+//! A [`Symbol`], a [`Scope`] and a [`Reference`] are of the analysis that they come from. A rule keeps them as it likes. What
+//! is kept with the file for rules of both kinds must not hold them.
+//!
+//! # What is not visited
+//!
+//! typescript-eslint's scope manager does not visit the type of the parameter of a `catch` clause
+//! or the options of an import type (`import("m", { with: { .. } })`). There are no scopes, no
+//! symbols and no references in them: [`Func::scope`] and [`Pat::symbol`] are `None` there, and
+//! [`Node::scope`] is the scope around. oxc visits both, so with
+//! [`has_scopes_of_oxc`](crate::language::LanguageOptions::has_scopes_of_oxc) they are like any
+//! other type and any other expression.
+//!
+//! # The order of references
+//!
+//! The scope manager makes the references in the order in which it visits the nodes.
+//! [`Scope::references`] and [`File::references_as_visited`] have that order, so the first
+//! reference to a name is the one that a rule for ESLint finds first. It is worked out when one of
+//! them is asked for the first time. It is the order of the source, but for this:
+//! - the names of a destructuring pattern come before what is in its defaults and computed keys,
+//!   and the index of `a[b]` in a pattern, or at the head of a `for`-`in` or `for`-`of`, before `a`
+//! - the type of a variable comes after its initializer, that of a parameter after its default,
+//!   that of a property of a class after its value and its decorators
+//! - the type arguments of a call, a `new` and a tagged template come after the arguments
+//! - the type parameters of a function come after its parameters and its return type, those of a
+//!   class after what it extends. Signatures and function types are visited as they are written
+//! - the type of `<T>e` comes after `e`, and that of `e as T` before `e` where it is assigned to:
+//!   `(e as T) = 1`, `(e as T)++`
+//! - the decorators of a member come after the member, those of the parameters of a method before
+//!   all its parameters
+//! - the use that JSX makes of `React` is where the first element is
+//!
+//! [`Symbol::references`] has only the first half of the first of these. [`File::references`]
+//! and what else says so is in source order.
 
 use crate::ast::{
     Alias, Class, Enum, EnumMember, Expr, ExprKind, File, Func, Ident, Import, ImportEquals,
-    ImportSpec, Interface, Module, Name, Node, Pat, Stmt, StmtKind, TypeKind, TypeNode, TypeParam,
+    ImportSpec, Interface, Module, Name, Node, Packed, Pat, Stmt, StmtKind, TypeKind, TypeNode,
+    TypeParam,
 };
 use crate::linter::globals::GlobalVariable;
 use crate::span::{Span, Spanned};
@@ -66,19 +128,46 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{self, Decl, ScopeId};
 use bun_sema::hir;
 use rustc_hash::FxHashSet;
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 
+mod order;
 mod references;
 mod scopes;
+mod table_of_oxc;
+mod variable;
 mod variables;
 
 use references::{RawReference, ReferenceSite, References};
 use scopes::{Block, ScopeTree};
+pub use table_of_oxc::{order_in_table, order_in_table_of_oxc};
+pub use variable::{Variable, VariableKind};
 use variables::Variables;
+
+/// What is known about the scopes of a file.
+#[derive(Default)]
+pub(crate) struct ReferenceIndex {
+    /// The analysis that the configuration is for.
+    analysis: Analysis,
+    /// With a configuration of oxlint: that of typescript-eslint, [beside that of oxc](self#two-analyses). Made when it is asked.
+    of_eslint: OnceCell<Box<Analysis>>,
+    /// `of_eslint` is what is asked.
+    asks_eslint: Cell<bool>,
+    /// What `File::global` has said of late, each name at the place that its number tells. Not
+    /// what a comment of the file names. Empty until something is asked.
+    globals: RefCell<Vec<(Atom, Option<GlobalVariable<'static>>)>>,
+}
+
+impl ReferenceIndex {
+    #[cold]
+    #[inline(never)]
+    fn analysis_of_eslint(&self) -> &Analysis {
+        self.of_eslint.get_or_init(Box::default)
+    }
+}
 
 /// Each part is computed the first time it is needed.
 #[derive(Default)]
-pub(crate) struct ReferenceIndex {
+struct Analysis {
     scopes: OnceCell<ScopeTree>,
     variables: OnceCell<Variables>,
     references: OnceCell<References>,
@@ -87,25 +176,70 @@ pub(crate) struct ReferenceIndex {
     marks: RefCell<Vec<u8>>,
     /// See [`File::mark_global_used`].
     marked_globals: RefCell<FxHashSet<Box<[u8]>>>,
-    /// What `File::global` has said of late, each name at the place that its number tells. Not
-    /// what a comment of the file names. Empty until something is asked.
-    globals: RefCell<Vec<(Atom, Option<GlobalVariable<'static>>)>>,
+}
+
+/// While it lives, what asks about the scopes of the file gets the answers of typescript-eslint:
+/// [`File::with_scopes_of_eslint`].
+pub(crate) struct ScopesOfEslint<'f, 'a> {
+    file: &'f File<'a>,
+    asked_before: bool,
+}
+
+impl Drop for ScopesOfEslint<'_, '_> {
+    fn drop(&mut self) {
+        self.file.ask_scopes_of_eslint(self.asked_before);
+    }
 }
 
 const MARKED_USED: u8 = 1 << 0;
 const MARKED_EXPORTED: u8 = 1 << 1;
 
 impl<'a> File<'a> {
-    #[inline]
-    fn semantic(&self) -> &ReferenceIndex {
-        self.lazy.references.get_or_init(ReferenceIndex::default)
+    #[inline(always)]
+    fn semantic_index(&self) -> &ReferenceIndex {
+        &self.lazy.references
     }
 
     #[inline]
+    fn semantic(&self) -> &Analysis {
+        let index = self.semantic_index();
+        match index.asks_eslint.get() {
+            false => &index.analysis,
+            true => index.analysis_of_eslint(),
+        }
+    }
+
+    /// Whether the scopes that are asked now are those of oxc, where they differ from typescript-eslint's:
+    /// [`LanguageOptions::has_scopes_of_oxc`](crate::language::LanguageOptions::has_scopes_of_oxc).
+    #[inline]
+    pub(crate) fn has_scopes_of_oxc(&self) -> bool {
+        self.language().has_scopes_of_oxc && !self.semantic_index().asks_eslint.get()
+    }
+
+    /// From now on, what asks about the scopes gets the [analysis](self#two-analyses) of typescript-eslint, or that of
+    /// oxc again. Only with a configuration of oxlint are these two. Returns what was asked before.
+    #[inline]
+    pub(crate) fn ask_scopes_of_eslint(&self, asks: bool) -> bool {
+        let asks = asks && self.language().has_scopes_of_oxc;
+        self.semantic_index().asks_eslint.replace(asks)
+    }
+
+    /// [`File::ask_scopes_of_eslint`] for as long as what is returned lives.
+    pub(crate) fn with_scopes_of_eslint(&self) -> ScopesOfEslint<'_, 'a> {
+        ScopesOfEslint {
+            file: self,
+            asked_before: self.ask_scopes_of_eslint(true),
+        }
+    }
+
+    // These three are inlined in more than a thousand places. So each has one way out, for what is not computed yet and for
+    // the analysis of typescript-eslint beside that of oxc.
+    #[inline]
     fn scope_tree(&'a self) -> &'a ScopeTree {
-        match self.semantic().scopes.get() {
-            Some(computed) => computed,
-            None => self.compute_scope_tree(),
+        let index = self.semantic_index();
+        match index.analysis.scopes.get() {
+            Some(computed) if !index.asks_eslint.get() => computed,
+            _ => self.compute_scope_tree(),
         }
     }
 
@@ -117,9 +251,10 @@ impl<'a> File<'a> {
 
     #[inline]
     fn variables(&'a self) -> &'a Variables {
-        match self.semantic().variables.get() {
-            Some(computed) => computed,
-            None => self.compute_variables(),
+        let index = self.semantic_index();
+        match index.analysis.variables.get() {
+            Some(computed) if !index.asks_eslint.get() => computed,
+            _ => self.compute_variables(),
         }
     }
 
@@ -133,9 +268,10 @@ impl<'a> File<'a> {
 
     #[inline]
     fn reference_list(&'a self) -> &'a References {
-        match self.semantic().references.get() {
-            Some(computed) => computed,
-            None => self.compute_references(),
+        let index = self.semantic_index();
+        match index.analysis.references.get() {
+            Some(computed) if !index.asks_eslint.get() => computed,
+            _ => self.compute_references(),
         }
     }
 
@@ -250,8 +386,8 @@ impl<'a> Symbol<'a> {
         all.iter().map(move |&decl| Declaration::new(file, decl))
     }
 
-    /// Everything in the file that refers to it, in [ESLint's order](self), which is the source
-    /// order but for the names of destructuring patterns with defaults. A declaration is not a
+    /// Everything in the file that refers to it, in source order but for the names of destructuring
+    /// patterns, which [come before the defaults](self#the-order-of-references). A declaration is not a
     /// reference, but one that gives its name a value makes a write reference of the name, as in
     /// ESLint: `let a = 1`, `function f(a = 1) {}`, `for (const a of b)`.
     #[inline]
@@ -476,7 +612,7 @@ impl<'a> Declaration<'a> {
             Declaration::Interface(it) => it.name().span(),
             Declaration::TypeAlias(it) => it.name().span(),
             Declaration::Enum(it) => it.name().span(),
-            Declaration::EnumMember(it) => it.key()?.span(it.file()),
+            Declaration::EnumMember(it) => it.key()?.inner_span(it.file()),
             Declaration::Module(it) => match it.name() {
                 crate::ast::ModuleName::Ident(name) | crate::ast::ModuleName::String(name) => {
                     name.span()
@@ -756,6 +892,15 @@ impl Spanned for Reference<'_> {
     fn span(&self) -> Span {
         Reference::span(*self)
     }
+
+    /// Where the name is a node of its own.
+    #[inline]
+    fn packed_node(&self) -> Option<Packed> {
+        match self.raw().site {
+            ReferenceSite::Expr(_) | ReferenceSite::Pat(_) => Some(self.node().packed()),
+            _ => None,
+        }
+    }
 }
 
 // ───────────────────────────── scopes ─────────────────────────────
@@ -1022,15 +1167,24 @@ impl<'a> Scope<'a> {
         self.data().is_strict
     }
 
-    /// The references that are written directly in it, not in a scope inside it, in source order:
-    /// ESLint's `scope.references`.
+    /// The references that are written directly in it, not in a scope inside it: ESLint's
+    /// `scope.references`, in [its order](self#the-order-of-references).
     pub fn references(
         self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
         Reference::all_at(
             self.file,
-            self.file.reference_list().in_scopes(self.id.0, self.id.0),
+            (self.file.reference_list()).in_scopes(self.file, self.id.0, self.id.0),
         )
+    }
+
+    /// The same references, nearly in the order of the source: the names of a pattern come before its defaults. For who does
+    /// not go by ESLint's order, which costs a pass over all references of the file the first time it is asked.
+    pub fn references_with_names_of_patterns_first(
+        self,
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        let in_it = self.file.reference_list().in_scope_as_visited(self.id.0);
+        Reference::all_at(self.file, in_it)
     }
 
     /// The references in it, and in the scopes inside it, to what is declared outside it or
@@ -1038,7 +1192,8 @@ impl<'a> Scope<'a> {
     pub fn through(self) -> impl Iterator<Item = Reference<'a>> + 'a {
         let (file, id) = (self.file, self.id.0);
         let (tree, variables) = (file.scope_tree(), file.variables());
-        let all = Reference::all_at(file, file.reference_list().in_scopes(id, self.data().last));
+        let in_it = (file.reference_list()).in_scopes_in_some_order(id, self.data().last);
+        let all = Reference::all_at(file, in_it);
         all.filter(
             move |it| match variables.list.get(it.raw().variable as usize) {
                 Some(variable) => !tree.contains(id, variable.scope),
@@ -1071,6 +1226,43 @@ impl<'a> File<'a> {
     #[inline]
     pub fn scope(&'a self) -> Scope<'a> {
         Scope::new(self, ScopeId(0))
+    }
+
+    /// The symbols whose [`Symbol::declaration_count`] is more than 1. It looks at no other.
+    pub(crate) fn symbols_declared_twice(&'a self) -> impl Iterator<Item = Symbol<'a>> + 'a {
+        let several = self.variables().several.iter();
+        several.map(move |&index| Symbol::at(self, index))
+    }
+
+    /// Whether a block has a declaration of what is a symbol of the function around: a `var`, or a function, as it is for oxc
+    /// outside strict code.
+    pub(crate) fn has_names_that_leave_blocks(&'a self) -> bool {
+        self.variables().has_names_that_leave_blocks
+    }
+
+    /// The symbols of the scopes that hold no `var`, each with the scope, as far as another symbol of the file has the same name.
+    /// `only_of_catch`: only the parameters of `catch` clauses.
+    pub(crate) fn symbols_of_blocks(
+        &'a self,
+        only_of_catch: bool,
+    ) -> impl Iterator<Item = (Scope<'a>, Symbol<'a>)> {
+        let (scopes, variables) = (&self.scope_tree().scopes, self.variables());
+        let blocks = (scopes.iter().zip(0u32..)).filter(move |(it, id)| {
+            it.variable_scope != *id && (!only_of_catch || it.kind == ScopeKind::Catch)
+        });
+        blocks.flat_map(move |(_, id)| {
+            let scope = Scope::new(self, ScopeId(id));
+            let shares_its_name = move |it: &usize| {
+                (variables.list.get(*it)).is_some_and(|it| variables.shares_its_name(it))
+            };
+            let symbols = variables.range_of_scope(id).filter(shares_its_name);
+            symbols.map(move |it| (scope, Symbol::at(self, it as u32)))
+        })
+    }
+
+    /// The scope that a name written at `pos` is declared in.
+    pub(crate) fn scope_at(&'a self, pos: u32) -> Scope<'a> {
+        Scope::new(self, ScopeId(self.scope_tree().scope_at(pos)))
     }
 
     /// The scope of what is declared at the top level: the `Module` scope, the `Function` scope of
@@ -1119,7 +1311,7 @@ impl<'a> File<'a> {
     pub fn global_named(&'a self, name: Name<'a>) -> Option<GlobalVariable<'a>> {
         const REMEMBERED: usize = 64;
         let atom = name.atom();
-        let mut remembered = self.semantic().globals.borrow_mut();
+        let mut remembered = self.semantic_index().globals.borrow_mut();
         if remembered.is_empty() {
             remembered.resize(REMEMBERED, (Atom::NONE, None));
         }
@@ -1166,12 +1358,27 @@ impl<'a> File<'a> {
         within.iter().map(move |raw| Reference { file: self, raw })
     }
 
-    /// Every reference, in [the order ESLint makes them](self).
+    /// Every reference, in [the order ESLint makes them](self#the-order-of-references).
     pub fn references_as_visited(
         &'a self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        let references = self.reference_list();
-        let (all, order) = (&references.all[..], references.visiting_order());
+        self.references_in(self.reference_list().as_made(self))
+    }
+
+    /// Every reference, in source order but for the names of destructuring patterns, which come before what else is in the
+    /// pattern.
+    pub(crate) fn references_with_names_of_patterns_first(
+        &'a self,
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        self.references_in(self.reference_list().visiting_order())
+    }
+
+    /// `order`: indices into `References::all`, or nothing for the order of that.
+    fn references_in(
+        &'a self,
+        order: &'a [u32],
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        let all = &self.reference_list().all[..];
         (0..all.len()).map(move |i| Reference {
             file: self,
             raw: &all[order.get(i).map_or(i, |&it| it as usize)],
@@ -1246,7 +1453,8 @@ impl<'a> Func<'a> {
         Symbol::declared_by(self.file(), Decl::Fn(self.id()))
     }
 
-    /// The scope of its parameters and its body. `None` for an index signature.
+    /// The scope of its parameters and its body. `None` for an index signature, and in
+    /// [what is not visited](self#what-is-not-visited).
     pub fn scope(self) -> Option<Scope<'a>> {
         let scope = *self.file().scope_tree().of_fn.get(self.id().idx())?;
         (scope != scopes::NONE).then(|| Scope::new(self.file(), ScopeId(scope)))

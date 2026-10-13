@@ -1049,10 +1049,8 @@ impl Expected {
                 None
             }
             JsonValue::Object(object) if is_map => {
-                let mut value = match self.value.take() {
-                    Some(Json::Object(value)) => value,
-                    _ => Vec::new(),
-                };
+                let value = self.value.take().and_then(Json::into_object);
+                let mut value = value.unwrap_or_default();
                 let refused = unmarshal_map(object.get(), has_duplicates, &mut value);
                 self.value = Some(Json::Object(value));
                 refused

@@ -1,12 +1,13 @@
 //! What a [`Config`](super::Config) computes once and all threads share.
 
 use crate::js_plugin::{Configured, Rule};
+use crate::language::GlobalsOfOptions;
 use crate::linter::resolved::ResolvedConfig;
 use crate::options::Json;
 use bun_threading::RwLock;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-type Resolved = Vec<(Box<[u32]>, Arc<ResolvedConfig>)>;
+type Resolved = Vec<(Box<[u32]>, Arc<OnceLock<Arc<ResolvedConfig>>>)>;
 type JsInstances = Vec<(Arc<[Json]>, Arc<Configured>)>;
 
 pub(super) struct Cache {
@@ -16,6 +17,8 @@ pub(super) struct Cache {
     js_rules: RwLock<JsInstances>,
     /// For each rule, by its index in the registry: the options that its schema allows.
     valid: RwLock<Vec<Vec<Arc<[Json]>>>>,
+    /// By `$env` and `globals` of `languageOptions`.
+    globals: RwLock<Vec<(Option<Json>, Option<Json>, GlobalsOfOptions)>>,
 }
 
 impl Default for Cache {
@@ -24,6 +27,7 @@ impl Default for Cache {
             resolved: RwLock::new(Vec::new()),
             js_rules: RwLock::new(Vec::new()),
             valid: RwLock::new(Vec::new()),
+            globals: RwLock::new(Vec::new()),
         }
     }
 }
@@ -35,22 +39,47 @@ impl Cache {
         make: impl FnOnce() -> ResolvedConfig,
     ) -> Arc<ResolvedConfig> {
         let find = |all: &Resolved| all.binary_search_by(|it| (*it.0).cmp(indices));
-        {
+        let known = {
             let all = self.resolved.read();
-            if let Ok(at) = find(&all) {
-                return Arc::clone(&all[at].1);
+            find(&all).ok().map(|at| Arc::clone(&all[at].1))
+        };
+        let place = known.unwrap_or_else(|| {
+            let mut all = self.resolved.write();
+            match find(&all) {
+                Ok(at) => Arc::clone(&all[at].1),
+                Err(at) => {
+                    let place = Arc::default();
+                    all.insert(at, (indices.into(), Arc::clone(&place)));
+                    place
+                }
             }
+        });
+        // Not under the lock: it takes the other ones. A thread that wants the same waits for it.
+        Arc::clone(place.get_or_init(|| Arc::new(make())))
+    }
+
+    /// [`GlobalsOfOptions::new`] of `language_options`, which is what `make` does.
+    pub(super) fn globals(
+        &self,
+        language_options: &Json,
+        make: impl FnOnce() -> GlobalsOfOptions,
+    ) -> GlobalsOfOptions {
+        let key = (
+            language_options.get(b"$env"),
+            language_options.get(b"globals"),
+        );
+        let known = self.globals.read();
+        if let Some(found) = known
+            .iter()
+            .find(|it| (it.0.as_ref(), it.1.as_ref()) == key)
+        {
+            return found.2.clone();
         }
-        // Not under the lock: it takes the other one. Two threads may do the same work once.
-        let made = Arc::new(make());
-        let mut all = self.resolved.write();
-        match find(&all) {
-            Ok(at) => Arc::clone(&all[at].1),
-            Err(at) => {
-                all.insert(at, (indices.into(), Arc::clone(&made)));
-                made
-            }
-        }
+        drop(known);
+        let made = make();
+        let entry = (key.0.cloned(), key.1.cloned(), made.clone());
+        self.globals.write().push(entry);
+        made
     }
 
     /// Whether `options` are [known](Cache::set_valid) to be what the schema of the rule at `index` of the registry allows.

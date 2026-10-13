@@ -319,7 +319,10 @@ impl PreserveCaughtError {
         let (property, has_multiple_definitions) = match get_error_cause(call.args(), options_index, is_oxlint) {
             Cause::Unknown => return,
             Cause::Missing => {
-                let report = cx.report(statement, MISSING_CAUSE);
+                let report = cx.report(statement, MISSING_CAUSE).hint_with(|| {
+                    let caught = bstr::BStr::new(caught.bytes());
+                    Some(format!("Pass {{ cause: {caught} }} as the last argument, so that the caught error is not lost."))
+                });
                 match cx.language().is_oxlint {
                     true => report.fix(|fixer| {
                         include_cause_as_oxlint(fixer, (thrown, call), options_index == 2, (caught, param_span))
@@ -377,7 +380,8 @@ impl PreserveCaughtError {
 impl Rule for PreserveCaughtError {
     const META: Meta = Meta::eslint("preserve-caught-error", Kind::Suggestion)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On = On::new().stmts(&[StmtTag::Throw, StmtTag::Try]);
     type State<'a> = ParentCatches<'a>;
 

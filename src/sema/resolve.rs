@@ -435,10 +435,14 @@ pub struct Dialect {
     /// JavaScript has the types and the declarations of Flow, as `flow-parser` reads them.
     pub flow: bool,
     /// What oxc accepts and the parsers of ESLint do not, in JavaScript and in TypeScript: `import source x from "a"`,
-    /// `import.source("a")`, and in TypeScript too something between the `<` and the `/` of a closing tag. A file that is
-    /// refused as a module is read as a script, if nothing in it says that it is a module: `await` is a name there, and
-    /// `<!--` and `-->` start comments, in TypeScript too.
+    /// `import.source("a")`, a `\u` escape in a name of JSX, and in TypeScript too something between the `<` and the `/` of a
+    /// closing tag. A file that is refused as a module is read as a script, if nothing in it says that it is a module:
+    /// `await` is a name there, and `<!--` and `-->` start comments, in TypeScript too. An expression in a type, like a
+    /// computed key, is in the await and yield context of the code around the type.
     pub oxc: bool,
+    /// With `oxc`: the parser says whether a name may be declared twice in a scope (`rare::MAY_REDECLARE`). It is for a caller
+    /// that would make the scopes of the file for nothing else.
+    pub oxc_names: bool,
 }
 
 impl Dialect {
@@ -451,6 +455,7 @@ impl Dialect {
             script,
             flow: false,
             oxc: false,
+            oxc_names: false,
         }
     }
 

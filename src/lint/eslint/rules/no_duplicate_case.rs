@@ -50,7 +50,10 @@ fn equal<'a>(file: &'a File<'a>, a: Expr<'a>, b: Expr<'a>, is_text_enough: bool)
 
 /// oxlint points at the first test that is the same.
 fn report<'a>(case: Case<'a>, first: Span, cx: &Cx<'a, NoDuplicateCase>) {
-    cx.report(if cx.language().is_oxlint { first } else { case.span() }, UNEXPECTED).labels_with(|labels| {
+    let report = cx.report(if cx.language().is_oxlint { first } else { case.span() }, UNEXPECTED).hint_with(|| {
+        Some(format!("Only the first case with this label runs. It is on line {}.", cx.line_of(first.start)))
+    });
+    report.labels_with(|labels| {
         labels.push(case.test().map(Expr::span).unwrap_or_default(), "is duplicated here");
     });
 }
@@ -72,7 +75,7 @@ fn check_by_text<'a>(cases: List<'a, Case<'a>>, cx: &Cx<'a, NoDuplicateCase>) {
 }
 
 impl Rule for NoDuplicateCase {
-    const META: Meta = Meta::eslint("no-duplicate-case", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-duplicate-case", Kind::Problem).recommended().hints();
     const ON: On = On::new().stmts(&[StmtTag::Switch]);
     no_state!();
 

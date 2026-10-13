@@ -17,9 +17,10 @@
 //! resolved as Node.js resolves them, after `paths`: [`AsRequire::as_import`].
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 use bun_core::strings;
-use bun_glob::{BunGlobWalker, Options as GlobOptions, Pattern};
+use bun_glob::{BunGlobWalker, Pattern};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
@@ -226,7 +227,10 @@ impl Scope {
             if !strings::contains_any(last, b".*?") {
                 path.extend_from_slice(b"/**/*");
             }
-            (Pattern::new(&path, GlobOptions::BUN), path.ends_with(b"*"))
+            (
+                Pattern::new(&bun_glob::pattern::of_fast_glob(&path)),
+                path.ends_with(b"*"),
+            )
         };
         let patterns = |written: &[Vec<u8>]| written.iter().map(pattern).collect::<Vec<_>>();
         let written = &project.written;
@@ -467,7 +471,7 @@ impl<'h> Graph<'h> {
             }
             left.iter().count() + a.count() + right.iter().count() + b.count()
         };
-        listed.sort_by_key(distance);
+        bun_lint::utils::sort::sort_by_key(&mut listed, distance);
         listed.dedup();
         let is_for_it = |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
         let chosen = match listed.len() {

@@ -54,7 +54,7 @@ async function lint(files: Files, args: string[], more: Record<string, string> =
   };
 }
 
-/** What expected.json has for a directory. The order in a file is left out: oxlint's is by rule, ours is by position. */
+/** What expected.json has for a directory. The order in a file is left out. */
 async function report(files: Files) {
   const { raw, stderr, exitCode, peak } = await lint(files, ["-f", "json"]);
   if (!raw.startsWith("{")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);

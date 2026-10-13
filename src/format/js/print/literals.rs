@@ -12,9 +12,10 @@ pub(crate) fn write_string_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let is_jsx = matches!(e.parent(), Node::Prop(property) if property.is_jsx_attribute())
         && matches!(e.ast_parent(), AstNodes::JSXAttribute(_));
     let source = f.source_text().text_for(&e);
-    if let Some(context) = context_of_string(source, f) {
-        let place = (e.span(), e.ast_parent());
-        let printed = sorted_string_literal(source, is_jsx, place, context, f);
+    if let Some(context) = context_of_string(source, f)
+        && let place = (e.span(), e.ast_parent())
+        && let Some(printed) = sorted_string_literal(source, is_jsx, place, context, f)
+    {
         return write!(f, text(&printed));
     }
     write!(

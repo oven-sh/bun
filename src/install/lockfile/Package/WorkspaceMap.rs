@@ -410,6 +410,8 @@ impl WorkspaceMap {
         }
 
         if workspace_globs.len() > 0 {
+            let prepared_globs: Vec<glob::Prepared<&[u8]>> =
+                (workspace_globs.iter().map(|it| glob::Prepared::new(&**it))).collect();
             let mut arena = Arena::new();
             for (i, user_pattern) in workspace_globs.iter().enumerate() {
                 // walker/iter borrow `&arena` and Drop at scope exit,
@@ -506,15 +508,14 @@ impl WorkspaceMap {
                         );
 
                         // check if it's negated by any remaining patterns
-                        for next_pattern in &workspace_globs[i + 1..] {
-                            let result =
-                                glob::r#match(next_pattern, matched_path_without_package_json);
+                        for next_pattern in &prepared_globs[i + 1..] {
+                            let result = next_pattern.r#match(matched_path_without_package_json);
                             if result.is_negated() && !result.matches() {
                                 bun_output::scoped_log!(
                                     Lockfile,
                                     "skipping negated path: {}, {}\n",
                                     BStr::new(matched_path_without_package_json),
-                                    BStr::new(next_pattern)
+                                    BStr::new(next_pattern.pattern())
                                 );
                                 continue 'next_match;
                             }

@@ -220,17 +220,13 @@ fn format_embedded(
                 &mut out,
             )
             .is_ok()
-            // A block of which something would be lost stays as it is.
-            && crate::html::has_same_content(code, &out, parser, &options)
     } else {
         match parser {
             b"graphql" => {
                 crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok()
             }
             b"glimmer" => {
-                let mut scratch = crate::handlebars::Scratch::default();
-                crate::handlebars::format(code, &options, &mut scratch, &mut out).is_ok()
-                    && !scratch.is_damaged()
+                crate::handlebars::format(code, &options, &mut Default::default(), &mut out).is_ok()
             }
             b"yaml" => {
                 crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok()
@@ -413,7 +409,8 @@ fn format_in(
         with_pragma.extend_from_slice(&text[front_matter_end..]);
         text = &with_pragma;
     }
-    if bun_core::strings::trim_js_whitespace_start(text).is_empty() {
+    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    if text.trim_ascii_start().is_empty() {
         return Ok(());
     }
 

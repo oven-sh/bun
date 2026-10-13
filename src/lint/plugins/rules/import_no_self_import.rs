@@ -3,7 +3,9 @@ use crate::module_visitor::{Systems, Visitor};
 use bun_lint::paths;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint_oxlint::module_record::{get_loaded_module, is_waiting_for_modules};
+use bun_lint_oxlint::module_record::{
+    get_loaded_module, in_hash_order, is_waiting_for_modules, requested_modules,
+};
 
 /// Forbid a module from importing itself.
 pub struct NoSelfImport;
@@ -13,11 +15,17 @@ const OXLINT: Message = Message::new("", "A module importing itself is not allow
 
 /// oxlint does not look at `require`.
 fn visitor(is_oxlint: bool) -> Visitor {
-    Visitor::of(Systems { esmodule: true, commonjs: !is_oxlint, amd: false })
+    Visitor::of(Systems {
+        esmodule: true,
+        commonjs: !is_oxlint,
+        amd: false,
+    })
 }
 
 impl Rule for NoSelfImport {
-    const META: Meta = Meta::plugin(Plugin::Import, "no-self-import", Kind::Problem).recommended().needs_modules();
+    const META: Meta = Meta::plugin(Plugin::Import, "no-self-import", Kind::Problem)
+        .recommended()
+        .needs_modules();
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -38,19 +46,21 @@ impl Rule for NoSelfImport {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let is_oxlint = file.language().is_oxlint;
-        let visited = visitor(is_oxlint).visit(file);
         if is_oxlint {
             // oxlint knows the declarations at the top level, resolves in its own way, and points at the specifier.
             let Some(me) = file.modules().and_then(|it| it.find(file.path())) else {
                 return;
             };
-            for it in visited.iter().filter(|it| matches!(it.importer.parent(), Node::File(_))) {
-                if get_loaded_module(file, it.specifier).is_some_and(|it| it.module == me) {
-                    cx.report(it.source, OXLINT);
+            for (request, requested_modules) in in_hash_order(requested_modules(file)) {
+                if get_loaded_module(file, request.bytes()).is_some_and(|it| it.module == me) {
+                    for requested_module in requested_modules {
+                        cx.report(requested_module.span, OXLINT);
+                    }
                 }
             }
             return;
         }
+        let visited = visitor(is_oxlint).visit(file);
         let Some(resolvers) = Resolvers::of(file.settings()) else {
             return;
         };

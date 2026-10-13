@@ -390,12 +390,20 @@ impl Expansion {
                 b'*' | b'?' | b'[' | b']' | b'{' | b'}' | b',' => {
                     pattern.extend_from_slice(&[b'[', b, b']']);
                 }
+                // The shell has no literal atom for `(` in a word, so here it is always data. It only means something to the
+                // matcher after one of these, as the start of an extglob group, and without a group `)` and `|` are plain
+                // characters. Any other `(` stays bare, so that `Dropbox (Personal)` is still a literal component, which
+                // the walker opens by name: that follows a symlink, and ignores case where the file system does.
+                b'(' if matches!(pattern.last(), Some(b'?' | b'*' | b'+' | b'@' | b'!')) => {
+                    pattern.extend_from_slice(b"[(]");
+                }
                 // `[!]`/`[^]` would be a negated class, so `!` cannot use the
                 // class wrapper. Only a `!` at the start of a path component
                 // (the same split `build_pattern_components` performs) can act
                 // as pattern syntax — the matcher's negation loop — so wrap
                 // that one in a one-branch brace group whose sole branch is
                 // the literal `!`. Every other `!` already matches literally
+                // (a `(` after it is wrapped, so it can't start `!(`)
                 // and is emitted bare: wrapping each one costs a brace-stack
                 // slot per byte, and a run of more than 10 interpolated `!`
                 // would overflow the matcher's bounded brace stack and turn

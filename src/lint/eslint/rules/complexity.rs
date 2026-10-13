@@ -53,14 +53,20 @@ impl Complexity {
         let inside = |func: Func<'a>| {
             let whole = func.span();
             let start = match func.open_paren() {
-                Some(open) => func.type_params().first().map_or(open, |it| it.span().start),
+                Some(open) => func
+                    .type_params()
+                    .first()
+                    .map_or(open, |it| it.span().start),
                 None => whole.start,
             };
             (Span::new(start, whole.end), 0)
         };
-        let outermost = cx.file().funcs().filter(|it| it.has_body() && it.enclosing().is_none());
+        let outermost = cx
+            .file()
+            .funcs()
+            .filter(|it| it.has_body() && it.enclosing().is_none());
         let mut outermost: Vec<(Span, usize)> = outermost.map(inside).collect();
-        outermost.sort_unstable_by_key(|it| it.0.start);
+        utils::sort::sort_unstable_by_key(&mut outermost, |it| it.0.start);
         // The last that starts before what has been found.
         let mut at = 0;
         let mut around = Vec::with_capacity(found.len());
@@ -68,7 +74,9 @@ impl Complexity {
             let is_at = outermost.get(at).is_some_and(|it| it.0.start <= start)
                 && outermost.get(at + 1).is_none_or(|it| start < it.0.start);
             if !is_at {
-                at = outermost.partition_point(|it| it.0.start <= start).wrapping_sub(1);
+                at = outermost
+                    .partition_point(|it| it.0.start <= start)
+                    .wrapping_sub(1);
             }
             around.push(match outermost.get_mut(at).filter(|it| start < it.0.end) {
                 Some(function) => {
@@ -88,11 +96,14 @@ impl Complexity {
     /// Adds to the complexity of what has the code path that `node` is in: the `Func` of a function
     /// or of a static block, or the `Member` whose initializer it is in. Nothing at the top level.
     fn add<'a>(node: Node<'a>, by: usize, cx: &mut Cx<'a, Self>) {
-        let owner = cx.state.owners.find(node, |inner, ancestor| match ancestor {
-            Node::Func(func) if func.has_body() => Some(ancestor),
-            Node::Member(member) if is_field_initializer(member, inner) => Some(ancestor),
-            _ => None,
-        });
+        let owner = cx
+            .state
+            .owners
+            .find(node, |inner, ancestor| match ancestor {
+                Node::Func(func) if func.has_body() => Some(ancestor),
+                Node::Member(member) if is_field_initializer(member, inner) => Some(ancestor),
+                _ => None,
+            });
         match owner {
             Some(Node::Func(func)) => Self::increase_function(func, by, cx),
             Some(Node::Member(member)) => *cx.state.of_fields.entry(member).or_insert(1) += by,
@@ -119,7 +130,9 @@ impl Complexity {
             // oxlint points at the parentheses too.
             Node::Member(member) if is_oxlint => (
                 b"class field initializer".to_vec(),
-                member.init().map_or_else(|| member.span(), Expr::outer_span),
+                member
+                    .init()
+                    .map_or_else(|| member.span(), Expr::outer_span),
             ),
             Node::Member(member) => (
                 b"Class field initializer".to_vec(),
@@ -137,7 +150,10 @@ impl Complexity {
                 }
             }
             // oxlint points at the function.
-            Node::Func(func) if is_oxlint => (oxlint::get_function_name_with_kind(func), func.estree_span()),
+            Node::Func(func) if is_oxlint => (
+                oxlint::get_function_name_with_kind(func),
+                func.estree_span(),
+            ),
             Node::Func(func) => (
                 upper_case_first(&ast_utils::get_function_name_with_kind(func)).into_owned(),
                 ast_utils::get_function_head_loc(func),
@@ -145,6 +161,7 @@ impl Complexity {
             _ => return,
         };
         cx.report(loc, COMPLEX)
+            .called_with(owner)
             .data("name", name)
             .data("complexity", complexity)
             .data("max", threshold);
@@ -180,9 +197,10 @@ impl Rule for Complexity {
         Complexity {
             threshold: match options.number(0) {
                 Some(n) => Some(n as usize),
-                None if object.has("maximum") || object.has("max") => {
-                    object.usize("maximum").filter(|n| *n != 0).or_else(|| object.usize("max"))
-                }
+                None if object.has("maximum") || object.has("max") => object
+                    .usize("maximum")
+                    .filter(|n| *n != 0)
+                    .or_else(|| object.usize("max")),
                 None => Some(THRESHOLD_DEFAULT),
             },
             is_modified: object.str("variant") == Some("modified"),
@@ -249,11 +267,22 @@ impl Rule for Complexity {
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match stmt.tag() {
-            StmtTag::If | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::While | StmtTag::DoWhile => {
+            StmtTag::If
+            | StmtTag::For
+            | StmtTag::ForIn
+            | StmtTag::ForOf
+            | StmtTag::While
+            | StmtTag::DoWhile => {
                 Self::increase(stmt, 1, cx);
             }
             StmtTag::Try => {
-                if matches!(stmt.kind(), StmtKind::Try { handler: Some(_), .. }) {
+                if matches!(
+                    stmt.kind(),
+                    StmtKind::Try {
+                        handler: Some(_),
+                        ..
+                    }
+                ) {
                     Self::increase(stmt, 1, cx);
                 }
             }
@@ -305,7 +334,9 @@ impl Rule for Complexity {
         };
         Self::count(threshold, cx);
         // oxlint reports an initializer that is a function and the function at one place: the initializer first.
-        for (&member, &complexity) in &cx.state.of_fields {
+        for (&member, &complexity) in
+            utils::sort::in_order_of(&cx.state.of_fields, |it| it.0.span().start)
+        {
             self.report(Node::Member(member), complexity, cx);
         }
         let of_functions = &cx.state.of_functions;

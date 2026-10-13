@@ -28,7 +28,7 @@ macro_rules! file_fields {
         $with! {
             plain: [
                 kind is_js is_flow check_directive is_module_by_decree has_module_syntax
-                has_errors ran_out_of_stack legacy_decorators may_bind_a_parameter_twice
+                has_errors ran_out_of_stack legacy_decorators may_bind_a_parameter_twice rare_syntax
                 has_parse_diagnostics
                 syntax_errors error_pos source_len body jsx_pragmas bases
             ]
@@ -106,27 +106,40 @@ pub struct SharedFile {
     ends: Vec<u32>,
 }
 
+/// `SharedFile::texts` and `ends` while the atoms are numbered.
+#[derive(Default)]
+struct Numbered {
+    texts: Vec<u8>,
+    ends: Vec<u32>,
+    numbers: FxHashMap<Atom, u32>,
+}
+
+impl Numbered {
+    /// Out of line: inlined, there is a copy for each of the 45 kinds of places that have an atom.
+    #[inline(never)]
+    fn number(&mut self, atom: Atom, atoms: &dyn Intern) -> Atom {
+        let number = *self.numbers.entry(atom).or_insert_with(|| {
+            self.texts.extend_from_slice(atoms.bytes(atom));
+            self.ends.push(self.texts.len() as u32);
+            self.ends.len() as u32 - 1
+        });
+        Atom(FIXED + number)
+    }
+}
+
 impl SharedFile {
     /// `file` and `bound` have the atoms of `atoms`. The text of the file is left out.
     pub fn new(file: &File, bound: &Bound, atoms: &dyn Intern) -> SharedFile {
-        let (mut texts, mut ends) = (Vec::new(), Vec::new());
-        let mut numbers: FxHashMap<Atom, u32> = FxHashMap::default();
-        let mut number = |atom: Atom| {
-            let number = *numbers.entry(atom).or_insert_with(|| {
-                texts.extend_from_slice(atoms.bytes(atom));
-                ends.push(texts.len() as u32);
-                ends.len() as u32 - 1
-            });
-            Atom(FIXED + number)
-        };
+        let mut numbered = Numbered::default();
+        let mut number = |atom: Atom| numbered.number(atom, atoms);
         let (mut file, mut bound) = (file_on_the_heap(file), bound_on_the_heap(bound));
         each_atom_of_file(&mut file, &mut number);
         each_atom_of_bound(&mut bound, &mut number);
         SharedFile {
             file,
             bound,
-            texts,
-            ends,
+            texts: numbered.texts,
+            ends: numbered.ends,
         }
     }
 
@@ -157,8 +170,21 @@ impl SharedFile {
     }
 }
 
+// A file and its `Bound` have 140 lists. What copies one is out of line, like `Fixed::copied_in`, so that there is a copy of
+// it for each size of element, not for each list.
+
 fn list_in_arena<'s, T: Copy>(list: &[T], arena: &'s Arena) -> Fixed<'s, T> {
     Fixed::copied_in(arena, list)
+}
+
+#[inline(never)]
+fn few_in_arena<'s, T: Copy>(list: &[T], arena: &'s Arena) -> ArenaFew<'s, T> {
+    ArenaFew::from_iter_in(list.iter().copied(), arena)
+}
+
+#[inline(never)]
+fn list_on_the_heap<T: Copy>(list: &[T]) -> Vec<T> {
+    list.to_vec()
 }
 
 fn file_on_the_heap(file: &File) -> FileBuilder {
@@ -166,8 +192,8 @@ fn file_on_the_heap(file: &File) -> FileBuilder {
         (plain: [$($p:ident)*] lists: [$($l:ident)*] few: [$($f:ident)*] kept: [$($k:ident)*]) => {
             FileIn {
                 $($p: file.$p,)*
-                $($l: file.$l.to_vec(),)*
-                $($f: file.$f.to_vec(),)*
+                $($l: list_on_the_heap(&file.$l),)*
+                $($f: list_on_the_heap(&file.$f),)*
                 $($k: file.$k.to_vec(),)*
                 text: Cow::default(),
                 lazy: LazyCells::default(),
@@ -183,7 +209,7 @@ fn file_in_arena<'s>(file: &FileBuilder, arena: &'s Arena, atoms: &Interner<'s>)
             FileIn {
                 $($p: file.$p,)*
                 $($l: list_in_arena(&file.$l, arena),)*
-                $($f: ArenaFew::from_iter_in(file.$f.iter().copied(), arena),)*
+                $($f: few_in_arena(&file.$f, arena),)*
                 $($k: Cow::Owned(file.$k.clone()),)*
                 text: Cow::default(),
                 lazy: Lazy::new(arena, atoms.session()),
@@ -212,8 +238,8 @@ fn bound_on_the_heap(bound: &Bound) -> BoundBuilder {
         (plain: [$($p:ident)*] lists: [$($l:ident)*] few: [$($f:ident)*] maps: [$($m:ident)*]) => {
             BoundIn {
                 $($p: bound.$p,)*
-                $($l: bound.$l.to_vec(),)*
-                $($f: bound.$f.to_vec(),)*
+                $($l: list_on_the_heap(&bound.$l),)*
+                $($f: list_on_the_heap(&bound.$f),)*
                 $($m: bound.$m.iter().map(|(&key, &value)| (key, value)).collect(),)*
                 this_in_type_literal: bound.this_in_type_literal.iter().copied().collect(),
                 symbols: symbols.collect(),
@@ -250,7 +276,7 @@ fn bound_in_arena<'s>(bound: &BoundBuilder, arena: &'s Arena) -> Bound<'s> {
             BoundIn {
                 $($p: bound.$p,)*
                 $($l: list_in_arena(&bound.$l, arena),)*
-                $($f: ArenaFew::from_iter_in(bound.$f.iter().copied(), arena),)*
+                $($f: few_in_arena(&bound.$f, arena),)*
                 $($m: {
                     let mut exact =
                         hashbrown::HashMap::with_capacity_and_hasher_in(bound.$m.len(), FxBuild, arena);

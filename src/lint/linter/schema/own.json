@@ -203,7 +203,7 @@
       "additionalProperties": false
     }
   ],
-  "bun/no-unbounded-requests": [
+  "bun/axios-no-unbounded-requests": [
     {
       "type": "object",
       "properties": {
@@ -288,7 +288,7 @@
       "additionalProperties": false
     }
   ],
-  "bun/no-unseeded-random-in-property-test": [],
+  "bun/fast-check-no-unseeded-random": [],
   "bun/no-useless-spread-fallback": [
     {
       "type": "object",
@@ -305,7 +305,7 @@
     }
   ],
   "bun/prefer-builtin-sleep": [],
-  "bun/prefer-lazy-schema": [
+  "bun/zod-prefer-lazy-schema": [
     {
       "type": "object",
       "properties": {

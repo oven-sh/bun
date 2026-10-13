@@ -65,7 +65,7 @@ struct Problem {
 
 struct Place {
     line: u32,
-    /// From 1, in bytes.
+    /// From 1, in UTF-16 code units, as everywhere in Bun.
     column: u32,
     line_text: Vec<u8>,
 }
@@ -98,7 +98,7 @@ impl Problem {
             message: message.to_vec(),
             at: Some(Place {
                 line,
-                column: (before.len() - line_start) as u32 + 1,
+                column: strings::utf8_decoded_len_utf16(&before[line_start..]) as u32 + 1,
                 line_text: rest[..end].to_vec(),
             }),
         }
@@ -112,8 +112,8 @@ impl Problem {
                 text: self.message.clone().into(),
                 location: Some(bun_ast::Location {
                     file: shown.to_vec().into(),
-                    line: self.at.as_ref().map_or(0, |it| it.line as i32),
-                    column: self.at.as_ref().map_or(0, |it| it.column as i32),
+                    line: self.at.as_ref().map_or(-1, |it| it.line as i32),
+                    column: self.at.as_ref().map_or(-1, |it| it.column as i32),
                     line_text: self.at.as_ref().map(|it| it.line_text.clone().into()),
                     ..Default::default()
                 }),
@@ -125,7 +125,7 @@ impl Problem {
             true => message.write_format::<true>(&mut printed),
             false => message.write_format::<false>(&mut printed),
         };
-        printed.push('\n');
+        printed.push_str("\n\n");
         printed.into_bytes()
     }
 }

@@ -38,9 +38,10 @@ fn use_splice<'a>(fixer: Fixer<'a>, node: Expr<'a>, object: Expr<'a>, key: Span,
     fixer.replace(node, suggestion)
 }
 
-/// What tsgolint suggests: the `delete` goes, the `[` becomes `.splice(` and the `]` becomes `, 1)`.
+/// What tsgolint suggests: the `delete` goes, the token after the array (the `[`, or the `?.` of
+/// `a?.[b]`) becomes `.splice(` and the `]` becomes `, 1)`.
 fn use_splice_as_tsgolint<'a>(fixer: Fixer<'a>, keyword: Span, object: Expr<'a>, argument: Expr<'a>) -> Option<[Fix; 3]> {
-    let open = fixer.file().token_after(object.outer_span()).filter(|it| it.is_punctuator("["))?;
+    let open = fixer.file().token_after(object.outer_span())?;
     let close = fixer.file().last_token(argument)?;
     Some([fixer.remove(keyword), fixer.replace(open, ".splice("), fixer.replace(close, ", 1)")])
 }
@@ -71,8 +72,8 @@ impl Rule for NoArrayDelete {
             }
             _ => return,
         };
-        // A `ChainExpression` for ESLint.
-        if argument.is_in_optional_chain() {
+        // A `ChainExpression` for ESLint. tsgolint looks at `a?.[b]` like at `a[b]`.
+        if !is_oxlint && argument.is_in_optional_chain() {
             return;
         }
         if !is_underlying_type_array(get_constrained_type_at_location(object)) {

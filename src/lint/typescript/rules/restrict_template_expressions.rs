@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::utils::{
-    TypeOrValueSpecifier, get_constrained_type_at_location, get_type_name, matches_type_or_base_type,
-    parse_type_or_value_specifiers, type_matches_some_specifier,
+    TypeOrValueSpecifier, get_constrained_type_at_location, get_type_name, is_symbol_from_default_library,
+    matches_type_or_base_type, parse_type_or_value_specifiers, type_matches_some_specifier,
 };
 use bun_lint::types::{Type, TypeFlags};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -18,6 +18,11 @@ pub struct RestrictTemplateExpressions {
 
 const INVALID_TYPE: Message =
     Message::new("invalidType", "Invalid type \"{{type}}\" of template literal expression.");
+
+/// tsgolint's `t == globalRegexpType`: the `RegExp` of the default library, not a type that prints as `RegExp`.
+fn is_global_reg_exp_type(ty: Type) -> bool {
+    ty.get_symbol().is_some_and(|symbol| symbol.name() == b"RegExp" && is_symbol_from_default_library(symbol))
+}
 
 impl RestrictTemplateExpressions {
     /// `on_the_way`: the arrays that `inner_type` is in. `type A = A[]` has no end.
@@ -44,7 +49,11 @@ impl RestrictTemplateExpressions {
                     on_the_way.remove(&inner_type);
                     is_allowed
                 })
-            || self.allow_reg_exp && get_type_name(inner_type) == b"RegExp"
+            || self.allow_reg_exp
+                && match inner_type.file().language().is_oxlint {
+                    true => is_global_reg_exp_type(inner_type),
+                    false => get_type_name(inner_type) == b"RegExp",
+                }
     }
 }
 
@@ -91,8 +100,10 @@ impl Rule for RestrictTemplateExpressions {
         let ExprKind::Template(template) = node.kind() else {
             return;
         };
+        // tsgolint asks the parent, which is the ParenthesizedExpression of a tag in parentheses.
         if template.exprs().is_empty()
             || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate)
+                && !(cx.language().is_oxlint && node.is_parenthesized())
         {
             return;
         }
@@ -100,9 +111,14 @@ impl Rule for RestrictTemplateExpressions {
             let expression_type = get_constrained_type_at_location(expression);
             let is_allowed = || self.recursively_check_type(expression_type, &mut FxHashSet::default());
             if !*cx.state.entry(expression_type).or_insert_with(is_allowed) {
-                cx.report(expression, INVALID_TYPE).data("type", expression_type.to_text()).labels_with(|labels| {
+                // tsgolint reports the ParenthesizedExpression.
+                let report = match cx.language().is_oxlint {
+                    true => cx.report(expression.outer_span(), INVALID_TYPE),
+                    false => cx.report(expression, INVALID_TYPE),
+                };
+                report.data("type", expression_type.to_text()).labels_with(|labels| {
                     labels.first(format!("Type: {}", bstr::BStr::new(&expression_type.to_text())));
-                    labels.push(expression, "");
+                    labels.push(expression.outer_span(), "");
                 });
             }
         }

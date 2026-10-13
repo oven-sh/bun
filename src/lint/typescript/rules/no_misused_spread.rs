@@ -141,6 +141,60 @@ fn is_iterable_map(ty: Type) -> bool {
     is_type_recurser(ty, &|t| is_builtin_symbol_like(t, &["Map", "ReadonlyMap"]))
 }
 
+/// Whether tsgolint's `patternVisitor` visits `e`: the left of a `=`, and in an array or object literal that it visits an
+/// element, the value of a property and what is spread. Not the left of a default in these, nor the head of a `for`-`of`.
+fn is_visited_as_pattern(e: Expr) -> bool {
+    let mut at = e;
+    loop {
+        if at.is_parenthesized() {
+            return false;
+        }
+        at = match at.parent() {
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Assign { op: None, target, .. } if target == at => return !is_visited_as_pattern(parent),
+                ExprKind::Array(_) | ExprKind::Spread(_) => parent,
+                _ => return false,
+            },
+            Node::Prop(prop)
+                if prop.value() == Some(at)
+                    && !prop.is_jsx_attribute()
+                    && matches!(prop.kind(), PropKind::Init | PropKind::Spread) =>
+            {
+                match prop.parent() {
+                    Node::Expr(object) => object,
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+    }
+}
+
+/// Whether the array or object literal is a pattern for the original: ESLint's `ArrayPattern` or `ObjectPattern`, or what
+/// tsgolint's `patternVisitor` visits.
+fn is_pattern(literal: Expr) -> bool {
+    match literal.file().language().is_oxlint {
+        true => is_visited_as_pattern(literal),
+        false => literal.is_assignment_target(),
+    }
+}
+
+/// tsgolint's `patternVisitor` visits the initializer of a `PropertyAssignment` and nothing of its computed name.
+fn is_in_unvisited_computed_name(node: Node) -> bool {
+    let mut child = node;
+    for parent in node.ancestors() {
+        if let (Node::Expr(key), Node::Prop(prop)) = (child, parent)
+            && prop.kind() == PropKind::Init
+            && prop.computed_key() == Some(key)
+            && matches!(prop.parent(), Node::Expr(object) if is_visited_as_pattern(object))
+        {
+            return true;
+        }
+        child = parent;
+    }
+    false
+}
+
 impl NoMisusedSpread {
     fn check_array_or_call_spread<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Spread(argument) = node.kind() else {
@@ -152,12 +206,14 @@ impl NoMisusedSpread {
         match parent.kind() {
             ExprKind::Call(_) => {}
             // In an `ArrayPattern` it is a `RestElement`.
-            ExprKind::Array(_) if !parent.is_assignment_target() => {}
+            ExprKind::Array(_) if !is_pattern(parent) => {}
             _ => return,
         }
         let ty = get_constrained_type_at_location(argument);
         let is_misused = || is_string(ty) && !type_matches_some_specifier(ty, &self.allow);
-        if *cx.state.in_lists.entry(ty).or_insert_with(is_misused) {
+        if *cx.state.in_lists.entry(ty).or_insert_with(is_misused)
+            && !(node.file().language().is_oxlint && is_in_unvisited_computed_name(Node::Expr(node)))
+        {
             cx.report(node, NO_STRING_SPREAD);
         }
     }
@@ -193,13 +249,16 @@ impl NoMisusedSpread {
             return;
         };
         // In an `ObjectPattern` it is a `RestElement`.
-        if !node.is_jsx_attribute() && parent.is_assignment_target() {
+        if !node.is_jsx_attribute() && is_pattern(parent) {
             return;
         }
         let ty = get_constrained_type_at_location(argument);
         let Some(misuse) = *cx.state.in_objects.entry(ty).or_insert_with(|| self.misuse_in_object(ty)) else {
             return;
         };
+        if node.file().language().is_oxlint && is_in_unvisited_computed_name(Node::Prop(node)) {
+            return;
+        }
         let report = cx.report(
             node,
             match misuse {

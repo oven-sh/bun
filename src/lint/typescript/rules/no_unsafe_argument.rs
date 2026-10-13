@@ -73,7 +73,12 @@ fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
             };
             let argument_type = argument.ty();
             if is_unsafe_assignment(argument_type, parameter_type, argument).is_some() {
-                cx.report(argument, UNSAFE_ARGUMENT)
+                // tsgolint has a node for the parentheses around an argument, and reports that.
+                let report = match cx.language().is_oxlint {
+                    true => cx.report(argument.outer_span(), UNSAFE_ARGUMENT),
+                    false => cx.report(argument, UNSAFE_ARGUMENT),
+                };
+                report
                     .data("receiver", describe_type(parameter_type, cx))
                     .data("sender", describe_type(argument_type, cx));
             }

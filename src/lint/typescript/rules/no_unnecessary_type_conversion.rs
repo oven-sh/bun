@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::union_constituents;
-use bun_lint::types::utils::{get_constrained_type_at_location, is_type_flag_set};
+use bun_lint::types::utils::{get_constrained_type_at_location, is_builtin_symbol_like, is_type_flag_set};
 use bun_lint::types::{SymbolFlags, Type, TypeFlags};
 use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer_for_chain_element, get_wrapping_fixer_without_wrap,
@@ -39,8 +39,10 @@ fn type_of_operand(e: Expr<'_>) -> Type<'_> {
     }
 }
 
+/// For tsgolint `('')` is a `ParenthesizedExpression`, not a string literal.
 fn is_empty_string_literal(e: Expr) -> bool {
     e.as_string().is_some_and(|value| value.bytes().is_empty())
+        && !(e.file().language().is_oxlint && e.is_parenthesized())
 }
 
 #[derive(Copy, Clone)]
@@ -176,11 +178,17 @@ fn check_call<'a>(node: Expr<'a>, cx: &Context<'a>) {
     let (object, property) = match callee.kind() {
         ExprKind::Ident(name) => return check_built_in_call(node, call, name, cx),
         ExprKind::Dot { obj, name, .. } if name.bytes() == b"toString" => (obj, name.span()),
-        ExprKind::Index { obj, index, .. } if index.is_ident("toString") => (obj, index.span()),
+        // tsgolint looks at a `PropertyAccessExpression` only.
+        ExprKind::Index { obj, index, .. } if !cx.language().is_oxlint && index.is_ident("toString") => {
+            (obj, index.span())
+        }
         _ => return,
     };
-    // `(a?.toString)()` calls a `ChainExpression`. tsgolint leaves a call with arguments alone.
-    if callee.is_chain_root() || cx.language().is_oxlint && !call.args().is_empty() {
+    // `(a?.toString)()` calls a `ChainExpression`. tsgolint leaves a callee in parentheses and a call
+    // with arguments alone.
+    if callee.is_chain_root()
+        || cx.language().is_oxlint && (callee.is_parenthesized() || !call.args().is_empty())
+    {
         return;
     }
     let ty = get_constrained_type_at_location(object);
@@ -202,22 +210,49 @@ fn check_call<'a>(node: Expr<'a>, cx: &Context<'a>) {
 }
 
 fn check_built_in_call<'a>(node: Expr<'a>, call: Call<'a>, name: Name<'a>, cx: &Context<'a>) {
-    let (type_flag, type_string, violation) = match name.bytes() {
-        b"BigInt" => (TypeFlags::BIG_INT_LIKE, "bigint", "Passing a bigint to BigInt()"),
-        b"Boolean" => (TypeFlags::BOOLEAN_LIKE, "boolean", "Passing a boolean to Boolean()"),
-        b"Number" => (TypeFlags::NUMBER_LIKE, "number", "Passing a number to Number()"),
-        b"String" => (TypeFlags::STRING_LIKE, "string", "Passing a string to String()"),
+    let (type_flag, type_string, violation, builtins) = match name.bytes() {
+        b"BigInt" => (
+            TypeFlags::BIG_INT_LIKE,
+            "bigint",
+            "Passing a bigint to BigInt()",
+            &["BigInt", "BigIntConstructor"],
+        ),
+        b"Boolean" => (
+            TypeFlags::BOOLEAN_LIKE,
+            "boolean",
+            "Passing a boolean to Boolean()",
+            &["Boolean", "BooleanConstructor"],
+        ),
+        b"Number" => (
+            TypeFlags::NUMBER_LIKE,
+            "number",
+            "Passing a number to Number()",
+            &["Number", "NumberConstructor"],
+        ),
+        b"String" => (
+            TypeFlags::STRING_LIKE,
+            "string",
+            "Passing a string to String()",
+            &["String", "StringConstructor"],
+        ),
         _ => return,
     };
     let callee = call.callee();
     let Some(argument) = call.args().first() else {
         return;
     };
-    // tsgolint leaves a call with more arguments alone.
-    if cx.language().is_oxlint && call.args().len() > 1 {
-        return;
-    }
-    if callee.symbol().is_some()
+    if cx.language().is_oxlint {
+        // tsgolint wants a name that is not in parentheses and one argument that is no spread, and
+        // asks the type of the callee, not what the name is bound to.
+        if callee.is_parenthesized()
+            || call.args().len() > 1
+            || argument.tag() == ExprTag::Spread
+            || !is_builtin_symbol_like(callee.ty(), builtins)
+            || !does_underlying_type_match_flag(get_constrained_type_at_location(argument), type_flag)
+        {
+            return;
+        }
+    } else if callee.symbol().is_some()
         || !does_underlying_type_match_flag(get_constrained_type_at_location(argument), type_flag)
         || Node::Expr(node).scope().resolve_name(name).is_some()
     {
@@ -235,9 +270,12 @@ fn check_built_in_call<'a>(node: Expr<'a>, call: Call<'a>, name: Name<'a>, cx: &
     );
 }
 
-fn is_integer_literal_type(ty: Type) -> bool {
+/// tsgolint compares the value with its `math.Trunc`, which holds for an infinite one.
+fn is_integer_literal_type(ty: Type, is_oxlint: bool) -> bool {
     is_type_flag_set(ty, TypeFlags::NUMBER_LITERAL)
-        && ty.number_value().is_some_and(|value| value.is_finite() && value.fract() == 0.0)
+        && ty
+            .number_value()
+            .is_some_and(|value| value.fract() == 0.0 || is_oxlint && value.is_infinite())
 }
 
 fn check_unary<'a>(outer_node: Expr<'a>, cx: &Context<'a>) {
@@ -247,7 +285,10 @@ fn check_unary<'a>(outer_node: Expr<'a>, cx: &Context<'a>) {
     // `node` is the operator next to the argument: the second of `!!` and `~~`.
     let (node, argument) = match (op, operand.kind()) {
         (UnOp::Plus, _) => (outer_node, operand),
-        (UnOp::Not | UnOp::BitNot, ExprKind::Unary { op: inner, operand: argument }) if inner == op => {
+        // For tsgolint the parent of the inner operator of `!(!a)` is the parentheses.
+        (UnOp::Not | UnOp::BitNot, ExprKind::Unary { op: inner, operand: argument })
+            if inner == op && !(cx.language().is_oxlint && operand.is_parenthesized()) =>
+        {
             (operand, argument)
         }
         _ => return,
@@ -265,7 +306,7 @@ fn check_unary<'a>(outer_node: Expr<'a>, cx: &Context<'a>) {
             "Using !! on a boolean",
         ),
         _ => (
-            union_constituents(ty).iter().all(is_integer_literal_type),
+            union_constituents(ty).iter().all(|t| is_integer_literal_type(t, cx.language().is_oxlint)),
             "number",
             "Using ~~ on an integer",
         ),

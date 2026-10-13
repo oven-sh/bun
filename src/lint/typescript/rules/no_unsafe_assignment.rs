@@ -218,7 +218,7 @@ fn check_pattern<'a>(
         TargetKind::Array => {
             check_array_destructure(cx, receiver_node, receiver_span, sender_type, parts)
         }
-        TargetKind::Object => check_object_destructure(receiver_node, sender_type, parts),
+        TargetKind::Object => check_object_destructure(cx, receiver_node, sender_type, parts),
         TargetKind::Ident(_) | TargetKind::Other(_) => {}
     }
     if let Some(added) = parts.get_mut(others..) {
@@ -253,17 +253,30 @@ fn check_array_destructure<'a>(
     let tuple_elements = sender_type.get_type_arguments();
     for (receiver_index, receiver_element) in receiver_node.elements().iter().enumerate() {
         // A rest element is not a 1:1 assignment.
-        if let Some(target) = receiver_element.target
-            && !receiver_element.is_rest
+        if !receiver_element.is_rest
             && let Some(sender_type) = tuple_elements.get(receiver_index)
         {
             let (sender, message) = (Sender::Type(sender_type), UNSAFE_ARRAY_PATTERN_FROM_TUPLE);
-            parts.push(Destructured::new(receiver_element, target, sender, message));
+            match (receiver_element.target, receiver_element.node) {
+                (Some(target), _) => {
+                    parts.push(Destructured::new(receiver_element, target, sender, message));
+                }
+                // tsgolint checks the `OmittedExpression` that a hole of an array literal is.
+                (None, Node::Expr(hole)) if cx.language().is_oxlint => parts.push(Destructured {
+                    span: receiver_span.of_comments,
+                    has_default: false,
+                    target: Target::Expr(hole),
+                    sender,
+                    message,
+                }),
+                (None, _) => {}
+            }
         }
     }
 }
 
 fn check_object_destructure<'a>(
+    cx: &Context<'a>,
     receiver_node: Target<'a>,
     sender_type: Type<'a>,
     parts: &mut Vec<Destructured<'a>>,
@@ -282,6 +295,11 @@ fn check_object_destructure<'a>(
             continue;
         };
         let key = match key.kind() {
+            // For tsgolint a key in brackets has a name if it is a literal: a regular expression is one, a keyword is not.
+            KeyKind::Computed(expression) if cx.language().is_oxlint => {
+                (expression.tag() == ExprTag::Regex && !expression.is_parenthesized())
+                    .then(|| expression.text())
+            }
             KeyKind::Computed(expression) => name_of_keyword(expression),
             _ => key.name().map(Name::bytes),
         };
@@ -470,10 +488,43 @@ fn check_assignment_to_target<'a>(
     }
 }
 
+/// Whether tsgolint's `visitLintNodes` comes to this array or object as a pattern: from the left of a `=`, through
+/// elements, values of properties and spreads. The left of a default in a pattern is not one, nor is that of a `for`.
+fn is_pattern(node: Expr) -> bool {
+    let (mut at, mut allows_pattern) = (node, false);
+    loop {
+        if at.is_parenthesized() {
+            return allows_pattern;
+        }
+        at = match at.parent() {
+            Node::Expr(parent) => match parent.as_assign() {
+                // The left of an assignment that is itself in a pattern is visited as an expression.
+                Some((None, left, _)) if left == at => {
+                    allows_pattern = !allows_pattern;
+                    parent
+                }
+                None if matches!(parent.tag(), ExprTag::Array | ExprTag::Spread) => parent,
+                _ => return allows_pattern,
+            },
+            Node::Prop(property)
+                if property.value() == Some(at)
+                    && matches!(property.kind(), PropKind::Init | PropKind::Spread)
+                    && !property.is_jsx_attribute() =>
+            {
+                match property.parent() {
+                    Node::Expr(object) => object,
+                    _ => return allows_pattern,
+                }
+            }
+            _ => return allows_pattern,
+        };
+    }
+}
+
 fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
     // The properties of an object pattern are checked via assignments.
     if node.is_import_attribute()
-        || matches!(node.parent(), Node::Expr(object) if object.is_assignment_target())
+        || matches!(node.parent(), Node::Expr(object) if !cx.language().is_oxlint && object.is_assignment_target())
     {
         return;
     }
@@ -545,8 +596,17 @@ impl NoUnsafeAssignment {
         let ExprKind::Spread(argument) = node.kind() else {
             return;
         };
-        if !matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Array && !parent.is_assignment_target())
-        {
+        let Node::Expr(parent) = node.parent() else {
+            return;
+        };
+        if parent.tag() != ExprTag::Array {
+            return;
+        }
+        let is_rest = match cx.language().is_oxlint {
+            true => is_pattern(parent),
+            false => parent.is_assignment_target(),
+        };
+        if is_rest {
             return;
         }
         let rest_type = argument.ty();
@@ -568,6 +628,30 @@ impl NoUnsafeAssignment {
 }
 
 impl NoUnsafeAssignment {
+    // tsgolint's listener for an `ObjectLiteralExpression` that is not a pattern.
+    fn object<'a>(node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Object(properties) = node.kind() else {
+            return;
+        };
+        if is_pattern(node) {
+            return;
+        }
+        for property in properties {
+            let kind = property.kind();
+            if !matches!(kind, PropKind::Init | PropKind::Shorthand) {
+                continue;
+            }
+            let Some(value) = property.value() else {
+                return;
+            };
+            // It leaves the object at a value that is an assignment: the properties after it are not checked.
+            if kind == PropKind::Init && value.tag() == ExprTag::Assign {
+                return;
+            }
+            check_property(cx, property, value);
+        }
+    }
+
     // An `AssignmentPattern` in a declaration.
     fn check_param<'a>(node: Param<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(right) = node.default() {
@@ -654,7 +738,7 @@ impl Rule for NoUnsafeAssignment {
         .requires_types();
     const ON: On = On::new()
         .members()
-        .exprs(&[ExprTag::Assign, ExprTag::Spread])
+        .exprs(&[ExprTag::Assign, ExprTag::Spread, ExprTag::Object])
         .params()
         .pats(&[PatTag::Array, PatTag::Object])
         .var_decls()
@@ -665,6 +749,21 @@ impl Rule for NoUnsafeAssignment {
 
     fn new(_: &Options) -> Self {
         NoUnsafeAssignment
+    }
+
+    // Only tsgolint goes through the properties of an object literal in their order.
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.language().is_oxlint {
+            true => Self::ON,
+            false => On::new()
+                .members()
+                .exprs(&[ExprTag::Assign, ExprTag::Spread])
+                .params()
+                .pats(&[PatTag::Array, PatTag::Object])
+                .var_decls()
+                .props()
+                .finish(),
+        }
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
@@ -678,7 +777,8 @@ impl Rule for NoUnsafeAssignment {
         };
         if node.kind() != MemberKind::Property
             || node.is_signature()
-            || node.flags().contains(Flags::ABSTRACT)
+            // tsgolint checks every `PropertyDeclaration` that has an initializer.
+            || (node.flags().contains(Flags::ABSTRACT) && !cx.language().is_oxlint)
         {
             return;
         }
@@ -693,6 +793,7 @@ impl Rule for NoUnsafeAssignment {
         match node.tag() {
             ExprTag::Assign => cx.state.push((node.span(), Assignment::Expr(node))),
             ExprTag::Spread => Self::spread(node, cx),
+            ExprTag::Object => Self::object(node, cx),
             _ => {}
         }
     }
@@ -732,7 +833,10 @@ impl Rule for NoUnsafeAssignment {
             return;
         };
         if !node.is_jsx_attribute() {
-            check_property(cx, node, value);
+            // For tsgolint the properties are checked from their object: `Self::object`.
+            if !cx.language().is_oxlint {
+                check_property(cx, node, value);
+            }
         } else if node.kind() != PropKind::Spread
             && value.jsx_container_span().is_some()
             && !value.is_missing()

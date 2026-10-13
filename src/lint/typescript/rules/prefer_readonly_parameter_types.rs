@@ -13,12 +13,13 @@ pub struct PreferReadonlyParameterTypes {
 const SHOULD_BE_READONLY: Message = Message::new("shouldBeReadonly", "Parameter should be a read only type.");
 
 /// `actualParam.typeAnnotation`. An `AssignmentPattern` has none: the annotation is part of its `left`.
-fn type_annotation(param: Param<'_>) -> Option<TypeNode<'_>> {
-    param.ty().filter(|_| param.default().is_none())
+/// tsgolint's `parameter.Type()` is the annotation of a parameter with a default too.
+fn type_annotation(param: Param<'_>, is_oxlint: bool) -> Option<TypeNode<'_>> {
+    param.ty().filter(|_| is_oxlint || param.default().is_none())
 }
 
-fn get_parameter_type(param: Param<'_>) -> Type<'_> {
-    if let Some(annotation) = type_annotation(param) {
+fn get_parameter_type(param: Param<'_>, is_oxlint: bool) -> Type<'_> {
+    if let Some(annotation) = type_annotation(param, is_oxlint) {
         // From the annotation, which preserves the `aliasSymbol`.
         return annotation.ts_node().get_type_from_type_node();
     }
@@ -51,22 +52,26 @@ impl Rule for PreferReadonlyParameterTypes {
         if matches!(func.kind(), FnKind::ConstructorType | FnKind::IndexSignature | FnKind::StaticBlock) {
             return;
         }
-        // tsgolint does not look at setters.
-        if func.kind() == FnKind::Setter && cx.language().is_oxlint {
+        let is_oxlint = cx.language().is_oxlint;
+        // tsgolint does not look at accessors.
+        if is_oxlint && matches!(func.kind(), FnKind::Getter | FnKind::Setter) {
             return;
         }
+        // tsgolint's `isParameterProperty`: only a parameter of a constructor is one.
+        let has_parameter_properties = !is_oxlint || func.kind() == FnKind::Constructor;
         for param in func.params_with_this() {
-            if !self.check_parameter_properties && param.is_parameter_property() {
+            let is_parameter_property = has_parameter_properties && param.is_parameter_property();
+            if !self.check_parameter_properties && is_parameter_property {
                 continue;
             }
-            if self.ignore_inferred_types && type_annotation(param).is_none() {
+            if self.ignore_inferred_types && type_annotation(param, is_oxlint).is_none() {
                 continue;
             }
-            let ty = get_parameter_type(param);
+            let ty = get_parameter_type(param, is_oxlint);
             let is_mutable = || !is_type_readonly(ty, &self.readonlyness) && !is_type_branded_literal_like(ty);
             if *cx.state.entry(ty).or_insert_with(is_mutable) {
                 // oxlint points at the decorators of what is no parameter property.
-                let place = match cx.language().is_oxlint && !param.is_parameter_property() {
+                let place = match is_oxlint && !is_parameter_property {
                     true => param.span(),
                     false => param.span_without_modifiers(),
                 };

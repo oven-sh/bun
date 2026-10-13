@@ -52,8 +52,16 @@ fn is_symbol_type_based(symbol: Option<TsSymbol>) -> Option<bool> {
     None
 }
 
-fn is_specifier_type_based(specifier: ExportSpec) -> Option<bool> {
-    is_symbol_type_based(NameOf(specifier).ts_symbol())
+fn is_specifier_type_based(specifier: ExportSpec, is_oxlint: bool) -> Option<bool> {
+    // tsgolint asks at the `propertyName` of `a as b`: the immediate alias of the specifier.
+    let property_name = match is_oxlint {
+        true => specifier.ts_node().property_name(),
+        false => None,
+    };
+    is_symbol_type_based(match property_name {
+        Some(property_name) => property_name.get_symbol_at_location(),
+        None => NameOf(specifier).ts_symbol(),
+    })
 }
 
 /// `raw` of a `Literal`, `name` of an `Identifier`.
@@ -190,8 +198,9 @@ impl ConsistentTypeExports {
         if export.is_type_only() {
             return;
         }
+        let is_oxlint = cx.language().is_oxlint;
         let is_type_based = |specifier: ExportSpec<'a>| {
-            !specifier.is_type_only() && is_specifier_type_based(specifier) == Some(true)
+            !specifier.is_type_only() && is_specifier_type_based(specifier, is_oxlint) == Some(true)
         };
         if !export.items().iter().any(is_type_based) {
             return;
@@ -207,7 +216,7 @@ impl ConsistentTypeExports {
                 report.inline_type_specifiers.push(specifier);
                 continue;
             }
-            match is_specifier_type_based(specifier) {
+            match is_specifier_type_based(specifier, is_oxlint) {
                 Some(true) => report.type_based_specifiers.push(specifier),
                 Some(false) => report.value_specifiers.push(specifier),
                 None => {}
@@ -220,7 +229,6 @@ impl ConsistentTypeExports {
         }
 
         // tsgolint names them as they are written, `a as b`, and has a comma before the `and`.
-        let is_oxlint = cx.language().is_oxlint;
         let name_of = |specifier: &ExportSpec<'a>| {
             let mut name = Vec::new();
             match is_oxlint {

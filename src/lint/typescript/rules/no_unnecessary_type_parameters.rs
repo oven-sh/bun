@@ -52,6 +52,23 @@ fn is_type_argument(reference: Reference) -> bool {
     }
 }
 
+/// What tsgolint takes for a reference: an identifier whose parent is a type node. Not the `T` of `T.Member`, whose
+/// parent is a qualified name.
+fn is_identifier_of_type_node(reference: Reference) -> bool {
+    match reference.node() {
+        Node::Type(ty) => match ty.kind() {
+            TypeKind::Ref { name, .. } => name.len() == 1,
+            TypeKind::Predicate { .. } => true,
+            _ => false,
+        },
+        // `typeof T`, where a value of the name is one symbol with the type parameter.
+        Node::Expr(expr) => {
+            matches!(expr.parent(), Node::Type(ty) if matches!(ty.kind(), TypeKind::Typeof { .. }))
+        }
+        _ => false,
+    }
+}
+
 fn is_type_parameter_repeated_in_ast<'a>(
     node: TypeParam<'a>,
     references: impl Iterator<Item = Reference<'a>>,
@@ -66,8 +83,14 @@ fn is_type_parameter_repeated_in_ast<'a>(
         // the signature, nor a value of the same name.
         if (identifier.start < definition.end && identifier.end > definition.start)
             || identifier.start > start_of_body
-            || !reference.is_type()
         {
+            continue;
+        }
+        let is_reference = match is_oxlint {
+            true => is_identifier_of_type_node(reference),
+            false => reference.is_type(),
+        };
+        if !is_reference {
             continue;
         }
         // tsgolint leaves a type argument to the types: in `Missing<T> & { a: 1 }`, which is `any`, there is no `T`.
@@ -238,8 +261,9 @@ impl<'a> UsageCounter<'a, '_> {
     /// `Map<K, V>`, are not looked into.
     fn visit_object_type(&mut self, ty: Type<'a>) {
         let properties = ty.get_properties();
+        let is_oxlint = ty.file().language().is_oxlint;
         // tsgolint looks at the properties each time: `{ a: T }` in a parameter and in what is returned is two uses.
-        if self.visited_symbol_lists.insert(ty) || ty.file().language().is_oxlint {
+        if self.visited_symbol_lists.insert(ty) || is_oxlint {
             for symbol in properties {
                 self.visit_type(symbol.get_type(), Uses::One, Place::Elsewhere);
             }
@@ -257,7 +281,16 @@ impl<'a> UsageCounter<'a, '_> {
         {
             self.visit_type(type_parameter, Uses::One, Place::Elsewhere);
             // `{ [k in "a"]: T }` is like `{ a: T }`: its properties have been counted.
-            if properties.is_empty() {
+            if properties.is_empty() && is_oxlint {
+                // tsgolint reads the template type where the checker keeps it, which is not on an instantiation: of
+                // that it visits the constraint type. An instantiation has a type parameter of its own.
+                let declared = type_parameter.get_symbol().map(|symbol| symbol.get_declared_type());
+                let visited = match declared.is_some_and(|declared| declared != type_parameter) {
+                    true => constraint_type,
+                    false => template_type,
+                };
+                self.visit_type(visited, Uses::One, Place::Elsewhere);
+            } else if properties.is_empty() {
                 self.visit_type(template_type, Uses::One, Place::Elsewhere);
                 // The declaration of the type parameter has the constraint from before the
                 // instantiation.
@@ -265,7 +298,8 @@ impl<'a> UsageCounter<'a, '_> {
                     self.visit_type(constraint_type, Uses::One, Place::Elsewhere);
                 }
             }
-            if let Some(name_type) = name_type {
+            // tsgolint does not visit the name type.
+            if let Some(name_type) = name_type.filter(|_| !is_oxlint) {
                 self.visit_type(name_type, Uses::One, Place::Elsewhere);
             }
         }
@@ -403,16 +437,26 @@ fn check_node<'a>(
         }
         // Inferred types take the type checker.
         let counts = counts.get_or_insert_with(|| count_type_parameter_usage(&mut cx.state));
-        let uses = match counts.get(&type_parameter.ts_node()).copied() {
+        // tsgolint counts by the symbol, which a class has in common with an interface of its name.
+        let declaration = match is_oxlint {
+            true => {
+                let symbol = type_parameter.ts_node().get_type_at_location().get_symbol();
+                symbol.and_then(|symbol| symbol.declarations().next())
+            }
+            false => Some(type_parameter.ts_node()),
+        };
+        let uses = match declaration.and_then(|declaration| counts.get(&declaration).copied()) {
             Some(1) => "never used",
             Some(2) => "used only once",
             _ => continue,
         };
         // oxlint points at where it is used.
-        let place = match variable.references().next().filter(|_| cx.language().is_oxlint) {
-            Some(reference) => reference.span(),
-            None if cx.language().is_oxlint => type_parameter.name().span(),
-            None => type_parameter.span(),
+        let place = match is_oxlint {
+            true => match variable.references().find(|&reference| is_identifier_of_type_node(reference)) {
+                Some(reference) => reference.span(),
+                None => type_parameter.name().span(),
+            },
+            false => type_parameter.span(),
         };
         cx.report(place, SOLE)
             .comments_apply_at(type_parameter.span())
@@ -454,6 +498,8 @@ impl Rule for NoUnnecessaryTypeParameters {
         }
         let start_of_body = match node.body() {
             FnBody::Block(_) => node.body_span().map(|body| body.start),
+            // For tsgolint what a returned function mentions is part of the signature.
+            FnBody::Expr(body) if cx.language().is_oxlint && body.as_fn().is_some() && !body.is_parenthesized() => None,
             FnBody::Expr(body) => Some(body.span().start),
             FnBody::None => node.return_type().map(|return_type| return_type.annotation_span().end),
         };

@@ -79,13 +79,25 @@ fn is_possibly_used_before_assigned(node: Expr) -> bool {
         && let Some(declarator_node) = declaration.to_ast()
         && !has_parser_context_flags(declarator_node)
     {
-        let scope = Node::Expr(node).scope();
-        let mut parent_scope = declarator_node.scope().parent();
-        while let Some(it) = parent_scope {
-            if it == scope {
-                return true;
+        // tsgolint goes by TypeScript's block scope containers: the `for` of `for (var a of b)` is one.
+        if node.file().language().is_oxlint {
+            let scope = get_enclosing_block_scope_container(node.ts_node());
+            let mut parent_scope = get_enclosing_block_scope_container(declaration);
+            while let Some(it) = parent_scope {
+                parent_scope = get_enclosing_block_scope_container(it);
+                if parent_scope.is_some() && parent_scope == scope {
+                    return true;
+                }
             }
-            parent_scope = it.parent();
+        } else {
+            let scope = Node::Expr(node).scope();
+            let mut parent_scope = declarator_node.scope().parent();
+            while let Some(it) = parent_scope {
+                if it == scope {
+                    return true;
+                }
+                parent_scope = it.parent();
+            }
         }
     }
 
@@ -104,6 +116,33 @@ fn is_possibly_used_before_assigned(node: Expr) -> bool {
         }
     }
     false
+}
+
+/// TypeScript's `getEnclosingBlockScopeContainer`.
+fn get_enclosing_block_scope_container(node: TsNode<'_>) -> Option<TsNode<'_>> {
+    node.ancestors().find(|it| match it.kind() {
+        SyntaxKind::SourceFile
+        | SyntaxKind::CaseBlock
+        | SyntaxKind::CatchClause
+        | SyntaxKind::ModuleDeclaration
+        | SyntaxKind::ForStatement
+        | SyntaxKind::ForInStatement
+        | SyntaxKind::ForOfStatement
+        | SyntaxKind::Constructor
+        | SyntaxKind::MethodDeclaration
+        | SyntaxKind::GetAccessor
+        | SyntaxKind::SetAccessor
+        | SyntaxKind::FunctionDeclaration
+        | SyntaxKind::FunctionExpression
+        | SyntaxKind::ArrowFunction
+        | SyntaxKind::PropertyDeclaration
+        | SyntaxKind::ClassStaticBlockDeclaration => true,
+        // The body of a function is no container of its own.
+        SyntaxKind::Block => it.parent().is_none_or(|parent| {
+            !parent.kind().is_function_like() && parent.kind() != SyntaxKind::ClassStaticBlockDeclaration
+        }),
+        _ => false,
+    })
 }
 
 /// Whether TypeScript's parser gives the nodes at `node` flags for where they are, so that the
@@ -129,9 +168,15 @@ fn is_implicitly_narrowed_literal_declaration(assertion: Assertion) -> bool {
         Node::Member(member) => {
             member.kind() == MemberKind::Property
                 && member.flags().contains(Flags::READONLY)
-                && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
                 && !member.is_signature()
-                && !member.decorators().any(|decorator| decorator == assertion.node)
+                && match assertion.node.file().language().is_oxlint {
+                    // A `PropertyDeclaration`, with `accessor` or `abstract` too, is the parent of its initializer.
+                    true => member.init() == Some(assertion.node),
+                    false => {
+                        !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
+                            && !member.decorators().any(|decorator| decorator == assertion.node)
+                    }
+                }
         }
         _ => false,
     }
@@ -145,18 +190,55 @@ fn tsgolint_has_enum_type(ty: Type) -> bool {
             && ty.types().iter().any(|part| is_enum(part) || part.is_intersection() && part.types().iter().any(is_enum))
 }
 
-/// tsgolint's `isReceiverOfWriteAccess`, for the assertions around `expression`: `(a as B).c.d = 1`.
-fn tsgolint_is_receiver_of_write_access(expression: Expr) -> bool {
-    let (mut current, mut is_access) = (expression, false);
-    while let Node::Expr(parent) = current.parent() {
-        match parent.kind() {
-            ExprKind::As { .. } if !is_access => {}
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == current => is_access = true,
-            ExprKind::Assign { target, .. } => return is_access && target == current,
-            ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => return is_access,
+/// TypeScript's `isWriteAccess`.
+fn is_write_access(node: Expr) -> bool {
+    let mut current = node;
+    loop {
+        current = match current.parent() {
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => {
+                    return true;
+                }
+                ExprKind::Assign { target, .. } => return target == current,
+                ExprKind::Array(_) => parent,
+                _ => return false,
+            },
+            Node::Prop(property)
+                if property.kind() == PropKind::Init && is_property(property) && property.value() == Some(current) =>
+            {
+                match property.parent() {
+                    Node::Expr(object) => object,
+                    _ => return false,
+                }
+            }
+            Node::Stmt(statement) => {
+                return matches!(
+                    statement.kind(),
+                    StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left.as_expr() == Some(current)
+                );
+            }
             _ => return false,
+        };
+    }
+}
+
+/// tsgolint's `isReceiverOfWriteAccess`, for the assertion around `expression`: `(a as B).c.d = 1`.
+fn tsgolint_is_receiver_of_write_access(expression: Expr) -> bool {
+    let Node::Expr(mut current) = expression.parent() else {
+        return false;
+    };
+    while let Node::Expr(access) = current.parent() {
+        let is_object = matches!(
+            access.kind(),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == current
+        );
+        if !is_object {
+            return false;
         }
-        current = parent;
+        if is_write_access(access) {
+            return true;
+        }
+        current = access;
     }
     false
 }
@@ -170,8 +252,15 @@ fn is_type_unchanged<'a>(
     if uncast == cast {
         return true;
     }
+    let is_oxlint = expression.file().language().is_oxlint;
+    // tsgolint's `utils.IsTypeFlagSet` is about the type itself, typescript-eslint's `isTypeFlagSet` also about the
+    // constituents of a union.
+    let has_flags = |ty: Type<'a>, flags: TypeFlags| match is_oxlint {
+        true => ty.has_flags(flags),
+        false => is_type_flag_set(ty, flags),
+    };
     // What tsgolint 7.0 has besides. A numeric enum and `number` can be assigned to each other, and are not the same.
-    if expression.file().language().is_oxlint
+    if is_oxlint
         && (tsgolint_has_enum_type(uncast)
             || tsgolint_has_enum_type(cast)
             || is_type_parameter(uncast) && tsgolint_is_receiver_of_write_access(expression))
@@ -181,8 +270,8 @@ fn is_type_unchanged<'a>(
     if type_annotation.is_some_and(|it| it.tag() == TypeTag::Intersection) && contains_type_variable(cast) {
         return false;
     }
-    if is_type_flag_set(uncast, TypeFlags::UNDEFINED)
-        && is_type_flag_set(cast, TypeFlags::UNDEFINED)
+    if has_flags(uncast, TypeFlags::UNDEFINED)
+        && has_flags(cast, TypeFlags::UNDEFINED)
         && is_compiler_option_enabled(
             expression.file().type_checker().compiler_options(),
             CompilerOption::ExactOptionalPropertyTypes,
@@ -193,7 +282,7 @@ fn is_type_unchanged<'a>(
     if expression.tag() != ExprTag::Object && is_conceptually_literal(expression) {
         return false;
     }
-    if (is_type_flag_set(uncast, TypeFlags::NON_PRIMITIVE) && !is_type_flag_set(cast, TypeFlags::NON_PRIMITIVE))
+    if (has_flags(uncast, TypeFlags::NON_PRIMITIVE) && !has_flags(cast, TypeFlags::NON_PRIMITIVE))
         || has_index_signature(uncast) != has_index_signature(cast)
         || contains_any(uncast)
         || contains_any(cast)
@@ -216,7 +305,11 @@ fn is_type_unchanged<'a>(
                 .iter()
                 .find(|part| *part != uncast)
                 .is_some_and(|other_part| is_empty_object_type(other_part) && !contains_type_variable(other_part))
-            && uncast.get_base_constraint_of_type().is_some_and(|constraint| !is_nullable_type(constraint));
+            && uncast.get_base_constraint_of_type().is_some_and(|constraint| match is_oxlint {
+                // The checker's `isNullableType` goes by type facts: `any`, `unknown` and `void` are not nullable.
+                true => !is_type_flag_set(constraint, TypeFlags::NULL | TypeFlags::UNDEFINED),
+                false => !is_nullable_type(constraint),
+            });
     }
     // The properties last: each is looked up in each constituent of a union.
     have_same_type_arguments(uncast, cast)
@@ -373,6 +466,28 @@ fn get_original_expression(assertion: Assertion<'_>) -> Expr<'_> {
     current
 }
 
+/// `checker.getConstraintOfTypeParameter(type)`: the constraint as it is written, which can be a type parameter.
+fn get_constraint_of_type_parameter(ty: Type<'_>) -> Option<Type<'_>> {
+    let declaration = ty.get_symbol()?.declarations().find(|it| it.kind() == SyntaxKind::TypeParameter)?;
+    Some(declaration.constraint()?.get_type_from_type_node())
+}
+
+/// tsgolint's `isConstrainedTo`: `source` is `target`, or leads there by the constraints of type parameters.
+fn tsgolint_is_constrained_to<'a>(source: Type<'a>, target: Type<'a>, seen: &mut SmallVec<[Type<'a>; 4]>) -> bool {
+    if source == target {
+        return true;
+    }
+    if seen.contains(&source) {
+        return false;
+    }
+    seen.push(source);
+    if is_type_parameter(source) {
+        return get_constraint_of_type_parameter(source)
+            .is_some_and(|constraint| tsgolint_is_constrained_to(constraint, target, seen));
+    }
+    source.is_intersection() && source.types().iter().any(|part| tsgolint_is_constrained_to(part, target, seen))
+}
+
 fn is_double_assertion_unnecessary<'a>(
     assertion: Assertion<'a>,
     contextual_type: Option<Type<'a>>,
@@ -387,6 +502,15 @@ fn is_double_assertion_unnecessary<'a>(
         return Some(UNNECESSARY_ASSERTION);
     }
     let contextual_type = contextual_type?;
+    // tsgolint keeps a bridge between two type parameters of which the first is not constrained to the second.
+    if cast_type.file().language().is_oxlint
+        && original_type != cast_type
+        && is_type_parameter(original_type)
+        && is_type_parameter(cast_type)
+        && !tsgolint_is_constrained_to(original_type, cast_type, &mut SmallVec::new())
+    {
+        return None;
+    }
     (is_type_flag_set(inner_expression.ty(), TypeFlags::ANY | TypeFlags::UNKNOWN)
         && original_type.is_assignable_to(contextual_type))
     .then_some(CONTEXTUALLY_UNNECESSARY)
@@ -520,13 +644,25 @@ fn is_property_in_problematic_context(assertion: Assertion) -> bool {
     let object_parent = object_expr.parent();
     // tsgolint 7.0 also leaves what has its context from another assertion: `{ a: "b" as C } as D`.
     let is_assertion = |node: Node| matches!(node, Node::Expr(e) if matches!(e.tag(), ExprTag::As | ExprTag::AsConst));
+    let is_oxlint = node.file().language().is_oxlint;
+    // Between the call and the `satisfies` ESLint has a `ChainExpression` around `f?.({})`, tsgolint a
+    // `ParenthesizedExpression` around `(f({}))`.
+    let is_child_of_satisfies = |call: Expr| match is_oxlint {
+        true => !call.is_parenthesized() && is_satisfies(call.parent()),
+        false => !call.is_chain_root() && is_satisfies(call.parent()),
+    };
     is_satisfies(object_parent)
-        || node.file().language().is_oxlint && is_assertion(object_parent)
-        || matches!(
-            object_parent,
-            // ESLint has a `ChainExpression` around `f?.({})`.
-            Node::Expr(call) if call.tag() == ExprTag::Call && !call.is_chain_root() && is_satisfies(call.parent())
-        )
+        || is_oxlint && is_assertion(object_parent)
+        || matches!(object_parent, Node::Expr(call) if call.tag() == ExprTag::Call && is_child_of_satisfies(call))
+}
+
+/// Whether the `Assign` is an assignment expression. A default in a destructuring target is an `AssignmentPattern` for
+/// ESLint. For tsgolint it is a `BinaryExpression`, but not that of a shorthand property, `{ a = 1 }`.
+fn is_assignment_expression(assignment: Expr) -> bool {
+    match assignment.file().language().is_oxlint {
+        true => !matches!(assignment.parent(), Node::Prop(property) if property.kind() == PropKind::Shorthand),
+        false => !assignment.is_assignment_target(),
+    }
 }
 
 /// The `AssignmentExpression` that `node` is the right of.
@@ -535,7 +671,7 @@ fn as_assigned_value(node: Expr<'_>) -> Option<(Expr<'_>, Option<BinOp>)> {
         return None;
     };
     match parent.kind() {
-        ExprKind::Assign { op, value, .. } if value == node && !parent.is_assignment_target() => Some((parent, op)),
+        ExprKind::Assign { op, value, .. } if value == node && is_assignment_expression(parent) => Some((parent, op)),
         _ => None,
     }
 }
@@ -663,7 +799,11 @@ fn tsgolint_has_generic_inference_parameter_at_argument<'a>(
         let last = type_arguments.len().saturating_sub(1);
         param_type = type_arguments.nth((arg_index - param_index).min(last)).unwrap_or(param_type);
     }
-    for element_index in element_path {
+    // The type of the symbol of an optional parameter has `undefined`: it is no tuple and has nothing at an index.
+    let options = call.file().type_checker().compiler_options();
+    let is_optional =
+        param.has_question_token() && is_strict_compiler_option_enabled(options, CompilerOption::StrictNullChecks);
+    for element_index in element_path.take(if is_optional { 0 } else { usize::MAX }) {
         let element_type = match param_type.is_tuple_type() {
             true => {
                 let type_arguments = param_type.get_type_arguments();
@@ -725,14 +865,22 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
     false
 }
 
-/// TypeScript's `getAssignmentReducedType`: the members of the union `declared` that are left after `assigned` has been
-/// assigned to a variable of that type.
-fn get_assignment_reduced_type<'a>(declared: Type<'a>, assigned: Type<'a>) -> SmallVec<[Type<'a>; 8]> {
-    if assigned.has_flags(TypeFlags::NEVER) {
+/// TypeScript's `getAssignmentReducedType`: the members of the union `declared` that are left after the union of
+/// `assigned` and `others` has been assigned to a variable of that type.
+fn get_assignment_reduced_type<'a>(
+    declared: Type<'a>,
+    assigned: Type<'a>,
+    others: &[Type<'a>],
+) -> SmallVec<[Type<'a>; 8]> {
+    let assigned: SmallVec<[Type<'a>; 8]> = union_constituents(assigned)
+        .iter()
+        .chain(others.iter().copied())
+        .filter(|it| !it.has_flags(TypeFlags::NEVER))
+        .collect();
+    if assigned.is_empty() {
         return SmallVec::new();
     }
     let members: SmallVec<[Type<'a>; 8]> = declared.types().iter().collect();
-    let assigned: SmallVec<[Type<'a>; 8]> = union_constituents(assigned).iter().collect();
     if members == assigned {
         return members;
     }
@@ -750,6 +898,8 @@ fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>
     // Up to the assignment that `node` can be the value of, or a part of the value: `a = b && (a as C)`,
     // `[a] = [a as C]`. What else can be the value is not looked at, which leaves more alone than tsgolint does.
     let (mut current, mut is_in_literal) = (node, false);
+    // The constituents of what else can be assigned: tsgolint unites them with both types.
+    let mut others: SmallVec<[Type<'a>; 4]> = SmallVec::new();
     let target = loop {
         let parent = match current.parent() {
             Node::Expr(parent) => parent,
@@ -768,7 +918,13 @@ fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>
             }
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => {}
             ExprKind::Binary { op: BinOp::Comma, right, .. } if right == current => {}
-            ExprKind::Cond { test, .. } if test != current => {}
+            ExprKind::Cond { test, yes, no } if test != current => {
+                // In a literal tsgolint takes the property of the other branch that the path leads to: not done.
+                if !is_in_literal {
+                    let other = if yes == current { no } else { yes };
+                    others.extend(union_constituents(other.ty()).iter());
+                }
+            }
             ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) if !parent.is_assignment_target() => {
                 is_in_literal = true;
             }
@@ -789,8 +945,8 @@ fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>
     };
     let receiver_type = receiver_type.get_base_constraint_of_type().unwrap_or(receiver_type);
     receiver_type.is_union()
-        && get_assignment_reduced_type(receiver_type, uncast_type)
-            != get_assignment_reduced_type(receiver_type, cast_type)
+        && get_assignment_reduced_type(receiver_type, uncast_type, &others)
+            != get_assignment_reduced_type(receiver_type, cast_type, &others)
 }
 
 fn should_skip_contextual_type_fallback<'a>(
@@ -834,21 +990,27 @@ fn should_skip_contextual_type_fallback<'a>(
 }
 
 fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
-    // Of an IIFE, the return type of the function.
+    let is_oxlint = expression.file().language().is_oxlint;
+    // Of an IIFE, the return type of the function. ESLint has a `ChainExpression` around an optional call, tsgolint none.
     if let ExprKind::Call(call) = expression.kind()
-        && !expression.is_chain_root()
+        && (is_oxlint || !expression.is_chain_root())
         && let Some(callee) = call.callee().as_fn()
         && let Some(signature) = call.callee().ty().get_call_signatures().first()
     {
         let return_type = signature.get_return_type();
+        // tsgolint's `utils.IsTypeFlagSet` is about the type itself: a union with `undefined` stays what it is.
+        let is_undefined = match is_oxlint {
+            true => return_type.has_flags(TypeFlags::UNDEFINED),
+            false => is_type_flag_set(return_type, TypeFlags::UNDEFINED),
+        };
         // What is inferred for `() => {}` should be `void`.
-        if callee.return_type().is_none() && is_type_flag_set(return_type, TypeFlags::UNDEFINED) {
+        if callee.return_type().is_none() && is_undefined {
             return expression.file().type_checker().get_void_type();
         }
         return return_type;
     }
     // tsgolint 7.0: what is asserted is not what the type arguments of a call are inferred from.
-    if expression.file().language().is_oxlint {
+    if is_oxlint {
         let (mut call, mut awaits) = (expression, 0);
         while let ExprKind::Await(argument) = call.kind() {
             (call, awaits) = (argument, awaits + 1);
@@ -884,17 +1046,10 @@ impl<'a> Visitor<'a> for CallThatInfers {
         if self.hidden == 0
             && !self.is_found
             && let Node::Expr(e) = node
-            && let ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) = e.kind()
-            && call.type_args().is_empty()
-            && let Some(declaration) = e.resolved_signature().and_then(|it| it.declaration())
+            && infers_type_arguments(e) == Some(true)
         {
-            // The type parameters of the signature of a constructor are those of the class.
-            let generic = match declaration.kind() {
-                SyntaxKind::Constructor => declaration.parent(),
-                _ => Some(declaration),
-            };
-            let mut parts = generic.into_iter().flat_map(TsNode::children);
-            self.is_found = parts.any(|it| it.kind() == SyntaxKind::TypeParameter);
+            // One that is the same where nothing is expected of it has nothing from the assertion.
+            self.is_found = e.context_free_type_of_call_resolved_afresh() != e.ty();
         }
     }
 
@@ -903,8 +1058,27 @@ impl<'a> Visitor<'a> for CallThatInfers {
     }
 }
 
-/// `Array.from(a.querySelectorAll("b")) as C[]`: what is asserted is expected of the inner call too, through the outer
-/// one. Only the outer one is resolved again where nothing is expected, so nothing is said about such an assertion.
+/// Whether the call, the `new` or the tagged template `node` has its type arguments inferred. `None`: it is none of
+/// these, or the signature that it resolves to has no declaration.
+fn infers_type_arguments(node: Expr) -> Option<bool> {
+    let (ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call)) = node.kind() else {
+        return None;
+    };
+    if !call.type_args().is_empty() {
+        return Some(false);
+    }
+    let declaration = node.resolved_signature()?.declaration()?;
+    // The type parameters of the signature of a constructor are those of the class.
+    let generic = match declaration.kind() {
+        SyntaxKind::Constructor => declaration.parent(),
+        _ => Some(declaration),
+    };
+    let mut parts = generic.into_iter().flat_map(TsNode::children);
+    Some(parts.any(|it| it.kind() == SyntaxKind::TypeParameter))
+}
+
+/// `Array.from(a.querySelectorAll("b")) as C[]`: what is asserted is expected of the inner call too, through the type
+/// parameters of the outer one, and nothing is said about such an assertion.
 fn is_asserted_type_expected_of_a_call_in_the_arguments(expression: Expr) -> bool {
     let mut call = expression;
     while let ExprKind::Await(argument) = call.kind() {
@@ -913,9 +1087,21 @@ fn is_asserted_type_expected_of_a_call_in_the_arguments(expression: Expr) -> boo
     let (ExprKind::Call(it) | ExprKind::New(it) | ExprKind::TaggedTemplate(it)) = call.kind() else {
         return false;
     };
+    // Without type parameters to infer, what a parameter expects of an argument does not depend on the assertion.
+    let infers = infers_type_arguments(call);
+    if infers == Some(false) {
+        return false;
+    }
+    // Which parameter an argument is for is known where nothing is spread.
+    let is_by_index = infers.is_some()
+        && !matches!(call.kind(), ExprKind::TaggedTemplate(_))
+        && !it.args().iter().any(|argument| argument.tag() == ExprTag::Spread);
     let mut calls = CallThatInfers::default();
-    for argument in it.args() {
-        walk_node(Node::Expr(argument), &mut calls);
+    for (index, argument) in it.args().iter().enumerate() {
+        // Nor does what a parameter without a type variable expects.
+        if !is_by_index || tsgolint_has_generic_inference_parameter_at_argument(call, index, std::iter::empty()) {
+            walk_node(Node::Expr(argument), &mut calls);
+        }
     }
     calls.is_found
 }
@@ -977,12 +1163,21 @@ impl NoUnnecessaryTypeAssertion {
             return;
         }
 
-        let uncast_type = get_uncast_type(expression);
+        let mut uncast_type = get_uncast_type(expression);
         if cast_type.is_unresolved() || uncast_type.is_unresolved() {
             return;
         }
         if cx.language().is_oxlint && is_asserted_type_expected_of_a_call_in_the_arguments(expression) {
             return;
+        }
+        // Where the type of an identifier with a conditional type is its constraint, tsgolint takes the declared type.
+        if cx.language().is_oxlint
+            && uncast_type == cast_type
+            && expression.tag() == ExprTag::Ident
+            && let Some(symbol_type) = expression.ts_symbol().map(|symbol| symbol.get_type())
+            && symbol_type.has_flags(TypeFlags::CONDITIONAL)
+        {
+            uncast_type = symbol_type;
         }
         let would_same_type_be_inferred = match cast_type_is_literal {
             true => is_implicitly_narrowed_literal_declaration(assertion),
@@ -1082,7 +1277,7 @@ impl NoUnnecessaryTypeAssertion {
 
         if let Node::Expr(parent) = node.parent()
             && let ExprKind::Assign { op: None, target, .. } = parent.kind()
-            && !parent.is_assignment_target()
+            && is_assignment_expression(parent)
         {
             if target == node {
                 cx.report(node, CONTEXTUALLY_UNNECESSARY).fix(|fixer| fix_non_null_assertion(fixer, outermost));

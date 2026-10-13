@@ -49,9 +49,7 @@ impl<'a> StaticallyNamed<'a> for IdentifierLike<'a> {
 /// `getJsDocDeprecation` of what has been asked about in the file: the same few symbols are used over and over.
 #[derive(Default)]
 pub struct Deprecations<'a> {
-    /// tsgolint has no reason for a variable, whose comment is at the statement.
-    has_no_reasons_for_variables: bool,
-    /// For tsgolint a member does not inherit the tag of what it implements or overrides.
+    /// For tsgolint, which asks each declaration itself: a member does not inherit the tag of what it implements or overrides.
     is_nothing_inherited: bool,
     of_symbols: FxHashMap<TsSymbol<'a>, Option<&'a [u8]>>,
     of_signatures: FxHashMap<Signature<'a>, Option<&'a [u8]>>,
@@ -61,16 +59,10 @@ impl<'a> Deprecations<'a> {
     /// `getJsDocDeprecation(symbol)`
     fn of_symbol(&mut self, symbol: Option<TsSymbol<'a>>) -> Option<&'a [u8]> {
         let symbol = symbol?;
-        let has_no_reasons_for_variables = self.has_no_reasons_for_variables;
         let is_nothing_inherited = self.is_nothing_inherited;
-        *self.of_symbols.entry(symbol).or_insert_with(|| {
-            let reason = match is_nothing_inherited {
-                true => symbol.declarations().find_map(TsNode::deprecation)?,
-                false => symbol.deprecation()?,
-            };
-            let is_variable =
-                || symbol.declarations().next().is_some_and(|it| it.kind() == SyntaxKind::VariableDeclaration);
-            Some(if has_no_reasons_for_variables && is_variable() { &b""[..] } else { reason })
+        *self.of_symbols.entry(symbol).or_insert_with(|| match is_nothing_inherited {
+            true => symbol.declarations().find_map(deprecation_of_declaration),
+            false => symbol.deprecation(),
         })
     }
 
@@ -79,7 +71,7 @@ impl<'a> Deprecations<'a> {
         let signature = signature?;
         let is_nothing_inherited = self.is_nothing_inherited;
         *self.of_signatures.entry(signature).or_insert_with(|| match is_nothing_inherited {
-            true => signature.declaration()?.deprecation(),
+            true => deprecation_of_declaration(signature.declaration()?),
             false => signature.deprecation(),
         })
     }
@@ -115,6 +107,9 @@ impl<'a> Deprecations<'a> {
 
     /// `getCallLikeDeprecation(node)`, where `call` is `node.parent`.
     fn of_call_like(&mut self, node: TsNode<'a>, call: TsNode<'a>) -> Option<&'a [u8]> {
+        if self.is_nothing_inherited {
+            return self.of_call_like_as_tsgolint(node, call);
+        }
         let symbol = node.get_symbol_at_location();
         let aliased_symbol = symbol.map(TsSymbol::skip_alias);
         let symbol_declaration_kind = aliased_symbol.and_then(|it| it.declarations().next()).map(|it| it.kind());
@@ -133,6 +128,28 @@ impl<'a> Deprecations<'a> {
         match has_overloads {
             true => None,
             false => self.of_symbol(aliased_symbol),
+        }
+    }
+
+    /// tsgolint's `getCallLikeDeprecation`: the declaration of the signature comes before the symbol.
+    fn of_call_like_as_tsgolint(&mut self, node: TsNode<'a>, call: TsNode<'a>) -> Option<&'a [u8]> {
+        let signature = call.get_resolved_signature();
+        if let Some(reason) = self.of_signature(signature) {
+            return Some(reason);
+        }
+        let symbol = node.get_symbol_at_location()?;
+        let aliased_symbol = symbol.skip_alias();
+        let has_overloads = matches!(
+            aliased_symbol.declarations().next().map(|it| it.kind()),
+            Some(SyntaxKind::MethodDeclaration | SyntaxKind::FunctionDeclaration | SyntaxKind::MethodSignature)
+        );
+        if let Some(reason) = self.search_in_aliases_chain(Some(symbol), !has_overloads) {
+            return Some(reason);
+        }
+        // Where the signature has no declaration, any overload that is deprecated counts.
+        match has_overloads && signature.and_then(Signature::declaration).is_none() {
+            true => self.of_symbol(Some(aliased_symbol)),
+            false => None,
         }
     }
 
@@ -174,28 +191,144 @@ impl<'a> Deprecations<'a> {
 
 /// `getCallLikeNode`: what is called, with the call, if that is `callee` or a `MemberExpression` that `callee` is the property of.
 fn get_call_like_node(mut callee: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
+    let is_oxlint = callee.file().language().is_oxlint;
     loop {
-        // Its parent is a `ChainExpression`.
-        if callee.is_chain_root() {
+        // Its parent is a `ChainExpression`, or for tsgolint a `ParenthesizedExpression`.
+        if callee.is_chain_root() || is_oxlint && callee.is_parenthesized() {
             return None;
         }
         let Node::Expr(parent) = callee.parent() else {
             return None;
         };
         match parent.kind() {
-            ExprKind::Index { index, .. } if index == callee => callee = parent,
+            // tsgolint goes up from the name of a `PropertyAccessExpression` only.
+            ExprKind::Index { index, .. } if index == callee && !is_oxlint => callee = parent,
             ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
                 return (call.callee() == callee).then_some((callee, parent));
+            }
+            // tsgolint: the tag of a `JsxOpeningElement`, also where it is a `PropertyAccessExpression`. That of a
+            // `JsxSelfClosingElement` is not called.
+            ExprKind::Jsx(jsx) if is_oxlint && jsx.tag() == Some(callee) && !jsx.is_self_closing() => {
+                return Some((callee, parent));
             }
             _ => return None,
         }
     }
 }
 
-/// The `a = 1` of `[a = 1] = b`, `({ a = 1 } = b)` and `({ a = 1 })`.
-fn is_assignment_pattern(assignment: Expr) -> bool {
-    assignment.is_assignment_target()
+/// The `a = 1` of `[a = 1] = b`, `({ a = 1 } = b)` and `({ a = 1 })`. For tsgolint only that of a shorthand property, whose
+/// name `check_object` reports: the others are assignments like any other.
+fn is_assignment_pattern(assignment: Expr, is_oxlint: bool) -> bool {
+    !is_oxlint && assignment.is_assignment_target()
         || matches!(assignment.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand)
+}
+
+/// What tsgolint's `IsDeprecatedDeclaration` and `getJsDocDeprecationFromNode` have of a declaration: the tag of its own
+/// comment, and for a variable that of its statement, which gives no reason. `TsNode::deprecation` is `getJSDocTags`, which
+/// goes on to the comments of other nodes.
+// TODO(api): replace by a query for the comments of the node itself, all of them
+fn deprecation_of_declaration<'a>(declaration: TsNode<'a>) -> Option<&'a [u8]> {
+    let has_tag = |node: TsNode<'a>| node.deprecation().is_some();
+    let statement_of =
+        |variable: TsNode<'a>| variable.ancestors().take(2).find(|it| it.kind() == SyntaxKind::VariableStatement);
+    // `getRootDeclaration`
+    let mut root = declaration;
+    while root.kind() == SyntaxKind::BindingElement {
+        root = root.parent()?.parent()?;
+    }
+    // `getCombinedNodeFlags`: of any variable of the statement.
+    if root.kind() == SyntaxKind::VariableDeclaration && statement_of(root).is_some_and(has_tag) {
+        return Some(&b""[..]);
+    }
+    let reason = root.deprecation()?;
+    // Where `getJSDocTags` has the tag from too: the initializer of a variable, what a function or a type is the value of,
+    // the `namespace A` of `namespace A.B`.
+    let elsewhere = match (root.kind(), root.parent()) {
+        (SyntaxKind::VariableDeclaration, _) => root.initializer(),
+        (kind, Some(parent)) => match parent.kind() {
+            SyntaxKind::PropertyAssignment
+            | SyntaxKind::PropertyDeclaration
+            | SyntaxKind::ReturnStatement
+            | SyntaxKind::ExportAssignment => Some(parent),
+            SyntaxKind::ModuleDeclaration if kind == SyntaxKind::ModuleDeclaration => Some(parent),
+            SyntaxKind::VariableDeclaration => statement_of(parent),
+            _ => None,
+        },
+        (_, None) => None,
+    };
+    if elsewhere.is_some_and(has_tag) {
+        return None;
+    }
+    Some(if root == declaration { reason } else { &b""[..] })
+}
+
+/// `checker.isDeprecatedSymbol`: of several declarations all have to be deprecated, but for a member of an interface.
+fn is_deprecated_symbol(symbol: TsSymbol<'_>) -> bool {
+    let mut declarations = symbol.declarations();
+    // `getParentOfSymbol`: a property of a union, an intersection or a mapped type has none.
+    let has_parent = !symbol.check_flags().intersects(CheckFlags::SYNTHETIC | CheckFlags::MAPPED);
+    let is_in_interface = |declaration: TsNode<'_>| {
+        declaration.parent().is_some_and(|parent| parent.kind() == SyntaxKind::InterfaceDeclaration)
+    };
+    match has_parent && declarations.len() > 1 && symbol.declarations().any(is_in_interface) {
+        true => declarations.any(|it| deprecation_of_declaration(it).is_some()),
+        false => declarations.all(|it| deprecation_of_declaration(it).is_some()),
+    }
+}
+
+/// tsgolint's `getBindingPatternSourceType`: the type of what a pattern destructures, from the initializer of the variable or
+/// from the parameter, property by property. `None` where it gives up.
+fn get_binding_pattern_source_type(binding_pattern: TsNode<'_>) -> Option<Type<'_>> {
+    // The `BindingElement`s and `ArrayBindingPattern`s on the way up: each takes a property of the type of what is above it.
+    let mut steps = Vec::new();
+    let mut current = binding_pattern;
+    let mut source_type = loop {
+        match current.kind() {
+            SyntaxKind::VariableDeclaration => break current.initializer()?.get_type_at_location(),
+            SyntaxKind::Parameter => break current.get_type_at_location(),
+            SyntaxKind::BindingElement | SyntaxKind::ArrayBindingPattern => steps.push(current),
+            _ => {}
+        }
+        current = current.parent()?;
+    };
+    for step in steps.into_iter().rev() {
+        source_type = match step.kind() {
+            SyntaxKind::ArrayBindingPattern => match source_type.get_property(b"0") {
+                Some(property) => property.get_type_at_location(step),
+                None => source_type,
+            },
+            _ => {
+                let name = match step.property_name() {
+                    Some(property_name) if property_name.kind() == SyntaxKind::ComputedPropertyName => return None,
+                    Some(property_name) => property_name.text(),
+                    // Empty for a pattern.
+                    None => step.name()?.text(),
+                };
+                if name.is_empty() {
+                    return None;
+                }
+                source_type.get_property(name)?.get_type_at_location(step)
+            }
+        };
+    }
+    Some(source_type)
+}
+
+/// The type in which tsgolint looks up what is under a `BindingElement` of `pattern`.
+fn binding_pattern_source_type(pattern: Pat<'_>) -> Type<'_> {
+    get_binding_pattern_source_type(pattern.ts_node()).unwrap_or_else(|| pattern.ty())
+}
+
+/// The name that tsgolint looks up for an identifier under a `BindingElement`: `bindingElem.PropertyName.Text()`, or `own`,
+/// the text of the identifier itself. `None` for a computed property name, where it looks nothing up.
+fn binding_property_name<'a>(property: PatProp<'a>, own: &'a [u8]) -> Option<&'a [u8]> {
+    if property.is_rest() || property.is_shorthand() {
+        return Some(own);
+    }
+    match property.key()?.kind() {
+        KeyKind::Ident(name) | KeyKind::String(name) | KeyKind::Number(name) => Some(name.bytes()),
+        _ => None,
+    }
 }
 
 /// `services.getContextualType(openingElement.name)`
@@ -295,18 +428,21 @@ impl NoDeprecated {
             return;
         };
         let name = name.bytes();
+        let is_oxlint = cx.language().is_oxlint;
         let mut node = e.ts_node();
         let reason = match e.parent() {
             // tsgolint takes for a declaration whatever name has an arrow function or a parameter for its parent:
             // what the function returns, and a default value.
-            Node::Func(_) | Node::Param(_) if cx.language().is_oxlint && !e.is_parenthesized() => return,
+            Node::Func(_) | Node::Param(_) if is_oxlint && !e.is_parenthesized() => return,
             Node::Expr(parent) => {
                 match parent.kind() {
-                    // `checkMemberExpression` handles it.
-                    ExprKind::Index { index, .. } if index == e => return,
-                    // An element of an `ArrayPattern`.
-                    ExprKind::Array(_) if parent.is_assignment_target() => return,
-                    ExprKind::Assign { target, .. } if target == e && is_assignment_pattern(parent) => return,
+                    // `checkMemberExpression` handles it. For tsgolint it is an identifier like any other.
+                    ExprKind::Index { index, .. } if index == e && !is_oxlint => return,
+                    // An element of an `ArrayPattern`, which tsgolint does not take for a declaration.
+                    ExprKind::Array(_) if !is_oxlint && parent.is_assignment_target() => return,
+                    ExprKind::Assign { target, .. } if target == e && is_assignment_pattern(parent, is_oxlint) => {
+                        return;
+                    }
                     // `check_jsx` handles it.
                     ExprKind::Jsx(jsx) if jsx.tag() == Some(e) || jsx.close_tag() == Some(e) => return,
                     _ => {}
@@ -319,14 +455,40 @@ impl NoDeprecated {
                 let Node::Expr(object) = prop.parent() else {
                     return;
                 };
-                // Upstream takes for a declaration the value in a pattern and the key in an object, also where that is computed.
-                if (prop.value() == Some(e)) == object.is_assignment_target() {
+                if is_oxlint && prop.kind() != PropKind::Shorthand {
+                    // For tsgolint a value, also in a pattern, and a computed key are identifiers like any other.
+                    cx.state.of_identifier(node)
+                } else {
+                    // Upstream takes for a declaration the value in a pattern and the key in an object, also where that is
+                    // computed.
+                    if (prop.value() == Some(e)) == object.is_assignment_target() {
+                        return;
+                    }
+                    if prop.kind() == PropKind::Shorthand {
+                        node = NameOf(prop).ts_node();
+                    }
+                    cx.state.of_property(node, name, || object.ty())
+                }
+            }
+            // tsgolint looks up an identifier that is the default of a `BindingElement` as a property of what is
+            // destructured, by the property name or else by its own name. A computed key is an identifier like any other.
+            Node::PatProp(prop) if is_oxlint => match prop.default() == Some(e) && !e.is_parenthesized() {
+                true => {
+                    let Some(property_name) = binding_property_name(prop, name) else {
+                        return;
+                    };
+                    let Node::Pat(pattern) = prop.parent() else {
+                        return;
+                    };
+                    cx.state.of_property(node, property_name, || binding_pattern_source_type(pattern))
+                }
+                false => cx.state.of_identifier(node),
+            },
+            Node::PatElem(element) if is_oxlint && element.default() == Some(e) && !e.is_parenthesized() => {
+                let Node::Pat(pattern) = element.parent() else {
                     return;
-                }
-                if prop.kind() == PropKind::Shorthand {
-                    node = NameOf(prop).ts_node();
-                }
-                cx.state.of_property(node, name, || object.ty())
+                };
+                cx.state.of_property(node, name, || binding_pattern_source_type(pattern))
             }
             // A computed key.
             Node::PatProp(prop) if prop.default() != Some(e) => {
@@ -335,9 +497,10 @@ impl NoDeprecated {
                 };
                 cx.state.of_property(node, name, || pattern.ty())
             }
-            // A computed key. Upstream knows nothing of abstract members.
+            // A computed key. Upstream knows nothing of abstract members. For tsgolint it is an identifier like any other.
             Node::Member(member)
-                if !member.flags().contains(Flags::ABSTRACT)
+                if !is_oxlint
+                    && !member.flags().contains(Flags::ABSTRACT)
                     && matches!(member.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == e) =>
             {
                 return;
@@ -411,7 +574,11 @@ impl NoDeprecated {
             && is_identifier(name)
         {
             let node = IdentifierLike::new(tag.ts_node(), tag.span(), name.bytes());
-            let reason = cx.state.of_call_like(node.node, element.ts_node());
+            let reason = match cx.language().is_oxlint && jsx.is_self_closing() {
+                // For tsgolint the tag of a `JsxSelfClosingElement` is not called: the symbol tells.
+                true => cx.state.of_identifier(node.node),
+                false => cx.state.of_call_like(node.node, element.ts_node()),
+            };
             self.report(node, reason, cx);
         }
         let mut contextual_type = None;
@@ -475,25 +642,66 @@ impl NoDeprecated {
             let Some(key) = property.key() else {
                 continue;
             };
-            let name = match key.kind() {
+            // `getObjectLiteralPropertyName`
+            let name: Cow<'a, [u8]> = match key.kind() {
                 KeyKind::Ident(name)
                 | KeyKind::String(name)
                 | KeyKind::Number(name)
                 | KeyKind::Private(name)
                 | KeyKind::ComputedString(name)
-                | KeyKind::ComputedNumber(name) => name.bytes(),
+                | KeyKind::ComputedNumber(name) => Cow::Borrowed(name.bytes()),
                 KeyKind::Computed(e) => match e.ty().value() {
-                    Some(LiteralValue::String(value)) => value,
+                    Some(LiteralValue::String(value)) => Cow::Borrowed(value),
+                    Some(LiteralValue::Number(n)) => Cow::Owned(text::number_to_string(n)),
                     _ => continue,
                 },
             };
-            // `checker.isDeprecatedSymbol`: of a union or an intersection all that have it have to be deprecated.
-            let symbol = expected.get_property(name).filter(|it| {
-                !it.check_flags().intersects(CheckFlags::SYNTHETIC)
-                    || it.declarations().all(|declaration| declaration.deprecation().is_some())
-            });
-            let reason = cx.state.of_symbol(symbol);
-            self.report(IdentifierLike::new(NameOf(property).ts_node(), key.span(cx.file()), name), reason, cx);
+            let symbol = expected.get_property(&name).filter(|it| is_deprecated_symbol(*it));
+            let Some(reason) = cx.state.of_symbol(symbol) else {
+                continue;
+            };
+            // tsgolint also allows by what is expected of the object.
+            if type_matches_some_specifier(expected, &self.allow) {
+                continue;
+            }
+            match name {
+                Cow::Borrowed(name) => {
+                    let node = IdentifierLike::new(NameOf(property).ts_node(), key.span(cx.file()), name);
+                    self.report(node, Some(reason), cx);
+                }
+                name @ Cow::Owned(_) => Self::report_at(key.span(cx.file()), name, reason, cx),
+            }
+        }
+    }
+
+    /// The identifiers that tsgolint finds under the `BindingElement`s of an `ObjectBindingPattern`: the property name and the
+    /// name that is bound, each looked up as the property that is destructured.
+    fn check_binding_pattern_as_tsgolint<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        let PatKind::Object(properties) = pattern.kind() else {
+            return;
+        };
+        let mut source_type = None;
+        for property in properties {
+            let value = property.value();
+            let bound = value.as_ident().map(|name| IdentifierLike::new(value.ts_node(), value.span(), name.bytes()));
+            let Some(property_name) = binding_property_name(property, bound.map_or(&b""[..], |it| it.name)) else {
+                continue;
+            };
+            // The `a` of `{ a: b }`.
+            let key = match property.key() {
+                Some(key) if !property.is_shorthand() => match key.kind() {
+                    KeyKind::Ident(name) => (property.ts_node().property_name())
+                        .map(|node| IdentifierLike::new(node, key.span(cx.file()), name.bytes())),
+                    _ => None,
+                },
+                _ => None,
+            };
+            for node in [key, bound].into_iter().flatten() {
+                let reason = cx.state.of_property(node.node, property_name, || {
+                    *source_type.get_or_insert_with(|| binding_pattern_source_type(pattern))
+                });
+                self.report(node, reason, cx);
+            }
         }
     }
 }
@@ -527,11 +735,29 @@ impl Rule for NoDeprecated {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Deprecations<'a>> {
         let is_oxlint = file.language().is_oxlint;
-        Some(Deprecations {
-            has_no_reasons_for_variables: is_oxlint,
-            is_nothing_inherited: is_oxlint,
-            ..Deprecations::default()
-        })
+        Some(Deprecations { is_nothing_inherited: is_oxlint, ..Deprecations::default() })
+    }
+
+    /// For tsgolint the name of a parameter, of a `catch` clause, of `namespace A.B {}` and of an abstract member is a
+    /// declaration, and so is what an array pattern binds.
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if !file.language().is_oxlint {
+            return Self::ON;
+        }
+        On::new()
+            .exprs(&[
+                ExprTag::Ident,
+                ExprTag::Dot,
+                ExprTag::Index,
+                ExprTag::Super,
+                ExprTag::PrivateIdentifier,
+                ExprTag::Jsx,
+                ExprTag::Object,
+            ])
+            .pats(&[PatTag::Object])
+            .types(&[TypeTag::Ref, TypeTag::Import, TypeTag::Predicate])
+            .stmts(&[StmtTag::ImportEquals])
+            .export_specs()
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -553,6 +779,9 @@ impl Rule for NoDeprecated {
 
     /// The keys of an `ObjectPattern` that declares, and the argument of a `RestElement` in a pattern.
     fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            return self.check_binding_pattern_as_tsgolint(pattern, cx);
+        }
         match pattern.kind() {
             PatKind::Object(properties) => {
                 for property in properties {

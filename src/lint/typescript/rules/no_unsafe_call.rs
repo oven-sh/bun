@@ -42,7 +42,7 @@ enum Use {
     TemplateTag,
 }
 
-fn check_call<'a>(node: Expr<'a>, reporting_node: Expr<'a>, how: Use, cx: &Cx<'a, NoUnsafeCall>) {
+fn check_call<'a>(node: Expr<'a>, reporting_node: impl Spanned, how: Use, cx: &Cx<'a, NoUnsafeCall>) {
     let (unsafe_message, error_message) = match how {
         Use::Call => (UNSAFE_CALL, ERROR_CALL),
         Use::New => (UNSAFE_NEW, ERROR_NEW),
@@ -122,8 +122,12 @@ impl Rule for NoUnsafeCall {
             }
             _ => return,
         };
-        if cx.language().is_oxlint || call.callee().tag() != ExprTag::New {
-            check_call(call.callee(), call.callee(), how, cx);
+        let callee = call.callee();
+        if cx.language().is_oxlint && callee.is_parenthesized() {
+            // tsgolint reports the ParenthesizedExpression.
+            check_call(callee, callee.outer_span(), how, cx);
+        } else if cx.language().is_oxlint || callee.tag() != ExprTag::New {
+            check_call(callee, callee, how, cx);
         }
     }
 }

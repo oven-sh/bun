@@ -63,9 +63,13 @@ fn get_member_name<'a>(key: Key<'a>, file: &'a File<'a>) -> Option<&'a [u8]> {
         | KeyKind::Private(name)
         | KeyKind::String(name)
         | KeyKind::ComputedNumber(name) => Some(name.bytes()),
-        // A `bigint` is not a `NumericLiteral`.
+        // A `bigint` is not a `NumericLiteral`. tsgolint has it by its text.
         KeyKind::Number(name) => {
-            (!file.slice(key.span(file)).ends_with(b"n")).then(|| name.bytes())
+            let text = file.slice(key.span(file));
+            match text.ends_with(b"n") {
+                true => file.language().is_oxlint.then_some(text),
+                false => Some(name.bytes()),
+            }
         }
         KeyKind::ComputedString(_) => None,
         KeyKind::Computed(expression) => match expression.kind() {
@@ -79,6 +83,32 @@ fn get_member_name<'a>(key: Key<'a>, file: &'a File<'a>) -> Option<&'a [u8]> {
             _ => None,
         },
     }
+}
+
+/// tsgolint's `typeIsOrHasBaseType`: whether the type, or a type that it extends however far up,
+/// has the symbol of `base_type`.
+fn tsgolint_type_is_or_has_base_type<'a>(ty: Type<'a>, base_type: Type<'a>) -> bool {
+    let Some(base_symbol) = base_type.get_symbol() else {
+        return false;
+    };
+    let mut queue: SmallVec<[Type<'a>; 4]> = SmallVec::new();
+    let mut seen: SmallVec<[Type<'a>; 4]> = SmallVec::new();
+    queue.push(ty);
+    while let Some(current) = queue.pop() {
+        if seen.contains(&current) {
+            continue;
+        }
+        seen.push(current);
+        if current.get_symbol() == Some(base_symbol) {
+            return true;
+        }
+        if is_object_type(current)
+            && is_object_flag_set(current, ObjectFlags::CLASS | ObjectFlags::INTERFACE)
+        {
+            queue.extend(current.get_base_types());
+        }
+    }
+    false
 }
 
 fn get_type_to_class_relation<'a>(ty: Type<'a>, class_type: Type<'a>) -> TypeToClassRelation {
@@ -111,7 +141,14 @@ fn get_type_to_class_relation<'a>(ty: Type<'a>, class_type: Type<'a>) -> TypeToC
             None => TypeToClassRelation::None,
         };
     }
-    if ty.get_symbol().is_none() || !type_is_or_has_base_type(ty, class_type) {
+    if ty.get_symbol().is_none() {
+        return TypeToClassRelation::None;
+    }
+    let is_or_has_base_type = match class_type.file().language().is_oxlint {
+        true => tsgolint_type_is_or_has_base_type(ty, class_type),
+        false => type_is_or_has_base_type(ty, class_type),
+    };
+    if !is_or_has_base_type {
         return TypeToClassRelation::None;
     }
     match is_object_type(ty) && is_object_flag_set(ty, ObjectFlags::ANONYMOUS) {
@@ -178,6 +215,10 @@ impl<'a> ClassScope<'a> {
         let Some(member_name) = member_name else {
             return;
         };
+        // tsgolint leaves `private "" = 1`.
+        if is_oxlint && member_name.is_empty() {
+            return;
+        }
         let is_static = flags.contains(Flags::STATIC);
         let existing = self.position(member_name, is_static);
         match existing.and_then(|i| self.private_modifiables.get_mut(i)) {
@@ -265,6 +306,8 @@ fn ts_parent(node: TsNodeLike<'_>) -> TsNodeLike<'_> {
                 return TsNodeLike::Expr(e, parens + 1);
             }
             match e.parent() {
+                // `a!!` is two of TypeScript's nodes, and the parent of the inner one is the outer.
+                Node::Expr(parent) if parent.non_null_count() > 1 => TsNodeLike::Other,
                 Node::Expr(parent) => match shorthand_with_default(parent) {
                     Some(prop) => TsNodeLike::Prop(prop),
                     None => TsNodeLike::Expr(parent, 0),
@@ -336,6 +379,15 @@ fn is_modified_property_access(node: Expr<'_>) -> bool {
     is_destructuring_assignment(node)
 }
 
+/// tsgolint has the constructors of TypeScript's parser: `static constructor() {}` is one,
+/// `"constructor"<T>() {}` and `*"constructor"() {}` are methods.
+fn is_constructor(member: Member<'_>) -> bool {
+    match member.file().language().is_oxlint {
+        true => member.kind() == MemberKind::Constructor,
+        false => member.is_constructor(),
+    }
+}
+
 /// The innermost class around `node`, and whether `node` is in its constructor and in no other
 /// function in that.
 fn enclosing_class(node: Expr<'_>) -> Option<(Class<'_>, bool)> {
@@ -345,7 +397,7 @@ fn enclosing_class(node: Expr<'_>) -> Option<(Class<'_>, bool)> {
             Node::Func(func) if innermost_function.is_none() => innermost_function = Some(func),
             Node::Class(class) => {
                 let is_directly_inside_constructor = innermost_function.is_some_and(
-                    |func| matches!(func.owner(), Node::Member(member) if member.is_constructor()),
+                    |func| matches!(func.owner(), Node::Member(member) if is_constructor(member)),
                 );
                 return Some((class, is_directly_inside_constructor));
             }
@@ -452,7 +504,7 @@ impl PreferReadonly {
         for constructor in class
             .members()
             .iter()
-            .filter(|member| member.is_constructor())
+            .filter(|member| is_constructor(*member))
         {
             let parameters = constructor.func().into_iter().flat_map(Func::params);
             for parameter in parameters.filter(|it| it.flags().contains(Flags::PRIVATE)) {

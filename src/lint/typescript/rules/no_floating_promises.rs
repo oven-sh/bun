@@ -5,7 +5,7 @@ use bun_lint::types::utils::{
     parse_then_call, parse_type_or_value_specifiers, type_matches_some_specifier,
     value_matches_some_specifier,
 };
-use bun_lint::types::{Signature, TsSymbol, Type};
+use bun_lint::types::{NodeFlags, Signature, SymbolFlags, SyntaxKind, TsSymbol, Type};
 use bun_lint::utils::eslint_utils::is_parenthesized;
 use bun_lint::utils::ts_utils::{OperatorPrecedence, get_operator_precedence_for_node};
 use rustc_hash::FxHashMap;
@@ -63,9 +63,13 @@ enum Unhandled {
 }
 
 fn is_async_iife(expression: Expr) -> bool {
-    // ESLint has a `ChainExpression` around `(() => {})?.()`.
-    !expression.is_chain_root()
-        && expression.as_call().is_some_and(|call| call.callee().as_fn().is_some())
+    // ESLint has a `ChainExpression` around `(() => {})?.()`, tsgolint a `ParenthesizedExpression`
+    // around `(function () {}())`.
+    let is_call_expression = match expression.file().language().is_oxlint {
+        true => !expression.is_parenthesized(),
+        false => !expression.is_chain_root(),
+    };
+    is_call_expression && expression.as_call().is_some_and(|call| call.callee().as_fn().is_some())
 }
 
 fn is_valid_rejection_handler(rejection_handler: Expr) -> bool {
@@ -116,6 +120,58 @@ fn rejection_handler_of(mut promise: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
+/// TypeScript's `isEntityNameExpression`: `a`, `a.b`, `a.b.c`.
+fn is_entity_name_expression(mut node: Expr) -> bool {
+    loop {
+        match node.kind() {
+            ExprKind::Ident(_) => return true,
+            ExprKind::Dot { obj, name, .. } if !obj.is_parenthesized() && !name.bytes().starts_with(b"#") => {
+                node = obj;
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// The checker's `tryGetNameFromEntityNameExpression`, for a name that is a string: of a constant
+/// or of a member of an enum, the literal type that is declared, or else that of the initializer.
+fn try_get_name_from_entity_name_expression(node: Expr<'_>) -> Option<&[u8]> {
+    let symbol = node.ts_symbol()?.skip_alias();
+    let declaration = symbol.value_declaration()?;
+    let is_constant_variable = symbol.has_flags(SymbolFlags::VARIABLE)
+        && declaration.flags().intersects(NodeFlags::CONST | NodeFlags::USING);
+    if !is_constant_variable && !symbol.has_flags(SymbolFlags::ENUM_MEMBER) {
+        return None;
+    }
+    let declared = declaration.type_node().and_then(|it| it.get_type_from_type_node().string_value());
+    if declared.is_some() {
+        return declared;
+    }
+    match (declaration.kind(), declaration.initializer()) {
+        (SyntaxKind::VariableDeclaration | SyntaxKind::EnumMember, Some(initializer)) => {
+            initializer.get_type_at_location().string_value()
+        }
+        (SyntaxKind::EnumMember, None) => Some(declaration.name()?.text()),
+        _ => None,
+    }
+}
+
+/// The checker's `getAccessedPropertyName`, by which tsgolint knows the method that is called: the
+/// name after the dot, with the `#` of a private one, or in the brackets a string, a constant or a
+/// member of an enum. Parentheses in the brackets leave it without a name.
+fn get_accessed_property_name(access: Expr<'_>) -> Option<&[u8]> {
+    match access.kind() {
+        ExprKind::Dot { name, .. } => Some(name.bytes()),
+        ExprKind::Index { index, .. } if !index.is_parenthesized() => match index.kind() {
+            ExprKind::String(value) => Some(value.bytes()),
+            ExprKind::Template(template) if template.exprs().is_empty() => Some(template.cooked(0)?.bytes()),
+            _ if is_entity_name_expression(index) => try_get_name_from_entity_name_expression(index),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 impl NoFloatingPromises {
     /// `node`: the range of the statement, or of the expression if it is the body of an arrow
     /// function.
@@ -134,8 +190,14 @@ impl NoFloatingPromises {
             (Unhandled::Promise, true) => FLOATING_VOID,
             (Unhandled::Promise, false) => FLOATING,
         };
-        // oxlint points at the promise.
-        let mut report = cx.report(if cx.language().is_oxlint { promise.span() } else { node }, message);
+        // oxlint points at the promise, with its parentheses unless they are those of the statement's
+        // expression.
+        let at = match cx.language().is_oxlint {
+            true if promise == expression => promise.span(),
+            true => promise.outer_span(),
+            false => node,
+        };
+        let mut report = cx.report(at, message);
         report = report.labels_with(|labels| {
             let what = match unhandled {
                 Unhandled::PromiseArray => "This array contains Promises and",
@@ -149,7 +211,7 @@ impl NoFloatingPromises {
                 let ty = bstr::BStr::new(&ty);
                 labels.push(at, format!("This rejection handler has type `{ty}`, which is not callable."));
             }
-            labels.push(promise, "");
+            labels.push(at, "");
         });
         if unhandled == Unhandled::PromiseArray {
             return;
@@ -172,19 +234,27 @@ impl NoFloatingPromises {
         };
         let callee = call.callee();
         let ty = callee.ty();
-        value_matches_some_specifier(callee, specifiers, ty)
+        // tsgolint has no name for a callee in parentheses.
+        let is_parenthesized_expression = callee.is_parenthesized() && callee.file().language().is_oxlint;
+        (!is_parenthesized_expression && value_matches_some_specifier(callee, specifiers, ty))
             || type_matches_some_specifier(ty, specifiers)
     }
 
-    /// `is_chain_element`: where ESLint has a `ChainExpression` and in it the call, `node` stands
-    /// for the call.
+    /// `is_statement_expression`: `node` is the expression of the statement, or the body of the
+    /// arrow function, not a part of it. Where ESLint has a `ChainExpression` and in it the call,
+    /// `node` stands for the call.
     fn is_unhandled_promise<'a>(
         &self,
         node: Expr<'a>,
-        is_chain_element: bool,
+        is_statement_expression: bool,
         known: &mut State<'a>,
     ) -> Option<(Unhandled, Expr<'a>)> {
+        let is_oxlint = node.file().language().is_oxlint;
+        // tsgolint skips the parentheses of the statement's expression only. Any other
+        // `ParenthesizedExpression` is none of the kinds that it looks into.
+        let is_parenthesized_expression = is_oxlint && !is_statement_expression && node.is_parenthesized();
         match node.kind() {
+            _ if is_parenthesized_expression => {}
             ExprKind::Assign { .. } => return None,
             // Any operand of a comma expression can be an unhandled promise, whatever the type of
             // the last is.
@@ -206,15 +276,44 @@ impl NoFloatingPromises {
         }
         // `await` handles a promise, but not an array of promises. The type does not tell: that of
         // `await (promise as Promise<number> & number)` is `Promise<number> & number`.
-        if let ExprKind::Await(_) = node.kind() {
+        if !is_parenthesized_expression && let ExprKind::Await(_) = node.kind() {
             return None;
         }
         if !self.is_promise_like(node, ty, known) {
             return None;
         }
+        if is_parenthesized_expression {
+            return Some((Unhandled::Promise, node));
+        }
 
         match node.kind() {
-            ExprKind::Call(_) if is_chain_element || !node.is_chain_root() => {
+            // tsgolint has no `ChainExpression`, and knows the method by the checker's name of it.
+            ExprKind::Call(call) if is_oxlint => {
+                let callee = call.callee();
+                // A callee in parentheses is not an access expression.
+                let method_name = match callee.is_parenthesized() {
+                    true => None,
+                    false => get_accessed_property_name(callee),
+                };
+                let arguments = call.args();
+                let mut known_arguments =
+                    arguments.iter().take_while(|argument| !matches!(argument.kind(), ExprKind::Spread(_)));
+                let on_rejected = match method_name {
+                    Some(b"catch") if !arguments.is_empty() => known_arguments.next(),
+                    Some(b"then") if arguments.len() >= 2 => known_arguments.nth(1),
+                    Some(b"finally") => {
+                        let object = callee.object()?;
+                        return self.is_unhandled_promise(object, false, known).map(|(it, _)| (it, node));
+                    }
+                    _ => None,
+                };
+                match on_rejected {
+                    Some(handler) if is_valid_rejection_handler(handler) => None,
+                    Some(_) => Some((Unhandled::NonFunctionHandler, node)),
+                    None => Some((Unhandled::Promise, node)),
+                }
+            }
+            ExprKind::Call(_) if is_statement_expression || !node.is_chain_root() => {
                 let promise_handling_method_call = match parse_catch_call(node) {
                     Some(call) => Some(call.on_rejected),
                     None => parse_then_call(node).map(|call| call.on_rejected),
@@ -319,12 +418,13 @@ impl Rule for NoFloatingPromises {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().stmts(&[StmtTag::Expr]);
 
         // The body of an arrow function that is a unary expression. Only what `void` is applied to
-        // can be a promise, and only if `void` is not a way to ignore one.
-        if !self.ignore_void {
+        // can be a promise, and only if `void` is not a way to ignore one. tsgolint looks at
+        // statements only.
+        if !self.ignore_void && !file.language().is_oxlint {
             on = on.exprs(&[ExprTag::Unary]);
         }
         on

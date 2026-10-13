@@ -1,9 +1,9 @@
 use bun_lint::prelude::*;
-use bun_lint::types::Type;
 use bun_lint::types::tsutils::{
     get_call_signatures_of_type, is_intrinsic_unknown_type, is_thenable_type, union_constituents,
 };
 use bun_lint::types::utils::{get_static_member_access_value, is_rest_parameter_declaration};
+use bun_lint::types::{NameOf, NodeFlags, SymbolFlags, SyntaxKind, TsSymbol, Type, TypeFlags};
 use bun_lint::utils::ts_utils::is_parenless_arrow_function;
 use smallvec::SmallVec;
 
@@ -115,6 +115,63 @@ fn report<'a>(argument: Func<'a>, info: PromiseMethod, cx: &Cx<'a, UseUnknownInC
     };
 }
 
+/// TypeScript's `resolveEntityName` of an entity name expression that is a value: through aliases,
+/// and into namespaces and enums only.
+fn resolve_entity_name(node: Expr<'_>) -> Option<TsSymbol<'_>> {
+    if node.is_parenthesized() {
+        return None;
+    }
+    let symbol = match node.kind() {
+        ExprKind::Ident(_) => node.ts_symbol()?,
+        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => {
+            if !resolve_entity_name(obj)?.has_flags(SymbolFlags::NAMESPACE) {
+                return None;
+            }
+            NameOf(node).ts_symbol()?
+        }
+        _ => return None,
+    };
+    Some(symbol.skip_alias())
+}
+
+/// TypeScript's `tryGetNameFromEntityNameExpression`, if the name is that of a string. Whether the
+/// constant is declared before its use is not asked.
+fn try_get_name_from_entity_name_expression(node: Expr<'_>) -> Option<&[u8]> {
+    let symbol = resolve_entity_name(node)?;
+    let declaration = symbol.value_declaration()?;
+    let is_constant_variable = symbol.has_flags(SymbolFlags::VARIABLE)
+        && declaration.flags().intersects(NodeFlags::CONST | NodeFlags::USING);
+    if !is_constant_variable && !symbol.has_flags(SymbolFlags::ENUM_MEMBER) {
+        return None;
+    }
+    if let Some(type_node) = declaration.type_node() {
+        let ty = type_node.get_type_from_type_node();
+        if ty.has_flags(TypeFlags::STRING_OR_NUMBER_LITERAL | TypeFlags::UNIQUE_ES_SYMBOL) {
+            return ty.string_value();
+        }
+    }
+    match (declaration.kind(), declaration.initializer()) {
+        (SyntaxKind::BindingElement, _) => None,
+        (_, Some(initializer)) => initializer.get_type_at_location().string_value(),
+        (SyntaxKind::EnumMember, None) => Some(symbol.name()),
+        _ => None,
+    }
+}
+
+/// tsgolint's `getAccessedPropertyName` of a member access, if the name is that of a string.
+fn get_accessed_property_name(callee: Expr<'_>) -> Option<&[u8]> {
+    match callee.kind() {
+        ExprKind::Dot { name, .. } => Some(name.bytes()),
+        ExprKind::Index { index, .. } if !index.is_parenthesized() => match index.kind() {
+            ExprKind::String(text) => Some(text.bytes()),
+            ExprKind::Template(template) if template.exprs().is_empty() => template.cooked(0).map(|text| text.bytes()),
+            ExprKind::Ident(_) | ExprKind::Dot { .. } => try_get_name_from_entity_name_expression(index),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn check_call<'a>(node: Expr<'a>, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>) {
     let Some(call) = node.as_call() else {
         return;
@@ -123,17 +180,17 @@ fn check_call<'a>(node: Expr<'a>, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>
     let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
         return;
     };
-    // `(a?.catch)(..)` calls a `ChainExpression`.
-    if callee.is_chain_root() {
+    let is_oxlint = callee.file().language().is_oxlint;
+    // `(a?.catch)(..)` calls a `ChainExpression`, and for tsgolint `(a.catch)(..)` calls a
+    // `ParenthesizedExpression`.
+    if callee.is_chain_root() || (is_oxlint && callee.is_parenthesized()) {
         return;
     }
-    let value = get_static_member_access_value(callee);
-    let method = match callee.kind() {
-        // tsgolint goes by the type of a name in the brackets, not by what it is initialized with.
-        ExprKind::Index { index, .. } if index.tag() == ExprTag::Ident && callee.file().language().is_oxlint => {
-            index.ty().string_value()
-        }
-        _ => value.as_ref().and_then(|it| it.as_string()),
+    let value = if is_oxlint { None } else { get_static_member_access_value(callee) };
+    let method = if is_oxlint {
+        get_accessed_property_name(callee)
+    } else {
+        value.as_ref().and_then(|it| it.as_string())
     };
     let info = match method {
         Some(b"catch") => CATCH,

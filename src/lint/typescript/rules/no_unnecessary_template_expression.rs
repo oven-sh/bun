@@ -1,7 +1,7 @@
 use bun_core::strings;
 use bun_lint::ast::Regex as RegexLiteral;
 use bun_lint::prelude::*;
-use bun_lint::types::tsutils::type_constituents;
+use bun_lint::types::tsutils::{is_union_or_intersection_type, type_constituents};
 use bun_lint::types::utils::{get_constraint_info, is_string_like};
 use bun_lint::types::{SyntaxKind, Type};
 use bun_lint::utils::text::number_to_string;
@@ -20,11 +20,15 @@ const NO_UNNECESSARY_TEMPLATE_EXPRESSION: Message = Message::new(
 
 /// A `TemplateLiteral` or a `TSTemplateLiteralType`.
 trait TemplateLiteralTypeOrValue<'a>: Copy {
+    fn cooked_of_quasi(self, i: usize) -> Option<Name<'a>>;
     fn raw_of_quasi(self, i: usize) -> &'a [u8];
     fn span_of_quasi(self, i: usize) -> Span;
 }
 
 impl<'a> TemplateLiteralTypeOrValue<'a> for Template<'a> {
+    fn cooked_of_quasi(self, i: usize) -> Option<Name<'a>> {
+        self.cooked(i)
+    }
     fn raw_of_quasi(self, i: usize) -> &'a [u8] {
         self.raw(i)
     }
@@ -34,6 +38,9 @@ impl<'a> TemplateLiteralTypeOrValue<'a> for Template<'a> {
 }
 
 impl<'a> TemplateLiteralTypeOrValue<'a> for TypeTemplate<'a> {
+    fn cooked_of_quasi(self, i: usize) -> Option<Name<'a>> {
+        self.cooked(i)
+    }
     fn raw_of_quasi(self, i: usize) -> &'a [u8] {
         self.raw(i)
     }
@@ -59,6 +66,8 @@ enum Interpolation<'a> {
         quasi_count: usize,
         first_raw: &'a [u8],
         last_raw: &'a [u8],
+        /// Its value, if it has no substitutions.
+        value: Option<Name<'a>>,
     },
 }
 
@@ -72,6 +81,10 @@ struct InterpolationInfo<'a> {
 }
 
 fn interpolation_of_expression(node: Expr<'_>) -> Option<Interpolation<'_>> {
+    // For tsgolint a `ParenthesizedExpression` is not the literal in it.
+    if node.file().language().is_oxlint && node.is_parenthesized() {
+        return None;
+    }
     Some(match node.kind() {
         ExprKind::Ident(name) if name.is_any(&["undefined", "Infinity", "NaN"]) => Interpolation::Name,
         ExprKind::String(value) => Interpolation::String(value),
@@ -85,6 +98,7 @@ fn interpolation_of_expression(node: Expr<'_>) -> Option<Interpolation<'_>> {
             quasi_count: template.quasi_count(),
             first_raw: template.raw(0),
             last_raw: template.raw(template.quasi_count() - 1),
+            value: template.as_static(),
         },
         _ => return None,
     })
@@ -93,14 +107,19 @@ fn interpolation_of_expression(node: Expr<'_>) -> Option<Interpolation<'_>> {
 fn interpolation_of_type(node: TypeNode<'_>) -> Option<Interpolation<'_>> {
     // The literal of `-1` is a `UnaryExpression`.
     let is_negative = || node.text().starts_with(b"-");
+    // For tsgolint a `ParenthesizedType` is not the literal in it.
+    if node.file().language().is_oxlint && node.is_parenthesized() {
+        return None;
+    }
     Some(match node.kind() {
         TypeKind::Keyword(Keyword::Null | Keyword::Undefined) => Interpolation::Name,
-        TypeKind::StringLit(_) if node.text().starts_with(b"`") => {
+        TypeKind::StringLit(value) if node.text().starts_with(b"`") => {
             let raw = node.file().slice(node.span().shrink(1, 1));
             Interpolation::Template {
                 quasi_count: 1,
                 first_raw: raw,
                 last_raw: raw,
+                value: Some(value),
             }
         }
         TypeKind::StringLit(value) => Interpolation::String(value),
@@ -124,6 +143,10 @@ fn starts_with_new_line(x: &[u8], is_oxlint: bool) -> bool {
 fn is_trailing_whitespace(kind: Interpolation, next_raw: &[u8], is_oxlint: bool) -> bool {
     let is_whitespace = match kind {
         Interpolation::String(value) => strings::is_all_js_whitespace(value.bytes()),
+        // tsgolint tests the value of a template without substitutions.
+        Interpolation::Template { value, .. } if is_oxlint => {
+            value.is_some_and(|it| strings::is_all_js_whitespace(it.bytes()))
+        }
         Interpolation::Template { quasi_count, first_raw, .. } => {
             quasi_count == 1 && strings::is_all_js_whitespace(first_raw)
         }
@@ -177,8 +200,12 @@ fn remove(span: Span) -> Fix {
     }
 }
 
-fn is_enum_member_type(ty: Type) -> bool {
+fn is_enum_member_type(ty: Type, is_oxlint: bool) -> bool {
     type_constituents(ty).iter().any(|t| {
+        // tsgolint's `TypeRecurser` goes into the unions and intersections among them.
+        if is_oxlint && is_union_or_intersection_type(t) {
+            return is_enum_member_type(t, is_oxlint);
+        }
         t.get_symbol()
             .and_then(|symbol| symbol.value_declaration())
             .is_some_and(|declaration| declaration.kind() == SyntaxKind::EnumMember)
@@ -187,16 +214,28 @@ fn is_enum_member_type(ty: Type) -> bool {
 
 type Context<'a> = Cx<'a, NoUnnecessaryTemplateExpression>;
 
-/// `${a}`, without a comment.
+/// `${a}`, without a comment. `first` is the interpolation with its parentheses.
 fn is_trivial_interpolation<'a>(
     template: impl TemplateLiteralTypeOrValue<'a>,
     interpolations: usize,
+    first: Span,
     cx: &Context<'a>,
 ) -> bool {
-    interpolations == 1
-        && template.raw_of_quasi(0).is_empty()
+    if interpolations != 1 {
+        return false;
+    }
+    let (head, tail) = (template.span_of_quasi(0), template.span_of_quasi(1));
+    // tsgolint compares the values of the texts, and looks for comments before and after the interpolation, not in it.
+    if cx.language().is_oxlint {
+        let is_empty = |i: usize| template.cooked_of_quasi(i).is_some_and(|it| it.bytes().is_empty());
+        return is_empty(0)
+            && is_empty(1)
+            && !cx.file().comments_exist_between(head, first)
+            && !cx.file().comments_exist_between(first, tail);
+    }
+    template.raw_of_quasi(0).is_empty()
         && template.raw_of_quasi(1).is_empty()
-        && !cx.file().comments_exist_between(template.span_of_quasi(0), template.span_of_quasi(1))
+        && !cx.file().comments_exist_between(head, tail)
 }
 
 /// Whether tsgolint puts parentheses around `moved` where `template` was: unless it binds more tightly than what the
@@ -219,20 +258,32 @@ fn is_wrapped_by_tsgolint(template: Expr, moved: Expr) -> bool {
     !moved.is_parenthesized() && like_member(get_operator_precedence_for_node(moved)) <= around
 }
 
-fn report_single_interpolation<'a>(node: Node<'a>, interpolation: Node<'a>, cx: &Context<'a>) {
+/// `head` is the text before the interpolation, `outer` the interpolation with its parentheses.
+fn report_single_interpolation<'a>(
+    node: Node<'a>,
+    interpolation: Node<'a>,
+    head: Span,
+    outer: Span,
+    cx: &Context<'a>,
+) {
+    let is_oxlint = cx.language().is_oxlint;
+    let span = interpolation.span();
+    // tsgolint reports from the `${`, whatever space follows, to the character after the interpolation and its
+    // parentheses.
+    let place = match is_oxlint {
+        true => Span::new(head.end - 2, outer.end + 1),
+        false => Span::new(span.start.saturating_sub(2), span.end + 1),
+    };
     // For tsgolint parentheses are a part of what is in them.
-    if let (Node::Expr(template), Node::Expr(moved), true) = (node, interpolation, cx.language().is_oxlint) {
-        let span = moved.outer_span();
-        // From the `${`, which is all that is before it, whatever space follows.
-        cx.report(Span::new(template.span().start + 1, span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+    if let (Node::Expr(template), Node::Expr(moved), true) = (node, interpolation, is_oxlint) {
+        cx.report(place, NO_UNNECESSARY_TEMPLATE_EXPRESSION)
             .fix(|fixer| match is_wrapped_by_tsgolint(template, moved) {
                 true => fixer.replace(node, [&b"("[..], moved.text(), b")"].concat()),
-                false => fixer.replace(node, cx.slice(span)),
+                false => fixer.replace(node, cx.slice(outer)),
             });
         return;
     }
-    let span = interpolation.span();
-    cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+    cx.report(place, NO_UNNECESSARY_TEMPLATE_EXPRESSION)
         .fix(|fixer| fixer.replace(node, get_moved_node_code(node, interpolation)));
 }
 
@@ -251,7 +302,15 @@ fn report_interpolations<'a>(
             continue;
         }
         let (prev_quasi, next_quasi) = (template.span_of_quasi(index), template.span_of_quasi(index + 1));
-        if cx.file().comments_exist_between(prev_quasi, next_quasi) {
+        // tsgolint looks for comments before and after the interpolation, not in it.
+        let has_comments = match cx.language().is_oxlint {
+            true => {
+                cx.file().comments_exist_between(prev_quasi, interpolation)
+                    || cx.file().comments_exist_between(interpolation, next_quasi)
+            }
+            false => cx.file().comments_exist_between(prev_quasi, next_quasi),
+        };
+        if has_comments {
             continue;
         }
         infos.push(InterpolationInfo {
@@ -287,7 +346,7 @@ fn report_infos<'a>(infos: &[InterpolationInfo<'a>], cx: &Context<'a>) {
                 next_character_is_opening_curly_brace = false;
                 None
             }
-            Interpolation::Template { quasi_count, first_raw, last_raw } => {
+            Interpolation::Template { quasi_count, first_raw, last_raw, .. } => {
                 // The `$` at its end and the `{` after it would be a `${`.
                 if next_character_is_opening_curly_brace && ends_with_unescaped_dollar_sign(last_raw) {
                     fixes.push(Fix {
@@ -347,10 +406,11 @@ impl NoUnnecessaryTemplateExpression {
         if matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate) {
             return;
         }
-        if is_trivial_interpolation(template, expressions.len(), cx)
+        let outer = first.outer_span();
+        if is_trivial_interpolation(template, expressions.len(), outer, cx)
             && get_constraint_info(first.ty()).constraint_type.is_some_and(is_string_like)
         {
-            report_single_interpolation(node.into(), first.into(), cx);
+            report_single_interpolation(node.into(), first.into(), template.quasi_span(0), outer, cx);
             return;
         }
         let interpolations = expressions.iter().map(|it| (it.span(), interpolation_of_expression(it)));
@@ -365,12 +425,14 @@ impl NoUnnecessaryTemplateExpression {
         let Some(first) = types.first() else {
             return;
         };
-        if is_trivial_interpolation(template, types.len(), cx) {
+        let is_oxlint = cx.language().is_oxlint;
+        let outer = first.outer_span();
+        if is_trivial_interpolation(template, types.len(), outer, cx) {
             let info = get_constraint_info(first.ty());
             if !info.is_type_parameter
-                && info.constraint_type.is_some_and(|it| is_string_like(it) && !is_enum_member_type(it))
+                && info.constraint_type.is_some_and(|it| is_string_like(it) && !is_enum_member_type(it, is_oxlint))
             {
-                report_single_interpolation(node.into(), first.into(), cx);
+                report_single_interpolation(node.into(), first.into(), template.quasi_span(0), outer, cx);
                 return;
             }
         }

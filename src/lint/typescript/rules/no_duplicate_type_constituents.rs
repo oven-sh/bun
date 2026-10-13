@@ -262,10 +262,11 @@ fn report<'a>(
         removed.push(token.span());
     }
 
-    // oxlint points at the first of the two.
-    let place = match previous.filter(|_| cx.language().is_oxlint) {
-        Some((_, previous)) => previous.outer_span(),
-        None => Span::new(constituent_node.span().start, end),
+    // oxlint points at the first of the two. tsgolint's constituent is the parenthesized type.
+    let place = match (cx.language().is_oxlint, previous) {
+        (true, Some((_, previous))) => previous.outer_span(),
+        (true, None) => constituent_node.outer_span(),
+        (false, _) => Span::new(constituent_node.span().start, end),
     };
     let mut report = cx.report(place, message).comments_apply_at(constituent_node.outer_span());
     if let Some((union_or_intersection, previous)) = previous {
@@ -348,13 +349,24 @@ impl NoDuplicateTypeConstituents {
         if matches!(parent, Node::Type(parent) if parent.tag() == tag) {
             return;
         }
+        // tsgolint asks only for the question token. Its parent of a union in parentheses is the parenthesized type,
+        // and only a constructor has parameter properties.
         let is_of_optional_parameter = tag == TypeTag::Union
             && matches!(parent, Node::Param(param) if param.is_optional()
-                && param.pat().tag() == PatTag::Ident
-                && !param.is_rest()
-                && !param.is_parameter_property()
-                && param.default().is_none()
-                && param.func().is_some_and(|func| func.kind() != FnKind::IndexSignature));
+                && match cx.language().is_oxlint {
+                    true => {
+                        !node.is_parenthesized()
+                            && !(param.is_parameter_property()
+                                && param.func().is_some_and(|func| func.kind() == FnKind::Constructor))
+                    }
+                    false => {
+                        param.pat().tag() == PatTag::Ident
+                            && !param.is_rest()
+                            && !param.is_parameter_property()
+                            && param.default().is_none()
+                            && param.func().is_some_and(|func| func.kind() != FnKind::IndexSignature)
+                    }
+                });
         let mut constituents = Constituents {
             tag,
             is_of_optional_parameter,

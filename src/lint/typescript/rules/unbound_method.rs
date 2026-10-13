@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{intersection_constituents, union_constituents};
-use bun_lint::types::utils::{is_builtin_symbol_like, is_symbol_from_default_library};
+use bun_lint::types::utils::{is_builtin_symbol_like, is_builtin_symbol_like_recurser, is_symbol_from_default_library};
 use bun_lint::types::{ModifierFlags, NameOf, SyntaxKind, TsNode, TsSymbol, Type};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 
@@ -137,6 +137,14 @@ fn is_natively_bound_member(object: &[u8], property: &[u8]) -> bool {
     members.iter().any(|member| member.as_bytes() == property)
 }
 
+/// What tsgolint's `nativelyBoundMembers` lacks: it is a table that was generated with an older Node.js.
+fn is_missing_from_tsgolint(object: &[u8], property: &[u8]) -> bool {
+    matches!(
+        (object, property),
+        (b"RegExp", b"escape") | (b"Atomics", b"pause") | (b"Math", b"f16round") | (b"Intl", b"DurationFormat")
+    )
+}
+
 const SUPPORTED_GLOBAL_TYPES: [&str; 12] = [
     "NumberConstructor",
     "ObjectConstructor",
@@ -161,11 +169,36 @@ fn is_not_imported(symbol: TsSymbol) -> bool {
 /// Whether `property_name` is a member of an instance of a built-in class that the specification
 /// defines as bound to that instance, which TypeScript's library declares as a plain method:
 /// upstream's `nativelyBoundInstanceMethods` is `Collator.compare`.
-fn is_spec_bound_builtin_method(object_type: Type, property_name: &[u8]) -> bool {
-    property_name == b"compare"
-        && object_type
+fn is_spec_bound_builtin_method(object_type: Type, property_name: &[u8], is_oxlint: bool) -> bool {
+    if property_name != b"compare" {
+        return false;
+    }
+    if !is_oxlint {
+        return object_type
             .get_symbol()
-            .is_some_and(|symbol| symbol.name() == b"Collator" && is_symbol_from_default_library(symbol))
+            .is_some_and(|symbol| symbol.name() == b"Collator" && is_symbol_from_default_library(symbol));
+    }
+    // tsgolint's `isSpecBoundBuiltinMethod` asks where the property is declared: only in the library's `Collator`.
+    let Some(symbol) = object_type.get_property(property_name) else {
+        return false;
+    };
+    let mut declarations = symbol.declarations().peekable();
+    declarations.peek().is_some()
+        && declarations.all(|declaration| {
+            declaration.get_source_file().is_default_library()
+                && declaration.parent().is_some_and(|owner| {
+                    owner.kind() == SyntaxKind::InterfaceDeclaration
+                        && owner.name().is_some_and(|name| name.text() == b"Collator")
+                })
+        })
+}
+
+/// tsgolint's `IsAnyBuiltinSymbolLike`
+fn is_any_builtin_symbol_like(ty: Type) -> bool {
+    is_builtin_symbol_like_recurser(ty, |sub_type| match sub_type.get_symbol() {
+        Some(symbol) => is_symbol_from_default_library(symbol).then_some(true),
+        None => Some(false),
+    })
 }
 
 /// The `object` of a `MemberExpression`, or what is destructured.
@@ -193,34 +226,46 @@ struct PropertyNode<'a> {
     node: TsNode<'a>,
 }
 
-fn is_natively_bound<'a>(object: ObjectNode<'a>, property: PropertyNode<'a>) -> bool {
+fn is_natively_bound<'a>(object: ObjectNode<'a>, property: PropertyNode<'a>, is_oxlint: bool) -> bool {
     // The types alone do not tell: some declarations are not from the default library but from
     // `@types/node`, and the signature in an interface does not say whether a method is bound.
     if let (Some(object_name), Some(property_name)) = (object.identifier, property.identifier)
         && is_natively_bound_member(object_name, property_name)
+        && !(is_oxlint && is_missing_from_tsgolint(object_name, property_name))
         && object.node.get_symbol_at_location().is_some_and(is_not_imported)
     {
         return true;
     }
     let object_type = object.node.get_type_at_location();
-    if property.identifier.is_some_and(|property_name| is_spec_bound_builtin_method(object_type, property_name)) {
+    if property
+        .identifier
+        .is_some_and(|property_name| is_spec_bound_builtin_method(object_type, property_name, is_oxlint))
+    {
         return true;
     }
-    is_builtin_symbol_like(object_type, &SUPPORTED_GLOBAL_TYPES)
-        && is_symbol_from_default_library(property.node.get_type_at_location().get_symbol())
+    if !is_builtin_symbol_like(object_type, &SUPPORTED_GLOBAL_TYPES) {
+        return false;
+    }
+    let property_type = property.node.get_type_at_location();
+    match is_oxlint {
+        true => is_any_builtin_symbol_like(property_type),
+        false => is_symbol_from_default_library(property_type.get_symbol()),
+    }
 }
 
-fn is_node_inside_type_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, ()>) -> bool {
+fn is_node_inside_type_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, ()>, is_oxlint: bool) -> bool {
     let is_type_declaration = |parent: Node| match parent {
         Node::Class(class) => {
             matches!(class.owner(), Node::Stmt(_)) && class.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT)
         }
         Node::Member(member) => {
             member.flags().contains(Flags::ABSTRACT)
-                && matches!(
-                    member.kind(),
-                    MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor
-                )
+                && match member.kind() {
+                    MemberKind::Method => true,
+                    // tsgolint knows the abstract `MethodDeclaration` only.
+                    MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => !is_oxlint,
+                    _ => false,
+                }
         }
         Node::Func(func) => match func.kind() {
             FnKind::Decl => !func.has_body(),
@@ -289,7 +334,7 @@ fn is_member_of(node: Expr, is_object: fn(ExprKind) -> bool) -> bool {
 
 /// A `ChainExpression` has the answer of what is in it, so it makes no difference that it is not a
 /// node here.
-fn is_safe_use<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+fn is_safe_use<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>, is_oxlint: bool) -> bool {
     let decide = |node: Node<'a>, parent: Node<'a>| {
         let (node, parent) = match (node, parent) {
             (_, Node::Stmt(parent)) => {
@@ -307,17 +352,23 @@ fn is_safe_use<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
                 BinOp::NotEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::EqEqEq | BinOp::Instanceof => Some(true),
                 // `&&` returns its left operand only if that is falsy.
                 BinOp::And if left == node => Some(true),
+                // tsgolint's `IsLogicalBinaryOperator` knows no `??`.
+                BinOp::Nullish if is_oxlint => Some(false),
                 // It is likely to return the method, so it is as safe as its own use.
                 BinOp::And | BinOp::Or | BinOp::Nullish => None,
                 _ => Some(false),
             },
             ExprKind::Assign { op, target, .. } => {
-                // A default in a pattern is an `AssignmentPattern`.
+                // A default in a pattern is an `AssignmentPattern`, and for tsgolint an assignment like any other.
+                let is_assignment = op.is_none() && (is_oxlint || !parent.is_assignment_target());
+                // For tsgolint a `ParenthesizedExpression` is no access.
+                let is_access = |it: Expr<'a>| !(is_oxlint && it.is_parenthesized());
                 Some(
-                    op.is_none()
-                        && !parent.is_assignment_target()
+                    is_assignment
                         && (target == node
-                            || (is_member_of(node, |object| matches!(object, ExprKind::Super))
+                            || (is_access(node)
+                                && is_access(target)
+                                && is_member_of(node, |object| matches!(object, ExprKind::Super))
                                 && is_member_of(target, |object| matches!(object, ExprKind::This)))),
                 )
             }
@@ -328,13 +379,28 @@ fn is_safe_use<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
     known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
-/// The name of a key that is an `Identifier`, which it also is in `[key]`, and the key as a node.
-fn identifier_key<'a>(key: Key<'a>, name_node: impl FnOnce() -> Option<TsNode<'a>>) -> Option<(Name<'a>, TsNode<'a>)> {
-    match key.kind() {
-        KeyKind::Ident(name) => Some((name, name_node()?)),
-        KeyKind::Computed(expression) => Some((expression.as_ident()?, expression.ts_node())),
-        _ => None,
-    }
+/// The name of the property that a key names, and the key. typescript-eslint checks an `Identifier`, which a key also
+/// is in `[key]`. tsgolint checks no key in brackets, and the string or the number of a `PropertyAssignment`.
+fn property_of_key<'a>(
+    key: Key<'a>,
+    name_node: impl FnOnce() -> Option<TsNode<'a>>,
+    is_oxlint: bool,
+    is_property_assignment: bool,
+) -> Option<(&'a [u8], PropertyNode<'a>)> {
+    let (name, is_identifier, node) = match key.kind() {
+        KeyKind::Ident(name) => (name, true, name_node()?),
+        KeyKind::Computed(expression) if !is_oxlint => (expression.as_ident()?, true, expression.ts_node()),
+        KeyKind::String(name) | KeyKind::Number(name) if is_oxlint && is_property_assignment => {
+            (name, false, name_node()?)
+        }
+        _ => return None,
+    };
+    let name = name.bytes();
+    let property = PropertyNode {
+        identifier: is_identifier.then_some(name),
+        node,
+    };
+    Some((name, property))
 }
 
 #[derive(Default)]
@@ -364,17 +430,32 @@ impl UnboundMethod {
         true
     }
 
+    /// tsgolint's diagnostic is for the whole `reference`. oxlint prints where its first label is, the name.
+    fn report_reference(cx: &Cx<'_, Self>, name: Span, reference: Span, message: Message) {
+        cx.report(name, message).comments_apply_at(reference).labels_with(|labels| {
+            labels.first("This reference may be unbound and lose `this` context");
+            labels.push(reference, "");
+        });
+    }
+
+    /// `skips_spec_bound`: tsgolint's `TypeRecurser` over the type of a pattern passes over a constituent whose
+    /// `compare` is bound.
     fn check_union_constituents_and_report<'a>(
         &self,
         cx: &mut Cx<'a, Self>,
         report_node: Span,
         property_name: &[u8],
         ty: Type<'a>,
+        skips_spec_bound: bool,
     ) -> bool {
         let is_oxlint = cx.language().is_oxlint;
-        let message = union_constituents(ty).iter().flat_map(intersection_constituents).find_map(|intersection_part| {
-            message_of(intersection_part.get_property(property_name)?, self.ignore_static, is_oxlint)
-        });
+        let message = union_constituents(ty)
+            .iter()
+            .flat_map(intersection_constituents)
+            .filter(|part| !(skips_spec_bound && is_spec_bound_builtin_method(*part, property_name, is_oxlint)))
+            .find_map(|intersection_part| {
+                message_of(intersection_part.get_property(property_name)?, self.ignore_static, is_oxlint)
+            });
         if let Some(message) = message {
             cx.report(report_node, message);
         }
@@ -382,52 +463,54 @@ impl UnboundMethod {
     }
 
     fn check_member_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if is_safe_use(node, &mut cx.state.safe_uses) || node.is_jsx_tag_name() || node.is_in_type_query() {
+        let is_oxlint = cx.language().is_oxlint;
+        // For tsgolint the name in a JSX tag is a `PropertyAccessExpression` like any other.
+        if is_safe_use(node, &mut cx.state.safe_uses, is_oxlint)
+            || (!is_oxlint && node.is_jsx_tag_name())
+            || node.is_in_type_query()
+        {
             return;
         }
         match node.kind() {
             ExprKind::Dot { obj: object, name, .. } => {
-                // A `PrivateIdentifier`.
-                if name.bytes().starts_with(b"#") {
+                // A `PrivateIdentifier`, which tsgolint checks.
+                if !is_oxlint && name.bytes().starts_with(b"#") {
                     return;
                 }
                 let property = PropertyNode {
                     identifier: Some(name.bytes()),
                     node: NameOf(node).ts_node(),
                 };
-                if is_natively_bound(object.into(), property) {
+                if is_natively_bound(object.into(), property, is_oxlint) {
                     return;
                 }
                 // tsgolint 7.0 asks for the symbol of the member, which has no declaration if the parts of a union or
                 // of an intersection declare it in different places, as in `window.print`. It points at the name.
-                if cx.language().is_oxlint {
+                if is_oxlint {
                     let symbol = node.ts_symbol();
-                    if let Some(message) = symbol.and_then(|it| message_of(it, self.ignore_static, cx.language().is_oxlint)) {
-                        cx.report(name.span(), message).comments_apply_at(node).labels_with(|labels| {
-                            labels.first("This reference may be unbound and lose `this` context");
-                            labels.push(node, "");
-                        });
+                    if let Some(message) = symbol.and_then(|it| message_of(it, self.ignore_static, is_oxlint)) {
+                        Self::report_reference(cx, name.span(), node.span(), message);
                     }
                     return;
                 }
-                self.check_union_constituents_and_report(cx, node.span(), name.bytes(), object.ty());
+                self.check_union_constituents_and_report(cx, node.span(), name.bytes(), object.ty(), false);
             }
             // tsgolint 7.0 does not look at `a[b]`.
-            ExprKind::Index { .. } if cx.language().is_oxlint => {}
+            ExprKind::Index { .. } if is_oxlint => {}
             ExprKind::Index { obj: object, index, .. } => {
                 let property = PropertyNode {
                     identifier: index.as_ident().map(Name::bytes),
                     node: index.ts_node(),
                 };
-                if is_natively_bound(object.into(), property) {
+                if is_natively_bound(object.into(), property, is_oxlint) {
                     return;
                 }
                 for part in union_constituents(index.ty()) {
                     let reported = if let Some(value) = part.string_value() {
-                        self.check_union_constituents_and_report(cx, node.span(), value, object.ty())
+                        self.check_union_constituents_and_report(cx, node.span(), value, object.ty(), false)
                     } else if let Some(value) = part.number_value() {
                         let property_name = text::number_to_string(value);
-                        self.check_union_constituents_and_report(cx, node.span(), &property_name, object.ty())
+                        self.check_union_constituents_and_report(cx, node.span(), &property_name, object.ty(), false)
                     } else {
                         false
                     };
@@ -465,10 +548,20 @@ impl UnboundMethod {
             identifier: Some(property_name.bytes()),
             node: property,
         };
-        if !is_natively_bound(object, property) {
-            let object_type = object.node.get_type_at_location();
-            self.check_union_constituents_and_report(cx, name.span(), property_name.bytes(), object_type);
+        let is_oxlint = cx.language().is_oxlint;
+        if is_natively_bound(object, property, is_oxlint) {
+            return;
         }
+        // tsgolint asks for the symbol of the `PropertyAccessExpression`, which names a type here.
+        if is_oxlint {
+            let symbol = access.and_then(TsNode::get_symbol_at_location);
+            if let Some(message) = symbol.and_then(|it| message_of(it, self.ignore_static, is_oxlint)) {
+                Self::report_reference(cx, property_name.span(), name.span(), message);
+            }
+            return;
+        }
+        let object_type = object.node.get_type_at_location();
+        self.check_union_constituents_and_report(cx, name.span(), property_name.bytes(), object_type, false);
     }
 
     fn check_property<'a>(
@@ -476,16 +569,13 @@ impl UnboundMethod {
         cx: &mut Cx<'a, Self>,
         pattern: ObjectPattern<'a>,
         key: Span,
-        key_name: Name<'a>,
-        key_node: TsNode<'a>,
+        property_name: &[u8],
+        property: PropertyNode<'a>,
     ) {
+        let is_oxlint = cx.language().is_oxlint;
         if let Some(init_node) = pattern.init_node {
-            let property = PropertyNode {
-                identifier: Some(key_name.bytes()),
-                node: key_node,
-            };
-            if !is_natively_bound(init_node.into(), property) {
-                if self.check_if_method_and_report(cx, key, init_node.ty().get_property(key_name.bytes())) {
+            if !is_natively_bound(init_node.into(), property, is_oxlint) {
+                if self.check_if_method_and_report(cx, key, init_node.ty().get_property(property_name)) {
                     return;
                 }
             // A default is not all that can be destructured:
@@ -494,14 +584,19 @@ impl UnboundMethod {
                 return;
             }
         }
-        self.check_union_constituents_and_report(cx, key, key_name.bytes(), pattern.node.get_type_at_location());
+        let pattern_type = pattern.node.get_type_at_location();
+        let skips_spec_bound = is_oxlint && property.identifier.is_some();
+        self.check_union_constituents_and_report(cx, key, property_name, pattern_type, skips_spec_bound);
     }
 
     fn check_binding_pattern<'a>(&self, node: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let PatKind::Object(properties) = node.kind() else {
             return;
         };
-        if properties.is_empty() || is_node_inside_type_declaration(Node::Pat(node), &mut cx.state.type_declarations) {
+        let is_oxlint = cx.language().is_oxlint;
+        if properties.is_empty()
+            || is_node_inside_type_declaration(Node::Pat(node), &mut cx.state.type_declarations, is_oxlint)
+        {
             return;
         }
         let (init_node, is_in_assignment_pattern) = match node.parent() {
@@ -522,10 +617,10 @@ impl UnboundMethod {
                 element.property_name().or_else(|| element.name())
             };
             if let Some(key) = property.key()
-                && let Some((key_name, key_node)) = identifier_key(key, name_node)
+                && let Some((property_name, property_node)) = property_of_key(key, name_node, is_oxlint, false)
             {
                 let key = key.inner_span(cx.file());
-                self.check_property(cx, pattern, key, key_name, key_node);
+                self.check_property(cx, pattern, key, property_name, property_node);
             }
         }
     }
@@ -534,9 +629,10 @@ impl UnboundMethod {
         let ExprKind::Object(properties) = node.kind() else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
         if properties.is_empty()
             || !node.is_assignment_target()
-            || is_node_inside_type_declaration(Node::Expr(node), &mut cx.state.type_declarations)
+            || is_node_inside_type_declaration(Node::Expr(node), &mut cx.state.type_declarations, is_oxlint)
         {
             return;
         }
@@ -549,17 +645,22 @@ impl UnboundMethod {
             },
             _ => (None, false),
         };
+        // tsgolint checks the pattern that is the left of an assignment, and not where that is a default in a pattern.
+        if is_oxlint && (init_node.is_none() || is_in_assignment_pattern) {
+            return;
+        }
         let pattern = ObjectPattern {
             node: node.ts_node(),
             init_node,
             is_in_assignment_pattern,
         };
         for property in properties {
+            let name_node = || Some(NameOf(property).ts_node());
             if let Some(key) = property.key()
-                && let Some((key_name, key_node)) = identifier_key(key, || Some(NameOf(property).ts_node()))
+                && let Some((property_name, property_node)) = property_of_key(key, name_node, is_oxlint, true)
             {
                 let key = key.inner_span(cx.file());
-                self.check_property(cx, pattern, key, key_name, key_node);
+                self.check_property(cx, pattern, key, property_name, property_node);
             }
         }
     }

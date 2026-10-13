@@ -45,10 +45,27 @@ fn get_construct_signature_declaration(symbol: TsSymbol<'_>) -> Option<TsNode<'_
 fn get_type_parameters_from_type(
     sym_at_location: Option<TsSymbol<'_>>,
     is_in_type_context: bool,
+    is_oxlint: bool,
 ) -> Option<TypeParameters<'_>> {
     let sym_at_location = sym_at_location?;
-    let mut declarations: SmallVec<[TsNode; 4]> =
-        sym_at_location.skip_alias().declarations().collect();
+    let symbol = sym_at_location.skip_alias();
+    let mut declarations: SmallVec<[TsNode; 4]> = symbol.declarations().collect();
+    if is_oxlint {
+        // tsgolint keeps the order of the type declarations and that of the others, and the first
+        // declaration that can have type parameters decides, also if it has none.
+        utils::sort::sort_by_key(&mut declarations, |&decl| {
+            is_type_context_declaration(decl) != is_in_type_context
+        });
+        let declaration = declarations.into_iter().find_map(|decl| match decl.kind() {
+            SyntaxKind::TypeAliasDeclaration
+            | SyntaxKind::InterfaceDeclaration
+            | SyntaxKind::ClassDeclaration
+            | SyntaxKind::ClassExpression => Some(decl),
+            SyntaxKind::VariableDeclaration => get_construct_signature_declaration(symbol),
+            _ => None,
+        })?;
+        return type_parameters_of(declaration);
+    }
     utils::sort::sort_by_key(&mut declarations, |&decl| !is_type_context_declaration(decl));
     if !is_in_type_context {
         declarations.reverse();
@@ -88,9 +105,7 @@ fn tsgolint_arguments_can_infer<'a>(constructor: TsNode<'a>, type_parameters: &[
 fn is_same_type_reference<'a>(a: Type<'a>, b: Type<'a>) -> bool {
     match (is_type_reference_type(a), is_type_reference_type(b)) {
         (true, true) => {
-            a.target().is_some()
-                && a.target() == b.target()
-                && a.get_type_arguments().iter().eq(b.get_type_arguments())
+            a.has_same_target_as(b) && a.get_type_arguments().iter().eq(b.get_type_arguments())
         }
         (true, false) => a.target() == Some(b) && a.get_type_arguments().is_empty(),
         (false, true) => b.target() == Some(a) && b.get_type_arguments().is_empty(),
@@ -141,7 +156,16 @@ impl NoUnnecessaryTypeArguments {
         // `typeName` of a `TypeReference`, `expression` of an `ExpressionWithTypeArguments`
         let name = node.ts_node().children().next();
         let symbol = name.and_then(|name| name.get_symbol_at_location());
-        if let Some(type_parameters) = get_type_parameters_from_type(symbol, true) {
+        let is_oxlint = cx.language().is_oxlint;
+        // tsgolint: what an interface extends is not in a type context.
+        let is_interface_heritage = matches!(
+            node.parent(),
+            Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Interface)
+        );
+        let is_in_type_context = !(is_oxlint && is_interface_heritage);
+        if let Some(type_parameters) =
+            get_type_parameters_from_type(symbol, is_in_type_context, is_oxlint)
+        {
             check_ts_args_and_parameters(args, &type_parameters, cx);
         }
     }
@@ -152,7 +176,8 @@ impl NoUnnecessaryTypeArguments {
             return;
         }
         let symbol = class.extends().and_then(get_symbol_at_location);
-        if let Some(type_parameters) = get_type_parameters_from_type(symbol, false) {
+        let is_oxlint = cx.language().is_oxlint;
+        if let Some(type_parameters) = get_type_parameters_from_type(symbol, false, is_oxlint) {
             check_ts_args_and_parameters(args, &type_parameters, cx);
         }
     }
@@ -168,7 +193,8 @@ impl NoUnnecessaryTypeArguments {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        let of_class = || get_type_parameters_from_type(get_symbol_at_location(class?.callee()), false);
+        let of_class =
+            || get_type_parameters_from_type(get_symbol_at_location(class?.callee()), false, is_oxlint);
         let sig_decl = node.resolved_signature().and_then(|sig| sig.declaration());
         let type_parameters = match sig_decl {
             // A constructor has none. tsgolint goes on to those of the class.
@@ -190,8 +216,10 @@ impl NoUnnecessaryTypeArguments {
 
     /// `A<B>` that is not called, which tsgolint looks at as at the class that a class extends.
     fn check_instantiation<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let is_oxlint = cx.language().is_oxlint;
         if let ExprKind::Instantiation { expr, type_args } = node.kind()
-            && let Some(type_parameters) = get_type_parameters_from_type(get_symbol_at_location(expr), false)
+            && let Some(type_parameters) =
+                get_type_parameters_from_type(get_symbol_at_location(expr), false, is_oxlint)
         {
             check_ts_args_and_parameters(type_args, &type_parameters, cx);
         }

@@ -20,6 +20,31 @@ fn is_string_array_node(node: Expr) -> bool {
         })
 }
 
+/// `isEntityNameExpression`
+fn is_entity_name_expression(mut node: Expr) -> bool {
+    loop {
+        if node.is_parenthesized() {
+            return false;
+        }
+        match node.kind() {
+            ExprKind::Ident(_) => return true,
+            ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => node = obj,
+            _ => return false,
+        }
+    }
+}
+
+/// Whether `tryGetElementAccessExpressionName`, which tsgolint asks, looks for a name in the key of
+/// `a[key]`: a string, a number, a template without substitutions or an entity name, not in parentheses.
+fn is_literal_or_entity_name_expression(key: Expr) -> bool {
+    !key.is_parenthesized()
+        && match key.kind() {
+            ExprKind::String(_) | ExprKind::Number(_) => true,
+            ExprKind::Template(template) => template.exprs().is_empty(),
+            _ => is_entity_name_expression(key),
+        }
+}
+
 impl RequireArraySortCompare {
     fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = node.kind() else {
@@ -29,11 +54,22 @@ impl RequireArraySortCompare {
             return;
         }
         let callee = call.callee();
-        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
-            return;
+        let is_oxlint = cx.language().is_oxlint;
+        let obj = match callee.kind() {
+            ExprKind::Dot { obj, .. } => obj,
+            ExprKind::Index { obj, index, .. } => {
+                if is_oxlint && !is_literal_or_entity_name_expression(index) {
+                    return;
+                }
+                obj
+            }
+            _ => return,
         };
-        // `(a?.sort)()` calls a `ChainExpression`.
-        if callee.is_chain_root() || !is_static_member_access_of_value(callee, &["sort", "toSorted"]) {
+        // `(a?.sort)()` calls a `ChainExpression`, and for tsgolint `(a.sort)()` a `ParenthesizedExpression`.
+        if callee.is_chain_root()
+            || (is_oxlint && callee.is_parenthesized())
+            || !is_static_member_access_of_value(callee, &["sort", "toSorted"])
+        {
             return;
         }
         if self.ignore_string_arrays && is_string_array_node(obj) {

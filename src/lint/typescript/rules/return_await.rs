@@ -69,8 +69,9 @@ fn resources_of<'a>(file: &'a File<'a>) -> Resources<'a> {
     resources
 }
 
-/// Whether a `using` declaration that comes before `node` is in scope, up to the function.
-fn affects_explicit_resource_management<'a>(node: Expr<'a>, resources: &Resources<'a>) -> bool {
+/// Whether a `using` declaration that comes before `node` is in scope, up to the function. To tsgolint a class static block
+/// is not a function.
+fn affects_explicit_resource_management<'a>(node: Expr<'a>, resources: &Resources<'a>, is_oxlint: bool) -> bool {
     if resources.is_empty() {
         return false;
     }
@@ -86,7 +87,9 @@ fn affects_explicit_resource_management<'a>(node: Expr<'a>, resources: &Resource
         if has_scope && resources.get(&ancestor).is_some_and(|&end| end < node.span().start) {
             return true;
         }
-        if matches!(ancestor, Node::Func(_)) {
+        if let Node::Func(func) = ancestor
+            && !(is_oxlint && func.kind() == FnKind::StaticBlock)
+        {
             return false;
         }
     }
@@ -95,11 +98,12 @@ fn affects_explicit_resource_management<'a>(node: Expr<'a>, resources: &Resource
 
 /// Whether `node` is in a `try` statement of its function in such a way that an exception has an
 /// impact on the control flow: in a `try` block, or in a `catch` block that a `finally` follows.
-fn affects_explicit_error_handling(node: Expr<'_>) -> bool {
+fn affects_explicit_error_handling(node: Expr<'_>, is_oxlint: bool) -> bool {
     let mut child = Node::Expr(node);
     for ancestor in child.ancestors() {
         match ancestor {
-            Node::Func(_) => return false,
+            // tsgolint stops at `ast.IsFunctionLike`, which a class static block is not.
+            Node::Func(func) if !(is_oxlint && func.kind() == FnKind::StaticBlock) => return false,
             Node::Stmt(statement) => {
                 if let StmtKind::Try {
                     block,
@@ -148,6 +152,13 @@ fn insert_await<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Vec<Fix> {
     }
 }
 
+/// tsgolint's `hasAsync` is the modifier as written. The HIR does not keep it on the function of an accessor.
+fn has_async_modifier(func: Func<'_>) -> bool {
+    matches!(func.kind(), FnKind::Getter | FnKind::Setter)
+        && matches!(func.owner(), Node::Member(member)
+            if member.modifiers().iter().any(|it| it.flag() == Flags::ASYNC))
+}
+
 impl ReturnAwait {
     /// `returned`: what `node` is, or is a branch of. `affects_error_handling`: of `returned`, once it is known. Nothing between
     /// the two makes a difference for it.
@@ -174,8 +185,10 @@ impl ReturnAwait {
         // It is a thenable.
         let affects_error_handling = *affects_error_handling.get_or_insert_with(|| {
             let file = cx.file();
-            affects_explicit_error_handling(returned)
-                || affects_explicit_resource_management(returned, cx.state.get_or_insert_with(|| resources_of(file)))
+            let is_oxlint = file.language().is_oxlint;
+            let resources = cx.state.get_or_insert_with(|| resources_of(file));
+            affects_explicit_error_handling(returned, is_oxlint)
+                || affects_explicit_resource_management(returned, resources, is_oxlint)
         });
         let (should_await_in_current_context, fix_or_suggest) = match affects_error_handling {
             true => (self.error_handling_context, FixOrSuggest::Suggest),
@@ -255,10 +268,11 @@ impl Rule for ReturnAwait {
         let StmtKind::Return(Some(argument)) = statement.kind() else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
         let mut functions = Node::Stmt(statement).ancestors().filter_map(Node::as_func);
         if functions
             .find(|func| func.kind() != FnKind::StaticBlock)
-            .is_some_and(Func::is_async)
+            .is_some_and(|func| func.is_async() || is_oxlint && has_async_modifier(func))
         {
             self.test_possibly_returned_nodes(argument, cx);
         }

@@ -25,6 +25,24 @@ use crate::syntax_error::{Message, SyntaxError};
 #[derive(Default)]
 pub struct Scratch {
     document: crate::Scratch,
+    /// See [`Scratch::unformatted`].
+    unformatted: Vec<Unformatted>,
+}
+
+/// What is in a `<script>` or a `<style>` cannot be parsed, and has stayed as it is.
+#[derive(Debug, Clone)]
+pub struct Unformatted {
+    /// What is wrong with it.
+    pub message: Vec<u8>,
+    /// At which byte of the component, not counting a byte order mark.
+    pub at: u32,
+}
+
+impl Scratch {
+    /// What has stayed as it is in the component that has been formatted last.
+    pub fn unformatted(&self) -> &[Unformatted] {
+        &self.unformatted
+    }
 }
 
 /// What parses the JavaScript in a component.
@@ -72,6 +90,7 @@ pub fn format(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
+    scratch.unformatted.clear();
     let Some(parsers) = Parsers::new(parse_javascript, options) else {
         return Err(FormatError::SyntaxError);
     };
@@ -122,13 +141,15 @@ pub fn format(
         let error = SyntaxError(Message::NeedsEmbeddedFormatting, 0);
         return Err(FormatError::SyntaxErrorAt(error));
     }
-    let stack = Stack::new();
+    let (stack, unformatted) = (Stack::new(), Default::default());
     let how = code::How {
         options: &host,
         is_typescript: snipped.is_typescript,
         indents_script_and_style: svelte.indents_script_and_style,
         script_flavor: options.flavor,
         stack: &stack,
+        parse: parsers.program,
+        unformatted: &unformatted,
     };
     let mut context = JsFormatContext::without_file(text, host.clone(), &[]);
     context.parse_javascript = parse_javascript;
@@ -143,6 +164,13 @@ pub fn format(
     })?;
     if stack.ran_out() {
         return Err(FormatError::NestedTooDeeply);
+    }
+    for (index, message, at) in unformatted.take() {
+        if let Some(start) = snipped.start_of_content(index) {
+            let place = SyntaxError(Message::UnexpectedToken, start + at);
+            let at = place.before_normalizing_end_of_line(without_mark).1;
+            scratch.unformatted.push(Unformatted { message, at });
+        }
     }
     if original.starts_with(crate::text::BOM) {
         out.extend_from_slice(crate::text::BOM);

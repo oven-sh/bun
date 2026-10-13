@@ -417,6 +417,8 @@ struct Scratches {
     verify: bun_format::verify::Scratch,
     /// For the blocks of code in Markdown.
     blocks: Option<Box<Scratches>>,
+    /// What is to be said about the file that has been formatted last, though it has been formatted.
+    warnings: Vec<Problem>,
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
@@ -555,6 +557,7 @@ fn format(
     verifies: bool,
 ) -> Result<Formatted, Failure> {
     let options = &resolved.options;
+    scratch.warnings.clear();
     // What `>` of Windows PowerShell writes. Some parsers take it for UTF-8 with a NUL next to every letter.
     if matches!(text, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
         return Err(Failure::Syntax(Problem::new(
@@ -692,6 +695,10 @@ fn format(
             {
                 return Err(Failure::Changed("formatting would change its contents"));
             }
+            let unformatted = scratch.svelte.unformatted().iter();
+            scratch.warnings = unformatted
+                .map(|it| Problem::at(text, &it.message, it.at))
+                .collect();
             return finish(done, out, "Svelte");
         }
         Some(Kind::Handlebars) => {
@@ -1148,6 +1155,16 @@ impl Run<'_> {
         out
     }
 
+    /// Says what is wrong in the file that is shown as `shown`, which has been formatted all the same.
+    fn report_warnings(&mut self, shown: &[u8], warnings: &[Problem]) {
+        if self.options.log_level >= LogLevel::Warn {
+            for problem in warnings {
+                let printed = problem.print(shown, bun_ast::Kind::Warn, self.colors());
+                self.out.stderr.extend_from_slice(&printed);
+            }
+        }
+    }
+
     /// Says why the file that is shown as `shown` is left as it is. Not in the way of Prettier or oxfmt, whose words for it
     /// are others anyway.
     fn report(&mut self, shown: &[u8], failure: &Failure) {
@@ -1419,7 +1436,8 @@ impl Run<'_> {
         let names = Session::new();
         // Prettier's `listDifferent` comes first, and that is all.
         let verifies = self.options.debug_check && !only_looks;
-        let format_text = |options: &Resolved| {
+        let mut scratch = Scratches::default();
+        let mut format_text = |options: &Resolved| {
             let mut first_failure = None;
             for path in paths {
                 match format(
@@ -1427,7 +1445,7 @@ impl Run<'_> {
                     &text,
                     options,
                     (&Interner::new_in(&names), &names),
-                    &mut Scratches::default(),
+                    &mut scratch,
                     verifies,
                 ) {
                     Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
@@ -1456,6 +1474,9 @@ impl Run<'_> {
             if (options.options.tailwind.as_deref()).is_some_and(Tailwind::has_missed) {
                 return self.fail(&has_classes_without_order(name));
             }
+        }
+        if formatted.is_ok() {
+            self.report_warnings(name, &scratch.warnings);
         }
         match formatted {
             Err(failure @ Failure::Unread(_)) => {
@@ -1693,6 +1714,8 @@ impl Run<'_> {
         let atoms = InternerPerThread::new_in(&names);
         let memory = Session::new();
         let mut results = Guarded::new(done);
+        // By the place of a file in `expanded`.
+        let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
         let once = fs::Written::default();
@@ -1737,6 +1760,10 @@ impl Run<'_> {
                     .is_some_and(Tailwind::has_missed)
                 {
                     return Ok(Done::PutAside);
+                }
+                if !scratch.warnings.is_empty() {
+                    let all = std::mem::take(&mut scratch.warnings);
+                    warnings.lock().push((index, all));
                 }
                 if formatted == text {
                     return Ok(Done::Unchanged);
@@ -1803,7 +1830,11 @@ impl Run<'_> {
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
         let (mut written, mut partly_staged) = (Vec::new(), Vec::new());
-        for (it, done) in expanded.iter().zip(std::mem::take(results.get_mut())) {
+        let mut warnings = std::mem::take(warnings.get_mut());
+        sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
+        let mut warnings = warnings.into_iter().peekable();
+        let results = std::mem::take(results.get_mut());
+        for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
             let target = match it {
                 Expanded::Error(error) => {
                     self.error(error);
@@ -1812,6 +1843,9 @@ impl Run<'_> {
                 Expanded::File(target) => target,
             };
             let shown = paths::relative(cwd, &target.path);
+            if let Some((_, all)) = warnings.next_if(|it| it.0 == index) {
+                self.report_warnings(&shown, &all);
+            }
             match done {
                 None => {}
                 Some(Done::Unchanged) => {
@@ -2092,7 +2126,7 @@ impl Run<'_> {
                 .concat(),
             );
         }
-        if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
+        if !(options.plugins.iter()).all(|it| configs.is_built_in(it)) {
             self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
         }
         if options.config.is_some() && !options.config_lookup {

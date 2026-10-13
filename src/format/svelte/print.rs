@@ -497,9 +497,11 @@ impl<'a, 'o> Printer<'a, 'o> {
         }
     }
 
-    /// Whether `expression` is the name `name`.
+    /// Whether `expression` is the name `name`. The plugin makes `{a}` of `a={a /* b */}`.
     fn is_name(&self, expression: Expression, name: &[u8]) -> bool {
-        expression.kind == ExpressionKind::Identifier && expression.span.of(self.text) == name
+        expression.kind == ExpressionKind::Identifier
+            && expression.span.of(self.text) == name
+            && !self.has_comments_around(expression)
     }
 
     /// `isOrCanBeConvertedToShorthand`
@@ -661,38 +663,31 @@ impl<'a, 'o> Printer<'a, 'o> {
         snip::unsnip(text, self.contents)
     }
 
+    /// Whether there is a comment before or behind what the plugin prints of `expression`: `{a /* b */}`, `{/* b */ (a)}`.
+    fn has_comments_around(&self, expression: Expression) -> bool {
+        // What is there is parentheses, white space and comments.
+        let has_comment = |start: u32, end: u32| {
+            let around = self.text.get(start as usize..end as usize);
+            around.is_some_and(|it| strings::contains_char(it, b'/'))
+        };
+        has_comment(expression.outer.start, expression.from)
+            || has_comment(expression.span.end, expression.outer.end)
+    }
+
     fn js(&self, expression: Expression) -> Js<'a> {
+        // The plugin loses them.
+        let has_comments_around = self.has_comments_around(expression);
+        let (start, end) = match has_comments_around {
+            true => (expression.outer.start, expression.outer.end),
+            false => (expression.from, expression.span.end),
+        };
         Js {
-            text: self.js_text(expression.from, expression.span.end),
+            text: self.js_text(start, end),
             kind: JsKind::Expression,
             has_single_quotes: false,
             is_on_one_line: false,
             is_without_parentheses: false,
-            ends_with_line_comment: false,
-        }
-    }
-
-    /// Whether a comment that says something is before or behind what `js` has of `expression`.
-    fn loses_comments(&self, expression: Expression) -> bool {
-        // What is there is parentheses, white space and comments.
-        let says_something = |start: u32, end: u32| {
-            let around = self.text.get(start as usize..end as usize);
-            (around.unwrap_or_default().iter()).any(|it| it.is_ascii_alphabetic() || !it.is_ascii())
-        };
-        says_something(expression.outer.start, expression.from)
-            || says_something(expression.span.end, expression.outer.end)
-    }
-
-    /// The same for the expression of a tag, in the markup or in the value of an attribute. There the plugin loses the
-    /// comments of `{a /* b */}` and `{/* b */ (a)}`.
-    fn js_of_tag(&self, expression: Expression) -> Js<'a> {
-        match self.loses_comments(expression) {
-            true => Js {
-                text: self.js_text(expression.outer.start, expression.outer.end),
-                ends_with_line_comment: expression.ends_with_line_comment,
-                ..self.js(expression)
-            },
-            false => self.js(expression),
+            has_comments_around,
         }
     }
 
@@ -700,9 +695,9 @@ impl<'a, 'o> Printer<'a, 'o> {
         Doc::Code(Box::new(Code::Js(js)))
     }
 
-    /// The expression of a tag, with nothing asked of it.
+    /// An expression with nothing asked of it.
     fn print_js(&self, expression: Expression) -> Doc<'a> {
-        Self::code(self.js_of_tag(expression))
+        Self::code(self.js(expression))
     }
 
     /// `printSvelteBlockJS`
@@ -717,7 +712,7 @@ impl<'a, 'o> Printer<'a, 'o> {
     fn print_js_in_braces(&self, expression: Expression) -> Doc<'a> {
         Doc::List(vec![
             Doc::Token("{"),
-            Self::code(self.js(expression)),
+            self.print_js(expression),
             Doc::Token("}"),
         ])
     }
@@ -747,7 +742,10 @@ impl<'a, 'o> Printer<'a, 'o> {
             expanded.extend_from_slice(b": ");
             expanded.extend_from_slice(annotation.of(self.text));
         }
-        owned(expanded)
+        match strings::contains_char(&expanded, b'\n') {
+            true => lines_as_they_are(&Cow::Owned(expanded)),
+            false => owned(expanded),
+        }
     }
 
     /// `removeAndGetLeadingComments`
@@ -802,12 +800,12 @@ impl<'a, 'o> Printer<'a, 'o> {
         result
     }
 
-    /// `getSnippedContent`
-    fn snipped_content(&self, attributes: &[Id]) -> &'a [u8] {
+    /// `getSnippedContent`, and which of what has been snipped it is.
+    fn snipped_content(&self, attributes: &[Id]) -> (&'a [u8], usize) {
         (self.attribute_text_value(attributes, ATTRIBUTE))
             .and_then(|it| std::str::from_utf8(it).ok()?.parse::<usize>().ok())
-            .and_then(|index| self.contents.get(index))
-            .map_or(&b""[..], |it| &it[..])
+            .and_then(|index| Some((&self.contents.get(index)?[..], index)))
+            .unwrap_or_default()
     }
 
     /// `path.map(printWithPrependedAttributeLine(node, options, print), "attributes")`
@@ -956,7 +954,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         &mut self,
         (id, tag): (Id, &'static str),
         attributes: &[Id],
-        content: &'a [u8],
+        (content, index): (&'a [u8], usize),
         comments: &[LeadingComment],
         is_top_level: bool,
     ) -> Doc<'a> {
@@ -978,7 +976,11 @@ impl<'a, 'o> Printer<'a, 'o> {
             .is_some_and(|it| self.is_ignore_directive(it.0));
         let body = match parser.filter(|_| self.is_supported_language(attributes) && !is_ignored) {
             Some(parser) if !strings::trim_js_whitespace(content).is_empty() => {
-                Doc::Code(Box::new(Code::Body { content, parser }))
+                Doc::Code(Box::new(Code::Body {
+                    content,
+                    parser,
+                    index,
+                }))
             }
             Some(_) if content.is_empty() => EMPTY,
             Some(_) => Doc::Hardline,
@@ -1059,7 +1061,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             _ => return None,
         };
         let content = match tag {
-            "template" => self.print_raw(fragment, false),
+            "template" => (self.print_raw(fragment, false), 0),
             _ => self.snipped_content(&attributes),
         };
         let comments: Vec<LeadingComment> = (self
@@ -1141,7 +1143,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 Doc::Token("{"),
                 Self::code(Js {
                     has_single_quotes: self.quoted_depth > 0,
-                    ..self.js_of_tag(*expression)
+                    ..self.js(*expression)
                 }),
                 Doc::Token("}"),
             ]),
@@ -1201,11 +1203,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         }
         match self.tree[id].kind.clone() {
             Kind::Attribute { name, value } => {
-                // The plugin makes `{a}` of `a={a /* b */}`.
-                let loses_comments = self.lone_mustache_tag(&value).is_some_and(
-                    |tag| matches!(self.tree[tag].kind, Kind::ExpressionTag(it) if self.loses_comments(it)),
-                );
-                if self.can_be_shorthand(name, &value) && !loses_comments {
+                if self.can_be_shorthand(name, &value) {
                     return Doc::List(match allows_shorthand {
                         true => vec![Doc::Token("{"), text(name), Doc::Token("}")],
                         false => vec![text(name), Doc::Token("={"), text(name), Doc::Token("}")],
@@ -1533,7 +1531,9 @@ impl<'a, 'o> Printer<'a, 'o> {
         if let Some(this) = this {
             let line = self.attribute_line(&element.attributes, true);
             let value = match this.kind {
-                ExpressionKind::StringLiteral if kind == ElementKind::SvelteElement => {
+                ExpressionKind::StringLiteral
+                    if kind == ElementKind::SvelteElement && !self.has_comments_around(this) =>
+                {
                     self.print_tag_name(this)
                 }
                 _ => self.print_js_in_braces(this),
@@ -1750,12 +1750,12 @@ impl<'a, 'o> Printer<'a, 'o> {
                 "{",
                 Self::code(Js {
                     has_single_quotes: self.quoted_depth > 0,
-                    ..self.js_of_tag(expression)
+                    ..self.js(expression)
                 }),
             ),
             Kind::HtmlTag(expression) => tag("{@html ", self.print_js(expression)),
             Kind::RenderTag(expression) => tag("{@render ", self.print_js(expression)),
-            Kind::ConstTag(declarator) => tag(
+            Kind::ConstTag(declarator, _) => tag(
                 "{@const ",
                 Self::code(Js {
                     text: self.js_text(declarator.start, declarator.end),
@@ -1763,7 +1763,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: true,
-                    ends_with_line_comment: false,
+                    has_comments_around: false,
                 }),
             ),
             Kind::DeclarationTag(declaration) => tag(
@@ -1774,10 +1774,15 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: false,
-                    ends_with_line_comment: false,
+                    has_comments_around: false,
                 }),
             ),
             Kind::DebugTag(identifiers) => {
+                // There is nothing in it but names, commas and comments, which the plugin loses.
+                let (start, end) = (self.tree[id].start as usize, self.tree[id].end as usize);
+                if (self.text.get(start..end)).is_some_and(|it| strings::contains_char(it, b'/')) {
+                    return self.print_as_written(id);
+                }
                 let mut parts = vec![Doc::Token("{@debug")];
                 for (index, identifier) in identifiers.iter().enumerate() {
                     parts.push(Doc::Token(if index == 0 { " " } else { ", " }));
@@ -1915,7 +1920,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: false,
-                    ends_with_line_comment: false,
+                    has_comments_around: false,
                 });
                 Doc::List(vec![
                     Doc::Token("{#snippet "),

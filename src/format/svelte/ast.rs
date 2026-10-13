@@ -49,8 +49,6 @@ pub(crate) struct Expression {
     pub(crate) from: u32,
     /// With the parentheses around it, and the comments before, between and behind those.
     pub(crate) outer: Span,
-    /// The last of these comments is a `//`.
-    pub(crate) ends_with_line_comment: bool,
 }
 
 impl Expression {
@@ -61,7 +59,6 @@ impl Expression {
             kind,
             from: span.start,
             outer: span,
-            ends_with_line_comment: false,
         }
     }
 }
@@ -180,8 +177,8 @@ pub(crate) enum Kind<'a> {
     ExpressionTag(Expression),
     HtmlTag(Expression),
     RenderTag(Expression),
-    /// The declarator.
-    ConstTag(Span),
+    /// The declarator, and its `init`.
+    ConstTag(Span, Expression),
     /// The declaration.
     DeclarationTag(Span),
     DebugTag(Vec<Span>),

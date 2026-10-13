@@ -11,8 +11,12 @@ use std::borrow::Cow;
 pub(crate) enum Code<'a> {
     /// What `embed` makes of a node with `isJS`.
     Js(Js<'a>),
-    /// `textToDoc(content, { parser })`, without the line breaks at its end.
-    Body { content: &'a [u8], parser: Parser },
+    /// `textToDoc(content, { parser })`, without the line breaks at its end. `index`: which of what has been snipped it is.
+    Body {
+        content: &'a [u8],
+        parser: Parser,
+        index: usize,
+    },
 }
 
 /// The parsers for what is in a `<script>` or a `<style>`.
@@ -47,8 +51,8 @@ pub(crate) struct Js<'a> {
     pub(crate) is_on_one_line: bool,
     /// `removeParentheses`
     pub(crate) is_without_parentheses: bool,
-    /// The last thing in `text` is a `//` comment that the plugin does not print.
-    pub(crate) ends_with_line_comment: bool,
+    /// `text` has the comments around the expression, and the parentheses between them, which the plugin leaves out.
+    pub(crate) has_comments_around: bool,
 }
 
 #[derive(Debug, Clone)]

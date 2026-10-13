@@ -475,13 +475,12 @@ impl<'a> Parser<'a, '_> {
 
     // ───────────── read/expression.js ─────────────
 
-    /// Goes on behind the comments that follow: the parser has passed them when it looked at the next token. Returns whether
-    /// the last of them is a `//`.
-    fn pass_comments(&mut self) -> bool {
-        let (mut at, mut is_line) = (self.index, false);
+    /// Goes on behind the comments that follow: the parser has passed them when it looked at the next token.
+    fn pass_comments(&mut self) {
+        let mut at = self.index;
         loop {
             let Some(rest) = self.text.get(at..self.len) else {
-                return is_line;
+                return;
             };
             let rest = strings::trim_js_whitespace_start(rest);
             let start = self.len - rest.len();
@@ -491,11 +490,10 @@ impl<'a> Parser<'a, '_> {
                 }
                 [b'/', b'*', inner @ ..] => match strings::index_of(inner, b"*/") {
                     Some(len) => start + 2 + len + 2,
-                    None => return is_line,
+                    None => return,
                 },
-                _ => return is_line,
+                _ => return,
             };
-            is_line = rest[1] == b'/';
             (at, self.index) = (end, end);
         }
     }
@@ -506,7 +504,7 @@ impl<'a> Parser<'a, '_> {
         match self.js.expression_at(template, index) {
             Ok(mut parsed) => {
                 self.index = parsed.end as usize;
-                parsed.expression.ends_with_line_comment = self.pass_comments();
+                self.pass_comments();
                 parsed.expression.outer = Span::new(index, self.index);
                 Ok(parsed)
             }
@@ -1443,7 +1441,6 @@ impl<'a> Parser<'a, '_> {
                 if let Some((end, annotation)) = parsed.assertion {
                     expression.span.end = end;
                     expression.outer.end = end;
-                    expression.ends_with_line_comment = false;
                     expression.kind = ExpressionKind::Other;
                     let mut at = (annotation as usize).saturating_sub(2);
                     while at > start && !self.text[at..].starts_with(b"as") {
@@ -1774,7 +1771,7 @@ impl<'a> Parser<'a, '_> {
             }
             self.allow_whitespace();
             self.expect(b"}")?;
-            Kind::ConstTag(Span::new(id.span.start as usize, declarator_end))
+            Kind::ConstTag(Span::new(id.span.start as usize, declarator_end), init)
         } else if self.eat(b"render") {
             self.require_whitespace()?;
             let expression = self.read_expression()?;

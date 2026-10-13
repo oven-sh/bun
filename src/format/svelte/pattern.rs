@@ -204,6 +204,11 @@ pub(crate) fn expand(
         let Some(parameter) = function.params().iter().next() else {
             return;
         };
+        // The plugin loses them.
+        if file.comments().into_iter().next().is_some() {
+            expanded = Some([b" ", pattern].concat());
+            return;
+        }
         let mut expander = Expander {
             file,
             out: Vec::new(),

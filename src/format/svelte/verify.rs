@@ -6,12 +6,14 @@
 //!   the same attributes and directives in the same order. The scripts, the style sheet and `<svelte:options>` can be
 //!   anywhere, and so can comments, which go with them.
 //! - All that is text has the same letters as often: text, comments, scripts, style sheets, the values of attributes,
-//!   expressions. A tag counts from `{` to `}`: `prettier-plugin-svelte` loses the comment of `{a /* b */}`.
+//!   expressions. An expression counts with the comments around it, which `prettier-plugin-svelte` loses: `{a /* b */}`.
+//! - There are as many comments: in the markup, between attributes, and around expressions.
 
 use super::Parsers;
 use super::ast::{Expression, FragmentId, Id, Kind, Pattern, Span, Tree, Value};
 use super::snip::{self, ATTRIBUTE};
 use crate::html::verify::{Reader, Signature};
+use bun_core::strings;
 
 struct Check<'t, 'a> {
     tree: &'t Tree<'a>,
@@ -37,12 +39,44 @@ impl Check<'_, '_> {
         self.reader.count(&text);
     }
 
+    /// Counts the comments from `start` to `end`, where no `/` is anything else than part of one.
+    #[optimize(size)]
+    fn count_comments(&mut self, start: u32, end: u32) {
+        let mut rest = Span { start, end }.of(self.text);
+        while let Some(at) = strings::index_of_char_usize(rest, b'/') {
+            let comment = &rest[at..];
+            let len = match comment.get(1) {
+                Some(b'*') => strings::index_of(&comment[2..], b"*/").map(|it| it + 4),
+                _ => strings::index_of_any(comment, b"\n\r"),
+            };
+            self.comments += 1;
+            rest = comment
+                .get(len.unwrap_or(comment.len())..)
+                .unwrap_or_default();
+        }
+    }
+
+    /// Counts the comments around `expression`.
+    #[optimize(size)]
+    fn count_comments_around(&mut self, expression: Expression) {
+        self.count_comments(expression.outer.start, expression.span.start);
+        self.count_comments(expression.span.end, expression.outer.end);
+    }
+
+    /// The comments around `expression`, and nothing of it.
+    #[optimize(size)]
+    fn comments_around(&mut self, expression: Expression) {
+        let (outer, inner) = (expression.outer, expression.span);
+        for (start, end) in [(outer.start, inner.start), (inner.end, outer.end)] {
+            self.span(Span { start, end });
+        }
+        self.count_comments_around(expression);
+    }
+
     #[optimize(size)]
     fn expression(&mut self, expression: Expression) {
-        self.span(Span {
-            start: expression.from,
-            end: expression.span.end,
-        });
+        self.span(expression.span);
+        self.comments_around(expression);
     }
 
     #[optimize(size)]
@@ -77,7 +111,10 @@ impl Check<'_, '_> {
             let node = &tree[part];
             match &node.kind {
                 Kind::Text { raw } => self.reader.count_value(raw),
-                _ => {
+                kind => {
+                    if let Kind::ExpressionTag(expression) = kind {
+                        self.count_comments_around(*expression);
+                    }
                     self.reader.mark(1);
                     self.span(Span {
                         start: node.start,
@@ -132,7 +169,8 @@ impl Check<'_, '_> {
                         Some(expression) if expression.span.of(self.text) != *name => {
                             self.expression(expression);
                         }
-                        _ => {}
+                        Some(expression) => self.comments_around(expression),
+                        None => {}
                     }
                 }
                 Kind::StyleDirective {
@@ -147,12 +185,17 @@ impl Check<'_, '_> {
                     }
                     // `style:color={color}` is `style:color`.
                     match self.lone_expression(value) {
-                        Some(expression) if expression.span.of(self.text) == *name => {}
+                        Some(expression) if expression.span.of(self.text) == *name => {
+                            self.comments_around(expression);
+                        }
                         _ => self.value(value),
                     }
                 }
                 // `{...a}`, `{@attach a}`
-                _ => {
+                kind => {
+                    if let Kind::SpreadAttribute(expression) | Kind::AttachTag(expression) = kind {
+                        self.count_comments_around(*expression);
+                    }
                     self.reader.mark(5);
                     self.span(Span {
                         start: node.start,
@@ -273,7 +316,15 @@ impl Check<'_, '_> {
                 fragments[0] = Some(Some(*body));
             }
             // Tags.
-            _ => {
+            kind => {
+                match kind {
+                    Kind::ExpressionTag(expression)
+                    | Kind::HtmlTag(expression)
+                    | Kind::RenderTag(expression)
+                    | Kind::ConstTag(_, expression) => self.count_comments_around(*expression),
+                    Kind::DebugTag(_) => self.count_comments(whole.start, whole.end),
+                    _ => {}
+                }
                 self.reader.mark(49);
                 return self.span(whole);
             }

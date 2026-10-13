@@ -33,21 +33,37 @@ struct Replaced {
     same: usize,
 }
 
+/// Where the byte at `at` of the new text is in the old text.
+fn before_replacing(replaced: &[Replaced], at: usize) -> usize {
+    let before = replaced.partition_point(|it| it.new.0 <= at);
+    match before.checked_sub(1).and_then(|index| replaced.get(index)) {
+        Some(it) if at < it.new.1 => it.old.0 + (at - it.new.0).min(it.same),
+        Some(it) => it.old.1 + (at - it.new.1),
+        None => at,
+    }
+}
+
 impl Snipped {
     /// Where the byte at `at` of `text` is in what has been snipped.
     #[cold]
     pub(crate) fn place_in_source(&self, at: u32) -> u32 {
-        let mut at = at as usize + self.trimmed;
-        for pass in self.replaced.iter().rev() {
-            let before = pass.partition_point(|it| it.new.0 <= at);
-            if let Some(it) = before.checked_sub(1).and_then(|index| pass.get(index)) {
-                at = match at < it.new.1 {
-                    true => it.old.0 + (at - it.new.0).min(it.same),
-                    false => it.old.1 + (at - it.new.1),
-                };
-            }
-        }
-        at as u32
+        let [scripts, styles] = &self.replaced;
+        before_replacing(
+            scripts,
+            before_replacing(styles, at as usize + self.trimmed),
+        ) as u32
+    }
+
+    /// Where `contents[index]` starts in what has been snipped.
+    #[cold]
+    pub(crate) fn start_of_content(&self, index: usize) -> Option<u32> {
+        let [scripts, styles] = &self.replaced;
+        // Behind the `>`.
+        let start = |it: &Replaced| it.old.0 + it.same + 1;
+        Some(match scripts.get(index) {
+            Some(script) => start(script),
+            None => before_replacing(scripts, start(styles.get(index - scripts.len())?)),
+        } as u32)
     }
 }
 

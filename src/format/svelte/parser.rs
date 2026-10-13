@@ -626,6 +626,9 @@ impl<'a> Parser<'a, '_> {
             self.index = start;
             return Ok(None);
         }
+        if !self.is_typescript {
+            return fail(Message::TypeScriptInJavaScript, self.index - 1);
+        }
         let (template, index) = (self.template(), self.index);
         match self.js.type_at(template, index) {
             Ok(span) => {

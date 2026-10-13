@@ -72,9 +72,14 @@ impl<'p> Parsers<'p> {
                 parse_part,
                 is_typescript: false,
                 is_nested_too_deeply: false,
+                typescript_at: None,
             };
             let parsed = parser::parse(text, &mut js);
-            tree = parsed.map_err(|error| (!js.is_nested_too_deeply).then_some(error));
+            tree = parsed.map_err(|error| match js.typescript_at == Some(error.1 as usize) {
+                _ if js.is_nested_too_deeply => None,
+                true => Some(SyntaxError(Message::TypeScriptInJavaScript, error.1)),
+                false => Some(error),
+            });
         });
         tree
     }

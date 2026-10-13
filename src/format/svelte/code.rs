@@ -212,7 +212,14 @@ fn write_js(js: &Js<'_>, out: &mut Writer<'_, '_>, how: &How<'_>) {
         Some(false) => {}
         // `catch (e) { return getText(node, options, true); }`
         None => {
-            out.string(&js.text);
+            // It may have lost its parentheses: `{(/a/b)}`.
+            let is_in_parentheses = js.follows.is_some()
+                && matches!(js.text.trim_ascii_start(), [b'/' | b'#' | b'@' | b':', ..])
+                && !matches!(js.text.trim_ascii_start(), [b'/', b'/' | b'*', ..]);
+            match is_in_parentheses {
+                true => out.string(&[b"(", &js.text[..], b")"].concat()),
+                false => out.string(&js.text),
+            }
             let last_line = strings::last_index_of_char(&js.text, b'\n').map_or(0, |it| it + 1);
             if strings::contains(&js.text[last_line..], b"//") {
                 out.hardline();

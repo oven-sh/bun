@@ -164,6 +164,7 @@ messages! {
     ReservedScriptAttribute = "This attribute is reserved on <script>",
     ReservedWord = "A reserved word cannot be a name here",
     SequenceInConstTag = "A comma expression needs parentheses here",
+    TypeScriptInJavaScript = "This is TypeScript, which needs <script lang=\"ts\">",
     UnexpectedEndOfBlock = "There is no open block to end here",
     UnknownBlock = "There is no such {#...} block",
     UnknownOption = "<svelte:options> has no such option",

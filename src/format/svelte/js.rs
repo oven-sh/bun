@@ -15,6 +15,8 @@ pub(crate) struct FromParser<'p> {
     pub(crate) is_typescript: bool,
     /// The stack has ended in a part.
     pub(crate) is_nested_too_deeply: bool,
+    /// Where the last error is, if it is that only TypeScript has what is there.
+    pub(crate) typescript_at: Option<usize>,
 }
 
 fn kind_of(e: Expr<'_>) -> ExpressionKind {
@@ -134,12 +136,7 @@ impl<'a> Visitor<'a> for Early {
             }
             // "The keyword 'yield' is reserved"
             ExprKind::Ident(_) => (e.text() == b"yield").then(|| e.span().start),
-            ExprKind::Fn(function) => (!self.is_typescript
-                && function.type_params().iter().next().is_some())
-            .then(|| e.span().start),
-            ExprKind::As { .. } if e.is_angle_bracket_assertion() => {
-                (!self.is_typescript).then(|| e.span().start)
-            }
+            ExprKind::As { .. } | ExprKind::AsConst(_) if e.is_angle_bracket_assertion() => None,
             ExprKind::As { expr, .. }
             | ExprKind::Satisfies { expr, .. }
             | ExprKind::AsConst(expr)
@@ -186,7 +183,7 @@ impl FromParser<'_> {
                 until: until as u32,
                 is_typescript,
             };
-            let (mut result, mut stops_at) = (Err(at), None);
+            let (mut result, mut stops_at, mut typescript_at) = (Err(at), None, None);
             let parsed = (self.parse_part)(part, &mut |file, end| {
                 let mut early = Early {
                     is_typescript,
@@ -196,6 +193,12 @@ impl FromParser<'_> {
                 };
                 walk(file, &mut early);
                 stops_at = early.first_of_typescript;
+                // acorn knows none of it.
+                typescript_at = (file.first_of_typescript_in_javascript())
+                    .filter(|it| {
+                        !is_typescript && early.first_error.is_none_or(|error| *it < error)
+                    })
+                    .map(|it| at + it as usize);
                 result = match (early.first_error, file.body().iter().next()) {
                     (Some(error), _) => Err(at + error as usize),
                     (None, None) => Err(at),
@@ -207,26 +210,33 @@ impl FromParser<'_> {
                 return Err(error.at as usize);
             }
             // Once more, with nothing to see of it.
-            match stops_at {
-                Some(it) => until = at + it as usize,
-                None => return result,
+            match (stops_at, typescript_at) {
+                (Some(it), _) => until = at + it as usize,
+                (None, Some(it)) => {
+                    self.typescript_at = Some(it);
+                    return Err(it);
+                }
+                (None, None) => return result,
             }
         }
     }
 
     /// What `read` makes of `program`.
+    /// `at`: where the second byte of `program` is in the component.
     fn program<R>(
-        &self,
-        program: &[u8],
+        &mut self,
+        (program, at): (&[u8], u32),
         read: impl for<'b> Fn(StmtKind<'b>) -> Option<R>,
-    ) -> Option<R> {
-        let mut result = None;
+    ) -> Result<R, usize> {
+        let (mut result, mut typescript_at) = (None, None);
         self.parse.call(self.path(), program, false, &mut |file| {
-            if !file.has_parse_errors() {
+            typescript_at = file.first_of_typescript_in_javascript();
+            if !file.has_parse_errors() && typescript_at.is_none() {
                 result = file.body().iter().next().and_then(|it| read(it.kind()));
             }
         });
-        result
+        self.typescript_at = typescript_at.map(|it| (at + it) as usize - 1);
+        result.ok_or_else(|| self.typescript_at.unwrap_or(at as usize))
     }
 }
 
@@ -293,13 +303,12 @@ impl Js for FromParser<'_> {
 
     fn check_pattern(&mut self, text: &[u8], pattern: Span) -> Result<(), usize> {
         let program = [b"(", pattern.of(text), b" = 1\n)"].concat();
-        self.program(&program, |_| Some(()))
-            .ok_or(pattern.start as usize)
+        self.program((&program, pattern.start), |_| Some(()))
     }
 
     fn parameters(&mut self, text: &[u8], parameters: Span) -> Result<Option<u32>, usize> {
         let program = [b"(", parameters.of(text), b" => {}\n)"].concat();
-        self.program(&program, |statement| match statement {
+        self.program((&program, parameters.start), |statement| match statement {
             StmtKind::Expr(e) => match e.kind() {
                 // One byte, the `(`, is before them.
                 ExprKind::Fn(function) => Some(
@@ -310,6 +319,5 @@ impl Js for FromParser<'_> {
             },
             _ => None,
         })
-        .ok_or(parameters.start as usize)
     }
 }

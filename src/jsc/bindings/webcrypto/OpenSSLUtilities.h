@@ -27,6 +27,7 @@
 
 #include "CryptoAlgorithmIdentifier.h"
 #include "OpenSSLCryptoUniquePtr.h"
+#include "VectorSizeLimit.h"
 #include <openssl/aes.h>
 #include <openssl/evp.h>
 #include <stdint.h>
@@ -36,6 +37,19 @@
 #if ENABLE(WEB_CRYPTO)
 
 namespace WebCore {
+
+// Sizes an output buffer whose length comes from user data (plaintext + tag,
+// padded block count, wrapped key + 8). SubtleCrypto caps the input at the
+// Vector limit, but the output can still be over it, and the Vector size
+// constructor CRASH()es instead of failing. A false return becomes an
+// OperationError rejection in the caller.
+[[nodiscard]] inline bool tryAllocateOutputBuffer(Vector<uint8_t>& buffer, size_t size)
+{
+    ASSERT(buffer.isEmpty());
+    if (size > Bun::maxVectorSize<uint8_t>()) [[unlikely]]
+        return false;
+    return buffer.tryGrow(size);
+}
 
 const EVP_MD* digestAlgorithm(CryptoAlgorithmIdentifier hashFunction);
 

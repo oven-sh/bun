@@ -443,7 +443,7 @@ Pass an array for several patterns. A pattern that starts with `!` excludes what
 const modules = import.meta.glob(["./pages/**/*.tsx", "!**/*.test.tsx"]);
 ```
 
-A pattern starts with `./` or `../` (relative to the file), `/` (relative to the directory Bun runs in), or an alias from `paths` in `tsconfig.json` or `imports` in `package.json`. Dotfiles, `node_modules` and the file itself are not matched.
+A pattern starts with `./` or `../` (relative to the file), `/` (relative to the directory Bun runs in), or an alias from `paths` in `tsconfig.json` or `imports` in `package.json`. Dotfiles, `node_modules` and the file itself are not matched. Parentheses are plain characters: for a choice, write `{a,b}` and not `(a|b)` or `@(a|b)`.
 
 | Option       | Description                                                                                                                  |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |

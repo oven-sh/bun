@@ -1,6 +1,8 @@
 //! `import.meta.glob()` with Vite's semantics: the call becomes an object whose keys are the files
 //! that match and whose values are `() => import(file)`, or static imports with `eager`.
 
+use std::borrow::Cow;
+
 use bun_alloc::Arena;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
@@ -222,9 +224,34 @@ fn literal(expr: Expr) -> Expr {
     }
 }
 
+/// Vite has no `@(a|b)`, `+(a|b)`, `?(a|b)`, `*(a|b)` or `!(a|b)`. The parenthesis becomes `[(]` and not `\(`,
+/// because on Windows the walker takes a backslash for a separator.
+fn without_extglobs(pattern: &[u8]) -> Cow<'_, [u8]> {
+    if !strings::contains_char(pattern, b'(') {
+        return Cow::Borrowed(pattern);
+    }
+    let mut out = Vec::with_capacity(pattern.len() + 4);
+    let mut at = 0;
+    while let Some(&byte) = pattern.get(at) {
+        let len = match byte {
+            b'\\' => 2,
+            b'[' => bun_glob::matcher::class_end(pattern, at).map_or(1, |end| end - at),
+            _ => 1,
+        };
+        out.extend_from_slice(&pattern[at..(at + len).min(pattern.len())]);
+        at += len;
+        if matches!(byte, b'@' | b'+' | b'?' | b'*' | b'!') && pattern.get(at) == Some(&b'(') {
+            out.extend_from_slice(b"[(]");
+            at += 1;
+        }
+    }
+    Cow::Owned(out)
+}
+
 impl Pattern {
     /// `text` is relative to `dir`. `None` when it is too long for a path.
     fn new(negated: bool, dir: &[u8], text: &[u8]) -> Option<Pattern> {
+        let text = &*without_extglobs(text);
         let mut buf = vec![0u8; text.len() + 1];
         let normalized: &[u8] = resolve_path::normalize_string_generic_t::<u8, true, false>(
             text,

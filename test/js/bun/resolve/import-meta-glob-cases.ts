@@ -84,6 +84,8 @@ export const cases: Case[] = [
   ['import.meta.glob("./dir/[!a].ts")', [["./dir/b.ts", "lazy", B], ["./dir/c.ts", "lazy", C]]],
   ['import.meta.glob("./dir/[^a].ts")', [["./dir/b.ts", "lazy", B], ["./dir/c.ts", "lazy", C]]],
   ['import.meta.glob("./dir/+(a|b).ts")', []],
+  ['import.meta.glob("./dir/@(a|b).ts")', []],
+  ['import.meta.glob("./dir/{a..c}.ts")', [["./dir/a.ts", "lazy", A], ["./dir/b.ts", "lazy", B], ["./dir/c.ts", "lazy", C]]],
   ['import.meta.glob("./dir/sub/../a.ts")', [["./dir/a.ts", "lazy", A]]],
   ['import.meta.glob("./dir/./a.ts")', [["./dir/a.ts", "lazy", A]]],
   ['import.meta.glob("./dir//a.ts")', [["./dir/a.ts", "lazy", A]]],

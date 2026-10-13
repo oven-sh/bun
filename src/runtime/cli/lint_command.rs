@@ -36,6 +36,9 @@ fn change_directory(cwd: &[u8]) {
 
 /// `--cwd` among the flags of `bun`, which precede `command`.
 fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
+    if let Some(args) = super::arguments::checked_command_arguments(command) {
+        return args.option(b"--cwd");
+    }
     let mut found = None;
     let mut args = bun_core::argv().into_iter();
     while let Some(arg) = args.next() {
@@ -54,6 +57,9 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
 
 /// `--config=<path>` among the flags of `bun`, which precede `command`. Without the `=` the path is taken for the command.
 fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
+    if let Some(args) = super::arguments::checked_command_arguments(command) {
+        return args.option(b"--config");
+    }
     let flags = (bun_core::argv().into_iter()).take_while(|arg| *arg != command);
     flags
         .filter_map(|arg| {
@@ -90,6 +96,10 @@ pub(crate) fn defaults_of_bunfig<T>(
 /// `--disallow-code-generation-from-strings` among the flags of `bun`, which precede `command`: it holds for the plugins and
 /// the configuration files.
 fn disallow_code_generation_before(command: &[u8]) {
+    if let Some(flags) = super::arguments::checked_flags_before_command(command) {
+        super::arguments::disallow_code_generation_from_strings_as_compiled(&flags);
+        return;
+    }
     let argv = bun_core::argv().to_vec();
     let flags = argv.iter().take_while(|it| it.as_bytes() != command);
     super::arguments::disallow_code_generation_from_strings_as_compiled(

@@ -867,6 +867,25 @@ pub(crate) fn checked_option_values(command: &[u8]) -> Vec<&'static [u8]> {
     .unwrap_or_default()
 }
 
+/// The actual global flags, without option values or argv[0], before an activated checked command.
+pub(crate) fn checked_flags_before_command(command: &[u8]) -> Option<Vec<&'static bun_core::ZStr>> {
+    let at = checked_command_index(command)?;
+    let values = checked_option_values(command);
+    Some(
+        bun_core::argv()
+            .to_vec()
+            .into_iter()
+            .take(at)
+            .skip(1)
+            .filter(|arg| {
+                !values
+                    .iter()
+                    .any(|value| core::ptr::eq(arg.as_bytes(), *value))
+            })
+            .collect(),
+    )
+}
+
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────
 // `AtomicBool` has the same size/alignment/bit-validity as `bool`, so the
 // `#[no_mangle]` symbol layout is unchanged for the C++ side that reads these

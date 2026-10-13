@@ -15757,25 +15757,70 @@ describe.concurrent("--check", () => {
       },
     );
 
-    test("a project value named fmt does not become a formatter path", async () => {
+    test.each(["fmt", "lint"])("a project value named %s does not hide the working directory", async command => {
       using dir = project({
         "actual/x.ts": `export const n: number = 1;\n`,
+        [`${command}/tsconfig.json`]: JSON.stringify({ files: ["../actual/x.ts"] }),
         // Kept unformatted: --check must not select this configuration as a formatter input.
-        "actual/fmt/tsconfig.json": `{ "compilerOptions": { "strict": true } }`,
+        [`actual/${command}/tsconfig.json`]: `{ "compilerOptions": { "strict": true } }`,
       });
-      const { stdout, stderr, exitCode } = await run(String(dir), [
-        "--check",
-        "--tsconfig-override",
-        "fmt",
-        "--cwd",
-        "actual",
-        "fmt",
-        "x.ts",
+      const tail = command === "lint" ? ["x.ts", "--rule", "no-undef: error"] : ["x.ts"];
+      const results = await Promise.all([
+        run(String(dir), ["--check", "--tsconfig-override", command, "--cwd", "actual", command, ...tail]),
+        run(String(dir), ["--check", "--tsconfig-override", command, command, "--cwd", "actual", ...tail]),
       ]);
-      expect([stdout, stderr, exitCode]).toEqual(["", "1 file is formatted.", 0]);
-      expect(readFileSync(join(String(dir), "actual/fmt/tsconfig.json"), "utf8")).toBe(
+      const summary = command === "fmt" ? "1 file is formatted." : "✓ No problems in 1 file [time]";
+      expect(results.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(results.map(() => ["", summary, 0]));
+      expect(readFileSync(join(String(dir), `actual/${command}/tsconfig.json`), "utf8")).toBe(
         `{ "compilerOptions": { "strict": true } }`,
       );
+    });
+
+    test.each(["fmt", "lint"])("a project value named %s does not hide a later bunfig", async command => {
+      using dir = project({
+        "x.ts": `export const n: number = 1;\n`,
+        [`${command}/tsconfig.json`]: JSON.stringify({ files: ["../x.ts"] }),
+        "chosen.toml": "[unterminated\n",
+      });
+      const { stderr, exitCode } = await run(String(dir), [
+        "--check",
+        "--project",
+        command,
+        "--config=chosen.toml",
+        command,
+        "x.ts",
+      ]);
+      expect(stderr).toContain("chosen.toml");
+      expect(exitCode).toBe(2);
+    });
+
+    test.each(["fmt", "lint"])("%s applies only real code-generation flags before the command", async command => {
+      const strict = "--disallow-code-generation-from-strings=strict";
+      const flag = "--disallow-code-generation-from-strings";
+      const value = command === "fmt" ? "({ semi: true })" : "[]";
+      using dir = project({
+        "x.ts": `export const n: number = 1;\n`,
+        [`${command}/tsconfig.json`]: JSON.stringify({ files: ["../x.ts"] }),
+        [`${strict}/tsconfig.json`]: JSON.stringify({ files: ["../x.ts"] }),
+        [command === "fmt" ? ".prettierrc.cjs" : "eslint.config.cjs"]:
+          `module.exports = new (require("node:vm").Script)(${JSON.stringify(value)}).runInThisContext();\n`,
+      });
+      const results = await Promise.all(
+        [[], [strict], [strict, flag]].map(flags =>
+          run(String(dir), ["--check", "--project", command, ...flags, command, "x.ts"]),
+        ),
+      );
+      expect(results[0].exitCode).toBe(0);
+      for (const result of results.slice(1)) {
+        expect(result.stderr).toContain("Code generation from strings disallowed for this context");
+        expect(result.exitCode).toBe(2);
+      }
+      const consumed = await Promise.all(
+        [[strict], [strict, "--project", command]].map(projects =>
+          run(String(dir), ["--check", "--project", ...projects, command, "x.ts"]),
+        ),
+      );
+      expect(consumed.map(it => it.exitCode)).toEqual([0, 0]);
     });
 
     test.each(["--help", "-h"])("a project value named %s does not request formatter help", async value => {

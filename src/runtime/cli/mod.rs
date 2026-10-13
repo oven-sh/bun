@@ -1646,20 +1646,17 @@ pub(crate) mod command {
             Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
             None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
         };
-        let at = arguments::checked_command_index(command)
-            .or_else(|| argv.iter().position(|arg| arg.as_bytes() == command))
-            .unwrap_or(argv.len());
-        let values = arguments::checked_option_values(command);
-        let before = argv.iter().take(at).skip(1);
+        let before = arguments::checked_flags_before_command(command).unwrap_or_else(|| {
+            argv.iter()
+                .skip(1)
+                .take_while(|arg| arg.as_bytes() != command)
+                .copied()
+                .collect()
+        });
         let mut args: Vec<_> = before
-            .filter(|arg| {
-                !values
-                    .iter()
-                    .any(|value| core::ptr::eq(arg.as_bytes(), *value))
-            })
+            .into_iter()
             .filter(|arg| arg.as_bytes().starts_with(b"-"))
             .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
-            .copied()
             .collect();
         args.extend_from_slice(after_command(argv, command));
         args

@@ -78,7 +78,9 @@ test("deeply nested valid calc() still parses and folds", async () => {
 });
 
 test("a color channel inside nested calc() parses as a percentage and as a number", async () => {
-  const nested = (value: string) => "calc(".repeat(64) + value + ")".repeat(64);
+  const open = Buffer.alloc(64 * "calc(".length, "calc(").toString();
+  const close = Buffer.alloc(64, ")").toString();
+  const nested = (value: string) => open + value + close;
   const { stderr, exitCode, output } = await buildCSS(
     "nested-calc-channel.css",
     `.a{color:hsl(120 ${nested("50%")} 50%)}.b{color:hsl(120 ${nested("50")} 50)}`,

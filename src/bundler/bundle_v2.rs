@@ -3018,8 +3018,9 @@ pub mod bv2_impl {
                 .filter(|&index| compiled.iter().any(|path| **path == *sources[index].path.text))
                 .collect();
             let unique_keys = self.graph.input_files.items_unique_key_for_additional_file();
-            self.assets_of_compiled_program =
-                (unique_keys.iter().enumerate()).filter(|(_, key)| !key.is_empty()).map(|(index, _)| Index::init(index as u32)).collect();
+            let mut assets: Vec<Index> = (unique_keys.iter().enumerate()).filter(|(_, key)| !key.is_empty()).map(|(index, _)| Index::init(index as u32)).collect();
+            assets.sort_by(|a, b| sources[a.get() as usize].path.text.cmp(sources[b.get() as usize].path.text));
+            self.assets_of_compiled_program = assets;
             for index in indices {
                 self.empty_entry_point(index)?;
             }

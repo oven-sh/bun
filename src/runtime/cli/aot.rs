@@ -85,6 +85,12 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         );
         Global::exit(1);
     }
+    if !ctx.runtime_options.eval.script.is_empty() {
+        pretty_errorln!(
+            "<r><red>error<r>: <b>--aot<r>: not compiled yet: a program that is in no file: <b>-e<r> | <b>-p<r> | <b>-<r>"
+        );
+        Global::exit(1);
+    }
 
     let mut args: Vec<Vec<u8>> = [
         &b"build"[..],

@@ -1674,7 +1674,11 @@ pub(crate) fn to_bytes(
     // Every per-module region below is written in load order (entry point's
     // static imports first, then dynamic imports breadth-first) so the modules
     // a process actually loads share pages instead of each dragging in its own.
-    module_files.sort_by_key(|f| f.load_order);
+    module_files.sort_by(|a, b| {
+        a.load_order
+            .cmp(&b.load_order)
+            .then_with(|| module_dest_path(a).cmp(module_dest_path(b)))
+    });
     let entry_point_id = module_files
         .iter()
         .position(|f| core::ptr::eq(*f, entry_point_file))

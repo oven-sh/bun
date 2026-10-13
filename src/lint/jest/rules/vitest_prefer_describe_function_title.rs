@@ -69,9 +69,16 @@ fn run<'a>(
     let Some(&is_value) = imported.get_or_init(|| imported_names(file)).get(&name) else {
         return;
     };
-    let typecheck = file.settings().get(b"vitest").and_then(|it| it.get(b"typecheck")).and_then(Json::as_bool);
-    if title_arg.tag() == ExprTag::String && typecheck == Some(true) {
-        return;
+    match ctx.runner {
+        // A type-only import has no value to pass to `describe`.
+        Runner::Bun if !is_value => return,
+        Runner::Bun => {}
+        Runner::Jest | Runner::Vitest => {
+            let typecheck = file.settings().get(b"vitest").and_then(|it| it.get(b"typecheck")).and_then(Json::as_bool);
+            if title_arg.tag() == ExprTag::String && typecheck == Some(true) {
+                return;
+            }
+        }
     }
     let report = ctx.report(title_arg, PREFER_DESCRIBE_FUNCTION_TITLE);
     if is_value {

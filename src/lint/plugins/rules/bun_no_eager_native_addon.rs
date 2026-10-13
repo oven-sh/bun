@@ -8,7 +8,7 @@ pub struct NoEagerNativeAddon;
 
 const EAGER_ADDON: Message = Message::new(
     "eagerAddon",
-    "The native addon `{{specifier}}` is loaded as soon as the module is evaluated. Load it in the function that first needs it.",
+    "The native addon `{{specifier}}` loads as soon as the module is imported. Load it inside the function that needs it.",
 );
 
 fn is_native_addon(specifier: Name) -> bool {

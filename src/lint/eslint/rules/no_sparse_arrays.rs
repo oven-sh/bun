@@ -11,7 +11,7 @@ const UNEXPECTED_COMMAS: Message =
     Message::new("unexpectedSparseArray", "{{count}} unexpected commas in middle of array");
 
 impl Rule for NoSparseArrays {
-    const META: Meta = Meta::eslint("no-sparse-arrays", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-sparse-arrays", Kind::Problem).recommended().hints();
     const ON: On = On::new().exprs(&[ExprTag::Array]);
     type State<'a> = ();
 
@@ -64,7 +64,8 @@ impl Rule for NoSparseArrays {
             return;
         }
         for comma in commas_of_holes {
-            cx.report(Span::new(comma, comma + 1), UNEXPECTED_SPARSE_ARRAY);
+            cx.report(Span::new(comma, comma + 1), UNEXPECTED_SPARSE_ARRAY)
+                .hint("It leaves a hole in the array. Remove the comma, or write undefined.");
         }
     }
 }

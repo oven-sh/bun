@@ -4,7 +4,8 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Disallow async functions which have no `await` expression.
 pub struct RequireAwait;
 
-pub const MISSING_AWAIT: Message = Message::new("missingAwait", "{{name}} has no 'await' expression.");
+pub const MISSING_AWAIT: Message =
+    Message::new("missingAwait", "{{name}} has no 'await' expression.");
 pub const REMOVE_ASYNC: Message = Message::new("removeAsync", "Remove 'async'.");
 
 pub struct State<'a> {
@@ -36,12 +37,20 @@ impl<'a> State<'a> {
 
 /// `node` awaits something: so does the function that it is directly in.
 #[inline(never)]
-pub fn mark_function_around<'a, R: Rule<State<'a> = State<'a>>>(node: Node<'a>, cx: &mut Cx<'a, R>) {
+pub fn mark_function_around<'a, R: Rule<State<'a> = State<'a>>>(
+    node: Node<'a>,
+    cx: &mut Cx<'a, R>,
+) {
     let function = cx.state.functions.find(node, |_, parent| {
-        parent.as_func().filter(|func| func.kind() != FnKind::StaticBlock)
+        parent
+            .as_func()
+            .filter(|func| func.kind() != FnKind::StaticBlock)
     });
     if let Some(func) = function
-        && let Ok(at) = cx.state.candidates.binary_search_by_key(&func.id().idx(), |it| it.id().idx())
+        && let Ok(at) = cx
+            .state
+            .candidates
+            .binary_search_by_key(&func.id().idx(), |it| it.id().idx())
         && let Some(has_await) = cx.state.has_await.get_mut(at)
     {
         *has_await = true;
@@ -70,17 +79,23 @@ fn oxlint_place<'a>(func: Func<'a>, file: &File<'a>) -> Span {
     let key = match func.owner() {
         // `static async constructor() {}`
         Node::Member(member) if member.key().is_none() => {
-            return member.constructor_keyword().map_or_else(|| func.estree_span(), |it| it.span());
+            return member
+                .constructor_keyword()
+                .map_or_else(|| func.estree_span(), |it| it.span());
         }
         Node::Member(member) => Some(member.key()),
         Node::Expr(e) => match e.parent() {
-            Node::Prop(prop) if prop.value() == Some(e) && !prop.is_jsx_attribute() => Some(prop.key()),
+            Node::Prop(prop) if prop.value() == Some(e) && !prop.is_jsx_attribute() => {
+                Some(prop.key())
+            }
             _ => None,
         },
         _ => None,
     };
     let name = match key {
-        Some(key) => key.filter(|it| matches!(it.kind(), KeyKind::Ident(_))).map(|it| it.span(file)),
+        Some(key) => key
+            .filter(|it| matches!(it.kind(), KeyKind::Ident(_)))
+            .map(|it| it.span(file)),
         None => func.name().map(|it| it.span()),
     };
     name.unwrap_or_else(|| func.estree_span())
@@ -96,8 +111,9 @@ fn report<'a>(func: Func<'a>, cx: &Cx<'a, RequireAwait>) {
         false => ast_utils::get_function_head_loc(func),
     };
     cx.report(place, MISSING_AWAIT)
+        .called_with(func)
         .data("name", name)
-        .suggest(REMOVE_ASYNC, |fixer| {
+        .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| {
             let file = fixer.file();
             let node = node_with_async_keyword(func);
             let async_token = file.tokens_in(node).find(|token| token.is("async"))?;
@@ -136,7 +152,12 @@ impl Rule for RequireAwait {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        mark_function_around(e.into(), cx);
+        // oxlint's rule does not look into types, where oxc reads `{ [await (a)]: T }` as an `await`.
+        let is_key_in_type = cx.language().is_oxlint
+            && matches!(e.parent(), Node::Member(member) if !matches!(member.parent(), Node::Class(_)));
+        if !is_key_in_type {
+            mark_function_around(e.into(), cx);
+        }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -154,7 +175,10 @@ impl Rule for RequireAwait {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let has_await = std::mem::take(&mut cx.state.has_await);
-        for (func, has_await) in std::mem::take(&mut cx.state.candidates).into_iter().zip(has_await) {
+        for (func, has_await) in std::mem::take(&mut cx.state.candidates)
+            .into_iter()
+            .zip(has_await)
+        {
             if !has_await {
                 report(func, cx);
             }

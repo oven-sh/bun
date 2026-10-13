@@ -1,6 +1,8 @@
 //! Prettier's `print/misc.js`, and the utilities of Prettier that it uses: strings, numbers, units.
 
-use crate::text::{self, ByteSet, make_string};
+use crate::html::in_js::PLACEHOLDER_START;
+use crate::text::make_string;
+use bun_core::strings;
 use std::borrow::Cow;
 
 /// The units of `css-units-list`, as they are written.
@@ -110,8 +112,7 @@ pub(crate) fn print_string(raw: &[u8], single_quote: bool, out: &mut Vec<u8>) {
 
 /// `adjustStrings`
 pub(crate) fn adjust_strings(value: &[u8], single_quote: bool) -> Cow<'_, [u8]> {
-    static QUOTES: ByteSet = ByteSet::new(b"\"'");
-    if QUOTES.find(value, 0).is_none() {
+    if !strings::contains_any(value, b"\"'") {
         return Cow::Borrowed(value);
     }
     let mut out = Vec::with_capacity(value.len());
@@ -268,20 +269,35 @@ pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) ->
     Cow::Owned(out)
 }
 
+/// `value.toLowerCase()`, of the letters of ASCII: to CSS, the others are not the same in the other case. Prettier makes a
+/// `k` of a Kelvin sign.
+pub(crate) fn to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
+    match value.iter().any(u8::is_ascii_uppercase) {
+        true => Cow::Owned(value.to_ascii_lowercase()),
+        false => Cow::Borrowed(value),
+    }
+}
+
 /// `maybeToLowerCase`
 pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
-    static SIGNS: ByteSet = ByteSet::new(b"$@#");
-    static OPEN: ByteSet = ByteSet::new(b"(");
-    static CLOSE: ByteSet = ByteSet::new(b")");
-    let keeps_case = SIGNS.find(value, 0).is_some()
+    // The last stands for a substitution in a template of JavaScript. Prettier does not find it again in lower case.
+    let keeps_case = strings::contains_any(value, b"$@#")
         || value.starts_with(b"%")
         || value.starts_with(b"--")
         || value.starts_with(b":--")
-        || (OPEN.find(value, 0).is_some() && CLOSE.find(value, 0).is_some());
+        || (strings::contains_char(value, b'(') && strings::contains_char(value, b')'))
+        || (value.len() > PLACEHOLDER_START.len() && strings::contains(value, PLACEHOLDER_START));
     match keeps_case {
         true => Cow::Borrowed(value),
-        false => text::to_lower_case(value),
+        false => to_lower_case(value),
     }
+}
+
+/// Whether `text` ends with a backslash that is not escaped itself. If `text` is all of a value or of the parameters of an
+/// at-rule, what it escapes is white space, which `postcss` takes for what is behind them: anything else would be in `text`.
+/// Not so for a word of a value: `\@a` is `\` and `@a`.
+pub(crate) fn ends_before_escaped_blank(text: &[u8]) -> bool {
+    text.ends_with(b"\\") && text.iter().rev().take_while(|byte| **byte == b'\\').count() % 2 == 1
 }
 
 /// `lastLineHasInlineComment`

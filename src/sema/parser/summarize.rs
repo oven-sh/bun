@@ -5,7 +5,9 @@
 use crate::{Options, Refusal, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
-use bun_sema::hir::{Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind};
+use bun_sema::hir::{
+    Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind, Stmt, StmtKind,
+};
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use core::sync::atomic::AtomicU64;
@@ -110,19 +112,41 @@ fn file_of(
     text: &[u8],
     atoms: Option<&dyn Intern>,
 ) -> Box<FileBuilder> {
+    // Another text than the last one, maybe at the same address.
+    scratch.stops.forget();
+    let is_named = |names: [&[u8]; 2]| names.iter().any(|it| how.path.ends_with(it));
+    let as_script = Reading {
+        dialect: Dialect {
+            script: true,
+            ..how.dialect
+        },
+        every_file_is_a_module: false,
+        ..how
+    };
+    // Whatever is in it, to oxc it is a script. An `await` expression at its top level is an error that it goes on after.
+    let is_script_by_name = how.dialect.oxc && is_named([b".cjs", b".cts"]);
+    if is_script_by_name && !how.dialect.script {
+        return file_read_as(scratch, as_script, text, atoms, false);
+    }
     let mut file = file_read_as(scratch, how, text, atoms, false);
     let is_refused = |file: &FileBuilder| file.has_errors || file.has_parse_diagnostics;
     let (was_refused, html_opens) = (is_refused(&file), scratch.html_opens);
-    if !how.dialect.oxc || how.dialect.script || !was_refused && html_opens.first.is_none() {
+    let has_only_ambiguous_awaits = scratch.has_only_ambiguous_awaits;
+    let may_be_script = html_opens.first.is_some() || has_only_ambiguous_awaits;
+    if !how.dialect.oxc || how.dialect.script || !was_refused && !may_be_script {
         return file;
     }
-    // For oxc a file is a script if nothing in it says that it is a module, or if its name says so. Here only these are
-    // read otherwise in one.
-    let is_named = |names: [&[u8]; 2]| names.iter().any(|it| how.path.ends_with(it));
-    let is_script_by_name = is_named([b".cjs", b".cts"]);
+    // For oxc a file is a script if nothing in it says that it is a module. Here only these are read otherwise in one.
     let is_module_by_name = is_named([b".mjs", b".mts"]);
-    let is_module = is_module_by_name || file.has_module_syntax && !is_script_by_name;
-    let words: [&[u8]; 3] = [b"await", b"<!--", b"-->"];
+    let has_import_meta = (file.exprs.iter()).any(|e| matches!(e.kind, ExprKind::ImportMeta));
+    // To TypeScript it says nothing about the file.
+    let is_global_name = |it: &Stmt| matches!(it.kind, StmtKind::ExportAsNamespace(..));
+    let is_module = is_module_by_name
+        || file.has_module_syntax
+        || has_import_meta
+        || file.stmts.iter().any(is_global_name);
+    // The last: `await` with an escape is a name in a script.
+    let words: [&[u8]; 4] = [b"await", b"<!--", b"-->", b"\\u"];
     if was_refused && (is_module || !words.iter().any(|it| bun_core::strings::contains(text, it))) {
         return file;
     }
@@ -149,16 +173,13 @@ fn file_of(
         return file;
     }
     scratch.recycle(file);
-    let as_script = Reading {
-        dialect: Dialect {
-            script: true,
-            ..how.dialect
-        },
-        every_file_is_a_module: false,
-        ..how
-    };
     let script = file_read_as(scratch, as_script, text, atoms, true);
-    if (!was_refused || !is_refused(&script)) && (is_script_by_name || !script.has_module_syntax) {
+    // `<!--` makes it a script whatever comes of that. `await (a)` is a call in a script, and `await a` makes it a module. Where
+    // nothing makes it one, oxc has read `await` as a name, and what is wrong with that is what it says: `await /a/;`.
+    let is_script = !is_refused(&script)
+        || !was_refused && html_opens.first.is_some()
+        || has_only_ambiguous_awaits;
+    if is_script && !script.has_module_syntax {
         return script;
     }
     // Atoms of its own are those of the last reading.
@@ -193,6 +214,9 @@ fn file_read_as(
         await_is_a_name: is_json
             || (is_ecmascript || dialect.oxc) && dialect.script
             || is_ecmascript && dialect.flow && !dialect.babel,
+        is_module_or_script: dialect.oxc
+            && !dialect.script
+            && ![&b".mjs"[..], b".mts"].iter().any(|it| path.ends_with(it)),
         recovers: false,
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,
@@ -274,6 +298,8 @@ fn file_read_as(
                     true => Vec::new(),
                     false => vec![error],
                 },
+                // Those that the lexer got past. oxlint looks for `@flow` in the first.
+                comments: std::mem::take(&mut file.comments),
                 ..Default::default()
             };
             return file;

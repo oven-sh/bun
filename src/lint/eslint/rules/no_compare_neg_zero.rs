@@ -47,7 +47,8 @@ fn push_operand_text(text: &mut Vec<u8>, operand: Expr) {
 impl Rule for NoCompareNegZero {
     const META: Meta = Meta::eslint("no-compare-neg-zero", Kind::Problem)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On = On::new().unaries(&[UnOp::Minus]);
     no_state!();
 
@@ -84,7 +85,10 @@ impl Rule for NoCompareNegZero {
         if left_is_neg_zero && operand != left {
             return;
         }
-        let report = cx.report(e, UNEXPECTED).data("operator", bin_op_text(op));
+        let report = cx
+            .report(e, UNEXPECTED)
+            .data("operator", bin_op_text(op))
+            .hint("-0 and 0 compare as equal. Use Object.is(x, -0) to tell them apart.");
         // oxlint suggests `Object.is` for `===`, and takes the `-` away from the first `-0` for all else.
         if cx.language().is_oxlint {
             let (neg_zero, other) = if left_is_neg_zero { (left, right) } else { (right, left) };

@@ -27,7 +27,25 @@ mod fake_mimalloc {
         chunks: Vec<*mut c_void>,
         at: usize,
         end: usize,
+        /// The bytes that were handed out, with their headers and padding.
+        used: usize,
     }
+
+    /// `mi_heap_area_t`
+    #[repr(C)]
+    struct Area {
+        blocks: *mut c_void,
+        reserved: usize,
+        committed: usize,
+        used: usize,
+        block_size: usize,
+        full_block_size: usize,
+        reserved1: *mut c_void,
+    }
+
+    /// `mi_block_visit_fun`
+    type Visitor =
+        extern "C" fn(*const c_void, *const Area, *mut c_void, usize, *mut c_void) -> bool;
 
     fn main_heap() -> *mut Heap {
         core::ptr::without_provenance_mut(8)
@@ -76,6 +94,7 @@ mod fake_mimalloc {
         // SAFETY: a heap is used by the thread that created it.
         let heap = unsafe { &mut *heap };
         let total = size + align.max(16) + HEADER;
+        heap.used += total;
         if heap.end - heap.at < total {
             let chunk = total.max(CHUNK);
             // SAFETY: plain libc allocation.
@@ -141,6 +160,7 @@ mod fake_mimalloc {
             chunks: Vec::new(),
             at: 0,
             end: 0,
+            used: 0,
         }))
         .cast()
     }
@@ -157,8 +177,37 @@ mod fake_mimalloc {
     extern "C" fn mi_heap_main() -> *mut c_void {
         main_heap().cast()
     }
+    /// The whole heap is one area of blocks of one byte. The blocks themselves are not visited.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_heap_visit_blocks(
+        heap: *const c_void,
+        _visit_all_blocks: bool,
+        visitor: Option<Visitor>,
+        arg: *mut c_void,
+    ) -> bool {
+        let Some(visitor) = visitor else {
+            return false;
+        };
+        if heap == main_heap().cast_const().cast() {
+            return true;
+        }
+        // SAFETY: created by `mi_heap_new`, and used by the thread that created it.
+        let used = unsafe { (*heap.cast::<Heap>()).used };
+        let area = Area {
+            blocks: core::ptr::null_mut(),
+            reserved: used,
+            committed: used,
+            used,
+            block_size: 1,
+            full_block_size: 1,
+            reserved1: core::ptr::null_mut(),
+        };
+        visitor(heap, &raw const area, core::ptr::null_mut(), 1, arg)
+    }
     #[unsafe(no_mangle)]
     extern "C" fn mi_collect(_force: bool) {}
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_option_set(_option: u32, _value: core::ffi::c_long) {}
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.
@@ -232,6 +281,16 @@ mod fake_mimalloc {
         unsafe { mi_heap_realloc_aligned(main_heap().cast(), p, size, 16) }
     }
     #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_realloc_aligned(
+        p: *mut c_void,
+        size: usize,
+        align: usize,
+    ) -> *mut c_void {
+        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
+        // requires.
+        unsafe { mi_heap_realloc_aligned(main_heap().cast(), p, size, align) }
+    }
+    #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free(p: *mut c_void) {
         // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
         // requires.
@@ -261,6 +320,12 @@ mod fake_mimalloc {
             // SAFETY: `p` is a block that one of these functions has returned. See `header`.
             unsafe { (*header(p)).size }
         }
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_usable_size(p: *const c_void) -> usize {
+        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
+        // requires.
+        unsafe { mi_malloc_usable_size(p) }
     }
     #[unsafe(no_mangle)]
     extern "C" fn mi_is_in_heap_region(_p: *const c_void) -> bool {
@@ -339,6 +404,64 @@ unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) ->
     text.chunks(192)
         .map(|chunk| usize::from(chunk.iter().map(|&c| u8::from(c == needle)).sum::<u8>()))
         .sum()
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_line_starts(p: *const u8, len: usize, out: *mut u32) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    let mut written = 0;
+    for (i, _) in text.iter().enumerate().filter(|it| *it.1 == b'\n') {
+        // SAFETY: `out` has room for one number for every line feed of the text.
+        unsafe { out.add(written).write(i as u32 + 1) };
+        written += 1;
+    }
+    written
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_odd_blocks(p: *const u8, len: usize, out: *mut u64) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    for (word, blocks) in text.chunks(64 * 64).enumerate() {
+        let is_odd = |c: &u8| !matches!(c, 0x20..=0x5B | 0x5D..=0x7E | b'\t' | b'\n' | b'\r');
+        let marks = blocks.chunks(64).enumerate();
+        let marks = marks.fold(0u64, |marks, (i, block)| {
+            marks | u64::from(block.iter().any(is_odd)) << i
+        });
+        // SAFETY: `out` has a word for every 64 blocks of 64 bytes, whole or not.
+        unsafe { out.add(word).write(marks) };
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_scanner_run_stops(
+    p: *const u8,
+    len: usize,
+    out: *mut u8,
+    plane_len: usize,
+) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    // SAFETY: `out` has three bitmaps, `plane_len` bytes apart, of 8 bytes for every 64 of the text.
+    let planes =
+        unsafe { core::slice::from_raw_parts_mut(out, 2 * plane_len + len.div_ceil(64) * 8) };
+    for (block, chunk) in text.chunks(64).enumerate() {
+        let mut stops = [u64::MAX; 3];
+        for (i, &c) in chunk.iter().enumerate() {
+            let is_name = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+            let is_blank = c == b'\t' || c == b' ';
+            let is_plain =
+                (0x20..0x80).contains(&c) && !matches!(c, b'"' | b'\'' | b'`' | b'$' | b'\\');
+            for (plane, is_in_run) in stops.iter_mut().zip([is_name, is_blank, is_plain]) {
+                *plane &= !(u64::from(is_in_run) << i);
+            }
+        }
+        for (plane, stops) in stops.iter().enumerate() {
+            let at = plane * plane_len + block * 8;
+            planes[at..at + 8].copy_from_slice(&stops.to_le_bytes());
+        }
+    }
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]

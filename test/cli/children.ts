@@ -1,4 +1,4 @@
-// The processes that the tests of `bun lint`, `bun format` and `bun check` start.
+// The processes that the tests of `bun lint`, `bun fmt` and `bun check` start.
 //
 // A test that runs out of time never gets to the end of its `await using`, and `bun test` ends what such a test has started only
 // if the test ran alone: not in a concurrent group, where these tests are. A linter in an endless loop would run on, and when

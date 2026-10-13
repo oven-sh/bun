@@ -214,21 +214,25 @@ function serializeConfigObject(given, index) {
 
 const isOfVite = require("node:path").basename(path).startsWith("vite.config.");
 const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config.");
-let exported = (await import(pathToFileURL(path).href)).default;
-if (typeof exported === "function")
-  exported = isOfVite ? exported({ command: "serve", mode: "development" }) : exported();
-exported = await exported;
-// Vite+: what `vp lint` reads.
-if (isOfVite) exported = exported?.lint ?? null;
-const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
-if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
-[exported].flat(Infinity).forEach((object, index) => {
-  for (const [prefix, plugin] of Object.entries(object?.plugins ?? {})) {
-    if (!pluginsByPrefix.has(prefix)) pluginsByPrefix.set(prefix, { plugin, index });
-  }
-});
-let config = null;
-if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
-else if (exported !== undefined) config = serializeConfigObject(exported, 0);
+// In a function: for an `await` at the top level that never settles Bun waits forever. This way the process ends when nothing is left to
+// wait for, as node does.
+(async () => {
+  let exported = (await import(pathToFileURL(path).href)).default;
+  if (typeof exported === "function")
+    exported = isOfVite ? exported({ command: "serve", mode: "development" }) : exported();
+  exported = await exported;
+  // Vite+: what `vp lint` reads.
+  if (isOfVite) exported = exported?.lint ?? null;
+  const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
+  if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
+  [exported].flat(Infinity).forEach((object, index) => {
+    for (const [prefix, plugin] of Object.entries(object?.plugins ?? {})) {
+      if (!pluginsByPrefix.has(prefix)) pluginsByPrefix.set(prefix, { plugin, index });
+    }
+  });
+  let config = null;
+  if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
+  else if (exported !== undefined) config = serializeConfigObject(exported, 0);
 
-finish(config, stringify);
+  finish(config, stringify);
+})();

@@ -16,7 +16,7 @@ impl<const RUNNER: u8> Rule for PreferSpyOn<RUNNER> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_for(file, RUNNER) && prefer_spy_on::should_run(file)).then_some(())
+        (jest::is_for(file, RUNNER) && prefer_spy_on::should_run(file, Runner::of(RUNNER))).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

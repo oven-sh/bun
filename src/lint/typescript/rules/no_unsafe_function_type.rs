@@ -1,5 +1,5 @@
-use bun_lint::prelude::*;
 use crate::rules::no_wrapper_object_types::{GlobalFunctions, is_reference_to_global};
+use bun_lint::prelude::*;
 
 /// Disallow using the unsafe built-in Function type.
 pub struct NoUnsafeFunctionType;
@@ -29,7 +29,7 @@ impl Rule for NoUnsafeFunctionType {
             && name.name().is("Function")
             && is_reference_to_global(name.name(), ty, &mut cx.state)
         {
-            cx.report(name, BANNED_FUNCTION_TYPE);
+            cx.report(name, BANNED_FUNCTION_TYPE).called_with(ty);
         }
     }
 }

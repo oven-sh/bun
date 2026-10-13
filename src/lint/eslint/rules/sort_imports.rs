@@ -205,7 +205,7 @@ impl Rule for SortImports {
             return;
         }
         let mut sorted: Vec<Stmt> = file.stmts_of_kind(StmtTag::Import).collect();
-        sorted.sort_by_key(start);
+        utils::sort::sort_by_key(&mut sorted, start);
         sorted.into_iter().for_each(|it| self.check_declaration(it, cx));
     }
 

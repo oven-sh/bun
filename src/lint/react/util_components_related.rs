@@ -2,7 +2,7 @@
 //! it adds to: that is `Components::get_related_component`.
 
 use crate::util_ast::name_of_key;
-use crate::util_variable::get_variable_from_context;
+use crate::util_variable::variable_from_context;
 use bun_lint::prelude::*;
 use bun_lint::utils::{estree_parent, estree_span};
 use rustc_hash::FxHashMap;
@@ -62,67 +62,12 @@ impl<'a> ComponentPaths<'a> {
     }
 }
 
-/// A variable of ESLint.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-enum Variable<'a> {
-    Declared(Symbol<'a>),
-    /// ESLint has two for the name of a class declaration: one in the scope of the class
-    /// (`true`), which is for what is in the class, and one around it.
-    OfClass(Symbol<'a>, Class<'a>, bool),
-    /// What the configuration, a comment or the language defines: it has no `defs`.
-    Global(Name<'a>),
-}
-
-impl<'a> Variable<'a> {
-    /// `variableUtil.getVariableFromContext(context, node, name)`
-    fn get_from_context(node: Node<'a>, name: Name<'a>) -> Option<Variable<'a>> {
-        let Some(symbol) = get_variable_from_context(node, name) else {
-            let global = node.file().global_named(name);
-            return global.map(|_| Variable::Global(name));
-        };
-        let class = symbol.declarations().find_map(|it| match it {
-            Declaration::Class(class) if matches!(class.owner(), Node::Stmt(_)) => Some(class),
-            _ => None,
-        });
-        Some(match class {
-            Some(class) => {
-                let is_in_class = class.scope().is_some_and(|it| it.contains(node.scope()));
-                Variable::OfClass(symbol, class, is_in_class)
-            }
-            None => Variable::Declared(symbol),
-        })
-    }
-
-    /// `variable.references`
-    fn for_each_reference(self, file: &'a File<'a>, visit: &mut dyn FnMut(Reference<'a>)) {
-        match self {
-            Variable::Declared(symbol) => symbol.references().for_each(visit),
-            Variable::OfClass(symbol, class, is_in_class) => {
-                let scope = class.scope();
-                (symbol.references())
-                    .filter(|it| {
-                        scope.is_some_and(|scope| scope.contains(it.scope())) == is_in_class
-                    })
-                    .for_each(visit);
-            }
-            Variable::Global(name) => (file.unresolved_references_to(name.bytes()))
-                .filter(|it| it.global().is_some())
-                .for_each(visit),
-        }
-    }
-
-    /// `defInScope.node` of `getRelatedComponent`
-    fn node_of_def_in_scope(self) -> Option<Node<'a>> {
-        use DeclarationKind::{ClassName, FunctionName, Variable as VariableKind};
-        match self {
-            Variable::Declared(symbol) | Variable::OfClass(symbol, _, false) => symbol
-                .declarations()
-                .find(|def| matches!(def.kind(), Some(ClassName | FunctionName | VariableKind)))?
-                .node(),
-            Variable::OfClass(_, class, true) => Some(Node::Class(class)),
-            Variable::Global(_) => None,
-        }
-    }
+/// `defInScope.node` of `getRelatedComponent`
+fn node_of_def_in_scope(variable: Variable<'_>) -> Option<Node<'_>> {
+    use DeclarationKind::{ClassName, FunctionName, Variable};
+    let mut defs = variable.declarations();
+    defs.find(|def| matches!(def.kind(), Some(ClassName | FunctionName | Variable)))?
+        .node()
 }
 
 /// `refId.parent.right`, where `ref_id` is a `MemberExpression`.
@@ -196,7 +141,7 @@ impl<'a> Related<'a> {
         let (&variable_name, component_path) = self.paths.of(node).split_first()?;
 
         // Find the variable in the current scope
-        let variable_in_scope = Variable::get_from_context(Node::Expr(node), variable_name)?;
+        let variable_in_scope = variable_from_context(Node::Expr(node), variable_name)?;
 
         // Try to find the component using variable references. A `refId` is `a` or `a.b`.
         let mut component_name: SmallVec<[u8; 32]> = SmallVec::from_slice(variable_name.bytes());
@@ -212,10 +157,10 @@ impl<'a> Related<'a> {
         if is_short {
             let references = self.references.entry(variable_in_scope).or_insert_with(|| {
                 let mut references = ReferencesByText::default();
-                variable_in_scope.for_each_reference(node.file(), &mut |reference| {
+                for reference in variable_in_scope.references() {
                     let (text_of_ref_id, component_node) = ref_id_of(reference);
                     references.entry(text_of_ref_id).or_insert(component_node);
-                });
+                }
                 references
             });
             if let Some(&Some(component_node)) = references.get(&component_name[..]) {
@@ -224,7 +169,7 @@ impl<'a> Related<'a> {
         }
 
         // Try to find the component using variable declarations
-        let mut component_node = match variable_in_scope.node_of_def_in_scope()? {
+        let mut component_node = match node_of_def_in_scope(variable_in_scope)? {
             Node::VarDecl(declarator) => match declarator.init() {
                 Some(init) => init,
                 None => return Some(Node::VarDecl(declarator)),

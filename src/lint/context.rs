@@ -1,7 +1,7 @@
 //! What a listener of a rule is given besides the node: the file, the state of the rule, and the
 //! means to report.
 
-use crate::ast::{File, Ident, Name, Packed};
+use crate::ast::{File, Ident, Name, Node, Packed};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
 use crate::oxlint_help::{self, Edits, Found, Help, Part};
 use crate::oxlint_messages;
@@ -27,8 +27,11 @@ pub struct Diagnostic {
     pub message_id: &'static str,
     pub message: Vec<u8>,
     pub span: Span,
-    /// The node that was reported, or the one that [`Report::listened_on`] was given. `None`: it was a token, a name or a span.
+    /// The node that was reported, or the one that [`Report::called_with`] or [`Report::listened_on`] was given. `None`: it was a
+    /// token, a name or a span.
     pub node: Option<Packed>,
+    /// `node` is not what was reported.
+    pub states_node: bool,
     /// ESLint was given a position, not a range: it reports no `endLine` and `endColumn`.
     pub has_no_end: bool,
     pub when: When,
@@ -98,6 +101,18 @@ pub(crate) struct Sink {
     pub(crate) drops_messages: Cell<bool>,
     /// What a rule has thrown: of all the first in the text, which ESLint comes to first.
     pub(crate) thrown: RefCell<Option<Thrown>>,
+    /// [`File::calls_in_turns`]
+    pub(crate) calls_in_turns: OnceCell<Box<[(Span, u32)]>>,
+}
+
+impl File<'_> {
+    /// For a rule that oxlint calls with the calls of Jest, when it reports under a configuration of oxlint. oxlint goes through
+    /// these calls after the nodes, in an order of its own. `calls` is asked once per file: the calls by where they start, the
+    /// longer first, each with the how manyth it is for oxlint.
+    #[inline]
+    pub fn calls_in_turns(&self, calls: impl FnOnce() -> Box<[(Span, u32)]>) {
+        self.sink.calls_in_turns.get_or_init(calls);
+    }
 }
 
 /// [`Cx::throw`], [`Cx::throw_for_selector`]
@@ -256,6 +271,7 @@ impl<'a> CxBase<'a> {
             message: Vec::new(),
             span,
             node,
+            states_node: false,
             has_no_end: false,
             when: self.meta.reports,
             details: None,
@@ -384,6 +400,30 @@ impl<'a> Report<'a> {
         }
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.node = node.packed_node();
+            diagnostic.states_node = true;
+        }
+        self
+    }
+
+    /// oxlint calls its rule with `node`, or with something around it, when it reports this. It prints what it reports in the order
+    /// in which it comes to the nodes, and what it reports about one node in the order in which the rule reports. To be said where
+    /// what is reported is not in that node, where a node in between is of a kind that oxlint also calls the rule with, and
+    /// where many tokens or names are reported, for which the node is searched otherwise. It means nothing to ESLint.
+    #[inline]
+    pub fn called_with(mut self, node: impl Into<Node<'a>>) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.node = Some(node.into().packed());
+            diagnostic.states_node = true;
+        }
+        self
+    }
+
+    /// [`Report::called_with`] where oxlint calls its rule with just what is reported, which is no node here: a name.
+    #[inline]
+    pub fn called_with_the_name(mut self) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.node = None;
+            diagnostic.states_node = true;
         }
         self
     }

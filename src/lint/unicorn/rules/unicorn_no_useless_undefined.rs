@@ -248,12 +248,9 @@ fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUseles
         return;
     };
     // oxlint's rule is called with the call.
-    let report = match cx.language().is_oxlint {
-        true => cx
-            .report(first_undefined, NO_USELESS_UNDEFINED)
-            .listened_on(e),
-        false => cx.report(first_undefined, NO_USELESS_UNDEFINED),
-    };
+    let report = cx
+        .report(first_undefined, NO_USELESS_UNDEFINED)
+        .called_with(e);
     let report = arguments
         .iter()
         .skip(remaining_count + 1)

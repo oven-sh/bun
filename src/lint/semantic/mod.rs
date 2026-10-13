@@ -119,7 +119,8 @@
 
 use crate::ast::{
     Alias, Class, Enum, EnumMember, Expr, ExprKind, File, Func, Ident, Import, ImportEquals,
-    ImportSpec, Interface, Module, Name, Node, Pat, Stmt, StmtKind, TypeKind, TypeNode, TypeParam,
+    ImportSpec, Interface, Module, Name, Node, Packed, Pat, Stmt, StmtKind, TypeKind, TypeNode,
+    TypeParam,
 };
 use crate::linter::globals::GlobalVariable;
 use crate::span::{Span, Spanned};
@@ -156,6 +157,14 @@ pub(crate) struct ReferenceIndex {
     globals: RefCell<Vec<(Atom, Option<GlobalVariable<'static>>)>>,
 }
 
+impl ReferenceIndex {
+    #[cold]
+    #[inline(never)]
+    fn analysis_of_eslint(&self) -> &Analysis {
+        self.of_eslint.get_or_init(Box::default)
+    }
+}
+
 /// Each part is computed the first time it is needed.
 #[derive(Default)]
 struct Analysis {
@@ -186,9 +195,9 @@ const MARKED_USED: u8 = 1 << 0;
 const MARKED_EXPORTED: u8 = 1 << 1;
 
 impl<'a> File<'a> {
-    #[inline]
+    #[inline(always)]
     fn semantic_index(&self) -> &ReferenceIndex {
-        self.lazy.references.get_or_init(ReferenceIndex::default)
+        &self.lazy.references
     }
 
     #[inline]
@@ -196,7 +205,7 @@ impl<'a> File<'a> {
         let index = self.semantic_index();
         match index.asks_eslint.get() {
             false => &index.analysis,
-            true => index.of_eslint.get_or_init(Box::default),
+            true => index.analysis_of_eslint(),
         }
     }
 
@@ -223,11 +232,14 @@ impl<'a> File<'a> {
         }
     }
 
+    // These three are inlined in more than a thousand places. So each has one way out, for what is not computed yet and for
+    // the analysis of typescript-eslint beside that of oxc.
     #[inline]
     fn scope_tree(&'a self) -> &'a ScopeTree {
-        match self.semantic().scopes.get() {
-            Some(computed) => computed,
-            None => self.compute_scope_tree(),
+        let index = self.semantic_index();
+        match index.analysis.scopes.get() {
+            Some(computed) if !index.asks_eslint.get() => computed,
+            _ => self.compute_scope_tree(),
         }
     }
 
@@ -239,9 +251,10 @@ impl<'a> File<'a> {
 
     #[inline]
     fn variables(&'a self) -> &'a Variables {
-        match self.semantic().variables.get() {
-            Some(computed) => computed,
-            None => self.compute_variables(),
+        let index = self.semantic_index();
+        match index.analysis.variables.get() {
+            Some(computed) if !index.asks_eslint.get() => computed,
+            _ => self.compute_variables(),
         }
     }
 
@@ -255,9 +268,10 @@ impl<'a> File<'a> {
 
     #[inline]
     fn reference_list(&'a self) -> &'a References {
-        match self.semantic().references.get() {
-            Some(computed) => computed,
-            None => self.compute_references(),
+        let index = self.semantic_index();
+        match index.analysis.references.get() {
+            Some(computed) if !index.asks_eslint.get() => computed,
+            _ => self.compute_references(),
         }
     }
 
@@ -877,6 +891,15 @@ impl Spanned for Reference<'_> {
     #[inline]
     fn span(&self) -> Span {
         Reference::span(*self)
+    }
+
+    /// Where the name is a node of its own.
+    #[inline]
+    fn packed_node(&self) -> Option<Packed> {
+        match self.raw().site {
+            ReferenceSite::Expr(_) | ReferenceSite::Pat(_) => Some(self.node().packed()),
+            _ => None,
+        }
     }
 }
 

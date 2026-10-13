@@ -307,8 +307,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // As with oxlint 1.87: the mark is on the plugin's variable, and oxlint's own rules have their own.
   test(
-    "a variable that a rule marks as used is used for no-unused-vars",
+    "a variable that a rule marks as used is still unused for oxlint's no-unused-vars",
     async () => {
       const plugin = `
       export default {
@@ -337,6 +338,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         ["-f", "unix"],
       );
       expect(stdout.split("\n").filter(it => it.includes("no-unused-vars"))).toEqual([
+        expect.stringMatching(/a\.js:1:7: .*'a'/),
         expect.stringMatching(/a\.js:2:7: .*'b'/),
       ]);
     },
@@ -3649,12 +3651,15 @@ export default {
     timeout,
   );
 
+  // What oxlint 1.87 says. Its own no-unused-vars doesn't see the mark.
   test(
     "with an oxlint config markVariableAsUsed marks the variable it names in every kind of file",
     async () => {
       const plugin = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
         Program(node) {
-          context.sourceCode.markVariableAsUsed("first", node);
+          const returned = context.sourceCode.markVariableAsUsed("first", node);
+          const declared = context.sourceCode.scopeManager.scopes.flatMap(it => it.variables).filter(it => it.defs.length);
+          context.report({ node, message: returned + " " + declared.map(it => it.name + "=" + it.eslintUsed).join(" ") });
         },
       }) } } };`;
       const code = "var first = 1;\nvar second = 2;\n";
@@ -3670,9 +3675,16 @@ export default {
       };
       const { raw, exitCode } = await lint(files, ["-f", "json"]);
       const said = JSON.parse(raw).diagnostics.map(
-        (it: { filename: string; message: string }) => `${it.filename} ${it.message.match(/'(\w+)'/)?.[1]}`,
+        (it: { filename: string; message: string }) =>
+          `${it.filename} ${it.message.match(/'(\w+)'/)?.[1] ?? it.message}`,
       );
-      expect(said.sort()).toEqual(["a.cjs second", "b.js second", "c.mjs second"]);
+      expect(said.sort()).toEqual(
+        ["a.cjs", "b.js", "c.mjs"].flatMap(file => [
+          `${file} first`,
+          `${file} second`,
+          `${file} true first=true second=false`,
+        ]),
+      );
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -4180,6 +4192,121 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
       const message: string =
         whose === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
       expect(message.split("|").map((said, i) => [rows[i][0], said])).toEqual(rows);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // `loc`, `decorators`, `ast.tokens` and the properties of `sourceCode` are made when they're read. It must not show who reads them first, in
+  // which realm or in which tier of the engine: they belong to the plugin's realm and stay the same objects.
+  // This is what oxlint 1.87 and ESLint 10.12 say, where all of it is plain data.
+  test.each(["oxlint", "eslint"])(
+    "what is made on first read is the same from a node:vm context and in hot code, with a config of %s",
+    async whose => {
+      const plugin = String.raw`import vm from "node:vm";
+const keys = ["decorators", "loc", "range"];
+// The same functions for each realm. A loop is as long as it takes the JIT compilers to get to it.
+const source =
+  "({" +
+  keys
+    .map(
+      key =>
+        "first_KEY(list, Base) { let mine = 0; const out = []; for (let i = 0; i < list.length; i++) { const it = list[i].KEY; mine += it instanceof Base; out.push(it); } return [mine, out]; }," +
+        "again_KEY(list, seen) { let changed = 0; for (let r = 0; r < 3; r++) for (let i = 0; i < list.length; i++) changed += list[i].KEY !== seen[i]; return changed; },",
+    )
+    .map((text, i) => text.replaceAll("KEY", keys[i]))
+    .join("") +
+  "methods(sourceCode, list) { let mine = 0; for (let r = 0; r < 3; r++) for (let i = 0; i < list.length; i++) mine += (sourceCode.getAncestors(list[i]) instanceof Array) + (sourceCode.getTokens(list[i]) instanceof Array); return mine; }," +
+  "properties(sourceCode) { const { text, ast, lines, visitorKeys, scopeManager, parserServices } = sourceCode; let changed = 0; for (let r = 0; r < 20000; r++) changed += (sourceCode.text !== text) + (sourceCode.ast !== ast) + (sourceCode.lines !== lines) + (sourceCode.visitorKeys !== visitorKeys) + (sourceCode.scopeManager !== scopeManager) + (sourceCode.parserServices !== parserServices) + (sourceCode.hasBOM !== false); return [changed, lines instanceof Array, ast.tokens instanceof Array, ast.comments instanceof Array, ast.tokens[0].loc instanceof Object, scopeManager.scopes[0].variables instanceof Array].join(); }," +
+  "Array, Object })";
+const rule = {
+  create(context) {
+    const found = [];
+    return {
+      Identifier(node) {
+        found.push(node);
+      },
+      "Program:exit"(program) {
+        const { sourceCode } = context;
+        const said = [];
+        for (const [realm, list, it] of [
+          ["main", found.slice(0, found.length / 2), (0, eval)(source)],
+          ["vm", found.slice(found.length / 2), vm.runInContext(source, vm.createContext({}))],
+        ]) {
+          // One read each of a node that nothing has looked at.
+          const node = list.pop();
+          const inContext = text => vm.runInNewContext(text, { node, sourceCode });
+          if (realm === "vm")
+            said.push(
+              "cold " +
+                [
+                  inContext("Array.isArray(node.range) && !(node.range instanceof Array)"),
+                  inContext("typeof node.loc.start.line"),
+                  inContext("'decorators' in node ? node.decorators.length : 'none'"),
+                  inContext("sourceCode.getText(node)"),
+                  inContext("sourceCode.getFirstToken(node).value"),
+                  inContext("sourceCode.text.length"),
+                  inContext("Reflect.get(node, 'loc', 42) === node.loc"),
+                  node.range instanceof Array,
+                  node.loc instanceof Object,
+                ].join(),
+            );
+          for (const key of keys) {
+            if (!(key in list[0])) continue;
+            const [Base, MainBase] = key === "loc" ? [it.Object, Object] : [it.Array, Array];
+            const [ofReader, seen] = it["first_" + key](list, Base);
+            if (key === "decorators") for (const decorators of seen) decorators.push(1);
+            const ofMain = seen.filter(it => it instanceof MainBase).length;
+            const kept = key === "decorators" ? list.filter(it => it.decorators.length === 1).length : "-";
+            said.push([realm, key, "reader's", ofReader, "main", ofMain, "changed", it["again_" + key](list, seen), "kept", kept].join(" "));
+          }
+          said.push([realm, "methods", it.methods(sourceCode, list), "properties", it.properties(sourceCode)].join(" "));
+        }
+        context.report({ node: program, message: said.join("\n") });
+      },
+    };
+  },
+};
+export default { meta: { name: "p" }, rules: { rule } };
+`;
+      const expected = {
+        oxlint: [
+          "main decorators reader's 1500 main 1500 changed 0 kept 1500",
+          "main loc reader's 1500 main 1500 changed 0 kept -",
+          "main range reader's 1500 main 1500 changed 0 kept -",
+          "main methods 9000 properties 0,true,true,true,true,true",
+          "cold true,number,0,v3001,v3001,19909,true,true,true",
+          "vm decorators reader's 0 main 1500 changed 0 kept 1500",
+          "vm loc reader's 0 main 1500 changed 0 kept -",
+          "vm range reader's 0 main 1500 changed 0 kept -",
+          "vm methods 0 properties 0,false,false,false,false,false",
+        ],
+        eslint: [
+          "main loc reader's 1500 main 1500 changed 0 kept -",
+          "main range reader's 1500 main 1500 changed 0 kept -",
+          "main methods 9000 properties 0,true,true,true,true,true",
+          "cold true,number,none,v3001,v3001,19909,true,true,true",
+          "vm loc reader's 0 main 1500 changed 0 kept -",
+          "vm range reader's 0 main 1500 changed 0 kept -",
+          "vm methods 0 properties 0,false,false,false,false,false",
+        ],
+      };
+      const configs = {
+        oxlint: { ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "p/rule": "error" } }) },
+        eslint: {
+          "eslint.config.mjs": `import p from "./plugin.mjs";
+            export default [{ files: ["**/*.js"], plugins: { p }, rules: { "p/rule": "error" } }];`,
+        },
+      };
+      const files = {
+        "plugin.mjs": plugin,
+        ...configs[whose as keyof typeof configs],
+        "a.js": "// c\n" + Array.from({ length: 3002 }, (_, i) => `v${i};\n`).join(""),
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+      const message: string =
+        whose === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
+      expect(message.split("\n")).toEqual(expected[whose as keyof typeof expected]);
       expect(exitCode).toBe(1);
     },
     timeout,

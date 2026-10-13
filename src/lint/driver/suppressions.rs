@@ -102,6 +102,7 @@ impl Suppressions {
     }
 
     /// `save`: `stringify(suppressions, { space: 2 })` of `json-stable-stringify`.
+    #[optimize(size)]
     pub(crate) fn save(&mut self, path: &[u8]) -> Result<(), Fatal> {
         bun_lint::utils::sort::sort_by(&mut self.0, |a, b| a.0.cmp(&b.0));
         let mut out = b"{".to_vec();

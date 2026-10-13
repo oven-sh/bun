@@ -218,6 +218,7 @@ fn cannot_precede(modifier: Flags) -> Flags {
 }
 
 /// oxc's `check_modifier`: `modifier`, at `pos`, follows the modifiers `seen`.
+#[inline(never)]
 pub(super) fn modifier_after(errors: &mut Errors, seen: Flags, modifier: Flags, pos: u32) {
     let in_the_way = cannot_precede(modifier) & seen;
     if in_the_way.is_empty() {
@@ -493,6 +494,20 @@ fn accessor(f: &FileBuilder, func: &Func) -> Option<Diagnostic> {
     })
 }
 
+/// Whether `declare` is one of the modifiers of the declaration `func`.
+fn is_after_declare(src: &[u8], func: &Func) -> bool {
+    let mut at = func.start as usize;
+    loop {
+        let rest = src.get(at..).unwrap_or_default();
+        let word = rest.iter().take_while(|it| it.is_ascii_lowercase()).count();
+        match &rest[..word] {
+            b"declare" => return true,
+            b"export" | b"default" | b"async" => at = skip_trivia(src, at + word),
+            _ => return false,
+        }
+    }
+}
+
 /// Where the parser is when it calls in.
 #[derive(Copy, Clone)]
 pub(super) struct Place {
@@ -510,7 +525,14 @@ pub(super) struct Place {
 /// At the end of the function `id`. `open_brace`: that of its body.
 #[cold]
 #[inline(never)]
-pub(super) fn function(f: &mut FileBuilder, src: &[u8], id: FnId, open_brace: u32, place: Place) {
+pub(super) fn function(
+    f: &mut FileBuilder,
+    src: &[u8],
+    id: FnId,
+    open_brace: u32,
+    place: Place,
+    can_end_here: bool,
+) {
     let Some(&func) = f.fns.get(id.idx()) else {
         return;
     };
@@ -567,6 +589,10 @@ pub(super) fn function(f: &mut FileBuilder, src: &[u8], id: FnId, open_brace: u3
             _ => {}
         }
         f.diagnostics.push(noticed_at(found, now));
+    }
+    // After `declare function f() {}` oxc wants the end of a statement, and only then looks at what it has read.
+    if func.kind == FnKind::Decl && has_body && !can_end_here && is_after_declare(src, &func) {
+        return f.diagnostics.push(missing_semicolon(now));
     }
     if func.kind == FnKind::Decl && is_ambient && has_body {
         let found = implementation_in_ambient_context(open_brace);
@@ -1665,6 +1691,7 @@ pub(super) fn line_break_after_throw(errors: &mut Errors, keyword: u32, next: (u
 }
 
 /// Each `return` in the static block with this body that is in no function in it.
+#[inline(never)]
 pub(super) fn returns_in_static_block(f: &mut FileBuilder, body: FnBody) {
     let FnBody::Block(body) = body else {
         return;
@@ -1708,6 +1735,8 @@ pub(super) fn returns_in_static_block(f: &mut FileBuilder, body: FnBody) {
 }
 
 /// `<a.b-c />`: the `b-c`.
+#[cold]
+#[inline(never)]
 pub(super) fn hyphen_in_jsx_member_name(errors: &mut Errors, at: (u32, u32)) {
     let message = "Identifiers in JSX cannot contain hyphens";
     errors.push(Diagnostic {
@@ -1717,6 +1746,8 @@ pub(super) fn hyphen_in_jsx_member_name(errors: &mut Errors, at: (u32, u32)) {
 }
 
 /// `<a b={} />`: the braces.
+#[cold]
+#[inline(never)]
 pub(super) fn empty_jsx_attribute_value(errors: &mut Errors, braces: (u32, u32)) {
     let message = "JSX attributes must only be assigned a non-empty 'expression'.";
     errors.push(error(17000, braces, message, ""));
@@ -1771,6 +1802,7 @@ pub(super) fn new_import(errors: &mut Errors, at: (u32, u32)) {
 }
 
 /// The arguments of the `import(..)` that starts at `start` and whose `)` is at `close`. oxc's parser gives up at each of these.
+#[inline(never)]
 pub(super) fn import_call(
     f: &mut FileBuilder,
     src: &[u8],
@@ -1863,6 +1895,15 @@ pub(super) fn async_before_of(errors: &mut Errors, at: u32) {
     let message = "The left-hand side of a `for...of` statement may not be `async`";
     let help = "Did you mean to use a for await...of statement?";
     errors.push(error(0, (at, at + 5), message, help));
+}
+
+/// `for await (a in b)`, `for await (;;)`: `head` is the statement up to its `)`.
+#[cold]
+#[inline(never)]
+pub(super) fn await_without_of(errors: &mut Errors, head: (u32, u32)) {
+    let message = "await can only be used in conjunction with `for...of` statements";
+    let help = "Did you mean to use a for...of statement?";
+    errors.push(noticed_at(error(0, head, message, help), head.1));
 }
 
 // ───────────────────────────── types ─────────────────────────────
@@ -2396,8 +2437,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[cold]
     #[inline(never)]
     pub(super) fn check_function_like_oxc(&mut self, id: FnId, open_brace: u32) {
-        let place = self.place();
-        function(&mut self.f, self.lx.src, id, open_brace, place);
+        let (place, can_end_here) = (self.place(), self.can_parse_semicolon());
+        function(
+            &mut self.f,
+            self.lx.src,
+            id,
+            open_brace,
+            place,
+            can_end_here,
+        );
     }
 
     /// After a member of a class that is neither a static block nor an index signature. `written`: its modifiers. `name`: from

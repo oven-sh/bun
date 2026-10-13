@@ -523,6 +523,12 @@ impl Feature {
 
 /// What `[fmt]` of `file` says.
 pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> {
+    if let Some(section) = file.get(b"format") {
+        return refuse(
+            section.loc,
+            &[b"Unknown section [format]\n  Did you mean [fmt]?"],
+        );
+    }
     let Some(section) = file.get(b"fmt") else {
         return Ok(None);
     };

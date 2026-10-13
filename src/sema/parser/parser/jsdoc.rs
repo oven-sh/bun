@@ -594,7 +594,8 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
                     | DiagnosticKind::JsDoc
                     | DiagnosticKind::Oxc
                     | DiagnosticKind::OxcFatal
-                    | DiagnosticKind::OxcSemantic => false,
+                    | DiagnosticKind::OxcSemantic
+                    | DiagnosticKind::OxcSecondReading => false,
                 }
         });
         self.f.diagnostics.append(&mut reported);

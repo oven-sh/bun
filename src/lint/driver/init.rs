@@ -105,6 +105,7 @@ impl Section {
     }
 
     /// `other` is another tool's config file, if one applies in the working directory.
+    #[optimize(size)]
     pub(crate) fn add(&self, other: Option<&[u8]>, environment: &Environment) -> Outcome {
         let mut out = Outcome::default();
         match self.try_add(other, &environment.cwd) {

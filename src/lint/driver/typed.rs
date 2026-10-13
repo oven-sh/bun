@@ -735,7 +735,7 @@ pub(crate) fn lint(
             });
             result.messages = fixed.remaining;
             if file.config.language.is_oxlint {
-                // They are by place now. oxlint prints what is left in the order in which it has run its rules.
+                // They are by place now.
                 bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| it.reported);
             }
             if !fixed.is_fixed {

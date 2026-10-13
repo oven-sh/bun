@@ -191,7 +191,7 @@ pub(crate) struct Lazy {
     pub(crate) sequence_roots: OnceCell<rustc_hash::FxHashMap<hir::ExprId, hir::ExprId>>,
     /// Where the `a.b` of each `<a.b>` and `</a.b>` starts and ends, in order.
     jsx_tags_with_dots: OnceCell<Box<[(u32, u32)]>>,
-    pub(crate) references: OnceCell<crate::semantic::ReferenceIndex>,
+    pub(crate) references: crate::semantic::ReferenceIndex,
     pub(crate) by_kind: crate::runner::ByKind,
     pub(crate) code_paths: crate::code_path::Store,
     pub(crate) linter: crate::linter::PerFile,

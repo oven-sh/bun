@@ -183,6 +183,9 @@ pub struct LintResult {
     pub thrown: Option<Vec<u8>>,
     /// [`File::known_line_starts`], for whoever lints to keep.
     pub line_starts: Option<Vec<u32>>,
+    /// With a configuration of oxlint that has a rule for which the file may be linted again: where in the run of oxlint each of
+    /// the messages of the rules is, by [`LintMessage::reported`], from 1.
+    pub run_keys: Vec<(u64, u128)>,
 }
 
 /// `S`: the rules that it has.
@@ -204,6 +207,8 @@ struct Running<'r, S> {
     when: When,
     /// [`Slot::kinds`]
     kinds: Kinds,
+    /// [`Slot::oxlint_number`]
+    oxlint_number: u16,
     rule: RuleRef<'r, S>,
     /// [`ConfiguredRule::refusal`]
     refusal: Option<Cow<'r, [u8]>>,
@@ -410,6 +415,7 @@ impl<S: RuleSet> Linter<S> {
                 number,
                 when,
                 kinds,
+                oxlint_number,
                 severity,
             };
             order.push((oxlint_number, slot, Arc::clone(instance)));
@@ -430,6 +436,7 @@ impl<S: RuleSet> Linter<S> {
             rules: Arc::new(rules),
             refusal,
             typed: typed.into(),
+            needs_modules: config.rules.iter().any(|it| it.entry.meta.needs_modules),
         }
     }
 
@@ -564,6 +571,7 @@ impl<S: RuleSet> Linter<S> {
                     severity: rule.severity,
                     when: slot.when,
                     kinds: slot.kinds,
+                    oxlint_number: slot.oxlint_number,
                     rule: RuleRef::Shared(instance),
                     refusal: self.refusal(rule).map(Cow::Borrowed),
                 });
@@ -856,66 +864,81 @@ impl<S: RuleSet> Linter<S> {
             }
         }
         problems.reserve(diagnostics.len());
-        // When oxlint runs each of the rules.
-        let of_place = |it: &Enabled<S>| prepared.order.get(it.place as usize).map(|it| it.when);
+        // oxlint sorts nothing. It prints what its rules report in the order in which it runs them.
         let follows_run = wants_places && file.language().is_oxlint && !diagnostics.is_empty();
-        let when: Vec<When> = match (follows_run, is_plain) {
-            (false, _) => Vec::new(),
-            (true, true) => enabled.iter().filter_map(of_place).collect(),
-            (true, false) => running.iter().map(|it| it.when).collect(),
+        // When oxlint runs a rule, and with which kinds of node it calls it.
+        let slot_of = |rule: usize| match is_plain {
+            true => {
+                let place = enabled.get(rule)?.place as usize;
+                let slot = prepared.order.get(place)?;
+                Some((slot.when, slot.kinds, slot.oxlint_number))
+            }
+            false => {
+                let it = running.get(rule)?;
+                Some((it.when, it.kinds, it.oxlint_number))
+            }
         };
+        let wants_keys = prepared.needs_modules;
+        let about = |rule: u16| {
+            let meta = ran(rule as usize)?.reported_as();
+            let (when, kinds, number) = slot_of(rule as usize)?;
+            Some(crate::oxlint_order::Ran {
+                when,
+                kinds,
+                once: crate::oxlint_order::once(meta),
+                is_port: crate::oxlint_order::is_port(meta),
+                number,
+            })
+        };
+        let (by_run, run_keys) = match follows_run {
+            true => crate::oxlint_order::in_run_order(file, &diagnostics, &about, wants_keys),
+            false => (Vec::new(), Vec::new()),
+        };
+        let of_rules = by_run.len() as u32;
+        // What was reported when the file was linted before, among which what is reported now belongs.
+        let keys_before = options
+            .again
+            .map_or(&[][..], |it| &it.previous.run_keys[..]);
+        let before_in_run = |step: u32| {
+            let key = run_keys.get(step as usize - 1);
+            key.map_or(0, |key| keys_before.partition_point(|it| it <= key) as u32)
+        };
+        // Only the comments want them by their places. Without any they are made in the order in which they are printed.
+        let in_run_order = follows_run && !has_directives;
+        // Else, for each of them, the how manyth it is printed, from 1.
+        let mut ranks: Vec<u32> = vec![0; if in_run_order { 0 } else { by_run.len() }];
+        for (at, rank) in by_run.iter().zip(1..) {
+            if let Some(it) = ranks.get_mut(*at as usize) {
+                *it = rank + before_in_run(rank);
+            }
+        }
         let order: Vec<u32> = match wants_places {
             _ if diagnostics.is_empty() => Vec::new(),
-            true => crate::runner::sorted(&diagnostics, &when),
+            _ if in_run_order => by_run,
+            true => {
+                let rules = 0..if follows_run {
+                    enabled.len().max(running.len())
+                } else {
+                    0
+                };
+                let when: Vec<When> = rules.map_while(|it| Some(slot_of(it)?.0)).collect();
+                crate::runner::sorted(&diagnostics, &when)
+            }
             false => (0..diagnostics.len() as u32).collect(),
         };
-        // oxlint sorts nothing. It prints what its rules report in the order in which it runs them: `run_once` of each rule, then
-        // the nodes in the order in which a walk enters them, each with the rules that are called with it, then the calls of
-        // Jest, then what tsgolint reports. For each place in `order`, the how manyth it is then, from 1.
-        let kinds_of = |rule: usize| match is_plain {
-            true => {
-                let slot = enabled
-                    .get(rule)
-                    .and_then(|it| prepared.order.get(it.place as usize));
-                slot.map(|it| it.kinds)
-            }
-            false => running.get(rule).map(|it| it.kinds),
-        };
-        let ranks: Vec<u32> = match follows_run {
-            true => crate::oxlint_order::ranks(file, &diagnostics, &order, &|rule| {
-                let meta = ran(rule as usize)?.reported_as();
-                Some(crate::oxlint_order::Ran {
-                    when: *when.get(rule as usize)?,
-                    kinds: kinds_of(rule as usize)?,
-                    keeps_its_order: crate::oxlint_order::keeps_its_order(meta),
-                })
-            }),
-            false => Vec::new(),
-        };
         // What was reported before comes after: plugins in JavaScript run last, and what is run again runs first.
-        let of_rules = ranks.len() as u32;
         for it in problems.iter_mut().skip(before_previous) {
             if it.reported != 0 && it.reported != u32::MAX {
-                it.reported += of_rules;
+                it.reported += match keys_before.get(it.reported as usize - 1) {
+                    Some(key) => run_keys.partition_point(|it| it < key) as u32,
+                    None => of_rules,
+                };
             }
         }
         let places = wants_places.then_some(&locator);
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());
-        // Only the comments want them by their places. Without any they are made in the order in which they are printed.
-        let in_run_order = follows_run && !has_directives;
-        let mut by_run: Vec<u32> = vec![0; if in_run_order { order.len() } else { 0 }];
-        for (place, rank) in (0..).zip(&ranks) {
-            if let Some(it) = rank
-                .checked_sub(1)
-                .and_then(|it| by_run.get_mut(it as usize))
-            {
-                *it = place;
-            }
-        }
-        for step in 0..order.len() {
-            let place = by_run.get(step).map_or(step, |it| *it as usize);
-            let at = order.get(place).copied().unwrap_or(0);
+        for (at, step) in order.into_iter().zip(1..) {
             let Some(diagnostic) = diagnostics.get_mut(at as usize) else {
                 continue;
             };
@@ -932,7 +955,10 @@ impl<S: RuleSet> Linter<S> {
                 );
             }
             problems.push(LintMessage {
-                reported: ranks.get(place).copied().unwrap_or(0),
+                reported: match in_run_order {
+                    true => step + before_in_run(step),
+                    false => ranks.get(at as usize).copied().unwrap_or(0),
+                },
                 ..to_message(diagnostic, rule.reported_as(), places)
             });
             let Some(message) =
@@ -1088,12 +1114,10 @@ impl<S: RuleSet> Linter<S> {
             );
         }
 
-        if file.language().is_oxlint
-            && (of_rules > 0 || of_js > 0 || has_directives)
-            && !problems.is_sorted_by_key(|it| it.reported)
-        {
+        if file.language().is_oxlint && !problems.is_sorted_by_key(|it| it.reported) {
             crate::utils::sort::sort_by_key(&mut problems, |it| it.reported);
         }
+        result.run_keys = run_keys;
         if !has_directives {
             result.messages = problems;
         } else {
@@ -1239,9 +1263,7 @@ fn is_thrown_error(problem: &LintMessage) -> bool {
 fn stands_for_js_rule(id: &RuleId) -> bool {
     match id {
         RuleId::Js(_) => true,
-        RuleId::Known(meta) | RuleId::Named(meta, _) => {
-            config::oxlint_category(meta.plugin, meta.name).is_none()
-        }
+        RuleId::Known(meta) | RuleId::Named(meta, _) => config::oxlint_lacks(meta),
         RuleId::Unknown(_) => false,
     }
 }
@@ -1669,6 +1691,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 severity,
                 when: entry.meta.reports,
                 kinds: Kinds::default(),
+                oxlint_number: u16::MAX,
                 rule,
                 refusal,
             };

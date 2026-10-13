@@ -5,7 +5,7 @@
 //! Only with `Options::recovers`. Without it the first error ends the file, or the speculative parse
 //! that is going on: a text without errors pays one test of a flag at each list.
 
-use super::{Parser, ctx};
+use super::{Checkpoint, Parser, ctx};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -244,7 +244,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     pub(crate) fn top_level_statement(&mut self) -> StmtId {
         (self.has_await_in_name, self.has_await_identifier) = (false, false);
         let before = self.checkpoint();
+        let had_plain_await = self.has_plain_top_level_await;
         let statement = self.statement();
+        if self.has_await_identifier
+            && self.options.is_module_or_script
+            && !had_plain_await
+            && !self.f.has_module_syntax
+            && let Some(statement) = self.first_reading_of_oxc(&before, statement)
+        {
+            return statement;
+        }
         if !(self.has_await_in_name && self.has_await_identifier) || self.has_failed() {
             return statement;
         }
@@ -253,6 +262,40 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let statement = self.statement();
         self.names_are_in_await_context = false;
         statement
+    }
+
+    /// After `statement`, which starts at `before` and has an `await` that can be a name, in a file that can still be a
+    /// script. That is how oxc reads it first, and what is wrong with that reading is what it says. Only when it is through
+    /// with the file does it try the operator.
+    #[cold]
+    #[inline(never)]
+    fn first_reading_of_oxc(&mut self, before: &Checkpoint, statement: StmtId) -> Option<StmtId> {
+        self.take_errors_of_scanner();
+        let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+        let said_before = before.file.diagnostics as usize;
+        let said = self.f.diagnostics.get(said_before..).unwrap_or_default();
+        let second: Vec<Diagnostic> = said.iter().filter(is_of_parser).cloned().collect();
+        let start = self.f.stmts.get(statement.idx())?.start;
+        let is_import_meta = |it: &Expr| it.pos < start && matches!(it.kind, ExprKind::ImportMeta);
+        if second.is_empty() || self.has_failed() || self.f.exprs.iter().any(is_import_meta) {
+            return None;
+        }
+        self.rollback(before);
+        self.has_plain_top_level_await = false;
+        let saved = self.enter_context(0, ctx::AWAIT);
+        let statement = self.statement();
+        self.context = saved;
+        self.take_errors_of_scanner();
+        // `file_of` tries a script.
+        self.has_top_level_await = true;
+        let said = self.f.diagnostics.get(said_before..).unwrap_or_default();
+        if !said.iter().any(|it| is_of_parser(&it)) {
+            let end = self.prev_end();
+            let mut found = Diagnostic::new(DiagnosticKind::OxcSecondReading, (start, end), 0, &[]);
+            found.related = second;
+            self.f.diagnostics.push(found);
+        }
+        Some(statement)
     }
 
     /// `scanError`: what the scanner has reported goes where the errors of the parser go, before

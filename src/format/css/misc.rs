@@ -293,6 +293,13 @@ pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
+/// Whether `text` ends with a backslash that is not escaped itself. If `text` is all of a value or of the parameters of an
+/// at-rule, what it escapes is white space, which `postcss` takes for what is behind them: anything else would be in `text`.
+/// Not so for a word of a value: `\@a` is `\` and `@a`.
+pub(crate) fn ends_before_escaped_blank(text: &[u8]) -> bool {
+    text.ends_with(b"\\") && text.iter().rev().take_while(|byte| **byte == b'\\').count() % 2 == 1
+}
+
 /// `lastLineHasInlineComment`
 pub(crate) fn last_line_has_inline_comment(value: &[u8]) -> bool {
     let last_line_start =

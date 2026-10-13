@@ -113,11 +113,15 @@ fn class_declaration_with_the_name_of<'a>(
 impl<'a> Variable<'a> {
     fn new(symbol: Symbol<'a>, known: &mut Known<'a>) -> Option<Self> {
         let mut definition = symbol.declarations().find(|it| it.name_span().is_some())?;
-        // The name of an enum member in quotes is not an identifier.
+        // The name of an enum member in quotes is not an identifier. oxlint goes by the symbol.
+        let is_oxlint = symbol.file().language().is_oxlint;
         let mut with_identifier = symbol.declarations().find(|it| match it {
-            Declaration::EnumMember(member) => member
-                .key()
-                .is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_))),
+            Declaration::EnumMember(member) => {
+                is_oxlint
+                    || member
+                        .key()
+                        .is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_)))
+            }
             _ => it.name_span().is_some(),
         })?;
         let class = class_declaration_with_the_name_of(definition, symbol.name());

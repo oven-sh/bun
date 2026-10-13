@@ -91,7 +91,7 @@ impl ExplicitModuleBoundaryTypes {
     fn check_parameters<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>, export: Option<Node<'a>>) {
         let is_oxlint = cx.language().is_oxlint;
         let report = |at: Span, message: Message| match export {
-            Some(export) => cx.report(at, message).listened_on(export),
+            Some(export) => cx.report(at, message).called_with(export),
             None => cx.report(at, message),
         };
         for (param, named, unnamed) in self.untyped_parameters(func, is_oxlint) {
@@ -515,7 +515,7 @@ impl<'a> OxlintChecker<'a, '_> {
                 if let Some(place) = place.filter(|_| !returns_function) {
                     self.cx
                         .report(place, MISSING_RETURN_TYPE)
-                        .listened_on(self.export);
+                        .called_with(self.export);
                 }
                 if forgets_target {
                     self.target = None;

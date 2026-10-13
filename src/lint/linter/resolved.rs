@@ -202,6 +202,8 @@ pub(super) struct Prepared {
     pub(super) refusal: Option<Arc<[u8]>>,
     /// Those that need types.
     pub(super) typed: Box<[&'static Meta]>,
+    /// One of them needs the modules, so that a file may be linted again.
+    pub(super) needs_modules: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -214,6 +216,8 @@ pub(super) struct Slot {
     pub(super) when: When,
     /// With a configuration of oxlint: the kinds of node that it calls the rule with.
     pub(super) kinds: Kinds,
+    /// With a configuration of oxlint: the number that it gives the rule.
+    pub(super) oxlint_number: u16,
     pub(super) severity: Severity,
 }
 

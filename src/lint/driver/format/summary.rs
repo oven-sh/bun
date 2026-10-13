@@ -152,6 +152,7 @@ pub(crate) fn about_suppressions(has_unused: bool, has_new: bool) -> Option<File
         had_types: false,
         text: Some(Vec::new()),
         line_starts: None,
+        run_keys: Vec::new(),
         is_fixed: false,
         fixes: 0,
         fixed_text: None,

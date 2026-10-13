@@ -918,6 +918,31 @@ describe.concurrent("bun fmt", () => {
         "{{#[a b]}}{{else [a b] c}}{{/[a b]}}",
         "{{#[a b]}}{{else a b c}}{{/[a b]}}",
       ],
+      "empty-brackets-and-a-slash": ["{{[]/a   }}\n", "{{[]/a}}", "{{a}}"],
+      "empty-brackets-behind-an-at": ["{{@[].a   }}\n", "{{@[].a}}", "{{@a}}"],
+      "empty-brackets-at-the-end": ["{{a.[]   }}\n", "{{a.[]}}", "{{a.}}"],
+      "empty-brackets-in-arguments": ["{{a   [].b c=[].d}}\n", "{{a [].b c=[].d}}", "{{a b c=d}}"],
+      "doctype-with-identifiers": [
+        '<!doctype html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">\n<p   ></p>\n',
+        '<!doctype html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">\n<p></p>',
+        "<p></p>",
+      ],
+      "this-twice": ["{{this.this   }}\n", "{{this.this}}", "{{this}}"],
+      "dots-before-a-name": ["{{a   ...b}}\n", "{{a ...b}}", "{{a b}}"],
+      "slash-in-brackets": ["{{[a/b]   }}\n", "{{[a/b]}}", "{{a/b}}"],
+      "hash-that-is-called-in-parentheses": ["{{a   ((b=c) d)}}\n", "{{a   ((b=c) d)}}", "{{a ( d)}}"],
+      "number-with-a-negative-exponent": ["{{a   0.0000001}}\n", "{{a 0.0000001}}", "{{a 1e-7}}"],
+      "mustache-where-a-comment-may-end": [
+        "<!-- a-{{b}} --><p   ></p>\n",
+        "<!-- a-{{b}} --><p></p>",
+        "{{b}}<!-- a- --><p></p>",
+      ],
+      "blank-behind-less-than": ["< a>b</a><p   ></p>\n", "< a>b</a><p   ></p>\n", "<a>b</a><p></p>"],
+      "columns-behind-a-line-separator": [
+        'a\n\u2028{{~! b ~}} <p {{c}} d="e" {{f}} g></p> <!-- {{h}} -->\n\u2029{{! prettier-ignore }} {{  i  }} {{!-- j --~}}\n{{k\n\u2028 l}} {{~! m }}\n',
+        'a \u2028{{~! b ~}}\n<p {{c}} d="e" {{f}} g></p>\n<!-- {{h}} -->\n\u2029{{! prettier-ignore }}\n{{  i  }}\n{{! j ~}}\n{{k l}}\n{{~! m }}',
+        'a \u2028{{! b }}\n<p {{c}} d="e" {{f}} g></p>\n<!--  {{h} -->\n\u2029\u2029{{! prettier-ignore }\n {{  i  }\n{{! j }}\n{{k l}}\n{{! m }}',
+      ],
     };
     // These look like it, but Handlebars reads what Prettier prints as it reads the template.
     const harmless: Record<string, [before: string, after: string]> = {
@@ -997,6 +1022,118 @@ describe.concurrent("bun fmt", () => {
       expect(after).not.toBe(ofPrettier);
       const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
       expect(result.files).toEqual({ "a.md": after, "b.md": after });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Known: Bun prints what Prettier 3.9.9 prints for these, and a CommonMark parser reads that as something else. All are
+    // emphasis three deep, or runs of `*` and `_` that are text in an emphasis. Telling them from `*foo_bar*`, of which
+    // `_foo_bar_` is right, takes the rules for delimiter runs.
+    test.each([
+      ["**a****a**\n", "**a\\****a**\n"],
+      ["*b **a*b*** c*\n", "*b \\**a*b*** c*\n"],
+      ["*b _a_*b* c*\n", "*b *a**b* c*\n"],
+      ["*b _*a*_ c*\n", "*b _*a*\\_ c*\n"],
+      ["*b *_a_* c*\n", "_b **a** c_\n"],
+      ["**b __**a**__ c**\n", "**b __**a**\\__ c**\n"],
+      ["**__a__****__a__**\n", "****a********a****\n"],
+      ["*b a__b__c c*\n", "_b a__b_\\_c c_\n"],
+      ["*b __a__b c*\n", "_b \\__a_\\_b c_\n"],
+      ["**b __a__b c**\n", "**b \\__a_\\_b c**\n"],
+      ["*b **(a)**b c*\n", "*b **(a)*_b c_\n"],
+      ["*b _\u4e2d_a c*\n", "_b _\u4e2d_a c_\n"],
+      ["*b a_\u4e2d_ c*\n", "_b a_\u4e2d_ c_\n"],
+    ])("known: %j", async (before, ofPrettier) => {
+      const result = await format({ "a.md": before }, [], { reads: ["a.md"] });
+      expect(result.files).toEqual({ "a.md": ofPrettier });
+    });
+  });
+
+  test("a folded scalar of YAML that keeps its line breaks has as many with --prose-wrap=never", async () => {
+    // Prettier 3.9.9 prints `k: >+\n  a\n  \n  \n\nl: m\n`, which has one more.
+    const result = await format({ "a.yaml": "k: >+\n  a\n\n\nl:   m\n" }, ["--prose-wrap=never"], {
+      reads: ["a.yaml"],
+    });
+    expect(result.files).toEqual({ "a.yaml": "k: >+\n  a\n\n\nl: m\n" });
+    expect(result.exitCode).toBe(0);
+  });
+
+  describe("an escaped blank at the end of the parameters of an at-rule", () => {
+    // Prettier 3.9.9 prints `@extend .a\\;`: the backslash escapes the `;`.
+    const names = ["extend", "include", "media", "supports", "container", "layer", "import", "custom"];
+    test.each(["a.css", "a.scss", "a.less"])("%s", async file => {
+      const before = names.map(name => `x{@${name}   .a\\ ;}\n@${name} .a\\ ;\n`).join("") + "@last .a\\ ";
+      const after = names.map(name => `x {\n  @${name} .a\\ ;\n}\n@${name} .a\\ ;\n`).join("") + "@last .a\\ ;\n";
+      const result = await format({ [file]: before }, [], { reads: [file] });
+      expect(result.files).toEqual({ [file]: after });
+      expect(result.exitCode).toBe(0);
+      expect(await different({ [file]: after }, [])).toEqual([]);
+    });
+
+    test("before a parenthesis, and not twice where Prettier has one", async () => {
+      // Prettier 3.9.9 prints `@media (a\\) {`. What it prints for the second is right.
+      const files = { "a.scss": "@media (a\\ ){b{c:d}}\n@each   .a\\ ;\n" };
+      const result = await format(files, [], { reads: ["a.scss"] });
+      expect(result.files).toEqual({ "a.scss": "@media (a\\ ) {\n  b {\n    c: d;\n  }\n}\n@each .a\\ ;\n" });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("a selector without a namespace", () => {
+    // The selector, what Bun makes of it, and what Prettier 3.9.9 makes of it.
+    test.each([
+      ["x |b", "x |b", "x|b"],
+      ["x,|b,y", "x,\n|b,\ny", "x,\n,|b,\ny"],
+    ])("%j", async (before, after, ofPrettier) => {
+      expect(after).not.toBe(ofPrettier);
+      const written = `${after} {\n  c: d;\n}\n`;
+      const result = await format({ "a.css": `${before}{c:d}\n`, "b.css": written }, [], { reads: ["a.css", "b.css"] });
+      expect(result.files).toEqual({ "a.css": written, "b.css": written });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("a backslash in a value of a style sheet", () => {
+    // The value, what Bun makes of it, and what Prettier 3.9.9 makes of it: it writes nothing behind a word with a backslash.
+    test.each([
+      ["Font\\ Awesome\\ 5", "Font\\ Awesome\\ 5", "Font\\Awesome\\5"],
+      ["a\\b   c", "a\\b c", "a\\bc"],
+      ["d\\  e", "d\\  e", "d\\e"],
+      ["d\\ -5", "d\\ -5", "d\\-5"],
+      ["d\\ ", "d\\ ", "d\\"],
+      ["(a\\ )", "(a\\ )", "(a\\)"],
+      ["f(b a\\ )", "f(b a\\ )", "f(b a\\)"],
+      ["f(a\\ , b)", "f(a\\ , b)", "f(a\\, b)"],
+      ["a\\ , b", "a\\ , b", "a\\, b"],
+      // What the backslash escapes here is no blank, and Prettier is right.
+      ["\\@a   1\\/3", "\\@a 1\\/3", null],
+      ["d\\\\   e", "d\\\\ e", "d\\\\e"],
+      ["x d\\e   f g", "x d\\e f g", "x d\\ef g"],
+    ])("%j", async (before, after, ofPrettier) => {
+      expect(after).not.toBe(ofPrettier);
+      const files = Object.fromEntries(["a.css", "b.scss", "c.less"].map(name => [name, `a{b:${before}}\n`]));
+      const result = await format(files, [], { reads: Object.keys(files) });
+      const written = `a {\n  b: ${after};\n}\n`;
+      expect(result.files).toEqual({ "a.css": written, "b.scss": written, "c.less": written });
+      expect(result.exitCode).toBe(0);
+      expect(await different({ "a.css": written }, [])).toEqual([]);
+    });
+  });
+
+  describe("YAML of which Prettier changes a value", () => {
+    // The text, what Bun makes of it, and what Prettier 3.9.9 makes of it: a key with one line break more, a scalar that has
+    // become a marker, a byte order mark that was the start of a key, and a key that cannot be read.
+    test.each([
+      ["? |+\n  a\n\n:   m\n", "? |+\n  a\n\n: m\n", "? |+\n  a\n\n\n: m\n"],
+      ["k:   l\n? >+\n  a\n\n", "k: l\n? >+\n  a\n\n", "k: l\n? >+\n  a\n\n\n"],
+      ["---   ---\n", "--- ---\n", "---\n---\n"],
+      ["---   ... x\n", "--- ... x\n", "---\n... x\n"],
+      ["? \ufeffa\n:   m\n", "? \ufeffa\n: m\n", "\ufeffa: m\n"],
+      ["? {a\n  b: c}\n:   m\n", "? { ? a\n      b\n    : c }\n: m\n", "{ ? a\n      b\n    : c }: m\n"],
+    ])("%j", async (before, after, ofPrettier) => {
+      expect(after).not.toBe(ofPrettier);
+      expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));
+      const result = await format({ "a.yaml": before, "b.yaml": after }, [], { reads: ["a.yaml", "b.yaml"] });
+      expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });
       expect(result.exitCode).toBe(0);
     });
   });
@@ -1129,6 +1266,28 @@ describe.concurrent("bun fmt", () => {
     expect(result.files).toEqual({ "a.html": "<div></span>\n", "b.html": "<p>a</p>\n" });
     expect(result.stderr).toContain("error: a.html: SyntaxError:");
     expect(result.exitCode).toBe(2);
+  });
+
+  describe("a <pre> with an element in it and no end tag", () => {
+    // The text, what Bun makes of it, and what Prettier 3.9.9 makes of it: all that follows the start tag is lost.
+    test.each([
+      ["<pre   ><b>a</b>\n", "<pre><b>a</b>\n", "<pre>>\n"],
+      ["<pre   >a<b>c\n", "<pre>a<b>c\n", "<pre>>\n"],
+      [
+        '<p>x</p><pre   class="y"><i>a</i>\n  b\n',
+        '<p>x</p>\n<pre class="y"><i>a</i>\n  b\n',
+        '<p>x</p>\n<pre class="y">>\n',
+      ],
+      ["<listing   ><b>a\n", "<listing><b>a\n", "<listing>>\n"],
+    ])("%j", async (before, after, ofPrettier) => {
+      expect(after).not.toBe(ofPrettier);
+      const result = await format({ "a.html": before, "b.html": after }, [], { reads: ["a.html", "b.html"] });
+      expect(result.files).toEqual({ "a.html": after, "b.html": after });
+      expect(result.exitCode).toBe(0);
+      const checked = await format({ "a.html": before }, ["--debug-check"]);
+      expect(checked.stderr).toBe("");
+      expect(checked.exitCode).toBe(0);
+    });
   });
 
   describe("a style sheet of which Prettier changes a letter", () => {
@@ -4914,7 +5073,8 @@ describe.concurrent("how a path is written", () => {
       commandLine: [],
     };
     await using proc = spawn({
-      cmd: [bunExe(), "-e", `const given = ${JSON.stringify(given)};\n${source}`],
+      // As there: nothing is fetched.
+      cmd: [bunExe(), "--no-install", "-e", `const given = ${JSON.stringify(given)};\n${source}`],
       env,
       cwd: String(dir),
       stdin: "ignore",

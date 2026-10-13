@@ -419,6 +419,20 @@ impl<'v> ValueRef<'v> {
     }
 
     /// Another node of the same values.
+    /// How many blanks follow its `value` in the text.
+    pub(crate) fn blanks_behind(self) -> usize {
+        let rest = self.values.text.get(self.node().value.1 as usize..);
+        (rest.unwrap_or_default().iter())
+            .take_while(|byte| byte.is_ascii_whitespace())
+            .count()
+    }
+
+    /// Whether something that is no blank follows its `value` in the text.
+    pub(crate) fn is_before_more(self) -> bool {
+        let rest = self.values.text.get(self.node().value.1 as usize..);
+        !rest.unwrap_or_default().trim_ascii_start().is_empty()
+    }
+
     pub(crate) fn at(self, id: ValueId) -> ValueRef<'v> {
         ValueRef { id, ..self }
     }

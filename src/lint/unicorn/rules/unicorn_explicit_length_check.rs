@@ -65,12 +65,8 @@ impl ExplicitLengthCheck {
             return;
         };
         // oxlint's rule is called with the `.length`.
-        let report = cx.report(node, if is_zero { ZERO } else { NON_ZERO });
-        let report = match cx.language().is_oxlint {
-            true => report.listened_on(member),
-            false => report,
-        };
-        report
+        cx.report(node, if is_zero { ZERO } else { NON_ZERO })
+            .called_with(member)
             .data("prop_name", property)
             .data("op_and_rhs", check_code)
             // Where there is a fix oxlint says what it says of any.

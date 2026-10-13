@@ -101,16 +101,6 @@ pub fn says_the_same(
     after: &[u8],
     options: &FormatOptions,
 ) -> Result<bool, FormatError> {
-    // Classes change places, and one that is there twice is there once. The rest is compared without that.
-    if options.tailwind.is_some() {
-        let plain = FormatOptions {
-            tailwind: None,
-            ..options.clone()
-        };
-        let mut formatted = Vec::new();
-        format(before, &plain, &mut Scratch::default(), &mut formatted)?;
-        return says_the_same(before, &formatted, &plain);
-    }
     let mut scratch = Scratch::default();
     let written = [before, after].map(|text| {
         let text = bun_core::strings::crlf_as_lf(text.strip_prefix(BOM).unwrap_or(text));
@@ -135,6 +125,8 @@ pub fn says_the_same(
             out: Vec::new(),
             run: Vec::new(),
             pre_depth: 0,
+            tailwind: options.tailwind.as_deref(),
+            touches: None,
             stack: Stack::new(),
         };
         writer.template(template);

@@ -317,7 +317,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     (targets.found.into_iter())
         .filter(|it| gives_up_at.is_none_or(|at| skip_trivia(file.text(), it.noticed) < at))
         .map(|it| {
-            SyntaxError::of_oxc(it.label, it.problem.message().as_bytes().to_vec())
+            SyntaxError::of_oxc(it.label, it.problem.message())
                 .help(Cow::Borrowed(it.problem.help()))
                 .stage(match it.is_fatal {
                     true => Stage::Fatal,

@@ -14,3 +14,5 @@ bun test/cli/format/own/sync.ts <directory with node_modules/prettier> <director
 ```
 
 **Nothing here fails**, so there is no list of what is expected to: `../conformance.test.ts` wants no line that starts with `FAIL`. An input comes in the commit that makes `bun fmt` print what Prettier prints for it. If the runner says `FAIL oxfmt` for it, rename its `.snap` to `.snap.todo`.
+
+**What `bun fmt` prints differently on purpose is not here.** Where what Prettier or oxfmt prints means something else than the input, `bun fmt` prints the right thing. Such an input is a row in `../format.test.ts`, with what `bun fmt` prints and what the tool prints.

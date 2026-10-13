@@ -36,6 +36,7 @@ fn text_of(it: &Diagnostic, index: usize) -> Cow<'static, str> {
 }
 
 /// An error that the parser has written down for oxc.
+#[optimize(size)]
 fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
     let stage = match it.kind {
         DiagnosticKind::Oxc => Stage::Parser,
@@ -81,6 +82,7 @@ fn brackets_around<'a>(file: &'a File<'a>, inside: u32) -> Span {
 
 /// An error that TypeScript's parser notes for the checker, if oxc's parser has one for the same code. Each was tried. oxc
 /// takes `let a: unique number` (1005), `A<T,>` (1009), `import.source("a")` (18061) and `Array<?>` (8020).
+#[optimize(size)]
 fn of_grammar<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
     if file.is_in_jsdoc(it.start) {
         return None;
@@ -166,13 +168,7 @@ fn of_grammar<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
             error(0, span, message, Stage::Parser)
         }
         // The body of an accessor in a type.
-        1183 => {
-            let message =
-                "Expected a semicolon or an implicit semicolon after a statement, but found none";
-            let at = Span::empty(file.end_of_token_before(it.start));
-            error(0, at, message, Stage::Fatal)
-                .help(Cow::Borrowed("Try inserting a semicolon here"))
-        }
+        1183 => semicolon_after(file.end_of_token_before(it.start)),
         8020 => match text.get(it.start as usize) {
             Some(b'*') => unexpected(it.start),
             // `A.<B>`
@@ -216,9 +212,7 @@ fn of_grammar<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
 }
 
 fn error(code: u16, at: Span, message: &str, stage: Stage) -> SyntaxError {
-    SyntaxError::of_oxc(at, message.as_bytes().to_vec())
-        .code(code)
-        .stage(stage)
+    SyntaxError::of_oxc(at, message).code(code).stage(stage)
 }
 
 /// Where a namespace, `declare module "m"` or `declare global` can't be, and what they lack.
@@ -567,16 +561,12 @@ fn unexpected_at<'a>(file: &'a File<'a>, at: u32) -> SyntaxError {
 fn expected<'a>(file: &'a File<'a>, wanted: &str, at: u32) -> SyntaxError {
     let here = token_at(file, at);
     let found = name_of_token(file.slice(here));
-    SyntaxError::of_oxc(here, format!("Expected {wanted} but found `{found}`"))
-        .says(format!("{wanted} expected"))
-        .stage(Stage::Fatal)
+    SyntaxError::expected(here, wanted, found.as_bytes()).stage(Stage::Fatal)
 }
 
 /// It takes what ends at `at` for a statement, and gives up at what follows on the line.
 fn semicolon_after(at: u32) -> SyntaxError {
-    let message = "Expected a semicolon or an implicit semicolon after a statement, but found none";
-    error(0, Span::empty(at), message, Stage::Fatal)
-        .help(Cow::Borrowed("Try inserting a semicolon here"))
+    SyntaxError::semicolon_after(at)
 }
 
 /// The `open` before `at` that nothing closes.
@@ -594,6 +584,7 @@ fn opener<'a>(file: &'a File<'a>, at: u32, (open, close): (u8, u8)) -> Option<Sp
 }
 
 /// It gives up at the token at `at`, after an element of a list in these brackets.
+#[optimize(size)]
 fn in_list<'a>(file: &'a File<'a>, at: u32, brackets: (u8, u8)) -> SyntaxError {
     let wanted = format!("`,` or `{}`", brackets.1 as char);
     let found = expected(file, &wanted, at).noticed_at(at);
@@ -615,17 +606,36 @@ enum Around {
     Condition(Span),
     /// A list in these brackets.
     List((u8, u8)),
+    /// The brackets of `a[b]` or of a computed name.
+    Index,
+    /// The value of a field of a class.
+    Field,
+    /// After the `@` of a decorator.
+    Decorator,
     Statement,
 }
 
+#[optimize(size)]
 fn around<'a>(file: &'a File<'a>, at: u32) -> Around {
     let is_object = |open: u32| {
         let mut all = file.hir.exprs.iter();
         all.any(|it| it.pos == open && matches!(it.kind, ExprKind::Object(_)))
     };
+    let is_array = |open: u32| {
+        let mut all = file.hir.exprs.iter();
+        all.any(|it| it.pos == open && matches!(it.kind, ExprKind::Array(_)))
+    };
+    let starts_member = |at: u32| file.hir.members.iter().any(|it| it.start == at);
     let (mut depth, mut colons) = (0u32, 0u32);
+    // Nothing so far but `a.b(c)`.
+    let mut is_path = true;
     for it in file.tokens_before(Span::empty(at)) {
         let opened = it.span();
+        if depth == 0 {
+            let is_word =
+                |it: &u8| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$' | 0x80..);
+            is_path &= matches!(it.text(), b"." | b")" | b"@") || it.text().iter().all(is_word);
+        }
         match it.text() {
             // A piece of a template closes a substitution, opens one, or both.
             [b'}', _, ..] | [b'`', _, ..] => {
@@ -646,9 +656,16 @@ fn around<'a>(file: &'a File<'a>, at: u32) -> Around {
                     _ => Around::List((b'(', b')')),
                 };
             }
-            b"[" => return Around::List((b'[', b']')),
+            b"[" if is_array(opened.start) => return Around::List((b'[', b']')),
+            b"[" => return Around::Index,
             b"{" if is_object(opened.start) => return Around::List((b'{', b'}')),
-            b"{" | b";" if depth == 0 => break,
+            b"{" | b";" if depth == 0 => {
+                return match starts_member(token_after(file, opened).start) {
+                    true => Around::Field,
+                    false => Around::Statement,
+                };
+            }
+            b"@" if depth == 0 && is_path => return Around::Decorator,
             _ if depth > 0 => {}
             b":" => colons += 1,
             b"?" if colons == 0 => return Around::Conditional(opened),
@@ -660,6 +677,7 @@ fn around<'a>(file: &'a File<'a>, at: u32) -> Around {
 }
 
 /// What it says at the token at `at`, which cannot follow the expression before it.
+#[optimize(size)]
 fn after_expression<'a>(file: &'a File<'a>, at: u32) -> SyntaxError {
     match around(file, at) {
         Around::Conditional(question) => expected(file, "`:`", at)
@@ -671,6 +689,9 @@ fn after_expression<'a>(file: &'a File<'a>, at: u32) -> SyntaxError {
             .noticed_at(at)
             .and(opened, "Opened here"),
         Around::List(brackets) => in_list(file, at, brackets),
+        Around::Index => expected(file, "`]`", at),
+        Around::Field => expected(file, "`;`", at),
+        Around::Decorator => unexpected_at(file, at),
         Around::Statement => semicolon_after(file.end_of_token_before(at)),
     }
 }
@@ -705,6 +726,7 @@ fn colon_before<'a>(file: &'a File<'a>, mut at: u32) -> u32 {
 }
 
 /// A function that has no `{` after the `)` that ends at `end`.
+#[optimize(size)]
 fn without_body<'a>(file: &'a File<'a>, func: &hir::Func, end: u32) -> SyntaxError {
     let mut start = func.anchor;
     if func.kind == FnKind::Decl {
@@ -724,6 +746,7 @@ fn without_body<'a>(file: &'a File<'a>, func: &hir::Func, end: u32) -> SyntaxErr
 }
 
 /// A variable with a `:` or a `!` at `at`, after its name.
+#[optimize(size)]
 fn variable_with_type<'a>(
     file: &'a File<'a>,
     it: &hir::VarDecl,
@@ -765,6 +788,7 @@ fn declaration_keyword<'a>(file: &'a File<'a>, keyword: Span) -> SyntaxError {
 }
 
 /// `type a` in the braces of an `import` or an `export`, where `type` is the name for oxc.
+#[optimize(size)]
 fn type_in_specifier<'a>(file: &'a File<'a>, keyword: Span) -> SyntaxError {
     let braces = (b'{', b'}');
     let next = token_after(file, keyword);
@@ -780,6 +804,7 @@ fn type_in_specifier<'a>(file: &'a File<'a>, keyword: Span) -> SyntaxError {
 
 /// `a ? (b): T => c : d` in a JavaScript file, where `arrow` is `(b): T => c` for TypeScript. For oxc the `:` is that of the
 /// conditional expression, and an expression follows it.
+#[optimize(size)]
 fn type_as_expression<'a>(file: &'a File<'a>, arrow: &hir::Func) -> SyntaxError {
     let (hir, text) = (&file.hir, file.text());
     let Some(mut ty) = hir.types.get(arrow.ret.idx()) else {
@@ -811,6 +836,7 @@ fn type_as_expression<'a>(file: &'a File<'a>, arrow: &hir::Func) -> SyntaxError 
 }
 
 /// What oxc says at the token after the arrow function `arrow`.
+#[optimize(size)]
 fn after_arrow_function<'a>(file: &'a File<'a>, arrow: &hir::Func) -> SyntaxError {
     let hir = &file.hir;
     let is_same = |it: &hir::Func| it.anchor == arrow.anchor;
@@ -828,6 +854,7 @@ fn after_arrow_function<'a>(file: &'a File<'a>, arrow: &hir::Func) -> SyntaxErro
 
 /// `export default interface A {}` in a JavaScript file, with its name at `name`. oxc reads it, but for type parameters and the
 /// types of properties and parameters.
+#[optimize(size)]
 fn default_interface<'a>(file: &'a File<'a>, name: u32, all: &mut Vec<SyntaxError>) {
     let (hir, text) = (&file.hir, file.text());
     let Some(it) = hir.interfaces.iter().find(|it| it.name_pos == name) else {
@@ -876,6 +903,7 @@ fn default_interface<'a>(file: &'a File<'a>, name: u32, all: &mut Vec<SyntaxErro
 
 /// What oxc's parser says about what TypeScript's parser has noted in a JavaScript file. The parser has those about modifiers and
 /// decorators itself.
+#[optimize(size)]
 fn of_javascript<'a>(file: &'a File<'a>, it: &Diagnostic, all: &mut Vec<SyntaxError>) {
     if file.is_in_jsdoc(it.start) {
         return;
@@ -1021,6 +1049,14 @@ fn of_javascript<'a>(file: &'a File<'a>, it: &Diagnostic, all: &mut Vec<SyntaxEr
             let whole = Span::new(cast.pos, cast.end);
             error(it.code as u16, whole, message, Stage::Parser).noticed_at(cast.end)
         }
+        // `let !a`, where a statement starts: oxc wants the name of a variable. As the body of a statement `let` is a name.
+        8013 if file.slice(first) == b"let"
+            && token_after(file, first).end == it.end
+            && !matches!(word_before(file, it.start), b")" | b"else" | b"do")
+            && file.hir.stmts.iter().any(|stmt| stmt.start == it.start) =>
+        {
+            unexpected_at(file, it.end.saturating_sub(1))
+        }
         // `a!`
         8013 => after_expression(file, it.end.saturating_sub(1)),
         8006 => match argument {
@@ -1151,6 +1187,7 @@ fn reserved_in_mts_and_cts<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
 /// `stop`: which of the diagnostics is the one at which oxc's parser gives up. What is noted after it is noted on a way that
 /// oxc's does not go, unless oxc notices it before that place: the parser looks at the modifiers of a member when it has all of
 /// the member. What is noted about JavaScript is added when the parser is through.
+#[optimize(size)]
 pub(super) fn noted<'a>(file: &'a File<'a>, stop: Option<usize>) -> Vec<SyntaxError> {
     let diagnostics = &file.hir.diagnostics;
     let gives_up_at = stop.and_then(|it| diagnostics.get(it)).map(|it| it.start);

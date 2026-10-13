@@ -1149,6 +1149,9 @@ pub enum DiagnosticKind {
     OxcFatal,
     /// The same from the pass that builds oxc's scopes, which doesn't run on a file that its parser has an error for.
     OxcSemantic,
+    /// A statement that reads with `await` as a name and not with `await` as the operator, in a file that nothing before it
+    /// makes a module. The tree has the first reading. `related`: the errors of the second.
+    OxcSecondReading,
 }
 
 /// `ast.Diagnostic`

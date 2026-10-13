@@ -141,6 +141,7 @@ pub(crate) struct Files<'e> {
 
 impl<'e> Files<'e> {
     /// `writes` is true if the run writes files.
+    #[optimize(size)]
     pub(crate) fn read(
         only: &'e Only,
         writes: bool,
@@ -299,6 +300,7 @@ impl<'e> Files<'e> {
 
     /// Explains why `files` (absolute paths, all [partly staged](Files::is_partly_staged)) weren't written. `done` is
     /// what didn't happen to them, like "fixed".
+    #[optimize(size)]
     pub(crate) fn refusal_to_write(&self, files: &mut [Vec<u8>], done: &str) -> Vec<u8> {
         bun_lint::utils::sort::sort_unstable(files);
         let shown = files

@@ -164,7 +164,10 @@ impl<'a> Reference<'a> {
     /// `reference.resolved`
     pub fn variable(self) -> Option<Variable<'a>> {
         let kind = match self.symbol() {
-            Some(symbol) => return Some(symbol.variable_in(self.scope())),
+            Some(symbol) if is_name_of_class(symbol) => {
+                return Some(symbol.variable_in(self.scope()));
+            }
+            Some(symbol) => VariableKind::Declared(symbol),
             None if self.raw().name == known::arguments && has_arguments_of_file(self.file) => {
                 VariableKind::ArgumentsOfFile
             }

@@ -5,7 +5,9 @@
 use crate::{Options, Refusal, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
-use bun_sema::hir::{Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind};
+use bun_sema::hir::{
+    Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind, Stmt, StmtKind,
+};
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use core::sync::atomic::AtomicU64;
@@ -137,8 +139,14 @@ fn file_of(
     // For oxc a file is a script if nothing in it says that it is a module. Here only these are read otherwise in one.
     let is_module_by_name = is_named([b".mjs", b".mts"]);
     let has_import_meta = (file.exprs.iter()).any(|e| matches!(e.kind, ExprKind::ImportMeta));
-    let is_module = is_module_by_name || file.has_module_syntax || has_import_meta;
-    let words: [&[u8]; 3] = [b"await", b"<!--", b"-->"];
+    // To TypeScript it says nothing about the file.
+    let is_global_name = |it: &Stmt| matches!(it.kind, StmtKind::ExportAsNamespace(..));
+    let is_module = is_module_by_name
+        || file.has_module_syntax
+        || has_import_meta
+        || file.stmts.iter().any(is_global_name);
+    // The last: `await` with an escape is a name in a script.
+    let words: [&[u8]; 4] = [b"await", b"<!--", b"-->", b"\\u"];
     if was_refused && (is_module || !words.iter().any(|it| bun_core::strings::contains(text, it))) {
         return file;
     }

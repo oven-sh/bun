@@ -3,9 +3,13 @@
 //! Both are parsed, and each tree is written down without what the printer is free to change: how the words of a text are
 //! spread over lines, quotes, how a number is written, `{{else}}{{#if a}}` for `{{else if a}}`, all but the letters of a
 //! style sheet, the front matter. What is written down has to be the same.
+//!
+//! With `sortTailwindcss`, the classes in a text or a string of an attribute that is sorted are written down in one order,
+//! each once. One that touches what is before or behind the text has to stay where it is, and so has the white space there.
 
 use super::ast::{self, Call, Kind, NOTHING, Node, NodeId, Range, Text, Tree};
 use crate::stack::Stack;
+use crate::tailwind::Tailwind;
 use bun_core::strings;
 
 const HTML_WHITE_SPACE: &[u8] = b"\t\n\x0C\r ";
@@ -19,36 +23,46 @@ pub(super) struct Writer<'a> {
     pub(super) run: Vec<u8>,
     /// How many elements are around in which all white space counts.
     pub(super) pre_depth: usize,
+    pub(super) tailwind: Option<&'a Tailwind>,
+    /// In the value of an attribute whose classes are sorted: whether what a string becomes is right behind, and right
+    /// before, something that is no white space, or may be none.
+    pub(super) touches: Option<[bool; 2]>,
     pub(super) stack: Stack,
 }
 
 impl<'a> Writer<'a> {
+    #[optimize(size)]
     fn text(&self, text: Text) -> &'a [u8] {
         self.tree.text(self.source, text)
     }
 
+    #[optimize(size)]
     fn list(&self, range: Range) -> &'a [NodeId] {
         self.tree.list(range)
     }
 
     /// `mark` says what comes, a NUL ends it.
+    #[optimize(size)]
     fn field(&mut self, mark: u8, bytes: &[u8]) {
         self.out.push(mark);
         self.out.extend_from_slice(bytes);
         self.out.push(0);
     }
 
+    #[optimize(size)]
     fn as_written(&mut self, node: Node) {
         let text = self.source.get(node.start as usize..node.end as usize);
         self.field(b'W', text.unwrap_or_default());
     }
 
+    #[optimize(size)]
     fn names(&mut self, names: Range) {
         for name in self.tree.names(names) {
             self.field(b'|', self.text(*name));
         }
     }
 
+    #[optimize(size)]
     fn words(&mut self, text: &[u8]) {
         let mut rest = text.trim_ascii_start();
         while !rest.is_empty() {
@@ -58,10 +72,75 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// The classes in `text`. See the top of the file.
+    #[optimize(size)]
+    fn classes(&mut self, text: &[u8], [touches_start, touches_end]: [bool; 2]) {
+        let mut words: Vec<&[u8]> = Vec::new();
+        let mut rest = text.trim_ascii_start();
+        while !rest.is_empty() {
+            let len = strings::index_of_any(rest, HTML_WHITE_SPACE).unwrap_or(rest.len());
+            words.push(&rest[..len]);
+            rest = rest[len..].trim_ascii_start();
+        }
+        let mut words = &mut words[..];
+        let has_blank = |end: Option<&u8>| end.is_some_and(u8::is_ascii_whitespace);
+        if touches_start {
+            match (has_blank(text.first()), std::mem::take(&mut words)) {
+                (false, [first, rest @ ..]) => {
+                    self.field(b'F', first);
+                    words = rest;
+                }
+                (_, all) => {
+                    self.out.push(b' ');
+                    words = all;
+                }
+            }
+        }
+        let mut last = None;
+        if touches_end && !has_blank(text.last()) {
+            if let [rest @ .., word] = std::mem::take(&mut words) {
+                (last, words) = (Some(*word), rest);
+            }
+        }
+        crate::sort::sort(words);
+        let mut previous = None;
+        for word in words.iter() {
+            if previous.replace(*word) != Some(*word) {
+                self.field(b'w', word);
+            }
+        }
+        match last {
+            Some(last) => self.field(b'L', last),
+            None if touches_end => self.out.push(b' '),
+            None => {}
+        }
+    }
+
+    /// `touches` of the one at `index` of `nodes`, which follow each other in something whose own is `outer`.
+    #[optimize(size)]
+    fn touches_of(&self, nodes: &[NodeId], index: usize, outer: [bool; 2]) -> [bool; 2] {
+        let has_blank_at = |id: NodeId, is_start: bool| {
+            let (Kind::Text { chars: text } | Kind::String { value: text }) = self.tree.kind(id)
+            else {
+                return false;
+            };
+            let text = self.text(text);
+            let end = if is_start { text.first() } else { text.last() };
+            end.is_some_and(u8::is_ascii_whitespace)
+        };
+        let before = index.checked_sub(1).and_then(|it| nodes.get(it));
+        [
+            before.map_or(outer[0], |it| !has_blank_at(*it, false)),
+            (nodes.get(index + 1)).map_or(outer[1], |it| !has_blank_at(*it, true)),
+        ]
+    }
+
+    #[optimize(size)]
     fn is_white_space(&self, nodes: &[NodeId]) -> bool {
         nodes.iter().all(|node| matches!(self.tree.kind(*node), Kind::Text { chars } if self.text(chars).trim_ascii_start().is_empty()))
     }
 
+    #[optimize(size)]
     pub(super) fn template(&mut self, template: NodeId) {
         if let Kind::Template { body } = self.tree.kind(template) {
             self.children(self.list(body), false);
@@ -69,6 +148,7 @@ impl<'a> Writer<'a> {
     }
 
     /// `is_in_style`: the white space between a text and what is no text counts.
+    #[optimize(size)]
     fn children(&mut self, nodes: &'a [NodeId], is_in_style: bool) {
         if !self.stack.has_room() {
             return;
@@ -103,6 +183,7 @@ impl<'a> Writer<'a> {
         }
     }
 
+    #[optimize(size)]
     fn child(&mut self, node: Node) {
         match node.kind {
             _ if node.is_as_written => self.as_written(node),
@@ -116,6 +197,7 @@ impl<'a> Writer<'a> {
         }
     }
 
+    #[optimize(size)]
     fn mustache_comment(&mut self, node: Node, value: Text) {
         let is_tilde = |at: Option<usize>| at.and_then(|at| self.source.get(at)) == Some(&b'~');
         let strips = [
@@ -126,6 +208,7 @@ impl<'a> Writer<'a> {
         self.field(b'!', self.text(value));
     }
 
+    #[optimize(size)]
     fn element(&mut self, node: Node) {
         let Kind::Element {
             tag,
@@ -163,6 +246,7 @@ impl<'a> Writer<'a> {
         self.out.push(b'/');
     }
 
+    #[optimize(size)]
     fn attribute(&mut self, id: NodeId) {
         let node = self.tree.node(id);
         match node.kind {
@@ -171,20 +255,27 @@ impl<'a> Writer<'a> {
                 let name = self.text(name);
                 self.field(b'@', name);
                 let is_class = name.eq_ignore_ascii_case(b"class");
+                let is_sorted =
+                    (self.tailwind).is_some_and(|it| name == b"class" || it.attributes.has(name));
                 let value = self.tree.node(value);
                 match value.kind {
                     Kind::Text { chars } if chars.is_empty() && value.start == value.end => {}
                     Kind::Concat { parts } => {
                         self.out.push(b'=');
-                        for &part in self.list(parts) {
+                        let parts = self.list(parts);
+                        for (index, &part) in parts.iter().enumerate() {
+                            self.touches =
+                                is_sorted.then(|| self.touches_of(parts, index, [false; 2]));
                             self.part_of_value(self.tree.node(part), is_class);
                         }
                     }
                     _ => {
                         self.out.push(b'=');
+                        self.touches = is_sorted.then_some([false; 2]);
                         self.part_of_value(value, is_class);
                     }
                 }
+                self.touches = None;
             }
             Kind::ElementModifier { call } => {
                 self.out.push(b'M');
@@ -195,11 +286,15 @@ impl<'a> Writer<'a> {
         }
     }
 
+    #[optimize(size)]
     fn part_of_value(&mut self, node: Node, is_class: bool) {
         let Kind::Text { chars } = node.kind else {
             return self.mustache(node);
         };
         let mut rest = self.text(chars);
+        if let Some(touches) = self.touches {
+            return self.classes(rest, touches);
+        }
         if is_class {
             return self.words(rest);
         }
@@ -220,6 +315,7 @@ impl<'a> Writer<'a> {
         self.out.push(0);
     }
 
+    #[optimize(size)]
     fn body_of(&self, block: NodeId) -> (&'a [NodeId], Range) {
         match self.tree.kind(block) {
             Kind::Block { body, block_params } => (self.list(body), block_params),
@@ -230,6 +326,7 @@ impl<'a> Writer<'a> {
     /// `is_all_of_inverse`: nothing else but white space follows the `{{else}}` of the block that it is in. Then it makes no difference
     /// whether it is written `{{else if a}}` or `{{else}}{{#if a}}..{{/if}}`, and of two tags with nothing between them,
     /// what the first strips on its right and the second on its left is nothing.
+    #[optimize(size)]
     fn block(&mut self, node: Node, is_all_of_inverse: bool) {
         let Kind::BlockStatement {
             call,
@@ -275,6 +372,7 @@ impl<'a> Writer<'a> {
         self.out.push(b'/');
     }
 
+    #[optimize(size)]
     fn mustache(&mut self, node: Node) {
         match node.kind {
             _ if node.is_as_written => self.as_written(node),
@@ -290,12 +388,20 @@ impl<'a> Writer<'a> {
         }
     }
 
+    #[optimize(size)]
     fn call(&mut self, call: Call) {
         self.expression(call.path);
-        for &param in self.list(call.params) {
+        let (outer, params) = (self.touches, self.list(call.params));
+        let is_concat = matches!(self.tree.kind(call.path), Kind::Path { name, tail, .. }
+            if tail.is_empty() && self.text(name) == b"concat");
+        for (index, &param) in params.iter().enumerate() {
             self.out.push(b',');
+            if is_concat {
+                self.touches = outer.map(|outer| self.touches_of(params, index, outer));
+            }
             self.expression(param);
         }
+        self.touches = outer;
         for &pair in self.list(call.pairs) {
             if let Kind::HashPair { key, value } = self.tree.kind(pair) {
                 self.field(b'=', self.text(key));
@@ -305,6 +411,7 @@ impl<'a> Writer<'a> {
         self.out.push(b'}');
     }
 
+    #[optimize(size)]
     fn expression(&mut self, id: NodeId) {
         let node = self.tree.node(id);
         match node.kind {
@@ -319,7 +426,10 @@ impl<'a> Writer<'a> {
                 self.field(b'p', self.text(name));
                 self.names(tail);
             }
-            Kind::String { value } => self.field(b's', self.text(value)),
+            Kind::String { value } => match self.touches {
+                Some(touches) => self.classes(self.text(value), touches),
+                None => self.field(b's', self.text(value)),
+            },
             Kind::Number { token } => {
                 let value = std::str::from_utf8(self.text(token)).ok();
                 let value = value

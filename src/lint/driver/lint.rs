@@ -136,33 +136,19 @@ pub(crate) fn unused_directives_as_oxlint(result: &mut LintResult, is_script: bo
     }
 }
 
-/// Puts the messages that have fixes in the order in which the rules of oxlint report at one node: by the plugin, then by the name.
-/// Of two fixes with the same range the first is applied.
+/// Puts the messages, which are in the order in which oxlint reports them, in the order that its `Fixer::fix` gives them if one has
+/// a fix: by the range of the fix, those without one first. It applies the fixes in that order, and prints what is left in it.
+///
+/// Its sort is not stable, which shows from 33 messages on: those without a fix do not keep their order. Here they do.
 pub(crate) fn order_fixes_as_oxlint(messages: &mut [LintMessage]) {
-    const PLUGINS: [Plugin; 13] = [
-        Plugin::Import,
-        Plugin::Eslint,
-        Plugin::TypeScript,
-        Plugin::Jest,
-        Plugin::React,
-        Plugin::ReactPerf,
-        Plugin::Unicorn,
-        Plugin::JsxA11y,
-        Plugin::Oxc,
-        Plugin::Nextjs,
-        Plugin::Promise,
-        Plugin::Vitest,
-        Plugin::Node,
-    ];
-    bun_lint::utils::sort::sort_by_key(messages, |it| match (&it.fix, &it.rule_id) {
-        (None, _) => (0, ""),
-        (Some(_), Some(RuleId::Known(meta))) => {
-            let plugin = meta.plugin.in_oxlint();
-            let rank = PLUGINS.iter().position(|it| *it == plugin);
-            (rank.unwrap_or(PLUGINS.len()), meta.name)
-        }
-        (Some(_), _) => (PLUGINS.len(), ""),
-    });
+    if messages.iter().all(|it| it.fix.is_none()) {
+        return;
+    }
+    let range = |it: &LintMessage| it.fix.as_ref().map(|it| (it.span.start, it.span.end));
+    bun_lint::utils::sort::sort_by_key(messages, |it| range(it).unwrap_or_default());
+    for (it, reported) in messages.iter_mut().zip(1..) {
+        it.reported = reported;
+    }
 }
 
 impl Context<'_, '_> {
@@ -394,6 +380,7 @@ impl Context<'_, '_> {
         let previous = LintResult {
             messages,
             suppressed: std::mem::take(&mut result.suppressed),
+            run_keys: std::mem::take(&mut result.run_keys),
             ..LintResult::default()
         };
         let again = Again {
@@ -637,7 +624,7 @@ impl Context<'_, '_> {
                     return self.result(path, verify(&text), text, was_fixed, config);
                 }
                 result.messages = fixed.remaining;
-                // They are by place now. oxlint prints what is left in the order in which it has run its rules.
+                // They are by place now.
                 bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| it.reported);
                 let is_fixed = fixed.is_fixed || was_fixed;
                 let mut result = self.result(path, result, text, is_fixed, config);
@@ -698,6 +685,7 @@ impl Context<'_, '_> {
             counts,
             text: (is_fixed || (self.keeps_text && is_reported)).then_some(text),
             line_starts: result.line_starts.filter(|_| !is_fixed && is_reported),
+            run_keys: result.run_keys,
             messages: result.messages,
             suppressed: result.suppressed,
             thrown: result.thrown,

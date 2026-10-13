@@ -264,6 +264,7 @@ describe.concurrent("bun lint and bun fmt", () => {
     ["fmt", "[fmt]\nsemi = 1\n", "error: expected boolean but received number"],
     ["lint", "lint = true\n", "error: expected object but received boolean"],
     ["fmt", "fmt = true\n", "error: expected object but received boolean"],
+    ["fmt", "[format]\nsemi = false\n", "error: Unknown section [format]"],
     ["lint", "logLevel = 3\n", "error: expected string but received number"],
     ["fmt", "logLevel = 3\n", "error: expected string but received number"],
   ])("bun %s with %j", async (command, config, error) => {

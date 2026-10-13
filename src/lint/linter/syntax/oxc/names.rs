@@ -143,20 +143,10 @@ fn is_instantiated<'a>(module: Module<'a>) -> bool {
     })
 }
 
-fn redeclaration(name: &[u8], first: Span, second: Span) -> SyntaxError {
-    let name = bstr::BStr::new(name);
-    let message = format!("Identifier `{name}` has already been declared").into_bytes();
-    SyntaxError::of_oxc(first, message)
-        .says(Cow::Owned(format!(
-            "`{name}` has already been declared here"
-        )))
-        .and(second, Cow::Borrowed("It can not be redeclared here"))
-}
-
 impl<'a> Binder<'a> {
     /// `noticed`: where oxc is when it reports the error, if not at `second`.
     fn report(&mut self, name: Name<'a>, first: Span, second: Span, noticed: Option<u32>) {
-        let error = redeclaration(name.bytes(), first, second);
+        let error = SyntaxError::redeclared("Identifier", name.bytes(), first, second);
         self.errors.push(match noticed {
             Some(at) => error.noticed_at(at),
             None => error,
@@ -627,7 +617,7 @@ fn repeated_members<'a>(class: Class<'a>, errors: &mut Vec<(u32, SyntaxError)>) 
         };
         let is_pair = is_accessor(before) && is_accessor(member) && before.kind() != member.kind();
         if !is_pair && is_static(before) == is_static(member) {
-            let error = redeclaration(file.slice(first), first, second);
+            let error = SyntaxError::redeclared("Identifier", file.slice(first), first, second);
             errors.push((class.span().start, error.noticed_at(u32::MAX)));
         }
     }
@@ -667,7 +657,7 @@ pub(super) fn class_members<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
             repeated_members(class, &mut errors);
         }
     }
-    errors.sort_by_key(|it| it.0);
+    crate::utils::sort::sort_by_key(&mut errors, |it| it.0);
     errors.into_iter().map(|it| it.1).collect()
 }
 
@@ -735,6 +725,7 @@ fn undeclared_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
 
 /// A name that a JavaScript module exports twice, and a second `default`. oxc's parser reports them when it is through with the
 /// file, also with one that it has given up. Nothing is asked of the scopes, and the tree can have holes.
+#[optimize(size)]
 pub(super) fn duplicate_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let mut errors = Vec::new();
     if !file.is_javascript() || source_type(file) != SourceType::Module {

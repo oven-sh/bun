@@ -261,23 +261,23 @@ impl Tailwind {
         if !collapses_whitespace {
             return Cow::Owned([prefix, result, suffix].concat());
         }
-        // Of the white space at an end a blank stays, or nothing.
-        let mut sorted = strings::trim_js_whitespace_end(&prefix).to_vec();
+        // Of the white space at an end a blank stays, or nothing. The plugin goes by what is white space in JavaScript, which
+        // takes a class away that is a no-break space.
+        let mut sorted = prefix.trim_ascii_end().to_vec();
         if sorted.len() < prefix.len() {
             sorted.push(b' ');
         }
-        if !ends.collapses_start && strings::trim_js_whitespace_start(&result).len() < result.len()
-        {
+        if !ends.collapses_start && result.trim_ascii_start().len() < result.len() {
             sorted.push(b' ');
         }
-        sorted.extend_from_slice(strings::trim_js_whitespace(&result));
-        if !ends.collapses_end && strings::trim_js_whitespace_end(&result).len() < result.len() {
+        sorted.extend_from_slice(result.trim_ascii());
+        if !ends.collapses_end && result.trim_ascii_end().len() < result.len() {
             sorted.push(b' ');
         }
-        if strings::trim_js_whitespace_start(&suffix).len() < suffix.len() {
+        if suffix.trim_ascii_start().len() < suffix.len() {
             sorted.push(b' ');
         }
-        sorted.extend_from_slice(strings::trim_js_whitespace_start(&suffix));
+        sorted.extend_from_slice(suffix.trim_ascii_start());
         Cow::Owned(sorted)
     }
 }

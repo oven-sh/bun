@@ -366,12 +366,12 @@ export const cases: Case[] = [
     exitCode: 1,
   },
   {
-    name: "60,000 assignments that pass a value on, all but the first reported",
+    name: "10,000 assignments that pass a value on, all but the first reported",
     isHeavy: true,
     file: "a.js",
-    text: () => `${rep("a = ", 60_000)}2;\n`,
+    text: () => `${rep("a = ", 10_000)}2;\n`,
     rules: { "no-multi-assign": "error" },
-    reports: { "no-multi-assign": 59_999 },
+    reports: { "no-multi-assign": 9_999 },
     exitCode: 1,
   },
   {

@@ -886,7 +886,7 @@ fn is_declaration_referentially_unique(symbol: Symbol) -> bool {
 /// `appended_to`: the array literal, if oxlint offers to put them at its end, and the `is_first` of [`replace_array`].
 fn report_missing<'a, R: Rule>(
     cx: &Cx<'a, R>,
-    hook: Name<'a>,
+    (node, hook): (Expr<'a>, Name<'a>),
     missing: &[(Span, Vec<u8>)],
     array: Span,
     mutable: Option<&[u8]>,
@@ -922,6 +922,7 @@ fn report_missing<'a, R: Rule>(
                 MISSING_DEPENDENCIES
             },
         )
+        .called_with(node)
         .comments_apply_at(array)
         .data("hook", hook)
         .data("dependencies", names)
@@ -1051,7 +1052,9 @@ pub(crate) fn run<'a, R: Rule>(
     };
     let args = call.args();
     let Some(callback_node) = args.get(callback_index) else {
-        cx.report(node, MISSING_CALLBACK).data("hook", hook);
+        cx.report(node, MISSING_CALLBACK)
+            .called_with(node)
+            .data("hook", hook);
         return;
     };
     let dependencies_node = args.get(callback_index + 1);
@@ -1059,6 +1062,7 @@ pub(crate) fn run<'a, R: Rule>(
     if dependencies_node.is_none() && !is_effect {
         if hook.is_any(&["useCallback", "useMemo"]) {
             cx.report(node, DEPENDENCY_ARRAY_REQUIRED)
+                .called_with(node)
                 .data("hook", hook)
                 .fix(|fixer| fixer.insert_after(callback_node.outer_span(), ", []"));
         }
@@ -1090,7 +1094,7 @@ pub(crate) fn run<'a, R: Rule>(
             let missing = || {
                 report_missing(
                     cx,
-                    hook,
+                    (node, hook),
                     &[(callback_expr.span(), name.bytes().to_vec())],
                     dependencies_node.outer_span(),
                     None,
@@ -1112,12 +1116,15 @@ pub(crate) fn run<'a, R: Rule>(
             }
         }
         _ => {
-            cx.report(callee, UNKNOWN_DEPENDENCIES).data("hook", hook);
+            cx.report(callee, UNKNOWN_DEPENDENCIES)
+                .called_with(node)
+                .data("hook", hook);
             return;
         }
     };
     if callback.is_async() && is_effect {
-        cx.report(callback.estree_span(), ASYNC_EFFECT);
+        cx.report(callback.estree_span(), ASYNC_EFFECT)
+            .called_with(node);
     }
 
     let array = dependencies_node.and_then(|it| {
@@ -1127,6 +1134,7 @@ pub(crate) fn run<'a, R: Rule>(
             ExprKind::Ident(name) if name.is("undefined") && symbol_of(array).is_none() => {}
             _ => drop(
                 cx.report(it.outer_span(), NOT_ARRAY_LITERAL)
+                    .called_with(node)
                     .data("hook", hook),
             ),
         }
@@ -1135,11 +1143,13 @@ pub(crate) fn run<'a, R: Rule>(
 
     let mut found = find_dependencies(callback, true);
     if is_effect && cx.file().mentions("current") {
-        report_refs_in_cleanups(cx, callback, &component, memo);
+        report_refs_in_cleanups(cx, (node, callback), &component, memo);
     }
     let Some(array) = array else {
         if is_effect && find_dependencies(callback, false).has_set_state_call {
-            cx.report(callee, INFINITE_RERENDER).data("hook", hook);
+            cx.report(callee, INFINITE_RERENDER)
+                .called_with(node)
+                .data("hook", hook);
         }
         return;
     };
@@ -1154,7 +1164,9 @@ pub(crate) fn run<'a, R: Rule>(
             continue;
         }
         if element.tag() == ExprTag::Spread {
-            cx.report(element, COMPLEX_EXPRESSION).data("hook", hook);
+            cx.report(element, COMPLEX_EXPRESSION)
+                .called_with(node)
+                .data("hook", hook);
             continue;
         }
         let element = inner(element);
@@ -1164,7 +1176,7 @@ pub(crate) fn run<'a, R: Rule>(
                 let number = found.paths.number_of(&dependency, |_| {});
                 let path = found.paths.get_mut(number);
                 if path.declared != 0 {
-                    cx.report(dependency.span, DUPLICATE);
+                    cx.report(dependency.span, DUPLICATE).called_with(node);
                 } else {
                     declared.push((dependency, number));
                     path.declared = declared.len() as u32;
@@ -1182,8 +1194,12 @@ pub(crate) fn run<'a, R: Rule>(
                         | ExprTag::String
                 );
                 match is_literal {
-                    true => drop(cx.report(element, LITERAL)),
-                    false => drop(cx.report(element, COMPLEX_EXPRESSION).data("hook", hook)),
+                    true => drop(cx.report(element, LITERAL).called_with(node)),
+                    false => drop(
+                        cx.report(element, COMPLEX_EXPRESSION)
+                            .called_with(node)
+                            .data("hook", hook),
+                    ),
                 }
             }
         }
@@ -1208,6 +1224,7 @@ pub(crate) fn run<'a, R: Rule>(
         .filter_map(|at| Some((*at, declared.get(*at)?)))
     {
         cx.report(dependency.span, UNNECESSARY_OUTER_SCOPE)
+            .called_with(node)
             .data("hook", hook)
             .data("dependency", dependency.name)
             .fix(|fixer| {
@@ -1258,7 +1275,7 @@ pub(crate) fn run<'a, R: Rule>(
             .collect();
         report_missing(
             cx,
-            hook,
+            (node, hook),
             &missing,
             array.span(),
             mutable.map(|it| it.0.text()).as_deref(),
@@ -1272,7 +1289,8 @@ pub(crate) fn run<'a, R: Rule>(
             && let ExprKind::Call(call) = init.kind()
             && func_call_without_react_namespace(call).is_some_and(|it| it.is("useEffectEvent"))
         {
-            cx.report(dependency.span, USE_EFFECT_EVENT);
+            cx.report(dependency.span, USE_EFFECT_EVENT)
+                .called_with(node);
         }
     }
 
@@ -1280,6 +1298,7 @@ pub(crate) fn run<'a, R: Rule>(
     if !is_effect {
         let unnecessary = |dependency: &Dependency| {
             cx.report(array, UNNECESSARY_DEPENDENCY)
+                .called_with(node)
                 .data("hook", hook)
                 .data("dependency", dependency.text());
         };
@@ -1322,6 +1341,7 @@ pub(crate) fn run<'a, R: Rule>(
         .filter_map(|at| Some((*at, declared.get(*at)?)))
     {
         cx.report(dependency.span, CHANGES_EVERY_RENDER)
+            .called_with(node)
             .data("hook", hook)
             .data("dependency", dependency.name)
             .labels_with(|labels| {
@@ -1344,7 +1364,7 @@ pub(crate) fn run<'a, R: Rule>(
 
 fn report_refs_in_cleanups<'a, R: Rule>(
     cx: &Cx<'a, R>,
-    callback: Func<'a>,
+    (node, callback): (Expr<'a>, Func<'a>),
     component: &Component<'a>,
     memo: &mut Memo<'a>,
 ) {
@@ -1394,6 +1414,6 @@ fn report_refs_in_cleanups<'a, R: Rule>(
                 continue;
             }
         }
-        cx.report(member, REF_IN_CLEANUP);
+        cx.report(member, REF_IN_CLEANUP).called_with(node);
     }
 }

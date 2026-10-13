@@ -6,8 +6,8 @@
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
-    self, Class, Expr, ExprKind, File, Flags, FnKind, Func, Handle, MemberKind, Node, Pat,
-    PropKind, Stmt, StmtKind, StmtTag, TypeKind, TypeNode, TypeParam, UnOp, VarDecl, VarKind,
+    self, Class, Expr, ExprKind, File, Flags, FnKind, Func, Handle, MemberKind, Node, Pat, Stmt,
+    StmtKind, StmtTag, TypeKind, TypeNode, TypeParam, UnOp, VarDecl, VarKind,
 };
 use crate::language::SourceType;
 use crate::span::Span;
@@ -16,6 +16,7 @@ use crate::utils::oxlint::{is_either, source_type};
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{self, DiagnosticKind, PatKind, TypeNodeKind};
 use smallvec::SmallVec;
+use std::cell::OnceCell;
 
 /// oxc's `BindingIdentifier`, `IdentifierReference` and `LabelIdentifier`
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -36,6 +37,7 @@ struct Checks<'a> {
     left: usize,
     /// The names that oxc's parser has an error about. It has one at most about a name.
     settled: SmallVec<[u32; 4]>,
+    read_again: OnceCell<Vec<Span>>,
     errors: Vec<SyntaxError>,
 }
 
@@ -133,17 +135,7 @@ impl<'a> Checks<'a> {
             if is_after_export {
                 return true;
             }
-            // Once the file has turned out to be a module, oxc reads a statement again in which `await` was a reference.
-            let is_reference = |(i, raw): (usize, &hir::Expr)| {
-                matches!(raw.kind, hir::ExprKind::Ident(name) if name == known::r#await)
-                    && span.contains_offset(raw.pos)
-                    && file.expr_in_tree(i).is_some()
-                    && !matches!(
-                        Node::Expr(Expr::from_raw(file, i as u32)).parent(),
-                        Node::Prop(it) if it.kind() == PropKind::Shorthand
-                    )
-            };
-            if file.hir.exprs.iter().enumerate().any(is_reference) {
+            if self.is_read_again(at) {
                 return true;
             }
             start = span.start.min(at);
@@ -165,6 +157,14 @@ impl<'a> Checks<'a> {
                 }
                 && file.expr_in_tree(i).is_some()
         })
+    }
+
+    /// Whether `at` is in one of the [statements that oxc reads again](super::statements_read_again), with `await` as the
+    /// operator. It doesn't get there after an error that it gives up at.
+    fn is_read_again(&self, at: u32) -> bool {
+        let again = || super::statements_read_again(self.file);
+        !self.file.has_parse_errors()
+            && (self.read_again.get_or_init(again).iter()).any(|it| it.contains_offset(at))
     }
 
     /// Whether oxc's parser is in the await context at `node`, which is at `at`.
@@ -425,8 +425,8 @@ impl<'a> Checks<'a> {
         if name == known::eval || name == known::arguments || Self::is_ambient(node) {
             return;
         }
-        let text = self.file.text().get(at as usize..).unwrap_or_default();
-        let text = text.get(..token_len(text)).unwrap_or_default();
+        // The name, however it is spelled: `yi\u0065ld`
+        let text = self.file.name(name).bytes();
         let reserved = [b"The keyword '", text, b"' is reserved"].concat();
         let error = if name != known::r#await {
             let note = match self.strictness(node, at) {
@@ -723,9 +723,10 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         return Vec::new();
     }
     let positions = hir.keyword_identifier_positions.iter();
-    let mut noted: SmallVec<[(u32, bool); 8]> = positions.map(|&at| (at, false)).collect();
-    noted.sort_unstable();
-    noted.dedup();
+    let mut positions: SmallVec<[u32; 8]> = positions.copied().collect();
+    positions.sort_unstable();
+    positions.dedup();
+    let noted: SmallVec<[(u32, bool); 8]> = positions.iter().map(|&at| (at, false)).collect();
     let mut checks = Checks {
         file,
         is_module: source_type(file) == SourceType::Module,
@@ -733,6 +734,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         left: noted.len(),
         noted,
         settled: SmallVec::new(),
+        read_again: OnceCell::new(),
         errors: Vec::new(),
     };
     let is_keyword = |name: Atom| name.is_keyword_identifier();

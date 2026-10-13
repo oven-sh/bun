@@ -53,7 +53,11 @@ fn can_follow_a_statement(statement: Stmt<'_>) -> bool {
 /// Without semicolons, whether a `(` that is written before `e`, and that [`expression_statement_needs_semicolon`] does not
 /// know about, has to have a `;` before it: a statement starts with `e`. Prettier writes none.
 pub(crate) fn parenthesis_before_needs_semicolon<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if !f.options().semicolons.is_as_needed() {
+    let in_html = f.options().in_html;
+    if !f.options().semicolons.is_as_needed()
+        || in_html.is_inline_event_handler
+        || in_html.root == HtmlRoot::VueEventBinding
+    {
         return false;
     }
     let mut top = e;
@@ -69,7 +73,6 @@ pub(crate) fn parenthesis_before_needs_semicolon<'a>(e: Expr<'a>, f: &Formatter<
             Node::Stmt(statement) => {
                 return matches!(statement.kind(), StmtKind::Expr(it) if it == top)
                     && can_follow_a_statement(statement)
-                    && semicolon_of_only_statement_in_html(statement, top, f).is_none()
                     && !expression_statement_needs_semicolon(statement, top, f);
             }
             _ => return false,

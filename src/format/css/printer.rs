@@ -4,8 +4,9 @@ use super::Parser as Syntax;
 use super::media_query::{MediaKind, MediaNode};
 use super::memo::Memo;
 use super::misc::{
-    adjust_numbers, adjust_strings, last_line_has_inline_comment, maybe_to_lower_case,
-    print_css_number, print_string, print_unit, quote_attribute_value, to_lower_case,
+    adjust_numbers, adjust_strings, ends_before_escaped_blank, last_line_has_inline_comment,
+    maybe_to_lower_case, print_css_number, print_string, print_unit, quote_attribute_value,
+    to_lower_case,
 };
 use super::parse::{Context, CssNode, Params, Parsed, Value};
 use super::postcss::{Kind, Node, NodeId, Tree};
@@ -834,6 +835,10 @@ impl<'a> Printer<'a, '_> {
                 printer.sink.end_indent();
                 printer.sink.end_indent();
             }
+            // Or the backslash would escape the `;`, as in what Prettier prints.
+            if ends_before_escaped_blank(printer.context.of(raw.value).trim_ascii_end()) {
+                printer.sink.token(" ");
+            }
             printer.print_rest_of_declaration(scope, raw);
         };
         match node.has_block {
@@ -1166,7 +1171,13 @@ impl<'a> Printer<'a, '_> {
                 self.sink.token("{");
             }
             false if is_import_that_ends_with_semicolon => {}
-            false => self.sink.token(semicolon),
+            false => {
+                // Or the backslash would escape the `;`, as in what Prettier prints. Behind the value of `@if` there is a blank.
+                if ends_before_escaped_blank(&node.raw_params) && !is_control_directive {
+                    self.sink.token(" ");
+                }
+                self.sink.token(semicolon);
+            }
         }
     }
 
@@ -1244,6 +1255,13 @@ impl<'a> Printer<'a, '_> {
                     self.sink.token("(");
                     for child in children {
                         self.print_media(child, false);
+                    }
+                    // `(a\ )`, of which Prettier prints `(a\)`.
+                    if let Some(inner) = node.value.strip_suffix(b")")
+                        && inner.last().is_some_and(u8::is_ascii_whitespace)
+                        && ends_before_escaped_blank(inner.trim_ascii_end())
+                    {
+                        self.sink.token(" ");
                     }
                     self.sink.token(")");
                 }

@@ -141,20 +141,11 @@ struct WrapInParens<'b, T>(&'b T);
 
 impl<'a, T: Format<'a>> Format<'a> for WrapInParens<'_, T> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        write!(f, WrapIn("(", self.0));
-    }
-}
-
-/// The same with something else than a `(` to start with.
-struct WrapIn<'b, T>(&'static str, &'b T);
-
-impl<'a, T: Format<'a>> Format<'a> for WrapIn<'_, T> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
         write!(
             f,
             [
-                if_group_breaks(&self.0),
-                soft_block_indent(self.1),
+                if_group_breaks(&"("),
+                soft_block_indent(self.0),
                 if_group_breaks(&")")
             ]
         );
@@ -296,14 +287,13 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
             ConditionalLike::ConditionalExpression(e) => {
                 let is_conditional = test.is_conditional();
                 let test = FormatOperand(test, comments.after_test);
-                let open = match parenthesis_before_needs_semicolon(e, f) {
-                    true => ";(",
-                    false => "(",
-                };
+                if parenthesis_before_needs_semicolon(e, f) {
+                    write!(f, if_group_breaks(&";"));
+                }
                 write!(
                     f,
                     [
-                        WrapIn(open, &test),
+                        WrapInParens(&test),
                         is_conditional.then_some(expand_parent())
                     ]
                 );

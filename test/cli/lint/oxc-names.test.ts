@@ -768,6 +768,120 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     },
   );
 
+  // At the end of a file that turned out to be a module, oxc reads each statement again in which `await` was a reference. It
+  // doesn't after an error that stops it, and not an `export`. The name in `{ await }` is no reference to its parser.
+  test.concurrent("`await` as a reference before what makes the file a module", async () => {
+    const reserved = "The keyword 'await' is reserved";
+    const both: [code: string, errors: string][] = [
+      ["new await; export {};", `${asyncContext} 4+5`],
+      ["new await; import.meta;", `${asyncContext} 4+5`],
+      ["new await;", ""],
+      ["{ class A extends await {} } import.meta;", `${asyncContext} 18+5`],
+      ["{ class A extends await {} }", ""],
+      ["@await class A {} export {};", `${asyncContext} 1+5`],
+      ["@await export class A {}", `${reserved} 1+5`],
+      ["@await export default class {}", `${reserved} 1+5`],
+      ["function w() { f(await); } export {};", `${reserved} 17+5`],
+      ["const w = () => f(await); export {};", `${reserved} 18+5`],
+      ["x = { await }; export {};", `${reserved} 6+5`],
+      ["{ x = { await }; } import.meta;", `${reserved} 8+5`],
+      ["({ await = 1 } = {}); export {};", `${reserved} 3+5`],
+      ["{ ({ await = 1 } = {}); } import.meta;", `${reserved} 5+5`],
+      ["await of; export {};", `${semicolon} 5+0`],
+      ["{ await () => 1; } import.meta;", `${semicolon} 10+0`],
+      // Before a parenthesis or an operator `await` is a reference the first time.
+      ["await (x), class await {}; import.meta;", `${asyncContext} 17+5`],
+      ["await (x), class await {};", ""],
+      ["await (x), function await() {}; import.meta;", `${reserved} 20+5`],
+      ["await (x), (await) => 1; import.meta;", `${asyncContext} 12+5`],
+      ["await [x], class await {}; export {};", `${asyncContext} 17+5`],
+      ["await + x, class await {}; import.meta;", `${asyncContext} 17+5`],
+      ["await - x, class await {}; import.meta;", `${asyncContext} 17+5`],
+      ["await `x`, class await {}; import.meta;", `${asyncContext} 17+5`],
+      ["await\n(x), class await {}; import.meta;", `${asyncContext} 17+5`],
+      ["await /* c */ (x), class await {}; import.meta;", `${asyncContext} 25+5`],
+      ["await y, class await {}; import.meta;", `${reserved} 15+5`],
+      ["await (x), class await {}; await y;", `${asyncContext} 17+5`],
+      ["await (x), class await {}; await using a = b;", `${asyncContext} 17+5`],
+      ["x = class await {}, await (x); import.meta;", `${asyncContext} 10+5`],
+      ["x = class await {}, new await; export {};", `${asyncContext} 10+5 | ${asyncContext} 24+5`],
+      ["x = () => await (x), class await {}; import.meta;", `${asyncContext} 27+5`],
+      ["label: await (x), class await {}; import.meta;", `${asyncContext} 24+5`],
+      ["var await = await (x); import.meta;", `${asyncContext} 4+5`],
+      ["let await = await (x); import.meta;", `${asyncContext} 4+5`],
+      ["for (var await of [await (x)]) ; import.meta;", `${asyncContext} 9+5`],
+      ["class await { [await (x)]() {} } import.meta;", `${asyncContext} 6+5`],
+      ["class A { [await (x)]() {} m(await) {} } import.meta;", `${reserved} 29+5`],
+      ["class A extends (await (x)) { p = (await) => 1 } import.meta;", `${reserved} 35+5`],
+      ["function f(a = await (x), await) {} import.meta;", `${reserved} 15+5 | ${reserved} 26+5`],
+      ["{ await (x); class await {} } import.meta;", `${asyncContext} 19+5`],
+      ["{ await (x); var await; } import.meta;", `${asyncContext} 17+5`],
+      ["{ await (x); function await() {} } import.meta;", `${asyncContext} 22+5`],
+      ["{ var await; new await; } import.meta;", `${asyncContext} 6+5 | ${asyncContext} 17+5`],
+      ["if (a) { await (x); } else { var await; } import.meta;", `${asyncContext} 33+5`],
+      // Only that statement.
+      ["await (x); x = class await {}; import.meta;", `${reserved} 21+5`],
+      ["x = class await {}; await (x); import.meta;", `${reserved} 10+5`],
+      ["{ var await; } { await (x); } import.meta;", `${reserved} 6+5`],
+      ["function w() { await (x); } x = class await {}; import.meta;", `${reserved} 15+5 | ${reserved} 38+5`],
+      ["{ var await; await (x); } { var await; } import.meta;", `${asyncContext} 6+5`],
+      // Where it goes back to the next such statement, it forgets what it has said since it first came there.
+      ["await (x), class await {}; await (y); import.meta;", `${reserved} 17+5`],
+      ["{ var await; await (x); } { var await; await (x); } import.meta;", `${asyncContext} 32+5`],
+      // After an error that stops it, it reads nothing again.
+      ["await (x), class await {}; a b; import.meta;", `${semicolon} 28+0`],
+      ["await (x), class await {}; import.meta; a b;", `${semicolon} 41+0`],
+      ["f(await), class await {}; export {};", "Unexpected token 7+1"],
+    ];
+    const rows = both.flatMap(([code, errors]): Row[] => [
+      ["js", code, errors],
+      ["ts", code, errors],
+    ]);
+    rows.push(["js", "await !x; export {};", `${semicolon} 5+0`], ["ts", "await !x; export {};", `${semicolon} 7+0`]);
+    expect(await found(rows, quiet)).toEqual(rows);
+  });
+
+  // A known difference. The second time, oxc has the error about the name before it stops at the `await` without an operand:
+  // oxlint 1.87 prints "Cannot use `await` as an identifier in an async context" at 10+5 first.
+  test.concurrent(
+    "a name before the `await` without an operand at which oxc stops has no error of its own",
+    async () => {
+      const rows: Row[] = [
+        ["js", "x = class await {}, f(await); export {};", "Unexpected token 27+1"],
+        ["ts", "x = class await {}, f(await); export {};", "Unexpected token 27+1"],
+      ];
+      expect(await found(rows, quiet)).toEqual(rows);
+    },
+  );
+
+  test.concurrent("the error has the word, however it is spelled", async () => {
+    const both: [code: string, errors: string][] = [
+      ["yi\\u0065ld; export {};", "The keyword 'yield' is reserved 0+10"],
+      ["var yi\\u0065ld; export {};", "The keyword 'yield' is reserved 4+10"],
+      ["yi\\u0065ld: a; export {};", "The keyword 'yield' is reserved 0+10"],
+      ["x = { yi\\u0065ld }; export {};", "The keyword 'yield' is reserved 6+10"],
+      ["'use strict'; yi\\u0065ld;", "The keyword 'yield' is reserved 14+10"],
+      ["'use strict'; var l\\u0065t;", "The keyword 'let' is reserved 18+8"],
+      ["'use strict'; var st\\u0061tic;", "The keyword 'static' is reserved 18+11"],
+      ["'use strict'; impl\\u0065ments;", "The keyword 'implements' is reserved 14+15"],
+      ["class A { m() { var yi\\u{65}ld; } }", "The keyword 'yield' is reserved 20+10"],
+      ["var aw\\u0061it; export {};", "The keyword 'await' is reserved 4+10"],
+      ["function aw\\u0061it() {} export {};", "The keyword 'await' is reserved 9+10"],
+      ["x = { aw\\u0061it }; export {};", "The keyword 'await' is reserved 6+10"],
+      ["async function f() { var aw\\u0061it; }", `${asyncContext} 25+10`],
+      ["function* f() { var yi\\u0065ld; }", `${generatorContext} 20+10`],
+      ["class A { static { var aw\\u0061it; } }", `${asyncContext} 23+10`],
+      ["'use strict'; \\u0065val = 1;", "Cannot assign to 'eval' in strict mode 14+9"],
+      ["'use strict'; argum\\u0065nts = 1;", "Cannot assign to 'arguments' in strict mode 14+14"],
+      ["'use strict'; var \\u0065val;", "Cannot assign to 'eval' in strict mode 18+9"],
+    ];
+    const rows = both.flatMap(([code, errors]): Row[] => [
+      ["js", code, errors],
+      ["ts", code, errors],
+    ]);
+    expect(await found(rows, quiet)).toEqual(rows);
+  });
+
   // A type is in the await context of what is around it. oxc leaves that context for a declaration that starts with `type`,
   // `interface`, `enum`, `abstract`, `declare`, `namespace` or `module`, but not for one after `export` or a decorator.
   test.concurrent("`await` and `yield` as names of parameters in types", async () => {

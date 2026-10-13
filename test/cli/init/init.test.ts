@@ -566,7 +566,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
         stdio: ["ignore", "pipe", "pipe"],
         env: bunEnv,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([fmt.stdout.text(), format.stderr.text(), format.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([format.stdout.text(), format.stderr.text(), format.exited]);
       expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     },
     30_000,

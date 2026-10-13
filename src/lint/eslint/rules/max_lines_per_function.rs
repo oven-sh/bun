@@ -21,10 +21,16 @@ fn get_comment_only_lines<'a>(file: &'a File<'a>) -> Vec<bool> {
     for comment in file.comments() {
         let mut start = file.line_of(comment.start());
         let mut end = file.line_of(comment.end());
-        if file.token_before(comment).is_some_and(|before| file.line_of(before.end()) == start) {
+        if file
+            .token_before(comment)
+            .is_some_and(|before| file.line_of(before.end()) == start)
+        {
             start += 1;
         }
-        if file.token_after(comment).is_some_and(|after| file.line_of(after.start()) == end) {
+        if file
+            .token_after(comment)
+            .is_some_and(|after| file.line_of(after.start()) == end)
+        {
             end -= 1;
         }
         for line in start..=end {
@@ -42,12 +48,14 @@ pub(super) fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32,
     let mut count = 0;
     let counts = file.comments().map(|comment| {
         let (first, last) = (file.line_of(comment.start()), file.line_of(comment.end()));
-        let is_first =
-            strings::is_all_js_whitespace(file.slice(Span::new(file.line_span(first).start, comment.start())));
+        let is_first = strings::is_all_js_whitespace(
+            file.slice(Span::new(file.line_span(first).start, comment.start())),
+        );
         count += match comment.kind() {
             TokenKind::Block => {
-                let is_last =
-                    strings::is_all_js_whitespace(file.slice(Span::new(comment.end(), file.line_span(last).end)));
+                let is_last = strings::is_all_js_whitespace(
+                    file.slice(Span::new(comment.end(), file.line_span(last).end)),
+                );
                 (last + u32::from(is_last)).saturating_sub(first + u32::from(!is_first))
             }
             _ => u32::from(is_first && comment.text().starts_with(b"//")),
@@ -72,7 +80,10 @@ fn has_other_line_breaks(text: &[u8]) -> bool {
 
 #[inline]
 fn is_method(func: Func) -> bool {
-    matches!(func.kind(), FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor)
+    matches!(
+        func.kind(),
+        FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
+    )
 }
 
 /// What is counted once in a file, when it is needed.
@@ -109,7 +120,8 @@ impl MaxLinesPerFunction {
     fn count_line_breaks<'a>(span: Span, cx: &mut Cx<'a, Self>) -> Option<u32> {
         let (file, text) = (cx.file(), cx.slice(span));
         let in_file = &mut cx.state.has_other_line_breaks;
-        let has_others = *in_file.get_or_insert_with(|| has_other_line_breaks(file.text())) && has_other_line_breaks(text);
+        let has_others = *in_file.get_or_insert_with(|| has_other_line_breaks(file.text()))
+            && has_other_line_breaks(text);
         (!has_others).then(|| strings::count_char(text, b'\n') as u32)
     }
 }
@@ -122,7 +134,10 @@ impl Rule for MaxLinesPerFunction {
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         MaxLinesPerFunction {
-            max: object.number("max").or_else(|| options.number(0)).map_or(50, |max| max as u32),
+            max: object
+                .number("max")
+                .or_else(|| options.number(0))
+                .map_or(50, |max| max as u32),
             skips_comments: object.bool_or("skipComments", false),
             skips_blank_lines: object.bool_or("skipBlankLines", false),
             counts_iifes: object.bool_or("IIFEs", false),
@@ -172,7 +187,9 @@ impl MaxLinesPerFunction {
         let is_oxlint = cx.language().is_oxlint;
         let span = match (func.owner(), func.kind()) {
             (Node::Member(member), _) if !is_oxlint => member.span(),
-            (Node::Expr(e), FnKind::Method | FnKind::Getter | FnKind::Setter) if !is_oxlint => e.parent().span(),
+            (Node::Expr(e), FnKind::Method | FnKind::Getter | FnKind::Setter) if !is_oxlint => {
+                e.parent().span()
+            }
             _ => func.estree_span(),
         };
         if span.len() < self.max {
@@ -189,9 +206,16 @@ impl MaxLinesPerFunction {
     }
 
     /// `span`: what of `func` is counted. `line_breaks`: how many are in it, if that is known.
-    fn check<'a>(&self, func: Func<'a>, span: Span, line_breaks: Option<u32>, cx: &mut Cx<'a, Self>) {
+    fn check<'a>(
+        &self,
+        func: Func<'a>,
+        span: Span,
+        line_breaks: Option<u32>,
+        cx: &mut Cx<'a, Self>,
+    ) {
         let (file, is_oxlint) = (cx.file(), cx.language().is_oxlint);
-        let line_breaks = line_breaks.unwrap_or_else(|| file.line_of(span.end) - file.line_of(span.start));
+        let line_breaks =
+            line_breaks.unwrap_or_else(|| file.line_of(span.end) - file.line_of(span.start));
         if line_breaks < self.max {
             return;
         }
@@ -202,12 +226,18 @@ impl MaxLinesPerFunction {
             let up_to = |line: u32| counted.get(line as usize).map_or(0, |&it| it);
             line_count = up_to(last).saturating_sub(up_to(first.saturating_sub(1)));
             if is_oxlint && self.skips_comments {
-                let comments = cx.state.comments.get_or_insert_with(|| count_comment_lines_as_oxlint(file));
+                let comments = cx
+                    .state
+                    .comments
+                    .get_or_insert_with(|| count_comment_lines_as_oxlint(file));
                 let before = |offset: u32| {
                     let at = comments.partition_point(|it| it.0 < offset);
-                    at.checked_sub(1).and_then(|it| comments.get(it)).map_or(0, |it| it.1)
+                    at.checked_sub(1)
+                        .and_then(|it| comments.get(it))
+                        .map_or(0, |it| it.1)
                 };
-                line_count = line_count.saturating_sub(before(span.end).saturating_sub(before(span.start)));
+                line_count =
+                    line_count.saturating_sub(before(span.end).saturating_sub(before(span.start)));
             }
             if line_count <= self.max {
                 return;
@@ -215,7 +245,14 @@ impl MaxLinesPerFunction {
         }
         // oxlint points at the function.
         let (name, place) = match cx.language().is_oxlint {
-            true => ([&b"The "[..], &utils::oxlint::get_function_name_with_kind(func)].concat(), func.estree_span()),
+            true => (
+                [
+                    &b"The "[..],
+                    &utils::oxlint::get_function_name_with_kind(func),
+                ]
+                .concat(),
+                func.estree_span(),
+            ),
             false => {
                 let name = ast_utils::get_function_name_with_kind(func);
                 // Before ESLint 10 it is all whose lines are counted.
@@ -227,6 +264,7 @@ impl MaxLinesPerFunction {
             }
         };
         cx.report(place, EXCEED)
+            .called_with(func)
             .data("name", name)
             .data("lineCount", line_count)
             .data("maxLines", self.max);

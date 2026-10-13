@@ -163,6 +163,7 @@ pub(crate) struct Packages {
 impl Packages {
     /// Reads the `package.json` closest to `cwd`. `is_of_a_tool` says whether a package only exists to serve the replaced
     /// tool. `need` says why a run still needs a package, if it does.
+    #[optimize(size)]
     pub(crate) fn new(
         cwd: &[u8],
         is_of_a_tool: &dyn Fn(&[u8]) -> bool,
@@ -211,6 +212,7 @@ impl Packages {
         packages
     }
 
+    #[optimize(size)]
     pub(crate) fn json(&self) -> Json {
         let needed = self.needed.iter().map(|(name, need)| {
             object(vec![
@@ -227,6 +229,7 @@ impl Packages {
         ])
     }
 
+    #[optimize(size)]
     pub(crate) fn write(&self, out: &mut Vec<u8>, colors: bool) {
         if self.removable.is_empty() && self.needed.is_empty() {
             return;

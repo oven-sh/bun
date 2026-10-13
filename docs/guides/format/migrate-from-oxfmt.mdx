@@ -108,7 +108,7 @@ If `bun fmt` and oxfmt 0.72 print different code, that's a bug. [Open an issue](
 - **Errors and warnings are worded differently.**
 - **An invalid TOML file is left alone**, with a warning. oxfmt rewrites the parts it can read.
 - **A file that isn't valid UTF-8 is still formatted**, and the invalid bytes are kept. oxfmt exits with code `2`.
-- **Formatting never changes what a file means.** In a few rare cases oxfmt's output does. In TOML it joins the lines of an inline table with a comment, which comments out the rest of the table. Bun keeps one entry per line.
+- **Where oxfmt's output changes what a file means, Bun's differs.** That's rare. In TOML oxfmt joins the lines of an inline table with a comment, which comments out the rest of the table. Bun keeps one entry per line.
 
 ---
 

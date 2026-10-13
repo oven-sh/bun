@@ -24,6 +24,7 @@ pub(crate) fn object(entries: Vec<(&[u8], Json)>) -> Json {
 
 /// What ESLint prints for a file that has `config`, but for the default options of the rules, which
 /// ESLint fills in. `None`: the file is not linted.
+#[optimize(size)]
 pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     let Some(config) = config else {
         return b"undefined".to_vec();

@@ -227,6 +227,7 @@ struct Rules {
 
 impl Rules {
     /// `wants_types` says whether rules that need types run under `config`.
+    #[optimize(size)]
     fn add(&mut self, config: &ResolvedConfig, wants_types: bool) {
         for rule in config
             .configured()
@@ -333,6 +334,7 @@ fn kind_of(flavor: Flavor) -> (&'static [u8], &'static str) {
 }
 
 /// Builds the `bun lint --doctor` report.
+#[optimize(size)]
 pub(crate) fn lint(
     (loader, options): (&Loader, &Options),
     pool: &Pool,

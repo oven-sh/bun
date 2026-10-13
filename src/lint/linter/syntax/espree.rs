@@ -530,15 +530,20 @@ pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<Synta
         return Vec::new();
     }
     let error = |it: Stmt<'a>| {
-        if !matches!(it.kind(), StmtKind::ForOf { is_await: true, .. }) {
+        let span = it.span();
+        let keyword = skip_trivia(file.text(), span.start + 3) as usize;
+        if !file
+            .text()
+            .get(keyword..)
+            .is_some_and(|it| it.starts_with(b"await"))
+        {
             return None;
         }
-        let span = it.span();
         let function = Node::Stmt(it).enclosing_function();
         match function {
             Some(func) if func.kind() == FnKind::StaticBlock => {
                 let message = b"Cannot use 'for await' in class static initialization block";
-                return Some(SyntaxError::of_oxc(span, message.to_vec()));
+                return Some(SyntaxError::of_oxc(span, message));
             }
             Some(func) if func.is_async() => return None,
             None if !is_script(file) => return None,
@@ -560,7 +565,12 @@ pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Vec<Synta
             Some(_) => error,
         })
     };
-    (file.stmts_of_kind(StmtTag::ForOf).filter_map(error)).collect()
+    // The others are an error after `for await`, which the parser goes on after.
+    let loops = [StmtTag::ForOf, StmtTag::ForIn, StmtTag::For];
+    let loops = loops.into_iter().flat_map(|it| file.stmts_of_kind(it));
+    let mut all: Vec<_> = loops.filter_map(error).collect();
+    crate::utils::sort::sort_by_key(&mut all, |it| it.at);
+    all
 }
 
 /// `with` where the code is strict for OXC, and anywhere in TypeScript, in its words.
@@ -693,10 +703,7 @@ impl<'a, 'c> Checks<'a, 'c> {
 
     /// For oxc: `name` is declared at `first` and again at `again`.
     fn redeclared(&mut self, what: &str, name: &[u8], first: Span, again: Span) -> SyntaxError {
-        let name = bstr::BStr::new(name);
-        SyntaxError::of_oxc(first, format!("{what} `{name}` has already been declared"))
-            .says(format!("`{name}` has already been declared here"))
-            .and(again, "It can not be redeclared here")
+        SyntaxError::redeclared(what, name, first, again)
     }
 
     /// Runs `check`, whose errors are those of oxc's parser.
@@ -812,6 +819,7 @@ impl<'a, 'c> Checks<'a, 'c> {
 
     // ───────────────────────────── the words for an error of the parser ─────────────────────────────
 
+    #[optimize(size)]
     fn error_of_parser(&mut self, diagnostic: Option<&Diagnostic>, at: u32) {
         let text = self.file.text();
         match diagnostic.map_or(0, |it| it.code) {

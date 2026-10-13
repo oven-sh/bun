@@ -8,6 +8,9 @@
 //! - [`fmt`]: the same for `bun fmt`.
 
 #![forbid(unsafe_code)]
+// For what a flag like `--doctor`, `--rules` or `--init` runs once: `#[optimize(size)]` roughly halves it, and how fast it is
+// doesn't matter. Nothing that runs for each file has it.
+#![feature(optimize_attribute)]
 
 mod args;
 pub mod bunfig;

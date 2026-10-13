@@ -1332,7 +1332,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let is_await = self.token() == T::Await;
         if is_await {
             self.f.rare_syntax |= rare::FOR_AWAIT;
+            let before = (self.has_top_level_await, self.has_plain_top_level_await);
             self.note_await();
+            // It tells oxc nothing about whether the file is a module.
+            if self.options.dialect.oxc {
+                (self.has_top_level_await, self.has_plain_top_level_await) = before;
+            }
             self.next();
         }
         self.expect(T::OpenParen);
@@ -1399,7 +1404,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 false => self.report(),
             }
         }
-        let kind = if (is_await || self.token() == T::Of) && self.expect(T::Of) {
+        // oxc reads the other loops after `for await` too.
+        let is_other_loop =
+            is_await && matches!(self.token(), T::In | T::Semicolon) && self.is_for_oxc();
+        let kind = if (is_await && !is_other_loop || self.token() == T::Of) && self.expect(T::Of) {
             let saved = self.enter_context(0, ctx::DISALLOW_IN);
             let expr = self.assignment_expression();
             self.context = saved;
@@ -1414,6 +1422,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         } else if self.eat(T::In) {
             let expr = self.expression_allowing_in();
             self.expect(T::CloseParen);
+            if is_other_loop {
+                let head = (start.pos, self.prev_end());
+                oxc::await_without_of(&mut self.f.diagnostics, head);
+            }
             let body = self.body_of_loop();
             StmtKind::ForIn {
                 left: init,
@@ -1432,6 +1444,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 _ => self.expression_allowing_in(),
             };
             self.expect(T::CloseParen);
+            if is_other_loop {
+                let head = (start.pos, self.prev_end());
+                oxc::await_without_of(&mut self.f.diagnostics, head);
+            }
             let body = self.body_of_loop();
             StmtKind::For {
                 init,

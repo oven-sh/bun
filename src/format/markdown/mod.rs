@@ -409,7 +409,8 @@ fn format_in(
         with_pragma.extend_from_slice(&text[front_matter_end..]);
         text = &with_pragma;
     }
-    if bun_core::strings::trim_js_whitespace_start(text).is_empty() {
+    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    if text.trim_ascii_start().is_empty() {
         return Ok(());
     }
 

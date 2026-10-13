@@ -40,17 +40,15 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*);
     static void destroy(JSC::JSCell*);
 
-    // `globalObject` is what a host function gets that `addLintHostFunctions` or a plugin's `sourceCode` has. That's the global object the function
-    // was made in, whoever calls it, so it's the Zig::GlobalObject with the host. A custom getter starts with `realmOfHolder` instead.
+    // For a host function, which gets the global object it was made in, whoever calls it. A custom getter starts with `realmOfHolder`.
     static LintHost* from(JSC::JSGlobalObject* globalObject)
     {
         return uncheckedDowncast<LintHost>(uncheckedDowncast<Zig::GlobalObject>(globalObject)->m_lintHost.getInitializedOnMainThread(globalObject));
     }
 
-    // The global object for a custom getter to work with, from its `thisValue`. Every custom getter here is for a `CustomValue`, so that's the object
-    // that has the property, and not the receiver, which a plugin chooses. The object was made here, so its realm has the host. What the getter
-    // makes belongs there too, as if it had been in the property all along. The global object that JSC passes isn't used: a plugin can read a
-    // node in a `node:vm` context, whose global object is of another class. Null if `holder` is none of this: then there's nothing to return.
+    // The global object for a custom getter to use, in place of the one it's passed: a plugin can read a node in a `node:vm` context, whose global
+    // object is of another class. `holder`: its `thisValue`. For a `CustomValue`, which all here are, that's the object with the property, not the
+    // receiver. Null if that isn't an object made here.
     static Zig::GlobalObject* realmOfHolder(JSC::EncodedJSValue holder)
     {
         JSC::JSObject* object = JSC::JSValue::decode(holder).getObject();

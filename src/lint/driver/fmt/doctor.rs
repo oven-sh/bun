@@ -44,6 +44,7 @@ struct Plugins {
 }
 
 impl Plugins {
+    #[optimize(size)]
     fn add(&mut self, name: &[u8]) {
         let list = if config::is_built_in_plugin(name) {
             &mut self.built_in
@@ -58,6 +59,7 @@ impl Plugins {
     }
 }
 
+#[optimize(size)]
 pub(super) fn report(
     (configs, cwd): (&Configs, &[u8]),
     pool: &Pool,

@@ -62,6 +62,8 @@ pub(crate) struct FileResult {
     pub(crate) text: Option<Vec<u8>>,
     /// Where the lines of `text` start, if that was looked for while it was linted.
     pub(crate) line_starts: Option<Vec<u32>>,
+    /// [`LintResult::run_keys`](bun_lint::linter::LintResult::run_keys), for when the file is linted again.
+    pub(crate) run_keys: Vec<(u64, u128)>,
     /// The text has been changed by fixes: `text` is ESLint's `output`.
     pub(crate) is_fixed: bool,
     /// Number of fixes applied.
@@ -115,6 +117,7 @@ impl FileResult {
             had_types: false,
             text: None,
             line_starts: None,
+            run_keys: Vec::new(),
             is_fixed: false,
             fixes: 0,
             fixed_text: None,

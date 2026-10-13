@@ -888,19 +888,28 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.f.has_module_syntax || self.has_plain_top_level_await {
             return false;
         }
+        let is_javascript = self.options.is_javascript;
+        // `None`: it can, and then it is another token than after the operator.
         let follows_no_name = self.look_ahead(|p| {
             p.next();
             let is_on_line = !p.newline_before();
             let follows_no_name = match p.token() {
+                T::Slash | T::SlashEquals | T::LessThan => return None,
+                // `await!`
+                T::Exclamation if !is_javascript => return None,
                 T::Exclamation
                 | T::Tilde
-                | T::PlusPlus
-                | T::MinusMinus
                 | T::OpenBrace
                 | T::PrivateIdentifier
                 | T::DotDotDot
-                | T::At
-                | T::Of => true,
+                | T::At => true,
+                // `for (await of a)`
+                T::Of => !p.has_context(ctx::DISALLOW_IN),
+                // `await ++a`, not `await++`
+                T::PlusPlus | T::MinusMinus => {
+                    p.next();
+                    !p.newline_before() && p.is_start_of_expression()
+                }
                 // `await () => 1`
                 T::OpenParen => {
                     p.next();
@@ -908,9 +917,51 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
                 _ => false,
             };
-            follows_no_name && is_on_line
+            Some(follows_no_name && is_on_line)
         });
-        follows_no_name && !self.is_module_so_far()
+        match follows_no_name {
+            Some(follows_no_name) => follows_no_name && !self.is_module_so_far(),
+            None => !self.is_module_so_far() && !self.can_await_be_a_name(),
+        }
+    }
+
+    /// At an `await`: whether the expression that starts here can be read with `await` as a name, up to a token that can
+    /// follow an expression.
+    #[cold]
+    #[inline(never)]
+    fn can_await_be_a_name(&mut self) -> bool {
+        let noted = (
+            self.has_plain_top_level_await,
+            self.has_await_in_statement,
+            self.has_await_identifier,
+        );
+        let errors = |p: &Self| {
+            let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+            p.f.diagnostics.iter().filter(is_of_parser).count()
+        };
+        let can_be = self.look_ahead_parsing(|p| {
+            let before = errors(p);
+            p.context &= !ctx::AWAIT;
+            p.assignment_expression();
+            p.take_errors_of_scanner();
+            // To oxc's lexer `</` is a `<`, and a regular expression after it.
+            let is_before_open_regex = p.token() == T::LessThanSlash && {
+                let rest = p.lx.src.get(p.lx.end as usize..).unwrap_or_default();
+                let line = rest.split(|it| matches!(it, b'\n' | b'\r')).next();
+                !line.is_some_and(|it| it.contains(&b'/'))
+            };
+            errors(p) == before
+                && !is_before_open_regex
+                && (p.newline_before()
+                    || !p.is_start_of_expression()
+                    || matches!(p.token(), T::In | T::Of))
+        });
+        (
+            self.has_plain_top_level_await,
+            self.has_await_in_statement,
+            self.has_await_identifier,
+        ) = noted;
+        can_be
     }
 
     /// Whether something before the token has told oxc that the file is a module.

@@ -301,6 +301,7 @@ pub(super) fn is_integer(value: f64) -> bool {
 }
 
 /// As serde_json prints it.
+#[optimize(size)]
 pub(super) fn write_number(out: &mut Vec<u8>, value: f64) {
     if is_integer(value) {
         let _ = match value < 0.0 {
@@ -328,6 +329,7 @@ pub(super) fn write_number(out: &mut Vec<u8>, value: f64) {
 }
 
 /// `{:?}` of a `str`
+#[optimize(size)]
 pub(super) fn write_debug(out: &mut Vec<u8>, text: &[u8]) {
     let _ = match std::str::from_utf8(text) {
         Ok(text) => write!(out, "{text:?}"),
@@ -336,6 +338,7 @@ pub(super) fn write_debug(out: &mut Vec<u8>, text: &[u8]) {
 }
 
 /// A string as serde_json prints it.
+#[optimize(size)]
 fn write_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'"');
     for &byte in text {
@@ -355,6 +358,7 @@ fn write_string(out: &mut Vec<u8>, text: &[u8]) {
 }
 
 /// `is_spaced`: with blanks where `serde_json::to_string_pretty` has line breaks.
+#[optimize(size)]
 fn write_value(out: &mut Vec<u8>, value: &Json, is_spaced: bool) {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return;
@@ -395,6 +399,7 @@ fn write_value(out: &mut Vec<u8>, value: &Json, is_spaced: bool) {
 }
 
 /// `value` as oxlint shows what it has received: printed on several lines, and all white space made one blank, in strings too.
+#[optimize(size)]
 fn shown(value: &Json) -> Vec<u8> {
     let mut printed = Vec::new();
     write_value(&mut printed, value, true);
@@ -439,6 +444,7 @@ fn unexpected(value: &Json) -> Vec<u8> {
 pub(super) type Checked = Result<(), Vec<u8>>;
 
 /// serde's `invalid_type`
+#[optimize(size)]
 pub(super) fn wrong_type(value: &Json, expected: &[u8]) -> Vec<u8> {
     let found = unexpected(value);
     [b"invalid type: ", &found[..], b", expected ", expected].concat()
@@ -453,6 +459,7 @@ fn too_long(len: usize) -> Checked {
 }
 
 /// serde's `OneOf`. `none`: what it says if there are no names.
+#[optimize(size)]
 fn expected_one_of(names: &[&[u8]], none: &str) -> Vec<u8> {
     let names: Vec<Vec<u8>> = (names.iter().map(|it| [b"`", *it, b"`"].concat())).collect();
     match &names[..] {

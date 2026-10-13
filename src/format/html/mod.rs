@@ -517,7 +517,8 @@ pub fn format_with(
     if has_bom {
         out.extend_from_slice(BOM);
     }
-    if strings::trim_js_whitespace(&text).is_empty() {
+    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    if text.trim_ascii().is_empty() {
         return Ok(None);
     }
     // Prettier's `isSourceElement`: nothing can be formatted on its own, except that in Vue everything can. It does not

@@ -583,8 +583,13 @@ impl Parser<'_> {
         };
         let is_this = is_this_path(text);
         let is_splat = text == b"...attributes";
-        // Only the `this` that a path starts with comes back.
-        let is_as_written = has_private_name || dropped != usize::from(is_this);
+        // Only the `this` that a path starts with comes back. And `[a/b]`, one name, is printed like `a/b`, which is two.
+        let is_as_written = has_private_name
+            || dropped != usize::from(is_this)
+            || (has_slash
+                && segments.iter().any(|segment| {
+                    segment.is_literal && strings::contains_char(self.text(segment.part), b'/')
+                }));
         let invalid = Expression {
             node: NOTHING,
             class: Class::Path,

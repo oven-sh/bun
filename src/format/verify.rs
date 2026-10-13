@@ -44,6 +44,7 @@ pub struct Difference {
 
 impl Difference {
     /// `before`, `after`: the text of the program, and where in it the difference is.
+    #[optimize(size)]
     fn new(what: &'static str, before: (&[u8], u32), after: (&[u8], u32)) -> Difference {
         // The rest of the line, if that is not long.
         let excerpt = |(text, at): (&[u8], u32)| {
@@ -65,6 +66,7 @@ impl Difference {
 }
 
 impl std::fmt::Display for Difference {
+    #[optimize(size)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -79,6 +81,7 @@ impl std::fmt::Display for Difference {
 }
 
 /// Whether the text of the template `e` may be formatted as a style sheet, as GraphQL, as HTML or as Markdown.
+#[optimize(size)]
 fn is_in_another_language(e: Expr<'_>) -> bool {
     let has_tag = match e.parent() {
         Node::Expr(parent) => match parent.kind() {
@@ -108,6 +111,7 @@ fn is_in_another_language(e: Expr<'_>) -> bool {
 }
 
 /// Whether the template `e` is the table of a `` describe.each`..` ``.
+#[optimize(size)]
 fn is_table(e: Expr<'_>) -> bool {
     matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::TaggedTemplate(call)
         if call.template() == Some(e) && call.callee().text().ends_with(b".each")))

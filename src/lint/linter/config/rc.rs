@@ -27,7 +27,7 @@ use crate::rule::{Meta, Plugin};
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 /// Whether `word` is one of the words of `list`, which have spaces between them.
 fn has_word(list: &str, word: &[u8]) -> bool {
@@ -57,18 +57,26 @@ fn printed_key(key: &[u8]) -> Vec<u8> {
     [plugin, b"/", name].concat()
 }
 
+/// The category of each rule that oxlint has, by the plugin that it is of there and its name.
+static CATEGORY_OF: LazyLock<FxHashMap<(Plugin, &[u8]), &str>> = LazyLock::new(|| {
+    let mut all = FxHashMap::default();
+    for (category, lists) in categories::CATEGORIES {
+        for (prefix, names) in *lists {
+            let Some(plugin) = Plugin::of_oxlint_prefix(prefix.as_bytes()) else {
+                continue;
+            };
+            for name in strings::tokenize(names.as_bytes(), b" ") {
+                all.entry((plugin, name)).or_insert(*category);
+            }
+        }
+    }
+    all
+});
+
 /// The category that oxlint has the rule in: `correctness`, `suspicious`, `pedantic`, `perf`, `style`, `restriction`, `nursery`.
 pub fn oxlint_category(plugin: Plugin, name: &str) -> Option<&'static str> {
-    let has = |lists: &[(&str, &str)]| {
-        (lists
-            .iter()
-            .filter(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()) == Some(plugin.in_oxlint())))
-        .any(|it| has_word(it.1, name.as_bytes()))
-    };
-    categories::CATEGORIES
-        .iter()
-        .find(|it| has(it.1))
-        .map(|it| it.0)
+    let all: &FxHashMap<(Plugin, &[u8]), &'static str> = &CATEGORY_OF;
+    all.get(&(plugin.in_oxlint(), name.as_bytes())).copied()
 }
 
 /// Whether oxlint could only run the rule as a rule of a plugin in JavaScript: it doesn't have it. Such a rule is a port of a

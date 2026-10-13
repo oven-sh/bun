@@ -80,6 +80,59 @@ describe.concurrent("sortTailwindcss", () => {
 
   const listed = (root: string) => readdirSync(root, { recursive: true, encoding: "utf8" }).sort();
 
+  describe("Handlebars: classes that oxfmt joins with what is next to them, or loses", () => {
+    // The template, what Bun makes of it, and what oxfmt 0.72 makes of it. It takes the blank at the end of a string away
+    // whatever follows, moves a class that touches what is before or behind the mustache, and loses a no-break space.
+    const rows = [
+      [
+        '<a class={{concat "p-4 flex" x " m-2 flex "}}></a>\n',
+        '<a class={{concat "p-4 flex" x " m-2 flex"}}></a>',
+        '<a class={{concat "flex p-4" x " m-2 flex"}}></a>',
+      ],
+      [
+        '<a class={{concat "p-4 flex " x " m-2 flex"}}></a>\n',
+        '<a class={{concat "flex p-4 " x " m-2 flex"}}></a>',
+        '<a class={{concat "flex p-4" x " m-2 flex"}}></a>',
+      ],
+      [
+        '<a class="{{if a "p-4 flex "}}x"></a>\n',
+        `<a class="{{if a 'flex p-4 '}}x"></a>`,
+        `<a class="{{if a 'flex p-4'}}x"></a>`,
+      ],
+      [
+        '<a class="x{{if a "p-4 flex"}}"></a>\n',
+        `<a class="x{{if a 'p-4 flex'}}"></a>`,
+        `<a class="x{{if a 'flex p-4'}}"></a>`,
+      ],
+      [
+        '<a class="{{if a "p-4 flex"}}x"></a>\n',
+        `<a class="{{if a 'p-4 flex'}}x"></a>`,
+        `<a class="{{if a 'flex p-4'}}x"></a>`,
+      ],
+      ['<a class="p-4 \u00a0 flex m-2"></a>\n', '<a class="\u00a0 m-2 flex p-4"></a>', '<a class="m-2 flex p-4"></a>'],
+      // With white space in between nothing touches.
+      ['<a class="x {{if a "p-4 flex"}} y"></a>\n', `<a class="x {{if a 'flex p-4'}} y"></a>`, null],
+    ] as const;
+    const names = rows.map((_, index) => `${index}.hbs`);
+    const files = Object.fromEntries(rows.map((row, index) => [names[index], row[0]]));
+    const project = { ...version4, ".oxfmtrc.json": '{ "sortTailwindcss": {} }' };
+
+    test("stay apart", async () => {
+      for (const [, after, ofOxfmt] of rows) expect(after).not.toBe(ofOxfmt);
+      const result = await format({ ...project, ...files }, names);
+      expect(result.stderr).toBe("");
+      expect(result.files).toEqual(rows.map(row => row[1]));
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("--debug-check compares what would be written, and has nothing to say about it", async () => {
+      const result = await format({ ...project, ...files }, names, ["--debug-check"]);
+      expect(result.stderr).toBe("");
+      expect(result.files).toEqual(rows.map(row => row[0]));
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   test("nothing is written into the project, not even while Tailwind is asked", async () => {
     // The stand-in looks around when it is loaded, and refuses to answer if there is a file that the test has not made.
     const looksAround = `const { readdirSync } = require("node:fs");

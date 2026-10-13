@@ -54,6 +54,7 @@ fn page_of(meta: &Meta) -> Option<&'static [u8]> {
 struct Defaults(FxHashMap<(Plugin, &'static str), (Severity, Arc<[Json]>)>);
 
 impl Defaults {
+    #[optimize(size)]
     fn new(registry: &Registry) -> Defaults {
         let mut on = FxHashMap::default();
         let config = configs::defaults(registry);
@@ -108,6 +109,7 @@ fn in_native_mode(registry: &Registry, meta: &'static Meta, id: &[u8]) -> &'stat
 }
 
 /// `--rules -f json`. oxlint's keys come first, with oxlint's values except for `docs_url`. Bun's own keys follow.
+#[optimize(size)]
 pub(crate) fn write_rules_as_json(out: &mut Vec<u8>, registry: &Registry) {
     let (descriptions, defaults) = (descriptions(), Defaults::new(registry));
     let rules = listed(registry).into_iter().map(|(scope, meta)| {
@@ -204,6 +206,7 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry) {
 }
 
 /// `--rules` in a terminal: rules grouped by plugin, each with its default severity and description.
+#[optimize(size)]
 pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colors: bool) {
     let (descriptions, defaults) = (descriptions(), Defaults::new(registry));
     let all = listed(registry);
@@ -320,6 +323,7 @@ fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
 }
 
 /// `--explain <rule>`. Returns the rendered docs page for `name`, or the error message to print.
+#[optimize(size)]
 pub(crate) fn explain(
     registry: &Registry,
     name: &[u8],

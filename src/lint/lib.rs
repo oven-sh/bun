@@ -13,6 +13,9 @@
 //! and `bun_lint_jest`.
 
 #![forbid(unsafe_code)]
+// For what only words an error, like the message for a file that doesn't parse or for an option that is refused:
+// `#[optimize(size)]` roughly halves it, and how fast it is doesn't matter. Nothing that runs for a file without errors has it.
+#![feature(optimize_attribute)]
 
 pub mod ast;
 pub mod code_path;

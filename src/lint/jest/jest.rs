@@ -33,8 +33,17 @@ pub(crate) struct Ctx<'a, 'r> {
     pub(crate) report: &'r dyn Fn(Span, Message) -> Report<'a>,
 }
 
+/// To be called before a rule that oxlint calls with the calls of Jest reports: [`File::calls_in_turns`].
+#[inline]
+pub(crate) fn note_turns<'a>(file: &'a File<'a>, runner: Runner) {
+    if file.language().is_oxlint {
+        file.calls_in_turns(|| OxlintOrder::turns(file, runner));
+    }
+}
+
 impl<'a> Ctx<'a, '_> {
     pub(crate) fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
+        note_turns(self.file, self.runner);
         (self.report)(at.span(), message)
     }
 
@@ -1846,6 +1855,24 @@ impl<'a> OxlintOrder<'a> {
         }
         let order = OxlintOrder::new(file);
         nodes.iter().copied().min_by_key(|it| order.key(*it))
+    }
+
+    /// [`File::calls_in_turns`]
+    #[cold]
+    fn turns(file: &'a File<'a>, runner: Runner) -> Box<[(Span, u32)]> {
+        let order = OxlintOrder::new(file);
+        let nodes: Vec<PossibleJestNode<'a>> = iter_possible_jest_call_node(file, runner).collect();
+        let mut by_turn: Vec<u32> = (0..nodes.len() as u32).collect();
+        utils::sort::sort_by_cached_key(&mut by_turn, |it| {
+            nodes.get(*it as usize).map(|it| order.key(*it))
+        });
+        let mut calls: Box<[(Span, u32)]> = nodes.iter().map(|it| (it.node.span(), 0)).collect();
+        for (turn, at) in (0..).zip(by_turn) {
+            if let Some(call) = calls.get_mut(at as usize) {
+                call.1 = turn;
+            }
+        }
+        calls
     }
 
     /// The place of `name` in the table.

@@ -60,6 +60,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.note_identifier(name.0, name.1);
             self.next_after_name();
             name
+        } else if (self.token() == T::LessThan
+            || self.token() == T::OpenParen && flags.contains(Flags::AMBIENT))
+            && self.reports_like_oxc()
+        {
+            // `declare function ();`, `function <T>() {}`: oxc wants no name there.
+            (Atom::NONE, start.pos)
         } else if !flags.contains(Flags::DEFAULT) {
             let full = self.full_start();
             match self.missing_identifier(0, 0) {

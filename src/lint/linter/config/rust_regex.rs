@@ -103,6 +103,7 @@ struct Parser<'p> {
     later: Option<Error>,
 }
 
+#[optimize(size)]
 fn is_meta_character(c: char) -> bool {
     matches!(
         c,
@@ -126,10 +127,12 @@ fn is_meta_character(c: char) -> bool {
     )
 }
 
+#[optimize(size)]
 fn is_escapeable_character(c: char) -> bool {
     is_meta_character(c) || (c.is_ascii() && !c.is_ascii_alphanumeric() && c != '<' && c != '>')
 }
 
+#[optimize(size)]
 fn is_capture_char(c: char, is_first: bool) -> bool {
     match is_first {
         true => c == '_' || c.is_alphabetic(),
@@ -137,6 +140,7 @@ fn is_capture_char(c: char, is_first: bool) -> bool {
     }
 }
 
+#[optimize(size)]
 fn error<T>(span: Span, kind: &'static str) -> Parsed<T> {
     Err(Error {
         kind,
@@ -145,23 +149,28 @@ fn error<T>(span: Span, kind: &'static str) -> Parsed<T> {
     })
 }
 
+#[optimize(size)]
 fn scalar_of(hex: &str) -> Option<char> {
     u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
 }
 
 impl<'p> Parser<'p> {
+    #[optimize(size)]
     fn rest(&self) -> &'p str {
         self.pattern.get(self.pos.offset..).unwrap_or_default()
     }
 
+    #[optimize(size)]
     fn char(&self) -> char {
         self.rest().chars().next().unwrap_or_default()
     }
 
+    #[optimize(size)]
     fn is_eof(&self) -> bool {
         self.pos.offset >= self.pattern.len()
     }
 
+    #[optimize(size)]
     fn bump(&mut self) -> bool {
         if self.is_eof() {
             return false;
@@ -175,6 +184,7 @@ impl<'p> Parser<'p> {
         !self.is_eof()
     }
 
+    #[optimize(size)]
     fn bump_if(&mut self, prefix: &str) -> bool {
         let is_there = self.rest().starts_with(prefix);
         if is_there {
@@ -183,10 +193,12 @@ impl<'p> Parser<'p> {
         is_there
     }
 
+    #[optimize(size)]
     fn is_lookaround_prefix(&mut self) -> bool {
         self.bump_if("?=") || self.bump_if("?!") || self.bump_if("?<=") || self.bump_if("?<!")
     }
 
+    #[optimize(size)]
     fn bump_and_bump_space(&mut self) -> bool {
         if !self.bump() {
             return false;
@@ -195,6 +207,7 @@ impl<'p> Parser<'p> {
         !self.is_eof()
     }
 
+    #[optimize(size)]
     fn bump_space(&mut self) {
         if !self.modes.ignore_whitespace {
             return;
@@ -217,10 +230,12 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn peek(&self) -> Option<char> {
         self.rest().chars().nth(1)
     }
 
+    #[optimize(size)]
     fn peek_space(&self) -> Option<char> {
         if !self.modes.ignore_whitespace {
             return self.peek();
@@ -243,6 +258,7 @@ impl<'p> Parser<'p> {
         })
     }
 
+    #[optimize(size)]
     fn span(&self) -> Span {
         Span {
             start: self.pos,
@@ -250,6 +266,7 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn span_from(&self, start: Position) -> Span {
         Span {
             start,
@@ -257,6 +274,7 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn span_char(&self) -> Span {
         let c = self.char();
         let end = match c {
@@ -277,6 +295,7 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn refuse_after_parsing(&mut self, span: Span, kind: &'static str) {
         if self.later.is_none() {
             self.later = Some(Error {
@@ -288,12 +307,14 @@ impl<'p> Parser<'p> {
     }
 
     /// With `(?-u)` a pattern matches bytes, and must not match what is no UTF-8.
+    #[optimize(size)]
     fn refuse_later(&mut self, span: Span, kind: &'static str) {
         if !self.modes.unicode {
             self.refuse_after_parsing(span, kind);
         }
     }
 
+    #[optimize(size)]
     fn set_flags(&mut self, flags: Flags) {
         self.modes = Modes {
             ignore_whitespace: (flags.ignore_whitespace).unwrap_or(self.modes.ignore_whitespace),
@@ -301,6 +322,7 @@ impl<'p> Parser<'p> {
         };
     }
 
+    #[optimize(size)]
     fn push_group(&mut self) -> Parsed<Last> {
         match self.parse_group()? {
             Group::SetFlags(flags) => {
@@ -318,6 +340,7 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn pop_group(&mut self) -> Parsed<Last> {
         let mut top = self.stack_group.pop();
         if matches!(top, Some(GroupState::Alternation)) {
@@ -331,6 +354,7 @@ impl<'p> Parser<'p> {
         Ok(Last::Expression)
     }
 
+    #[optimize(size)]
     fn pop_group_end(&mut self) -> Parsed<()> {
         let mut top = self.stack_group.pop();
         if matches!(top, Some(GroupState::Alternation)) {
@@ -342,17 +366,20 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn unclosed_class_error<T>(&self) -> Parsed<T> {
         let open = self.stack_class.iter().rev().find_map(|it| *it);
         error(open.map_or_else(|| self.span(), |it| it.0), CLASS_UNCLOSED)
     }
 
+    #[optimize(size)]
     fn pop_class_op(&mut self) {
         if matches!(self.stack_class.last(), Some(None)) {
             self.stack_class.pop();
         }
     }
 
+    #[optimize(size)]
     fn parse(&mut self) -> Parsed<()> {
         let mut last = Last::Nothing;
         loop {
@@ -385,6 +412,7 @@ impl<'p> Parser<'p> {
         self.pop_group_end()
     }
 
+    #[optimize(size)]
     fn parse_uncounted_repetition(&mut self, last: Last) -> Parsed<Last> {
         if last != Last::Expression {
             return error(self.span(), REPETITION_MISSING);
@@ -395,6 +423,7 @@ impl<'p> Parser<'p> {
         Ok(Last::Expression)
     }
 
+    #[optimize(size)]
     fn parse_counted_repetition(&mut self, last: Last) -> Parsed<Last> {
         let start = self.pos;
         if last != Last::Expression {
@@ -434,6 +463,7 @@ impl<'p> Parser<'p> {
         Ok(Last::Expression)
     }
 
+    #[optimize(size)]
     fn parse_group(&mut self) -> Parsed<Group> {
         let open_span = self.span_char();
         self.bump();
@@ -465,6 +495,7 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn parse_capture_name(&mut self) -> Parsed<()> {
         if self.is_eof() {
             return error(self.span(), NAME_EOF);
@@ -502,6 +533,7 @@ impl<'p> Parser<'p> {
     }
 
     /// Whether there are none, and what they say.
+    #[optimize(size)]
     fn parse_flags(&mut self) -> Parsed<(bool, Flags)> {
         let mut items: Vec<(char, Span)> = Vec::new();
         let mut last_was_negation = None;
@@ -541,6 +573,7 @@ impl<'p> Parser<'p> {
         Ok((items.is_empty(), flags))
     }
 
+    #[optimize(size)]
     fn parse_primitive(&mut self) -> Parsed<()> {
         match self.char() {
             '\\' => return self.parse_escape(false).map(|_| ()),
@@ -551,6 +584,7 @@ impl<'p> Parser<'p> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn parse_escape(&mut self, is_in_class: bool) -> Parsed<(Primitive, Span)> {
         let start = self.pos;
         if !self.bump() {
@@ -613,6 +647,7 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn maybe_parse_special_word_boundary(&mut self, wb_start: Position) -> Parsed<()> {
         let is_valid_char = |c: char| c.is_ascii_alphabetic() || c == '-';
         let start = self.pos;
@@ -650,6 +685,7 @@ impl<'p> Parser<'p> {
     }
 
     /// The character, where the literal ends, and whether it is `\xFF`, which is a byte with `(?-u)`.
+    #[optimize(size)]
     fn parse_hex(&mut self) -> Parsed<(char, Position, bool)> {
         let digits = match self.char() {
             'x' => 2,
@@ -666,6 +702,7 @@ impl<'p> Parser<'p> {
         Ok((c, end, digits == 2))
     }
 
+    #[optimize(size)]
     fn parse_hex_digits(&mut self, digits: usize) -> Parsed<(char, Position)> {
         let mut hex = String::new();
         let start = self.pos;
@@ -685,6 +722,7 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn parse_hex_brace(&mut self) -> Parsed<(char, Position)> {
         let mut hex = String::new();
         let brace_pos = self.pos;
@@ -709,6 +747,7 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn parse_decimal(&mut self) -> Parsed<u32> {
         let mut digits = String::new();
         while !self.is_eof() && self.char().is_whitespace() {
@@ -733,6 +772,7 @@ impl<'p> Parser<'p> {
     }
 
     /// `parse_decimal` in a counted repetition.
+    #[optimize(size)]
     fn parse_count(&mut self) -> Parsed<u32> {
         self.parse_decimal().map_err(|it| Error {
             kind: match it.kind {
@@ -743,6 +783,7 @@ impl<'p> Parser<'p> {
         })
     }
 
+    #[optimize(size)]
     fn parse_set_class(&mut self) -> Parsed<()> {
         loop {
             self.bump_space();
@@ -779,6 +820,7 @@ impl<'p> Parser<'p> {
         }
     }
 
+    #[optimize(size)]
     fn parse_set_class_range(&mut self) -> Parsed<()> {
         let (first, first_span) = self.parse_set_class_item()?;
         self.bump_space();
@@ -818,6 +860,7 @@ impl<'p> Parser<'p> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn parse_set_class_item(&mut self) -> Parsed<(Primitive, Span)> {
         if self.char() == '\\' {
             return self.parse_escape(true);
@@ -831,6 +874,7 @@ impl<'p> Parser<'p> {
     }
 
     /// Where it is, and whether the class is negated.
+    #[optimize(size)]
     fn parse_set_class_open(&mut self) -> Parsed<(Span, bool)> {
         let start = self.pos;
         if !self.bump_and_bump_space() {
@@ -854,6 +898,7 @@ impl<'p> Parser<'p> {
     }
 
     /// Whether `[:alpha:]` or the like was here.
+    #[optimize(size)]
     fn maybe_parse_ascii_class(&mut self) -> bool {
         let start = self.pos;
         let mut is_negated = false;
@@ -900,6 +945,7 @@ impl<'p> Parser<'p> {
     }
 
     /// Whether there can be such a class.
+    #[optimize(size)]
     fn parse_unicode_class(&mut self) -> Parsed<bool> {
         if !self.bump_and_bump_space() {
             return error(self.span(), ESCAPE_EOF);
@@ -924,6 +970,7 @@ impl<'p> Parser<'p> {
 }
 
 /// `str::lines`
+#[optimize(size)]
 fn lines(pattern: &[u8]) -> Vec<&[u8]> {
     let mut all: Vec<&[u8]> = strings::split(pattern, b"\n").collect();
     if pattern.is_empty() || pattern.ends_with(b"\n") {
@@ -936,6 +983,7 @@ fn lines(pattern: &[u8]) -> Vec<&[u8]> {
 }
 
 /// `Display` of `regex_syntax::Error`
+#[optimize(size)]
 fn describe(pattern: &[u8], error: &Error) -> Vec<u8> {
     let lines = lines(pattern);
     let line_count = lines.len() + usize::from(pattern.ends_with(b"\n"));
@@ -1004,6 +1052,7 @@ fn describe(pattern: &[u8], error: &Error) -> Vec<u8> {
 }
 
 /// What `regex::Regex::new(pattern)` fails with, as it is printed. `None`: nothing is wrong with the syntax.
+#[optimize(size)]
 pub(super) fn syntax_error(pattern: &[u8]) -> Option<Vec<u8>> {
     let text = std::str::from_utf8(pattern).ok()?;
     let mut parser = Parser {

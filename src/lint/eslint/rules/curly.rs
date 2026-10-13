@@ -249,7 +249,7 @@ impl Curly {
             false => None,
         };
         let report = |message: Message| match chain {
-            Some(first) => cx.report(body, message).listened_on(first),
+            Some(first) => cx.report(body, message).called_with(first),
             None => cx.report(body, message),
         };
         match check.expected {

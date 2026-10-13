@@ -64,16 +64,59 @@ enum Stage {
 
 impl SyntaxError {
     /// An error of oxc whose first label is `label`.
-    fn of_oxc(label: Span, message: impl Into<Vec<u8>>) -> SyntaxError {
+    #[inline(always)]
+    fn of_oxc(label: Span, message: impl AsRef<[u8]>) -> SyntaxError {
+        Self::of_oxc_with(label, message.as_ref())
+    }
+
+    /// One body for the hundred places that make one.
+    #[cold]
+    #[inline(never)]
+    fn of_oxc_with(label: Span, message: &[u8]) -> SyntaxError {
         SyntaxError {
             at: label.start,
             end: match label.end == label.start {
                 true => Diagnostic::NO_LENGTH,
                 false => label.end,
             },
-            message: message.into(),
+            message: message.to_vec(),
             of_oxc: OfOxc::default(),
         }
+    }
+
+    /// "Expected `;` but found `Identifier`". `wanted`: in backticks. `found`: what oxc calls the token at `label`.
+    #[cold]
+    #[inline(never)]
+    fn expected(label: Span, wanted: &str, found: &[u8]) -> SyntaxError {
+        let texts: [&[u8]; 5] = [
+            b"Expected ",
+            wanted.as_bytes(),
+            b" but found `",
+            found,
+            b"`",
+        ];
+        Self::of_oxc_with(label, &texts.concat()).says([wanted, " expected"].concat())
+    }
+
+    /// oxc takes what ends at `after` for a statement, and gives up at what follows on the line.
+    #[cold]
+    #[inline(never)]
+    fn semicolon_after(after: u32) -> SyntaxError {
+        let message =
+            "Expected a semicolon or an implicit semicolon after a statement, but found none";
+        Self::of_oxc(Span::empty(after), message)
+            .help("Try inserting a semicolon here")
+            .stage(Stage::Fatal)
+    }
+
+    /// `name` is declared at `first` and again at `again`.
+    #[cold]
+    #[inline(never)]
+    fn redeclared(what: &str, name: &[u8], first: Span, again: Span) -> SyntaxError {
+        let name = bstr::BStr::new(name);
+        Self::of_oxc(first, format!("{what} `{name}` has already been declared"))
+            .says(format!("`{name}` has already been declared here"))
+            .and(again, "It can not be redeclared here")
     }
 
     /// `TS(code)`
@@ -164,10 +207,19 @@ fn error_of_parser<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> {
 /// The errors of TypeScript's parser that count, in the words of oxc, up to the first at which oxc's parser gives up. Which of
 /// the diagnostics of the file that one is, and the token at which TypeScript's parser has it.
 fn errors_of_parser_for_oxc<'a>(file: &'a File<'a>) -> (Vec<SyntaxError>, Option<(usize, u32)>) {
-    if !file.has_parse_errors() {
-        return (Vec::new(), None);
+    match file.has_parse_errors() {
+        true => in_words_of_oxc(file, file.hir.diagnostics),
+        false => (Vec::new(), None),
     }
-    let of_parser = file.hir.diagnostics.iter().enumerate();
+}
+
+/// [`errors_of_parser_for_oxc`], of `diagnostics`.
+#[optimize(size)]
+fn in_words_of_oxc<'a>(
+    file: &'a File<'a>,
+    diagnostics: &[Diagnostic],
+) -> (Vec<SyntaxError>, Option<(usize, u32)>) {
+    let of_parser = diagnostics.iter().enumerate();
     let mut of_parser = of_parser.filter(|it| it.1.kind == DiagnosticKind::Parse);
     let mut all = Vec::new();
     // After a character that it does not know TypeScript's parser is lost, where oxc's lexer goes on. Only what it says about other

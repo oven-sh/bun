@@ -209,6 +209,9 @@ impl<'a> Binding<'a> {
 
     /// What `reference`, which is one to `symbol`, refers to.
     fn of(symbol: Symbol<'a>, reference: Reference<'a>) -> Binding<'a> {
+        if !(symbol.declaration_kinds()).contains(DeclarationKinds::CLASS_NAME) {
+            return Binding::outer(symbol);
+        }
         let class = match symbol.variable_in(reference.scope()).kind() {
             VariableKind::NameInClass { class, .. } => Some(class),
             _ => None,

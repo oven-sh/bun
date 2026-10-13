@@ -236,10 +236,7 @@ pub(crate) mod require_hook {
             around: Node<'a>,
             ctx: &Ctx<'a, '_>,
         ) {
-            let report = |at: Span| match ctx.file.language().is_oxlint {
-                true => drop(ctx.report(at, USE_HOOK).listened_on(around)),
-                false => drop(ctx.report(at, USE_HOOK)),
-            };
+            let report = |at: Span| drop(ctx.report(at, USE_HOOK).called_with(around));
             for stmt in statements {
                 if let Some(expr) = stmt.as_expr() {
                     if let Some(call_expr) = expr.as_call()

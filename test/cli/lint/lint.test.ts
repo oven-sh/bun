@@ -5396,6 +5396,134 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  // oxlint analyses a file twice. Its own rules see the scopes of oxc, a rule of a plugin in JavaScript those of typescript-eslint. They
+  // differ about `namespace A.B {}`, about a function in a block of sloppy JavaScript, and about what is in the type of a `catch`
+  // parameter and in the options of an import type. A rule that is built in here and that oxlint lacks, as `no-catch-shadow`, is
+  // one that oxlint could only run from a plugin. What is expected is what oxlint 1.87 reports, and for `no-catch-shadow` what
+  // it reports for the plugin's copy of that rule.
+  describe("with an oxlint config, which scopes a rule sees doesn't depend on the other rules", () => {
+    const sources = {
+      "namespace.ts": `let Inner = 0;\nnamespace Outer.Inner { Inner = 1; export const x = Inner; try {} catch (Inner) {} }\nconsole.log(Inner, Outer);\n`,
+      "namespace-used.ts": `namespace Shapes.Round { export const sides = 0; }\nexport { Shapes };\n`,
+      "block.cjs": `{ function helper() {} }\nhelper();\ntry {} catch (helper) {}\n`,
+      "block.js": `{ function helper() {} }\nhelper();\ntry {} catch (helper) {}\n`,
+      "switch.cjs": `switch (kind) { case 1: function helper() {} }\nhelper;\nfunction outer() { { function inner() {} } inner(); try {} catch (inner) {} }\nouter();\n`,
+      "import-type.ts": `export type A = import("./m", { with: { k: function (left: unknown) { try {} catch (left) {} } } });\n`,
+      "catch-type.ts": `type Shape = unknown;\ntry {} catch (e: (v: Shape) => void) { e; }\nexport {};\n`,
+      "empty.mjs": `export default { meta: { name: "q" }, rules: {} };\n`,
+      "plugin.mjs": `const shadow = { create(context) { return { CatchClause(node) {
+  let scope = context.sourceCode.getScope(node);
+  if (scope.block === node) scope = scope.upper;
+  for (; scope; scope = scope.upper) if (scope.set.has(node.param.name)) return context.report({ node, message: "shadows" });
+} }; } };
+const scopes = { create(context) { return { Program(node) {
+  const declared = it => it.variables.filter(it => it.defs.length).map(it => it.name);
+  context.report({ node, message: context.sourceCode.scopeManager.scopes.map(it => it.type + "[" + declared(it) + "]").join(" ") });
+} }; } };
+export default { meta: { name: "q" }, rules: { shadow, scopes } };\n`,
+    };
+    const ofOxlint = {
+      "no-undef": "error",
+      "no-unused-vars": "error",
+      "no-shadow": "error",
+      "prefer-const": "error",
+      "no-use-before-define": "error",
+      "no-useless-assignment": "error",
+    };
+    const reported = async (more: object, rules: object) => {
+      const configuration = {
+        categories: { correctness: "off" },
+        env: { node: true },
+        globals: { kind: "readonly" },
+        ignorePatterns: ["*.mjs"],
+        ...more,
+        rules: { ...ofOxlint, ...rules },
+      };
+      const { stdout } = await lint({ ".oxlintrc.json": JSON.stringify(configuration), ...sources }, ["-f", "unix"]);
+      const found = [...stdout.matchAll(/^([\w-]+\.\w+:\d+:\d+): (.*) \[Error\/(\w+)\(([\w-]+)\)\]$/gm)];
+      const all = found.map(it => `${it[1]} ${it[4]}` + (it[3] === "q" ? ` ${it[2]}` : "")).sort();
+      const isOfOxlint = (it: string) => it.split(" ")[1] in ofOxlint;
+      return { ofOxlint: all.filter(isOfOxlint), others: all.filter(it => !isOfOxlint(it)) };
+    };
+    const expected = [
+      "block.cjs:3:15 no-shadow",
+      "block.cjs:3:15 no-unused-vars",
+      "block.js:3:15 no-shadow",
+      "block.js:3:15 no-unused-vars",
+      "import-type.ts:1:54 no-unused-vars",
+      "import-type.ts:1:85 no-shadow",
+      "import-type.ts:1:85 no-unused-vars",
+      "namespace.ts:1:5 prefer-const",
+      "namespace.ts:2:17 no-shadow",
+      "namespace.ts:2:74 no-shadow",
+      "namespace.ts:2:74 no-unused-vars",
+      "switch.cjs:3:67 no-shadow",
+      "switch.cjs:3:67 no-unused-vars",
+    ];
+
+    test("only oxlint's rules", async () => {
+      expect(await reported({}, {})).toEqual({ ofOxlint: expected, others: [] });
+    });
+
+    test("beside a plugin without rules", async () => {
+      expect(await reported({ jsPlugins: ["./empty.mjs"] }, {})).toEqual({ ofOxlint: expected, others: [] });
+    });
+
+    test("beside a plugin that asks the scopes", async () => {
+      const rules = { "q/shadow": "error", "q/scopes": "error" };
+      expect(await reported({ jsPlugins: ["./plugin.mjs"] }, rules)).toEqual({
+        ofOxlint: expected,
+        others: [
+          "block.cjs:1:1 scopes global[] function[] block[helper] function[] block[] catch[helper] block[]",
+          "block.js:1:1 scopes global[] block[helper] function[] block[] catch[helper] block[]",
+          "catch-type.ts:1:1 scopes global[] module[Shape] block[] catch[e] block[]",
+          "import-type.ts:1:1 scopes global[] module[A]",
+          "namespace-used.ts:1:1 scopes global[] module[] tsModule[sides]",
+          "namespace.ts:1:1 scopes global[Inner] tsModule[x] block[] catch[Inner] block[]",
+          "namespace.ts:2:67 shadow shadows",
+          "switch.cjs:1:1 scopes global[] function[outer] switch[helper] function[] function[] block[inner] function[] block[] catch[inner] block[]",
+        ],
+      });
+    });
+
+    // The mark is on the plugin's variable.
+    test("`markVariableAsUsed` in a plugin doesn't silence oxlint's no-unused-vars", async () => {
+      const files = {
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          jsPlugins: ["./marks.mjs"],
+          ignorePatterns: ["*.mjs"],
+          rules: { "no-unused-vars": "error", "q/marks": "error", "q/marked": "error" },
+        }),
+        "marks.mjs": `const marks = { create(context) { return { Program(node) {
+  for (const name of ["first", "work", "Kind"]) context.sourceCode.markVariableAsUsed(name, node);
+} }; } };
+const marked = { create(context) { return { "Program:exit"(node) {
+  const all = context.sourceCode.scopeManager.scopes.flatMap(it => it.variables).filter(it => it.defs.length);
+  context.report({ node, message: all.map(it => it.name + "=" + !!it.eslintUsed).join(" ") });
+} }; } };
+export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
+        "marked.ts": `const first = 1;\nconst second = 2;\nfunction work() {}\ntype Kind = 1;\nexport {};\n`,
+      };
+      const { stdout } = await lint(files, ["-f", "unix"]);
+      const found = [...stdout.matchAll(/^marked\.ts:(\d+:\d+): (.*) \[Error\/(\w+)\(([\w-]+)\)\]$/gm)];
+      expect(found.map(it => `${it[1]} ${it[4]}` + (it[3] === "q" ? ` ${it[2]}` : "")).sort()).toEqual([
+        "1:1 marked first=true second=false work=true Kind=true",
+        "1:7 no-unused-vars",
+        "2:7 no-unused-vars",
+        "3:10 no-unused-vars",
+        "4:6 no-unused-vars",
+      ]);
+    });
+
+    test("beside a built-in rule that oxlint lacks", async () => {
+      expect(await reported({}, { "no-catch-shadow": "error" })).toEqual({
+        ofOxlint: expected,
+        others: ["namespace.ts:2:67 no-catch-shadow"],
+      });
+    });
+  });
+
   // `namespace A.B { .. }` is one node, and what is between the braces is its body: a rule that looks at the statements beside a
   // statement says there what it says in `namespace B { .. }` and in `namespace A { export namespace B { .. } }`.
   describe("the statements of a namespace with dots in its name", () => {
@@ -14250,6 +14378,460 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
         "await of;",
         "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
       ],
+      ["function w() { let !x; }", "Unexpected token @19+1"],
+      ["{ let !x; }", "Unexpected token @6+1"],
+      ["let !x;", "Unexpected token @4+1"],
+      ["function w() { let 1; }", "Unexpected token @19+1"],
+      ["function w() { let ~x; }", "Unexpected token @19+1"],
+      ["() => { let !x; };", "Unexpected token @12+1"],
+      ["class A { m() { let !x; } }", "Unexpected token @20+1"],
+      [
+        "static function () {};",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+      ],
+      ["declare function () {};", "TS(1183) An implementation cannot be declared in ambient contexts. @20+0"],
+      [
+        "export function () {};",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "async function () {};",
+        "Expected function name @15+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "static function* () {};",
+        "Expected function name @17+1 help: Function name is required in function declaration or named export",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+      ],
+      [
+        "public function () {};",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+        "'public' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+      ],
+      [
+        "function () {} let y: readonly number;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @22+8",
+      ],
+      [
+        "function () {} let a = ;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "Unexpected token @23+1",
+      ],
+      [
+        "function* () {} let y: readonly number;",
+        "Expected function name @10+1 help: Function name is required in function declaration or named export",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @23+8",
+      ],
+      [
+        "let zz; let zz; function () {}",
+        "Expected function name @25+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "export function () {} let y: readonly number;",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @29+8",
+      ],
+      [
+        "function () {}",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "function (a b) {}",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        'Expected `,` or `)` but found `Identifier` @12+1 "`,` or `)` expected", 9+1 "Opened here"',
+      ],
+      ["function;", 'Expected `(` but found `;` @8+1 "`(` expected"'],
+      ["function {}", 'Expected `(` but found `{` @9+1 "`(` expected"'],
+      [
+        "static function () {} let y: readonly number;",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @29+8",
+      ],
+      ["declare function* ();", "TS(1221) Generators are not allowed in an ambient context. @16+5"],
+      ["declare function;", 'Expected `(` but found `;` @16+1 "`(` expected"'],
+      [
+        "declare namespace N { function (); }",
+        "Expected function name @31+1 help: Function name is required in function declaration or named export",
+      ],
+      ["{ x = { await }; } import.meta;", "The keyword 'await' is reserved @8+5"],
+      ["({ await = 1 } = {}); import.meta;", "The keyword 'await' is reserved @3+5"],
+      ["{ ({ await = 1 } = {}); } import.meta;", "The keyword 'await' is reserved @5+5"],
+      ["class A { a = await !x; }", 'Expected `;` but found `Identifier` @21+1 "`;` expected"'],
+      [
+        "for await (const a of b) {} await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @35+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} a b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["class A { [b c] = 1; }", 'Expected `]` but found `Identifier` @13+1 "`]` expected"'],
+      ["x = { [b c]: 1 };", 'Expected `]` but found `Identifier` @9+1 "`]` expected"'],
+      [
+        "for await (const a of b) {}",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await (x);",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await;",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) { c d }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @28+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "new.target;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; new.target;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "export {}; new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x);",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; await (x); new.target;",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await x; new.target;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await x;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "{ new.target; }",
+        "Unexpected new.target expression @2+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "() => new.target;",
+        "Unexpected new.target expression @6+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "{ await (x); new.target; } import.meta;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x), new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "f(await (x), new.target); import.meta;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target, await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; a; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await; new.target; import.meta;", "Unexpected token @5+1"],
+      ["x = await; new.target; import.meta;", "Unexpected token @9+1"],
+      [
+        "let await; new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await: a; new.target; import.meta;", "Unexpected token @5+1"],
+      [
+        "x = { await }; new.target; import.meta;",
+        "Unexpected new.target expression @15+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); class A { m(): void; } import.meta;",
+        "TS(2391) Function implementation is missing or not immediately following the declaration. @21+1",
+      ],
+      ["await (x); enum E { A = 'x', B } import.meta;", "Enum member must have initializer. @29+1"],
+      [
+        "let y: readonly number; await (x); import.meta;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+      ],
+      [
+        "type A = typeof await; new.target; import.meta;",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let a: typeof await; new.target; import.meta;",
+        "Unexpected new.target expression @21+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "declare const a: typeof await; new.target; import.meta;",
+        "Unexpected new.target expression @31+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["namespace N { await (x); } new.target; import.meta;", "The keyword 'await' is reserved @14+5"],
+      ["enum E { A = await (x) } new.target; import.meta;", "The keyword 'await' is reserved @13+5"],
+      [
+        "await (x); declare function f() {} import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @34+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x); import a = require('a'); new.target;",
+        "Unexpected new.target expression @36+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); declare module 'a' {} new.target;",
+        "Unexpected new.target expression @33+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { a = new.target; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @28+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { static { new.target; } } new.target; let zz; let zz;",
+        "Unexpected new.target expression @35+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let y: readonly number; new.target; let zz; let zz;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f(a?: number, b: number) {} new.target; let zz; let zz;",
+        "TS(1016) A required parameter cannot follow an optional parameter. @23+9",
+        "Unexpected new.target expression @37+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { m(): void; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "enum E { A = 'x', B } new.target; let zz; let zz;",
+        "Unexpected new.target expression @22+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "static function f() {} new.target; let zz; let zz;",
+        "'static' modifier cannot be used here. @0+6 help: Allowed modifiers are: declare, async",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "abstract class A { abstract m() {} } new.target; let zz; let zz;",
+        "TS(1245) Method 'm' cannot have an implementation because it is marked abstract. @28+1",
+        "Unexpected new.target expression @37+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "interface A implements B {} new.target; let zz; let zz;",
+        "TS(1176) Interface declaration cannot have 'implements' clause. @12+10",
+        "Unexpected new.target expression @28+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { constructor(public a?, b) {} } new.target; let zz; let zz;",
+        "TS(1016) A required parameter cannot follow an optional parameter. @33+1",
+        "Unexpected new.target expression @41+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "declare function f() {} new.target; let zz; let zz;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let a?: number; new.target; let zz; let zz;",
+        "Optional declaration is not allowed here @5+1 help: Remove the `?`",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let a!: number = 1; new.target; let zz; let zz;",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @5+1",
+        "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { declare a = 1; } new.target; let zz; let zz;",
+        "TS(1039) Initializers are not allowed in ambient contexts. @22+1",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A<in T> {} function f<in T>() {} new.target; let zz; let zz;",
+        "TS(1274) 'in' modifier can only appear on a type parameter of a class, interface or type alias. @28+2",
+        "Unexpected new.target expression @39+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f(this) {} x = (this) => 1; new.target; let zz; let zz;",
+        "TS(2730) An arrow function cannot have a `this` parameter. @25+4 help: Arrow function does not bind `this` and inherits `this` from the outer scope",
+        "Unexpected new.target expression @37+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "type A = { readonly m(): void }; new.target; let zz; let zz;",
+        "TS(1024) 'readonly' modifier can only appear on a property declaration or index signature. @11+8",
+        "Unexpected new.target expression @33+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = <T>a; let y: readonly number; new.target; let zz; let zz;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @17+8",
+        "Unexpected new.target expression @34+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "declare function f() {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      ["declare function f() {}", "TS(1183) An implementation cannot be declared in ambient contexts. @21+0"],
+      ["declare function f() {}\na;", "TS(1183) An implementation cannot be declared in ambient contexts. @21+0"],
+      ["declare function f() {};", "TS(1183) An implementation cannot be declared in ambient contexts. @21+0"],
+      [
+        "declare function f() {} declare function g() {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare namespace N { function f() {} a; }",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @35+0",
+        "TS(1036) Statements are not allowed in ambient contexts. @38+2",
+      ],
+      [
+        "declare namespace N { function f() {} }",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @35+0",
+      ],
+      [
+        "declare class A { m() {} n() {} }",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @22+0",
+        "TS(1183) An implementation cannot be declared in ambient contexts. @29+0",
+      ],
+      [
+        "export declare function f() {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @30+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare function f(): void {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare async function f() {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare function* f() {} a;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @24+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x); new.target; import a = require('a');",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; import type a = require('a');",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; declare global {}",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await!; new.target; import.meta;", "Unexpected token @6+1"],
+      [
+        "await as any; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await satisfies any; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @15+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let a = await as any; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @16+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "declare namespace N { a; } await (x); import.meta;",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+2",
+      ],
+      [
+        "declare namespace N { await (x); } import.meta;",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+10",
+      ],
+      [
+        "declare namespace N { await (x); a; } import.meta;",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+10",
+      ],
+      [
+        "declare namespace N { a; await (x); } import.meta;",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+2",
+      ],
+      ["await!; import.meta;", "Unexpected token @6+1"],
+      [
+        "await !x; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["await ![]; import.meta;", "Unexpected token @8+1"],
+      [
+        "await !!x; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !{}; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["await !.a; import.meta;", "Unexpected token @7+1"],
+      ["await!.a; import.meta;", "Unexpected token @6+1"],
+      [
+        "f(await !x); import.meta;",
+        'Expected `,` or `)` but found `Identifier` @9+1 "`,` or `)` expected", 1+1 "Opened here"',
+      ],
+      ["f(await!); import.meta;", "Unexpected token @8+1"],
+      ["f(await!, a); import.meta;", "Unexpected token @8+1"],
+      [
+        "await ! as any; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @10+0 help: Try inserting a semicolon here",
+      ],
+      ["await /k/; import.meta;", "Unexpected token @9+1"],
+      ["await /k/.test(a); import.meta;", "Unexpected token @9+1"],
+      ["await /=k/; import.meta;", "Unexpected token @10+1"],
+      [
+        "await <T>(x) => 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @12+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await <T>x y; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @10+0 help: Try inserting a semicolon here",
+      ],
+      ["f(await /k/); import.meta;", "Unexpected token @11+1"],
+      ["await /k/;", "Unexpected token @9+1"],
+      [
+        "function <T>() {} let y: readonly number;",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @25+8",
+      ],
+      ["declare function <T>;", 'Expected `(` but found `;` @20+1 "`(` expected"'],
+      ["declare function ()\n{}", "TS(1183) An implementation cannot be declared in ambient contexts. @20+0"],
+      ["d\\u0065clare function f();", "Keywords cannot contain escape characters @0+12"],
+      ["t\\u0079pe A = 1;", "Keywords cannot contain escape characters @0+9"],
+      ["int\\u0065rface A {}", "Keywords cannot contain escape characters @0+14"],
+      ["n\\u0061mespace A {}", "Keywords cannot contain escape characters @0+14"],
+      ["\\u0061bstract class A {}", "Keywords cannot contain escape characters @0+13"],
+      ["class A { r\\u0065adonly a; }", "Keywords cannot contain escape characters @10+13"],
+      ["class A { p\\u0075blic a; }", "Keywords cannot contain escape characters @10+11"],
+      ["let a = b \\u0061s c;", "Keywords cannot contain escape characters @10+7"],
+      ["let a: k\\u0065yof b;", "Keywords cannot contain escape characters @7+10"],
     ],
     "d.ts": [
       ["const a: number = 1;", "TS(1039) Initializers are not allowed in ambient contexts. @18+1"],
@@ -14462,6 +15044,33 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
         "await !x;",
         "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
       ],
+      [
+        "function ();",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "export function ();",
+        "Expected function name @16+1 help: Function name is required in function declaration or named export",
+      ],
+      [
+        "declare const a: 1; let y: readonly number; export {};",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @27+8",
+      ],
+      ["await (x);", "TS(1036) Statements are not allowed in ambient contexts. @0+10"],
+      ["a; import.meta;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; export {};", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; await (x); import.meta;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["await x;", "TS(1036) Statements are not allowed in ambient contexts. @0+8"],
+      ["await x; a;", "TS(1036) Statements are not allowed in ambient contexts. @0+8"],
+      [
+        "let y: readonly number; await (x); export {};",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+      ],
+      [
+        "declare const a: typeof await; let y: readonly number; export {};",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @38+8",
+      ],
+      ["function f() { new.target; }", "TS(1183) An implementation cannot be declared in ambient contexts. @13+0"],
     ],
     "tsx": [
       ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
@@ -14533,6 +15142,12 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ],
       ["let zz; let zz; <a b={} />;", "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @21+2"],
       ["< />;", "Unexpected token @2+1"],
+      ["await <a />; import.meta;", "Unexpected token @10+1"],
+      ["await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
+      [
+        "await <T,>(x) => 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
+      ],
     ],
     "mts": [
       ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
@@ -14599,6 +15214,10 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["namespace await {}", "The keyword 'await' is reserved @10+5"],
       ["let x: A<await>;", "The keyword 'await' is reserved @9+5"],
       ["class A implements await {}", "The keyword 'await' is reserved @19+5"],
+      [
+        "await (x); new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
     ],
     "cts": [
       ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
@@ -14672,6 +15291,10 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       [
         "namespace N { await k; }",
         "`await` is only allowed within async functions and at the top levels of modules @14+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await (x); new.target; import.meta;",
+        "Unexpected import.meta expression @23+11 help: import.meta is only allowed in module code",
       ],
     ],
     "js": [
@@ -16666,6 +17289,1009 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["(await) => 1; export {};", "The keyword 'await' is reserved @1+5"],
       ["({ await } = x); import.meta;", "The keyword 'await' is reserved @3+5"],
       ["let { await } = x; import.meta;", "The keyword 'await' is reserved @6+5"],
+      ["class A { a = await !x; }", 'Expected `;` but found `!` @20+1 "`;` expected"'],
+      [
+        "for await (const a of b) {} await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @33+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["function w() { let !x; }", "Unexpected token @19+1"],
+      [
+        "static function () {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      ["for (await of []) {} import.meta;", "Unexpected token @15+1"],
+      ["await++; import.meta;", "Unexpected token @7+1"],
+      ["for (await of []) {} await y;", "Unexpected token @15+1"],
+      ["await++; await y;", "Unexpected token @7+1"],
+      ["await++; export {};", "Unexpected token @7+1"],
+      ["for (await of []) {} export {};", "Unexpected token @15+1"],
+      ["for (await in x) {} import.meta;", "Unexpected token @11+2"],
+      ["await.x = 1; import.meta;", "Unexpected token @5+1"],
+      ["[await] = x; import.meta;", "Unexpected token @6+1"],
+      [
+        "new.target; import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class W { static { await (await x); } }",
+        "Cannot use await in class static initialization block @26+5",
+        "Cannot use await in class static initialization block @19+5",
+      ],
+      [
+        "class W { static { await x; await y; } }",
+        "Cannot use await in class static initialization block @19+5",
+        "Cannot use await in class static initialization block @28+5",
+      ],
+      [
+        "class W { static { f(await x, await y); } }",
+        "Cannot use await in class static initialization block @21+5",
+        "Cannot use await in class static initialization block @30+5",
+      ],
+      [
+        "function f() { await (await x); }",
+        "`await` is only allowed within async functions and at the top levels of modules @22+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "function f() { await x + await y; }",
+        "`await` is only allowed within async functions and at the top levels of modules @15+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "`await` is only allowed within async functions and at the top levels of modules @25+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "function () {} a ?? b || c;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "Logical expressions and coalesce expressions cannot be mixed @15+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "function () {}",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+      ],
+      ["{ x = { await }; } import.meta;", "The keyword 'await' is reserved @8+5"],
+      ["({ await = 1 } = {}); import.meta;", "The keyword 'await' is reserved @3+5"],
+      ["{ ({ await = 1 } = {}); } import.meta;", "The keyword 'await' is reserved @5+5"],
+      ["({ await = 1 } = {}); export {};", "The keyword 'await' is reserved @3+5"],
+      ["{ x = { await }; } export {};", "The keyword 'await' is reserved @8+5"],
+      ["if (a) { x = { await }; } import.meta;", "The keyword 'await' is reserved @15+5"],
+      ["x = { await }; await y;", "The keyword 'await' is reserved @6+5"],
+      ["x = { a: await }; import.meta;", "Unexpected token @15+1"],
+      ["class A { a = await !x; } export {};", 'Expected `;` but found `!` @20+1 "`;` expected"'],
+      ["class A { a = await ~x; }", 'Expected `;` but found `~` @20+1 "`;` expected"'],
+      ["class A { a = await", 'Expected `}` but found `EOF` @20+0 "`}` expected", 8+1 "Opened here"'],
+      ["class A { a = b !x; }", 'Expected `;` but found `!` @16+1 "`;` expected"'],
+      ["class A { a = b c; }", 'Expected `;` but found `Identifier` @16+1 "`;` expected"'],
+      ["class A { static a = await !x; }", 'Expected `;` but found `!` @27+1 "`;` expected"'],
+      ["class A { a = () => await !x; }", 'Expected `;` but found `!` @26+1 "`;` expected"'],
+      [
+        "for await (const a of b) {}",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await ~x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @33+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} a b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} let a = ;",
+        "Unexpected token @36+1",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await !x; for await (const a of b) {}",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "for await (const a of b) {} await (x);",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await;",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} for await (const c of d) {} a b;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @57+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @32+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["class A { a = b as c; }", "TS(8016) Type assertion expressions can only be used in TypeScript files. @14+6"],
+      [
+        "class A { a = b satisfies c; }",
+        "TS(8037) Type satisfaction expressions can only be used in TypeScript files. @14+13",
+      ],
+      ["class A { a = b<c>; }", "Unexpected token @18+1"],
+      ["class A { a = b!; }", 'Expected `;` but found `!` @15+1 "`;` expected"'],
+      ["class A { a = b!.c; }", 'Expected `;` but found `!` @15+1 "`;` expected"'],
+      ["class A { c; a = b !x; }", 'Expected `;` but found `!` @19+1 "`;` expected"'],
+      ["class A { c() {} a = b !x; }", 'Expected `;` but found `!` @23+1 "`;` expected"'],
+      [
+        "class A { a = () => { b !x; }; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @23+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "class A { static { b !x; } }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @20+0 help: Try inserting a semicolon here",
+      ],
+      ["class A { a = (b !x); }", 'Expected `,` or `)` but found `!` @17+1 "`,` or `)` expected", 14+1 "Opened here"'],
+      ["class A { a = [b !x]; }", 'Expected `,` or `]` but found `!` @17+1 "`,` or `]` expected", 14+1 "Opened here"'],
+      [
+        "class A { a = { c: b !x }; }",
+        'Expected `,` or `}` but found `!` @21+1 "`,` or `}` expected", 14+1 "Opened here"',
+      ],
+      ["x = class { a = b !x; };", 'Expected `;` but found `!` @18+1 "`;` expected"'],
+      [
+        "class A { a = b ? c !x : d; }",
+        'Expected `:` but found `!` @20+1 "`:` expected", 16+1 "Conditional starts here"',
+      ],
+      ["class A { [b !x] = 1; }", 'Expected `]` but found `!` @13+1 "`]` expected"'],
+      ["class A { @b !x a; }", "Unexpected token @13+1"],
+      ["x = { [b !x]: 1 };", 'Expected `]` but found `!` @9+1 "`]` expected"'],
+      ["class A { [b !x]() {} }", 'Expected `]` but found `!` @13+1 "`]` expected"'],
+      ["class A { static [b !x] = 1; }", 'Expected `]` but found `!` @20+1 "`]` expected"'],
+      ["class A { get [b !x]() {} }", 'Expected `]` but found `!` @17+1 "`]` expected"'],
+      ["x = { get [b !x]() {} };", 'Expected `]` but found `!` @13+1 "`]` expected"'],
+      ["x = { [b c]: 1 };", 'Expected `]` but found `Identifier` @9+1 "`]` expected"'],
+      ["class A { [b c] = 1; }", 'Expected `]` but found `Identifier` @13+1 "`]` expected"'],
+      ["a[b !x];", 'Expected `]` but found `!` @4+1 "`]` expected"'],
+      ["a[b c];", 'Expected `]` but found `Identifier` @4+1 "`]` expected"'],
+      ["const { [b !x]: c } = d;", 'Expected `]` but found `!` @11+1 "`]` expected"'],
+      ["const { [b c]: d } = e;", 'Expected `]` but found `Identifier` @11+1 "`]` expected"'],
+      ["@b !x class A {}", "Unexpected token @3+1"],
+      ["class A { @b c d; }", 'Expected `;` but found `Identifier` @15+1 "`;` expected"'],
+      [
+        "for await (const a of b) {} await /x/;",
+        "Unexpected token @37+1",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} await [x];",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) { await (x); }",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of await (b)) {}",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) {} function f() { await x; }",
+        "`await` is only allowed within async functions and at the top levels of modules @43+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b) { c d }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @28+0 help: Try inserting a semicolon here",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (const a of b c) {}",
+        'Expected `)` but found `Identifier` @24+1 "`)` expected", 10+1 "Opened here"',
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (a in b) {}",
+        "await can only be used in conjunction with `for...of` statements @0+18 help: Did you mean to use a for...of statement?",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "for await (;;) {}",
+        "await can only be used in conjunction with `for...of` statements @0+14 help: Did you mean to use a for...of statement?",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      ["let !x;", "Unexpected token @4+1"],
+      ["{ let !x; }", "Unexpected token @6+1"],
+      ["function w() { a; let !x; }", "Unexpected token @22+1"],
+      ["function w() { let !x; } a b;", "Unexpected token @19+1"],
+      ["() => { let !x; };", "Unexpected token @12+1"],
+      ["class A { m() { let !x; } }", "Unexpected token @20+1"],
+      ["function w() { let ~x; }", "Unexpected token @19+1"],
+      ["function w() { let 1; }", "Unexpected token @19+1"],
+      [
+        "function w() { foo !x; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @18+0 help: Try inserting a semicolon here",
+      ],
+      ["if (a) { let !x; }", "Unexpected token @13+1"],
+      [
+        "new.target;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; new.target;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "export {}; new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x);",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; await (x); new.target;",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await x; new.target;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await x;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "{ new.target; }",
+        "Unexpected new.target expression @2+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "() => new.target;",
+        "Unexpected new.target expression @6+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "{ await (x); new.target; } import.meta;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x), new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "f(await (x), new.target); import.meta;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target, await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; a; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await; new.target; import.meta;", "Unexpected token @5+1"],
+      ["x = await; new.target; import.meta;", "Unexpected token @9+1"],
+      [
+        "let await; new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await: a; new.target; import.meta;", "Unexpected token @5+1"],
+      [
+        "x = { await }; new.target; import.meta;",
+        "Unexpected new.target expression @15+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await (x); function* g() { yield\n* 2; } import.meta;", "Unexpected token @33+1"],
+      [
+        "await (x); 08; import.meta;",
+        "Decimals with leading zeros are not allowed in strict mode @11+2 help: remove the leading zero",
+      ],
+      [
+        "await (x); '\\08'; import.meta;",
+        "'0'-prefixed octal literals and octal escape sequences are deprecated @11+5 help: for octal literals use the '0o' prefix instead",
+      ],
+      ["await (x); with (a) {} import.meta;", "'with' statements are not allowed @11+4"],
+      [
+        "await (x); let a; let a; import.meta;",
+        'Identifier `a` has already been declared @15+1 "`a` has already been declared here", 22+1 "It can not be redeclared here"',
+      ],
+      [
+        "await (x); break; import.meta;",
+        "Illegal break statement @11+6 help: A `break` statement can only be used within an enclosing iteration or switch statement.",
+      ],
+      [
+        "await (x); super.a; import.meta;",
+        "'super' can only be referenced in members of derived classes or object literal expressions. @11+5",
+      ],
+      [
+        "await (x); class A { constructor() {} constructor() {} } import.meta;",
+        'Multiple constructor implementations are not allowed. @21+11 "constructor has already been declared here", 38+11 "it cannot be redeclared here"',
+      ],
+      [
+        "await (x); ({ a = 1 }); import.meta;",
+        "Invalid assignment in object literal @14+5 help: Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.",
+      ],
+      ["await (x); a?.b = 1; import.meta;", "Cannot assign to this expression @11+4"],
+      ["await (x); delete a; import.meta;", "Delete of an unqualified identifier in strict mode. @18+1"],
+      [
+        "await (x); x = { __proto__: 1, __proto__: 2 }; import.meta;",
+        'Identifier `__proto__` has already been declared @17+9 "`__proto__` has already been declared here", 31+9 "It can not be redeclared here"',
+      ],
+      [
+        "await (x); function f(a, a) { 'use strict'; } import.meta;",
+        'Identifier `a` has already been declared @22+1 "`a` has already been declared here", 25+1 "It can not be redeclared here"',
+      ],
+      ["await (x); yield = 1; import.meta;", "The keyword 'yield' is reserved @11+5"],
+      ["await (x); let let = 1; import.meta;", "The keyword 'let' is reserved @15+3"],
+      [
+        "await (x); class A extends B { m() { super(); } } import.meta;",
+        "TS(2337) Super calls are not permitted outside constructors or in nested functions inside constructors. @37+7",
+      ],
+      [
+        "a ?? b || c; await (x); import.meta;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      ["function f() { await (x); } new.target; import.meta;", "The keyword 'await' is reserved @15+5"],
+      ["function f() { await; } new.target; import.meta;", "The keyword 'await' is reserved @15+5"],
+      ["() => await (x); new.target; import.meta;", "The keyword 'await' is reserved @6+5"],
+      [
+        "async function f() { await (x); } new.target; import.meta;",
+        "Unexpected new.target expression @34+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "async () => await (x); new.target; import.meta;",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["class A { a = await (x); } new.target; import.meta;", "The keyword 'await' is reserved @14+5"],
+      ["class A { m() { await (x); } } new.target; import.meta;", "The keyword 'await' is reserved @16+5"],
+      [
+        "class A extends await {} new.target; import.meta;",
+        "Cannot use `await` as an identifier in an async context @16+5",
+      ],
+      [
+        "await y; await (x); new.target;",
+        "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; a b; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @24+0 help: Try inserting a semicolon here",
+      ],
+      ["await (x); new.target; await; import.meta;", "Unexpected token @28+1"],
+      [
+        "await (x); new.target; await (y) z; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @32+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x) y; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "new.target; await (x); new.target; await; import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected token @40+1",
+      ],
+      [
+        "await (x), new.target; new.target; await (y); import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x), new.target; await (y); import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x), new.target, new.target; await (y); import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; await (y), new.target; import.meta;",
+        "Unexpected new.target expression @34+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await (x), function await() {}; import.meta;", "The keyword 'await' is reserved @20+5"],
+      ["await (x), function await() {}; await (y); import.meta;", "The keyword 'await' is reserved @20+5"],
+      ["await (x), function await() {}; new.target; await (y); import.meta;", "The keyword 'await' is reserved @20+5"],
+      ["await (x), class await {}; await (y); import.meta;", "The keyword 'await' is reserved @17+5"],
+      [
+        "export const a = await (x); new.target;",
+        "Unexpected new.target expression @28+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; export const a = await (x);",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "export default await (x); new.target;",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["typeof await; new.target; import.meta;", "Unexpected token @12+1"],
+      [
+        "x = { await: 1 }; new.target; import.meta;",
+        "Unexpected new.target expression @18+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "a.await; new.target; import.meta;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "({ await } = {}); new.target; import.meta;",
+        "Unexpected new.target expression @18+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "({ await = 1 } = {}); new.target; import.meta;",
+        "Unexpected new.target expression @22+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await /k/; new.target; import.meta;", "Unexpected token @9+1"],
+      ["await in k; new.target; import.meta;", "Unexpected token @6+2"],
+      ["await instanceof k; new.target; import.meta;", "Unexpected token @6+10"],
+      ["await = 1; new.target; import.meta;", "Unexpected token @6+1"],
+      ["await.a; new.target; import.meta;", "Unexpected token @5+1"],
+      ["await ? a : b; new.target; import.meta;", "Unexpected token @6+1"],
+      ["await, a; new.target; import.meta;", "Unexpected token @5+1"],
+      ["await (x); 1_; import.meta;", "Invalid Character `;` @13+0"],
+      ["await (x); '\\u{110000}'; import.meta;", "Invalid escape sequence @12+9"],
+      ["await (x); 0b12; import.meta;", "Invalid characters after number @14+1"],
+      [
+        "await (x); export { a as b, c as b }; var a, c;",
+        'Duplicated export \'b\' @25+1 "Export has already been declared here", 33+1 "It cannot be redeclared here"',
+      ],
+      ["await (x); export { zz };", "Export 'zz' is not defined @20+2"],
+      [
+        "await (x); import { a, a } from 'a';",
+        'Identifier `a` has already been declared @20+1 "`a` has already been declared here", 23+1 "It can not be redeclared here"',
+      ],
+      [
+        "await (x); l: l: a; import.meta;",
+        'Label `l` has already been declared @11+1 "`l` has already been declared here", 14+1 "It can not be redeclared here"',
+      ],
+      [
+        "await (x); continue; import.meta;",
+        "Illegal continue statement: no surrounding iteration statement @11+9 help: A `continue` statement can only be used within an enclosing `for`, `while` or `do while` ",
+      ],
+      [
+        "await (x); class A { #a; #a; } import.meta;",
+        'Identifier `#a` has already been declared @21+2 "`#a` has already been declared here", 25+2 "It can not be redeclared here"',
+      ],
+      ["await (x); a.#b; import.meta;", "Private identifier '#b' is not allowed outside class bodies @13+2"],
+      [
+        "await (x); function f() { 'use strict'; 08; } import.meta;",
+        "Decimals with leading zeros are not allowed in strict mode @40+2 help: remove the leading zero",
+      ],
+      [
+        "await (x); function f(a = 1) { 'use strict'; } import.meta;",
+        "Illegal 'use strict' directive in function with non-simple parameter list @31+13 help: Wrap this function with an IIFE with a 'use strict' directive that returns this function",
+      ],
+      [
+        "await (x); function* g(a = yield) {} import.meta;",
+        'yield expression not allowed in formal parameter @27+5 "yield expression not allowed in formal parameter"',
+      ],
+      [
+        "await (x); async function g(a = await 1) {} import.meta;",
+        'await expression not allowed in formal parameter @32+7 "await expression not allowed in formal parameter"',
+      ],
+      [
+        "await (x); for (let a = 1 of b); import.meta;",
+        "for-of loop variable declaration may not have an initializer @16+9",
+      ],
+      ["await (x); for (let of b); import.meta;", 'Expected `;` but found `Identifier` @23+1 "`;` expected"'],
+      [
+        "await (x); if (a) function f() {} import.meta;",
+        "Invalid function declaration @18+15 help: In strict mode code, functions can only be declared at top level or inside a block",
+      ],
+      [
+        "await (x); if (a) let b; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @21+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x); while (a) function f() {} import.meta;",
+        "Invalid function declaration @21+15 help: In strict mode code, functions can only be declared at top level or inside a block",
+      ],
+      [
+        "await (x); try {} catch ([a, a]) {} import.meta;",
+        'Identifier `a` has already been declared @26+1 "`a` has already been declared here", 29+1 "It can not be redeclared here"',
+      ],
+      ["await (x); new a?.b(); import.meta;", "Invalid optional chain from new expression. @16+2"],
+      ["await (x); (a, ...b); import.meta;", "Unexpected token @15+3"],
+      ["await (x); function f(...a, b) {} import.meta;", "A rest parameter must be last in a parameter list @22+4"],
+      [
+        "await (x); import('a', 'b', 'c'); import.meta;",
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @11+16",
+      ],
+      [
+        "await (x); import(...a); import.meta;",
+        "TS(1325) Argument of dynamic import cannot be a spread element. @18+3",
+      ],
+      [
+        "await (x); x = <a.b-c />; import.meta;",
+        "Identifiers in JSX cannot contain hyphens @18+3 help: Remove the hyphen from the identifier",
+      ],
+      ["await (x); arguments = 1; import.meta;", "Cannot assign to 'arguments' in strict mode @11+9"],
+      ["await (x); eval = 1; import.meta;", "Cannot assign to 'eval' in strict mode @11+4"],
+      [
+        "await (x); class A { a = arguments; } import.meta;",
+        "'arguments' is not allowed in class field initializer @25+9 help: Assign the 'arguments' variable to a temporary variable outside",
+      ],
+      ["await (x); function f() { new.target = 1; } import.meta;", "Cannot assign to this expression @26+10"],
+      ["await (x); import.meta = 1;", "Cannot assign to this expression @11+11"],
+      [
+        "await (x); import.foo; import.meta;",
+        "The only valid property accesses on import are `import.meta`, `import.source()`, and `import.defer()` @11+10",
+      ],
+      ["await (x); new.foo; import.meta;", "The only valid meta property for new is new.target @11+7"],
+      ["await (x); x = async function await() {}; import.meta;", "The keyword 'await' is reserved @30+5"],
+      [
+        "class A { a = new.target; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @28+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { static { new.target; } } new.target; let zz; let zz;",
+        "Unexpected new.target expression @35+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "a ?? b || c; new.target; let zz; let zz;",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { await y; } new.target; let zz; let zz;",
+        "`await` is only allowed within async functions and at the top levels of modules @15+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["function* g() { yield\n* 2; } new.target; let zz; let zz;", "Unexpected token @22+1"],
+      [
+        "08; new.target; let zz; let zz;",
+        "Unexpected new.target expression @4+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "'\\08'; new.target; let zz; let zz;",
+        "Unexpected new.target expression @7+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "with (a) {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @12+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let a; let a; new.target; let zz; let zz;",
+        "Unexpected new.target expression @14+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "break; new.target; let zz; let zz;",
+        "Unexpected new.target expression @7+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "return; new.target; let zz; let zz;",
+        "Unexpected new.target expression @8+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "super.a; new.target; let zz; let zz;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { constructor() {} constructor() {} } new.target; let zz; let zz;",
+        "Unexpected new.target expression @46+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "({ a = 1 }); new.target; let zz; let zz;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Invalid assignment in object literal @3+5 help: Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.",
+      ],
+      [
+        "function () {} new.target; let zz; let zz;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "Unexpected new.target expression @15+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "/(/; new.target; let zz; let zz;",
+        "Invalid regular expression: Unterminated capturing group @1+1 help: Add the missing closing delimiter",
+        "Unexpected new.target expression @5+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["a?.b = 1; new.target; let zz; let zz;", "Cannot assign to this expression @0+4"],
+      [
+        "delete a; new.target; let zz; let zz;",
+        "Unexpected new.target expression @10+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = { __proto__: 1, __proto__: 2 }; new.target; let zz; let zz;",
+        "Unexpected new.target expression @36+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f(a, a) { 'use strict'; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @35+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "yield = 1; new.target; let zz; let zz;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "let let = 1; new.target; let zz; let zz;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A extends B { m() { super(); } } new.target; let zz; let zz;",
+        "Unexpected new.target expression @39+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "'\\u{110000}'; new.target; let zz; let zz;",
+        "Invalid escape sequence @1+9",
+        "Unexpected new.target expression @14+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "`\\u{110000}`; new.target; let zz; let zz;",
+        "Bad escape sequence in untagged template literal @1+10",
+        "Unexpected new.target expression @14+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["0b12; new.target; let zz; let zz;", "Invalid characters after number @3+1"],
+      [
+        "a as b; new.target; let zz; let zz;",
+        "TS(8016) Type assertion expressions can only be used in TypeScript files. @0+6",
+        "Unexpected new.target expression @8+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "const a; new.target; let zz; let zz;",
+        "Missing initializer in const declaration @6+1 help: Add an initializer (e.g. ` = undefined`) here",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "l: l: a; new.target; let zz; let zz;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "continue; new.target; let zz; let zz;",
+        "Unexpected new.target expression @10+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { get constructor() {} } new.target; let zz; let zz;",
+        "Constructor can't have get/set modifier @14+11",
+        "Unexpected new.target expression @33+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { static prototype() {} } new.target; let zz; let zz;",
+        "Classes may not have a static property named 'prototype' @17+9",
+        "Unexpected new.target expression @34+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { #a; #a; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "a.#b; new.target; let zz; let zz;",
+        "Unexpected new.target expression @6+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { 'use strict'; 08; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @35+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f(a = 1) { 'use strict'; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @36+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function* g(a = yield) {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "async function g(a = await 1) {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @33+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = { get a(b) {} }; new.target; let zz; let zz;",
+        "A 'get' accessor must not have any formal parameters. @11+3 help: Remove these parameters here",
+        "Unexpected new.target expression @21+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = { set a() {} }; new.target; let zz; let zz;",
+        "TS(1049) A 'set' accessor must have exactly one parameter. @11+2 help: Add a parameter here",
+        "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "for (let a = 1 of b); new.target; let zz; let zz;",
+        "Unexpected new.target expression @22+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["for (let of b); new.target; let zz; let zz;", 'Expected `;` but found `Identifier` @12+1 "`;` expected"'],
+      [
+        "for (async of b); new.target; let zz; let zz;",
+        "The left-hand side of a `for...of` statement may not be `async` @5+5 help: Did you mean to use a for await...of statement?",
+        "Unexpected new.target expression @18+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "if (a) function f() {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @23+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "if (a) class A {} new.target; let zz; let zz;",
+        "Invalid class declaration @7+8 help: Classes can only be declared at top level or inside a block",
+        "Unexpected new.target expression @18+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "if (a) let b; new.target; let zz; let zz;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @10+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "while (a) function f() {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "try {} catch ([a, a]) {} new.target; let zz; let zz;",
+        "Unexpected new.target expression @25+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["new a?.b(); new.target; let zz; let zz;", "Invalid optional chain from new expression. @5+2"],
+      [
+        "a?.`b`; new.target; let zz; let zz;",
+        "Tagged template expressions are not permitted in an optional chain @3+3",
+        "Unexpected new.target expression @8+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "-a ** b; new.target; let zz; let zz;",
+        "A unary expression with the '-' operator cannot be used as the left operand of an exponentiation expression @0+2 help: Wrap the unary expression in parentheses to make the precedence explicit",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "[a, ...b,] = c; new.target; let zz; let zz;",
+        "A rest parameter or binding pattern may not have a trailing comma. @8+1 help: Remove the trailing comma here",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["(a, ...b); new.target; let zz; let zz;", "Unexpected token @4+3"],
+      ["function f(...a, b) {} new.target; let zz; let zz;", "A rest parameter must be last in a parameter list @11+4"],
+      [
+        "function f(...a = 1) {} new.target; let zz; let zz;",
+        "A rest parameter cannot have an initializer. @14+5",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "({ ...a, } = b); new.target; let zz; let zz;",
+        "A rest parameter or binding pattern may not have a trailing comma. @7+1 help: Remove the trailing comma here",
+        "Unexpected new.target expression @17+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import('a', 'b', 'c'); new.target; let zz; let zz;",
+        "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments @0+16",
+      ],
+      [
+        "import(...a); new.target; let zz; let zz;",
+        "TS(1325) Argument of dynamic import cannot be a spread element. @7+3",
+      ],
+      [
+        "new import('a'); new.target; let zz; let zz;",
+        "Cannot use new with dynamic import @4+11 help: Wrap this with parenthesis",
+        "Unexpected new.target expression @17+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "throw\na; new.target; let zz; let zz;",
+        'Illegal newline after throw @0+5 "throw starts here", 6+1 "A newline is not expected here"',
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "using a = b; new.target; let zz; let zz;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "@a export @b class A {} new.target; let zz; let zz;",
+        "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'. @10+2",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = <a b={} />; new.target; let zz; let zz;",
+        "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @9+2",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "x = <a.b-c />; new.target; let zz; let zz;",
+        "Identifiers in JSX cannot contain hyphens @7+3 help: Remove the hyphen from the identifier",
+      ],
+      [
+        "arguments = 1; new.target; let zz; let zz;",
+        "Unexpected new.target expression @15+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "eval = 1; new.target; let zz; let zz;",
+        "Unexpected new.target expression @10+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "class A { a = arguments; } new.target; let zz; let zz;",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["function f() { new.target = 1; } new.target; let zz; let zz;", "Cannot assign to this expression @15+10"],
+      [
+        "import.foo; new.target; let zz; let zz;",
+        "The only valid property accesses on import are `import.meta`, `import.source()`, and `import.defer()` @0+10",
+      ],
+      ["new.foo; new.target; let zz; let zz;", "The only valid meta property for new is new.target @0+7"],
+      [
+        "x = async function await() {}; new.target; let zz; let zz;",
+        "Cannot use `await` as an identifier in an async context @19+5",
+        "Unexpected new.target expression @31+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { for await (a of b); } new.target; let zz; let zz;",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @19+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "Unexpected new.target expression @37+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { await using a = b; } new.target; let zz; let zz;",
+        "`await` is only allowed within async functions and at the top levels of modules @15+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        "Unexpected new.target expression @36+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "function f() { yield 1; } new.target; let zz; let zz;",
+        "A 'yield' expression is only allowed in a generator body. @15+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        "Unexpected new.target expression @26+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["await ('\\u{110000}'); import.meta;", "Invalid escape sequence @8+9"],
+      ["await ('\\u{110000}'); a; import.meta;", "Invalid escape sequence @8+9"],
+      ["await (x); '\\u{110000}'; await (y); import.meta;", "Invalid escape sequence @12+9"],
+      ["await (x); '\\xg'; import.meta;", "Invalid escape sequence @12+2"],
+      ["await (x); '\\u12'; import.meta;", "Invalid escape sequence @12+4"],
+      ["await (x); a\\u12; import.meta;", "Invalid Unicode escape sequence @13+3"],
+      [
+        "await (x); \\u{61}wait; import.meta;",
+        "Keywords cannot contain escape characters @11+10",
+        "Unexpected token @21+1",
+      ],
+      ["await (x); 0x; import.meta;", "Invalid Character `;` @13+0"],
+      ["await (x); 1e; import.meta;", "Invalid Character `;` @13+0"],
+      ["await (x); 0_1; import.meta;", "Invalid characters after number @12+1"],
+      ["await (x); 1_000_; import.meta;", "Invalid Character `;` @17+0"],
+      [
+        "await (x); 09.5; import.meta;",
+        "Decimals with leading zeros are not allowed in strict mode @11+4 help: remove the leading zero",
+      ],
+      ["await (x); 1n2; import.meta;", "Invalid characters after number @13+1"],
+      ["await (x); 01n; import.meta;", "Invalid characters after number @13+1"],
+      ["await (x); #; import.meta;", "Invalid Character `;` @12+1"],
+      ["await (x); a # b; import.meta;", "Invalid Character ` ` @14+1"],
+      [
+        "await (x); /a/gg; import.meta;",
+        "Flag g is mentioned twice in regular expression literal @15+1 help: Remove the duplicated flag here",
+        "Unexpected token @11+5",
+      ],
+      [
+        "await (x); /a/x; import.meta;",
+        "Unexpected flag x in regular expression literal @14+1 help: The allowed flags are `gimsuydv`",
+        "Unexpected token @11+4",
+      ],
+      ["await (x); /a; import.meta;", "Unterminated regular expression @11+17", "Unexpected token @11+17"],
+      ["await (x); 'a; import.meta;", "Unterminated string @11+17"],
+      ["await (x); `a; import.meta;", "Unterminated string @11+17"],
+      ["await (x); /* a; import.meta;", "Unterminated multiline comment @11+19"],
+      [
+        "await (x); v\\u0061r; import.meta;",
+        "Keywords cannot contain escape characters @11+8",
+        "Unexpected token @19+1",
+      ],
+      ["await (x); a <!--b\nimport.meta;", "HTML comments are not allowed in modules @13+4"],
+      [
+        "await (/(/); import.meta;",
+        "Invalid regular expression: Unterminated capturing group @8+1 help: Add the missing closing delimiter",
+      ],
+      [
+        "await (/(/); await (y); import.meta;",
+        "Invalid regular expression: Unterminated capturing group @8+1 help: Add the missing closing delimiter",
+      ],
+      [
+        "await (x); new.target; export = a;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "Unexpected token @30+1",
+      ],
+      [
+        "await (x); new.target; import a = require('a');",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "TS(8002) 'import ... =' can only be used in TypeScript files. @23+24 help: TypeScript transforms 'import ... =' to 'const ... ='",
+      ],
+      [
+        "await using a = b; await (x); new.target;",
+        "Unexpected new.target expression @30+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; for await (a of b);",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @27+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "f(await (x), import.meta), new.target;",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x) => 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x) => 1; new.target; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await /k/ 1; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      ["await <a>b</a>; import.meta;", "Unterminated regular expression @11+18", "Unexpected token @11+18"],
+      ["await <a />; import.meta;", "Unexpected token @10+1"],
+      ["await <a />; new.target; import.meta;", "Unexpected token @10+1"],
+      ["await /k/; import.meta;", "Unexpected token @9+1"],
+      ["await /k/.test(a); import.meta;", "Unexpected token @9+1"],
+      ["await /=k/; import.meta;", "Unexpected token @10+1"],
+      ["f(await /k/); import.meta;", "Unexpected token @11+1"],
+      ["f(await <a />); import.meta;", "Unexpected token @12+1"],
+      ["await <a></a>; import.meta;", "Unexpected token @10+1"],
+      ["await <></>; import.meta;", "Unexpected token @7+1"],
+      [
+        "await <a b='c' />; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      ["await <a>{b}</a>; import.meta;", "Unterminated regular expression @13+18", "Unexpected token @13+18"],
+      ["await <a>b</a>;", "Unterminated regular expression @11+5", "Unexpected token @11+5"],
+      ["x = await /k/; export {};", "Unexpected token @13+1"],
+      ["v\\u0061r;", "Keywords cannot contain escape characters @0+8", "Unexpected token @8+1"],
+      ["\\;", "Invalid Unicode escape sequence @1+1"],
+      [
+        "function () {} let a = ;",
+        "Expected function name @9+1 help: Function name is required in function declaration or named export",
+        "Unexpected token @23+1",
+      ],
+      ["cl\\u0061ss A {}", "Keywords cannot contain escape characters @0+10"],
+      [
+        "cl\\u0061ss A {} new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @0+10",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["x = { g\\u0065t a() {} };", "Keywords cannot contain escape characters @6+8"],
+      [
+        "x = { g\\u0065t a() {} }; new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @6+8",
+        "Unexpected new.target expression @25+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["\\u0061sync function f() {}", "Keywords cannot contain escape characters @0+10"],
+      [
+        "\\u0061sync function f() {} new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @0+10",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["v\\u0061r a;", "Keywords cannot contain escape characters @0+8"],
+      [
+        "v\\u0061r a; new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @0+8",
+        "Unexpected new.target expression @12+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["c\\u006fnst a = 1;", "Keywords cannot contain escape characters @0+10"],
+      ["\\u0069f (a) b;", "Keywords cannot contain escape characters @0+7"],
+      ["x = n\\u0065w A;", "Keywords cannot contain escape characters @4+8"],
+      [
+        "x = n\\u0065w A; new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @4+8",
+        "Unexpected new.target expression @16+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["x = typ\\u0065of a;", "Keywords cannot contain escape characters @4+11"],
+      ["x = tru\\u0065;", "Keywords cannot contain escape characters @4+9"],
+      ["x = th\\u0069s;", "Keywords cannot contain escape characters @4+9"],
+      ["x = n\\u0075ll;", "Keywords cannot contain escape characters @4+9"],
+      ["f\\u0075nction f() {}", "Keywords cannot contain escape characters @0+13"],
+      ["r\\u0065turn;", "Keywords cannot contain escape characters @0+11"],
+      ["class A { st\\u0061tic a; }", "Keywords cannot contain escape characters @10+11"],
+      [
+        "class A { st\\u0061tic a; } new.target; let zz; let zz;",
+        "Keywords cannot contain escape characters @10+11",
+        "Unexpected new.target expression @27+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      ["class A { g\\u0065t a() {} }", "Keywords cannot contain escape characters @10+8"],
+      ["for (a \\u006ff b);", "Keywords cannot contain escape characters @7+7"],
+      ["for (a \\u0069n b);", "Keywords cannot contain escape characters @7+7"],
+      ["\\u{61}wait x;", "Keywords cannot contain escape characters @0+10"],
+      ["\\u{61}wait; export {};", "Keywords cannot contain escape characters @0+10", "Unexpected token @10+1"],
+      ["\\u{61}wait (x); export {};", "Keywords cannot contain escape characters @0+10"],
+      ["\\u{61}wait x; export {};", "Keywords cannot contain escape characters @0+10"],
+      ["async function f() { \\u{61}wait x; }", "Keywords cannot contain escape characters @21+10"],
+      [
+        "async function f() { \\u{61}wait; }",
+        "Keywords cannot contain escape characters @21+10",
+        "Unexpected token @31+1",
+      ],
+      ["function* g() { yi\\u0065ld; }", "Keywords cannot contain escape characters @16+10"],
+      ["\\u0061sync () => 1;", "Keywords cannot contain escape characters @0+10"],
+      ["x = \\u0061sync () => 1;", "Keywords cannot contain escape characters @4+10"],
+      ["export {}; \\u{61}wait;", "Keywords cannot contain escape characters @11+10", "Unexpected token @21+1"],
+      ["im\\u0070ort 'a';", "Keywords cannot contain escape characters @0+11"],
+      ["exp\\u006frt {};", "Keywords cannot contain escape characters @0+11"],
+      ["import a fr\\u006fm 'a';", "Keywords cannot contain escape characters @9+9"],
+      ["import * \\u0061s a from 'a';", "Keywords cannot contain escape characters @9+7"],
+      ["export { a \\u0061s b }; var a;", "Keywords cannot contain escape characters @11+7"],
     ],
     "cjs": [
       ["await /k/;", "Unexpected token @9+1"],
@@ -16742,15 +18368,129 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
         "await using a = b;",
         "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
       ],
+      [
+        "for await (const a of b) {} await (x);",
+        "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "new.target; import.meta;",
+        "Unexpected import.meta expression @12+11 help: import.meta is only allowed in module code",
+      ],
+      [
+        "import.meta; new.target;",
+        "Unexpected import.meta expression @0+11 help: import.meta is only allowed in module code",
+      ],
+      ["new.target; export {};", "Cannot use export statement outside a module @12+6"],
+      ["export {}; new.target;", "Cannot use export statement outside a module @0+6"],
+      [
+        "await (x); new.target; import.meta;",
+        "Unexpected import.meta expression @23+11 help: import.meta is only allowed in module code",
+      ],
+      ["await (x); new.target; export {};", "Cannot use export statement outside a module @23+6"],
+      [
+        "new.target; await (x); import.meta;",
+        "Unexpected import.meta expression @23+11 help: import.meta is only allowed in module code",
+      ],
+      ["new.target; await (x); export {};", "Cannot use export statement outside a module @23+6"],
+      [
+        "await (x); import.meta; new.target;",
+        "Unexpected import.meta expression @11+11 help: import.meta is only allowed in module code",
+      ],
+      ["await (x); export {}; new.target;", "Cannot use export statement outside a module @11+6"],
+      [
+        "import.meta; await (x); new.target;",
+        "Unexpected import.meta expression @0+11 help: import.meta is only allowed in module code",
+      ],
+      [
+        "await (x); new.target; await y;",
+        "`await` is only allowed within async functions and at the top levels of modules @23+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "await x; new.target;",
+        "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
+      [
+        "new.target; await x;",
+        "`await` is only allowed within async functions and at the top levels of modules @12+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+      ],
     ],
     "jsx": [
       ["< />;", "Unexpected token @2+1"],
       ["<1 />;", "Unexpected token @1+1"],
       ["</>;", "Unexpected token @1+1"],
+      ["await <a />; import.meta;", "Unexpected token @10+1"],
     ],
     "mjs": [
       ["x = { await };", 'Expected `:` but found `}` @12+1 "`:` expected"'],
       ["{ class A extends await {} }", "Cannot use `await` as an identifier in an async context @18+5"],
+      [
+        "new.target;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; new.target;",
+        "Unexpected new.target expression @13+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "export {}; new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x);",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; import.meta;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; export {};",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); import.meta;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await (x); export {};",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); import.meta; new.target;",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); export {}; new.target;",
+        "Unexpected new.target expression @22+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "import.meta; await (x); new.target;",
+        "Unexpected new.target expression @24+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await (x); new.target; await y;",
+        "Unexpected new.target expression @11+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "await x; new.target;",
+        "Unexpected new.target expression @9+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
+      [
+        "new.target; await x;",
+        "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      ],
     ],
   };
 
@@ -17442,6 +19182,66 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "let instanceof a;",
       "await (x); import.meta;",
       "await <T>x;",
+      "declare function ();",
+      "declare function (): void;",
+      "export declare function ();",
+      "declare async function ();",
+      "await (x); new.target; import.meta;",
+      "await (x); new.target; export {};",
+      "await (x); import.meta; new.target;",
+      "await (x); export {}; new.target;",
+      "await (x); new.target; await y;",
+      "await (x); { new.target; } import.meta;",
+      "await (x); () => new.target; import.meta;",
+      "await (x); class A { a = new.target; } import.meta;",
+      "await (x); class A { static { new.target; } } import.meta;",
+      "class A { a = new.target; }",
+      "class A { static { new.target; } }",
+      "{ await (x); } new.target; import.meta;",
+      "a; await (x); new.target; import.meta;",
+      "await (x); a; new.target; import.meta;",
+      "await (x); new.target; new.target; import.meta;",
+      "await (x); new.target; await (y); new.target; import.meta;",
+      "await + 1; new.target; import.meta;",
+      "await (x); let y: readonly number; import.meta;",
+      "await (x); function f(a?: number, b: number) {} import.meta;",
+      "await (x); static function f() {} import.meta;",
+      "await (x); abstract class A { abstract m() {} } import.meta;",
+      "await (x); import.meta; let y: readonly number;",
+      "await (x); interface A implements B {} import.meta;",
+      "await (x); class A { constructor(public a?, b) {} } import.meta;",
+      "await (x); let a?: number; import.meta;",
+      "await (x); let a!: number = 1; import.meta;",
+      "await (x); class A { declare a = 1; } import.meta;",
+      "await (x); class A<in T> {} function f<in T>() {} import.meta;",
+      "await (x); function f(this) {} x = (this) => 1; import.meta;",
+      "await (x); type A = { readonly m(): void }; import.meta;",
+      "await (x); export = a;",
+      "await (x); export import a = b.c; new.target;",
+      "await (x); export as namespace a; new.target;",
+      "await (x); import type a from 'a'; new.target;",
+      "await (x); export type { a }; new.target;",
+      "await (x); x = <T>a; let y: readonly number; import.meta;",
+      "await (x); declare function f() {}\nimport.meta;",
+      "await (x); new.target; export = a;",
+      "await (x); new.target; export declare const a: 1;",
+      "await <T>(x); new.target; import.meta;",
+      "await <T>x; new.target; import.meta;",
+      "await (x); declare namespace N { a; } import.meta;",
+      "await!;",
+      "await !(x); import.meta;",
+      "await !(x);",
+      "await !-x; import.meta;",
+      "await !\nx; import.meta;",
+      "await /k/g.test(a); import.meta;",
+      "await /=k/g; import.meta;",
+      "f(await /k/g); import.meta;",
+      "await /k/g;",
+      "function <T>() {}",
+      "declare function <T>();",
+      "export declare function <T>(a: T): T;",
+      "export default function <T>() {}",
+      "\\u{61}wait;",
     ],
     "ts tsx mts": [
       "using a = b; await using c = d; export {};",
@@ -17488,6 +19288,13 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "class W { static { static as any = 1; } }",
       "declare module 'w' { static as any = 1; }",
       "export {}; declare global { static as any = 1; }",
+      "await (x); new.target; import.meta;",
+      "await (x); import.meta;",
+      "await (x); export {};",
+      "await (x); a; import.meta;",
+      "await (x); let y: readonly number; export {};",
+      "declare namespace N { const a = await (x); } let y: readonly number; export {};",
+      "declare function ();",
     ],
     "mts": [
       "<T,>() => 1;",
@@ -17513,6 +19320,7 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "<a-b.c></a-b.c>;",
       "<a-b.c.d />;",
       "<a>{}</a>;",
+      "await (x); new.target; import.meta;",
     ],
     "js": [
       "(a ?? b) || c;",
@@ -17684,6 +19492,93 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "{ class A extends await {} }",
       "x = { await: 1 }; import.meta;",
       "x = { await() {} }; import.meta;",
+      "await++;",
+      "for (await of []) {}",
+      "({ await = 1 } = {});",
+      "{ x = { await }; }",
+      "class A { a = await x; }",
+      "class A { a = await; }",
+      "for await (const a of b) {} await x;",
+      "for await (const a of b) { await x; }",
+      "for await (const a of await b) {}",
+      "await (x); new.target; import.meta;",
+      "await (x); new.target; export {};",
+      "await (x); import.meta; new.target;",
+      "await (x); export {}; new.target;",
+      "await (x); new.target; await y;",
+      "await (x); { new.target; } import.meta;",
+      "await (x); () => new.target; import.meta;",
+      "await (x); class A { a = new.target; } import.meta;",
+      "await (x); class A { static { new.target; } } import.meta;",
+      "class A { a = new.target; }",
+      "class A { static { new.target; } }",
+      "{ await (x); } new.target; import.meta;",
+      "a; await (x); new.target; import.meta;",
+      "await (x); a; new.target; import.meta;",
+      "await (x); new.target; new.target; import.meta;",
+      "await (x); new.target; await (y); new.target; import.meta;",
+      "await + 1; new.target; import.meta;",
+      "await (x); a ?? b || c; import.meta;",
+      "await (x); function f() { await y; } import.meta;",
+      "await (x); for await (const a of b) {} import.meta;",
+      "await (x); return; import.meta;",
+      "await (x); function () {} import.meta;",
+      "await (x); /(/; import.meta;",
+      "await (x); import.meta; a ?? b || c;",
+      "class A { [await (x)] = 1; } new.target; import.meta;",
+      "await (x); import.meta; await (y), new.target;",
+      "await (x); export {}; await (y), new.target;",
+      "await (x); await y; await (z), new.target;",
+      "await (x); await y; new.target;",
+      "await (x); new.target; export const a = await (y);",
+      "await `k`; new.target; import.meta;",
+      "await [k]; new.target; import.meta;",
+      "await - k; new.target; import.meta;",
+      "await\nk; new.target; import.meta;",
+      "await (x); `\\u{110000}`; import.meta;",
+      "await (x); a as b; import.meta;",
+      "await (x); const a; import.meta;",
+      "await (x); class A { get constructor() {} } import.meta;",
+      "await (x); class A { static prototype() {} } import.meta;",
+      "await (x); x = { get a(b) {} }; import.meta;",
+      "await (x); x = { set a() {} }; import.meta;",
+      "await (x); for (async of b); import.meta;",
+      "await (x); if (a) class A {} import.meta;",
+      "await (x); a?.`b`; import.meta;",
+      "await (x); -a ** b; import.meta;",
+      "await (x); [a, ...b,] = c; import.meta;",
+      "await (x); function f(...a = 1) {} import.meta;",
+      "await (x); ({ ...a, } = b); import.meta;",
+      "await (x); new import('a'); import.meta;",
+      "await (x); throw\na; import.meta;",
+      "await (x); using a = b; import.meta;",
+      "await (x); @a export @b class A {} import.meta;",
+      "await (x); x = <a b={} />; import.meta;",
+      "await (x); function f() { for await (a of b); } import.meta;",
+      "await (x); function f() { await using a = b; } import.meta;",
+      "await (x); function f() { yield 1; } import.meta;",
+      "await (x); /[b-a]/; import.meta;",
+      "await (x); x = <a b='\\u{110000}' />; import.meta;",
+      "await (x); x`\\u{110000}`; import.meta;",
+      "await (x); cl\\u0061ss A {} import.meta;",
+      "await (x); x = { g\\u0065t a() {} }; import.meta;",
+      "await (x); \\u0061sync function f() {} import.meta;",
+      "await (x); new.target; await using a = b;",
+      "f(await (x), import.meta); new.target;",
+      "f(await (x), await y); new.target;",
+      "f(await y, await (x)); new.target;",
+      "await /k/g; import.meta;",
+      "await /k/g; new.target; import.meta;",
+      "await /k/g.test(a); import.meta;",
+      "await /=k/g; import.meta;",
+      "await <a>b</a>/g; import.meta;",
+      "import.meta; await <a />;",
+      "await x; await <a />;",
+      "await /k/\nimport.meta;",
+      "\\u{61}wait;",
+      "\\u{61}wait (x);",
+      "function f() { \\u{61}wait; }",
+      "yi\\u0065ld;",
     ],
     "cts": [
       "for (var a = 1 in {}) {}",
@@ -17706,9 +19601,12 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "async function f() { await k; }",
       "a <!--b",
       "let await;",
+      "new.target;",
+      "await (x); new.target;",
+      "new.target; await (x);",
     ],
-    "jsx": ["< a />;"],
-    "mjs": ["await !x;", "a <!--b"],
+    "jsx": ["< a />;", "await (x); new.target; import.meta;"],
+    "mjs": ["await !x;", "a <!--b", "for await (const a of b) {} await !x;"],
   };
 
   test("every error of a file is printed like oxlint's, in its order", async () => {
@@ -17735,16 +19633,81 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
     expect(await run(files, oxlintrc)).toEqual({ errors: {}, exitCode: 0 });
   });
 
-  // What oxlint 1.87 prints and `bun lint` does not yet.
+  // What oxlint 1.87 prints and `bun lint` does not yet. Both refuse each of these files.
   const knownDifferences: [extension: string, code: string, ...errors: string[]][] = [
-    // `for await` does not tell oxc that the file is a module, so the `await` after it is a name.
+    // oxc has given up before the `export`, so the file is no module to it.
     [
       "js",
-      "for await (const a of b) {} await !x;",
+      "for await (const a of b) {} await !x; export {};",
       "Expected a semicolon or an implicit semicolon after a statement, but found none @33+0 help: Try inserting a semicolon here",
       "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
     ],
-    ["js", "class A { a = await !x; }", 'Expected `;` but found `!` @20+1 "`;` expected"'],
+    [
+      "js",
+      "for await (const a of b) {} a b; export {};",
+      "Expected a semicolon or an implicit semicolon after a statement, but found none @29+0 help: Try inserting a semicolon here",
+      "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+    ],
+    // The second `await` is a reference, so oxc reads the statement again once it knows that the file is a module.
+    ["js", "x = { await, b: await }; import.meta;", 'Expected `:` but found `,` @11+1 "`:` expected"'],
+    // After a name `<` compares. oxc reads the statement again, where an element starts.
+    ["js", "await < a; import.meta;", "Unexpected token @9+1"],
+    ["js", "await < a > b; import.meta;", "Unexpected token @11+17"],
+    [
+      "ts",
+      "await <T,>(x) => 1; import.meta;",
+      "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
+    ],
+    // `-->` at the start of a line.
+    [
+      "js",
+      "await (x);\n--> b\nimport.meta;",
+      "HTML comments are not allowed in modules @11+3",
+      "HTML comments are not allowed in modules @11+3",
+    ],
+    ["js", "\n--> b\nimport.meta;", "HTML comments are not allowed in modules @1+3"],
+    // `let` with an escape is a name.
+    [
+      "js",
+      "l\\u0065t a;",
+      "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+    ],
+    // The name as it is spelled.
+    ["js", "yi\\u0065ld; export {};", "The keyword 'yield' is reserved @0+10"],
+    // `new.target` in a declaration file.
+    [
+      "d.ts",
+      "new.target;",
+      "Unexpected new.target expression @0+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      "TS(1036) Statements are not allowed in ambient contexts. @0+11",
+    ],
+    [
+      "d.ts",
+      "declare const a: 1; new.target;",
+      "Unexpected new.target expression @20+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+      "TS(1036) Statements are not allowed in ambient contexts. @20+11",
+    ],
+    // What the lexer says next.
+    ["js", "await (x); 1__0; import.meta;", "Invalid Character `_` @13+0", "Invalid characters after number @13+1"],
+    ["js", "await (x); 3in []; import.meta;", "Invalid characters after number @12+2"],
+    ["js", "1__0; new.target; let zz; let zz;", "Invalid Character `_` @2+0", "Invalid characters after number @2+1"],
+    ["js", "3in []; new.target; let zz; let zz;", "Invalid characters after number @1+2"],
+    [
+      "js",
+      "await (x); \\; import.meta;",
+      "Invalid Unicode escape sequence @12+1",
+      "Expected a semicolon or an implicit semicolon after a statement, but found none @13+0 help: Try inserting a semicolon here",
+    ],
+    [
+      "js",
+      "1_; new.target; let zz; let zz;",
+      "Invalid Character `;` @2+0",
+      "Unexpected new.target expression @4+10 help: new.target is only allowed in constructors, functions, and class field initializers",
+    ],
+    // The second reading has `await` as a keyword.
+    ["js", "await (x), class await {}; import.meta;", "Cannot use `await` as an identifier in an async context @17+5"],
+    // Type parameters that do not start.
+    ["ts", "declare function <;", "Unexpected token @18+1"],
   ];
   test.todo.each(knownDifferences)("%s: %j", async (extension, code, ...errors) => {
     const name = `a.${extension}`;

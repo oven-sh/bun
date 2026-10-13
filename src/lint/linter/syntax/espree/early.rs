@@ -739,13 +739,7 @@ impl<'a> Checks<'a, '_> {
                         _ if strings::contains_js_line_break(between) => {}
                         _ if self.is_oxc => {
                             let after = start + "let".len() as u32;
-                            let message = "Expected a semicolon or an implicit semicolon after a statement, but found none";
-                            let label = crate::span::Span::new(after, after);
-                            self.report(
-                                SyntaxError::of_oxc(label, message)
-                                    .help("Try inserting a semicolon here")
-                                    .stage(Stage::Fatal),
-                            );
+                            self.report(SyntaxError::semicolon_after(after));
                         }
                         _ => self.unexpected(next),
                     }
@@ -1097,12 +1091,7 @@ impl<'a> Checks<'a, '_> {
         for (i, flag) in flags.iter().enumerate() {
             let at = first_flag + i as u32;
             if !flag.is_ascii() {
-                let message = "Expected a semicolon or an implicit semicolon after a statement, but found none";
-                return self.report(
-                    SyntaxError::of_oxc(Span::empty(at), message)
-                        .help("Try inserting a semicolon here")
-                        .stage(Stage::Fatal),
-                );
+                return self.report(SyntaxError::semicolon_after(at));
             }
             let (message, help) = if !strings::contains_char(b"gimsuydv", *flag) {
                 let message = format!(
@@ -1433,8 +1422,9 @@ impl<'a> Checks<'a, '_> {
             if is_in_block(Node::Expr(it)) {
                 let start = it.span().start;
                 let keyword = crate::span::Span::new(start, start + 5);
-                let message = b"Cannot use await in class static initialization block";
-                self.fail_for(keyword, message.to_vec());
+                let message = "Cannot use await in class static initialization block";
+                // oxc says it when it has the operand.
+                self.report(SyntaxError::of_oxc(keyword, message).noticed_at(it.span().end));
             }
         }
         for it in self.file.stmts_of_kind(StmtTag::Var) {

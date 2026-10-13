@@ -529,8 +529,8 @@ fn report_magic<'a, R: Rule>(at: Span, sign: Option<u8>, literal: Literal<'a>, c
     let report = match literal.number {
         Some(number) if at == unsigned => cx.report(number, NO_MAGIC),
         // oxlint's rule is called with the number.
-        Some(number) if cx.language().is_oxlint => cx.report(at, NO_MAGIC).listened_on(number),
-        _ => cx.report(at, NO_MAGIC),
+        Some(number) => cx.report(at, NO_MAGIC).called_with(number),
+        None => cx.report(at, NO_MAGIC),
     };
     report.data("raw", raw);
 }

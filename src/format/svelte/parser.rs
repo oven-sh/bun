@@ -1347,14 +1347,14 @@ impl<'a> Parser<'a, '_> {
     /// `{` ends is read by `read_selector_list`, which throws at a `<`.
     ///
     /// `None` also where Svelte reads on and the formatter for style sheets does not leave a `</style` as it is, or does not
-    /// read on: one that is not in a string, a comment or `url(..)`, and a string that goes on in the next line.
+    /// read on: one that is not in a string, a comment or `url(..)`, and a string or a `url(..)` that goes on in the next line.
     fn end_of_css_value(&self, start: usize, is_prelude: bool) -> Option<usize> {
         let text = &self.text[..self.len];
         let (mut at, mut is_in_url, mut quote, mut has_angle) = (start, false, None, false);
         loop {
             at += strings::index_of_any(text.get(at..)?, b"\\\"'()/;{}<\n")?;
             match text[at] {
-                b'\n' if quote.is_some() => return None,
+                b'\n' if quote.is_some() || is_in_url => return None,
                 b'<' if quote.is_none() && !is_in_url => {
                     if text[at..].starts_with(b"</style") {
                         return None;
@@ -1399,6 +1399,8 @@ impl<'a> Parser<'a, '_> {
             match rest.first()? {
                 b'<' if depth == 0 && rest.starts_with(b"</style") => return Some(at),
                 b'}' => depth = depth.checked_sub(1)?,
+                // No selector, no declaration.
+                b'{' | b';' => return None,
                 // `read_at_rule`: the name is not part of the prelude.
                 b'@' => {
                     let name = rest[1..]
@@ -1588,7 +1590,12 @@ impl<'a> Parser<'a, '_> {
             if !self.matches(b"as") {
                 // It may have been taken for an assertion of TypeScript.
                 if let Some(first) = parsed.first {
-                    expression = first;
+                    // With the comments before it. Nothing is behind it.
+                    let (start, end) = (expression.outer.start, first.span.end);
+                    expression = Expression {
+                        outer: Span { start, end },
+                        ..first
+                    };
                 }
                 if let Some((end, annotation)) = parsed.assertion {
                     expression.span.end = end;

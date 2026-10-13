@@ -9244,15 +9244,16 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
     true
 }
 
-/// Blocks until `fd` takes a write, or has an error for the next write to report.
+/// Blocks until `fd` takes a write; `false` if the next write would only report an error (the reader is gone).
 #[cfg(unix)]
-pub fn wait_for_writable(fd: Fd) -> Maybe<()> {
+pub fn wait_for_writable(fd: Fd) -> Maybe<bool> {
     let mut pfd = [posix::PollFd {
         fd: fd.native(),
         events: posix::POLL_OUT,
         revents: 0,
     }];
-    posix::poll(&mut pfd, -1).map(|_| ())
+    posix::poll(&mut pfd, -1)?;
+    Ok(pfd[0].revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) == 0)
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`

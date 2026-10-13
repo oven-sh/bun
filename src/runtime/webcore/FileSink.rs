@@ -232,11 +232,14 @@ fn __bun_flush_stdio_sink(global: &JSGlobalObject, fd: Fd) {
         let this = &raw mut (*sink).sink;
         let _guard = RefPtr::init_ref(this);
         while (*this).writer.get().has_pending_data() && !(*this).done.get() {
-            FileSink::flush_buffered(this);
-            let writer = (*this).writer.get();
-            if writer.has_pending_data() && sys::wait_for_writable(writer.get_fd()).is_err() {
+            // A reader that is gone is left for the event loop to report, as it does without the console.
+            if !matches!(
+                sys::wait_for_writable((*this).writer.get().get_fd()),
+                Ok(true)
+            ) {
                 break;
             }
+            FileSink::flush_buffered(this);
         }
     }
 }
@@ -1756,7 +1759,12 @@ impl FlushPendingTask {
         // SAFETY: balances the `ref_()` taken in `run_pending_later()` when
         // this task was enqueued; `this` is live for at least that ref.
         let _guard = unsafe { RefPtr::from_raw(this) };
-        if had {
+        // SAFETY: `_guard` keeps `this` live.
+        let sink = unsafe { &*this };
+        // A `write()` has since joined the pending slot and backed up: `on_write` settles it once those bytes are out too.
+        let backed_up_again = sink.writer.get().has_pending_data()
+            && !matches!(sink.pending.get().result, streams::Writable::Err(_));
+        if had && !backed_up_again {
             // SAFETY: `this` is the canonical `*mut FileSink` recovered via
             // `from_field_ptr!` from the embedded `run_pending_later` task;
             // `_guard` keeps it live for the call.

@@ -47,9 +47,7 @@ describe("live worker output", () => {
 
   test("does not treat a marker in the middle of a line as a command", () => {
     const filter = createLiveOutputFilter({ github: true, buildkite: false });
-    expect(filter("literal ") + filter("::group::not a file\n") + filter.end()).toBe(
-      "literal ::group::not a file\n",
-    );
+    expect(filter("literal ") + filter("::group::not a file\n") + filter.end()).toBe("literal ::group::not a file\n");
   });
 });
 

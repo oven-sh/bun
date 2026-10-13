@@ -47,18 +47,38 @@ impl<'s> Program<'s> {
     /// (`has_order_dependent_assignment_marks`). A task is invalid if it walked a function of a
     /// file it was visiting that is inside or around one that an earlier task of the step walked,
     /// on demand. Retried, it finds those walks published, with what was evaluated along with them.
-    pub fn validate(&self, finished: &[Finished<'s>]) -> Vec<bool> {
+    ///
+    /// Likewise for the list of properties that an intersection keeps (`Finished::listings`). A
+    /// retried task finds the list in the tables that the valid tasks published.
+    /// `is_published`: whether the tasks of this round publish their tables. If not, a retried
+    /// task could not find the list of a valid one: the tasks that noted a list of an
+    /// intersection that an invalid task noted are invalid too, and what the round noted is
+    /// forgotten. A round of retries publishes.
+    pub fn validate(&self, finished: &[Finished<'s>], is_published: bool) -> Vec<bool> {
         let mut serial = self.serial_variances.lock();
+        let mut listings = self.serial_listings.lock();
+        let compares_listings = !*self.listings_are_not_compared.lock();
         let mut walked: Vec<(FileId, Node)> = Vec::new();
-        (finished.iter())
+        let mut invalid: Vec<bool> = (finished.iter())
             .map(|finished| {
                 let is_invalid = (finished.order_dependent_variances.iter()).any(|it| {
                     serial
                         .get(&it.sym)
                         .is_some_and(|first| it.conflicts_with(first))
                 });
-                if is_invalid || self.has_walked_across_earlier_walk(finished, &walked) {
+                // A task before it in the serial order assigned the other list: this one would
+                // have found that.
+                let has_another_list = compares_listings
+                    && (finished.listings.iter())
+                        .any(|it| listings.get(&it.0).is_some_and(|first| first.0 != it.1));
+                if is_invalid
+                    || has_another_list
+                    || self.has_walked_across_earlier_walk(finished, &walked)
+                {
                     return true;
+                }
+                for it in &finished.listings {
+                    listings.entry(it.0).or_insert((it.1, is_published));
                 }
                 for it in &finished.order_dependent_variances {
                     serial.entry(it.sym).or_insert(it.variances);
@@ -66,7 +86,43 @@ impl<'s> Program<'s> {
                 walked.extend(finished.assignments_walked.iter().map(|it| (it.0, it.1)));
                 false
             })
-            .collect()
+            .collect();
+        if !is_published {
+            // Of the intersections that an invalid task noted, and so on from the tasks that this
+            // makes invalid.
+            let mut noted_by_invalid: Vec<Sym> = Vec::new();
+            let mut has_grown = compares_listings;
+            while has_grown {
+                has_grown = false;
+                for (finished, is_invalid) in finished.iter().zip(&mut invalid) {
+                    let of = |it: &(Sym, bool)| noted_by_invalid.contains(&it.0);
+                    if !*is_invalid && finished.listings.iter().any(of) {
+                        (*is_invalid, has_grown) = (true, true);
+                    }
+                    if *is_invalid {
+                        for it in &finished.listings {
+                            if !noted_by_invalid.contains(&it.0) {
+                                noted_by_invalid.push(it.0);
+                                has_grown = true;
+                            }
+                        }
+                    }
+                }
+            }
+            listings.retain(|_, first| first.1);
+        }
+        invalid
+    }
+
+    /// The guarantee that the retries of a step end: called when a round of retries left every
+    /// invalid task invalid.
+    pub fn stop_comparing_listings(&self) {
+        *self.listings_are_not_compared.lock() = true;
+    }
+
+    /// At the start of a step.
+    pub fn compare_listings(&self) {
+        *self.listings_are_not_compared.lock() = false;
     }
 
     /// `earlier`: `Finished::assignments_walked` of the valid tasks before it.
@@ -277,7 +333,9 @@ impl<'s> Checker<'_, 's> {
     /// - 1: a query has re-entered itself.
     /// - 2: an instantiation limit was reached, or the native stack ran low.
     /// - 4: a comparison was cut short because both types were deeply nested.
-    /// - 8: `check_file` does not check the statements of `file`.
+    /// - 8: `check_file` does not check the statements of `file`. Or the range assigned a list of
+    ///   properties to an intersection (`Finished::listings`): its tables of records are
+    ///   withheld, so the task of `file` could not find the list.
     pub fn check_statements_ahead(
         &mut self,
         file: FileId,
@@ -305,9 +363,12 @@ impl<'s> Checker<'_, 's> {
         let is_cut_short = self.ran_out_of_stack.replace(false)
             || self.cuts() != 0
             || self.instantiation_limit_hits != 0;
+        let has_listed = !self.task.listings.is_empty();
+        self.task.listings.clear();
         u8::from(self.task.closed_a_cycle)
             | u8::from(is_cut_short) << 1
             | u8::from(self.comparisons_of_deeply_nested_types != 0) << 2
+            | u8::from(has_listed) << 3
     }
 
     /// `checkSourceElements`

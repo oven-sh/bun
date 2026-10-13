@@ -28,6 +28,7 @@
 
 #if ENABLE(WEB_CRYPTO)
 
+#include "CryptoDigest.h"
 #include "ScriptExecutionContext.h"
 #include <openssl/err.h>
 
@@ -142,7 +143,7 @@ void CryptoAlgorithm::dispatchOperationInWorkQueue(WorkQueue& workQueue, ScriptE
     dispatchAlgorithmOperation(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
 }
 
-size_t CryptoAlgorithm::maxInputSizeForInlineOperation(CryptoAlgorithmIdentifier hashOrCipher)
+static size_t maxInputSizeForInlineOperation(CryptoAlgorithmIdentifier hashOrCipher)
 {
     switch (hashOrCipher) {
     case CryptoAlgorithmIdentifier::SHA_1:
@@ -151,12 +152,13 @@ size_t CryptoAlgorithm::maxInputSizeForInlineOperation(CryptoAlgorithmIdentifier
     case CryptoAlgorithmIdentifier::AES_CTR:
     case CryptoAlgorithmIdentifier::AES_CBC:
     case CryptoAlgorithmIdentifier::AES_GCM:
-    case CryptoAlgorithmIdentifier::AES_CFB:
     case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
         return 1024;
     case CryptoAlgorithmIdentifier::SHA_384:
     case CryptoAlgorithmIdentifier::SHA_512:
         return 256;
+    // AES-CFB-8 encrypts a whole block for every byte.
+    case CryptoAlgorithmIdentifier::AES_CFB:
     case CryptoAlgorithmIdentifier::SHA3_256:
     case CryptoAlgorithmIdentifier::SHA3_384:
     case CryptoAlgorithmIdentifier::SHA3_512:
@@ -169,7 +171,7 @@ size_t CryptoAlgorithm::maxInputSizeForInlineOperation(CryptoAlgorithmIdentifier
 template<typename ResultCallbackType, typename OperationType>
 static void runOrDispatchAlgorithmOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, ResultCallbackType&& callback, CryptoAlgorithm::ExceptionCallback&& exceptionCallback, OperationType&& operation)
 {
-    if (inputSize > CryptoAlgorithm::maxInputSizeForInlineOperation(hashOrCipher)) {
+    if (inputSize > maxInputSizeForInlineOperation(hashOrCipher)) {
         dispatchAlgorithmOperation(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
         return;
     }
@@ -177,13 +179,18 @@ static void runOrDispatchAlgorithmOperation(CryptoAlgorithmIdentifier hashOrCiph
     // A failed operation leaves its reason on the BoringSSL error queue of the thread it ran on, which is now the caller's.
     if (result.hasException())
         ERR_clear_error();
-    context.postTaskAfterYield([result = WTF::move(result), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto&) mutable {
+    Function<void(ScriptExecutionContext&)> settle = [result = WTF::move(result), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto&) mutable {
         if (result.hasException()) {
             exceptionCallback(result.releaseException().code(), ""_s);
             return;
         }
         callback(result.releaseReturnValue());
-    });
+    };
+    // A macro's loop turns only while the macro is waited for: what it started is posted the way the work queue posts it.
+    if (auto loopKind = context.currentLoopKind(); loopKind != BunLoopKind::Regular)
+        ScriptExecutionContext::postTaskTo(context.identifier(), loopKind, WTF::move(settle));
+    else
+        context.postTaskAfterYield(WTF::move(settle));
 }
 
 void CryptoAlgorithm::dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, Function<ExceptionOr<Vector<uint8_t>>()>&& operation)
@@ -194,6 +201,20 @@ void CryptoAlgorithm::dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, 
 void CryptoAlgorithm::dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, BoolCallback&& callback, ExceptionCallback&& exceptionCallback, Function<ExceptionOr<bool>()>&& operation)
 {
     runOrDispatchAlgorithmOperation(hashOrCipher, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
+}
+
+void CryptoAlgorithm::dispatchDigest(CryptoAlgorithmIdentifier hash, std::unique_ptr<PAL::CryptoDigest>&& digest, Vector<uint8_t>&& message, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
+{
+    if (!digest) {
+        exceptionCallback(OperationError, ""_s);
+        return;
+    }
+    auto inputSize = message.size();
+    dispatchOperation(hash, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+        [digest = WTF::move(digest), message = WTF::move(message)]() -> ExceptionOr<Vector<uint8_t>> {
+            digest->addBytes(message.begin(), message.size());
+            return digest->computeHash();
+        });
 }
 
 }

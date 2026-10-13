@@ -30,6 +30,7 @@
 
 #include "CryptoAlgorithmHmacKeyParams.h"
 #include "CryptoKeyHMAC.h"
+#include "OpenSSLUtilities.h"
 #include <variant>
 #include <wtf/text/Base64.h>
 
@@ -61,8 +62,10 @@ CryptoAlgorithmIdentifier CryptoAlgorithmHMAC::identifier() const
 // On top of the message HMAC hashes three blocks (the two pads and the inner digest), and a key longer than a block.
 static size_t hashedSize(const CryptoKeyHMAC& key, size_t messageSize)
 {
-    auto hash = key.hashAlgorithmIdentifier();
-    size_t blockSize = hash == CryptoAlgorithmIdentifier::SHA_384 || hash == CryptoAlgorithmIdentifier::SHA_512 ? 128 : 64;
+    auto* digest = digestAlgorithm(key.hashAlgorithmIdentifier());
+    if (!digest)
+        return std::numeric_limits<size_t>::max();
+    size_t blockSize = EVP_MD_block_size(digest);
     size_t keySize = key.key().size();
     return messageSize + 3 * blockSize + (keySize > blockSize ? keySize : 0);
 }

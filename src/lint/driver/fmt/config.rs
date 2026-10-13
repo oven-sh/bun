@@ -2036,6 +2036,14 @@ impl<'c> Configs<'c> {
                 _ => {}
             }
         }
+        // `svelte = false` leaves the files alone with every config, also with the `parser` that the README of the plugin has for
+        // them.
+        if resolved.options.parser.as_deref() == Some(b"svelte")
+            && !resolved.options.svelte.is_on
+            && self.svelte_of_flags(path) == Some(false)
+        {
+            resolved.options.parser = None;
+        }
         if !is_oxfmt
             && resolved.options.parser.is_none()
             && let Some(parser) = path.and_then(super::files::parser_by_interpreter)

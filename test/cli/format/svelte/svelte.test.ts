@@ -1039,6 +1039,27 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         null,
       ],
       ['<script type="module">let  b=1</script>\n', '<script type="module">\n  let b = 1;\n</script>\n', null],
+      // A `type` that says nothing: it is code if it can be read as code.
+      [
+        '<script type="text/partytown">let  b=1</script>\n',
+        '<script type="text/partytown">\n  let b = 1;\n</script>\n',
+        null,
+      ],
+      [
+        '<script type="text/ecmascript">let  b=1</script>\n',
+        '<script type="text/ecmascript">\n  let b = 1;\n</script>\n',
+        null,
+      ],
+      [
+        '<script type="application/ecmascript">let  b=1</script>\n',
+        '<script type="application/ecmascript">\n  let b = 1;\n</script>\n',
+        null,
+      ],
+      [
+        '<script type="x-shader/x-vertex">attribute vec4 b;</script>\n',
+        '<script type="x-shader/x-vertex">attribute vec4 b;</script>\n',
+        null,
+      ],
     ],
     "a style sheet ends between two rules": [
       [

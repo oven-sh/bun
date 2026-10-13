@@ -24,6 +24,8 @@ pub(crate) enum Code<'a> {
 pub(crate) enum Parser {
     TypeScript,
     BabelTs,
+    /// The same for what may be no code, by its `type`. If it cannot be parsed it is none, and stays as it is written.
+    BabelTsIfCode,
     Json,
     Css,
     Scss,

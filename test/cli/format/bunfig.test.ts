@@ -488,6 +488,40 @@ let a = 1;
     expect(result.exitCode).toBe(2);
   });
 
+  test("leaves the files alone next to the `parser` that the plugin's README has for them", async () => {
+    const overrides = [{ files: "*.svelte", options: { parser: "svelte" } }];
+    const files = {
+      ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-svelte"], overrides }) + "\n",
+      ...bunfig("svelte = false"),
+      "src/a.svelte": input,
+      "src/b.js": "b;\n",
+    };
+    const untouched = { files: { "src/a.svelte": input, "src/b.js": "b;\n" } };
+    const [written, checked, named] = await Promise.all([
+      format(files, ["src"]),
+      format(files, ["--check", "src"]),
+      format(files, ["src/a.svelte"]),
+    ]);
+    expect(written).toMatchObject({ stderr: "", ...untouched, exitCode: 0 });
+    expect(checked).toMatchObject({ stderr: "", ...untouched, exitCode: 0 });
+    // As without the `parser`.
+    const noParser = (cwd: string) =>
+      `error: No parser could be inferred for file "${join(cwd, "src", "a.svelte")}".\n`;
+    expect(named).toMatchObject({ stderr: noParser(named.cwd), ...untouched, exitCode: 2 });
+
+    using dir = tempDir("bun-format-bunfig", files);
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", "--stdin-filepath", "src/a.svelte"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: new Blob([input]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: noParser(String(dir)), exitCode: 2 });
+  });
+
   test("--parser svelte is refused while it is off", async () => {
     const message =
       "error: Cannot use --parser svelte while Svelte is off (--no-svelte, or svelte = false in bunfig.toml).\n";

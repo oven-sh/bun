@@ -1,7 +1,7 @@
 //! The code in a component: the plugin's `embed.ts`, from `textToDoc` on.
 
 use super::doc::{self, Brace, Code, Js, JsKind, Parser};
-use super::print::preformatted_body;
+use super::print::{lines_as_they_are, preformatted_body};
 use crate::html::js::{self, Hug, Parse, Piece, SourceType, Syntax};
 use crate::html::writer::Writer;
 use crate::js::comments::Comment;
@@ -15,6 +15,7 @@ use crate::syntax_error::{Message, SyntaxError};
 use crate::{FormatError, write};
 use bun_core::strings;
 use bun_lint::linter::{TypesInJavaScript, refusal_of_prettier};
+use std::borrow::Cow;
 use std::cell::RefCell;
 
 pub(crate) struct How<'o> {
@@ -416,7 +417,7 @@ fn write_body(
     };
     let written = match parser {
         Parser::TypeScript => program(Syntax::TypeScript, out),
-        Parser::BabelTs => program(Syntax::BabelTs, out),
+        Parser::BabelTs | Parser::BabelTsIfCode => program(Syntax::BabelTs, out),
         Parser::Json => write_printed_text(out, how.options, |options, printed| {
             let parser = crate::json::Parser::Json;
             crate::json::format(content, parser, options, &mut Default::default(), printed)
@@ -430,9 +431,13 @@ fn write_body(
         out.end_indent();
     }
     out.hardline();
-    // The plugin writes the error to stderr, and leaves what is in the tag as it is.
+    // The plugin writes the error to stderr, and leaves what is in the tag as it is, but for the line breaks at its ends. It
+    // does so with a shader in a `x-shader/x-vertex` too, in which nothing is wrong.
     let is_written = written == Ok(true);
-    if let Err((message, at)) = written {
+    let is_code = parser != Parser::BabelTsIfCode;
+    if let Err((message, at)) = written
+        && is_code
+    {
         how.unformatted.borrow_mut().push((message, start + at));
     }
     if !out.end_attempt(attempt, is_written) {
@@ -440,7 +445,11 @@ fn write_body(
             code: &mut |_, _| {},
             stack: how.stack,
         };
-        doc::write(preformatted_body(content), out, &mut write);
+        let as_it_is = match is_code {
+            true => preformatted_body(content),
+            false => lines_as_they_are(&Cow::Borrowed(content)),
+        };
+        doc::write(as_it_is, out, &mut write);
     }
 }
 

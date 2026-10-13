@@ -53,13 +53,14 @@ function fixture(opts: {
     });
     // Only the abandoned upload may keep the process alive.
     server.unref();
-    const client = new Bun.S3Client({
+    const credentials = {
       endpoint: "http://127.0.0.1:" + server.port,
       bucket: "bucket",
       accessKeyId: "key",
       secretAccessKey: "secret",
       region: "us-east-1",
-    });
+    };
+    const client = new Bun.S3Client(credentials);
     const partSize = 5 * 1024 * 1024;
     const opts = { partSize, queueSize: 2, retry: ${opts.retry ?? 0} };
     const deadline = Date.now() + 4_000;
@@ -98,7 +99,7 @@ async function run(opts: Parameters<typeof fixture>[0]) {
 }
 
 // Uploads a stream that yields one full part, waits for `before`, then errors.
-const failingStream = (before: string) => `
+const failingStream = (before: string, upload = `client.write("key", new Response(stream), opts)`) => `
   let pulls = 0;
   const stream = new ReadableStream({
     async pull(controller) {
@@ -110,7 +111,7 @@ const failingStream = (before: string) => `
       controller.error(new Error("source failed"));
     },
   });
-  const result = await client.write("key", new Response(stream), opts).then(
+  const result = await ${upload}.then(
     () => "resolved",
     e => "rejected: " + e.message,
   );
@@ -141,6 +142,17 @@ test.concurrent.each([204, 404])("AbortMultipartUpload answered with %d is not r
   expect(
     await run({ body: failingStream(`reqs.part === 1`), waitFor: `reqs.abort > 0`, retry: 3, abortStatus }),
   ).toEqual({
+    stdout: `rejected: source failed\n{"create":1,"part":1,"complete":0,"abort":1,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+// The same failure in a fetch() upload. The fetch rejects with the stream's error. It used to
+// resolve a 500 response, and the error went to a second promise that nothing could reach.
+test.concurrent("fetch(s3://) rejects with the stream's error after a part and aborts the upload", async () => {
+  const upload = `fetch("s3://key", { method: "PUT", body: stream, s3: { ...credentials, ...opts } })`;
+  expect(await run({ body: failingStream(`reqs.part === 1`, upload), waitFor: `reqs.abort > 0` })).toEqual({
     stdout: `rejected: source failed\n{"create":1,"part":1,"complete":0,"abort":1,"put":0}\n`,
     stderr: "",
     exited: 0,

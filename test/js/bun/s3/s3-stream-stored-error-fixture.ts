@@ -19,6 +19,15 @@ function outcome<T>(promise: Promise<T>, resolved: (value: T) => string): Promis
   return promise.then(resolved, (error: { code?: string; name?: string }) => `rejected ${error.code ?? error.name}`);
 }
 
+// For a call that settles without I/O: one turn of the event loop is enough for it. A promise
+// that is still pending after the turn never settles.
+async function outcomeWithoutIO<T>(promise: Promise<T>, resolved: (value: T) => string): Promise<string> {
+  let result = "pending";
+  void outcome(promise, resolved).then(value => (result = value));
+  await new Promise(resolve => setImmediate(resolve));
+  return result;
+}
+
 async function count(stream: Body) {
   let bytes = 0;
   for await (const chunk of stream) bytes += chunk.length;
@@ -65,12 +74,13 @@ async function stored() {
       return new Response("", { headers: { ETag: '"etag"' } });
     },
   });
-  const client = new Bun.S3Client({
+  const destination = {
     endpoint: `http://127.0.0.1:${bucket.port}`,
     accessKeyId: "id",
     secretAccessKey: "secret",
     bucket: "bucket",
-  });
+  };
+  const client = new Bun.S3Client(destination);
   results["client.write(key, new Response(stream))"] = await outcome(
     client.write("copy", new Response(failed())),
     bytes => `resolved ${bytes} bytes`,
@@ -92,6 +102,18 @@ async function stored() {
     const attempt = () => outcome((async () => write(stream))(), bytes => `resolved ${bytes} bytes`);
     results[`${name}, twice`] = [await attempt(), await attempt()];
   }
+  // fetch() settles its own promise for an upload. It used to stay pending for a stream that had
+  // failed already.
+  const put = (body: Body | Blob) => fetch("s3://bucket/copy", { method: "PUT", body, s3: destination });
+  results["fetch('s3://', { method: 'PUT', body: stream })"] = await outcomeWithoutIO(
+    put(failed()),
+    response => `resolved ${response.status}`,
+  );
+  // An S3 file is sent as its stream.
+  results["fetch('s3://', { method: 'PUT', body: s3file })"] = await outcomeWithoutIO(
+    put(new Bun.S3Client({}).file("source")),
+    response => `resolved ${response.status}`,
+  );
   // Waits for requests in flight, so a PUT that went out is counted.
   await bucket.stop();
   results["requests the bucket got"] = puts;

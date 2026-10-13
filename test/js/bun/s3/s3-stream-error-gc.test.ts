@@ -149,6 +149,8 @@ test.concurrent("S3 stream that failed before anything read it rejects every con
     "client.write(key, new Response(stream)), twice": [rejected, "rejected TypeError"],
     "client.file(key).write(new Response(stream)), twice": [rejected, "rejected TypeError"],
     "Bun.write(s3file, new Response(stream)), twice": [rejected, "rejected TypeError"],
+    "fetch('s3://', { method: 'PUT', body: stream })": rejected,
+    "fetch('s3://', { method: 'PUT', body: s3file })": rejected,
     "requests the bucket got": [],
     "fetch(url, { method: 'POST', body: stream })": rejected,
     "complete requests the receiver got": 0,

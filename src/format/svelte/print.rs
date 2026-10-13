@@ -1258,11 +1258,16 @@ impl<'a, 'o> Printer<'a, 'o> {
             Some(it) => Doc::List(vec![Doc::Token("="), printer.print_js_in_braces(it)]),
             None => EMPTY,
         };
-        // The plugin puts every value in double quotes: `a='"'` becomes `a="""`.
+        // The plugin puts every value in double quotes: `a='"'` becomes `a="""`. And `<script lang=ts'>`, which is TypeScript to
+        // Svelte, becomes `lang="ts'"`, which is not: it looks at the text.
+        let quotes: &[u8] = match self.tree[owner].kind {
+            Kind::Script { .. } | Kind::StyleSheet { .. } => b"\"'",
+            _ => b"\"",
+        };
         if let Kind::Attribute { value, .. } | Kind::StyleDirective { value, .. } =
             &self.tree[id].kind
             && (value.parts().iter().filter_map(|&it| self.raw(it)))
-                .any(|it| strings::contains_char(it, b'"'))
+                .any(|it| strings::index_of_any(it, quotes).is_some())
         {
             return self.print_as_written(id);
         }

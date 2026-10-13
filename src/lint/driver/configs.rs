@@ -1337,8 +1337,10 @@ impl<'l> Loader<'l> {
         for (at, specifier) in options.plugin.iter().enumerate() {
             let written = options.plugins_of_bunfig.get(at);
             let mistake = |message: Vec<u8>| native::Mistake::new(message, written.map(|it| it.at));
-            // Of jsdoc and vue there is only the name here.
-            let is_built_in = |name: &[u8]| Plugin::spelled(name).any(|it| !it.has_no_rules());
+            // Of jsdoc and vue there is only the name here. oxlint keeps those names to itself all the same.
+            let is_built_in = |name: &[u8]| {
+                Plugin::spelled(name).any(|it| flavor == Flavor::Oxlint || !it.has_no_rules())
+            };
             let is_path = specifier.starts_with(b".") || paths::is_absolute(specifier);
             // As with ESLint, `perfectionist` is eslint-plugin-perfectionist.
             let long = plugin_longhand(specifier).filter(|_| !is_path);

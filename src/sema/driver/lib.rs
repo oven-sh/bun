@@ -301,8 +301,9 @@ pub struct PlanOptions {
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most. Each
     /// occupies memory.
     pub projects_at_once: usize,
-    /// A project with at most this many files of its own is small: see `projects_at_once`. As
-    /// many small projects are built at once as there are threads, each by one thread.
+    /// A project with at most this many files of its own is small: see `projects_at_once`. A
+    /// small project is built by one thread, and at most four times `projects_at_once` of them
+    /// at once, and no more than there are threads: each program occupies memory.
     pub files_of_a_small_project: usize,
     /// `Request::after_file` is only called for the files that are checked, not at the end for the
     /// declaration files and the JSON files that are not. Then nothing reads what the last step

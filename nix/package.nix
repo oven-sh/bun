@@ -7,7 +7,6 @@
   autoPatchelfHook,
   unzip,
   installShellFiles,
-  openssl,
   cctools,
   darwin,
   rcodesign,
@@ -34,7 +33,6 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     installShellFiles
   ]
   ++ lib.optionals stdenvNoCC.hostPlatform.isLinux [ autoPatchelfHook ];
-  buildInputs = [ openssl ];
 
   dontConfigure = true;
   dontBuild = true;

@@ -20,8 +20,11 @@ const res = await fetch(shasumsUrl);
 if (!res.ok) throw new Error(`${shasumsUrl} returned ${res.status}`);
 const shasums = new Map<string, string>();
 for (const line of (await res.text()).split("\n")) {
-  const [sha256, file] = line.trim().split(/\s+/);
-  if (file) shasums.set(file, sha256);
+  if (!line.trim()) continue;
+  // `<sha256>  <file>`, or `<sha256> *<file>` from `sha256sum --binary`.
+  const match = line.trim().match(/^([0-9a-fA-F]{64}) [ *](\S+)$/);
+  if (!match) throw new Error(`Unexpected line in ${shasumsUrl}: ${line}`);
+  shasums.set(match[2], match[1].toLowerCase());
 }
 
 for (const [system, source] of Object.entries<{ asset: string; sha256: string }>(sources.sources)) {

@@ -163,20 +163,18 @@ const entries: Entry[] = [
     }),
   },
   // What is only imported for its types is not in a bundle.
-  ...[".script", ".js"].map(
-    (extension): Entry => ({
-      name: `--loader ${extension}:ts, a file that is only imported for its types`,
-      wrong: `types${extension}`,
-      isIncluded: true,
-      loader: [extension, "ts"],
-      commands: withLoader,
-      main: () => [`main${extension}`],
-      files: (isCorrect, seen) => ({
-        [`main${extension}`]: `${seen}import type { N } from "./types${extension}";\nexport const m: N = 1;\n${run}`,
-        [`types${extension}`]: `export type N = number;\nexport const n: N = ${value(isCorrect)};\n`,
-      }),
+  ...[".script", ".js"].map((extension): Entry => ({
+    name: `--loader ${extension}:ts, a file that is only imported for its types`,
+    wrong: `types${extension}`,
+    isIncluded: true,
+    loader: [extension, "ts"],
+    commands: withLoader,
+    main: () => [`main${extension}`],
+    files: (isCorrect, seen) => ({
+      [`main${extension}`]: `${seen}import type { N } from "./types${extension}";\nexport const m: N = 1;\n${run}`,
+      [`types${extension}`]: `export type N = number;\nexport const n: N = ${value(isCorrect)};\n`,
     }),
-  ),
+  })),
   {
     // Without `allowJs`.
     name: "a JavaScript file with its declaration file",

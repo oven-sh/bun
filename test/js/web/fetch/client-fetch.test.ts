@@ -168,7 +168,7 @@ test.todo("multipart formdata base64", async () => {
   await using server = createServer(async (req, res) => {
     res.setHeader("content-type", "multipart/form-data; boundary=----formdata-bun-0.5786922755719377");
 
-    for (let offset = 0; offset < formRaw.length; ) {
+    for (let offset = 0; offset < formRaw.length;) {
       res.write(formRaw.slice(offset, (offset += 2)));
       await new Promise(resolve => setTimeout(resolve));
     }

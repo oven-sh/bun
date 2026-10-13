@@ -7010,7 +7010,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       expect(JSON.parse(sarif.raw).runs[0].tool.driver).toMatchObject({
         name: "bun lint",
         version: expect.not.stringContaining("1.87.0"),
-        informationUri: "https://bun.com/docs/runtime/lint",
+        informationUri: "https://bun.com/docs/lint",
         rules: [{ id: "eslint(no-var)" }, { id: "eslint(eqeqeq)" }, { id: "eslint(no-debugger)" }],
       });
       expect(JSON.parse(sarif.raw).runs[0].results.map((it: any) => [it.ruleId, it.level])).toEqual([

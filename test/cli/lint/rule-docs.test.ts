@@ -5,16 +5,21 @@ import { dirname, join } from "node:path";
 import {
   bodyFor,
   configFor,
+  examplesIn,
   examplesOf,
   generatedFor,
   indexFor,
+  lintExamples,
   pageNames,
   pageOf,
   pagesRoot,
   readPage,
   readRules,
+  reportsOf,
+  typed,
   writtenPart,
   type Example,
+  type Reports,
   type Rule,
 } from "../../../src/codegen/lint-rule-docs.ts";
 
@@ -34,23 +39,14 @@ beforeAll(async () => {
   for (const rule of rules) byPage.set(pageOf(rule), rule);
 });
 
-/** `compilerOptions` for the examples of rules that need types. */
-const typed = {
-  strict: true,
-  noEmit: true,
-  target: "esnext",
-  module: "esnext",
-  moduleResolution: "bundler",
-  jsx: "preserve",
-  lib: ["esnext", "dom"],
-  skipLibCheck: true,
-};
+const recorded: Reports = JSON.parse(readFileSync(join(pagesRoot, "reports.json"), "utf8"));
 
 const text = (page: string) => readFileSync(join(pagesRoot, page + ".mdx"), "utf8").replaceAll("\r\n", "\n");
 
 describe("docs/lint/rules", () => {
   test("every rule has a page and every page has a rule", () => {
     expect(pageNames()).toEqual([...byPage.keys()].sort());
+    expect(Object.keys(recorded).filter(page => !byPage.has(page))).toEqual([]);
   });
 
   test("frontmatter is valid and up to date", () => {
@@ -152,123 +148,30 @@ describe("docs/lint/rules", () => {
     const examples: Example[] = [];
     for (const name of names) {
       if (!byPage.has(name)) continue;
-      const page = readPage(text(name));
-      if (!page) continue;
-      const firstLine = text(name).length
-        ? text(name)
-            .slice(0, text(name).length - page.body.length)
-            .split("\n").length
-        : 1;
-      const found = examplesOf(name, page.body, firstLine);
+      const found = examplesIn(name, text(name));
+      if (!found) continue;
       wrong.push(...found.problems.map(it => `${name}: ${it}`));
       examples.push(...found.examples);
     }
 
-    using dir = tempDir("bun-lint-rule-docs", {
-      "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }),
-    });
-    const directoryOf = (it: Example) => join(String(dir), `${it.page.replaceAll("/", "__")}__${it.line}`);
-    const put = (path: string, content: string) => (
-      mkdirSync(dirname(path), { recursive: true }),
-      writeFileSync(path, content)
-    );
+    using dir = tempDir("bun-lint-rule-docs", {});
+    const outcomes = await lintExamples(String(dir), examples, byPage, lint);
     for (const it of examples) {
-      const rule = byPage.get(it.page)!;
-      for (const [name, content] of Object.entries(it.files)) put(join(directoryOf(it), name), content);
-      for (const [name, version] of Object.entries(it.packages ?? {}))
-        put(join(directoryOf(it), "node_modules", name, "package.json"), JSON.stringify({ name, version }));
-      // Escape `*/` in options like `**/*.js`, or it would close the comment.
-      const setting = JSON.stringify(["error", ...it.options]).replaceAll("*/", "*\\/");
-      put(join(directoryOf(it), it.filename), `${it.code}\n/* eslint ${rule.id}: ${setting} */\n`);
-      if (!rule.type_aware) continue;
-      const compilerOptions = { ...typed, ...it.compilerOptions };
-      put(join(directoryOf(it), "tsconfig.json"), JSON.stringify({ compilerOptions, include: ["."] }));
+      const { reports, error } = outcomes.get(it)!;
+      const given = it.config === "oxlint" ? ", with an oxlint config" : "";
+      const where = `${it.page}: line ${it.line}${it.options.length ? ` with ${JSON.stringify(it.options)}` : ""}${given}`;
+      if (error) wrong.push(`${where}: ${error}`);
+      else if (it.want === "good" && reports.length) wrong.push(`${where}: reported: ${reports[0][4]}`);
+      else if (it.want === "bad" && !reports.length) wrong.push(`${where}: not reported`);
+      else if (it.count !== undefined && reports.length !== it.count)
+        wrong.push(`${where}: ${reports.length} reports, not ${it.count}`);
     }
 
-    // Two runs for most examples: one without types, one with. Each `root` example gets its own run.
-    const native = examples.filter(it => it.config !== "oxlint");
-    const together = native.filter(it => !it.root);
-    const runs = [
-      ...[false, true].map(typed => ({
-        cwd: String(dir),
-        typed,
-        part: together.filter(it => byPage.get(it.page)!.type_aware === typed),
-      })),
-      ...native
-        .filter(it => it.root)
-        .map(it => ({ cwd: directoryOf(it), typed: byPage.get(it.page)!.type_aware, part: [it] })),
-    ];
-    for (const it of examples)
-      if (it.root && !it.files["package.json"]) put(join(directoryOf(it), "package.json"), "{}");
-    for (const { cwd, typed, part } of runs) {
-      const paths = part.map(it => directoryOf(it).slice(cwd.length + 1) || ".");
-      const { stdout, stderr } = await lint(cwd, ["-f", "json", ...(typed ? ["--type-aware"] : []), ...paths]);
-      let report: {
-        filePath: string;
-        messages: { ruleId: string | null; fatal?: boolean; message: string; line: number }[];
-      }[];
-      try {
-        report = JSON.parse(stdout);
-      } catch {
-        throw new Error(`bun lint printed no JSON: ${stderr.slice(0, 2000)}`);
-      }
-      const byFile = new Map(report.map(it => [it.filePath, it.messages]));
-      for (const it of part) {
-        const rule = byPage.get(it.page)!;
-        const where = `${it.page}: line ${it.line}${it.options.length ? ` with ${JSON.stringify(it.options)}` : ""}`;
-        const messages = byFile.get(join(directoryOf(it), it.filename));
-        const ids = [rule.id, ...rule.aliases, rule.twin?.id];
-        const own = messages?.filter(message => ids.includes(message.ruleId!)) ?? [];
-        // Invalid options are reported under the rule's own ID, so don't count that as a real report.
-        const fatal =
-          messages?.find(message => message.fatal) ??
-          own.find(message => message.message.startsWith("Inline configuration for rule"));
-        if (!messages) wrong.push(`${where}: ${it.filename} was not linted`);
-        else if (fatal) wrong.push(`${where}: ${fatal.message}`);
-        else if (it.want === "good" && own.length) wrong.push(`${where}: reported: ${own[0].message}`);
-        else if (it.want === "bad" && !own.length) wrong.push(`${where}: not reported`);
-        else if (it.count !== undefined && own.length !== it.count)
-          wrong.push(`${where}: ${own.length} reports, not ${it.count}`);
-      }
-    }
-    // Rules that only report with an oxlint config.
-    for (const it of examples.filter(it => it.config === "oxlint")) {
-      const rule = byPage.get(it.page)!;
-      const name = `${rule.scope.replaceAll("_", "-")}/${rule.value}`;
-      const plugins = [
-        "typescript",
-        "unicorn",
-        "oxc",
-        "react",
-        "react-perf",
-        "import",
-        "jsx-a11y",
-        "nextjs",
-        "promise",
-        "node",
-        "jest",
-        "vitest",
-      ];
-      put(join(directoryOf(it), "package.json"), "{}");
-      put(join(directoryOf(it), it.filename), it.code);
-      put(
-        join(directoryOf(it), ".oxlintrc.json"),
-        JSON.stringify({
-          plugins,
-          categories: { correctness: "off" },
-          settings: it.settings ?? {},
-          rules: { [name]: ["error", ...it.options] },
-        }),
-      );
-      const { stdout, stderr, exitCode } = await lint(directoryOf(it), ["-f", "unix", "."]);
-      const reports = stdout.split("\n").filter(line => /\[(Error|Warning)\/[^\]]+\]$/.test(line)).length;
-      const where = `${it.page}: line ${it.line}, with an oxlint config`;
-      if (exitCode === 2) wrong.push(`${where}: ${stderr.slice(0, 300)}`);
-      else if (it.want === "good" && reports) wrong.push(`${where}: reported`);
-      else if (it.want === "bad" && !reports) wrong.push(`${where}: not reported`);
-      else if (it.count !== undefined && reports !== it.count)
-        wrong.push(`${where}: ${reports} reports, not ${it.count}`);
-    }
+    // The website underlines these in the examples.
+    const now = reportsOf(examples, outcomes);
+    for (const name of names)
+      if (!Bun.deepEquals(recorded[name], now[name]))
+        wrong.push(`${name}: reports.json is out of date. Run \`bun src/codegen/lint-rule-docs.ts --write\`.`);
     expect(wrong).toEqual([]);
   });
 

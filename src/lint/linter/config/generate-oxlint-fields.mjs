@@ -482,7 +482,7 @@ async function infer(rule, wrap, node, path) {
   }
   // The fields that a sequence has to have an element for. The order of the fields is known if they were listed.
   const own = fields.filter(it => !it.alias);
-  for (const elements = []; list && elements.length < own.length; ) {
+  for (const elements = []; list && elements.length < own.length;) {
     const at = Number(/^invalid length (\d+), expected struct/.exec((await ask([...elements])) ?? "")?.[1]);
     if (!(at >= elements.length)) break;
     own[at].isNeeded = true;

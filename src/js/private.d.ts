@@ -97,20 +97,18 @@ declare module "bun" {
   namespace Spawn {
     // `globalThis.`: inside this module the bare name is Bun's narrower `ArrayBufferView` alias.
     type NodeStdio = (Bun.SpawnOptions.Writable | globalThis.ArrayBufferView | "ipc" | "socket-fd")[];
-    interface NodeSpawnOptions
-      extends Omit<
-        Bun.Spawn.SpawnOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
-        "stdio" | "onDisconnect"
-      > {
+    interface NodeSpawnOptions extends Omit<
+      Bun.Spawn.SpawnOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
+      "stdio" | "onDisconnect"
+    > {
       cmd: string[];
       stdio: NodeStdio;
       onDisconnect?(ok: boolean): void;
     }
-    interface NodeSpawnSyncOptions
-      extends Omit<
-        Bun.Spawn.SpawnSyncOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
-        "stdio"
-      > {
+    interface NodeSpawnSyncOptions extends Omit<
+      Bun.Spawn.SpawnSyncOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
+      "stdio"
+    > {
       cmd: string[];
       stdio: NodeStdio;
     }

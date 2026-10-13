@@ -219,6 +219,14 @@ const PLUGIN_NAMES: [&[u8]; 23] = [
     b"vue",
 ];
 
+/// What oxlint calls the built-in plugin that `name` is a name of anywhere: `node` for `n`. `None`: it has no such plugin.
+pub fn oxlint_plugin_name(name: &[u8]) -> Option<&'static [u8]> {
+    let spellings = Plugin::spelled(name).flat_map(|it| it.spellings());
+    let mut known =
+        spellings.filter_map(|it| PLUGIN_NAMES.iter().find(|name| **name == it.as_bytes()));
+    known.next().copied()
+}
+
 /// The files that are linted if nothing else says so. Of the last three the scripts.
 const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,svelte,astro}";
 

@@ -26,8 +26,8 @@ use bun_lint::language::InferGlobals;
 use bun_lint::linter::config::json_for_oxlint;
 use bun_lint::linter::{
     Config, FileConfig, InJavaScript, LegacyFile, LegacyOptions, NamedPlugin, Registry,
-    ResolvedConfig, formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key,
-    parse_rule_id, plugin_of_oxlint,
+    ResolvedConfig, formatting_rules, oxlint_category_of_key, oxlint_filter_keys,
+    oxlint_plugin_name, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::{Plugin, minor_of};
@@ -1223,11 +1223,11 @@ impl<'l> Loader<'l> {
             }
             apply_filters(entries, &options.filters, &inherited);
             let has_rules = |name: &[u8]| Plugin::spelled(name).any(|it| !it.has_no_rules());
-            let turned_on = self
-                .built_in_plugins(has_rules)
-                .map(|it| (plugin_shorthand(it), true));
+            let turned_on = (self.built_in_plugins(has_rules))
+                .filter_map(|it| Some((oxlint_plugin_name(&plugin_shorthand(it))?.to_vec(), true)));
+            // A flag counts for more.
             let of_flags = options.plugins.iter().map(|it| (it.0.to_vec(), it.1));
-            let switches: Vec<(Vec<u8>, bool)> = of_flags.chain(turned_on).collect();
+            let switches: Vec<(Vec<u8>, bool)> = turned_on.chain(of_flags).collect();
             if !switches.is_empty() {
                 let mut plugins: Vec<Json> = match entries.iter().find(|it| it.0 == b"plugins") {
                     Some((_, Json::Array(plugins))) => plugins.clone(),
@@ -1344,8 +1344,8 @@ impl<'l> Loader<'l> {
             let is_built_in = |name: &[u8]| match flavor {
                 // The others are packages there, like any other.
                 Flavor::Eslint | Flavor::EslintRc => Plugin::is_native_under_eslint(name),
-                // It keeps the names jsdoc and vue to itself, though there are no such rules here.
-                Flavor::Oxlint => Plugin::spelled(name).next().is_some(),
+                // It keeps the names jsdoc and vue to itself, though there are no such rules here. `prettier` is a package to it.
+                Flavor::Oxlint => oxlint_plugin_name(name).is_some(),
                 Flavor::BuiltIn => Plugin::spelled(name).any(|it| !it.has_no_rules()),
             };
             let is_path = specifier.starts_with(b".") || paths::is_absolute(specifier);

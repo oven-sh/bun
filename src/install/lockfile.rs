@@ -1910,12 +1910,22 @@ impl Lockfile {
     }
 
     /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.
+    #[inline]
     pub fn save_to_disk(
         &mut self,
         load_result: &LoadResult<'_>,
         options: &PackageManagerOptions,
     ) -> bool {
-        let save_format = load_result.save_format(options);
+        self.save_to_disk_as(load_result.save_format(options), load_result, options)
+    }
+
+    /// [`save_to_disk`](Self::save_to_disk) into the lockfile of `save_format`.
+    pub(crate) fn save_to_disk_as(
+        &mut self,
+        save_format: LockfileFormat,
+        load_result: &LoadResult<'_>,
+        options: &PackageManagerOptions,
+    ) -> bool {
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {
                 bun_core::pretty_errorln!(
@@ -2040,11 +2050,18 @@ impl Lockfile {
             }
         }
 
-        if let Err(e) = file.close_and_move_to(tmpname, save_format.filename()) {
+        if let Err(mut e) = file.close_and_move_to(tmpname, save_format.filename()) {
             bun_core::handle_error_return_trace(&e);
 
             // note: file is already closed here.
             let _ = sys::unlink(tmpname);
+
+            if is_mount_point_error(&e) {
+                match write_lockfile_in_place(save_format.filename(), &bytes) {
+                    Ok(()) => return true,
+                    Err(in_place) => e = in_place,
+                }
+            }
 
             Output::err(
                 &e,
@@ -2093,6 +2110,20 @@ impl Lockfile {
     pub fn init_empty(&mut self) {
         *self = Self::init_empty_value();
     }
+}
+
+/// Linux refuses to rename onto or unlink a mount point (a bind-mounted file) with EBUSY; on
+/// Windows EBUSY is a sharing violation.
+pub(crate) fn is_mount_point_error(err: &sys::Error) -> bool {
+    cfg!(any(target_os = "linux", target_os = "android")) && err.get_errno() == sys::E::EBUSY
+}
+
+/// Writes `bytes` over the existing lockfile `name`, for a lockfile whose directory entry cannot
+/// be replaced. It truncates last, so a concurrent reader never finds the file empty.
+pub(crate) fn write_lockfile_in_place(name: &ZStr, bytes: &[u8]) -> sys::Result<()> {
+    let file = File::openat(Fd::cwd(), name.as_bytes(), sys::O::WRONLY, 0)?;
+    file.pwrite_all(bytes, 0)?;
+    sys::ftruncate(file.handle, bytes.len() as i64)
 }
 
 impl Default for Lockfile {

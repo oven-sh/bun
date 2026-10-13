@@ -1916,8 +1916,10 @@ fn create_new_lockfile_and_enqueue(
         manager.lockfile.text_lockfile_version = version;
     }
 
+    // A lockfile that loaded (its root has no dependencies) is compared after the resolve, like
+    // every other frozen install. One that failed to load has nothing to compare.
     if manager.options.enable.frozen_lockfile()
-        && !matches!(load_result, lockfile::LoadResult::NotFound)
+        && matches!(load_result, lockfile::LoadResult::Err(_))
     {
         if log_level != Options::LogLevel::Silent {
             bun_core::pretty_errorln!(
@@ -2260,9 +2262,6 @@ fn write_yarn_lock_with_progress(
         let _ = manager.progress.start(b"Saving yarn.lock", 0);
         manager.progress.refresh();
         node_started = true;
-    } else if log_level != Options::LogLevel::Silent {
-        bun_core::pretty_errorln!("Saved yarn.lock");
-        Output::flush();
     }
 
     write_yarn_lock(manager)?;
@@ -2273,6 +2272,9 @@ fn write_yarn_lock_with_progress(
         manager.progress.refresh();
         manager.progress.root.end();
         manager.progress = Default::default();
+    } else if log_level != Options::LogLevel::Silent {
+        bun_core::pretty_errorln!("Saved yarn.lock");
+        Output::flush();
     }
     Ok(())
 }

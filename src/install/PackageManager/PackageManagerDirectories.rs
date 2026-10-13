@@ -5,6 +5,7 @@ use bun_alloc::AllocError;
 use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
+use crate::lockfile_real::{is_mount_point_error, write_lockfile_in_place};
 use crate::repository::Repository;
 use bun_core::ZStr;
 use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
@@ -1119,6 +1120,20 @@ pub fn save_lockfile(
                             break 'delete;
                         }
 
+                        // A mount point cannot be deleted: save the emptied lockfile into the same file.
+                        if is_mount_point_error(&err) && this.lockfile.packages.len() > 0 {
+                            let wrote = this.lockfile.save_to_disk_as(
+                                delete_format,
+                                load_result,
+                                &this.options,
+                            );
+                            if wrote && log_level != LogLevel::Silent {
+                                bun_core::pretty_errorln!("Saved lockfile");
+                                Output::flush();
+                            }
+                            return Ok(wrote);
+                        }
+
                         if log_level != LogLevel::Silent {
                             Output::err(err, "failed to delete empty lockfile", ());
                         }
@@ -1160,11 +1175,6 @@ pub fn save_lockfile(
 
     let wrote = this.lockfile.save_to_disk(load_result, &this.options);
 
-    // delete binary lockfile if saving text lockfile
-    if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
-        let _ = sys::unlinkat(Fd::cwd(), bun_paths::path_literal!("bun.lockb"));
-    }
-
     if cfg!(debug_assertions) {
         if !matches!(load_result, LoadResult::NotFound) {
             if load_result.loaded_from_text_lockfile() {
@@ -1202,6 +1212,20 @@ pub fn save_lockfile(
         Output::flush();
     }
 
+    // delete binary lockfile if saving text lockfile
+    if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
+        if let Err(err) = sys::unlinkat(Fd::cwd(), bun_paths::path_literal!("bun.lockb")) {
+            // bun.lock is saved and is the lockfile bun reads first, so the command still succeeds.
+            if err.get_errno() != sys::E::ENOENT && log_level != LogLevel::Silent {
+                bun_core::warn!(
+                    "failed to delete bun.lockb after saving bun.lock: {}",
+                    bstr::BStr::new(err.name()),
+                );
+                Output::flush();
+            }
+        }
+    }
+
     Ok(wrote)
 }
 
@@ -1225,6 +1249,21 @@ pub fn update_lockfile_if_needed(
 }
 
 pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
+    // `bun_sys::File`
+    // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
+    // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
+    let mut buf: Vec<u8> = Vec::with_capacity(4096);
+    {
+        let mut printer = crate::lockfile_real::Printer {
+            lockfile: &this.lockfile,
+            options: &this.options,
+            successfully_installed: None,
+            // `Yarn::print` never reads `updates`; pass an empty slice.
+            updates: &[],
+        };
+        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buf)?;
+    }
+
     let mut tmpname_buf = [0u8; 512];
     tmpname_buf[0..8].copy_from_slice(b"tmplock-");
     // Windows opens via `get_default_temp_dir`.
@@ -1255,21 +1294,9 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
         Global::crash();
     }
 
-    let file = tmpfile.file();
-    {
-        let mut printer = crate::lockfile_real::Printer {
-            lockfile: &this.lockfile,
-            options: &this.options,
-            successfully_installed: None,
-            // `Yarn::print` never reads `updates`; pass an empty slice.
-            updates: &[],
-        };
-        // `bun_sys::File`
-        // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
-        // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
-        let mut buf: Vec<u8> = Vec::with_capacity(4096);
-        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buf)?;
-        file.write_all(&buf).map_err(Error::from)?;
+    if let Err(err) = tmpfile.file().write_all(&buf) {
+        tmpfile.discard(tmpname);
+        return Err(err.into());
     }
 
     #[cfg(unix)]
@@ -1281,7 +1308,13 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
         );
     }
 
-    tmpfile.promote_to_cwd(tmpname, z_static(b"yarn.lock\0"))?;
+    let yarn_lock = z_static(b"yarn.lock\0");
+    if let Err(err) = tmpfile.promote_to_cwd(tmpname, yarn_lock) {
+        if !is_mount_point_error(&err) {
+            return Err(err.into());
+        }
+        write_lockfile_in_place(yarn_lock, &buf)?;
+    }
     Ok(())
 }
 

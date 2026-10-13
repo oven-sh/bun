@@ -786,6 +786,20 @@ pub mod fs {
             }
         }
 
+        /// Closes a temp file that will not be promoted. On POSIX it sits in the project
+        /// directory, so it is removed too; on Windows it stays in the process temp dir.
+        pub fn discard(&mut self, name: &ZStr) {
+            self.close();
+            #[cfg(not(windows))]
+            {
+                let _ = bun_sys::unlinkat(self.dir_fd, name);
+            }
+            #[cfg(windows)]
+            {
+                let _ = name;
+            }
+        }
+
         /// POSIX path opens at cwd; Windows opens under the
         /// process temp dir.
         pub fn create(&mut self, name: &ZStr) -> crate::CrateResult<()> {
@@ -832,21 +846,25 @@ pub mod fs {
         }
 
         /// Renames the temp file from `from_name` to `name` relative to the
-        /// current working directory.
-        pub fn promote_to_cwd(&mut self, from_name: &ZStr, name: &ZStr) -> crate::CrateResult<()> {
+        /// current working directory. A failed rename [`discard`](Self::discard)s the temp file.
+        pub fn promote_to_cwd(&mut self, from_name: &ZStr, name: &ZStr) -> bun_sys::Result<()> {
             #[cfg(not(windows))]
             {
                 debug_assert!(self.fd != bun_sys::Fd::INVALID);
                 debug_assert!(self.dir_fd != bun_sys::Fd::INVALID);
-                bun_sys::move_file_z_with_handle(
+                let moved = bun_sys::move_file_z_with_handle(
                     self.fd,
                     self.dir_fd,
                     from_name,
                     bun_sys::Fd::cwd(),
                     name,
-                )?;
-                self.close();
-                Ok(())
+                );
+                if moved.is_err() {
+                    self.discard(from_name);
+                } else {
+                    self.close();
+                }
+                moved
             }
             #[cfg(windows)]
             {
@@ -885,8 +903,7 @@ pub mod fs {
                     return Err(bun_sys::Error::from_win32(
                         w::Win32Error::get(),
                         bun_sys::Tag::rename,
-                    )
-                    .into());
+                    ));
                 }
                 Ok(())
             }

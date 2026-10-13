@@ -811,8 +811,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{let sum = (b /* c */)}\n", "{let sum = (b /* c */)}\n", "{let sum = b /* c */}\n"],
       ["{const sum = b + (c /* d */)}\n", "{const sum = b + (c /* d */)}\n", "{const sum = b + c /* d */}\n"],
       ["{let sum /* c */;}\n", "{let sum /* c */;}\n", "{let sum /* c */}\n"],
-      // This one stays where it is.
-      ["{const  sum = [1,2 /* c */]}\n", "{const sum = [1, 2 /* c */]}\n", null],
+      [
+        `${typescript}{const sum = b as C[/* d */]}\n`,
+        `${typescript}{const sum = b as C[/* d */]}\n`,
+        `${typescript}{const sum = b as C[] /* d */}\n`,
+      ],
+      // This one stays where it is: something follows it that does not close anything.
+      ["{const  sum = [1 /* c */,2]}\n", "{const sum = [1 /* c */, 2]}\n", null],
     ],
     "no comment is behind the expression of an each block without `as`": [
       ["{#each rows[0 // c\n]}y{/each}\n", "{#each rows[0 // c\n]}y{/each}\n", "{#each rows[0] // c\n}y{/each}\n"],
@@ -823,6 +828,24 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ],
       ["{#each b + (c /* d */)}y{/each}\n", "{#each b + (c /* d */)}y{/each}\n", "{#each b + c /* d */}y{/each}\n"],
       ["{#each  f(b /* c */)}y{/each}\n", "{#each f(b /* c */)}y{/each}\n", null],
+    ],
+    "an each block without `as` gets none": [
+      [
+        `${typescript}{#each (b: C) => (b as D)}y{/each}\n`,
+        `${typescript}{#each (b: C) => (b as D)}y{/each}\n`,
+        `${typescript}{#each (b: C) => b as D}y{/each}\n`,
+      ],
+      [
+        `${typescript}{#each b = (c as D), i}y{/each}\n`,
+        `${typescript}{#each b = (c as D), i}y{/each}\n`,
+        `${typescript}{#each b = c as D, i}y{/each}\n`,
+      ],
+      // With one of its own, the last is that.
+      [
+        `${typescript}{#each (b: C) => (b as D) as e}y{/each}\n`,
+        `${typescript}{#each (b: C) => b as D as e}y{/each}\n`,
+        null,
+      ],
     ],
     "no comment is behind the name of a snippet": [
       [
@@ -890,6 +913,61 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<svelte:element this="b"c">y</svelte:element>\n',
       ],
       ["<svelte:element this={'b'}>y</svelte:element>\n", '<svelte:element this={"b"}>y</svelte:element>\n', null],
+      // Not right behind the `{`, the plugin makes a text of the string.
+      ["<svelte:element this={ 'b' }>y</svelte:element>\n", '<svelte:element this="b">y</svelte:element>\n', null],
+      [
+        "<svelte:element this={ 'b\"c' }>y</svelte:element>\n",
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        '<svelte:element this="b"c">y</svelte:element>\n',
+      ],
+      [
+        "<svelte:element this={('b\"c')}>y</svelte:element>\n",
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        '<svelte:element this=b"c>y</svelte:element>\n',
+      ],
+      [
+        "<svelte:element this={\n  'b\"c'}>y</svelte:element>\n",
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        '<svelte:element this=b"c>y</svelte:element>\n',
+      ],
+      // One backslash in the string would be two in the text, and an entity in the text is none in the string.
+      [
+        '<svelte:element this={ "b\\\\c" }>y</svelte:element>\n',
+        '<svelte:element this={"b\\\\c"}>y</svelte:element>\n',
+        '<svelte:element this="b\\\\c">y</svelte:element>\n',
+      ],
+      [
+        '<svelte:element this={ "b&amp;c" }>y</svelte:element>\n',
+        '<svelte:element this={"b&amp;c"}>y</svelte:element>\n',
+        '<svelte:element this="b&amp;c">y</svelte:element>\n',
+      ],
+    ],
+    "a value with a comment in it is not left out": [
+      // What the plugin prints is the third.
+      ["<Row item={/* keep */ item} />\n", "<Row item={/* keep */ item} />\n", "<Row {item} />\n"],
+      [
+        "<Row\n  item={\n    // keep this\n    item\n  }\n/>\n",
+        "<Row\n  item={// keep this\n  item}\n/>\n",
+        "<Row {item} />\n",
+      ],
+      ["<Row item={/** @type {Item} */ item} />\n", "<Row item={/** @type {Item} */ item} />\n", "<Row {item} />\n"],
+      ['<Row item="{/* c */ item}" />\n', "<Row item={/* c */ item} />\n", "<Row {item} />\n"],
+      ["<input bind:value={/* c */ value} />\n", "<input bind:value={/* c */ value} />\n", "<input bind:value />\n"],
+      [
+        "<p class:on={/* c */ on} style:top={/* d */ top}>y</p>\n",
+        "<p class:on={/* c */ on} style:top={/* d */ top}>y</p>\n",
+        "<p class:on style:top>y</p>\n",
+      ],
+      ["<Row let:item={/* c */ item} />\n", "<Row let:item={/* c */ item} />\n", "<Row let:item />\n"],
+      [
+        '<svelte:element this={/* c */ "b"}>y</svelte:element>\n',
+        '<svelte:element this={/* c */ "b"}>y</svelte:element>\n',
+        '<svelte:element this="b">y</svelte:element>\n',
+      ],
+      // The parentheses go, the comment does not go with them the next time.
+      ["<Row item={/* c */ (item)} />\n", "<Row item={/* c */ item} />\n", "<Row {item} />\n"],
+      // Without a comment it is left out as before.
+      ["<Row item={ (item) } />\n", "<Row {item} />\n", null],
     ],
     "a declaration ends behind its `;`": [
       ["{const sum = 1;}\n", "{const sum = 1}\n", null],
@@ -1111,6 +1189,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<style>b{c:</style>}</style>\n",
         "1 | <style>b{c:</style>}</style>\n                        ^\nerror: This end tag has no start tag\n    at 3.svelte:1:21\n\n",
       ],
+      // Neither is `url(..)`.
+      [
+        "<style>b{@url(</style>)}</style>\n",
+        "1 | <style>b{@url(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 4.svelte:1:25\n\n",
+      ],
+      [
+        "<style>b{curl(</style>)}</style>\n",
+        "1 | <style>b{curl(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 5.svelte:1:25\n\n",
+      ],
     ];
     const names = refused.map((_, index) => `${index}.svelte`);
     const files = Object.fromEntries(refused.map((it, index) => [names[index], it[0]]));
@@ -1141,15 +1228,104 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<style>b</style>\n<p>{c}</p>\n<svelte:head><style>d{margin:0}</style></svelte:head>\n",
         "<p>{c}</p>\n<svelte:head\n  ><style>\n    d {\n      margin: 0;\n    }\n  </style></svelte:head\n>\n\n<style>\nb\n</style>\n",
       ],
+      // What is not closed does not go on in the markup, up to what closes it there and to the end of another style sheet.
+      [
+        "<style>\n  b { background: url(it's.png) }\n</style>\n<p>don't</p>\n<svg><style>c:d}</style></svg>\n",
+        "<p>don't</p>\n<svg\n  ><style>\nc:d}\n  </style></svg\n>\n\n<style>\n  b {\n    background: url(it's.png);\n  }\n</style>\n",
+      ],
+      [
+        "<style>\n  b { content: 'c }\n</style>\n<p>don't</p>\n<svg><style>d}</style></svg>\n",
+        "<p>don't</p>\n<svg\n  ><style>\nd}\n  </style></svg\n>\n\n<style>\n  b { content: 'c }\n</style>\n",
+      ],
+      [
+        "<style>\n  b { background: url(c\n</style>\n<p>y</p>\n<div><style>d) }</style></div>\n",
+        "<p>y</p>\n<div>\n  <style>\nd) }\n  </style>\n</div>\n\n<style>\n  b { background: url(c\n</style>\n",
+      ],
+      [
+        "<style>\n  /* b\n</style>\n<p>y</p>\n<svg><style>c */d{e:f}</style></svg>\n",
+        "<p>y</p>\n<svg\n  ><style>\n    c */d {\n      e: f;\n    }\n  </style></svg\n>\n\n<style>\n  /* b\n</style>\n",
+      ],
+      // A string goes on in the next line behind a backslash.
+      [
+        '<style>b{content:"c\\\nd </style>"}</style>\n',
+        '<style>\n  b {\n    content: "c\\\nd </style>";\n  }\n</style>\n',
+      ],
     ];
     const others = formatted.map((_, index) => `${index}.svelte`);
     const texts = Object.fromEntries(formatted.map((it, index) => [others[index], it[0]]));
     expect(await format(texts, others, ["--threads=1"])).toMatchObject({
       stderr:
         "1 | <style>b{margin:0</style>\n           ^\nwarn: Unclosed block\n   at 3.svelte:1:8\n\n" +
-        "1 | <style>b</style>\n           ^\nwarn: Expected a declaration or a rule\n   at 4.svelte:1:8\n\n",
+        "1 | <style>b</style>\n           ^\nwarn: Expected a declaration or a rule\n   at 4.svelte:1:8\n\n" +
+        '5 | <svg><style>c:d}</style></svg>\n                   ^\nwarn: Unexpected "}"\n   at 5.svelte:5:16\n\n' +
+        "2 |   b { content: 'c }\n                   ^\nwarn: Unclosed string\n   at 6.svelte:2:16\n\n" +
+        "5 | <svg><style>d}</style></svg>\n                ^\nwarn: Expected a declaration or a rule\n   at 6.svelte:5:13\n\n" +
+        "2 |   b { background: url(c\n                         ^\nwarn: Unclosed bracket\n   at 7.svelte:2:22\n\n" +
+        "5 | <div><style>d) }</style></div>\n                ^\nwarn: Expected a declaration or a rule\n   at 7.svelte:5:13\n\n" +
+        "2 |   /* b\n      ^\nwarn: Unclosed comment\n   at 8.svelte:2:3\n\n",
       files: formatted.map(it => it[1]),
       exitCode: 0,
+    });
+  });
+
+  describe("every comment next to a value that is named like its attribute is kept", () => {
+    const sites = [
+      "<Row b={V} />",
+      "<a b={V}>y</a>",
+      '<a b="{V}">y</a>',
+      "<input bind:b={V} />",
+      "<a class:b={V}>y</a>",
+      "<a style:b={V}>y</a>",
+      '<a style:b="{V}">y</a>',
+      "<Row let:b={V} />",
+      "<svelte:element this={V}>y</svelte:element>",
+      "<a on:b={V}>y</a>",
+      "<a use:b={V}>y</a>",
+    ];
+    const forms = [
+      "/* C1 */ b",
+      "/* C1 */b",
+      "/** C1 */ b",
+      "// C1\nb",
+      "\n// C1\nb\n",
+      "/* C1 */\nb",
+      "\n/* C1 */\nb",
+      "b /* C1 */",
+      "b/* C1 */",
+      "b // C1\n",
+      "b\n// C1\n",
+      "b\n/* C1 */\n",
+      "/* C1 */ (b)",
+      "(/* C1 */ b)",
+      "(b /* C1 */)",
+      "(b) /* C1 */",
+      "/* C1 */ b /* C2 */",
+      "/* C1 *//* C2 */ b",
+    ];
+    const texts = sites.flatMap(site =>
+      forms.map(form => site.replace("V", site.includes("this=") ? form.replace(/\bb\b/, '"b"') : form) + "\n"),
+    );
+    const names = texts.map((_, index) => `${index}.svelte`);
+    const comments = (text: string) => text.match(/C\d/g)!.sort();
+
+    test.each([true, false])("svelteAllowShorthand: %p", async svelteAllowShorthand => {
+      using dir = tempDir("bun-format-svelte", {
+        ".prettierrc": JSON.stringify({ plugins, svelteAllowShorthand }),
+        ...Object.fromEntries(texts.map((text, index) => [names[index], text])),
+      });
+      let before = texts;
+      for (const pass of [1, 2, 3]) {
+        const result = await formatIn(String(dir), names);
+        expect({ pass, stderr: result.stderr, exitCode: result.exitCode }).toEqual({ pass, stderr: "", exitCode: 0 });
+        // What has lost or doubled one, with what it was.
+        const wrong = result.files.flatMap((text, index) =>
+          Bun.deepEquals(text.match(/C\d/g)?.sort(), comments(texts[index])) ? [] : [[pass, before[index], text]],
+        );
+        expect(wrong).toEqual([]);
+        before = result.files;
+      }
+      // It has settled by then.
+      expect((await formatIn(String(dir), names)).files).toEqual(before);
     });
   });
 
@@ -1162,6 +1338,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "{#if b}{@const c = class { // d\n    e = 1;\n  }}{c}{/if}\n",
         "{#if b}{@const c = class {\n    // d\n    e = 1;\n  }}{c}{/if}\n",
       ],
+      ["{#each ( /* c */b + c ) * d, i}y{/each}\n", "{#each /* c */ (b + c) * d, i}y{/each}\n"],
+      ["{#snippet f(b =\n/* c */\n`${d}`)}y{/snippet}\n", "{#snippet f(\n  /* c */\n  b = `${d}`,\n)}y{/snippet}\n"],
       // A name without its escape, modifiers in the usual order, a name that is written twice.
       [`${typescript}{b\\u{63}}\n`, `${typescript}{bc}\n`],
       [`${typescript}{class{static private b}}\n`, `${typescript}{class {\n  private static b;\n}}\n`],
@@ -1216,6 +1394,29 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{#if q}{@const c = b + 1}{c}{/if}\n", "{#if q}{@const c = b /* + 1 */}{c}{/if}\n"],
       // A comment that is lost.
       ["{f(b /* c */)}\n", "{f(b)}\n"],
+      ["<Row item={/* c */ item} />\n", "<Row {item} />\n"],
+      ["<input bind:value={/* c */ value} />\n", "<input bind:value />\n"],
+      // A string is no name.
+      ['{"name"}\n', "{name}\n"],
+      ['{f("x")}\n', "{f(x)}\n"],
+      ['{f(b, "x", c)}\n', "{f(b, x, c)}\n"],
+      ['{b["c"]}\n', "{b[c]}\n"],
+      ['{"1"}\n', "{1}\n"],
+      ['{b ? "c" : d}\n', "{b ? c : d}\n"],
+      ['<p b={"c"}>y</p>\n', "<p b={c}>y</p>\n"],
+      [`${typescript}{b as "c"}\n`, `${typescript}{b as c}\n`],
+      ['<svelte:element this={"b"}>y</svelte:element>\n', "<svelte:element this={b}>y</svelte:element>\n"],
+      ['<svelte:element this={ "b\\\\c" }>y</svelte:element>\n', '<svelte:element this="b\\\\c">y</svelte:element>\n'],
+      // A template that is in no other language, whatever is before it.
+      ["{() => { return `b  c` }}\n", "{() => { return `b c` }}\n"],
+      ["{typeof `b  c`}\n", "{typeof `b c`}\n"],
+      ["{b in `b  c`}\n", "{b in `b c`}\n"],
+      ["{async () => await `b  c`}\n", "{async () => await `b c`}\n"],
+      ["{() => { if (b) `b  c` }}\n", "{() => { if (b) `b c` }}\n"],
+      ["{f`b  c`}\n", "{f`b c`}\n"],
+      // A name that is spelled like a modifier.
+      ["{f(public, b)}\n", "{f(b, public)}\n"],
+      ["{static + b}\n", "{b + static}\n"],
       // What is no letter.
       ["{row(1, 2)}\n", "{row(1)}\n"],
       ["{b + 1}\n", "{b}\n"],
@@ -1251,6 +1452,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{b => b}\n", "{(b) => b}\n"],
       ["{() => {b;c}}\n", "{() => {\n  b;\n  c;\n}}\n"],
       ["{css`b{}`}\n", "{css`\n  b {\n  }\n`}\n"],
+      ["{/* HTML */ `<p   >b</p>`}\n", "{/* HTML */ `<p>b</p>`}\n"],
+      ["{({'b': 1, 'c': 2})}\n", "{{ b: 1, c: 2 }}\n"],
+      ["{({'1': b})}\n", "{{ 1: b }}\n"],
+      ["{class{'b'(){}}}\n", "{class {\n  b() {}\n}}\n"],
+      ["{#each b as {'c': d}}y{/each}\n", "{#each b as { c: d }}y{/each}\n"],
+      [`${typescript}{b as {'c'?:D}}\n`, `${typescript}{b as { c?: D }}\n`],
+      [`${typescript}{class{readonly static [b] = 1}}\n`, `${typescript}{class {\n  static readonly [b] = 1;\n}}\n`],
+      ['<svelte:element this={ "b" }>y</svelte:element>\n', '<svelte:element this="b">y</svelte:element>\n'],
       ["{b ? c : (d // e\n)}\n", "{b ? c : d // e\n}\n"],
       ["{const b = 1;}\n", "{const b = 1}\n"],
       ["{#each b as { c: c }}y{/each}\n", "{#each b as { c }}y{/each}\n"],

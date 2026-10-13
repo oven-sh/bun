@@ -212,9 +212,11 @@ for (const [transport, viaConnectionEvent] of [
     });
 
     test("an explicit Connection: keep-alive on the rejection keeps the connection", async () => {
+      let keepAliveAfterWriteHead: boolean | undefined;
       const server = http.createServer((req, res) => res.end("SECOND"));
       server.on("checkContinue", (req: http.IncomingMessage, res: http.ServerResponse) => {
         res.writeHead(417, { Connection: "keep-alive" });
+        keepAliveAfterWriteHead = res.shouldKeepAlive;
         res.end();
       });
       const { socket, until, close } = await dial(server, viaConnectionEvent);
@@ -222,8 +224,8 @@ for (const [transport, viaConnectionEvent] of [
         socket.write(expectHead);
         const head = await until("\r\n\r\n");
         assert.deepStrictEqual(
-          { status: statusOf(head), connection: connectionOf(head) },
-          { status: "HTTP/1.1 417 Expectation Failed", connection: "keep-alive" },
+          { status: statusOf(head), connection: connectionOf(head), keepAliveAfterWriteHead },
+          { status: "HTTP/1.1 417 Expectation Failed", connection: "keep-alive", keepAliveAfterWriteHead: true },
         );
 
         // The connection stays framed only when the client still sends the announced body.

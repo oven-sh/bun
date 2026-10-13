@@ -2449,11 +2449,20 @@ const kMaxNativeKeepAliveSecs = 0x7fffffff;
 let renderedAutoHeaders = 0;
 let renderedKeepAliveSecs = 0;
 
+// The value of a response's Connection header: one string, or an array of them.
+function connectionHeaderHasClose(value) {
+  return RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value));
+}
+
 // Node's writeHead: a final response to an Expect: 100-continue request that got no
 // 100 Continue leaves the announced body unsent, so the connection cannot be reused.
+// Node's matchHeader then lets a Connection header of the response other than close win.
 function clearKeepAliveIfContinueNotSent(res) {
   if (res._expect_continue && !res._sent100) {
-    res.shouldKeepAlive = false;
+    const connection = res[kOutHeaders]?.connection;
+    if (connection === undefined || connectionHeaderHasClose(connection[1])) {
+      res.shouldKeepAlive = false;
+    }
   }
 }
 
@@ -2488,7 +2497,7 @@ function renderNativeHeaders(res) {
           // An explicit `Connection: close` response header must also close the
           // transport after 'finish' (Node.js's matchHeader sets _last, then
           // resOnFinish destroys the socket).
-          if (RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value))) {
+          if (connectionHeaderHasClose(value)) {
             res[kMustCloseConnection] = true;
           }
         } else if (key === "keep-alive") hasKeepAlive = true;

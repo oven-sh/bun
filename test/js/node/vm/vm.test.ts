@@ -11,6 +11,7 @@ import {
   runInThisContext,
   Script,
   SourceTextModule,
+  SyntheticModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -2728,5 +2729,264 @@ test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context
     stdout: "woken: 1\nthe live context's wait resolved: ok\n",
     stderr: "",
     exitCode: 0,
+  });
+});
+
+// module.evaluate() is one ECMAScript Evaluate() on that module: InnerModuleEvaluation walks the graph
+// depth first, a module's body runs after its dependencies' bodies, and a cycle finishes at the member
+// the walk entered it through. Every expectation in this block is the output of Node v26.3.0 for the
+// same graph.
+describe("node:vm module.evaluate() runs a module graph in the order of one Evaluate()", () => {
+  type Modules = Record<string, SourceTextModule | SyntheticModule>;
+
+  function graph(sources: Record<string, string>, sandbox: Record<string, unknown> = {}, contextOptions = {}) {
+    const order: string[] = [];
+    const context = createContext({ order, ...sandbox }, contextOptions);
+    const modules: Modules = {};
+    for (const [identifier, source] of Object.entries(sources))
+      modules[identifier] = new SourceTextModule(source, { identifier, context });
+    return { order, context, modules };
+  }
+  const link = (modules: Modules, root = "A") =>
+    (modules[root] as SourceTextModule).link(specifier => modules[specifier]);
+  const statuses = (modules: Modules) => Object.values(modules).map(module => module.status);
+
+  describe("import cycles", () => {
+    test("two modules that import each other: the dependency's body runs first", async () => {
+      const { order, modules } = graph({
+        A: `import { v } from "B"; order.push("A"); export const a = v + 1;`,
+        B: `import "A"; order.push("B"); export const v = 1;`,
+      });
+      await link(modules);
+      await modules.A.evaluate();
+      expect({ order, a: (modules.A.namespace as any).a, statuses: statuses(modules) }).toEqual({
+        order: ["B", "A"],
+        a: 2,
+        statuses: ["evaluated", "evaluated"],
+      });
+    });
+
+    test("only functions cross the cycle", async () => {
+      const { order, modules } = graph({
+        A: `import { g } from "B"; order.push("A"); export function f() { return 1; } g();`,
+        B: `import { f } from "A"; order.push("B"); export function g() { return f(); }`,
+      });
+      await link(modules);
+      await modules.A.evaluate();
+      expect(order).toEqual(["B", "A"]);
+    });
+
+    const ring = {
+      A: `import "B"; order.push("A");`,
+      B: `import "C"; order.push("B");`,
+      C: `import "A"; order.push("C");`,
+    };
+
+    test("a ring of three", async () => {
+      const { order, modules } = graph(ring);
+      await link(modules);
+      await modules.A.evaluate();
+      expect(order).toEqual(["C", "B", "A"]);
+    });
+
+    test("the member evaluate() is called on is the last one of its cycle to run", async () => {
+      const { order, modules } = graph(ring);
+      await link(modules);
+      await modules.B.evaluate();
+      expect({ order, statuses: statuses(modules) }).toEqual({
+        order: ["A", "C", "B"],
+        statuses: ["evaluated", "evaluated", "evaluated"],
+      });
+      // The cycle is done: evaluate() on another member runs nothing.
+      await modules.A.evaluate();
+      expect(order).toEqual(["A", "C", "B"]);
+    });
+
+    test("two roots that share a cycle run it once", async () => {
+      const { order, modules } = graph({
+        R1: `import "A"; order.push("R1");`,
+        R2: `import "B"; order.push("R2");`,
+        A: `import "B"; order.push("A");`,
+        B: `import "A"; order.push("B");`,
+      });
+      await link(modules, "R1");
+      await link(modules, "R2");
+      await modules.R1.evaluate();
+      expect(order).toEqual(["B", "A", "R1"]);
+      await modules.R2.evaluate();
+      expect(order).toEqual(["B", "A", "R1", "R2"]);
+    });
+
+    test("a ring with a top-level await", async () => {
+      const { order, modules } = graph({
+        A: `import "B"; order.push("A");`,
+        B: `import "C"; order.push("B1"); await 0; order.push("B2");`,
+        C: `import "A"; order.push("C");`,
+      });
+      await link(modules);
+      await modules.A.evaluate();
+      expect(order).toEqual(["C", "B1", "B2", "A"]);
+    });
+
+    test("every member of a cycle reads 'evaluating' until the cycle is done", async () => {
+      const { order, modules } = graph(
+        {
+          A: `import "B"; snap("in A");`,
+          B: `import "A"; snap("in B");`,
+        },
+        { snap: (where: string) => order.push(`${where}: ${statuses(modules).join(", ")}`) },
+      );
+      await link(modules);
+      await modules.A.evaluate();
+      expect({ order, statuses: statuses(modules) }).toEqual({
+        order: ["in B: evaluating, evaluating", "in A: evaluating, evaluating"],
+        statuses: ["evaluated", "evaluated"],
+      });
+    });
+
+    test("a body that throws errors every member of its cycle with the one error", async () => {
+      const { order, modules } = graph({
+        A: `import "B"; order.push("A");`,
+        B: `import "A"; order.push("B"); throw new Error("from B");`,
+      });
+      await link(modules);
+      await expect(modules.A.evaluate()).rejects.toThrow("from B");
+      expect({ order, statuses: statuses(modules), sameError: modules.A.error === modules.B.error }).toEqual({
+        order: ["B"],
+        statuses: ["errored", "errored"],
+        sameError: true,
+      });
+    });
+  });
+
+  describe("graphs without a cycle", () => {
+    test("a diamond runs each body once, dependencies first", async () => {
+      const { order, modules } = graph({
+        A: `import "B"; import "C"; order.push("A");`,
+        B: `import "D"; order.push("B");`,
+        C: `import "D"; order.push("C");`,
+        D: `order.push("D");`,
+      });
+      await link(modules);
+      await modules.A.evaluate();
+      expect(order).toEqual(["D", "B", "C", "A"]);
+    });
+
+    test("a dependency reads 'evaluated' in the body of its importer", async () => {
+      const { order, modules } = graph(
+        {
+          A: `import "B"; snap("in A");`,
+          B: `snap("in B");`,
+        },
+        { snap: (where: string) => order.push(`${where}: ${statuses(modules).join(", ")}`) },
+      );
+      await link(modules);
+      await modules.A.evaluate();
+      expect(order).toEqual(["in B: evaluating, evaluating", "in A: evaluating, evaluated"]);
+    });
+
+    test("a dependency that throws leaves a module the walk did not reach linked", async () => {
+      const { order, modules } = graph({
+        A: `import "B"; import "C"; order.push("A");`,
+        B: `order.push("B"); throw new Error("from B");`,
+        C: `order.push("C");`,
+      });
+      await link(modules);
+      await expect(modules.A.evaluate()).rejects.toThrow("from B");
+      expect({ order, statuses: statuses(modules), sameError: modules.A.error === modules.B.error }).toEqual({
+        order: ["B"],
+        statuses: ["errored", "errored", "linked"],
+        sameError: true,
+      });
+      await modules.C.evaluate();
+      expect({ order, statuses: statuses(modules) }).toEqual({
+        order: ["B", "C"],
+        statuses: ["errored", "errored", "evaluated"],
+      });
+    });
+
+    test("an afterEvaluate context gets one microtask checkpoint, after the whole graph", async () => {
+      const { order, modules } = graph(
+        {
+          A: `import "B"; order.push("A");`,
+          B: `order.push("B"); Promise.resolve().then(() => order.push("microtask of B"));`,
+        },
+        {},
+        { microtaskMode: "afterEvaluate" },
+      );
+      await link(modules);
+      await modules.A.evaluate();
+      expect(order).toEqual(["B", "A", "microtask of B"]);
+    });
+  });
+
+  describe("a SyntheticModule's evaluateCallback runs where the walk reaches the module", () => {
+    function synthetic(
+      { order, context, modules }: ReturnType<typeof graph>,
+      evaluateCallback: (module: SyntheticModule) => void,
+    ) {
+      const module = new SyntheticModule(["x"], () => evaluateCallback(module), { identifier: "S", context });
+      modules.S = module;
+      return module;
+    }
+
+    test("in a cycle, after the dependency that was imported before it", async () => {
+      const g = graph({
+        A: `import "B"; import { x } from "S"; order.push("A" + x);`,
+        B: `import "A"; order.push("B");`,
+      });
+      synthetic(g, S => (g.order.push("S"), S.setExport("x", 7)));
+      await link(g.modules);
+      await g.modules.A.evaluate();
+      expect(g.order).toEqual(["B", "S", "A7"]);
+    });
+
+    test("between the bodies of the dependencies on either side of it", async () => {
+      const g = graph({
+        A: `import "B"; import { x } from "S"; import "C"; order.push("A" + x);`,
+        B: `order.push("B");`,
+        C: `order.push("C");`,
+      });
+      synthetic(g, S => (g.order.push("S"), S.setExport("x", 7)));
+      await link(g.modules);
+      await g.modules.A.evaluate();
+      expect(g.order).toEqual(["B", "S", "C", "A7"]);
+    });
+
+    test("it sees what the body of an earlier dependency did", async () => {
+      const shared: { fromB?: number } = {};
+      const g = graph(
+        {
+          A: `import "B"; import { x } from "S"; order.push("A" + x);`,
+          B: `shared.fromB = 5; order.push("B");`,
+        },
+        { shared },
+      );
+      synthetic(g, S => S.setExport("x", shared.fromB));
+      await link(g.modules);
+      await g.modules.A.evaluate();
+      expect(g.order).toEqual(["B", "A5"]);
+    });
+
+    test("when it throws, every module on the way to it is errored and none of them can run later", async () => {
+      const g = graph({
+        A: `import "B"; order.push("A");`,
+        B: `import "C"; import { x } from "S"; order.push("B" + x);`,
+        C: `import "B"; order.push("C");`,
+      });
+      synthetic(g, () => {
+        throw new Error("from S");
+      });
+      await link(g.modules);
+      await expect(g.modules.A.evaluate()).rejects.toThrow("from S");
+      // C is in a cycle with B. Its body ran before the walk reached S, and it is errored with the cycle.
+      expect({ order: g.order, statuses: statuses(g.modules) }).toEqual({
+        order: ["C"],
+        statuses: ["errored", "errored", "errored", "errored"],
+      });
+      await expect(g.modules.C.evaluate()).rejects.toThrow("from S");
+      await expect(g.modules.B.evaluate()).rejects.toThrow("from S");
+      expect(g.order).toEqual(["C"]);
+    });
   });
 });

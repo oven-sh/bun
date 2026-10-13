@@ -34,7 +34,12 @@ pub(super) fn code(message: &LintMessage) -> Option<Vec<u8>> {
 
 /// [`code`], made once for each rule that is built in.
 #[derive(Default)]
-pub(super) struct Codes(FxHashMap<usize, Vec<u8>>);
+pub(super) struct Codes {
+    /// One after the other.
+    text: Vec<u8>,
+    /// By where the rule is: from where to where its code is in `text`.
+    places: FxHashMap<usize, (u32, u32)>,
+}
 
 impl Codes {
     /// Writes `before` and the code of `message`, if it has one.
@@ -42,13 +47,25 @@ impl Codes {
         let made;
         let code = match &message.rule_id {
             Some(RuleId::Known(meta)) => {
-                let known = self.0.entry(std::ptr::from_ref(*meta).addr());
-                &*known.or_insert_with(|| code(message).unwrap_or_default())
+                let rule = std::ptr::from_ref(*meta).addr();
+                let (start, end) = match self.places.get(&rule) {
+                    Some(place) => *place,
+                    None => {
+                        let start = self.text.len() as u32;
+                        self.text.extend(code(message).unwrap_or_default());
+                        let place = (start, self.text.len() as u32);
+                        self.places.insert(rule, place);
+                        place
+                    }
+                };
+                self.text
+                    .get(start as usize..end as usize)
+                    .unwrap_or_default()
             }
             _ => match code(message) {
                 Some(code) => {
                     made = code;
-                    &made
+                    &made[..]
                 }
                 None => return,
             },

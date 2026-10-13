@@ -1410,7 +1410,7 @@ impl Run<'_> {
             && only.is_none();
 
         let started = Instant::now();
-        let with_help: format::WithHelp = &|result: &FileResult| context.with_help(result);
+        let with_help: format::WithHelp = &|result, only| context.with_help(result, only);
         let color = options.color.unwrap_or(environment.stdout.colors);
         let to_terminal = environment.stdout.is_tty && options.output_file.is_none();
         let meta = format::Meta {

@@ -103,6 +103,8 @@ pub(crate) struct Sink {
     pub(crate) thrown: RefCell<Option<Thrown>>,
     /// [`File::calls_in_turns`]
     pub(crate) calls_in_turns: OnceCell<Box<[(Span, u32)]>>,
+    /// A rule has asked for [`File::modules`]: the file may be linted again.
+    pub(crate) asks_about_modules: Cell<bool>,
 }
 
 impl File<'_> {

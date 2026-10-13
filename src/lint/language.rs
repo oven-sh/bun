@@ -147,6 +147,8 @@ pub struct LanguageOptions {
     pub has_scopes_of_oxc: bool,
     /// With a configuration of oxlint: the rules that are on and that oxlint could only run as rules of a plugin in JavaScript.
     pub rules_that_oxlint_lacks: Vec<&'static crate::rule::Meta>,
+    /// A rule is on that can't run without types.
+    pub has_rule_that_requires_types: bool,
     /// With a configuration of oxlint in which no rule makes the variables of every file: the parser looks out for a name that may
     /// be declared twice, which is an error for oxlint. See `Dialect::oxc_names`.
     pub parser_tracks_names: bool,
@@ -412,6 +414,7 @@ impl LanguageOptions {
             stands_alone: false,
             has_scopes_of_oxc: false,
             rules_that_oxlint_lacks: Vec::new(),
+            has_rule_that_requires_types: false,
             parser_tracks_names: false,
             eslint_8: None,
             eslint_major: 10,
@@ -521,6 +524,7 @@ impl Default for LanguageOptions {
             stands_alone: false,
             has_scopes_of_oxc: false,
             rules_that_oxlint_lacks: Vec::new(),
+            has_rule_that_requires_types: false,
             parser_tracks_names: false,
             eslint_8: None,
             eslint_major: 10,

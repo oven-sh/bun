@@ -109,6 +109,35 @@ struct Pattern {
     matches_without_slash: bool,
     /// `*`, `!..`, `../*`, `../**`: it does not make ESLint lint a file that nothing else matches.
     is_universal: bool,
+    /// What it matches ends with `.` and one of these, [packed](packed_extension). Empty: it cannot be told.
+    extensions: SmallVec<[u64; 8]>,
+    /// It ends with `/**`, so it says the same about all files of a directory.
+    is_about_directory: bool,
+}
+
+/// An extension of 8 bytes at most as a number.
+fn packed_extension(extension: &[u8]) -> Option<u64> {
+    let mut bytes = [0; 8];
+    bytes.get_mut(..extension.len())?.copy_from_slice(extension);
+    Some(u64::from_le_bytes(bytes))
+}
+
+/// [`Pattern::extensions`] of a pattern without a leading `!`: what follows its last `.`, a word or words in braces.
+fn extensions_of(pattern: &[u8]) -> SmallVec<[u64; 8]> {
+    let is_word = |it: &[u8]| !it.is_empty() && it.iter().all(u8::is_ascii_alphanumeric);
+    let dot = bun_core::strings::last_index_of_char(pattern, b'.');
+    let words: SmallVec<[&[u8]; 8]> = match dot.and_then(|at| pattern.get(at + 1..)) {
+        // Braces around one word are no choice.
+        Some([b'{', words @ .., b'}']) if bun_core::strings::contains_char(words, b',') => {
+            bun_core::strings::split(words, b",").collect()
+        }
+        Some(word) => smallvec::smallvec![word],
+        None => SmallVec::new(),
+    };
+    let packed = words
+        .iter()
+        .map(|it| packed_extension(it).filter(|_| is_word(it)));
+    packed.collect::<Option<_>>().unwrap_or_default()
 }
 
 impl Pattern {
@@ -120,6 +149,7 @@ impl Pattern {
             written => written.to_vec(),
         };
         let bangs = normalized.iter().take_while(|it| **it == b'!').count();
+        let says_what_it_matches = bangs == 0 && !normalized.starts_with(b"#");
         Pattern {
             matcher: bun_glob::Pattern::with_dots(
                 &crate::glob::from_minimatch(&normalized[bangs..]),
@@ -133,6 +163,11 @@ impl Pattern {
                 || normalized.starts_with(b"!")
                 || normalized.ends_with(b"/*")
                 || normalized.ends_with(b"/**"),
+            extensions: match says_what_it_matches {
+                true => extensions_of(&normalized),
+                false => SmallVec::new(),
+            },
+            is_about_directory: says_what_it_matches && normalized.ends_with(b"/**"),
         }
     }
 
@@ -155,6 +190,8 @@ impl Pattern {
             is_comment: false,
             matches_without_slash: false,
             is_universal: true,
+            extensions: SmallVec::new(),
+            is_about_directory: false,
         }
     }
 
@@ -220,6 +257,12 @@ struct ConfigObject {
 }
 
 impl ConfigObject {
+    /// Whether it is for a file depends on the directory alone.
+    fn is_about_directories(&self) -> bool {
+        let mut patterns = self.files.iter().flatten().flatten();
+        self.files.is_some() && self.ignores.is_none() && patterns.all(|it| it.is_about_directory)
+    }
+
     /// What it sees of the entries of `directory`, which is absolute, if it has a base path of its own. `before_name`: of
     /// [`Config::relative`].
     fn see(&self, config: &Config, directory: &[u8], before_name: &[u8]) -> BeforeName {
@@ -309,6 +352,12 @@ struct Heads {
     is_listed: Vec<bool>,
     /// For each object, the number of its first element, and whether all of its elements are listed.
     objects: Vec<(u32, bool)>,
+    /// For each extension that a pattern ends with, [packed](packed_extension): what can match a file that has it.
+    by_extension: Vec<(u64, Listed)>,
+    /// What can match a file with any other extension, or without one.
+    without_extension: Listed,
+    /// A bit for each object that is [about directories](ConfigObject::is_about_directories).
+    about_directories: Bits,
 }
 
 type Bits = SmallVec<[u64; 4]>;
@@ -321,6 +370,7 @@ fn has_bit(bits: &Bits, index: usize) -> bool {
 }
 
 /// What is listed for a path: a bit for each element, and one for each object.
+#[derive(Default)]
 struct Listed {
     elements: Bits,
     objects: Bits,
@@ -336,7 +386,7 @@ fn heads_of(patterns: &[Pattern]) -> Option<Vec<&[u8]>> {
 }
 
 impl Heads {
-    fn new(objects: &[ConfigObject]) -> Heads {
+    fn new<'o>(objects: &'o [ConfigObject]) -> Heads {
         let mut heads = Heads::default();
         for (index, object) in objects.iter().enumerate() {
             let first = heads.is_listed.len();
@@ -355,7 +405,53 @@ impl Heads {
                 object.files.is_some() && heads.is_listed[first..].iter().all(|it| *it);
             heads.objects.push((first as u32, are_all_listed));
         }
+        let elements = || objects.iter().flat_map(|it| it.files.iter().flatten());
+        // All of the patterns of an element have to match, so one that says so is enough.
+        let extensions_of = |element: &'o Vec<Pattern>| {
+            let mut known = element.iter().map(|it| &it.extensions[..]);
+            known.find(|it| !it.is_empty()).unwrap_or_default()
+        };
+        let for_extension = |extension: Option<u64>| {
+            let can_match = |element: &'o Vec<Pattern>| {
+                let needs = extensions_of(element);
+                needs.is_empty() || extension.is_some_and(|it| needs.contains(&it))
+            };
+            let mut found = Listed {
+                elements: smallvec::smallvec![0; heads.is_listed.len().div_ceil(64)],
+                objects: smallvec::smallvec![0; objects.len().div_ceil(64)],
+            };
+            for (at, _) in elements().enumerate().filter(|it| can_match(it.1)) {
+                found.elements[at / 64] |= 1 << (at % 64);
+            }
+            for (at, object) in objects.iter().enumerate() {
+                if (object.files.as_ref()).is_none_or(|it| it.iter().any(can_match)) {
+                    found.objects[at / 64] |= 1 << (at % 64);
+                }
+            }
+            found
+        };
+        let mut extensions: Vec<u64> = elements().flat_map(extensions_of).copied().collect();
+        extensions.sort_unstable();
+        extensions.dedup();
+        let by_extension = extensions.iter().map(|&it| (it, for_extension(Some(it))));
+        heads.by_extension = by_extension.collect();
+        heads.without_extension = for_extension(None);
+        heads.about_directories = smallvec::smallvec![0; objects.len().div_ceil(64)];
+        for (at, _) in (objects.iter().enumerate()).filter(|it| it.1.is_about_directories()) {
+            heads.about_directories[at / 64] |= 1 << (at % 64);
+        }
         heads
+    }
+
+    /// What can match `path`, going by its extension.
+    fn of_extension(&self, path: &[u8]) -> &Listed {
+        // A `/` in it is in no extension that is known.
+        let extension = bun_core::strings::last_index_of_char(path, b'.')
+            .and_then(|at| packed_extension(path.get(at + 1..)?));
+        let mut known = self.by_extension.iter();
+        known
+            .find(|it| Some(it.0) == extension)
+            .map_or(&self.without_extension, |it| &it.1)
     }
 
     /// What is listed for what `path` starts with. `None`: it cannot be told.
@@ -389,8 +485,13 @@ impl Heads {
 
     /// The same for its `nth` element.
     fn allows(&self, found: &Listed, object: usize, nth: usize) -> bool {
-        let element = self.objects[object].0 as usize + nth;
+        let element = self.element(object, nth);
         !self.is_listed[element] || has_bit(&found.elements, element)
+    }
+
+    /// The number of the `nth` element of `files` of `object`.
+    fn element(&self, object: usize, nth: usize) -> usize {
+        self.objects[object].0 as usize + nth
     }
 }
 
@@ -461,12 +562,18 @@ pub struct Within<'c> {
     relative: Vec<u8>,
     /// The objects that were merged last, and what they make.
     merged: Option<(Indices, Arc<ResolvedConfig>)>,
+    said: Said,
 }
+
+/// For objects that are [about directories](ConfigObject::is_about_directories), by their index: whether it is for the files of
+/// the directory, and whether that makes ESLint lint them.
+type Said = std::cell::RefCell<SmallVec<[(u32, bool, bool); 2]>>;
 
 /// An entry of the directory of a [`Within`].
 struct Entry<'w> {
     name: &'w [u8],
     seen_by_objects: &'w [(u32, BeforeName)],
+    said: &'w Said,
 }
 
 impl Entry<'_> {
@@ -477,6 +584,12 @@ impl Entry<'_> {
             .binary_search_by_key(&index, |it| it.0 as usize)
             .ok()?;
         Some([objects.get(at)?.1.as_deref()?, self.name].concat())
+    }
+
+    fn said_by(&self, index: usize) -> Option<(bool, bool)> {
+        let said = self.said.borrow();
+        let found = said.iter().find(|it| it.0 as usize == index)?;
+        Some((found.1, found.2))
     }
 }
 
@@ -500,6 +613,7 @@ impl Within<'_> {
             Entry {
                 name,
                 seen_by_objects: &self.seen.by_objects,
+                said: &self.said,
             },
         ))
     }
@@ -832,6 +946,7 @@ impl Config {
             name_at: directory.len() + usize::from(!directory.ends_with(b"/")),
             relative: seen.before_name.clone().unwrap_or_default(),
             merged: None,
+            said: Said::default(),
         }
     }
 
@@ -933,8 +1048,20 @@ impl Config {
         let mut matching = Indices::new();
         let mut is_matched = false;
         let listed = self.heads.of(parts.path());
+        let by_extension = self.heads.of_extension(parts.path());
         for (index, object) in self.objects.iter().enumerate() {
-            if (listed.as_ref()).is_some_and(|found| !self.heads.allows_object(found, index)) {
+            if !has_bit(&by_extension.objects, index)
+                || (listed.as_ref()).is_some_and(|found| !self.heads.allows_object(found, index))
+            {
+                continue;
+            }
+            // Said of another file of the directory.
+            let said = entry.filter(|_| has_bit(&self.heads.about_directories, index));
+            if let Some((applies, is_linted)) = said.and_then(|it| it.said_by(index)) {
+                if applies {
+                    matching.push(index as u32);
+                }
+                is_matched |= is_linted;
                 continue;
             }
             let own = object.base_path.as_ref().map(|base_path| {
@@ -957,7 +1084,9 @@ impl Config {
                 };
                 let can_match = (files.iter().enumerate())
                     .filter(|it| {
-                        (listed.as_ref()).is_none_or(|found| self.heads.allows(found, index, it.0))
+                        has_bit(&by_extension.elements, self.heads.element(index, it.0))
+                            && (listed.as_ref())
+                                .is_none_or(|found| self.heads.allows(found, index, it.0))
                     })
                     .map(|it| it.1);
                 let is_universal = |all: &&Vec<Pattern>| all.iter().all(|it| it.is_universal);
@@ -977,6 +1106,12 @@ impl Config {
                 Some(own) => status(&Candidate::new(own)),
                 None => status(parts),
             };
+            if let Some(entry) = said {
+                entry
+                    .said
+                    .borrow_mut()
+                    .push((index as u32, applies, is_linted));
+            }
             if applies {
                 matching.push(index as u32);
             }
@@ -1431,6 +1566,7 @@ impl Config {
             }
             config.plugins = Some(implemented);
         }
+        config.language.has_rule_that_requires_types = config.has_enabled(|it| it.requires_types);
         config
     }
 }

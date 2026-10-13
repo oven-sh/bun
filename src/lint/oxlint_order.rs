@@ -75,34 +75,50 @@ pub(crate) struct Called {
     /// A bit for each `BinOp` and for each `UnOp`.
     binaries: u32,
     unaries: u32,
-    /// It is called with a part of a node here, or with declarations alone: it takes more than a look.
+    /// It is called with a part of a node here: it takes more than a look.
     is_odd: bool,
 }
 
 /// What oxlint does with a rule.
 #[derive(Copy, Clone)]
-pub(crate) struct Order {
+pub(crate) struct Ran {
     pub(crate) when: When,
     /// Its place among all the rules, by the plugin and the name. A rule that oxlint has not comes after its rules.
     pub(crate) number: u16,
     /// For [`Entering`]: the kinds of node that it is called with.
-    pub(crate) kinds: Called,
+    kinds: Called,
+    /// [`once`]
+    once: Once,
+    /// [`is_port`]
+    is_port: bool,
 }
 
-pub(crate) fn of(rule: &Meta) -> Order {
+impl Ran {
+    /// A rule that nothing is known about is taken for one that is called with nodes.
+    pub(crate) fn unknown(when: When, number: u16) -> Ran {
+        Ran {
+            when,
+            number,
+            kinds: Called::default(),
+            once: Once::ByStart,
+            is_port: false,
+        }
+    }
+}
+
+pub(crate) fn of(rule: &Meta) -> Ran {
     let key = key(rule.plugin, rule.name.as_bytes());
     let found = TABLE.rules.binary_search_by_key(&key, |it| it.key);
-    match found.ok().and_then(|at| TABLE.rules.get(at)) {
-        Some(it) => Order {
-            when: it.when,
-            number: it.number,
-            kinds: visited::called(it.kinds),
-        },
-        None => Order {
-            when: Entering,
-            number: u16::MAX,
-            kinds: Called::default(),
-        },
+    let (when, number, kinds) = match found.ok().and_then(|at| TABLE.rules.get(at)) {
+        Some(it) => (it.when, it.number, visited::called(it.kinds)),
+        None => (Entering, u16::MAX, Called::default()),
+    };
+    Ran {
+        when,
+        number,
+        kinds,
+        once: once(rule),
+        is_port: is_port(rule),
     }
 }
 
@@ -113,7 +129,7 @@ fn kind_named(name: &str) -> Option<u8> {
 
 /// In which order a rule that oxlint runs once reports.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum Once {
+enum Once {
     /// It goes through the text.
     ByStart,
     /// It reports a function when it leaves it.
@@ -122,7 +138,7 @@ pub(crate) enum Once {
     AsReported,
 }
 
-pub(crate) fn once(rule: &Meta) -> Once {
+fn once(rule: &Meta) -> Once {
     let as_reported = match rule.plugin.in_oxlint() {
         Plugin::Eslint if rule.name == "max-statements" => return Once::ByEnd,
         Plugin::Eslint => rule.name == "no-undef",
@@ -140,7 +156,7 @@ pub(crate) fn once(rule: &Meta) -> Once {
 
 /// Whether the rule here is made after oxlint's, and goes through a node as that does. One that is made after a rule for ESLint
 /// may go through it in another way: what it reports about one node is put in the order of the text.
-pub(crate) fn is_port(rule: &Meta) -> bool {
+fn is_port(rule: &Meta) -> bool {
     rule.follows_oxlint
 }
 
@@ -194,19 +210,6 @@ static TABLE: LazyLock<Table> = LazyLock::new(|| {
         kinds: strings::split(KINDS.as_bytes(), b" ").zip(0..).collect(),
     }
 });
-
-/// What [`in_run_order`] asks about a rule that has reported.
-#[derive(Copy, Clone)]
-pub(crate) struct Ran {
-    pub(crate) when: When,
-    pub(crate) kinds: Called,
-    /// [`once`]
-    pub(crate) once: Once,
-    /// [`is_port`]
-    pub(crate) is_port: bool,
-    /// [`Order::number`]
-    pub(crate) number: u16,
-}
 
 /// Where in a run of oxlint it reports something: less for what is earlier. It says the same whichever rules run beside the one
 /// that reports, so that what is reported when a file is linted again can be put among what was reported before.
@@ -337,22 +340,13 @@ fn sort_as_entered<'a>(
 
 /// The places in `diagnostics` in the order in which oxlint reports them, and if `wants_keys` the [`RunKey`] of each. `ran`: about
 /// the rule with that index.
-pub(crate) fn in_run_order<'a>(
+pub(crate) fn in_run_order<'a, 'r>(
     file: &'a File<'a>,
     diagnostics: &[Diagnostic],
-    ran: &dyn Fn(u16) -> Option<Ran>,
+    ran: &dyn Fn(u16) -> Option<&'r Ran>,
     wants_keys: bool,
 ) -> (Vec<u32>, Vec<RunKey>) {
-    // What `ran` has said last, and about which rule. A rule reports all that it reports in a row.
-    let mut asked: Option<(u16, Option<Ran>)> = None;
-    let mut ask = |rule: u16| match asked {
-        Some((last, ran)) if last == rule => ran,
-        _ => {
-            let ran = ran(rule);
-            asked = Some((rule, ran));
-            ran
-        }
-    };
+    let unknown = Ran::unknown(Entering, u16::MAX);
     let mut places = Places::new(file);
     // The four parts of the run. Each with the place in `diagnostics` in the low 32 bits.
     let with_place = |key: u64, at: u32| (u128::from(key) << 32) | u128::from(at);
@@ -369,58 +363,63 @@ pub(crate) fn in_run_order<'a>(
     let mut searched: Vec<u128> = Vec::new();
     // The number of the rule of each, for the keys.
     let mut numbers: Vec<u16> = Vec::with_capacity(if wants_keys { diagnostics.len() } else { 0 });
-    for ((at, it), place) in (0u32..).zip(diagnostics).zip(&mut found) {
-        let ran = ask(it.rule);
+    // A rule reports all that it reports in a row.
+    let mut rest = (0u32..).zip(&mut found);
+    for of_rule in diagnostics.chunk_by(|a, b| a.rule == b.rule) {
+        let ran = of_rule.first().and_then(|it| ran(it.rule));
+        let ran = ran.unwrap_or(&unknown);
         if wants_keys {
-            numbers.push(ran.map_or(u16::MAX, |it| it.number));
+            numbers.resize(numbers.len() + of_rule.len(), ran.number);
         }
-        let details = it.details.as_deref();
-        // What is about the file as a whole, at no place in it, is the first of its part.
-        let start = details.and_then(|it| it.start_position.as_ref());
-        let has_place = u64::from(start.is_none_or(|it| it.line != 0));
-        let by_place = (has_place << 32) | u64::from(it.span.start);
-        match ran.map(|it| it.when) {
-            // One that says with which node has a `run` as well, which reports this.
-            Some(When::Once) if !it.states_node => {
-                let within = match ran.map(|it| it.once) {
-                    Some(Once::AsReported) => u64::from(at),
-                    Some(Once::ByEnd) => (has_place << 32) | u64::from(it.span.end),
-                    _ => by_place,
-                };
-                once.push(with_place((u64::from(it.rule) << 33) | within, at));
-            }
-            // Of a chain of calls it comes to the inner ones first.
-            Some(When::AtTheEnd) => {
-                let label = (u64::from(it.span.start) << 32) | u64::from(it.span.end);
-                calls.push(with_place(label, at));
-            }
-            Some(When::Last) => last.push(with_place(by_place, at)),
-            _ => {
-                // A rule that says which node it is goes through the node as oxlint's does.
-                place.1 = match it.states_node || ran.is_some_and(|it| it.is_port) {
-                    true => at,
-                    false => it.span.start,
-                };
-                let called = ran.map_or_else(Called::default, |it| it.kinds);
-                let stated = details.and_then(|it| it.listened_on);
-                let label = stated.filter(|_| it.node.is_none()).unwrap_or(it.span);
-                let known = match it.node {
-                    _ if has_place == 0 => Some(nowhere),
-                    Some(node) => (places.at_a_look(&called, node, it))
-                        .or_else(|| places.of(it.rule, &called.kinds, label, it.node)),
-                    // The name is the node.
-                    None if it.states_node && stated.is_none() => Some(Place {
-                        span: label,
-                        node: None,
-                    }),
-                    None => places.of(it.rule, &called.kinds, label, None),
-                };
-                match known {
-                    Some(known) => {
-                        place.0 = known;
-                        nodes.push((u64::from(known.span.start) << 32) | u64::from(at));
+        for (it, (at, place)) in of_rule.iter().zip(&mut rest) {
+            let details = it.details.as_deref();
+            // What is about the file as a whole, at no place in it, is the first of its part.
+            let start = details.and_then(|it| it.start_position.as_ref());
+            let has_place = u64::from(start.is_none_or(|it| it.line != 0));
+            let by_place = (has_place << 32) | u64::from(it.span.start);
+            match ran.when {
+                // One that says with which node has a `run` as well, which reports this.
+                When::Once if !it.states_node => {
+                    let within = match ran.once {
+                        Once::AsReported => u64::from(at),
+                        Once::ByEnd => (has_place << 32) | u64::from(it.span.end),
+                        Once::ByStart => by_place,
+                    };
+                    once.push(with_place((u64::from(it.rule) << 33) | within, at));
+                }
+                // Of a chain of calls it comes to the inner ones first.
+                When::AtTheEnd => {
+                    let label = (u64::from(it.span.start) << 32) | u64::from(it.span.end);
+                    calls.push(with_place(label, at));
+                }
+                When::Last => last.push(with_place(by_place, at)),
+                _ => {
+                    // A rule that says which node it is goes through the node as oxlint's does.
+                    place.1 = match it.states_node || ran.is_port {
+                        true => at,
+                        false => it.span.start,
+                    };
+                    let called = &ran.kinds;
+                    let stated = details.and_then(|it| it.listened_on);
+                    let label = stated.filter(|_| it.node.is_none()).unwrap_or(it.span);
+                    let known = match it.node {
+                        _ if has_place == 0 => Some(nowhere),
+                        Some(node) => (places.at_a_look(called, node, it))
+                            .or_else(|| places.of(it.rule, &called.kinds, label, it.node)),
+                        // The name is the node.
+                        None if it.states_node && stated.is_none() => Some(Place {
+                            span: label,
+                            node: None,
+                        }),
+                        None => places.of(it.rule, &called.kinds, label, None),
+                    };
+                    match known {
+                        Some(known) => {
+                            place.0 = known;
+                            nodes.push((u64::from(known.span.start) << 32) | u64::from(at));
+                        }
+                        None => searched.push(with_place(as_entered(label), at)),
                     }
-                    None => searched.push(with_place(as_entered(label), at)),
                 }
             }
         }
@@ -447,7 +446,7 @@ pub(crate) fn in_run_order<'a>(
             else {
                 continue;
             };
-            let kinds = ask(it.rule).map_or_else(Kinds::default, |it| it.kinds.kinds);
+            let kinds = ran(it.rule).map_or_else(Kinds::default, |it| it.kinds.kinds);
             place.0 = places.search(it.rule, &kinds, label, near);
             late.push((u64::from(place.0.span.start) << 32) | u64::from(at));
         }

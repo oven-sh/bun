@@ -14,7 +14,14 @@ use std::borrow::Cow;
 pub struct Registry {
     /// Sorted by plugin and name.
     rules: Vec<&'static RuleEntry>,
+    /// The rules of typescript-eslint, each with the name of the core rule that it is a version of, or else its own. Sorted
+    /// by that name, which is there once.
+    extensions: Vec<(&'static str, &'static RuleEntry)>,
     native_plugins: NativePlugins,
+}
+
+fn core_rule_of(extension: &Meta) -> &'static str {
+    extension.extends_base_rule.unwrap_or(extension.name)
 }
 
 /// For which of the plugins that a configuration of ESLint loads from a package the rules here answer, in place of those of
@@ -316,8 +323,15 @@ impl Registry {
                 .filter(|it| it.is_deprecated && !it.follows_oxlint)
                 .all(|it| deprecated_rule(&super::RuleId::Known(it).to_vec()).is_some())
         );
+        let of_typescript = (rules.iter()).filter(|it| it.meta.plugin == Plugin::TypeScript);
+        let mut extensions: Vec<_> = of_typescript
+            .map(|it| (core_rule_of(it.meta), *it))
+            .collect();
+        crate::utils::sort::sort_by_key(&mut extensions, |it| it.0);
+        extensions.dedup_by_key(|it| it.0);
         Registry {
             rules,
+            extensions,
             native_plugins: NativePlugins::All,
         }
     }
@@ -422,17 +436,17 @@ impl Registry {
     /// If `meta` is a core rule with a typescript-eslint version, or that version, returns both (core rule first). Without an
     /// ESLint or oxlint config they act as one rule. The core rule runs on JavaScript and the other on TypeScript.
     pub fn pair_of(&self, meta: &Meta) -> Option<(&'static RuleEntry, &'static RuleEntry)> {
-        let base_of = |it: &Meta| it.extends_base_rule.unwrap_or(it.name);
-        let mut of_typescript = self.rules.iter().copied();
-        let mut of_typescript = of_typescript
-            .by_ref()
-            .filter(|it| it.meta.plugin == Plugin::TypeScript);
         let extension = match meta.plugin {
-            Plugin::TypeScript => of_typescript.find(|it| it.meta.name == meta.name),
-            Plugin::Eslint => of_typescript.find(|it| base_of(it.meta) == meta.name),
+            Plugin::TypeScript => self.get(Plugin::TypeScript, meta.name.as_bytes()),
+            Plugin::Eslint => {
+                let at = self.extensions.binary_search_by_key(&meta.name, |it| it.0);
+                at.ok()
+                    .and_then(|at| self.extensions.get(at))
+                    .map(|it| it.1)
+            }
             _ => None,
         }?;
-        let base = self.get(Plugin::Eslint, base_of(extension.meta).as_bytes())?;
+        let base = self.get(Plugin::Eslint, core_rule_of(extension.meta).as_bytes())?;
         Some((base, extension))
     }
 

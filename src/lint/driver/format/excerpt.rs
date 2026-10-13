@@ -70,6 +70,8 @@ struct Place<'r> {
     file: Option<(&'r FileResult, LineStarts, Vec<u8>)>,
     /// The file that [`with_help`] has asked about last, and the answer.
     helped: Option<(&'r FileResult, Vec<LintMessage>)>,
+    /// The rules of the problems that are written, if those are few.
+    written: Option<Vec<&'r RuleId>>,
 }
 
 impl<'r> Place<'r> {
@@ -94,7 +96,7 @@ impl<'r> Place<'r> {
 fn with_help<'r>(problem: Problem<'r>, meta: &Meta, place: &mut Place<'r>) -> Option<LintMessage> {
     let (lint, Problem { result, message }) = (meta.help?, problem);
     if !(place.helped.as_ref()).is_some_and(|it| std::ptr::eq(it.0, result)) {
-        place.helped = Some((result, lint(result)));
+        place.helped = Some((result, lint(result, place.written.as_deref())));
     }
     let rule = |it: &LintMessage| it.rule_id.as_ref().map(|id| id.to_vec());
     let is_same = |it: &&LintMessage| {
@@ -220,12 +222,30 @@ impl<'r> Rule<'r> {
     }
 }
 
+fn rules_of<'r>(problems: impl Iterator<Item = Problem<'r>>) -> Option<Vec<&'r RuleId>> {
+    Some(
+        problems
+            .filter_map(|it| it.message.rule_id.as_ref())
+            .collect(),
+    )
+}
+
 /// Groups problems that have the same rule and message, largest group first. With `by_rule`, the message is ignored and
 /// groups of errors come before groups of warnings.
 fn grouped<'r>(problems: &[Problem<'r>], by_rule: bool) -> Vec<Vec<Problem<'r>>> {
     let mut index: FxHashMap<(Rule, &[u8]), usize> = FxHashMap::default();
+    // With `by_rule`: the group of a rule that is built in, by where the rule is. That saves reading its name for each problem.
+    let mut known: FxHashMap<usize, usize> = FxHashMap::default();
     let mut groups: Vec<Vec<Problem>> = Vec::new();
     for problem in problems {
+        let address = match &problem.message.rule_id {
+            Some(RuleId::Known(meta)) if by_rule => Some(std::ptr::from_ref(*meta).addr()),
+            _ => None,
+        };
+        if let Some(at) = address.and_then(|it| known.get(&it)) {
+            groups[*at].push(*problem);
+            continue;
+        }
         let key = match Rule::of(problem) {
             Rule::None => (Rule::None, &problem.message.message[..]),
             rule if by_rule => (rule, &b""[..]),
@@ -236,6 +256,9 @@ fn grouped<'r>(problems: &[Problem<'r>], by_rule: bool) -> Vec<Vec<Problem<'r>>>
             groups.len() - 1
         });
         groups[at].push(*problem);
+        if let Some(address) = address {
+            known.insert(address, at);
+        }
     }
     bun_lint::utils::sort::sort_by_key(&mut groups, |group| {
         let is_first = by_rule && group[0].is_error();
@@ -485,6 +508,9 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
     let problems = all(results);
     let place = &mut Place::default();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
+        if problems.len() <= GROUP_THRESHOLD {
+            place.written = rules_of(problems.iter().copied());
+        }
         for (i, problem) in problems.into_iter().enumerate() {
             if i > 0 {
                 out.push(b'\n');
@@ -495,6 +521,7 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
     }
     let groups = grouped(&problems, meta.is_native);
     let shown = groups.len().min(MAX_GROUPS);
+    place.written = rules_of(groups[..shown].iter().map(|it| it[0]));
     for group in &groups[..shown] {
         let has_notes = write_pretty_problem(out, group[0], meta, place);
         if group.len() > 1 {
@@ -676,12 +703,16 @@ pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
     let problems = all(results);
     let place = &mut Place::default();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
+        if problems.len() <= GROUP_THRESHOLD {
+            place.written = rules_of(problems.iter().copied());
+        }
         problems.iter().for_each(|problem| {
             write_agent_problem(out, std::slice::from_ref(problem), meta, place)
         });
     } else {
         let groups = grouped(&problems, false);
         let shown = groups.len().min(MAX_GROUPS + MAX_COMPACT_GROUPS);
+        place.written = rules_of(groups[..shown].iter().map(|it| it[0]));
         groups[..shown]
             .iter()
             .for_each(|group| write_agent_problem(out, group, meta, place));

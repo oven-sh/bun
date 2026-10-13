@@ -49,8 +49,18 @@ impl<'r> Source<'r> {
             strings::replace_owned(paths::inside(meta.cwd, &path).unwrap_or(&path), b"\\", b"/");
         let text = result.text.as_deref().unwrap_or_default();
         let offsets = Offsets::new(text, result.line_starts.as_deref());
-        let has = |separator: &str| strings::contains(text, separator.as_bytes());
-        let lines = (!offsets.is_ascii && (has("\u{2028}") || has("\u{2029}"))).then(|| {
+        // U+2028 and U+2029 start with the same two bytes.
+        let has_separator = || {
+            let mut rest = text;
+            while let Some(at) = strings::index_of(rest, b"\xE2\x80") {
+                if matches!(rest.get(at + 2), Some(0xA8 | 0xA9)) {
+                    return true;
+                }
+                rest = &rest[at + 2..];
+            }
+            false
+        };
+        let lines = (!offsets.is_ascii && has_separator()).then(|| {
             let mut lines = vec![0];
             let mut at = 0;
             while let Some(found) = strings::index_of_any(&text[at..], b"\r\n") {
@@ -121,6 +131,15 @@ impl<'r> Source<'r> {
 
     /// [`Info::start`]
     pub(super) fn start(&self, message: &LintMessage) -> Position {
+        // In a line after the first, which may start with a byte order mark, and before its end, the line is the one that
+        // ESLint counts, and the column is known with the offset.
+        if message.line > 1 && self.lines.is_none() {
+            let (at, column) = self.offsets.at(message.line, message.column);
+            if self.text.get(at).is_some_and(|it| *it != b'\n') {
+                let line = message.line as usize;
+                return Position { line, column };
+            }
+        }
         (self.span(message)).map_or_else(Default::default, |it| self.position(it.0))
     }
 

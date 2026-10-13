@@ -12,7 +12,8 @@ pub struct NumericSeparatorsStyle {
     fraction_group_length: usize,
 }
 
-const NUMERIC_SEPARATORS_STYLE: Message = Message::new("", "Invalid group length in numeric value.");
+const NUMERIC_SEPARATORS_STYLE: Message =
+    Message::new("", "Invalid group length in numeric value.");
 
 struct NumericBaseConfig {
     only_if_contains_separator: Option<bool>,
@@ -22,7 +23,12 @@ struct NumericBaseConfig {
 
 impl NumericBaseConfig {
     fn new(options: Object, group_length: usize, minimum_digits: usize) -> Self {
-        let integer = |key: &str| options.number(key).filter(|it| it.fract() == 0.0).and_then(|_| options.usize(key));
+        let integer = |key: &str| {
+            options
+                .number(key)
+                .filter(|it| it.fract() == 0.0)
+                .and_then(|_| options.usize(key))
+        };
         NumericBaseConfig {
             only_if_contains_separator: options.bool("onlyIfContainsSeparator"),
             group_length: integer("groupLength").unwrap_or(group_length),
@@ -53,13 +59,17 @@ impl NumericSeparatorsStyle {
             [b'0', b'x' | b'X', digits @ ..] => (raw.get(..2)?, digits, &self.hexadecimal),
             [b'0', b'o' | b'O', digits @ ..] => (raw.get(..2)?, digits, &self.octal),
             // `010`, which cannot have separators.
-            [b'0', digits @ ..] if !digits.is_empty() && digits.iter().all(|it| matches!(it, b'0'..=b'7')) => {
+            [b'0', digits @ ..]
+                if !digits.is_empty() && digits.iter().all(|it| matches!(it, b'0'..=b'7')) =>
+            {
                 return None;
             }
             _ => (&b""[..], raw, &self.number),
         };
         if !strings::contains_char(raw, b'_')
-            && config.only_if_contains_separator.unwrap_or(self.only_if_contains_separator)
+            && config
+                .only_if_contains_separator
+                .unwrap_or(self.only_if_contains_separator)
         {
             return None;
         }
@@ -74,7 +84,8 @@ impl NumericSeparatorsStyle {
             Some(at) => (raw.get(..at)?, raw.get(at..)),
             None => (raw, None),
         };
-        let (integer_part, decimal_part) = strings::split_once_char(mantissa, b'.').unwrap_or((mantissa, b""));
+        let (integer_part, decimal_part) =
+            strings::split_once_char(mantissa, b'.').unwrap_or((mantissa, b""));
         config.add_separators(&mut out, integer_part, config.group_length, false);
         // The `.` of `1.e2` is dropped, as in oxlint. That of `1.` stays, for `1..toString()`.
         if !decimal_part.is_empty() || raw.ends_with(b".") {
@@ -97,21 +108,29 @@ impl NumericSeparatorsStyle {
 }
 
 impl Rule for NumericSeparatorsStyle {
-    const META: Meta =
-        Meta::oxlint(Plugin::Unicorn, "numeric-separators-style", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::oxlint(
+        Plugin::Unicorn,
+        "numeric-separators-style",
+        Kind::Suggestion,
+    )
+    .fixable(Fixable::Code);
     const ON: On = On::new().number_literals();
     no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let number = options.object("number");
-        let fraction_group_length = number.number("fractionGroupLength").filter(|it| it.fract() == 0.0);
+        let fraction_group_length = number
+            .number("fractionGroupLength")
+            .filter(|it| it.fract() == 0.0);
         NumericSeparatorsStyle {
             only_if_contains_separator: options.bool_or("onlyIfContainsSeparator", false),
             hexadecimal: NumericBaseConfig::new(options.object("hexadecimal"), 2, 0),
             binary: NumericBaseConfig::new(options.object("binary"), 4, 0),
             octal: NumericBaseConfig::new(options.object("octal"), 4, 0),
-            fraction_group_length: fraction_group_length.and_then(|_| number.usize("fractionGroupLength")).unwrap_or(usize::MAX),
+            fraction_group_length: fraction_group_length
+                .and_then(|_| number.usize("fractionGroupLength"))
+                .unwrap_or(usize::MAX),
             number: NumericBaseConfig::new(number, 3, 5),
         }
     }
@@ -119,7 +138,8 @@ impl Rule for NumericSeparatorsStyle {
     fn number_literal<'a>(&self, number: Literal<'a>, cx: &mut Cx<'a, Self>) {
         let raw = number.text();
         // Most numbers are a few digits.
-        let is_short = raw.len() <= self.number.group_length || raw.len() < self.number.minimum_digits;
+        let is_short =
+            raw.len() <= self.number.group_length || raw.len() < self.number.minimum_digits;
         if is_short && raw.iter().all(u8::is_ascii_digit) {
             return;
         }
@@ -129,7 +149,10 @@ impl Rule for NumericSeparatorsStyle {
         };
         if formatted != digits {
             formatted.extend_from_slice(raw.get(digits.len()..).unwrap_or_default());
-            cx.report(number, NUMERIC_SEPARATORS_STYLE).fix(|fixer| fixer.replace(number, formatted));
+            let report = cx
+                .report(number, NUMERIC_SEPARATORS_STYLE)
+                .called_with_the_name();
+            report.fix(|fixer| fixer.replace(number, formatted));
         }
     }
 }

@@ -55,11 +55,48 @@ impl<T: Copy> ByName<T> {
 /// Where the lines of a file start.
 pub(crate) struct Lines {
     starts: LineStarts,
-    /// No column needs converting: a byte is a UTF-16 code unit.
-    is_ascii: bool,
+    /// A bit for each line that has a byte that is not ASCII, from the first. In the others no column needs converting: a byte is
+    /// a UTF-16 code unit. Empty if there is no such line.
+    not_ascii: Vec<u64>,
     /// For columns far into a line: how many UTF-16 code units the characters have that start before each multiple of
     /// `BLOCK`, and at last all of them. `None` if the text is not valid UTF-8. Made when the first such column is asked for.
     units: OnceCell<Option<Vec<u32>>>,
+}
+
+impl Lines {
+    fn new(text: &[u8], starts: LineStarts) -> Lines {
+        let (mut not_ascii, mut at) = (Vec::new(), 0);
+        while let Some(found) = text.get(at..).and_then(bun_core::strings::first_non_ascii) {
+            let line = starts.line_at(at as u32 + found).0 as usize;
+            not_ascii.resize(starts.starts.len().div_ceil(64), 0u64);
+            if let Some(bits) = not_ascii.get_mut((line - 1) / 64) {
+                *bits |= 1 << ((line - 1) % 64);
+            }
+            // On with the next line.
+            match starts.starts.get(line) {
+                Some(next) => at = *next as usize,
+                None => break,
+            }
+        }
+        Lines {
+            starts,
+            not_ascii,
+            units: OnceCell::new(),
+        }
+    }
+
+    /// The whole text.
+    #[inline]
+    fn is_ascii(&self) -> bool {
+        self.not_ascii.is_empty()
+    }
+
+    /// The line `line`, counted from 1.
+    #[inline]
+    fn is_line_ascii(&self, line: u32) -> bool {
+        let bits = self.not_ascii.get((line as usize - 1) / 64);
+        bits.is_none_or(|bits| (bits >> ((line - 1) % 64)) & 1 == 0)
+    }
 }
 
 /// Where the lines of a text start.
@@ -204,10 +241,9 @@ impl<'a> File<'a> {
     }
 
     fn lines_index(&self) -> &Lines {
-        self.lazy.lines.get_or_init(|| Lines {
-            starts: LineStarts::at(line_starts(self.text(), self.is_plain())),
-            is_ascii: bun_core::strings::first_non_ascii(self.text()).is_none(),
-            units: OnceCell::new(),
+        self.lazy.lines.get_or_init(|| {
+            let starts = LineStarts::at(line_starts(self.text(), self.is_plain()));
+            Lines::new(self.text(), starts)
         })
     }
 
@@ -320,8 +356,16 @@ impl<'a> File<'a> {
             None => {
                 let lines = self.lines_index();
                 let (line, start) = lines.starts.line_at(offset);
-                self.position_in_line(line, start, offset, lines.is_ascii)
+                self.position_in_line(line, start, offset, lines.is_line_ascii(line))
             }
+        }
+    }
+
+    /// The positions of `count` spans are about to be asked for. If that is many for a text of this length, where the lines start
+    /// is found at once. It takes about as long as to find the lines of a dozen spans one by one in 25,000 bytes.
+    pub(crate) fn expect_positions(&self, count: usize) {
+        if count.saturating_mul(2048) >= self.text().len() {
+            self.lines_index();
         }
     }
 
@@ -334,7 +378,8 @@ impl<'a> File<'a> {
         let (from, to) = (span.start.min(len), span.end.min(len));
         let (line, start) = lines.starts.line_at(from);
         let (end_line, end_start) = lines.starts.line_from(line - 1, to);
-        if lines.is_ascii {
+        let (is_ascii, is_end_ascii) = (lines.is_line_ascii(line), lines.is_line_ascii(end_line));
+        if is_ascii && is_end_ascii {
             let (column, end_column) = (from - start, to - end_start);
             let end = Position {
                 line: end_line,
@@ -343,12 +388,12 @@ impl<'a> File<'a> {
             return (Position { line, column }, end);
         }
         (
-            self.position_in_line(line, start, from, lines.is_ascii),
-            self.position_in_line(end_line, end_start, to, lines.is_ascii),
+            self.position_in_line(line, start, from, is_ascii),
+            self.position_in_line(end_line, end_start, to, is_end_ascii),
         )
     }
 
-    /// The position of `offset`, which is in the line `line`, which starts at `start`. `is_ascii`: the text is known to be.
+    /// The position of `offset`, which is in the line `line`, which starts at `start`. `is_ascii`: the line is known to be.
     #[inline]
     fn position_in_line(&self, line: u32, start: u32, offset: u32, is_ascii: bool) -> Position {
         let text = self.text();
@@ -386,7 +431,7 @@ impl<'a> File<'a> {
     /// ESLint's `getIndexFromLoc`. The position between the two UTF-16 code units of a character is its offset plus 2.
     pub fn offset(&self, position: Position) -> u32 {
         let line = self.line_span(position.line);
-        if self.lines_index().is_ascii {
+        if self.lines_index().is_ascii() {
             return line.start + position.column;
         }
         let (mut at, mut units) = (line.start, 0);

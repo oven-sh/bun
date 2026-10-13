@@ -2198,7 +2198,7 @@ impl<'l> Loader<'l> {
         // With no config file and no flag, the rules decide. A rule that only uses types when they're available isn't a
         // reason to type check.
         if loaded.flavor == Flavor::BuiltIn && self.options.type_aware.is_none() {
-            return self.options.type_check || config.has_enabled(|it| it.requires_types);
+            return self.options.type_check || config.language.has_rule_that_requires_types;
         }
         // oxlint reads `options` in the configuration of the working directory only.
         let of_the_run = || {

@@ -6,8 +6,8 @@ use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
 use crate::options::Json;
-use crate::oxlint_order::Called;
-use crate::rule::{Meta, Plugin, When};
+use crate::oxlint_order::Ran as InOxlint;
+use crate::rule::{Meta, Plugin};
 use crate::rule_set::RuleBits;
 use crate::runner::{Listeners, RuleEntry};
 use std::sync::{Arc, OnceLock};
@@ -212,12 +212,8 @@ pub(super) struct Slot {
     pub(super) at: u32,
     /// In the set of the rules of the linter.
     pub(super) number: u16,
-    /// With a configuration of oxlint: when oxlint reports what the rule reports.
-    pub(super) when: When,
-    /// With a configuration of oxlint: the kinds of node that it calls the rule with.
-    pub(super) kinds: Called,
-    /// With a configuration of oxlint: the number that it gives the rule.
-    pub(super) oxlint_number: u16,
+    /// With a configuration of oxlint: what it does with the rule. Otherwise only when the rule reports.
+    pub(super) in_oxlint: InOxlint,
     pub(super) severity: Severity,
 }
 

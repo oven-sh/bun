@@ -278,6 +278,7 @@ impl<'a> File<'a> {
     /// The other files. `None` where a file is linted alone: a rule that needs them has nothing to say.
     #[inline]
     pub fn modules(&self) -> Option<&'a dyn Modules> {
+        self.sink.asks_about_modules.set(true);
         self.modules.get()
     }
 

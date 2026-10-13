@@ -16,7 +16,7 @@ mod xml;
 use crate::results::{Counts, FileResult};
 use crate::run::Pool;
 use bun_core::fmt::TerminalHyperlink;
-use bun_lint::linter::LintMessage;
+use bun_lint::linter::{LintMessage, RuleId};
 use std::borrow::Cow;
 
 /// `--format`
@@ -161,7 +161,8 @@ impl Format {
 
 /// ESLint's `ResultsMeta`, and what else a format wants to know.
 /// [`Context::with_help`](crate::lint::Context::with_help)
-pub(crate) type WithHelp<'m> = &'m (dyn Fn(&FileResult) -> Vec<LintMessage> + Sync);
+pub(crate) type WithHelp<'m> =
+    &'m (dyn Fn(&FileResult, Option<&[&RuleId]>) -> Vec<LintMessage> + Sync);
 
 pub(crate) struct Meta<'m> {
     /// If the messages lack what it makes.

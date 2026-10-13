@@ -113,7 +113,7 @@ pub(super) fn called(kinds: Kinds) -> Called {
                 UnOp::PreInc as u32,
                 UnOp::PostDec as u32,
             ),
-        is_odd: kinds.has_any_of(&known.parts) || kinds.are_among(&known.declarations),
+        is_odd: kinds.has_any_of(&known.parts),
     }
 }
 
@@ -550,7 +550,8 @@ impl<'a> Places<'a> {
         if called.is_odd {
             return None;
         }
-        let (is_leaf, span) = match node.unpack(self.file) {
+        let known = self.known;
+        let (node, level, is_leaf, span) = match node.unpack(self.file) {
             Node::Expr(e) => {
                 let tag = e.tag();
                 let tags = called.exprs
@@ -563,18 +564,29 @@ impl<'a> Places<'a> {
                     || match tag {
                         ExprTag::Binary => (called.binaries >> e.binary_op()? as u32) & 1 != 0,
                         ExprTag::Unary => (called.unaries >> e.unary_op()? as u32) & 1 != 0,
-                        _ => false,
+                        // They are other nodes.
+                        ExprTag::Fn | ExprTag::Class => return None,
+                        _ => {
+                            known.exprs.get(tag as usize) == Some(&ASK)
+                                && called.kinds.has(known.kind_of(Node::Expr(e)))
+                        }
                     };
-                if !is_called_with {
-                    return None;
-                }
+                let level = match is_called_with {
+                    true => ITSELF,
+                    false if called.kinds.has(known.chain_expression) && is_chain_root(e) => CHAIN,
+                    false => return None,
+                };
                 let span = if it.states_node { e.span() } else { it.span };
-                ((self.known.leaf_exprs >> tag as u32) & 1 != 0, span)
+                let is_leaf = level == ITSELF && (known.leaf_exprs >> tag as u32) & 1 != 0;
+                (node, level, is_leaf, span)
             }
-            // With an `export` before it, it is in another node, which starts there.
-            Node::Stmt(statement) if !statement.is_exported() => {
+            Node::Stmt(statement) => {
                 let tag = statement.tag();
-                if (called.stmts >> tag as u32) & 1 == 0 || statement.is_with() {
+                // With an `export` before it, it is in another node, which starts there.
+                if (called.stmts >> tag as u32) & 1 == 0
+                    || statement.is_exported()
+                    || statement.is_with()
+                {
                     return None;
                 }
                 let span = if it.states_node {
@@ -582,13 +594,30 @@ impl<'a> Places<'a> {
                 } else {
                     it.span
                 };
-                ((self.known.leaf_stmts >> tag as u32) & 1 != 0, span)
+                (
+                    node,
+                    ITSELF,
+                    (known.leaf_stmts >> tag as u32) & 1 != 0,
+                    span,
+                )
             }
-            _ => return None,
+            other => {
+                let other = normalize(other);
+                let kind = known.kind_of(other);
+                if !called.kinds.has(kind) {
+                    return None;
+                }
+                (
+                    other.packed(),
+                    ITSELF,
+                    known.leaves.has(kind),
+                    estree_span(other),
+                )
+            }
         };
         Some(Place {
             span,
-            node: (!is_leaf).then_some((node, ITSELF)),
+            node: (!is_leaf).then_some((node, level)),
         })
     }
 

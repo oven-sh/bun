@@ -1,6 +1,8 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint_eslint::rules::init_declarations::{Config, Finding, declared_namespace_around, has_declare};
+use bun_lint_eslint::rules::init_declarations::{
+    Config, Finding, declared_namespace_around, has_declare,
+};
 
 /// Require or disallow initialization in variable declarations.
 pub struct InitDeclarations {
@@ -10,8 +12,8 @@ pub struct InitDeclarations {
 }
 
 impl Rule for InitDeclarations {
-    const META: Meta =
-        Meta::typescript("init-declarations", Kind::Suggestion).extends_base_rule("init-declarations")
+    const META: Meta = Meta::typescript("init-declarations", Kind::Suggestion)
+        .extends_base_rule("init-declarations")
         .reports_on_exit();
     const ON: On = On::new().var_decls();
     type State<'a> = ();
@@ -51,12 +53,18 @@ impl InitDeclarations {
             return;
         }
         if decl.init().is_some() {
-            cx.report(decl, found.message).data("idName", found.name);
+            let report = cx
+                .report(decl, found.message)
+                .called_with(found.declaration);
+            report.data("idName", found.name);
             return;
         }
         // For oxlint the type annotation is part of it.
         if cx.language().is_oxlint {
-            cx.report(decl.binding_span(), found.message).data("idName", found.name);
+            let report = cx.report(decl.binding_span(), found.message);
+            report
+                .called_with(found.declaration)
+                .data("idName", found.name);
             return;
         }
         // Without the type annotation: as many columns as the name is long.

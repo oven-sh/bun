@@ -1321,7 +1321,10 @@ impl<'a> Checks<'a, '_> {
                     .map(|it| (it.span().start, "Setter cannot use rest params")),
                 _ => None,
             };
-            if let (true, Some(_), Some(list)) = (self.is_oxc, wrong, it.params_span()) {
+            if self.is_oxc
+                && wrong.is_some()
+                && let Some(list) = it.params_span()
+            {
                 self.report(
                     match (it.kind(), params.len()) {
                         (FnKind::Getter, _) => {

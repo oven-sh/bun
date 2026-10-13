@@ -115,6 +115,8 @@ struct How<'h> {
     without_rules: bool,
     /// [`Context::with_help`]
     with_help: bool,
+    /// Which rules run.
+    only: Option<&'h RuleFilter<'h>>,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -285,8 +287,12 @@ impl Context<'_, '_> {
     }
 
     /// Lints the text that the messages of `result` are about once more, and makes what oxlint says besides each message. Nothing, if
-    /// that was made the first time or there is no such thing: see [`Context::help_on_demand`].
-    pub(crate) fn with_help(&self, result: &FileResult) -> Vec<LintMessage> {
+    /// that was made the first time or there is no such thing: see [`Context::help_on_demand`]. `only`: the rules that are asked about.
+    pub(crate) fn with_help(
+        &self,
+        result: &FileResult,
+        only: Option<&[&RuleId]>,
+    ) -> Vec<LintMessage> {
         let (Some(linted), Some(text)) = (&result.linted, &result.text) else {
             return Vec::new();
         };
@@ -297,8 +303,10 @@ impl Context<'_, '_> {
         if was_made || !has_help {
             return Vec::new();
         }
+        let is_asked_about = |id: &RuleId, _: Severity| only.is_none_or(|only| only.contains(&id));
         let how = How {
             with_help: true,
+            only: Some(&is_asked_about),
             ..How::default()
         };
         self.verify_as(&path, text, &linted.config, &how).messages
@@ -565,7 +573,9 @@ impl Context<'_, '_> {
             physical_path_len: as_what.physical_path_len,
             rule_filter: match as_what.without_rules {
                 true => Some(&no_rule),
-                false => as_what.script.map(|it| it.1).or(options.rule_filter),
+                false => (as_what.script.map(|it| it.1))
+                    .or(as_what.only)
+                    .or(options.rule_filter),
             },
             ..options
         };

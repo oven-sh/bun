@@ -79,7 +79,7 @@ use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
-use crate::oxlint_order::Called;
+use crate::oxlint_order::Ran as InOxlint;
 use crate::rule::{Meta, When};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::runner::{Enabled, Listeners, RuleEntry, each_bit};
@@ -203,12 +203,8 @@ struct Running<'r, S> {
     /// What the configuration has for it.
     configured: Option<&'r ConfiguredRule>,
     severity: Severity,
-    /// [`Slot::when`]
-    when: When,
-    /// [`Slot::kinds`]
-    kinds: Called,
-    /// [`Slot::oxlint_number`]
-    oxlint_number: u16,
+    /// [`Slot::in_oxlint`]
+    in_oxlint: InOxlint,
     rule: RuleRef<'r, S>,
     /// [`ConfiguredRule::refusal`]
     refusal: Option<Cow<'r, [u8]>>,
@@ -401,24 +397,19 @@ impl<S: RuleSet> Linter<S> {
             };
             let number = instance.number();
             on.insert(number);
-            let (when, oxlint_number, kinds) = match config.language.is_oxlint {
-                true => {
-                    let order = crate::oxlint_order::of(rule.reported_as());
-                    (order.when, order.number, order.kinds)
-                }
-                false => (rule.entry.meta.reports, 0, Called::default()),
+            let in_oxlint = match config.language.is_oxlint {
+                true => crate::oxlint_order::of(rule.reported_as()),
+                false => InOxlint::unknown(rule.entry.meta.reports, 0),
             };
             let at = at as u32;
             let severity = rule.severity;
             let slot = Slot {
                 at,
                 number,
-                when,
-                kinds,
-                oxlint_number,
+                in_oxlint,
                 severity,
             };
-            order.push((oxlint_number, slot, Arc::clone(instance)));
+            order.push((in_oxlint.number, slot, Arc::clone(instance)));
             if rule.entry.meta.requires_types {
                 typed.push(rule.entry.meta);
             }
@@ -569,9 +560,7 @@ impl<S: RuleSet> Linter<S> {
                     entry: rule.entry,
                     configured: Some(rule),
                     severity: rule.severity,
-                    when: slot.when,
-                    kinds: slot.kinds,
-                    oxlint_number: slot.oxlint_number,
+                    in_oxlint: slot.in_oxlint,
                     rule: RuleRef::Shared(instance),
                     refusal: self.refusal(rule).map(Cow::Borrowed),
                 });
@@ -864,45 +853,23 @@ impl<S: RuleSet> Linter<S> {
             }
         }
         problems.reserve(diagnostics.len());
+        if wants_places {
+            file.expect_positions(diagnostics.len());
+        }
         // oxlint sorts nothing. It prints what its rules report in the order in which it runs them.
         let follows_run = wants_places && file.language().is_oxlint && !diagnostics.is_empty();
         // When oxlint runs a rule, and with which kinds of node it calls it.
-        let slot_of = |rule: usize| match is_plain {
+        let in_oxlint = |rule: usize| match is_plain {
             true => {
                 let place = enabled.get(rule)?.place as usize;
-                let slot = prepared.order.get(place)?;
-                Some((slot.when, slot.kinds, slot.oxlint_number))
+                Some(&prepared.order.get(place)?.in_oxlint)
             }
-            false => {
-                let it = running.get(rule)?;
-                Some((it.when, it.kinds, it.oxlint_number))
-            }
+            false => Some(&running.get(rule)?.in_oxlint),
         };
-        // A file is linted again if it names a module.
-        let names_a_module = || {
-            use crate::ast::{ExprTag, StmtTag};
-            let statements = [
-                StmtTag::Import,
-                StmtTag::ImportEquals,
-                StmtTag::ExportNamed,
-                StmtTag::ExportStar,
-            ];
-            file.has_stmts(statements)
-                || file.has_exprs([ExprTag::ImportCall])
-                || file.mentions("require")
-        };
-        let wants_keys = follows_run && prepared.needs_modules && names_a_module();
-        let about = |rule: u16| {
-            let meta = ran(rule as usize)?.reported_as();
-            let (when, kinds, number) = slot_of(rule as usize)?;
-            Some(crate::oxlint_order::Ran {
-                when,
-                kinds,
-                once: crate::oxlint_order::once(meta),
-                is_port: crate::oxlint_order::is_port(meta),
-                number,
-            })
-        };
+        // A file is linted again for a rule that has asked about the other files.
+        let wants_keys =
+            follows_run && prepared.needs_modules && file.sink.asks_about_modules.get();
+        let about = |rule: u16| in_oxlint(rule as usize);
         let (by_run, run_keys) = match follows_run {
             true => crate::oxlint_order::in_run_order(file, &diagnostics, &about, wants_keys),
             false => (Vec::new(), Vec::new()),
@@ -934,7 +901,7 @@ impl<S: RuleSet> Linter<S> {
                 } else {
                     0
                 };
-                let when: Vec<When> = rules.map_while(|it| Some(slot_of(it)?.0)).collect();
+                let when: Vec<When> = rules.map_while(|it| Some(in_oxlint(it)?.when)).collect();
                 crate::runner::sorted(&diagnostics, &when)
             }
             false => (0..diagnostics.len() as u32).collect(),
@@ -1702,9 +1669,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 entry,
                 configured: existing,
                 severity,
-                when: entry.meta.reports,
-                kinds: Called::default(),
-                oxlint_number: u16::MAX,
+                in_oxlint: InOxlint::unknown(entry.meta.reports, u16::MAX),
                 rule,
                 refusal,
             };

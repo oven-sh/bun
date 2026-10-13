@@ -36,8 +36,9 @@ fn hash(name: &[u8]) -> u32 {
     hash ^ (len as u32).rotate_left(16)
 }
 
-/// How many buckets hashbrown looks at in one step: with SSE2, and with NEON.
-const GROUP: usize = if cfg!(target_arch = "aarch64") { 8 } else { 16 };
+/// How many buckets hashbrown looks at in one step on x86-64. On arm64 it is 8, so oxlint itself has another order there. What is
+/// printed here does not depend on the machine.
+const GROUP: usize = 16;
 
 const FREE: u32 = u32::MAX;
 

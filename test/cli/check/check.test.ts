@@ -1641,6 +1641,37 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(stdout).toBe(`pkg/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
     });
 
+    test("links to a file and to directories, side by side in one directory", async () => {
+      using dir = project({
+        "real/file.ts": `export const file: string = 1;\n`,
+        "real/one/index.ts": `export const one: string = 1;\n`,
+        "real/two/index.ts": `export const two: string = 1;\n`,
+        "src/a.ts": `import { file } from "./file";
+import { one } from "./one";
+import { two } from "./two";
+export const a: number[] = [file, one, two];
+`,
+      });
+      const link = (name: string, type: "file" | "dir" | "junction") =>
+        symlinkSync(join(String(dir), "real", name), join(String(dir), "src", name), type);
+      link("file.ts", "file");
+      link("one", "dir");
+      link("two", "junction");
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "real/file.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        real/one/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        real/two/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/a.ts(4,29): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/a.ts(4,35): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/a.ts(4,40): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/file.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/one/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/two/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("a path on the command line is relative to the working directory, as in tsc", async () => {
       using dir = project({
         "packages/server/tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["src"] }),

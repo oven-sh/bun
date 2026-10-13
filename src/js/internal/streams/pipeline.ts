@@ -11,6 +11,7 @@ const { aggregateTwoErrors } = require("internal/errors");
 const { validateFunction, validateAbortSignal } = require("internal/validators");
 const {
   isIterable,
+  isWritableStreamLike,
   isReadable,
   isReadableNodeStream,
   isNodeStream,
@@ -365,7 +366,7 @@ function pipelineImpl(streams, callback, opts?) {
         );
       }
       ret = stream;
-    } else if (isWebStream(stream)) {
+    } else if (isWebStream(stream) || isWritableStreamLike(stream)) {
       if (isReadableNodeStream(ret)) {
         finishCount++;
         pumpToWeb(makeAsyncIterable(ret), stream, finish, { end });

@@ -82,8 +82,11 @@ function isWritableStream(obj) {
   return $inheritsWritableStream(obj);
 }
 
+// Node has only the duck type, for a { readable, writable } pair, and tests isNodeStream() first:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L99-L106
+// The class check stays in front, so a TransformStream costs no getter call. isNodeStream() reads
+// the most, so it is last.
 function isTransformStream(obj) {
-  // Node's duck type for a { readable, writable } pair. isNodeStream() reads the most, so it is last.
   return (
     $inheritsTransformStream(obj) ||
     !!(obj && typeof obj.readable === "object" && typeof obj.writable === "object" && !isNodeStream(obj))
@@ -92,6 +95,14 @@ function isTransformStream(obj) {
 
 function isWebStream(obj) {
   return isReadableStream(obj) || isWritableStream(obj) || isTransformStream(obj);
+}
+
+// Node's isWritableStream(), for a WritableStream that is not native, as a polyfill makes it:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L90-L97
+// The two callers have ruled out a node stream. isWritableStream() stays a class check: its other
+// callers give the stream to native code.
+function isWritableStreamLike(obj) {
+  return !!(obj && typeof obj.getWriter === "function" && typeof obj.abort === "function");
 }
 
 function isIterable(obj, isAsync?) {
@@ -293,6 +304,7 @@ export default {
   isWritable,
   isWritableNodeStream,
   isWritableStream,
+  isWritableStreamLike,
   isWritableEnded,
   isWritableFinished,
   isWritableErrored,

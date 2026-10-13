@@ -2,7 +2,7 @@
 
 const ArrayPrototypePop = Array.prototype.pop;
 
-const { isIterable, isNodeStream, isWebStream } = require("internal/streams/utils");
+const { isIterable, isNodeStream, isWebStream, isWritableStreamLike } = require("internal/streams/utils");
 const { pipelineImpl: pl } = require("internal/streams/pipeline");
 const { finished } = require("internal/streams/end-of-stream");
 
@@ -18,7 +18,8 @@ function pipeline(...streams) {
       typeof lastArg === "object" &&
       !isNodeStream(lastArg) &&
       !isIterable(lastArg) &&
-      !isWebStream(lastArg)
+      !isWebStream(lastArg) &&
+      !isWritableStreamLike(lastArg)
     ) {
       const options = ArrayPrototypePop.$call(streams);
       signal = options.signal;

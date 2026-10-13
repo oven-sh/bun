@@ -29,13 +29,12 @@ pub(crate) fn freemem() -> u64 {
 
 mod _impl {
     use super::*;
-    use bun_core::EncodedSlice;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
-    use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
+    use bun_jsc::{StringJsc as _, SysErrorJsc as _, SystemError};
 
     #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
@@ -74,114 +73,57 @@ mod _impl {
     // safe upper bound for the stack buffer on every platform.
     const HOST_NAME_MAX: usize = 256;
 
-    // Generated bindings (emitted from `node_os.bind.ts` via
-    // `src/codegen/bindgen.ts`). The C++ side
-    // (`GeneratedBindings.cpp`) defines the SYSV-ABI `bindgen_Node_os_js*` host
-    // functions, which validate/decode arguments and call back into the
-    // `bindgen_Node_os_dispatch*` entry points. This module provides the
-    // public surface: `js*` extern pointers + `create*Callback` wrappers
-    // + the `UserInfoOptions` dictionary.
-    pub(crate) mod gen_ {
-        use super::{BunString, CallFrame, EncodedSlice, JSGlobalObject, JSValue};
-        use bun_jsc::host_fn;
+    /// What `node_os.bind.ts` binds.
+    pub(crate) mod js_bindings {
+        use super::BunString;
+        use crate::generated_bindgen::node_os::UserInfoOptions;
+        use bun_jsc::bindgen::{self, JsCall, JsValue};
 
-        // C++-side host fns (GeneratedBindings.cpp). `bindgen.ts` emits these as
-        // `extern "C" SYSV_ABI` (the `JSHostFunctionType` shape) — `jsc.conv` is
-        // the System V ABI on Windows-x64 and the C ABI everywhere else, matching
-        // `bun_jsc::host_fn::JsHostFn`.
-        bun_jsc::jsc_abi_extern! {
-            fn bindgen_Node_os_jsCpus(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsFreemem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsGetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsHomedir(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsHostname(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsLoadavg(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsNetworkInterfaces(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsRelease(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsTotalmem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsUptime(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsUserInfo(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsVersion(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
-            fn bindgen_Node_os_jsSetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        pub(crate) use super::super::freemem;
+        pub(crate) use super::{loadavg, release, totalmem, version};
+
+        pub(crate) fn host_cpu_count() -> i32 {
+            super::bun_sysconf__SC_NPROCESSORS_ONLN().max(1)
         }
-
-        // Each `create*Callback` is identical modulo (display name, min arg
-        // count, host-fn symbol) — see `bindgen.ts:1538`. Generate them with
-        // the exact triples the codegen would have produced.
-        macro_rules! create_callback {
-        ($($fn_name:ident, $js_name:literal, $argc:literal, $sym:ident;)*) => {$(
-            pub(crate) fn $fn_name(global: &JSGlobalObject) -> JSValue {
-                host_fn::new_runtime_function(
-                    global,
-                    Some(&EncodedSlice::latin1($js_name.as_bytes())),
-                    $argc,
-                    $sym,
-                    false,
-                    None,
-                )
-            }
-        )*};
-    }
-        create_callback! {
-            create_cpus_callback,               "cpus",              1, bindgen_Node_os_jsCpus;
-            create_freemem_callback,            "freemem",           0, bindgen_Node_os_jsFreemem;
-            create_get_priority_callback,       "getPriority",       2, bindgen_Node_os_jsGetPriority;
-            create_homedir_callback,            "homedir",           1, bindgen_Node_os_jsHomedir;
-            create_hostname_callback,           "hostname",          1, bindgen_Node_os_jsHostname;
-            create_loadavg_callback,            "loadavg",           1, bindgen_Node_os_jsLoadavg;
-            create_network_interfaces_callback, "networkInterfaces", 1, bindgen_Node_os_jsNetworkInterfaces;
-            create_release_callback,            "release",           0, bindgen_Node_os_jsRelease;
-            create_totalmem_callback,           "totalmem",          0, bindgen_Node_os_jsTotalmem;
-            create_uptime_callback,             "uptime",            1, bindgen_Node_os_jsUptime;
-            create_user_info_callback,          "userInfo",          2, bindgen_Node_os_jsUserInfo;
-            create_version_callback,            "version",           0, bindgen_Node_os_jsVersion;
-            create_set_priority_callback,       "setPriority",       2, bindgen_Node_os_jsSetPriority;
+        pub(crate) fn cpus<'a>(cx: &mut JsCall<'a>) -> bindgen::Result<'a, JsValue<'a>> {
+            cx.with_global_value(super::cpus)
         }
-
-        /// `t.dictionary({ encoding: t.DOMString.default("") })` from
-        /// `node_os.bind.ts`. Mirrors the extern struct emitted by bindgen;
-        /// the C++ side passes a pointer to this layout, so it must stay
-        /// `#[repr(C)]`.
-        #[repr(C)]
-        pub(crate) struct UserInfoOptions {
-            pub(crate) encoding: BunString,
+        pub(crate) fn get_priority<'a>(cx: &mut JsCall<'a>, pid: i32) -> bindgen::Result<'a, i32> {
+            cx.with_global(|global| super::get_priority(global, pid))
         }
-    }
-
-    pub(crate) fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
-        let obj = JSValue::create_empty_object(global, 14);
-        // SAFETY: pure FFI getter
-        obj.put(
-            global,
-            b"hostCpuCount",
-            JSValue::js_number(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN()) as f64),
-        );
-        obj.put(global, b"cpus", gen_::create_cpus_callback(global));
-        obj.put(global, b"freemem", gen_::create_freemem_callback(global));
-        obj.put(
-            global,
-            b"getPriority",
-            gen_::create_get_priority_callback(global),
-        );
-        obj.put(global, b"homedir", gen_::create_homedir_callback(global));
-        obj.put(global, b"hostname", gen_::create_hostname_callback(global));
-        obj.put(global, b"loadavg", gen_::create_loadavg_callback(global));
-        obj.put(
-            global,
-            b"networkInterfaces",
-            gen_::create_network_interfaces_callback(global),
-        );
-        obj.put(global, b"release", gen_::create_release_callback(global));
-        obj.put(global, b"totalmem", gen_::create_totalmem_callback(global));
-        obj.put(global, b"uptime", gen_::create_uptime_callback(global));
-        obj.put(global, b"userInfo", gen_::create_user_info_callback(global));
-        obj.put(global, b"version", gen_::create_version_callback(global));
-        obj.put(
-            global,
-            b"setPriority",
-            gen_::create_set_priority_callback(global),
-        );
-        Ok(obj)
+        pub(crate) fn homedir<'a>(cx: &mut JsCall<'a>) -> bindgen::Result<'a, BunString> {
+            cx.with_global(super::homedir)
+        }
+        pub(crate) fn hostname<'a>(cx: &mut JsCall<'a>) -> bindgen::Result<'a, JsValue<'a>> {
+            cx.with_global_value(super::hostname)
+        }
+        pub(crate) fn network_interfaces<'a>(
+            cx: &mut JsCall<'a>,
+        ) -> bindgen::Result<'a, JsValue<'a>> {
+            cx.with_global_value(super::network_interfaces)
+        }
+        pub(crate) fn uptime<'a>(cx: &mut JsCall<'a>) -> bindgen::Result<'a, f64> {
+            cx.with_global(super::uptime)
+        }
+        pub(crate) fn user_info<'a>(
+            cx: &mut JsCall<'a>,
+            options: UserInfoOptions,
+        ) -> bindgen::Result<'a, JsValue<'a>> {
+            cx.with_global_value(|global| super::user_info(global, &options))
+        }
+        pub(crate) fn set_priority<'a>(
+            cx: &mut JsCall<'a>,
+            pid: i32,
+            priority: i32,
+        ) -> bindgen::Result<'a, ()> {
+            cx.with_global(|global| super::set_priority(global, pid, priority))
+        }
+        pub(crate) fn set_priority_of_current_process<'a>(
+            cx: &mut JsCall<'a>,
+            priority: i32,
+        ) -> bindgen::Result<'a, ()> {
+            cx.with_global(|global| super::set_priority(global, 0, priority))
+        }
     }
 
     impl CPUTimes {
@@ -781,7 +723,7 @@ mod _impl {
         }
     }
 
-    pub(crate) fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn loadavg() -> [f64; 3] {
         #[cfg(target_os = "macos")]
         let result: [f64; 3] = 'loadavg: {
             let mut avg: c::struct_loadavg = bun_core::ffi::zeroed();
@@ -831,14 +773,7 @@ mod _impl {
         #[cfg(windows)]
         let result: [f64; 3] = [0.0, 0.0, 0.0];
 
-        JSArray::create(
-            global,
-            &[
-                JSValue::js_number(result[0]),
-                JSValue::js_number(result[1]),
-                JSValue::js_number(result[2]),
-            ],
-        )
+        result
     }
 
     #[cfg(unix)]
@@ -1372,7 +1307,7 @@ mod _impl {
         return bun_sys::get_errno(code);
     }
 
-    pub(crate) fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {
+    pub(crate) fn set_priority(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {
         let errno = set_process_priority_impl(pid, priority);
         if errno == bun_sys::E::SUCCESS {
             return Ok(());
@@ -1383,10 +1318,6 @@ mod _impl {
         sys_err.message =
             BunString::static_(err.uv_code_label().map_or("unknown error", |(_, l)| l));
         Err(global.throw_value(sys_err.to_error_instance_with_info_object(global)))
-    }
-
-    pub(crate) fn set_priority2(global: &JSGlobalObject, priority: i32) -> JsResult<()> {
-        set_priority1(global, 0, priority)
     }
 
     pub(crate) fn totalmem() -> u64 {
@@ -1460,7 +1391,7 @@ mod _impl {
 
     pub(crate) fn user_info(
         global_this: &JSGlobalObject,
-        options: &gen_::UserInfoOptions,
+        options: &crate::generated_bindgen::node_os::UserInfoOptions,
     ) -> JsResult<JSValue> {
         let _ = options; // TODO:
 

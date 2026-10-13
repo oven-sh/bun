@@ -231,9 +231,25 @@ export const frameworkRouterInternals = $rust("FrameworkRouter.rs", "JSFramework
   };
 };
 
-export const bindgen = $rust("bindgen_test.rs", "getBindgenTestFunctions") as {
-  add: (a: any, b: any) => number;
-  requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
+export const bindgen = {
+  add: $bindgenFn("bindgen_test.bind.ts", "add"),
+  requiredAndOptionalArg: $bindgenFn("bindgen_test.bind.ts", "requiredAndOptionalArg"),
+  utf8Echo: $bindgenFn("bindgen_test.bind.ts", "utf8Echo"),
+  utf8EchoLoose: $bindgenFn("bindgen_test.bind.ts", "utf8EchoLoose"),
+  utf8Optional: $bindgenFn("bindgen_test.bind.ts", "utf8Optional"),
+  stringEcho: $bindgenFn("bindgen_test.bind.ts", "stringEcho"),
+  nextColor: $bindgenFn("bindgen_test.bind.ts", "nextColor"),
+  optionsEcho: $bindgenFn("bindgen_test.bind.ts", "optionsEcho"),
+  describeValue: $bindgenFn("bindgen_test.bind.ts", "describeValue"),
+  sumArray: $bindgenFn("bindgen_test.bind.ts", "sumArray"),
+  range: $bindgenFn("bindgen_test.bind.ts", "range"),
+  words: $bindgenFn("bindgen_test.bind.ts", "words"),
+  sumBytes: $bindgenFn("bindgen_test.bind.ts", "sumBytes"),
+  sumBeforeAndAfterCallback: $bindgenFn("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
+  withValueEcho: $bindgenFn("bindgen_test.bind.ts", "withValueEcho"),
+  fail: $bindgenFn("bindgen_test.bind.ts", "fail"),
+  TestCounter: $bindgenFn("bindgen_test.bind.ts", "TestCounter"),
+  makeToken: $bindgenFn("bindgen_test.bind.ts", "makeToken"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");

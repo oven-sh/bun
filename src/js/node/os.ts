@@ -152,7 +152,22 @@ function bound(binding) {
   };
 }
 
-const out = bound($rust("node_os.rs", "createNodeOsBinding"));
+const out = bound({
+  hostCpuCount: $bindgenFn("node_os.bind.ts", "hostCpuCount")(),
+  cpus: $bindgenFn("node_os.bind.ts", "cpus"),
+  freemem: $bindgenFn("node_os.bind.ts", "freemem"),
+  getPriority: $bindgenFn("node_os.bind.ts", "getPriority"),
+  homedir: $bindgenFn("node_os.bind.ts", "homedir"),
+  hostname: $bindgenFn("node_os.bind.ts", "hostname"),
+  loadavg: $bindgenFn("node_os.bind.ts", "loadavg"),
+  networkInterfaces: $bindgenFn("node_os.bind.ts", "networkInterfaces"),
+  release: $bindgenFn("node_os.bind.ts", "release"),
+  totalmem: $bindgenFn("node_os.bind.ts", "totalmem"),
+  uptime: $bindgenFn("node_os.bind.ts", "uptime"),
+  userInfo: $bindgenFn("node_os.bind.ts", "userInfo"),
+  version: $bindgenFn("node_os.bind.ts", "version"),
+  setPriority: $bindgenFn("node_os.bind.ts", "setPriority"),
+});
 
 symbolToStringify(out, "arch");
 symbolToStringify(out, "availableParallelism");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "GeneratedBindings+Counts.h"
 
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -79,6 +80,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSWebView { nullptr };
 
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
+    GCClient::IsoSubspace* m_clientSubspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClassSubspaces] {};
     /* --- bun --- */
 
     GCClient::IsoSubspace* m_clientSubspaceForDOMException { nullptr };

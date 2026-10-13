@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -10,8 +11,8 @@
 #include <wtf/text/WTFString.h>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
-#include <StrongRef.h>
 #include "ExternUnion.h"
+#include "JSStringUTF8View.h"
 
 namespace Bun::Bindgen {
 
@@ -122,13 +123,35 @@ template<> struct ExternTraits<JSC::JSValue> {
     }
 };
 
-template<> struct ExternTraits<Bun::StrongRef> {
-    using ExternType = Bun::StrongRefImpl*;
+struct ExternBytes {
+    const std::uint8_t* data;
+    std::size_t length;
+};
 
-    static ExternType convertToExtern(Bun::StrongRef&& cppValue)
+template<> struct ExternTraits<std::span<const std::uint8_t>> {
+    using ExternType = ExternBytes;
+
+    static ExternType convertToExtern(std::span<const std::uint8_t> cppValue)
     {
-        return cppValue.release();
+        return { cppValue.data(), cppValue.size() };
     }
+};
+
+template<> struct ExternTraits<JSStringUTF8View> {
+    using ExternType = ExternBytes;
+
+    // The storage stays with `cppValue`, which outlives the call this is an argument of.
+    static ExternType convertToExtern(JSStringUTF8View&& cppValue)
+    {
+        return ExternTraits<std::span<const std::uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+// A converted argument and the argument itself.
+template<typename T>
+struct ExternWithValue {
+    T converted;
+    JSC::EncodedJSValue value;
 };
 
 template<typename T, typename P, typename R> struct ExternTraits<WTF::Ref<T, P, R>> {

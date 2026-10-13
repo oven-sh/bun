@@ -1,12 +1,19 @@
-import { fn, t } from "bindgen";
+import * as b from "../codegen/bindgen-lib.ts";
 
-export const Formatter = t.stringEnum("highlight-javascript", "highlight-javascript-redacted", "escape-powershell");
+export default b.module({ rustPath: "crate::fmt_jsc::js_bindings" });
 
-export const fmtString = fn({
+export const Formatter = b.enumeration("Formatter", [
+  "highlight-javascript",
+  "highlight-javascript-redacted",
+  "escape-powershell",
+]);
+
+export const fmtString = b.fn({
   args: {
-    global: t.globalObject,
-    code: t.UTF8String,
+    code: b.utf8.loose,
     formatter: Formatter,
   },
-  ret: t.DOMString,
+  returns: b.string,
+  capability: "heap",
+  throws: true,
 });

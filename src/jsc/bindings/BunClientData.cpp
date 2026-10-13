@@ -57,6 +57,7 @@ JSHeapData::~JSHeapData() = default;
 
 JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
     : commonStrings(vm)
+    , bindgenIdentifiers(vm)
     , m_builtinNames(vm)
     , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
@@ -183,6 +184,7 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
             JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
             clientData->commonStrings.visit(visitor);
+            clientData->bindgenIdentifiers.visit(visitor);
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
 

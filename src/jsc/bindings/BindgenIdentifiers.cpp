@@ -1,0 +1,132 @@
+#include "root.h"
+#include "Bindgen/Identifiers.h"
+#include "Bindgen/JSStringUTF8View.h"
+#include "GeneratedBindings+Tables.h"
+#include "BunClientData.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <wtf/SIMDUTF.h>
+
+namespace Bun::Bindgen {
+using namespace JSC;
+
+Identifiers::Identifiers(VM& vm)
+    : m_vm(vm)
+    , m_memberNames(std::make_unique<Identifier[]>(std::size(Tables::memberNames)))
+    , m_enumerationValues(std::make_unique<JSString*[]>(std::size(Tables::enumerationValues)))
+{
+}
+
+void Identifiers::initializeMemberNames(unsigned first, unsigned count)
+{
+    ASSERT(m_vm.currentThreadIsHoldingAPILock());
+    for (unsigned i = first; i < first + count; ++i)
+        m_memberNames[i] = Identifier::fromString(m_vm, Tables::memberNames[i]);
+}
+
+void Identifiers::initializeEnumerationValue(unsigned index)
+{
+    ASSERT(m_vm.currentThreadIsHoldingAPILock());
+    m_enumerationValues[index] = jsString(m_vm, AtomString(Tables::enumerationValues[index]));
+}
+
+template<typename Visitor>
+void Identifiers::visit(Visitor& visitor)
+{
+    for (unsigned i = 0; i < Tables::enumerationValueCount; ++i) {
+        if (auto* string = m_enumerationValues[i])
+            visitor.appendUnbarriered(string);
+    }
+}
+template void Identifiers::visit(JSC::AbstractSlotVisitor&);
+template void Identifiers::visit(JSC::SlotVisitor&);
+
+Identifiers& identifiers(VM& vm)
+{
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->bindgenIdentifiers;
+}
+
+unsigned objectStructureCount()
+{
+    return Tables::objectStructureCount;
+}
+
+Structure* createObjectStructure(VM& vm, JSGlobalObject* globalObject, unsigned index)
+{
+    auto [firstMemberNameIndex, memberCount] = Tables::objectStructures[index];
+    const Identifier* memberNames = identifiers(vm).identifiersAt(firstMemberNameIndex, memberCount);
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), memberCount);
+    for (unsigned i = 0; i < memberCount; ++i) {
+        PropertyOffset offset;
+        structure = Structure::addPropertyTransition(vm, structure, memberNames[i], 0, offset);
+        RELEASE_ASSERT(offset == static_cast<PropertyOffset>(i));
+    }
+    return structure;
+}
+
+void JSStringUTF8View::convert(StringView view)
+{
+    m_isConverted = true;
+    if (view.is8Bit()) {
+        auto span = view.span8();
+        m_converted.grow(span.size() * 2);
+        m_converted.shrink(simdutf::convert_latin1_to_utf8(byteCast<char>(span.data()), span.size(), byteCast<char>(m_converted.mutableSpan().data())));
+        return;
+    }
+    auto span = view.span16();
+    m_converted.grow(span.size() * 3);
+    size_t length = simdutf::convert_utf16le_to_utf8(span.data(), span.size(), byteCast<char>(m_converted.mutableSpan().data()));
+    if (length) [[likely]] {
+        m_converted.shrink(length);
+        return;
+    }
+    // simdutf refuses unpaired surrogates; each becomes U+FFFD.
+    auto lenient = view.utf8(WTF::ConversionMode::StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    m_converted.shrink(0);
+    m_converted.append(byteCast<uint8_t>(lenient.span()));
+}
+
+}
+
+using namespace JSC;
+
+// An empty value is a member that is absent.
+extern "C" EncodedJSValue Bun__Bindgen__createObject(JSGlobalObject* globalObject, unsigned structureIndex, const EncodedJSValue* values, size_t count)
+{
+    VM& vm = getVM(globalObject);
+    ASSERT(count == Bun::Bindgen::Tables::objectStructures[structureIndex].memberCount);
+    bool hasEveryMember = true;
+    for (size_t i = 0; i < count; ++i)
+        hasEveryMember &= !!values[i];
+    if (hasEveryMember) [[likely]] {
+        JSObject* object = constructEmptyObject(vm, defaultGlobalObject(globalObject)->bindgenObjectStructure(structureIndex));
+        for (size_t i = 0; i < count; ++i)
+            object->putDirectOffset(vm, static_cast<PropertyOffset>(i), JSValue::decode(values[i]));
+        return JSValue::encode(object);
+    }
+    const Identifier* memberNames = Bun::Bindgen::identifiers(vm).identifiersAt(Bun::Bindgen::Tables::objectStructures[structureIndex].firstMemberNameIndex, count);
+    JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
+    for (size_t i = 0; i < count; ++i) {
+        if (values[i])
+            object->putDirect(vm, memberNames[i], JSValue::decode(values[i]));
+    }
+    return JSValue::encode(object);
+}
+
+extern "C" EncodedJSValue Bun__Bindgen__enumerationValueToJS(JSGlobalObject* globalObject, unsigned index)
+{
+    return JSValue::encode(Bun::Bindgen::identifiers(getVM(globalObject)).stringAt(index));
+}
+
+extern "C" EncodedJSValue Bun__Bindgen__constructArray(JSGlobalObject* globalObject, MarkedArgumentBuffer* values)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (values->hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), *values)));
+}

@@ -72,6 +72,7 @@ class DOMWrapperWorld;
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
 #include "BunCommonStrings.h"
+#include "Bindgen/Identifiers.h"
 #include "DOMURLBaseCache.h"
 #include "NodeVMOptionNames.h"
 #include "NodeVMSourceOriginCache.h"
@@ -244,6 +245,7 @@ public:
 
     // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
     Bun::CommonStrings commonStrings;
+    Bun::Bindgen::Identifiers bindgenIdentifiers;
 
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
     Bun::NodeVMOptionNames& nodeVMOptionNames() { return m_nodeVMOptionNames; }

@@ -1579,8 +1579,16 @@ unsafe extern "C" {
 #[path = "generated.rs"]
 pub mod generated;
 
-/// `bun.gen` — bindgen dispatch shims.
-/// Hand-written per-module until `src/codegen/bindgen.ts` grows a `.rs` backend.
-/// (`gen` is a reserved keyword in edition 2024; use `r#gen` at call sites.)
-#[path = "bindings/GeneratedBindings.rs"]
-pub mod r#gen;
+/// What `src/codegen/bindgen.ts` generates from this crate's `.bind.ts` files.
+#[allow(
+    non_snake_case,
+    unused_unsafe,
+    clippy::missing_safety_doc,
+    clippy::identity_op
+)]
+pub mod generated_bindgen {
+    include!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/generated_bindgen_bun_jsc.rs"
+    ));
+}

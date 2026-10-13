@@ -275,13 +275,16 @@ declare function $newRustFunction<T = (...args: any) => any>(
   argCount: number,
 ): T;
 /**
- * Retrieves a handle to a function defined in native code, defined in a
+ * Retrieves a handle to a function or class defined in native code, defined in a
  * `.bind.ts` file. For more information on how to define bindgen functions, see
  * [bindgen's documentation](https://bun.com/docs/project/bindgen).
  * @param filename - The basename of the `.bind.ts` file.
- * @param symbol - The name of the function to call.
+ * @param symbol - The name of the export.
  */
-declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
+declare function $bindgenFn<File extends keyof $Bindgen.Exports, Name extends keyof $Bindgen.Exports[File]>(
+  filename: File,
+  symbol: Name,
+): $Bindgen.Exports[File][Name];
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
 
 declare module "node:stream" {

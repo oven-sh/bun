@@ -63,17 +63,13 @@ const patterns = {
     paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/mod.rs"],
     exclude: ["src/runtime/bake/generated.ts"],
   },
-  /** legacy bindgen input */
+  /** bindgen input */
   bindgen: {
     paths: ["src/**/*.bind.ts"],
   },
-  /** v2 bindgen input */
-  bindgenV2: {
-    paths: ["src/**/*.bindv2.ts"],
-  },
-  /** bindgen v2 generator code */
-  bindgenV2Internal: {
-    paths: ["src/codegen/bindgenv2/**/*.ts"],
+  /** bindgen generator code */
+  bindgenInternal: {
+    paths: ["src/codegen/bindgen*.ts", "src/codegen/helpers.ts"],
   },
   /**
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.

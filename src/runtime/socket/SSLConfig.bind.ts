@@ -1,39 +1,39 @@
-import * as b from "../../codegen/bindgenv2/lib.ts";
+import * as b from "../../codegen/bindgen-lib.ts";
 
 export const SSLConfigSingleFile = b.union("SSLConfigSingleFile", {
-  string: b.String,
-  buffer: b.ArrayBuffer,
-  file: b.Blob,
+  string: b.string,
+  buffer: b.arrayBuffer,
+  file: b.blob,
 });
 
 export const SSLConfigFile = b.union("SSLConfigFile", {
   none: b.null,
-  string: b.String,
-  buffer: b.ArrayBuffer,
-  file: b.Blob,
-  array: b.Array(SSLConfigSingleFile),
+  string: b.string,
+  buffer: b.arrayBuffer,
+  file: b.blob,
+  array: b.array(SSLConfigSingleFile),
 });
 
 export const ALPNProtocols = b.union("ALPNProtocols", {
   none: b.null,
-  string: b.String,
-  buffer: b.ArrayBuffer,
+  string: b.string,
+  buffer: b.arrayBuffer,
 });
 
 export const SSLConfig = b.dictionary(
   {
     name: "SSLConfig",
     userFacingName: "TLSOptions",
-    generateConversionFunction: true,
+    fromJS: true,
   },
   {
-    passphrase: b.String.nullable,
+    passphrase: b.string.nullable,
     dhParamsFile: {
-      type: b.String.nullable,
+      type: b.string.nullable,
       internalName: "dh_params_file",
     },
     serverName: {
-      type: b.String.nullable,
+      type: b.string.nullable,
       internalName: "server_name",
       altNames: ["servername"],
     },
@@ -70,22 +70,22 @@ export const SSLConfig = b.dictionary(
       internalName: "ssl_max_version",
     },
     keyFile: {
-      type: b.String.nullable,
+      type: b.string.nullable,
       internalName: "key_file",
     },
     certFile: {
-      type: b.String.nullable,
+      type: b.string.nullable,
       internalName: "cert_file",
     },
     caFile: {
-      type: b.String.nullable,
+      type: b.string.nullable,
       internalName: "ca_file",
     },
     ALPNProtocols: {
       type: ALPNProtocols,
       internalName: "alpn_protocols",
     },
-    ciphers: b.String.nullable,
+    ciphers: b.string.nullable,
     clientRenegotiationLimit: {
       type: b.u32,
       default: 0,
@@ -107,9 +107,9 @@ export const SSLConfig = b.dictionary(
       default: 0,
       internalName: "session_timeout",
     },
-    sigalgs: b.String.nullable,
+    sigalgs: b.string.nullable,
     ecdhCurve: {
-      type: b.String.nullable,
+      type: b.string.nullable,
       internalName: "ecdh_curve",
     },
   },

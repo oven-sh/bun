@@ -2,11 +2,13 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use std::rc::Rc;
 
+use crate::generated_bindgen::socket_config::{
+    SocketConfig as GeneratedSocketConfig, SocketConfigBinaryType as GeneratedBinaryType,
+    SocketConfigHandlers as GeneratedSocketConfigHandlers, SocketConfigTLS as GeneratedTls,
+};
 use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::generated::{
-    SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
-};
+use bun_jsc::bindgen::{JsCall, JsValue};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
@@ -310,13 +312,17 @@ impl Handlers {
         opts: JSValue,
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
-        let generated = GeneratedSocketConfigHandlers::from_js(global_object, opts)?;
+        // SAFETY: reached from a host function with no `JsCall` borrowed.
+        let cx = unsafe { JsCall::from_global(global_object) };
+        let opts = JsValue::new(&cx.heap, opts);
+        let generated = GeneratedSocketConfigHandlers::from_js(cx, opts)
+            .map_err(|e| e.into_js_error(global_object))?;
         Self::from_generated(global_object, &generated, mode)
     }
 
     pub(crate) fn from_generated(
         global_object: &JSGlobalObject,
-        generated: &GeneratedSocketConfigHandlers,
+        generated: &GeneratedSocketConfigHandlers<'_>,
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
         let callbacks = Self::validate_callbacks(global_object, generated)?;
@@ -343,11 +349,11 @@ impl Handlers {
     /// `JSValue::ZERO`. Array order matches `Bun::JSSocketHandlers::Field`.
     fn validate_callbacks(
         global_object: &JSGlobalObject,
-        generated: &GeneratedSocketConfigHandlers,
+        generated: &GeneratedSocketConfigHandlers<'_>,
     ) -> JsResult<[JSValue; CALLBACK_COUNT]> {
         macro_rules! validated_callback {
             ($field:ident, $name:literal) => {{
-                let value = generated.$field;
+                let value = generated.$field.to_js();
                 if value.is_undefined_or_null() {
                     JSValue::ZERO
                 } else if !value.is_callable() {
@@ -406,7 +412,11 @@ impl Handlers {
         global_object: &JSGlobalObject,
         opts: JSValue,
     ) -> JsResult<ReloadedHandlers> {
-        let generated = GeneratedSocketConfigHandlers::from_js(global_object, opts)?;
+        // SAFETY: reached from a host function with no `JsCall` borrowed.
+        let cx = unsafe { JsCall::from_global(global_object) };
+        let opts = JsValue::new(&cx.heap, opts);
+        let generated = GeneratedSocketConfigHandlers::from_js(cx, opts)
+            .map_err(|e| e.into_js_error(global_object))?;
         let callbacks = Self::validate_callbacks(global_object, &generated)?;
         Ok(ReloadedHandlers {
             callbacks,
@@ -449,8 +459,6 @@ impl Scope {
         self.handlers.mark_inactive()
     }
 }
-
-use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 pub(crate) struct SocketConfig {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
@@ -495,7 +503,7 @@ impl SocketConfig {
     pub(crate) fn from_generated(
         vm: &'static VirtualMachine,
         global: &JSGlobalObject,
-        generated: GeneratedSocketConfig,
+        generated: GeneratedSocketConfig<'_>,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
@@ -530,7 +538,7 @@ impl SocketConfig {
                 default_data: if generated.data.is_undefined() {
                     JSValue::ZERO
                 } else {
-                    generated.data
+                    generated.data.to_js()
                 },
                 exclusive: false,
                 allow_half_open: false,
@@ -550,7 +558,7 @@ impl SocketConfig {
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
-        } else if let Some(unix) = generated.unix_.into_inner() {
+        } else if let Some(unix) = generated.unix_ {
             if unix.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
@@ -564,7 +572,7 @@ impl SocketConfig {
                 let without_prefix = slice[7..].to_vec();
                 result.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
             }
-        } else if let Some(hostname) = generated.hostname.into_inner() {
+        } else if let Some(hostname) = generated.hostname {
             if hostname.length() == 0 {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
@@ -601,9 +609,11 @@ impl SocketConfig {
         global_object: &JSGlobalObject,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
-        let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
+        // SAFETY: reached from a host function with no `JsCall` borrowed.
+        let cx = unsafe { JsCall::from_global(global_object) };
+        let opts = JsValue::new(&cx.heap, opts);
+        let generated =
+            GeneratedSocketConfig::from_js(cx, opts).map_err(|e| e.into_js_error(global_object))?;
         Self::from_generated(vm, global_object, generated, mode)
     }
 }
-
-use bun_jsc::generated::SocketConfigTls as GeneratedTls;

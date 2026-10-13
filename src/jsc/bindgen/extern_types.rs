@@ -1,0 +1,131 @@
+//! Rust side of `src/jsc/bindings/Bindgen/Extern*.h`: the C layouts generated code passes between
+//! C++ and Rust. Everything here is plain data; ownership is taken by the generated conversion that
+//! reads it, exactly once.
+
+use core::ffi::c_uint;
+
+use crate::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
+
+/// `WTF::StringImpl*` carrying one ref, or null.
+pub type ExternString = *mut bun_core::WTFStringImplStruct;
+
+/// An empty `StringImpl` becomes `String::EMPTY`, as `Bun::toString` does: a WTF-backed `String` is
+/// never empty.
+#[inline]
+pub fn adopt_string(ptr: ExternString) -> bun_core::String {
+    let string = bun_core::String::adopt_wtf_impl(ptr);
+    if string.is_empty() {
+        return bun_core::String::EMPTY;
+    }
+    string
+}
+
+/// `ExternVariant<ExternNullPtr, T>`, which is what `std::optional<T>` lowers to.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExternOptional<T: Copy> {
+    data: ExternOptionalData<T>,
+    tag: u8,
+}
+#[repr(C)]
+#[derive(Clone, Copy)]
+union ExternOptionalData<T: Copy> {
+    none: u8,
+    some: T,
+}
+impl<T: Copy> ExternOptional<T> {
+    #[inline(always)]
+    pub fn get(self) -> Option<T> {
+        // SAFETY: C++ initialized the arm `tag` names.
+        (self.tag != 0).then(|| unsafe { self.data.some })
+    }
+}
+
+/// A mimalloc buffer this side now owns.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExternVector<T: Copy> {
+    data: *mut T,
+    length: c_uint,
+    capacity: c_uint,
+}
+impl<T: Copy> ExternVector<T> {
+    /// Converts every element and frees the buffer.
+    #[inline]
+    pub fn into_vec<U>(self, mut convert: impl FnMut(T) -> U) -> Vec<U> {
+        if self.data.is_null() {
+            return Vec::new();
+        }
+        // SAFETY: C++ initialized `length` elements.
+        let items = unsafe { core::slice::from_raw_parts(self.data, self.length as usize) };
+        let result = items.iter().map(|item| convert(*item)).collect();
+        // SAFETY: allocated by `Bun::MimallocMalloc`; ownership was transferred.
+        unsafe { bun_alloc::basic::free_without_size(self.data.cast()) };
+        result
+    }
+}
+
+/// Bytes in the C++ host function's frame, or in a JS value that frame keeps alive, until it returns.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExternBytes {
+    data: *const u8,
+    length: usize,
+}
+impl ExternBytes {
+    /// # Safety
+    /// `'a` ends before the host function that passed this returns.
+    #[inline(always)]
+    pub unsafe fn get<'a>(self) -> &'a [u8] {
+        // SAFETY: C++ never passes a null pointer for a present value.
+        unsafe { core::slice::from_raw_parts(self.data, self.length) }
+    }
+    /// A null pointer is "absent".
+    ///
+    /// # Safety
+    /// As [`get`](Self::get).
+    #[inline(always)]
+    pub unsafe fn get_optional<'a>(self) -> Option<&'a [u8]> {
+        if self.data.is_null() {
+            return None;
+        }
+        // SAFETY: forwarded.
+        Some(unsafe { self.get() })
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExternWithValue<T: Copy> {
+    pub converted: T,
+    pub value: JSValue,
+}
+
+/// Runs a generated `Bun__Bindgen__*__fromJS`, which returns false exactly when it threw.
+#[inline]
+pub fn from_js<'a>(
+    cx: &mut super::JsCall<'a>,
+    convert: impl FnOnce(*mut JSGlobalObject) -> bool,
+) -> super::Result<'a, ()> {
+    cx.with_global(|global| crate::call_false_is_throw(global, || convert(global.as_mut_ptr())))
+}
+
+unsafe extern "C" {
+    pub fn Bun__Bindgen__constructArray(
+        global: *mut JSGlobalObject,
+        values: *mut MarkedArgumentBuffer,
+    ) -> JSValue;
+    pub fn Bun__Bindgen__createObject(
+        global: *mut JSGlobalObject,
+        structure_index: u32,
+        values: *const JSValue,
+        count: usize,
+    ) -> JSValue;
+    pub fn Bun__Bindgen__enumerationValueToJS(global: *mut JSGlobalObject, index: u32) -> JSValue;
+    pub fn Bun__Bindgen__setInternalField(
+        global: *mut JSGlobalObject,
+        cell: *mut u8,
+        offset: u32,
+        value: JSValue,
+    );
+}

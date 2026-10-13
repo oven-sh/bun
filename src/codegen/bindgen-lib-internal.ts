@@ -1,1061 +1,1296 @@
-// While working on this file, it is important to have very rigorous errors
-// and checking on input data. The goal is to allow people not aware of
-// various footguns in JavaScript, C++, and the bindings generator to
-// always produce correct code, or bail with an error.
-import { expect } from "bun:test";
+// The type model behind `bindgen-lib.ts`. Each type knows four things:
+//
+//   idlType         the C++ tag type whose `WebCore::Converter` turns a JSValue into a C++ value
+//                   (src/jsc/bindings/BunIDL*.h, Bindgen/IDL*.h, webcore/JSDOMConvert*.h)
+//   rustExternType  the Rust mirror of what `Bun::Bindgen::ExternTraits` lowers that C++ value to
+//                   (src/jsc/bindings/Bindgen/Extern*.h, src/jsc/bindgen/extern_types.rs), with its C layout
+//   rustType        the type a Rust body sees, and `rustFromExtern`, the expression that gets there
+//   rustToJS        for types that can be returned: the expression that converts back
+
 import assert from "node:assert";
-import * as path from "node:path";
-import type { FuncOptions, t } from "./bindgen-lib";
+import util from "node:util";
 
-export const src = path.join(import.meta.dirname, "../");
-
-export type TypeKind = keyof typeof t;
-
-export let files = new Map<string, File>();
-/** A reachable type is one that is required for code generation */
-export let typeHashToReachableType = new Map<string, TypeImpl>();
-export let typeHashToStruct = new Map<string, Struct>();
-export let typeHashToNamespace = new Map<string, string>();
-export let structHashToSelf = new Map<string, Struct>();
-
-/** String literal */
-export const str = (v: any) => JSON.stringify(v);
-/** Capitalize */
-export const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
-/** Camel Case */
-export const camel = (s: string) =>
-  s[0].toLowerCase() + s.slice(1).replace(/[_-](\w)?/g, (_, letter) => letter?.toUpperCase() ?? "");
-/** Pascal Case */
-export const pascal = (s: string) => cap(camel(s));
-
-// Return symbol names of extern values (must be equivalent on both sides of the FFI boundary)
-
-/** The JS Host function, aka fn (*JSC.JSGlobalObject, *JSC.CallFrame) JSValue.MaybeException */
-export const extJsFunction = (namespaceVar: string, fnLabel: string) =>
-  `bindgen_${cap(namespaceVar)}_js${cap(fnLabel)}`;
-/** Each variant gets a dispatcher function. */
-export const extDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: number) =>
-  `bindgen_${cap(namespaceVar)}_dispatch${cap(fnLabel)}${variantNumber}`;
-export const extInternalDispatchVariant = (namespaceVar: string, fnLabel: string, variantNumber: string | number) =>
-  `bindgen_${cap(namespaceVar)}_js${cap(fnLabel)}_v${variantNumber}`;
-
-interface TypeDataDefs {
-  /** The name */
-  ref: string;
-
-  sequence: {
-    element: TypeImpl;
-    repr: "slice";
-  };
-  record: {
-    value: TypeImpl;
-    repr: "kv-slices";
-  };
-  stringEnum: string[];
-  oneOf: TypeImpl[];
-  dictionary: DictionaryField[];
-}
-type TypeData<K extends TypeKind> = K extends keyof TypeDataDefs ? TypeDataDefs[K] : any;
-
-export const enum NodeValidator {
-  validateInteger = "validateInteger",
-}
-
-interface Flags {
-  nodeValidator?: NodeValidator;
-  optional?: boolean;
-  required?: boolean;
-  nonNull?: boolean;
-  default?: any;
-  range?: ["clamp" | "enforce", bigint, bigint] | ["clamp" | "enforce", "abi", "abi"];
-  finite?: boolean;
-}
-
-export interface DictionaryField {
-  key: string;
-  type: TypeImpl;
-}
-
-export declare const isType: unique symbol;
-
-const numericTypes = new Set(["f64", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize"]);
-
-/**
- * Implementation of the Type interface.  All types are immutable and hashable.
- * Hashes de-duplicate structure and union definitions. Flags do not account for
- * the hash, so `oneOf(A, B)` and `oneOf(A, B).optional` will point to the same
- * generated struct type, the purpose of the flags are to inform receivers like
- * `t.dictionary` and `fn` to mark uses as optional or provide default values.
- */
-export class TypeImpl<K extends TypeKind = TypeKind> {
-  kind: K;
-  data: TypeData<K>;
-  flags: Flags;
-  /** Access via .name(). */
-  nameDeduplicated: string | null | undefined = undefined;
-  /** Access via .hash() */
-  #hash: string | undefined = undefined;
-  ownerFile: string;
-
-  declare [isType]: true;
-
-  constructor(kind: K, data: TypeData<K>, flags: Flags = {}) {
-    this.kind = kind;
-    this.data = data;
-    this.flags = flags;
-    this.ownerFile = path.basename(stackTraceFileName(snapshotCallerLocation()), ".bind.ts");
-  }
-
-  isVirtualArgument() {
-    return this.kind === "globalObject" || this.kind === "virtualMachine";
-  }
-
-  hash() {
-    if (this.#hash) {
-      return this.#hash;
-    }
-    let h = `${this.kind}:`;
-    switch (this.kind) {
-      case "ref":
-        throw new Error("TODO");
-      case "sequence":
-        h += this.data.element.hash();
-        break;
-      case "record":
-        h += this.data.value.hash();
-        break;
-      case "stringEnum":
-        h += this.data.join(",");
-        break;
-      case "oneOf":
-        h += this.data.map(t => t.hash()).join(",");
-        break;
-      case "dictionary":
-        h += this.data.map(({ key, required, type }) => `${key}:${required}:${type.hash()}`).join(",");
-        break;
-    }
-    let hash = String(Bun.hash(h));
-    this.#hash = hash;
-    return hash;
-  }
-
-  /**
-   * If this type lowers to a named type (struct, union, enum)
-   */
-  lowersToNamedType() {
-    switch (this.kind) {
-      case "ref":
-        throw new Error("TODO");
-      case "sequence":
-      case "record":
-      case "oneOf":
-      case "dictionary":
-      case "stringEnum":
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  canDirectlyMapToCAbi(): CAbiType | null {
-    let kind = this.kind;
-    switch (kind) {
-      case "ref":
-        throw new Error("TODO");
-      case "any":
-        return "JSValue";
-      case "ByteString":
-      case "DOMString":
-      case "USVString":
-      case "UTF8String":
-        return "bun.String";
-      case "boolean":
-        return "bool";
-      case "strictBoolean":
-        return "bool";
-      case "f64":
-      case "i8":
-      case "i16":
-      case "i32":
-      case "i64":
-      case "u8":
-      case "u16":
-      case "u32":
-      case "u64":
-      case "usize":
-        return kind;
-      case "globalObject":
-      case "virtualMachine":
-        return "*JSGlobalObject";
-      case "stringEnum":
-        return cAbiTypeForEnum(this.data.length);
-      case "undefined":
-        return "u0";
-      case "oneOf": // `union(enum)`
-      case "record": // undecided how to lower records
-      case "sequence": // []const T
-        return null;
-      case "externalClass":
-        throw new Error("TODO");
-      case "dictionary": {
-        let existing = typeHashToStruct.get(this.hash());
-        if (existing) return existing;
-        existing = new Struct();
-        for (const { key, type } of this.data as DictionaryField[]) {
-          if (type.flags.optional && !("default" in type.flags)) {
-            return null; // ?T
-          }
-          const repr = type.canDirectlyMapToCAbi();
-          if (!repr) return null;
-
-          existing.add(key, repr);
-        }
-        existing.reorderForSmallestSize();
-        if (!structHashToSelf.has(existing.hash())) {
-          structHashToSelf.set(existing.hash(), existing);
-        }
-        existing.assignName(this.name());
-        typeHashToStruct.set(this.hash(), existing);
-        return existing;
-      }
-      default: {
-        throw new Error("unexpected: " + (kind satisfies never));
-      }
-    }
-  }
-
-  name() {
-    if (this.nameDeduplicated) {
-      return this.nameDeduplicated;
-    }
-    const hash = this.hash();
-    const existing = typeHashToReachableType.get(hash);
-    if (existing) return (this.nameDeduplicated = existing.nameDeduplicated ??= this.#generateName());
-    return (this.nameDeduplicated = `anon_${this.kind}_${hash}`);
-  }
-
-  cppInternalName() {
-    const name = this.name();
-    const cAbiType = this.canDirectlyMapToCAbi();
-    const namespace = typeHashToNamespace.get(this.hash());
-    if (cAbiType) {
-      if (typeof cAbiType === "string") {
-        return cAbiType;
-      }
-    }
-    return namespace ? `${namespace}${name}` : name;
-  }
-
-  cppClassName() {
-    assert(this.lowersToNamedType(), `Does not lower to named type: ${inspect(this)}`);
-    const name = this.name();
-    const namespace = typeHashToNamespace.get(this.hash());
-    return namespace ? `${namespace}::${cap(name)}` : name;
-  }
-
-  cppName() {
-    const name = this.name();
-    const cAbiType = this.canDirectlyMapToCAbi();
-    const namespace = typeHashToNamespace.get(this.hash());
-    if (cAbiType && typeof cAbiType === "string" && this.kind !== "stringEnum") {
-      return cAbiTypeName(cAbiType);
-    }
-    return namespace ? `${namespace}::${cap(name)}` : name;
-  }
-
-  #generateName() {
-    return `bindgen_${this.ownerFile}_${this.hash()}`;
-  }
-
-  /**
-   * Name assignment is done to give readable names.
-   * The first name to a unique hash wins.
-   */
-  assignName(name: string) {
-    if (this.nameDeduplicated) return;
-    const hash = this.hash();
-    const existing = typeHashToReachableType.get(hash);
-    if (existing) {
-      this.nameDeduplicated = existing.nameDeduplicated ??= name;
-      return;
-    }
-    this.nameDeduplicated = name;
-  }
-
-  markReachable() {
-    if (!this.lowersToNamedType()) return;
-    const hash = this.hash();
-    const existing = typeHashToReachableType.get(hash);
-    this.nameDeduplicated ??= existing?.name() ?? `anon_${this.kind}_${hash}`;
-    if (!existing) typeHashToReachableType.set(hash, this);
-
-    switch (this.kind) {
-      case "ref":
-        throw new Error("TODO");
-      case "sequence":
-        this.data.element.markReachable();
-        break;
-      case "record":
-        this.data.value.markReachable();
-        break;
-      case "oneOf":
-        for (const type of this.data as TypeImpl[]) {
-          type.markReachable();
-        }
-        break;
-      case "dictionary":
-        for (const { type } of this.data as DictionaryField[]) {
-          type.markReachable();
-        }
-        break;
-    }
-  }
-
-  #rangeModifier(min: undefined | number | bigint, max: undefined | number | bigint, kind: "clamp" | "enforce") {
-    if (this.flags.range) {
-      throw new Error("This type already has a range modifier set");
-    }
-
-    // cAbiIntegerLimits throws on non-integer types
-    const range = cAbiIntegerLimits(this.kind as CAbiType);
-    const abiMin = BigInt(range[0]);
-    const abiMax = BigInt(range[1]);
-    if (min === undefined) {
-      min = abiMin;
-      max = abiMax;
-    } else {
-      if (max === undefined) {
-        throw new Error("Expected min and max to be both set or both unset");
-      }
-      min = BigInt(min);
-      max = BigInt(max);
-
-      if (min < abiMin || min > abiMax) {
-        throw new Error(`Expected integer in range ${range}, got ${inspect(min)}`);
-      }
-      if (max < abiMin || max > abiMax) {
-        throw new Error(`Expected integer in range ${range}, got ${inspect(max)}`);
-      }
-      if (min > max) {
-        throw new Error(`Expected min <= max, got ${inspect(min)} > ${inspect(max)}`);
-      }
-    }
-
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      range: min === BigInt(range[0]) && max === BigInt(range[1]) ? [kind, "abi", "abi"] : [kind, min, max],
-    });
-  }
-
-  assertDefaultIsValid(value: unknown) {
-    switch (this.kind) {
-      case "DOMString":
-      case "ByteString":
-      case "USVString":
-      case "UTF8String":
-        if (typeof value !== "string") {
-          throw new Error(`Expected string, got ${inspect(value)}`);
-        }
-        break;
-      case "boolean":
-        if (typeof value !== "boolean") {
-          throw new Error(`Expected boolean, got ${inspect(value)}`);
-        }
-        break;
-      case "f64":
-        if (typeof value !== "number") {
-          throw new Error(`Expected number, got ${inspect(value)}`);
-        }
-        break;
-      case "usize":
-      case "u8":
-      case "u16":
-      case "u32":
-      case "u64":
-      case "i8":
-      case "i16":
-      case "i32":
-      case "i64":
-        const range = this.flags.range?.slice(1) ?? cAbiIntegerLimits(this.kind);
-        if (typeof value === "number") {
-          if (value % 1 !== 0) {
-            throw new Error(`Expected integer, got ${inspect(value)}`);
-          }
-          if (value >= Number.MAX_SAFE_INTEGER || value <= Number.MIN_SAFE_INTEGER) {
-            throw new Error(
-              `Specify default ${this.kind} outside of max safe integer range as a BigInt to avoid precision loss`,
-            );
-          }
-          if (value < Number(range[0]) || value > Number(range[1])) {
-            throw new Error(`Expected integer in range [${range[0]}, ${range[1]}], got ${inspect(value)}`);
-          }
-        } else if (typeof value === "bigint") {
-          if (value < BigInt(range[0]) || value > BigInt(range[1])) {
-            throw new Error(`Expected integer in range [${range[0]}, ${range[1]}], got ${inspect(value)}`);
-          }
-        } else {
-          throw new Error(`Expected integer, got ${inspect(value)}`);
-        }
-        break;
-      case "dictionary":
-        if (typeof value !== "object" || value === null) {
-          throw new Error(`Expected object, got ${inspect(value)}`);
-        }
-        for (const { key, type } of this.data as DictionaryField[]) {
-          if (key in value) {
-            type.assertDefaultIsValid(value[key]);
-          } else if (type.flags.required) {
-            throw new Error(`Missing key ${key} in dictionary`);
-          }
-        }
-        break;
-      case "undefined":
-        assert(value === undefined, `Expected undefined, got ${inspect(value)}`);
-        break;
-      default:
-        throw new Error(`TODO: set default value on type ${this.kind}`);
-    }
-  }
-
-  emitCppDefaultValue(w: CodeWriter) {
-    const value = this.flags.default;
-    switch (this.kind) {
-      case "boolean":
-        w.add(value ? "true" : "false");
-        break;
-      case "f64":
-        w.add(String(value));
-        break;
-      case "usize":
-      case "u8":
-      case "u16":
-      case "u32":
-      case "u64":
-      case "i8":
-      case "i16":
-      case "i32":
-      case "i64":
-        w.add(String(value));
-        break;
-      case "dictionary":
-        const struct = this.structType();
-        w.line(`${this.cppName()} {`);
-        w.indent();
-        for (const { name } of struct.fields) {
-          w.add(`.${name} = `);
-          const type = this.data.find(f => f.key === name)!.type;
-          type.emitCppDefaultValue(w);
-          w.line(",");
-        }
-        w.dedent();
-        w.add(`}`);
-        break;
-      case "DOMString":
-      case "ByteString":
-      case "USVString":
-      case "UTF8String":
-        if (typeof value === "string") {
-          w.add("Bun::BunStringEmpty");
-        } else {
-          throw new Error(`TODO: non-empty string default`);
-        }
-        break;
-      case "undefined":
-        throw new Error("Zero-sized type");
-      default:
-        throw new Error(`TODO: set default value on type ${this.kind}`);
-    }
-  }
-
-  structType() {
-    const direct = this.canDirectlyMapToCAbi();
-    assert(typeof direct !== "string");
-    if (direct) return direct;
-    throw new Error("TODO: generate non-extern struct for representing this data type");
-  }
-
-  isIgnoredUndefinedType() {
-    return this.kind === "undefined";
-  }
-
-  isStringType() {
-    return (
-      this.kind === "DOMString" || this.kind === "ByteString" || this.kind === "USVString" || this.kind === "UTF8String"
-    );
-  }
-
-  isNumberType() {
-    return numericTypes.has(this.kind);
-  }
-
-  isObjectType() {
-    return this.kind === "externalClass" || this.kind === "dictionary";
-  }
-
-  [Symbol.toStringTag] = "Type";
-  [Bun.inspect.custom](depth, options, inspect) {
-    return (
-      `${options.stylize("Type", "special")} ${
-        this.lowersToNamedType() && this.nameDeduplicated
-          ? options.stylize(JSON.stringify(this.nameDeduplicated), "string") + " "
-          : ""
-      }${options.stylize(
-        `[${this.kind}${["required", "optional", "nullable"]
-          .filter(k => this.flags[k])
-          .map(x => ", " + x)
-          .join("")}]`,
-        "regexp",
-      )}` +
-      (this.data
-        ? " " +
-          inspect(this.data, {
-            ...options,
-            depth: options.depth === null ? null : options.depth - 1,
-          }).replace(/\n/g, "\n")
-        : "")
-    );
-  }
-
-  // Public interface definition API
-  get optional() {
-    if (this.flags.required) {
-      throw new Error("Cannot derive optional on a required type");
-    }
-    if (this.flags.default) {
-      throw new Error("Cannot derive optional on a something with a default value (default implies optional)");
-    }
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      optional: true,
-    });
-  }
-
-  get finite() {
-    if (this.kind !== "f64") {
-      throw new Error("finite can only be used on f64");
-    }
-    if (this.flags.finite) {
-      throw new Error("This type already has finite set");
-    }
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      finite: true,
-    });
-  }
-
-  get required() {
-    if (this.flags.required) {
-      throw new Error("This type already has required set");
-    }
-    if (this.flags.required) {
-      throw new Error("Cannot derive required on an optional type");
-    }
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      required: true,
-    });
-  }
-
-  default(def: any) {
-    if ("default" in this.flags) {
-      throw new Error("This type already has a default value");
-    }
-    if (this.flags.required) {
-      throw new Error("Cannot derive default on a required type");
-    }
-    this.assertDefaultIsValid(def);
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      default: def,
-    });
-  }
-
-  clamp(min?: number | bigint, max?: number | bigint) {
-    return this.#rangeModifier(min, max, "clamp");
-  }
-
-  enforceRange(min?: number | bigint, max?: number | bigint) {
-    return this.#rangeModifier(min, max, "enforce");
-  }
-
-  get nonNull() {
-    if (this.flags.nonNull) {
-      throw new Error("Cannot derive nonNull on a nonNull type");
-    }
-    return new TypeImpl(this.kind, this.data, {
-      ...this.flags,
-      nonNull: true,
-    });
-  }
-
-  validateInt32(min?: number, max?: number) {
-    if (this.kind !== "i32") {
-      throw new Error("validateInt32 can only be used on i32 or u32");
-    }
-    const rangeInfo = cAbiIntegerLimits("i32");
-    return this.validateInteger(min ?? rangeInfo[0], max ?? rangeInfo[1]);
-  }
-
-  validateUint32(min?: number, max?: number) {
-    if (this.kind !== "u32") {
-      throw new Error("validateUint32 can only be used on i32 or u32");
-    }
-    const rangeInfo = cAbiIntegerLimits("u32");
-    return this.validateInteger(min ?? rangeInfo[0], max ?? rangeInfo[1]);
-  }
-
-  validateInteger(min?: number | bigint, max?: number | bigint) {
-    min ??= Number.MIN_SAFE_INTEGER;
-    max ??= Number.MAX_SAFE_INTEGER;
-    const enforceRange = this.#rangeModifier(min, max, "enforce") as TypeImpl;
-    enforceRange.flags.nodeValidator = NodeValidator.validateInteger;
-    return enforceRange;
-  }
-}
-
-export function cAbiIntegerLimits(type: CAbiType) {
-  switch (type) {
-    case "u8":
-      return [0, 255];
-    case "u16":
-      return [0, 65535];
-    case "u32":
-      return [0, 4294967295];
-    case "u64":
-      return [0, 18446744073709551615n];
-    case "usize":
-      return [0, 18446744073709551615n];
-    case "i8":
-      return [-128, 127];
-    case "i16":
-      return [-32768, 32767];
-    case "i32":
-      return [-2147483648, 2147483647];
-    case "i64":
-      return [-9223372036854775808n, 9223372036854775807n];
-    case "f64":
-      return [-Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
-    default:
-      throw new Error(`Unexpected type ${type}`);
-  }
-}
-
-export function cAbiTypeForEnum(length: number): CAbiType {
-  return ("u" + alignForward(length, 8)) as CAbiType;
-}
-
-export function inspect(value: any) {
-  return Bun.inspect(value, { colors: Bun.enableANSIColors });
-}
-
-export function oneOfImpl(types: TypeImpl[]): TypeImpl {
-  const out: TypeImpl[] = [];
-  for (const type of types) {
-    if (type.kind === "oneOf") {
-      out.push(...type.data);
-    } else {
-      if (type.flags.default) {
-        throw new Error(
-          "Union type cannot include a default value. Instead, set a default value on the union type itself",
-        );
-      }
-      if (type.isVirtualArgument()) {
-        throw new Error(`t.${type.kind} can only be used as a function argument type`);
-      }
-      out.push(type);
-    }
-  }
-  return new TypeImpl("oneOf", out);
-}
-
-export function dictionaryImpl(record: Record<string, TypeImpl>): TypeImpl {
-  const out: DictionaryField[] = [];
-  for (const key in record) {
-    const type = record[key];
-    if (type.isVirtualArgument()) {
-      throw new Error(`t.${type.kind} can only be used as a function argument type`);
-    }
-    out.push({
-      key,
-      type: type,
-    });
-  }
-  return new TypeImpl("dictionary", out);
-}
-
-export const isFunc = Symbol("isFunc");
-
-export interface Func {
-  [isFunc]: true;
-  name: string;
-  snapshot: string;
-  /** The `.bind.ts` that declared it, relative to `src/`. */
-  sourceFile: string;
-  variants: Variant[];
-}
-
-export interface Variant {
-  suffix: string;
-  args: Arg[];
-  ret: TypeImpl;
-  returnStrategy?: ReturnStrategy;
-  globalObjectArg?: number | "hidden";
-  minRequiredArgs: number;
-  communicationStruct?: Struct;
-}
-
-export interface Arg {
-  name: string;
-  type: TypeImpl;
-  loweringStrategy?: ArgStrategy;
-}
-
-/**
- * The strategy for moving arguments over the ABI boundary are computed before
- * any code is generated so that the proper definitions can be easily made,
- * while allow new special cases to be added.
- */
-export type ArgStrategy =
-  // The argument is communicated as a C parameter
-  | { type: "c-abi-pointer"; abiType: CAbiType }
-  // The argument is communicated as a C parameter
-  | { type: "c-abi-value"; abiType: CAbiType }
-  // The data is added as a field on `.communicationStruct`
-  | {
-      type: "uses-communication-buffer";
-      /**
-       * Unique prefix for fields. For example, moving an optional over the ABI
-       * boundary uses two fields, `bool {prefix}_set` and `T {prefix}_value`.
-       */
-      prefix: string;
-    };
-/**
- * In addition to moving a payload over, an additional bit of information
- * crosses the ABI boundary indicating if the function threw an exception.
- *
- * For simplicity, the possibility of any native binding returning an error/calling
- * `throw` is assumed and there isnt a way to disable the exception check.
- */
-export type ReturnStrategy =
-  // JSValue is special cased because it encodes exception as 0x0
-  | { type: "jsvalue" }
-  // Return value doesnt exist. function returns a boolean indicating success/error.
-  | { type: "void" }
-  // For primitives and simple structures where direct assignment into a
-  // pointer is possible. function returns a boolean indicating success/error.
-  | { type: "basic-out-param"; abiType: CAbiType };
-
-export interface File {
-  functions: Func[];
-  typedefs: TypeDef[];
-}
-
-export interface TypeDef {
-  name: string;
-  type: TypeImpl;
-}
-
-export function registerFunction(opts: FuncOptions) {
-  const snapshot = snapshotCallerLocation();
-  const filename = stackTraceFileName(snapshot);
-  expect(filename).toEndWith(".bind.ts");
-  const sourceFile = path.relative(src, filename);
-  let file = files.get(sourceFile);
-  if (!file) {
-    file = { functions: [], typedefs: [] };
-    files.set(sourceFile, file);
-  }
-  const variants: Variant[] = [];
-  if ("variants" in opts) {
-    let i = 1;
-    for (const variant of opts.variants) {
-      const { minRequiredArgs } = validateVariant(variant);
-      variants.push({
-        args: Object.entries(variant.args).map(([name, type]) => ({ name, type })) as Arg[],
-        ret: variant.ret as TypeImpl,
-        suffix: `${i}`,
-        minRequiredArgs,
-      } as unknown as Variant);
-      i++;
-    }
-  } else {
-    const { minRequiredArgs } = validateVariant(opts);
-    variants.push({
-      suffix: "",
-      args: Object.entries(opts.args).map(([name, type]) => ({ name, type })) as Arg[],
-      ret: opts.ret as TypeImpl,
-      minRequiredArgs,
-    });
-  }
-
-  const func: Func = {
-    [isFunc]: true,
-    name: "",
-    snapshot,
-    sourceFile,
-    variants,
-  };
-  file.functions.push(func);
-  return func;
-}
-
-function validateVariant(variant: any) {
-  let minRequiredArgs = 0;
-  let seenOptionalArgument = false;
-  let i = 0;
-
-  for (const [name, type] of Object.entries(variant.args) as [string, TypeImpl][]) {
-    if (!(type instanceof TypeImpl)) {
-      throw new Error(`Expected type for argument ${name}, got ${inspect(type)}`);
-    }
-    i += 1;
-    if (type.isVirtualArgument()) {
-      continue;
-    }
-    if (!type.flags.optional && !("default" in type.flags)) {
-      if (seenOptionalArgument) {
-        throw new Error(`Required argument ${name} cannot follow an optional argument`);
-      }
-      minRequiredArgs++;
-    } else {
-      seenOptionalArgument = true;
-    }
-  }
-
-  return { minRequiredArgs };
-}
-
-function snapshotCallerLocation(): string {
-  const stack = new Error().stack!;
-  const lines = stack.split("\n");
-  let i = 1;
-  for (; i < lines.length; i++) {
-    if (!lines[i].includes(import.meta.dir)) {
-      return lines[i];
-    }
-  }
-  throw new Error("Couldn't find caller location in stack trace");
-}
-
-function stackTraceFileName(line: string): string {
-  const match = /(?:at\s+|\()(.:?[^:\n(\)]*)[^(\n]*$/i.exec(line);
-  assert(match, `Couldn't extract filename from stack trace line: ${line}`);
-  return match[1].replaceAll("\\", "/");
-}
-
-export type CAbiType =
-  | "*anyopaque"
-  | "*JSGlobalObject"
-  | "JSValue"
-  | "JSValue.MaybeException"
-  | "u0"
-  | "bun.String"
-  | "bool"
-  | "u8"
-  | "u16"
-  | "u32"
-  | "u64"
-  | "usize"
-  | "i8"
-  | "i16"
-  | "i32"
-  | "i64"
-  | "f64"
-  | Struct;
-
-export function cAbiTypeInfo(type: CAbiType): [size: number, align: number] {
-  if (typeof type !== "string") {
-    return type.abiInfo();
-  }
-  switch (type) {
-    case "u0":
-      return [0, 0]; // no-op
-    case "bool":
-    case "u8":
-    case "i8":
-      return [1, 1];
-    case "u16":
-    case "i16":
-      return [2, 2];
-    case "u32":
-    case "i32":
-      return [4, 4];
-    case "usize":
-    case "u64":
-    case "i64":
-    case "f64":
-      return [8, 8];
-    case "*anyopaque":
-    case "*JSGlobalObject":
-    case "JSValue":
-    case "JSValue.MaybeException":
-      return [8, 8]; // pointer size
-    case "bun.String":
-      return [24, 8];
-    default:
-      throw new Error("unexpected: " + (type satisfies never));
-  }
-}
-
-export function cAbiTypeName(type: CAbiType) {
-  if (typeof type !== "string") {
-    return type.name();
-  }
-  return (
-    {
-      "*anyopaque": "void*",
-      "*JSGlobalObject": "JSC::JSGlobalObject*",
-      "JSValue": "JSValue",
-      "JSValue.MaybeException": "JSValue",
-      "bool": "bool",
-      "u8": "uint8_t",
-      "u16": "uint16_t",
-      "u32": "uint32_t",
-      "u64": "uint64_t",
-      "i8": "int8_t",
-      "i16": "int16_t",
-      "i32": "int32_t",
-      "i64": "int64_t",
-      "f64": "double",
-      "usize": "size_t",
-      "bun.String": "BunString",
-      u0: "void",
-    } satisfies Record<Extract<CAbiType, string>, string>
-  )[type];
-}
-
-export function alignForward(size: number, alignment: number) {
-  return Math.floor((size + alignment - 1) / alignment) * alignment;
-}
-
-export class Struct {
-  fields: StructField[] = [];
-  #hash?: string;
-  #name?: string;
-
-  abiInfo(): [size: number, align: number] {
-    let size = 0;
-    let align = 0;
-    for (const field of this.fields) {
-      size = alignForward(size, field.naturalAlignment);
-      size += field.size;
-      align = Math.max(align, field.naturalAlignment);
-    }
-    return [size, align];
-  }
-
-  reorderForSmallestSize() {
-    // for conistency sort by alignment, then size, then name
-    this.fields.sort((a, b) => {
-      if (a.naturalAlignment !== b.naturalAlignment) {
-        return a.naturalAlignment - b.naturalAlignment;
-      }
-      if (a.size !== b.size) {
-        return a.size - b.size;
-      }
-      return a.name.localeCompare(b.name);
-    });
-  }
-
-  hash() {
-    return (this.#hash ??= String(
-      Bun.hash(
-        this.fields
-          .map(f => {
-            if (f.type instanceof Struct) {
-              return f.name + `:` + f.type.hash();
-            }
-            return f.name + `:` + f.type;
-          })
-          .join(","),
-      ),
-    ));
-  }
-
-  name() {
-    if (this.#name) return this.#name;
-    const hash = this.hash();
-    const existing = structHashToSelf.get(hash);
-    if (existing && existing !== this) return (this.#name = existing.name());
-    return (this.#name = `anon_extern_struct_${hash}`);
-  }
-
-  assignName(name: string) {
-    if (this.#name) return;
-    const hash = this.hash();
-    const existing = structHashToSelf.get(hash);
-    if (existing && existing.#name) name = existing.#name;
-    this.#name = name;
-    if (existing) existing.#name = name;
-  }
-
-  assignGeneratedName(name: string) {
-    if (this.#name) return;
-    this.assignName(name);
-  }
-
-  add(name: string, cType: CAbiType) {
-    const [size, naturalAlignment] = cAbiTypeInfo(cType);
-    this.fields.push({ name, type: cType, size, naturalAlignment });
-  }
-
-  emitCpp(cpp: CodeWriter, structName: string) {
-    cpp.line(`struct ${structName} {`);
-    cpp.indent();
-    for (const field of this.fields) {
-      cpp.line(`${cAbiTypeName(field.type)} ${field.name};`);
-    }
-    cpp.dedent();
-    cpp.line("};");
-  }
-}
-
-export interface StructField {
-  /** camel case */
-  name: string;
-  type: CAbiType;
+export interface Layout {
   size: number;
-  naturalAlignment: number;
+  align: number;
 }
 
-export class CodeWriter {
-  level = 0;
-  buffer = "";
+/** Where a named type or function was declared. */
+export interface Origin {
+  /** Absolute path of the `.bind.ts` file. */
+  file: string;
+  /** `node_os` for `node_os.bind.ts`. */
+  stem: string;
+  /** `NodeOs`: the C++ namespace of the file's functions, and `Generated<namespace>.h`. */
+  namespace: string;
+  /** Rust module the file's items are generated into. */
+  rustModule: string;
+  /** Cargo package that owns the file. */
+  crate: string;
+}
 
-  temporaries = new Set<string>();
+/** Where Rust code is being emitted, so paths to named types can be spelled from there. */
+export type RustScope = Pick<Origin, "crate" | "rustModule">;
 
-  line(s?: string) {
-    this.add((s ?? "") + "\n");
+export const roundUp = (n: number, align: number) => Math.ceil(n / align) * align;
+
+export function structLayout(fields: readonly Layout[]): Layout {
+  let size = 0;
+  let align = 1;
+  for (const field of fields) {
+    size = roundUp(size, field.align) + field.size;
+    align = Math.max(align, field.align);
+  }
+  return { size: roundUp(size, align), align };
+}
+
+/** `ExternVariant<...>`: `{ union data; uint8_t tag; }`. */
+export function variantLayout(alternatives: readonly Layout[]): Layout {
+  const align = Math.max(...alternatives.map(a => a.align));
+  const union = { size: roundUp(Math.max(...alternatives.map(a => a.size)), align), align };
+  return structLayout([union, { size: 1, align: 1 }]);
+}
+
+export function snakeCase(name: string): string {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .toLowerCase();
+}
+
+export function pascalCase(name: string): string {
+  return name
+    .split(/[^A-Za-z0-9]+/)
+    .filter(part => part.length > 0)
+    .map(part => part[0].toUpperCase() + part.slice(1))
+    .join("");
+}
+
+const rustKeywords = new Set(
+  "as break const continue crate else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while async await dyn gen".split(
+    " ",
+  ),
+);
+export const rustIdent = (name: string) => (rustKeywords.has(name) ? `r#${name}` : name);
+
+export function asciiLiteral(value: string): string {
+  assert(!/[^\x20-\x7e]/.test(value), `must be printable ASCII: ${util.inspect(value)}`);
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"_s`;
+}
+
+export abstract class Type {
+  /** `undefined` means "not provided". */
+  get optional(): OptionalType {
+    return new OptionalType(this, "optional");
+  }
+  /** `null` or `undefined` means "not provided". */
+  get nullable(): OptionalType {
+    return new OptionalType(this, "nullable");
+  }
+  /**
+   * Both forms: converted for use now, and the original value to hand to something that holds it
+   * longer (one of a class's `values`, a `Strong`, a JS call, the result). Only for arguments.
+   */
+  get withValue(): WithValueType {
+    return new WithValueType(this);
+  }
+  /** Value to use when not provided. Only for arguments and dictionary members. */
+  default(value: unknown): DefaultType {
+    return new DefaultType(this, value);
   }
 
-  add(s: string) {
-    this.buffer += (this.buffer.endsWith("\n") ? "    ".repeat(this.level) : "") + s;
+  abstract readonly idlType: string;
+  /** TypeScript spelling. */
+  abstract readonly tsType: string;
+
+  /** How `IDLNullable<this>::ImplementationType` says "null". */
+  get nullRepresentation(): "optional" | "pointer" | "undefined" {
+    return "optional";
+  }
+  /** Converting `undefined` succeeds, so a dictionary member of this type is not required. */
+  get permitsUndefined(): boolean {
+    return false;
+  }
+  /** Holds a JS value: the Rust type is branded with the call. */
+  get holdsJSValue(): boolean {
+    return this.dependencies.some(type => type.holdsJSValue);
+  }
+  /** Points into memory JavaScript can detach, resize or free: not for a function that can run it. */
+  get borrowsHeap(): boolean {
+    return this.dependencies.some(type => type.borrowsHeap);
+  }
+  /** Points into the C++ thunk's frame: only usable for the duration of a host call. */
+  get borrowsFrame(): boolean {
+    return this.dependencies.some(type => type.borrowsFrame);
+  }
+  get needsLifetime(): boolean {
+    return this.holdsJSValue || this.borrowsFrame || this.borrowsHeap;
+  }
+  get dependencies(): readonly Type[] {
+    return [];
+  }
+  getHeaders(out: Set<string>): void {
+    for (const type of this.dependencies) type.getHeaders(out);
   }
 
-  indent() {
-    this.level += 1;
+  /** A C++ expression of `idlType::ImplementationType` for a default value written in the schema. */
+  abstract toCpp(value: unknown): string;
+  /** The same value as a Rust expression of `rustType`. */
+  toRust(value: unknown, scope: RustScope): string {
+    throw new TypeError(`${this.tsType} cannot have a default`);
+  }
+  /** A C++ expression that converts `value`. `ctx` is a conversion context, `name` what to call the value. */
+  cppConvert(value: string, ctx: string, name: string): string {
+    return `::Bun::convertIDL<${this.idlType}>(*globalObject, ${value}, ${ctx})`;
   }
 
-  dedent() {
-    this.level -= 1;
+  abstract layout(): Layout;
+  abstract rustExternType(scope: RustScope): string;
+  abstract rustType(scope: RustScope): string;
+  /** A Rust expression (inside `unsafe`) that consumes `expr`, a `rustExternType`. */
+  rustFromExtern(expr: string, scope: RustScope): string {
+    return expr;
   }
 
-  trimLastNewline() {
-    this.buffer = this.buffer.trimEnd();
+  /** The type of a field of a returned dictionary. */
+  rustResultFieldType(scope: RustScope): string {
+    return this.rustType(scope);
   }
-
-  resetTemporaries() {
-    this.temporaries.clear();
+  /** The return type of a trait method. */
+  rustReturnType(scope: RustScope): string {
+    return this.rustResultFieldType(scope);
   }
+  /** A Rust expression of type `bindgen::Result<'a, bindgen::JsValue<'a>>` that consumes `value`; `heap` is in scope. */
+  rustToJS(value: string, scope: RustScope): string {
+    throw new TypeError(`${this.tsType} cannot be returned to JavaScript`);
+  }
+}
 
-  nextTemporaryName(label: string) {
-    let i = 0;
-    let name = `${label}_${i}`;
-    while (this.temporaries.has(name)) {
-      i++;
-      name = `${label}_${i}`;
+// ───────────────────────────── primitives ─────────────────────────────
+
+class PrimitiveType extends Type {
+  readonly idlType: string;
+  readonly tsType: string;
+  readonly rustName: string;
+  readonly size: number;
+  constructor(idlType: string, tsType: string, rustName: string, size: number) {
+    super();
+    this.idlType = idlType;
+    this.tsType = tsType;
+    this.rustName = rustName;
+    this.size = size;
+  }
+  toCpp(value: unknown): string {
+    if (this.rustName === "bool") {
+      assert(typeof value === "boolean");
+      return String(value);
     }
-    this.temporaries.add(name);
+    assert(typeof value === "number");
+    if (this.rustName !== "f64") assert(Number.isSafeInteger(value));
+    return `${this.idlType}::ImplementationType { ${value} }`;
+  }
+  toRust(value: unknown): string {
+    return this.rustName === "f64" && Number.isInteger(value) ? `${value}.0` : String(value);
+  }
+  layout(): Layout {
+    return { size: this.size, align: this.size };
+  }
+  rustExternType(): string {
+    return this.rustName;
+  }
+  rustType(): string {
+    return this.rustName;
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::${this.rustName}(heap, ${value})`;
+  }
+}
+
+export class BoolType extends PrimitiveType {
+  constructor(idlType = "::Bun::IDLStrictBoolean") {
+    super(idlType, "boolean", "bool", 1);
+  }
+  /** `ToBoolean`: any value is accepted. */
+  get loose(): BoolType {
+    return new BoolType("::WebCore::IDLBoolean");
+  }
+}
+
+interface IntegerInfo {
+  rust: string;
+  cpp: string;
+  size: number;
+  /** The WebIDL integer type of this width. */
+  webidl: string;
+  min: number | bigint;
+  max: number | bigint;
+}
+
+export class IntegerType extends PrimitiveType {
+  readonly info: IntegerInfo;
+  constructor(info: IntegerInfo, idlType = `::Bun::IDLStrictInteger<${info.cpp}>`) {
+    super(idlType, "number", info.rust, info.size);
+    this.info = info;
+  }
+  /** `ToNumeric` first, then as strict as the default. */
+  get loose(): IntegerType {
+    return new IntegerType(this.info, `::Bun::IDLLooseInteger<${this.info.cpp}>`);
+  }
+  /** WebIDL conversion: `ToNumber`, then wrap modulo the width. */
+  get wrap(): IntegerType {
+    return new IntegerType(this.info, `::WebCore::${this.info.webidl}`);
+  }
+  /** WebIDL `[EnforceRange]` over `[min, max]`. */
+  enforceRange(min = Number(this.info.min), max = Number(this.info.max)): RangeType {
+    return new RangeType(this.info, min, max, "Web");
+  }
+  /** Node's `validateInteger` / `validateInt32` / `validateUint32`: `ERR_INVALID_ARG_TYPE`, `ERR_OUT_OF_RANGE`. */
+  validateInteger(min = Number(this.info.min), max = Number(this.info.max)): RangeType {
+    return new RangeType(this.info, min, max, "Node");
+  }
+}
+
+export class RangeType extends IntegerType {
+  readonly kind: "Web" | "Node";
+  constructor(info: IntegerInfo, min: number, max: number, kind: "Web" | "Node") {
+    assert(Number.isSafeInteger(min) && Number.isSafeInteger(max) && min <= max);
+    assert(min >= Number(info.min) && max <= Number(info.max), `range does not fit ${info.rust}`);
+    super(
+      info,
+      `::Bun::BindgenCustomEnforceRange<${info.cpp}, ${min}, ${max}, ::Bun::BindgenCustomEnforceRangeKind::${kind}>`,
+    );
+    this.kind = kind;
+  }
+  getHeaders(out: Set<string>): void {
+    out.add("BindgenCustomEnforceRange.h");
+  }
+  cppConvert(value: string, ctx: string, name: string): string {
+    return this.kind === "Node"
+      ? `::WebCore::convert<${this.idlType}>(*globalObject, ${value}, []() { return ${asciiLiteral(name)}; })`
+      : `::WebCore::convert<${this.idlType}>(*globalObject, ${value})`;
+  }
+}
+
+const integer = (rust: string, cpp: string, size: number, webidl: string, min: number | bigint, max: number | bigint) =>
+  new IntegerType({ rust, cpp: `::std::${cpp}`, size, webidl, min, max });
+
+export const integers = {
+  i8: integer("i8", "int8_t", 1, "IDLByte", -128, 127),
+  u8: integer("u8", "uint8_t", 1, "IDLOctet", 0, 255),
+  i16: integer("i16", "int16_t", 2, "IDLShort", -32768, 32767),
+  u16: integer("u16", "uint16_t", 2, "IDLUnsignedShort", 0, 65535),
+  i32: integer("i32", "int32_t", 4, "IDLLong", -2147483648, 2147483647),
+  u32: integer("u32", "uint32_t", 4, "IDLUnsignedLong", 0, 4294967295),
+  i64: integer("i64", "int64_t", 8, "IDLLongLong", Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
+  u64: integer("u64", "uint64_t", 8, "IDLUnsignedLongLong", 0, Number.MAX_SAFE_INTEGER),
+  usize: integer("usize", "uint64_t", 8, "IDLUnsignedLongLong", 0, Number.MAX_SAFE_INTEGER),
+};
+
+export class DoubleType extends PrimitiveType {
+  constructor(idlType = "::Bun::IDLStrictDouble") {
+    super(idlType, "number", "f64", 8);
+  }
+  /** Rejects NaN and the infinities. */
+  get finite(): DoubleType {
+    return new DoubleType("::Bun::IDLFiniteDouble");
+  }
+  /** `ToNumber`. */
+  get loose(): DoubleType {
+    return new DoubleType("::WebCore::IDLUnrestrictedDouble");
+  }
+}
+
+/** Only as a union alternative or a return type. */
+export class UnitType extends Type {
+  readonly idlType: string;
+  readonly tsType: string;
+  constructor(tsType: "null" | "undefined") {
+    super();
+    this.tsType = tsType;
+    this.idlType = tsType === "null" ? "::Bun::IDLStrictNull" : "::Bun::IDLStrictUndefined";
+  }
+  get permitsUndefined(): boolean {
+    return true;
+  }
+  toCpp(): string {
+    return this.tsType === "null" ? "nullptr" : "::std::monostate {}";
+  }
+  layout(): Layout {
+    return { size: 1, align: 1 };
+  }
+  rustExternType(): string {
+    return "u8";
+  }
+  rustType(): string {
+    return "()";
+  }
+  rustFromExtern(): string {
+    return "()";
+  }
+  rustToJS(value: string): string {
+    assert(this.tsType === "undefined", "return b.undefined, or a nullable type");
+    return `bindgen::to_js::undefined(heap, ${value})`;
+  }
+}
+
+// ───────────────────────────── strings, values, buffers ─────────────────────────────
+
+/** An owned `bun_core::String` sharing the JS string's `StringImpl`. */
+export class StringType extends Type {
+  readonly idlType: string;
+  readonly tsType = "string";
+  constructor(idlType = "::Bun::IDLStrictString") {
+    super();
+    this.idlType = idlType;
+  }
+  /** `ToString`: any value is accepted. */
+  get loose(): StringType {
+    return new StringType("::WebCore::IDLDOMString");
+  }
+  get nullRepresentation() {
+    return "pointer" as const;
+  }
+  toCpp(value: unknown): string {
+    assert(typeof value === "string");
+    return `::WTF::String { ${asciiLiteral(value)} }`;
+  }
+  toRust(value: unknown): string {
+    return value === "" ? "bun_core::String::EMPTY" : `bun_core::String::static_(${JSON.stringify(value)})`;
+  }
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternString";
+  }
+  rustType(): string {
+    return "bun_core::String";
+  }
+  rustFromExtern(expr: string): string {
+    return `bindgen::extern_types::adopt_string(${expr})`;
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::string(heap, ${value})`;
+  }
+}
+
+/**
+ * UTF-8 bytes for the duration of the call: borrowed from the JS string when it is 8-bit ASCII,
+ * transcoded into the thunk's frame otherwise.
+ */
+export class Utf8Type extends Type {
+  readonly idlType: string;
+  readonly tsType = "string";
+  constructor(idlType = "::Bun::Bindgen::IDLStrictUTF8String") {
+    super();
+    this.idlType = idlType;
+  }
+  /** `ToString`: any value is accepted. */
+  get loose(): Utf8Type {
+    return new Utf8Type("::Bun::Bindgen::IDLLooseUTF8String");
+  }
+  get borrowsFrame(): boolean {
+    return true;
+  }
+  get nullRepresentation() {
+    return "pointer" as const;
+  }
+  getHeaders(out: Set<string>): void {
+    out.add("Bindgen/IDLConvert.h");
+  }
+  toCpp(value: unknown): string {
+    assert(typeof value === "string");
+    return `::Bun::Bindgen::JSStringUTF8View { ${asciiLiteral(value)} }`;
+  }
+  toRust(value: unknown): string {
+    return `b${JSON.stringify(value)}`;
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternBytes";
+  }
+  rustType(): string {
+    return "&'a [u8]";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get()`;
+  }
+  rustResultFieldType(): string {
+    return "Vec<u8>";
+  }
+  rustReturnType(): string {
+    return "impl AsRef<[u8]>";
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::utf8(heap, ${value})`;
+  }
+}
+
+/** The bytes of a typed array, `DataView` or `ArrayBuffer`, as `&[u8]`. */
+export class BytesType extends Type {
+  readonly idlType = "::Bun::Bindgen::IDLBufferSourceBytes";
+  readonly tsType = "ArrayBuffer | ArrayBufferView";
+  get borrowsHeap(): boolean {
+    return true;
+  }
+  get nullRepresentation() {
+    return "pointer" as const;
+  }
+  getHeaders(out: Set<string>): void {
+    out.add("Bindgen/IDLConvert.h");
+  }
+  toCpp(): string {
+    throw new TypeError("b.bytes cannot have a default");
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternBytes";
+  }
+  rustType(): string {
+    return "&'a [u8]";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get()`;
+  }
+}
+
+/** A typed array, `DataView` or `ArrayBuffer`, as a handle whose bytes are read through `with_bytes`. */
+export class BufferSourceType extends Type {
+  readonly idlType = "::Bun::Bindgen::IDLRawBufferSource";
+  readonly tsType = "ArrayBuffer | ArrayBufferView";
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  getHeaders(out: Set<string>): void {
+    out.add("Bindgen/IDLConvert.h");
+  }
+  toCpp(): string {
+    throw new TypeError("b.bufferSource cannot have a default");
+  }
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "JSValue";
+  }
+  rustType(): string {
+    return "bindgen::JsValue<'a, bun_jsc::ArrayBuffer>";
+  }
+  rustFromExtern(expr: string): string {
+    return `bindgen::JsValue::from_extern(${expr})`;
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::any(heap, ${value})`;
+  }
+}
+
+/** Converts as `inner` does; the thunk passes the argument itself along. */
+export class WithValueType extends Type {
+  readonly inner: Type;
+  constructor(inner: Type) {
+    super();
+    assert(!(inner instanceof DefaultType || inner instanceof WithValueType));
+    this.inner = inner;
+  }
+  get idlType(): string {
+    return this.inner.idlType;
+  }
+  get tsType(): string {
+    return this.inner.tsType;
+  }
+  get permitsUndefined(): boolean {
+    return this.inner.permitsUndefined;
+  }
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  get dependencies(): readonly Type[] {
+    return [this.inner];
+  }
+  toCpp(): string {
+    throw new TypeError("put .withValue last");
+  }
+  cppConvert(value: string, ctx: string, name: string): string {
+    return this.inner.cppConvert(value, ctx, name);
+  }
+  layout(): Layout {
+    return structLayout([this.inner.layout(), { size: 8, align: 8 }]);
+  }
+  rustExternType(scope: RustScope): string {
+    return `bindgen::extern_types::ExternWithValue<${this.inner.rustExternType(scope)}>`;
+  }
+  rustType(scope: RustScope): string {
+    return `bindgen::WithValue<'a, ${this.inner.rustType(scope)}>`;
+  }
+  rustFromExtern(expr: string, scope: RustScope): string {
+    return `{ let with_value = ${expr}; bindgen::WithValue { converted: ${this.inner.rustFromExtern("with_value.converted", scope)}, value: bindgen::JsValue::from_extern(with_value.value) } }`;
+  }
+}
+
+export class AnyType extends Type {
+  readonly idlType = "::Bun::IDLRawAny";
+  readonly tsType = "any";
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  get permitsUndefined(): boolean {
+    return true;
+  }
+  get nullRepresentation() {
+    return "undefined" as const;
+  }
+  toCpp(): string {
+    throw new TypeError("b.any cannot have a default");
+  }
+  toRust(): string {
+    return "bindgen::JsValue::UNDEFINED";
+  }
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "JSValue";
+  }
+  rustType(): string {
+    return "bindgen::JsValue<'a>";
+  }
+  rustFromExtern(expr: string): string {
+    return `bindgen::JsValue::from_extern(${expr})`;
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::any(heap, ${value})`;
+  }
+}
+
+/** A ref-counted native object taken out of its JS wrapper. */
+export class RefType extends Type {
+  readonly idlType: string;
+  readonly tsType: string;
+  readonly pointee: string;
+  readonly header: string | null;
+  constructor(idlType: string, tsType: string, pointee: string, header: string | null) {
+    super();
+    this.idlType = idlType;
+    this.tsType = tsType;
+    this.pointee = pointee;
+    this.header = header;
+  }
+  get nullRepresentation() {
+    return "pointer" as const;
+  }
+  getHeaders(out: Set<string>): void {
+    if (this.header) out.add(this.header);
+  }
+  toCpp(): string {
+    throw new TypeError(`${this.tsType} cannot have a default`);
+  }
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  /** Untyped: C++ never looks inside, and `improper_ctypes` would follow a typed pointer into the pointee. */
+  rustExternType(): string {
+    return "*mut core::ffi::c_void";
+  }
+  rustType(): string {
+    return `bun_core::ExternalShared<${this.pointee}>`;
+  }
+  rustFromExtern(expr: string): string {
+    return `bun_core::ExternalShared::<${this.pointee}>::adopt(${expr}.cast())`;
+  }
+}
+
+// ───────────────────────────── combinators ─────────────────────────────
+
+export class OptionalType extends Type {
+  readonly payload: Type;
+  readonly kind: "optional" | "nullable" | "looseNullable";
+  constructor(payload: Type, kind: "optional" | "nullable" | "looseNullable") {
+    super();
+    assert(!(payload instanceof OptionalType), "already optional");
+    assert(!(payload instanceof DefaultType), "put .default() last");
+    assert(!(payload instanceof AnyType), "b.any already accepts undefined and null");
+    this.payload = payload;
+    this.kind = kind;
+  }
+  /** Every falsy value means "not provided". */
+  get loose(): OptionalType {
+    assert(this.kind === "nullable", ".loose follows .nullable");
+    return new OptionalType(this.payload, "looseNullable");
+  }
+  get idlType(): string {
+    const template = {
+      optional: "::WebCore::IDLOptional",
+      nullable: "::WebCore::IDLNullable",
+      looseNullable: "::Bun::IDLLooseNullable",
+    }[this.kind];
+    return `${template}<${this.payload.idlType}>`;
+  }
+  get tsType(): string {
+    return `${this.payload.tsType} | ${this.kind === "optional" ? "undefined" : "null | undefined"}`;
+  }
+  get permitsUndefined(): boolean {
+    return true;
+  }
+  get dependencies(): readonly Type[] {
+    return [this.payload];
+  }
+  toCpp(value: unknown): string {
+    return value == null ? `${this.idlType}::nullValue()` : this.payload.toCpp(value);
+  }
+  toRust(value: unknown, scope: RustScope): string {
+    return value == null ? "None" : `Some(${this.payload.toRust(value, scope)})`;
+  }
+  layout(): Layout {
+    return this.payload.nullRepresentation === "optional"
+      ? variantLayout([{ size: 1, align: 1 }, this.payload.layout()])
+      : this.payload.layout();
+  }
+  rustExternType(scope: RustScope): string {
+    return this.payload.nullRepresentation === "optional"
+      ? `bindgen::extern_types::ExternOptional<${this.payload.rustExternType(scope)}>`
+      : this.payload.rustExternType(scope);
+  }
+  rustType(scope: RustScope): string {
+    return `Option<${this.payload.rustType(scope)}>`;
+  }
+  rustFromExtern(expr: string, scope: RustScope): string {
+    if (this.payload.nullRepresentation === "optional") {
+      const inner = this.payload.rustFromExtern("value", scope);
+      return inner === "value" ? `${expr}.get()` : `${expr}.get().map(|value| ${inner})`;
+    }
+    if (this.payload instanceof Utf8Type) return `${expr}.get_optional()`;
+    return `{ let value = ${expr}; if value.is_null() { None } else { Some(${this.payload.rustFromExtern("value", scope)}) } }`;
+  }
+  rustResultFieldType(scope: RustScope): string {
+    return `Option<${this.payload.rustResultFieldType(scope)}>`;
+  }
+  rustReturnType(scope: RustScope): string {
+    return `Option<${this.payload.rustReturnType(scope)}>`;
+  }
+  rustToJS(value: string, scope: RustScope): string {
+    const none = this.kind === "optional" ? "UNDEFINED" : "NULL";
+    return `match ${value} { Some(value) => ${this.payload.rustToJS("value", scope)}, None => Ok(bindgen::JsValue::${none}) }`;
+  }
+}
+
+/** Not a type of its own: marks an argument or member whose absence has a value. */
+export class DefaultType extends Type {
+  readonly payload: Type;
+  readonly value: unknown;
+  /** `null` also takes the default. */
+  readonly onNull: boolean;
+  constructor(payload: Type, value: unknown) {
+    super();
+    assert(!(payload instanceof DefaultType));
+    if (payload instanceof OptionalType) {
+      assert(payload.kind === "nullable", ".default() follows a type or .nullable");
+      this.payload = payload.payload;
+      this.onNull = true;
+    } else {
+      this.payload = payload;
+      this.onNull = false;
+    }
+    this.value = value;
+    this.payload.toCpp(value);
+  }
+  get idlType(): string {
+    return this.payload.idlType;
+  }
+  get tsType(): string {
+    return `${this.payload.tsType} | ${this.onNull ? "null | undefined" : "undefined"}`;
+  }
+  get permitsUndefined(): boolean {
+    return true;
+  }
+  get dependencies(): readonly Type[] {
+    return [this.payload];
+  }
+  toCpp(value: unknown): string {
+    return this.payload.toCpp(value);
+  }
+  toRust(value: unknown, scope: RustScope): string {
+    return this.payload.toRust(value, scope);
+  }
+  cppConvert(value: string, ctx: string, name: string): string {
+    return this.payload.cppConvert(value, ctx, name);
+  }
+  layout(): Layout {
+    return this.payload.layout();
+  }
+  rustExternType(scope: RustScope): string {
+    return this.payload.rustExternType(scope);
+  }
+  rustType(scope: RustScope): string {
+    return this.payload.rustType(scope);
+  }
+  rustFromExtern(expr: string, scope: RustScope): string {
+    return this.payload.rustFromExtern(expr, scope);
+  }
+}
+
+export class ArrayType extends Type {
+  readonly element: Type;
+  constructor(element: Type) {
+    super();
+    assert(!(element instanceof DefaultType));
+    this.element = element;
+  }
+  get idlType(): string {
+    assert(!this.element.holdsJSValue, "an array argument cannot hold JS values: the GC does not scan it");
+    assert(!this.element.borrowsFrame, "an array argument cannot hold borrowed views; use b.string");
+    return `::Bun::IDLArray<${this.element.idlType}>`;
+  }
+  get tsType(): string {
+    return `(${this.element.tsType})[]`;
+  }
+  get dependencies(): readonly Type[] {
+    return [this.element];
+  }
+  getHeaders(out: Set<string>): void {
+    out.add("Bindgen/ExternVectorTraits.h");
+    super.getHeaders(out);
+  }
+  toCpp(value: unknown): string {
+    assert(Array.isArray(value));
+    return `${this.idlType}::ImplementationType { ${value.map(item => this.element.toCpp(item)).join(", ")} }`;
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(scope: RustScope): string {
+    return `bindgen::extern_types::ExternVector<${this.element.rustExternType(scope)}>`;
+  }
+  rustType(scope: RustScope): string {
+    return `Vec<${this.element.rustType(scope)}>`;
+  }
+  rustFromExtern(expr: string, scope: RustScope): string {
+    return `${expr}.into_vec(|value| ${this.element.rustFromExtern("value", scope)})`;
+  }
+  rustResultFieldType(scope: RustScope): string {
+    return `Vec<${this.element.rustResultFieldType(scope)}>`;
+  }
+  rustReturnType(scope: RustScope): string {
+    return `impl IntoIterator<Item = ${this.element.rustReturnType(scope)}>`;
+  }
+  rustToJS(value: string, scope: RustScope): string {
+    return `bindgen::to_js::array(heap, ${value}, |heap, value| ${this.element.rustToJS("value", scope)})`;
+  }
+}
+
+// ───────────────────────────── named types ─────────────────────────────
+
+export abstract class NamedType extends Type {
+  readonly name: string;
+  /** Set when the generator finds the type among a file's exports. */
+  origin: Origin | null = null;
+  constructor(name: string) {
+    super();
+    assert(/^[A-Z][A-Za-z0-9]*$/.test(name), `type names are PascalCase: ${name}`);
+    this.name = name;
+  }
+  get cpp(): string {
+    return `::Bun::Bindgen::Generated::${this.name}`;
+  }
+  getHeaders(out: Set<string>): void {
+    assert(this.origin, `${this.name} is used but not exported from a .bind.ts file`);
+    out.add(`Generated${this.origin.namespace}.h`);
+  }
+  protected path(scope: RustScope, name: string): string {
+    assert(this.origin, `${this.name} is used but not exported from a .bind.ts file`);
+    if (this.origin.crate !== scope.crate)
+      return `${this.origin.crate}::generated_bindgen::${this.origin.rustModule}::${name}`;
+    if (this.origin.rustModule !== scope.rustModule) return `super::${this.origin.rustModule}::${name}`;
     return name;
+  }
+  rustType(scope: RustScope): string {
+    return this.path(scope, this.name) + (this.needsLifetime ? "<'a>" : "");
+  }
+  get tsType(): string {
+    return this.name;
+  }
+}
+
+export class EnumType extends NamedType {
+  /** `spellings[i]` all parse to variant `i`; the first is the canonical one. */
+  readonly spellings: readonly (readonly string[])[];
+  /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
+  firstEnumerationValueIndex = -1;
+  constructor(name: string, values: readonly (string | readonly string[])[]) {
+    super(name);
+    assert(values.length > 0, `${name} is empty`);
+    this.spellings = values.map(value => (typeof value === "string" ? [value] : value));
+    const all = this.spellings.flat();
+    assert(new Set(all).size === all.length, `${name} has a duplicate value`);
+    assert(new Set(this.variants).size === this.variants.length, `${name}: two values make the same identifier`);
+    for (const variant of this.variants) assert(/^[A-Z]/.test(variant), `${name}: ${variant} is not an identifier`);
+  }
+  get variants(): string[] {
+    return this.spellings.map(([canonical]) => pascalCase(canonical));
+  }
+  get idlType(): string {
+    return `::WebCore::IDLEnumeration<${this.cpp}>`;
+  }
+  get tsType(): string {
+    return this.spellings
+      .flat()
+      .map(value => JSON.stringify(value))
+      .join(" | ");
+  }
+  toCpp(value: unknown): string {
+    const index = this.spellings.findIndex(spellings => spellings.includes(value as string));
+    assert(index >= 0, `${util.inspect(value)} is not a value of ${this.name}`);
+    return `${this.cpp}::${this.variants[index]}`;
+  }
+  toRust(value: unknown, scope: RustScope): string {
+    const index = this.spellings.findIndex(spellings => spellings.includes(value as string));
+    return `${this.path(scope, this.name)}::${this.variants[index]}`;
+  }
+  layout(): Layout {
+    return { size: 4, align: 4 };
+  }
+  rustExternType(scope: RustScope): string {
+    return this.path(scope, this.name);
+  }
+  rustToJS(value: string, scope: RustScope): string {
+    return `${value}.to_js(heap)`;
+  }
+}
+
+export interface MemberOptions {
+  type: Type;
+  default?: unknown;
+  /** Name of the C++ field and, in snake_case, of the Rust one. Defaults to the JS name. */
+  internalName?: string;
+  /** Other JS names, tried in order while the value is `undefined`. */
+  altNames?: readonly string[];
+}
+
+export class Member {
+  readonly names: readonly string[];
+  readonly internalName: string;
+  readonly type: Type;
+  constructor(name: string, spec: Type | MemberOptions) {
+    const options: MemberOptions = spec instanceof Type ? { type: spec } : spec;
+    this.names = [name, ...(options.altNames ?? [])];
+    this.internalName = options.internalName ?? name;
+    this.type = Object.hasOwn(options, "default") ? options.type.default(options.default) : options.type;
+  }
+  get name(): string {
+    return this.names[0];
+  }
+  get rustName(): string {
+    return rustIdent(snakeCase(this.internalName));
+  }
+}
+
+export interface DictionaryOptions {
+  name: string;
+  /** What error messages call it. Defaults to `name`. */
+  userFacingName?: string;
+  /** Also generate `Name::from_js`, for Rust that holds a JS value and no typed signature. */
+  fromJS?: boolean;
+}
+
+export class DictionaryType extends NamedType {
+  readonly userFacingName: string;
+  readonly fromJS: boolean;
+  readonly members: readonly Member[];
+  /** Index of the first member name in `Tables::memberNames`. Set by the generator. */
+  firstMemberNameIndex = -1;
+  /** Index in `Tables::objectStructures`. Set by the generator. */
+  structureIndex = -1;
+  /** Reachable from an argument or `fromJS` / from a return type. Set by the generator. */
+  accepted = false;
+  returned = false;
+  constructor(options: string | DictionaryOptions, members: Record<string, Type | MemberOptions>) {
+    super(typeof options === "string" ? options : options.name);
+    this.userFacingName = (typeof options === "string" ? undefined : options.userFacingName) ?? this.name;
+    this.fromJS = typeof options !== "string" && !!options.fromJS;
+    this.members = Object.entries(members).map(([name, spec]) => new Member(name, spec));
+    assert(!this.fromJS || !this.borrowsFrame, `${this.name}: from_js outlives the frame b.utf8 borrows from`);
+  }
+  get idlType(): string {
+    return `::WebCore::IDLDictionary<${this.cpp}>`;
+  }
+  get dependencies(): readonly Type[] {
+    return this.members.map(member => member.type);
+  }
+  /** Every JS name read, in order. */
+  get names(): string[] {
+    return this.members.flatMap(member => member.names);
+  }
+  toCpp(value: unknown): string {
+    assert(typeof value === "object" && value !== null);
+    const given = value as Record<string, unknown>;
+    for (const key of Object.keys(given))
+      assert(
+        this.members.some(m => m.name === key),
+        `unexpected key: ${key}`,
+      );
+    const fields = this.members.map(member => {
+      let field: unknown;
+      if (Object.hasOwn(given, member.name)) field = given[member.name];
+      else if (member.type instanceof DefaultType) field = member.type.value;
+      else assert(member.type.permitsUndefined, `missing key: ${member.name}`);
+      return `.${member.internalName} = ${member.type.toCpp(field)}`;
+    });
+    return `${this.cpp} { ${fields.join(", ")} }`;
+  }
+  /** Every member can be left out. */
+  get hasDefault(): boolean {
+    return this.members.every(member => member.type.permitsUndefined);
+  }
+  toRust(value: unknown, scope: RustScope): string {
+    const given = value as Record<string, unknown>;
+    const fields = this.members
+      .filter(member => Object.hasOwn(given, member.name))
+      .map(member => `${member.rustName}: ${member.type.toRust(given[member.name], scope)}, `);
+    return `${this.path(scope, this.name)} { ${fields.join("")}..Default::default() }`;
+  }
+  layout(): Layout {
+    return structLayout(this.members.map(member => member.type.layout()));
+  }
+  rustExternType(scope: RustScope): string {
+    return this.path(scope, `Extern${this.name}`);
+  }
+  rustFromExtern(expr: string, scope: RustScope): string {
+    return `${this.path(scope, this.name)}::from_extern(${expr})`;
+  }
+  rustToJS(value: string, scope: RustScope): string {
+    return `${value}.to_js(heap)`;
+  }
+}
+
+/** Alternatives are tried in order; the first whose conversion accepts the value wins. */
+export class UnionType extends NamedType {
+  readonly alternatives: readonly { name: string; variant: string; type: Type }[];
+  constructor(name: string, alternatives: Record<string, Type>) {
+    super(name);
+    this.alternatives = Object.entries(alternatives).map(([name, type]) => {
+      assert(!(type instanceof DefaultType));
+      return { name, variant: pascalCase(name), type };
+    });
+    assert(this.alternatives.length > 0 && this.alternatives.length <= 16, `${name}: 1 to 16 alternatives`);
+  }
+  get idlType(): string {
+    return `::Bun::IDLOrderedUnion<${this.alternatives.map(a => a.type.idlType).join(", ")}>`;
+  }
+  get tsType(): string {
+    return this.alternatives.map(a => a.type.tsType).join(" | ");
+  }
+  get permitsUndefined(): boolean {
+    return this.alternatives.some(a => a.type.permitsUndefined);
+  }
+  get dependencies(): readonly Type[] {
+    return this.alternatives.map(a => a.type);
+  }
+  toCpp(value: unknown): string {
+    const unit = this.alternatives.find(a => a.type instanceof UnitType && a.type.tsType === String(value));
+    assert(unit, `${this.name}: only null or undefined can be a default`);
+    return `${this.idlType}::ImplementationType { ${unit.type.toCpp(value)} }`;
+  }
+  toRust(value: unknown, scope: RustScope): string {
+    const unit = this.alternatives.find(
+      a => a.type instanceof UnitType && (value === undefined || a.type.tsType === String(value)),
+    );
+    assert(unit, `${this.name}: only null or undefined can be a default`);
+    return `${this.path(scope, this.name)}::${unit.variant}`;
+  }
+  layout(): Layout {
+    return variantLayout(this.alternatives.map(a => a.type.layout()));
+  }
+  rustExternType(scope: RustScope): string {
+    return this.path(scope, `Extern${this.name}`);
+  }
+  rustFromExtern(expr: string, scope: RustScope): string {
+    return `${this.path(scope, this.name)}::from_extern(${expr})`;
+  }
+}
+
+// ───────────────────────────── functions ─────────────────────────────
+
+/**
+ * What the Rust body is handed, and so what it is able to do:
+ * `"none"` computes; `"heap"` (`&JsHeap`) also allocates JS values; `"js"` (`&mut JsCall`) also runs JavaScript.
+ */
+export type Capability = "none" | "heap" | "js";
+
+export interface SignatureOptions {
+  args?: Record<string, Type>;
+  returns?: Type;
+  capability?: Capability;
+  /** The body returns `Result<T, E>` for any `E: bindgen::IntoError`. */
+  throws?: boolean;
+  /** Path of the Rust function. Defaults to the module's path plus the export's name in snake_case. */
+  rustPath?: string;
+  /** The JS function's `length`. Defaults to the number of required arguments. */
+  length?: number;
+}
+
+export class Signature {
+  readonly args: readonly { name: string; type: Type }[];
+  readonly returns: Type;
+  readonly capability: Capability;
+  readonly throws: boolean;
+  readonly rustPath: string | undefined;
+  readonly length: number | undefined;
+  constructor(options: SignatureOptions) {
+    this.length = options.length;
+    this.args = Object.entries(options.args ?? {}).map(([name, type]) => ({ name, type }));
+    this.returns = options.returns ?? new UnitType("undefined");
+    this.capability = options.capability ?? "none";
+    this.throws = options.throws ?? false;
+    this.rustPath = options.rustPath;
+    let optional = false;
+    for (const { name, type } of this.args) {
+      if (type.permitsUndefined) optional = true;
+      else assert(!optional, `required argument ${name} follows an optional one`);
+    }
+    for (const { name, type } of this.args) {
+      assert(
+        !type.borrowsHeap || this.capability !== "js",
+        `${name}: JavaScript can detach a buffer; take b.bufferSource and use with_bytes`,
+      );
+    }
+    assert(!(this.returns instanceof DefaultType));
+    assert(!this.returns.holdsJSValue || this.capability !== "none", "returning a JS value takes a capability");
+  }
+  get requiredCount(): number {
+    return this.args.filter(arg => !arg.type.permitsUndefined).length;
+  }
+}
+
+export class FunctionDefinition {
+  /** More than one: picked by argument count, most arguments first. */
+  readonly signatures: readonly Signature[];
+  name = "";
+  origin: Origin | null = null;
+  constructor(signatures: readonly SignatureOptions[]) {
+    assert(signatures.length > 0);
+    this.signatures = signatures.map(options => new Signature(options)).sort((a, b) => b.args.length - a.args.length);
+    const counts = this.signatures.map(signature => signature.requiredCount);
+    assert(new Set(counts).size === counts.length, "overloads must differ in their number of required arguments");
+  }
+  get length(): number {
+    const given = this.signatures.find(signature => signature.length !== undefined);
+    return given?.length ?? Math.min(...this.signatures.map(signature => signature.requiredCount));
+  }
+}
+
+// ───────────────────────────── classes ─────────────────────────────
+
+/** A native function. */
+export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
+  /** Name of the method in the generated trait. Defaults to the property's name in snake_case. */
+  fn?: string;
+  /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
+  mutates?: boolean;
+  /** Also pass the wrapper, for its `values`. `capability: "js"` always gets it. */
+  passThis?: boolean;
+  /** Key the function by this private builtin name (`$name` in src/js) instead of a string. */
+  privateSymbol?: string;
+}
+
+export interface GetterField {
+  getter: Type;
+  /** Also generate a setter, which takes `&mut self` (or the wrapper, with `capability: "js"`). */
+  setter?: true;
+  /** Computed once per object, then kept in the wrapper. */
+  cache?: true;
+  capability?: Capability;
+  throws?: boolean;
+}
+
+/** A function written in JavaScript: the name of the code generator bundle-functions.ts emits. */
+export interface BuiltinField {
+  builtin: string;
+  length: number;
+}
+
+export type Field = FunctionField | GetterField | BuiltinField;
+
+export interface ClassOptions {
+  /** Path of the Rust struct. It implements the generated `${name}Class` trait. */
+  rustPath: string;
+  /** Absent: JavaScript cannot construct one, and there is no constructor object. */
+  construct?: Omit<SignatureOptions, "rustPath" | "returns">;
+  /** Properties of the prototype. */
+  proto?: Record<string, Field>;
+  /** Properties of the constructor. */
+  klass?: Record<string, FunctionField>;
+  /** JS values the object holds. The GC visits them; the wrapper gets `_get_cached` / `_set_cached` for each. */
+  values?: readonly string[];
+  /** `false`: prototype properties are non-configurable. */
+  configurable?: boolean;
+}
+
+export class Method extends Signature {
+  readonly name: string;
+  readonly rustName: string;
+  readonly receiver: "ref" | "mut" | "wrapper" | "static";
+  readonly passThis: boolean;
+  readonly privateSymbol: string | undefined;
+  constructor(name: string, options: FunctionField, isStatic = false) {
+    super(options);
+    this.name = name;
+    this.rustName = options.fn ?? rustIdent(snakeCase(name));
+    assert(
+      !(options.mutates && this.capability === "js"),
+      `${name}: a method that can run JavaScript gets the wrapper, not &mut self`,
+    );
+    this.receiver = isStatic ? "static" : this.capability === "js" ? "wrapper" : options.mutates ? "mut" : "ref";
+    this.passThis = !isStatic && this.capability !== "js" && !!options.passThis;
+    this.privateSymbol = options.privateSymbol;
+  }
+}
+
+export class Getter {
+  readonly name: string;
+  readonly type: Type;
+  readonly capability: Capability;
+  readonly throws: boolean;
+  readonly hasSetter: boolean;
+  /** Index of the internal field a cached value lives in, or -1. */
+  internalFieldIndex = -1;
+  constructor(name: string, options: GetterField) {
+    this.name = name;
+    this.type = options.getter;
+    this.capability = options.capability ?? "none";
+    this.throws = options.throws ?? false;
+    this.hasSetter = options.setter ?? false;
+    assert(!(options.cache && options.setter), `${name}: a cached getter has no setter`);
+    if (options.cache) this.internalFieldIndex = 0;
+  }
+  get rustName(): string {
+    return rustIdent(snakeCase(this.name));
+  }
+}
+
+/** Stands for the class being declared, in its own signatures. */
+class SelfType extends Type {
+  readonly idlType = "";
+  readonly tsType = "this";
+  toCpp(): string {
+    throw new TypeError("b.self is only for the arguments and results of a class's own members");
+  }
+  layout(): Layout {
+    return this.toCpp() as never;
+  }
+  rustExternType(): string {
+    return this.toCpp();
+  }
+  rustType(): string {
+    return this.toCpp();
+  }
+}
+export const selfType = new SelfType();
+
+/** As an argument or a result: the wrapper, `JsWrapper<'a, T>`. */
+export class ClassType extends NamedType {
+  readonly rustPath: string;
+  readonly construct: Signature | null;
+  readonly methods: readonly Method[];
+  readonly getters: readonly Getter[];
+  readonly staticMethods: readonly Method[];
+  readonly builtins: readonly ({ name: string } & BuiltinField)[];
+  readonly values: readonly string[];
+  /** `values`, then one per cached getter. */
+  readonly internalFields: readonly string[];
+  readonly configurable: boolean;
+  /** Index in `Tables::classes`. Set by the generator. */
+  classIndex = -1;
+  constructor(name: string, options: ClassOptions) {
+    super(name);
+    this.rustPath = options.rustPath;
+    const own = (type: Type) => (type === selfType ? this : type);
+    const resolve = <T extends SignatureOptions>(signature: T): T => ({
+      ...signature,
+      args: Object.fromEntries(Object.entries(signature.args ?? {}).map(([name, type]) => [name, own(type)])),
+      ...(signature.returns ? { returns: own(signature.returns) } : {}),
+    });
+    this.construct = options.construct ? new Signature(resolve(options.construct)) : null;
+    const methods: Method[] = [];
+    const getters: Getter[] = [];
+    const builtins: ({ name: string } & BuiltinField)[] = [];
+    for (const [name, field] of Object.entries(options.proto ?? {})) {
+      if ("builtin" in field) builtins.push({ name, ...field });
+      else if ("getter" in field) getters.push(new Getter(name, field));
+      else methods.push(new Method(name, resolve(field)));
+    }
+    this.methods = methods;
+    this.getters = getters;
+    this.builtins = builtins;
+    this.staticMethods = Object.entries(options.klass ?? {}).map(
+      ([name, field]) => new Method(name, resolve(field), true),
+    );
+    assert(this.construct || this.staticMethods.length === 0, `${name}: klass needs a constructor object`);
+    this.values = options.values ?? [];
+    const internalFields = [...this.values];
+    for (const getter of getters) {
+      if (getter.internalFieldIndex >= 0) getter.internalFieldIndex = internalFields.push(getter.name) - 1;
+    }
+    this.internalFields = internalFields;
+    this.configurable = options.configurable ?? true;
+    for (const method of this.methods) {
+      assert(
+        method.receiver !== "mut" ||
+          !method.args.some(arg => arg.type.dependencies.includes(this) || arg.type === this),
+        `${name}.${method.name}: &mut self and an argument of the same class may be the same object`,
+      );
+    }
+  }
+  get cpp(): string {
+    return `::Bun::Bindgen::Generated::JS${this.name}`;
+  }
+  get idlType(): string {
+    return `::Bun::Bindgen::IDLRawInterface<${this.cpp}>`;
+  }
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  get nullRepresentation() {
+    return "pointer" as const;
+  }
+  /** Signatures are not dependencies: a class may mention itself. */
+  get signatureTypes(): Type[] {
+    return [
+      ...(this.construct ? this.construct.args.map(arg => arg.type) : []),
+      ...[...this.methods, ...this.staticMethods].flatMap(method => [
+        ...method.args.map(arg => arg.type),
+        method.returns,
+      ]),
+      ...this.getters.map(getter => getter.type),
+    ];
+  }
+  toCpp(): string {
+    throw new TypeError(`${this.name} cannot have a default`);
+  }
+  layout(): Layout {
+    return { size: 8, align: 8 };
+  }
+  rustExternType(): string {
+    return "*mut u8";
+  }
+  rustType(): string {
+    return `bindgen::JsWrapper<'a, ${this.rustPath}>`;
+  }
+  rustFromExtern(expr: string): string {
+    return `bindgen::JsWrapper::<${this.rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}))`;
+  }
+  rustToJS(value: string): string {
+    return `bindgen::to_js::any(heap, ${value}.as_value())`;
+  }
+}
+
+export class ModuleDefinition {
+  /** Rust path the file's functions live under, e.g. `crate::node::node_os`. */
+  readonly rustPath: string;
+  constructor(options: { rustPath: string }) {
+    this.rustPath = options.rustPath;
   }
 }

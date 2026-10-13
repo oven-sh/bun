@@ -73,6 +73,7 @@ struct node_module;
 #include "BakeAdditionsToGlobalObject.h"
 #include "NativeModuleList.h"
 #include "streams/JSStreamsRuntime.h"
+#include <wtf/FixedVector.h>
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -96,6 +97,11 @@ extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 #include <uv.h>
 extern "C" uv_loop_t* Bun__ZigGlobalObject__uvLoop(void* /* BunVM */);
 #endif
+
+namespace Bun::Bindgen {
+unsigned objectStructureCount();
+unsigned classCount();
+}
 
 namespace Zig {
 
@@ -783,6 +789,13 @@ public:
 
     Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
+
+    // Structures of the dictionaries src/codegen/bindgen.ts returns, by index into Bun::Bindgen::Tables::objectStructures.
+    // Sized in the member initializer, so the marker never sees it change.
+    JSC::Structure* bindgenObjectStructure(unsigned index) const { return m_bindgenObjectStructures[index].getInitializedOnMainThread(this); }
+    WTF::FixedVector<LazyPropertyOfGlobalObject<JSC::Structure>> m_bindgenObjectStructures { Bun::Bindgen::objectStructureCount() };
+    // The classes it generates, by index into Bun::Bindgen::Tables::classes.
+    WTF::FixedVector<JSC::LazyClassStructure> m_bindgenLazyClasses { Bun::Bindgen::classCount() };
 
     void finishCreation(JSC::VM&);
 

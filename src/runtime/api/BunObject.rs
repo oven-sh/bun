@@ -92,10 +92,9 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
-/// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
-pub(crate) mod r#gen {
-    pub(crate) use bun_jsc::generated::bun_object::BracesOptions;
-}
+use crate::generated_bindgen::bun_object::BracesOptions;
+use crate::generated_bindgen::glob::GlobClass as _;
+use bun_jsc::bindgen::{self, JsCall, JsValue};
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -387,10 +386,23 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     Ok(jsval)
 }
 
-pub(crate) fn braces(
+pub(crate) fn braces<'a>(
+    cx: &mut JsCall<'a>,
+    input: BunString,
+    options: BracesOptions,
+) -> bindgen::Result<'a, JsValue<'a>> {
+    cx.with_global_value(|global| braces_impl(global, &input, options))
+}
+
+/// `Bun.gc(force)`: heap size after the collection.
+pub(crate) fn gc_from_js(cx: &mut JsCall<'_>, force: bool) -> usize {
+    cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
+}
+
+fn braces_impl(
     global: &JSGlobalObject,
     brace_str: &BunString,
-    opts: r#gen::BracesOptions,
+    opts: BracesOptions,
 ) -> JsResult<JSValue> {
     let brace_slice = brace_str.to_utf8();
 
@@ -1738,7 +1750,9 @@ fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 }
 
 fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::glob::Glob>(global_this)
+    // SAFETY: a lazy property callback, entered from JSC with no `JsCall` borrowed.
+    let cx = unsafe { JsCall::from_global(global_this) };
+    crate::api::glob::Glob::get_constructor(&cx.heap).to_js()
 }
 
 fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

@@ -62,6 +62,8 @@ enum Step {
     Clone,
     /// `git log -1 <committish>` (commit task).
     Log,
+    /// `git ls-remote origin HEAD`, after `git log -1` found no commit at the local HEAD (commit task).
+    RemoteHead,
     /// `git clone --no-checkout <bare repository> <tmp>` (checkout task).
     CheckoutClone,
     /// `git checkout <resolved>` in `<tmp>` (checkout task).
@@ -599,9 +601,9 @@ impl GitSubprocess {
                 b"core.longpaths=true",
                 b"--quiet",
                 b"--bare",
-                // The refresh fetches "origin" by name, whatever clone.defaultRemoteName says.
-                b"-o",
-                b"origin",
+                // The refresh fetches "origin" by name. Not `-o origin`: git before 2.39 refuses it with --bare.
+                b"-c",
+                b"clone.defaultRemoteName=origin",
                 b"--",
                 &url,
                 &tmp_path,
@@ -613,13 +615,8 @@ impl GitSubprocess {
 
     /// May free `this` on `Ok`.
     fn begin_commit(this: ThisPtr<Self>) -> Result<(), Error> {
-        let req = this.task().request_git_commit();
-        let committish = req.committish.slice().to_vec();
-        let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            &this.manager().cache_directory_path,
-            &[&bare_repo_folder_name(req.clone_id)],
-        )
-        .to_vec();
+        let committish = this.task().request_git_commit().committish.slice().to_vec();
+        let path = this.commit_repo_path();
         this.step.set(Step::Log);
         if committish.is_empty() {
             Self::spawn(this, &[b"-C", &path, b"log", b"--format=%H", b"-1"])
@@ -637,6 +634,28 @@ impl GitSubprocess {
                 ],
             )
         }
+    }
+
+    /// The bare repository of a commit task.
+    fn commit_repo_path(&self) -> Vec<u8> {
+        Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+            &self.manager().cache_directory_path,
+            &[&bare_repo_folder_name(
+                self.task().request_git_commit().clone_id,
+            )],
+        )
+        .to_vec()
+    }
+
+    /// Whether to ask the remote: upstream renamed its default branch, and the refresh pruned the one HEAD names here.
+    fn asks_remote_head(&self) -> bool {
+        self.task()
+            .request_git_commit()
+            .committish
+            .slice()
+            .is_empty()
+            && self.manager().options.offline
+                != crate::package_manager_real::options::OfflineMode::Offline
     }
 
     // ── checkout ────────────────────────────────────────────────────────────
@@ -875,6 +894,15 @@ impl GitSubprocess {
                 && strings::contains(stderr, b"not")
                 && strings::contains(stderr, b"found"))
                 || strings::contains(stderr, b"does not exist"));
+        if !ok && matches!(step, Step::Log) && this.asks_remote_head() {
+            let path = this.commit_repo_path();
+            this.step.set(Step::RemoteHead);
+            this.reset_polls();
+            if let Err(err) = Self::spawn(this, &[b"-C", &path, b"ls-remote", b"origin", b"HEAD"]) {
+                Self::finish_commit(this, Err(err));
+            }
+            return;
+        }
         if !ok && !not_found {
             this.report_failure(status, stderr);
         }
@@ -921,6 +949,16 @@ impl GitSubprocess {
                     Err(Error::InstallFailed)
                 };
                 Self::finish_commit(this, result);
+            }
+            Step::RemoteHead => {
+                // `<commit>\tHEAD`, or nothing when the remote HEAD names no branch.
+                let commit = strings::split_once_char(stdout, b'\t').filter(|_| ok);
+                Self::finish_commit(
+                    this,
+                    commit
+                        .map(|(commit, _)| commit.to_vec())
+                        .ok_or(Error::InstallFailed),
+                );
             }
             Step::CheckoutClone => {
                 if ok {

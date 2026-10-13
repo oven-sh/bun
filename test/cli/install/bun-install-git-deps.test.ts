@@ -2561,7 +2561,16 @@ test.concurrent.skipIf(isWindows).each([
 ])("clones %s from the right URLs", async (dependency, https, ssh = https) => {
   const { calls, stderr, exitCode } = await failingGitCalls(dependency);
   // `--`: whatever follows is not an option of git
-  const clone = ["clone", "-c", "core.longpaths=true", "--quiet", "--bare", "-o", "origin", "--"];
+  const clone = [
+    "clone",
+    "-c",
+    "core.longpaths=true",
+    "--quiet",
+    "--bare",
+    "-c",
+    "clone.defaultRemoteName=origin",
+    "--",
+  ];
   expect(calls).toEqual([
     [...clone, `https://${https}`],
     [...clone, `ssh://${ssh}`],
@@ -3229,6 +3238,72 @@ test.concurrent("bun update moves a git dependency without a committish to the n
   expect(stderr).not.toContain("error:");
   expect(await installedVersionOf(project, "dep")).toBe("main-v2");
   expect(await Bun.file(join(project, "bun.lock")).text()).toContain(branchCommits(bare).main);
+  expect(exitCode).toBe(0);
+});
+
+// The refresh prunes the branch that HEAD of the cached clone names.
+test.concurrent("bun update follows a default branch that was renamed upstream", async () => {
+  using dir = tempDir("git-dep-renamed-default", {});
+  const root = String(dir);
+  await using server = serveStatic(root);
+  const { bare, project, cache } = await installedFromBranch(root, server.port!, "master", { committish: "" });
+
+  await git(bare, "branch", "-m", "master", "main");
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  await moveBranch(bare, "main", "main-v2");
+
+  for (const command of ["update", "update"]) {
+    const { stderr, exitCode } = await runBun(project, cache, {}, command);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("fatal:");
+    expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+    expect(await Bun.file(join(project, "bun.lock")).text()).toContain(branchCommits(bare).main);
+    expect(exitCode).toBe(0);
+  }
+});
+
+// `git init --bare` on a server, then a push of another branch than its HEAD names.
+test.concurrent("refreshes a repository whose HEAD names no branch", async () => {
+  using dir = tempDir("git-dep-dangling-head", {});
+  const root = String(dir);
+  await using server = serveStatic(root);
+  const { bare, project, cache } = await installedFromBranch(root, server.port!, "main");
+
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/gone");
+  await moveBranch(bare, "main", "main-v2");
+
+  const { stderr, exitCode } = await runBun(project, cache, {}, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+  expect(exitCode).toBe(0);
+});
+
+// Ubuntu 22.04 has git 2.34, Debian 11 has 2.30.
+test.concurrent.skipIf(isWindows)("clones with a git older than 2.39, which refuses --bare with --origin", async () => {
+  using dir = tempDir("git-dep-old-git", {
+    "bin/git": `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    --bare) bare=1 ;;
+    -o | --origin | --origin=*) origin=1 ;;
+  esac
+done
+if [ -n "$bare" ] && [ -n "$origin" ]; then
+  echo "fatal: --bare and --origin origin options are incompatible." >&2
+  exit 128
+fi
+exec "${Bun.which("git")}" "$@"
+`,
+  });
+  const root = String(dir);
+  chmodSync(join(root, "bin", "git"), 0o755);
+  const project = writeProject(root, { pkg: `git+${pathToFileURL(sharedBare)}#pkg-b` });
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {
+    PATH: `${join(root, "bin")}:${process.env.PATH}`,
+  });
+  expect(stderr).not.toContain("error:");
+  expect(existsSync(join(project, "node_modules", "pkg", "package.json"))).toBe(true);
   expect(exitCode).toBe(0);
 });
 

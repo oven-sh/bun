@@ -5235,8 +5235,7 @@ describe("a send that the kernel rejects", () => {
   });
 
   // The client is a process of its own and the server does next to nothing, so the reset arrives in the middle of the sends.
-  // At the reset of the server, Windows drops what is still unread in the kernel.
-  it.skipIf(isWindows).each(["its own socket", "tls.connect({ socket })"])(
+  it.each(["its own socket", "tls.connect({ socket })"])(
     "leaves an upload over %s the answer that came before the reset",
     async transport => {
       using server = Bun.listen({
@@ -5263,11 +5262,13 @@ describe("a send that the kernel rejects", () => {
           // The server is slow to answer its first connection.
           for (let i = 0; i < 4; i++) {
             const request = require("node:https").request({ ...options, method: "POST", headers, createConnection });
+            let outcome = "nothing";
             request.on("response", response => {
-              response.setEncoding("utf8").on("data", chunk => console.log(response.statusCode, chunk.trim()));
+              response.setEncoding("utf8").on("data", chunk => (outcome = response.statusCode + " " + chunk.trim()));
             });
-            request.on("error", () => {}).end(body);
+            request.on("error", () => (outcome = outcome === "nothing" ? "error" : outcome)).end(body);
             await new Promise(resolve => request.on("close", resolve));
+            console.log(outcome);
           }`,
         ],
         env: bunEnv,
@@ -5275,7 +5276,11 @@ describe("a send that the kernel rejects", () => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
-      expect(stdout.trim().split("\n")).toEqual(Array(4).fill("403 refused"));
+      const outcomes = stdout.trim().split("\n");
+      // At the reset of the server, Windows drops what is still unread in the kernel: there the upload may just fail.
+      expect(isWindows ? outcomes.map(outcome => (outcome === "error" ? "403 refused" : outcome)) : outcomes).toEqual(
+        Array(4).fill("403 refused"),
+      );
       expect(exitCode).toBe(0);
     },
   );

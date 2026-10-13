@@ -1070,30 +1070,66 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
-  test("with a `lang`, or if it cannot be read, a style sheet ends at the first end tag", async () => {
-    const rows: [string, string][] = [
+  test("a style sheet ends at the first end tag with a `lang`, or if that is not in a string, a comment or `url()`", async () => {
+    const refused: [string, string][] = [
       // A preprocessor cuts it out before Svelte reads it.
       [
-        '<style lang="scss">p::after{content:"</style>"}</style>\n',
-        "This end tag has no start tag\n    at 0.svelte:1:48",
+        '<style lang="scss">b::after{content:"</style>"}</style>\n',
+        '1 | <style lang="scss">b::after{content:"</style>"}</style>\n' +
+          "                                                   ^\nerror: This end tag has no start tag\n    at 0.svelte:1:48\n\n",
       ],
-      ["<style>p{margin:0}</style>\n<b>'</style>'</b>\n", "This end tag has no start tag\n    at 1.svelte:2:5"],
+      [
+        "<style>b{margin:0}</style>\n<i>'</style>'</i>\n",
+        "2 | <i>'</style>'</i>\n        ^\nerror: This end tag has no start tag\n    at 1.svelte:2:5\n\n",
+      ],
+      // To Svelte this is a comment, to who formats the style sheet it is a selector.
+      [
+        "<style><!-- </style> -->b{margin:0}</style>\n",
+        "1 | <style><!-- </style> -->b{margin:0}</style>\n" +
+          "                                       ^\nerror: This end tag has no start tag\n    at 2.svelte:1:36\n\n",
+      ],
+      [
+        "<style>b{c:</style>}</style>\n",
+        "1 | <style>b{c:</style>}</style>\n                        ^\nerror: This end tag has no start tag\n    at 3.svelte:1:21\n\n",
+      ],
     ];
-    const names = rows.map((_, index) => `${index}.svelte`);
-    const result = await format(Object.fromEntries(rows.map((it, index) => [names[index], it[0]])), names);
-    for (const [, message] of rows) expect(result.stderr).toContain(`error: ${message}\n`);
-    expect(result).toMatchObject({ files: rows.map(it => it[0]), exitCode: 2 });
-    // An apostrophe in a comment of SCSS starts nothing, and a block that is not closed is a warning as before.
-    const kept = {
-      "a.svelte": "<style lang=\"scss\">// don't\np{margin:0}</style>\n<p>it's</p>\n",
-      "b.svelte": "<style>p{margin:0</style>\n<p>y</p>\n",
-    };
-    expect(await format(kept, ["a.svelte", "b.svelte"])).toMatchObject({
-      files: [
-        "<p>it's</p>\n\n<style lang=\"scss\">\n  // don't\n  p {\n    margin: 0;\n  }\n</style>\n",
-        "<p>y</p>\n\n<style>\np{margin:0\n</style>\n",
+    const names = refused.map((_, index) => `${index}.svelte`);
+    const files = Object.fromEntries(refused.map((it, index) => [names[index], it[0]]));
+    expect(await format(files, names, ["--threads=1"])).toMatchObject({
+      stderr: refused.map(it => it[1]).join(""),
+      files: refused.map(it => it[0]),
+      exitCode: 2,
+    });
+
+    const formatted: [string, string][] = [
+      // The same as the first above, without the `lang`.
+      [
+        '<style>b::after{content:"</style>"}</style>\n',
+        '<style>\n  b::after {\n    content: "</style>";\n  }\n</style>\n',
       ],
-      stderr: "1 | <style>p{margin:0</style>\n           ^\nwarn: Unclosed block\n   at b.svelte:1:8\n\n",
+      // An apostrophe in a comment of SCSS starts nothing.
+      [
+        "<style lang=\"scss\">// don't\nb{margin:0}</style>\n<p>it's</p>\n",
+        "<p>it's</p>\n\n<style lang=\"scss\">\n  // don't\n  b {\n    margin: 0;\n  }\n</style>\n",
+      ],
+      [
+        "<style>@media (width<600px){b{margin:0}}</style>\n",
+        "<style>\n  @media (width<600px) {\n    b {\n      margin: 0;\n    }\n  }\n</style>\n",
+      ],
+      // What cannot be read stays as it is, up to the first end tag.
+      ["<style>b{margin:0</style>\n<p>y</p>\n", "<p>y</p>\n\n<style>\nb{margin:0\n</style>\n"],
+      [
+        "<style>b</style>\n<p>{c}</p>\n<svelte:head><style>d{margin:0}</style></svelte:head>\n",
+        "<p>{c}</p>\n<svelte:head\n  ><style>\n    d {\n      margin: 0;\n    }\n  </style></svelte:head\n>\n\n<style>\nb\n</style>\n",
+      ],
+    ];
+    const others = formatted.map((_, index) => `${index}.svelte`);
+    const texts = Object.fromEntries(formatted.map((it, index) => [others[index], it[0]]));
+    expect(await format(texts, others, ["--threads=1"])).toMatchObject({
+      stderr:
+        "1 | <style>b{margin:0</style>\n           ^\nwarn: Unclosed block\n   at 3.svelte:1:8\n\n" +
+        "1 | <style>b</style>\n           ^\nwarn: Expected a declaration or a rule\n   at 4.svelte:1:8\n\n",
+      files: formatted.map(it => it[1]),
       exitCode: 0,
     });
   });

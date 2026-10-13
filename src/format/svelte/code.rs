@@ -68,9 +68,9 @@ fn starts_like_a_tag<'a>(mut e: Expr<'a>, brace: Brace, f: &Formatter<'a>) -> bo
     }
 }
 
-/// Whether one of the `comments` in `text` can be the last of it that is printed. One that goes up to the end of its line
-/// waits for the end of a line. Any other stays before what follows it, unless all of that goes: parentheses, and the `;` of
-/// a statement.
+/// Whether one of the `comments` in `text` can be the last of it that is printed. One at the start or at the end of its line
+/// waits for the end of a line: `a[0\n/* b */\n]` is `a[0]\n/* b */`. Any other stays before what follows it, unless all of
+/// that goes: parentheses, and the `;` of a statement.
 fn can_end_with_comment(text: &[u8], comments: &[Comment]) -> bool {
     // They are in the order in which they are printed.
     let Some(end) = comments.iter().map(|it| it.span.end).max() else {
@@ -84,7 +84,9 @@ fn can_end_with_comment(text: &[u8], comments: &[Comment]) -> bool {
             _ => break,
         }
     }
-    behind.is_empty() || comments.iter().any(|it| it.is_line())
+    behind.is_empty()
+        || (comments.iter())
+            .any(|it| it.is_line() || it.preceded_by_newline() || it.followed_by_newline())
 }
 
 /// `textToDoc(forceIntoExpression(text), ..)`, and what is done to the document. Returns whether the last thing that is

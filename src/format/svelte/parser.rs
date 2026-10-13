@@ -1344,14 +1344,20 @@ impl<'a> Parser<'a, '_> {
     }
 
     /// `read_value`: where the `;`, `{` or `}` is that ends what starts at `start`. `is_selector`: it is read by
-    /// `read_selector_list`, which throws at a `<`.
+    /// `read_selector_list`, which throws at a `<`. `None` also for a `</style` that is not in a string, a comment or `url(..)`:
+    /// Svelte reads on, and the formatter for style sheets does not leave it as it is.
     fn end_of_css_value(&self, start: usize, is_selector: bool) -> Option<usize> {
         let text = &self.text[..self.len];
         let (mut at, mut is_in_url, mut quote) = (start, false, None);
         loop {
             at += strings::index_of_any(text.get(at..)?, b"\\\"'()/;{}<")?;
             match text[at] {
-                b'<' if is_selector && quote.is_none() => return None,
+                b'<' if quote.is_none()
+                    && !is_in_url
+                    && (is_selector || text[at..].starts_with(b"</style")) =>
+                {
+                    return None;
+                }
                 b'\\' => at += 1,
                 byte if quote == Some(byte) => quote = None,
                 b')' => is_in_url = false,
@@ -1368,21 +1374,16 @@ impl<'a> Parser<'a, '_> {
     }
 
     /// Where `read_style` finds the `</style` that ends the style sheet that starts here. It looks for it between two rules:
-    /// `a { b: "</style>" }`. `None`: it throws.
+    /// `a { b: "</style>" }`. `None`: it throws, or see [`Parser::end_of_css_value`].
     fn end_of_css(&self) -> Option<usize> {
         let text = &self.text[..self.len];
         let (mut at, mut depth) = (self.index, 0usize);
         loop {
-            // `allow_comment_or_whitespace`
+            // `allow_comment_or_whitespace`, but for `<!-- -->`, which is no comment to the formatter for style sheets.
             let rest = strings::trim_js_whitespace_start(text.get(at..)?);
             at = text.len() - rest.len();
-            let comment: Option<(&[u8], &[u8])> = match rest {
-                [b'/', b'*', ..] => Some((b"/*", b"*/")),
-                [b'<', b'!', b'-', b'-', ..] => Some((b"<!--", b"-->")),
-                _ => None,
-            };
-            if let Some((open, end)) = comment {
-                at += open.len() + strings::index_of(&rest[open.len()..], end)? + end.len();
+            if let [b'/', b'*', inner @ ..] = rest {
+                at += strings::index_of(inner, b"*/")? + 4;
                 continue;
             }
             match rest.first()? {

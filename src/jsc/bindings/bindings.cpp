@@ -2486,18 +2486,26 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
 }
 void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
-    // copyTo isomorphic-encodes: one byte per code unit.
+    uint32_t entries = 0;
+    size_t bytes = 0;
+    auto add = [&](const String& name, const String& value) {
+        // copyTo's iterator passes over a null value.
+        if (value.isNull())
+            return;
+        entries++;
+        // copyTo isomorphic-encodes: one byte per code unit.
+        bytes += name.length() + value.length();
+    };
     auto& map = headers->internalHeaders();
-    size_t i = 0;
     for (auto& header : map.commonHeaders())
-        i += WTF::httpHeaderNameStringImpl(header.key).length() + header.value.length();
+        add(WTF::httpHeaderNameStringImpl(header.key), header.value);
     for (auto& header : map.uncommonHeaders())
-        i += header.key.length() + header.value.length();
+        add(header.key, header.value);
     for (auto& cookie : map.getSetCookieHeaders())
-        i += WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie).length() + cookie.length();
+        add(WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), cookie);
 
-    *count = headers->size();
-    *buf_len = i;
+    *count = entries;
+    *buf_len = bytes;
 }
 
 typedef struct ZigSliceString {

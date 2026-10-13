@@ -1029,7 +1029,7 @@ fn written_ref_access<'a>(
     };
     let uses = kept_in.into_iter().flat_map(|it| it.references());
     let uses = uses.filter(|it| it.is_read()).map(|it| it.span().start);
-    let at = uses.min().unwrap_or(read.span().start);
+    let at = uses.min().unwrap_or_else(|| read.span().start);
     Some((
         at,
         match is_assigned {

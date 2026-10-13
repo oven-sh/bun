@@ -11,7 +11,7 @@ SVE2 and then read the vector length with `cntb`, which is SIGILL there.
    constexpr CapBits kGroupSVE2 = HWCAP2_SVE2 | HWCAP2_SVEAES;
    const CapBits hw2 = getauxval(AT_HWCAP2);
 -  if ((hw2 & kGroupSVE2) == kGroupSVE2) {
-+  if ((bits & HWY_SVE) && (hw2 & kGroupSVE2) == kGroupSVE2) {
++  if ((hw2 & kGroupSVE2) == kGroupSVE2 && (bits & HWY_SVE)) {
      bits |= HWY_SVE2;
    }
  

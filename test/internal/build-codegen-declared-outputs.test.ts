@@ -199,11 +199,12 @@ describe("emitBindgen", () => {
 
       const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
       const typesDir = resolve(String(dir), "types");
+      const sources = /--sources=[^\s'"]+/.exec(n.toString().replaceAll("$:", ":"))![0];
       expect(
         await bunRun([
           "run",
           script,
-          `--sources=${bindgen.join(",")}`,
+          sources,
           `--codegen-path=${cfg.codegenDir}`,
           `--types-path=${typesDir}`,
         ]),

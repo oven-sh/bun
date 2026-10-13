@@ -1,11 +1,4 @@
-// The type model behind `bindgen-lib.ts`. Each type knows four things:
-//
-//   idlType         the C++ tag type whose `WebCore::Converter` turns a JSValue into a C++ value
-//                   (src/jsc/bindings/BunIDL*.h, Bindgen/IDL*.h, webcore/JSDOMConvert*.h)
-//   rustExternType  the Rust mirror of what `Bun::Bindgen::ExternTraits` lowers that C++ value to
-//                   (src/jsc/bindings/Bindgen/Extern*.h, src/jsc/bindgen/extern_types.rs), with its C layout
-//   rustType        the type a Rust body sees, and `rustFromExtern`, the expression that gets there
-//   rustToJS        for types that can be returned: the expression that converts back
+// The type model behind `bindgen-lib.ts`.
 
 import assert from "node:assert";
 import util from "node:util";
@@ -17,8 +10,6 @@ export interface Layout {
 
 /** Where a named type or function was declared. */
 export interface Origin {
-  /** Absolute path of the `.bind.ts` file. */
-  file: string;
   /** `node_os` for `node_os.bind.ts`. */
   stem: string;
   /** `NodeOs`: the C++ namespace of the file's functions, and `Generated<namespace>.h`. */
@@ -92,10 +83,7 @@ export abstract class Type {
   get falsyAsNull(): OptionalType {
     return new OptionalType(this, "falsyAsNull");
   }
-  /**
-   * Both forms: converted for use now, and the original value to hand to something that holds it
-   * longer (one of a class's `internalFields`, a `Strong`, a JS call, the result). Only for arguments.
-   */
+  /** Converted for use now, and the value itself for whatever holds it longer. Only for arguments. */
   get withValue(): WithValueType {
     return new WithValueType(this);
   }
@@ -104,12 +92,13 @@ export abstract class Type {
     return new DefaultType(this, value);
   }
 
+  /** The C++ tag type whose `WebCore::Converter` turns a JSValue into a C++ value. */
   abstract readonly idlType: string;
   /** TypeScript spelling. */
   abstract readonly tsType: string;
 
   /** How `IDLNullable<this>::ImplementationType` says "null". */
-  get nullRepresentation(): "optional" | "pointer" | "undefined" {
+  get nullRepresentation(): "optional" | "pointer" {
     return "optional";
   }
   /** Converting `undefined` succeeds, so a dictionary member of this type is not required. */
@@ -154,7 +143,9 @@ export abstract class Type {
   }
 
   abstract layout(): Layout;
+  /** The Rust mirror of what `Bun::Bindgen::ExternTraits` lowers the C++ value to. */
   abstract rustExternType(scope: RustScope): string;
+  /** What a Rust body sees. */
   abstract rustType(scope: RustScope): string;
   /** A Rust expression (inside `unsafe`) that consumes `expr`, a `rustExternType`. */
   rustFromExtern(expr: string, scope: RustScope): string {
@@ -287,28 +278,17 @@ const integer = (rust: string, cpp: string, size: number, webidl: string, min: n
   new IntegerType({ rust, cpp: `::std::${cpp}`, size, webidl, min, max });
 
 export const integers = {
-  i8: integer("i8", "int8_t", 1, "IDLByte", -128, 127),
   u8: integer("u8", "uint8_t", 1, "IDLOctet", 0, 255),
-  i16: integer("i16", "int16_t", 2, "IDLShort", -32768, 32767),
   u16: integer("u16", "uint16_t", 2, "IDLUnsignedShort", 0, 65535),
   i32: integer("i32", "int32_t", 4, "IDLLong", -2147483648, 2147483647),
   u32: integer("u32", "uint32_t", 4, "IDLUnsignedLong", 0, 4294967295),
-  i64: integer("i64", "int64_t", 8, "IDLLongLong", Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
   u64: integer("u64", "uint64_t", 8, "IDLUnsignedLongLong", 0, Number.MAX_SAFE_INTEGER),
   usize: integer("usize", "uint64_t", 8, "IDLUnsignedLongLong", 0, Number.MAX_SAFE_INTEGER),
 };
 
 export class DoubleType extends PrimitiveType {
-  constructor(idlType = "::Bun::IDLStrictDouble") {
-    super(idlType, "number", "f64", 8);
-  }
-  /** Rejects NaN and the infinities. */
-  get finite(): DoubleType {
-    return new DoubleType("::Bun::IDLFiniteDouble");
-  }
-  /** `ToNumber`. */
-  get loose(): DoubleType {
-    return new DoubleType("::WebCore::IDLUnrestrictedDouble");
+  constructor() {
+    super("::Bun::IDLStrictDouble", "number", "f64", 8);
   }
 }
 
@@ -343,7 +323,7 @@ export class UnitType extends Type {
     return "()";
   }
   rustToJS(value: string): string {
-    assert(this.tsType === "undefined", "return b.undefined, or a nullable type");
+    assert(this.tsType === "undefined", "leave `returns` out, or return a nullable type");
     return `bindgen::to_js::undefined(heap, ${value})`;
   }
 }
@@ -364,8 +344,8 @@ export class StringType extends Type {
   }
   /** `&[u8]`, UTF-8, for the duration of the call, instead of an owned string. Also takes a `String` object. */
   get utf8(): Utf8Type {
-    const utf8 = new Utf8Type();
-    return this.idlType === "::WebCore::IDLDOMString" ? utf8.loose : utf8;
+    const isLoose = this.idlType === "::WebCore::IDLDOMString";
+    return new Utf8Type(`::Bun::Bindgen::IDL${isLoose ? "Loose" : "Strict"}UTF8String`);
   }
   get nullRepresentation() {
     return "pointer" as const;
@@ -394,32 +374,22 @@ export class StringType extends Type {
   }
 }
 
-/**
- * UTF-8 bytes for the duration of the call: borrowed from the JS string when it is 8-bit ASCII,
- * transcoded into the thunk's frame otherwise.
- */
+/** UTF-8 bytes for the duration of the call: `Bun::Bindgen::JSStringUTF8View`. */
 export class Utf8Type extends Type {
   get rustIsCopy(): boolean {
     return true;
   }
   readonly idlType: string;
   readonly tsType = "string";
-  constructor(idlType = "::Bun::Bindgen::IDLStrictUTF8String") {
+  constructor(idlType: string) {
     super();
     this.idlType = idlType;
-  }
-  /** `ToString`: any value is accepted. */
-  get loose(): Utf8Type {
-    return new Utf8Type("::Bun::Bindgen::IDLLooseUTF8String");
   }
   get borrowsFrame(): boolean {
     return true;
   }
   get nullRepresentation() {
     return "pointer" as const;
-  }
-  getHeaders(out: Set<string>): void {
-    out.add("Bindgen/IDLConvert.h");
   }
   toCpp(value: unknown): string {
     assert(typeof value === "string");
@@ -464,9 +434,6 @@ export class BytesType extends Type {
   get nullRepresentation() {
     return "pointer" as const;
   }
-  getHeaders(out: Set<string>): void {
-    out.add("Bindgen/IDLConvert.h");
-  }
   toCpp(): string {
     throw new TypeError("b.bufferSource.bytes cannot have a default");
   }
@@ -502,9 +469,6 @@ export class BufferSourceType extends Type {
   get holdsJSValue(): boolean {
     return true;
   }
-  getHeaders(out: Set<string>): void {
-    out.add("Bindgen/IDLConvert.h");
-  }
   toCpp(): string {
     throw new TypeError("b.bufferSource cannot have a default");
   }
@@ -530,7 +494,8 @@ export class WithValueType extends Type {
   readonly inner: Type;
   constructor(inner: Type) {
     super();
-    assert(!(inner instanceof DefaultType || inner instanceof WithValueType));
+    assert(!(inner instanceof DefaultType), ".withValue cannot be combined with .default()");
+    assert(!(inner instanceof WithValueType), "already .withValue");
     this.inner = inner;
   }
   get idlType(): string {
@@ -549,7 +514,7 @@ export class WithValueType extends Type {
     return [this.inner];
   }
   toCpp(): string {
-    throw new TypeError("put .withValue last");
+    throw new TypeError(".withValue cannot be combined with .default()");
   }
   cppConvert(value: string, ctx: string, name: string): string {
     return this.inner.cppConvert(value, ctx, name);
@@ -579,9 +544,6 @@ export class AnyType extends Type {
   }
   get permitsUndefined(): boolean {
     return true;
-  }
-  get nullRepresentation() {
-    return "undefined" as const;
   }
   toCpp(): string {
     throw new TypeError("b.any cannot have a default");
@@ -653,6 +615,7 @@ export class OptionalType extends Type {
     assert(!(payload instanceof OptionalType), "already optional");
     assert(!(payload instanceof DefaultType), "put .default() last");
     assert(!(payload instanceof AnyType), "b.any already accepts undefined and null");
+    assert(!(payload instanceof WithValueType), "put .withValue last");
     this.payload = payload;
     this.kind = kind;
   }
@@ -775,6 +738,10 @@ export class ArrayType extends Type {
   constructor(element: Type) {
     super();
     assert(!(element instanceof DefaultType));
+    assert(
+      !element.borrowsHeap,
+      "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
+    );
     this.element = element;
   }
   get idlType(): string {
@@ -898,7 +865,6 @@ export class EnumType extends NamedType {
 
 export interface MemberOptions {
   type: Type;
-  default?: unknown;
   /** Name of the C++ field and, in snake_case, of the Rust one. Defaults to the JS name. */
   internalName?: string;
   /** Other JS names, tried in order while the value is `undefined`. */
@@ -912,8 +878,10 @@ export class Member {
   constructor(name: string, spec: Type | MemberOptions) {
     const options: MemberOptions = spec instanceof Type ? { type: spec } : spec;
     this.names = [name, ...(options.altNames ?? [])];
+    for (const name of this.names)
+      assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a member is named by an identifier`);
     this.internalName = options.internalName ?? name;
-    this.type = Object.hasOwn(options, "default") ? options.type.default(options.default) : options.type;
+    this.type = options.type;
   }
   get name(): string {
     return this.names[0];
@@ -928,6 +896,8 @@ export interface DictionaryOptions {
   userFacingName?: string;
   /** Also generate `Name::from_js`, for Rust that holds a JS value and no typed signature. */
   fromJS?: boolean;
+  /** An array is an object with none of the members, not an error. */
+  allowArray?: boolean;
 }
 
 export class DictionaryType extends NamedType {
@@ -944,6 +914,11 @@ export class DictionaryType extends NamedType {
     super();
     this.options = options;
     this.members = Object.entries(members).map(([name, spec]) => new Member(name, spec));
+    assert(this.members.length > 0, "a dictionary has members");
+    assert(
+      !this.borrowsHeap,
+      "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
+    );
     assert(!this.fromJS || !this.borrowsFrame, "from_js outlives the frame b.string.utf8 borrows from");
   }
   get userFacingName(): string {
@@ -951,6 +926,9 @@ export class DictionaryType extends NamedType {
   }
   get fromJS(): boolean {
     return !!this.options.fromJS;
+  }
+  get allowArray(): boolean {
+    return !!this.options.allowArray;
   }
   get idlType(): string {
     return `::WebCore::IDLDictionary<${this.cpp}>`;
@@ -1013,7 +991,11 @@ export class UnionType extends NamedType {
       assert(!(type instanceof DefaultType));
       return { name, variant: pascalCase(name), type };
     });
-    assert(this.alternatives.length > 0 && this.alternatives.length <= 16, "1 to 16 alternatives");
+    assert(this.alternatives.length > 0 && this.alternatives.length <= 16, "1 to 16 alternatives (Bindgen/Macros.h)");
+    assert(
+      !this.borrowsHeap,
+      "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
+    );
   }
   get idlType(): string {
     return `::Bun::IDLOrderedUnion<${this.alternatives.map(a => a.type.idlType).join(", ")}>`;
@@ -1052,10 +1034,7 @@ export class UnionType extends NamedType {
 
 // ───────────────────────────── functions ─────────────────────────────
 
-/**
- * What the Rust body is handed, and so what it is able to do:
- * `"none"` computes; `"heap"` (`&JsHeap`) also allocates JS values; `"js"` (`&mut JsCall`) also runs JavaScript.
- */
+/** What the Rust body is handed: nothing, `&JsHeap` (allocates JS values) or `&mut JsCall` (runs JavaScript). */
 export type Capability = "none" | "heap" | "js";
 
 export interface SignatureOptions {
@@ -1104,13 +1083,15 @@ export class Signature {
 }
 
 export class FunctionDefinition {
-  /** More than one: picked by argument count, most arguments first. */
+  /** More than one: picked by argument count, most required arguments first. */
   readonly signatures: readonly Signature[];
   name = "";
   origin: Origin | null = null;
   constructor(signatures: readonly SignatureOptions[]) {
     assert(signatures.length > 0);
-    this.signatures = signatures.map(options => new Signature(options)).sort((a, b) => b.args.length - a.args.length);
+    this.signatures = signatures
+      .map(options => new Signature(options))
+      .sort((a, b) => b.requiredCount - a.requiredCount);
     const counts = this.signatures.map(signature => signature.requiredCount);
     assert(new Set(counts).size === counts.length, "overloads must differ in their number of required arguments");
   }
@@ -1124,8 +1105,6 @@ export class FunctionDefinition {
 
 /** A native function. */
 export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
-  /** Name of the method in the generated trait. Defaults to the property's name in snake_case. */
-  fn?: string;
   /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
   mutates?: boolean;
   /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it. */
@@ -1176,7 +1155,7 @@ export class Method extends Signature {
   constructor(name: string, options: FunctionField, isStatic = false) {
     super(options);
     this.name = name;
-    this.rustName = options.fn ?? rustIdent(snakeCase(name));
+    this.rustName = rustIdent(snakeCase(name.replace(/^_+/, "")));
     assert(
       !(options.mutates && this.capability === "js"),
       `${name}: a method that can run JavaScript gets the wrapper, not &mut self`,

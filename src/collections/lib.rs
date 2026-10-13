@@ -467,6 +467,3 @@ pub mod hash_map {
     /// re-exported from `array_hash_map` rather than duplicated.
     pub use crate::array_hash_map::KV;
 }
-
-pub mod array_list;
-pub use array_list::ArrayListDefault;

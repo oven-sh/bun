@@ -4,11 +4,12 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::ArrayBuffer;
 use crate::bindgen::{
-    self, IntoError as _, JsCall, JsHeap, JsPayload as _, JsValue, JsWrapper, WithValue,
+    self, IntoError as _, JsCall, JsHeap, JsPayload as _, JsValue, JsWrapper, JsWrapperStrong,
+    WithValue,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestColor, TestCounterClass, TestCounterInternalFields as _, TestFailure, TestOptions,
-    TestOptionsEcho, TestTokenClass, TestValue,
+    TestColor, TestCounterClass, TestCounterInternalFields as _, TestFailure, TestHolderClass,
+    TestOptions, TestOptionsEcho, TestTokenClass, TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
@@ -102,11 +103,15 @@ pub fn sum_bytes(bytes: &[u8]) -> u32 {
     sum(bytes)
 }
 
+pub fn sum_bytes_then_text(bytes: &[u8], text: &[u8]) -> u32 {
+    sum(bytes) + sum(text)
+}
+
 pub fn sum_before_and_after_callback<'a>(
     cx: &mut JsCall<'a>,
     buffer: JsValue<'a, ArrayBuffer>,
     callback: JsValue<'a>,
-) -> bindgen::Result<'a, [Option<u32>; 2]> {
+) -> bindgen::Result<'a, [u32; 2]> {
     let before = buffer.with_bytes(&cx.heap, sum);
     let Some(callback) = callback.as_function() else {
         return Err(cx
@@ -149,7 +154,7 @@ pub struct TestCounter {
 
 impl TestCounter {
     fn new(count: i32) -> Self {
-        ALIVE.fetch_add(1, Ordering::Relaxed);
+        ALIVE.fetch_add(1, Ordering::SeqCst);
         TestCounter {
             count,
             label: Vec::new(),
@@ -159,7 +164,7 @@ impl TestCounter {
 
 impl Drop for TestCounter {
     fn drop(&mut self) {
-        ALIVE.fetch_sub(1, Ordering::Relaxed);
+        ALIVE.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -185,8 +190,8 @@ impl TestCounterClass for TestCounter {
         self.label = value.to_vec();
     }
 
-    fn tag<'a>(&self, heap: &JsHeap<'a>) -> JsValue<'a> {
-        bindgen::to_js::array(heap, [self.count], bindgen::to_js::i32).unwrap_or(JsValue::NULL)
+    fn tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsValue<'a>> {
+        bindgen::to_js::array(heap, [self.count], bindgen::to_js::i32)
     }
 
     fn increment(&mut self, by: i32) -> i32 {
@@ -215,7 +220,28 @@ impl TestCounterClass for TestCounter {
     }
 
     fn alive() -> usize {
-        ALIVE.load(Ordering::Relaxed)
+        ALIVE.load(Ordering::SeqCst)
+    }
+}
+
+pub struct TestHolder {
+    counter: JsWrapperStrong<TestCounter>,
+}
+
+impl TestHolderClass for TestHolder {
+    fn constructor<'a>(heap: &JsHeap<'a>, counter: JsWrapper<'a, TestCounter>) -> Self {
+        TestHolder {
+            counter: counter.to_strong(heap),
+        }
+    }
+
+    fn counter<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, TestCounter> {
+        self.counter.get(heap)
+    }
+
+    fn increment_counter<'a>(this: JsWrapper<'a, Self>, cx: &mut JsCall<'a>) -> i32 {
+        let counter = this.with(&cx.payloads, |holder| holder.counter.get(&cx.heap));
+        counter.with_mut(&mut cx.payloads, |counter| counter.increment(1))
     }
 }
 

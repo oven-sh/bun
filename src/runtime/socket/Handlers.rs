@@ -8,7 +8,6 @@ use crate::generated_bindgen::socket_config::{
 };
 use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::bindgen::{JsCall, JsValue};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
@@ -312,14 +311,9 @@ impl Handlers {
         opts: JSValue,
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
-        let from_js = |cx: &mut JsCall<'_>| {
-            let opts = JsValue::new(&cx.heap, opts);
-            let generated = GeneratedSocketConfigHandlers::from_js(cx, opts)
-                .map_err(|e| e.into_js_error(global_object))?;
+        GeneratedSocketConfigHandlers::from_js(global_object, opts, |generated| {
             Self::from_generated(global_object, &generated, mode)
-        };
-        // SAFETY: reached from a host function with no `JsCall` borrowed.
-        unsafe { JsCall::with(global_object.as_mut_ptr(), from_js) }
+        })
     }
 
     pub(crate) fn from_generated(
@@ -414,18 +408,13 @@ impl Handlers {
         global_object: &JSGlobalObject,
         opts: JSValue,
     ) -> JsResult<ReloadedHandlers> {
-        let from_js = |cx: &mut JsCall<'_>| {
-            let opts = JsValue::new(&cx.heap, opts);
-            let generated = GeneratedSocketConfigHandlers::from_js(cx, opts)
-                .map_err(|e| e.into_js_error(global_object))?;
+        GeneratedSocketConfigHandlers::from_js(global_object, opts, |generated| {
             let callbacks = Self::validate_callbacks(global_object, &generated)?;
             Ok(ReloadedHandlers {
                 callbacks,
                 binary_type: binary_type_from_generated(generated.binary_type),
             })
-        };
-        // SAFETY: reached from a host function with no `JsCall` borrowed.
-        unsafe { JsCall::with(global_object.as_mut_ptr(), from_js) }
+        })
     }
 
     /// Writes the validated callbacks into the existing cell, so the listener
@@ -613,13 +602,8 @@ impl SocketConfig {
         global_object: &JSGlobalObject,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
-        let from_js = |cx: &mut JsCall<'_>| {
-            let opts = JsValue::new(&cx.heap, opts);
-            let generated = GeneratedSocketConfig::from_js(cx, opts)
-                .map_err(|e| e.into_js_error(global_object))?;
+        GeneratedSocketConfig::from_js(global_object, opts, |generated| {
             Self::from_generated(vm, global_object, generated, mode)
-        };
-        // SAFETY: reached from a host function with no `JsCall` borrowed.
-        unsafe { JsCall::with(global_object.as_mut_ptr(), from_js) }
+        })
     }
 }

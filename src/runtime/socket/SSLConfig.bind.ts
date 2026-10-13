@@ -23,90 +23,29 @@ export const ALPNProtocols = b.union({
 export const SSLConfig = b.dictionary(
   {
     passphrase: b.string.nullable,
-    dhParamsFile: {
-      type: b.string.nullable,
-      internalName: "dh_params_file",
-    },
-    serverName: {
-      type: b.string.nullable,
-      internalName: "server_name",
-      altNames: ["servername"],
-    },
-    lowMemoryMode: {
-      type: b.bool,
-      default: false,
-      internalName: "low_memory_mode",
-    },
-    rejectUnauthorized: {
-      type: b.bool.nullable,
-      internalName: "reject_unauthorized",
-    },
-    requestCert: {
-      type: b.bool,
-      default: false,
-      internalName: "request_cert",
-    },
+    dhParamsFile: b.string.nullable,
+    serverName: { type: b.string.nullable, altNames: ["servername"] },
+    lowMemoryMode: b.bool.default(false),
+    rejectUnauthorized: b.bool.nullable,
+    requestCert: b.bool.default(false),
     ca: SSLConfigFile,
     cert: SSLConfigFile,
     key: SSLConfigFile,
-    secureOptions: {
-      type: b.u32,
-      default: 0,
-      internalName: "secure_options",
-    },
-    minVersion: {
-      type: b.i32,
-      default: 0,
-      internalName: "ssl_min_version",
-    },
-    maxVersion: {
-      type: b.i32,
-      default: 0,
-      internalName: "ssl_max_version",
-    },
-    keyFile: {
-      type: b.string.nullable,
-      internalName: "key_file",
-    },
-    certFile: {
-      type: b.string.nullable,
-      internalName: "cert_file",
-    },
-    caFile: {
-      type: b.string.nullable,
-      internalName: "ca_file",
-    },
-    ALPNProtocols: {
-      type: ALPNProtocols,
-      internalName: "alpn_protocols",
-    },
+    secureOptions: b.u32.default(0),
+    minVersion: { type: b.i32.default(0), internalName: "ssl_min_version" },
+    maxVersion: { type: b.i32.default(0), internalName: "ssl_max_version" },
+    keyFile: b.string.nullable,
+    certFile: b.string.nullable,
+    caFile: b.string.nullable,
+    ALPNProtocols: { type: ALPNProtocols, internalName: "alpn_protocols" },
     ciphers: b.string.nullable,
-    clientRenegotiationLimit: {
-      type: b.u32,
-      default: 0,
-      internalName: "client_renegotiation_limit",
-    },
-    clientRenegotiationWindow: {
-      type: b.u32,
-      default: 0,
-      internalName: "client_renegotiation_window",
-    },
+    clientRenegotiationLimit: b.u32.default(0),
+    clientRenegotiationWindow: b.u32.default(0),
     crl: SSLConfigFile,
-    allowPartialTrustChain: {
-      type: b.bool,
-      default: false,
-      internalName: "allow_partial_trust_chain",
-    },
-    sessionTimeout: {
-      type: b.i32,
-      default: 0,
-      internalName: "session_timeout",
-    },
+    allowPartialTrustChain: b.bool.default(false),
+    sessionTimeout: b.i32.default(0),
     sigalgs: b.string.nullable,
-    ecdhCurve: {
-      type: b.string.nullable,
-      internalName: "ecdh_curve",
-    },
+    ecdhCurve: b.string.nullable,
   },
   {
     userFacingName: "TLSOptions",

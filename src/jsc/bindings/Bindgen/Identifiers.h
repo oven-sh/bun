@@ -5,8 +5,7 @@
 
 namespace Bun::Bindgen {
 
-// Identifiers for dictionary member names and JSStrings for enumeration values, each made on first
-// use. Atom tables are per thread, so this lives in JSVMClientData, never in a process global.
+// Identifiers for dictionary member names and JSStrings for enumeration values, each made on first use.
 class Identifiers {
     WTF_MAKE_NONCOPYABLE(Identifiers);
     WTF_MAKE_NONMOVABLE(Identifiers);
@@ -45,8 +44,7 @@ private:
 
 Identifiers& identifiers(JSC::VM&);
 
-// The Structures of returned dictionaries, by index into Tables::objectStructures.
-unsigned objectStructureCount();
+// The Structure of a returned dictionary, by index into Tables::objectStructures.
 JSC::Structure* createObjectStructure(JSC::VM&, JSC::JSGlobalObject*, unsigned index);
 
 }

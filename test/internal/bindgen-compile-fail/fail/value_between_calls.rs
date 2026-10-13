@@ -2,8 +2,8 @@
 fn f(global: *mut JSGlobalObject) {
     unsafe {
         JsCall::with(global, |outer| {
-            let error = outer.heap.throw_value(JsValue::NULL);
-            JsCall::with(global, |inner| drop(inner.take_exception(error)));
+            let value = JsValue::new(&outer.heap, JSValue::NULL);
+            JsCall::with(global, |inner| drop(inner.heap.throw_value(value)));
         })
     };
 }

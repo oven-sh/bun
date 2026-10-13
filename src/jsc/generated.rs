@@ -1,10 +1,6 @@
 //! Hand-written Rust surface for the `.classes.ts` codegen.
 //!
-//! Each `JS${Type}` module exposes `from_js` / `from_js_direct` / `to_js` / `get_constructor`,
-//! thin-wrapping the `${Type}__fromJS` / `__fromJSDirect` / `__create` / `__getConstructor` C++
-//! exports of `src/codegen/generate-classes.ts`, plus one `${name}_get_cached` /
-//! `${name}_set_cached` pair per `cache: true` property, for the classes downstream crates name
-//! directly (`bun_jsc::generated::{JSTimeout, JSImmediate, JSBlob, JSResponse, JSRequest}`).
+//! One module per class downstream crates name directly, wrapping its `generate-classes.ts` C++ exports.
 //!
 //! Symbol-naming contract (kept in sync with generate-classes.ts):
 //!   `${T}Prototype__${name}GetCachedValue(JSValue) -> JSValue`

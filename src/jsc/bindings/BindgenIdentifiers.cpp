@@ -14,8 +14,8 @@ using namespace JSC;
 
 Identifiers::Identifiers(VM& vm)
     : m_vm(vm)
-    , m_memberNames(std::make_unique<Identifier[]>(std::size(Tables::memberNames)))
-    , m_enumerationValues(std::make_unique<JSString*[]>(std::size(Tables::enumerationValues)))
+    , m_memberNames(std::make_unique<Identifier[]>(Tables::memberNames.size()))
+    , m_enumerationValues(std::make_unique<JSString*[]>(Tables::enumerationValues.size()))
 {
 }
 
@@ -35,7 +35,7 @@ void Identifiers::initializeEnumerationValue(unsigned index)
 template<typename Visitor>
 void Identifiers::visit(Visitor& visitor)
 {
-    for (unsigned i = 0; i < Tables::enumerationValueCount; ++i) {
+    for (unsigned i = 0; i < Tables::enumerationValues.size(); ++i) {
         if (auto* string = m_enumerationValues[i])
             visitor.appendUnbarriered(string);
     }
@@ -48,14 +48,10 @@ Identifiers& identifiers(VM& vm)
     return static_cast<WebCore::JSVMClientData*>(vm.clientData)->bindgenIdentifiers;
 }
 
-unsigned objectStructureCount()
-{
-    return Tables::objectStructureCount;
-}
-
 Structure* createObjectStructure(VM& vm, JSGlobalObject* globalObject, unsigned index)
 {
     auto [firstMemberNameIndex, memberCount] = Tables::objectStructures[index];
+    RELEASE_ASSERT(memberCount <= JSFinalObject::maxInlineCapacity);
     const Identifier* memberNames = identifiers(vm).identifiersAt(firstMemberNameIndex, memberCount);
     Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), memberCount);
     for (unsigned i = 0; i < memberCount; ++i) {
@@ -66,26 +62,29 @@ Structure* createObjectStructure(VM& vm, JSGlobalObject* globalObject, unsigned 
     return structure;
 }
 
-void JSStringUTF8View::convert(StringView view)
+bool JSStringUTF8View::convert()
 {
+    StringView view = m_view;
     m_isConverted = true;
     if (view.is8Bit()) {
         auto span = view.span8();
-        m_converted.grow(span.size() * 2);
+        if (!m_converted.tryGrow(span.size() * 2))
+            return false;
         m_converted.shrink(simdutf::convert_latin1_to_utf8(byteCast<char>(span.data()), span.size(), byteCast<char>(m_converted.mutableSpan().data())));
-        return;
+        return true;
     }
     auto span = view.span16();
-    m_converted.grow(span.size() * 3);
+    if (!m_converted.tryGrow(span.size() * 3))
+        return false;
     size_t length = simdutf::convert_utf16le_to_utf8(span.data(), span.size(), byteCast<char>(m_converted.mutableSpan().data()));
     if (length) [[likely]] {
         m_converted.shrink(length);
-        return;
+        return true;
     }
     // simdutf refuses unpaired surrogates; each becomes U+FFFD.
     auto lenient = view.utf8(WTF::ConversionMode::StrictConversionReplacingUnpairedSurrogatesWithFFFD);
     m_converted.shrink(0);
-    m_converted.append(byteCast<uint8_t>(lenient.span()));
+    return m_converted.tryAppend(byteCast<uint8_t>(lenient.span()));
 }
 
 }
@@ -101,7 +100,7 @@ extern "C" EncodedJSValue Bun__Bindgen__createObject(JSGlobalObject* globalObjec
     for (size_t i = 0; i < count; ++i)
         hasEveryMember &= !!values[i];
     if (hasEveryMember) [[likely]] {
-        JSObject* object = constructEmptyObject(vm, defaultGlobalObject(globalObject)->bindgenObjectStructure(structureIndex));
+        JSObject* object = constructEmptyObject(vm, defaultGlobalObject(globalObject)->m_bindgenAdditions.m_objectStructures[structureIndex].getInitializedOnMainThread(globalObject));
         for (size_t i = 0; i < count; ++i)
             object->putDirectOffset(vm, static_cast<PropertyOffset>(i), JSValue::decode(values[i]));
         return JSValue::encode(object);

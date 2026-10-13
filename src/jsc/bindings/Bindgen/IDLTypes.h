@@ -25,8 +25,7 @@ struct IDLStrictUTF8String : WebCore::IDLType<JSStringUTF8View> {
 // `ToString`.
 struct IDLLooseUTF8String : IDLStrictUTF8String {};
 
-// The bytes of a BufferSource that is not shared. Valid while the argument is alive and no JavaScript
-// runs; the generator refuses this type to a function that can run any.
+// The bytes of a BufferSource that is not shared. Valid while the argument is alive and no JavaScript runs.
 struct IDLBufferSourceBytes : WebCore::IDLType<std::span<const uint8_t>> {
     using SequenceStorageType = void;
     using NullableType = std::span<const uint8_t>;

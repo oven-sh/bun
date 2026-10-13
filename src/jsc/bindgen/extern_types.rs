@@ -1,6 +1,4 @@
-//! Rust side of `src/jsc/bindings/Bindgen/Extern*.h`: the C layouts generated code passes between
-//! C++ and Rust. Everything here is plain data; ownership is taken by the generated conversion that
-//! reads it, exactly once.
+//! Rust side of `src/jsc/bindings/Bindgen/Extern*.h`. The generated conversion that reads a value takes ownership.
 
 use core::ffi::{c_uint, c_void};
 
@@ -9,8 +7,7 @@ use crate::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 /// `WTF::StringImpl*` carrying one ref, or null.
 pub type ExternString = *mut bun_core::WTFStringImplStruct;
 
-/// An empty `StringImpl` becomes `String::EMPTY`, as `Bun::toString` does: a WTF-backed `String` is
-/// never empty.
+/// A WTF-backed `String` is never empty, as in `Bun::toString`.
 #[inline]
 pub fn adopt_string(ptr: ExternString) -> bun_core::String {
     let string = bun_core::String::adopt_wtf_impl(ptr);
@@ -83,8 +80,6 @@ impl ExternBytes {
         // SAFETY: C++ never passes a null pointer for a present value.
         unsafe { core::slice::from_raw_parts(self.data, self.length) }
     }
-    /// A null pointer is "absent".
-    ///
     /// # Safety
     /// As [`get`](Self::get).
     #[inline(always)]
@@ -102,15 +97,6 @@ impl ExternBytes {
 pub struct ExternWithValue<T: Copy> {
     pub converted: T,
     pub value: JSValue,
-}
-
-/// Runs a generated `Bun__Bindgen__*__fromJS`, which returns false exactly when it threw.
-#[inline]
-pub fn from_js<'a>(
-    cx: &mut super::JsCall<'a>,
-    convert: impl FnOnce(*mut JSGlobalObject) -> bool,
-) -> super::Result<'a, ()> {
-    cx.with_global(|global| crate::call_false_is_throw(global, || convert(global.as_mut_ptr())))
 }
 
 unsafe extern "C" {

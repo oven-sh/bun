@@ -94,10 +94,10 @@ describe("strings", () => {
     "ascii",
     "latin1 éÿ",
     "utf16 你好 \u{1f600}",
-    rope("a".repeat(40), "b".repeat(40)),
-    rope("é".repeat(40), "你".repeat(40)),
-    "x".repeat(1000),
-    "é".repeat(1000),
+    rope(Buffer.alloc(40, "a").toString(), Buffer.alloc(40, "b").toString()),
+    rope(Buffer.alloc(80, "é").toString(), Buffer.alloc(120, "你").toString()),
+    Buffer.alloc(1000, "x").toString(),
+    Buffer.alloc(2000, "é").toString(),
     "nul \0 inside",
   ];
 
@@ -146,7 +146,34 @@ describe("strings", () => {
   });
 
   it("checks the argument count", () => {
-    expect(() => bindgen.utf8Echo()).toThrow("Not enough arguments");
+    expect(() => bindgen.utf8Echo()).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS", message: "Not enough arguments" }),
+    );
+  });
+
+  it("keeps the characters of a substring while its base is swapped for an atom", () => {
+    const fill = (length: number, char: string) => Buffer.alloc(length, char).toString("latin1");
+    const overwriteStack = (depth: number): number => (depth > 0 ? overwriteStack(depth - 1) + depth : 0);
+    const keys: Record<string, number> = {};
+    const strings = { base: fill(300, "q"), equal: fill(300, "q") };
+    keys[strings.equal] = 1;
+    const options = {
+      name: strings.base.substring(10, 290),
+      // Read after `name` is converted.
+      get renamed() {
+        // The base takes the atom's characters; two more lookups push its own out of the VM's last-atomized slot.
+        keys[strings.base];
+        keys[fill(33, "q")];
+        keys[fill(34, "q")];
+        overwriteStack(200);
+        Bun.gc(true);
+        const reuse = Array.from({ length: 5000 }, () => fill(300, "Z"));
+        Bun.gc(true);
+        return reuse.length ? 1 : 0;
+      },
+    };
+    overwriteStack(300);
+    expect(bindgen.optionsEcho(options).name).toBe(fill(280, "q"));
   });
 });
 
@@ -402,6 +429,26 @@ describe("dictionaries", () => {
     };
     expect(bindgen.optionsEcho(options)).toStrictEqual({ ...defaults, name: "added" });
   });
+
+  it("a conversion that changes the object is seen by the members after it", () => {
+    const make = () => {
+      const options: any = { payload: 0, color: "red", renamed: 1 };
+      options.name = Object.assign(new String("x"), {
+        toString() {
+          options.color = "blue";
+          options.renamed = 9;
+          delete options.payload;
+          options.payload = "late";
+          return "n";
+        },
+      });
+      return options;
+    };
+    const expected = { ...defaults, name: "n", color: "blue", payload: "late", renamed: 9 };
+    expect(bindgen.optionsEcho(make())).toStrictEqual(expected);
+    expect(bindgen.optionsEcho(Object.setPrototypeOf(make(), {}))).toStrictEqual(expected);
+    expect(bindgen.optionsEcho(Object.defineProperty(make(), "count", { get: () => 1 }))).toStrictEqual(expected);
+  });
 });
 
 describe("unions", () => {
@@ -477,6 +524,21 @@ describe("buffers", () => {
     }
   });
 
+  it("reads the bytes after every other argument is converted", () => {
+    const transferred = new Uint8Array([1, 2, 3]);
+    const transfers = { toString: () => (transferred.buffer.transfer(), "\x01") };
+    expect(bindgen.sumBytesThenText(transferred, transfers)).toBe(1);
+
+    const resizable = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 20 });
+    const view = new Uint8Array(resizable).fill(1);
+    const shrinks = { toString: () => (resizable.resize(2), "") };
+    expect(bindgen.sumBytesThenText(view, shrinks)).toBe(2);
+
+    expect(() => bindgen.sumBytesThenText("no", { toString: () => expect.unreachable() })).toThrow(
+      "bytes must be an ArrayBuffer or ArrayBufferView that is not shared",
+    );
+  });
+
   it("looks the bytes up again after JavaScript ran", () => {
     const same = new Uint8Array([1, 2, 3]);
     expect(bindgen.sumBeforeAndAfterCallback(same, () => {})).toEqual([6, 6]);
@@ -533,9 +595,9 @@ describe("errors", () => {
 });
 
 describe("classes", () => {
-  const { TestCounter } = bindgen as any;
+  const { TestCounter, TestHolder } = bindgen as any;
 
-  it("has the shape of a class", () => {
+  it("looks like a class", () => {
     expect(typeof TestCounter).toBe("function");
     expect(TestCounter.name).toBe("TestCounter");
     expect(TestCounter.length).toBe(0);
@@ -561,11 +623,11 @@ describe("classes", () => {
   });
 
   it("a constructor that throws makes nothing", () => {
-    Bun.gc(true);
     const before = TestCounter.alive();
     expect(() => new TestCounter(-1)).toThrow(new RangeError("start must not be negative"));
     expect(() => new TestCounter("1")).toThrow(TypeError);
-    expect(TestCounter.alive()).toBe(before);
+    // A collection in between can only lower it.
+    expect(TestCounter.alive()).toBeLessThanOrEqual(before);
   });
 
   it("setters convert like arguments", () => {
@@ -643,7 +705,7 @@ describe("classes", () => {
     expect(made.plus(made)).toBe(80);
   });
 
-  it("holds a value in a slot and lets JavaScript re-enter", () => {
+  it("holds a value in an internal field and lets JavaScript re-enter", () => {
     const counter = new TestCounter(1);
     expect(counter.notify()).toBe(1);
     const receivers: unknown[] = [];
@@ -673,19 +735,31 @@ describe("classes", () => {
     expect(Object.getPrototypeOf(bindgen.makeToken(8))).toBe(prototype);
   });
 
+  it("a payload keeps another object alive with a Strong", () => {
+    const holder = new TestHolder(new TestCounter(5));
+    Bun.gc(true);
+    expect(holder.counter).toBeInstanceOf(TestCounter);
+    expect(holder.counter).toBe(holder.counter);
+    expect(holder.incrementCounter()).toBe(6);
+    expect(holder.counter.count).toBe(6);
+    expect(() => new TestHolder({})).toThrow("counter must be an instance of TestCounter");
+  });
+
   it("drops the Rust value when the object is collected", () => {
+    const count = 1000;
+    let counters: unknown[] | null = Array.from({ length: count }, (_, i) => {
+      const counter = new TestCounter(i);
+      counter.label = "label " + i;
+      counter.listen(() => counter);
+      counter.tag;
+      return new TestHolder(counter);
+    });
     Bun.gc(true);
-    const before = TestCounter.alive();
-    (function make() {
-      for (let i = 0; i < 1000; i++) {
-        const counter = new TestCounter(i);
-        counter.label = "label " + i;
-        counter.listen(() => counter);
-        counter.tag;
-      }
-    })();
-    expect(TestCounter.alive()).toBeGreaterThan(before);
+    expect(TestCounter.alive()).toBeGreaterThanOrEqual(counters.length);
+    counters = null;
+    // The first collection drops the holders and their Strongs, the second the counters.
     Bun.gc(true);
-    expect(TestCounter.alive()).toBeLessThan(before + 100);
+    Bun.gc(true);
+    expect(TestCounter.alive()).toBeLessThan(count);
   });
 });

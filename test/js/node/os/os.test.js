@@ -309,3 +309,52 @@ it("setPriority throws ESRCH for a nonexistent pid", () => {
     }),
   );
 });
+
+it("functions have Node's length", () => {
+  const lengths = Object.fromEntries(
+    [
+      "cpus",
+      "freemem",
+      "getPriority",
+      "homedir",
+      "hostname",
+      "loadavg",
+      "networkInterfaces",
+      "release",
+      "setPriority",
+      "totalmem",
+      "uptime",
+      "userInfo",
+      "version",
+    ].map(name => [name, os[name].length]),
+  );
+  // node -p 'os.<name>.length', v26.7.0
+  expect(lengths).toEqual({
+    cpus: 0,
+    freemem: 0,
+    getPriority: 1,
+    homedir: 0,
+    hostname: 0,
+    loadavg: 0,
+    networkInterfaces: 0,
+    release: 0,
+    setPriority: 2,
+    totalmem: 0,
+    uptime: 0,
+    userInfo: 1,
+    version: 0,
+  });
+});
+
+it("userInfo ignores options that are not an object, like Node", () => {
+  const info = os.userInfo();
+  for (const options of [undefined, null, 5, "utf8", true, Symbol("s"), [], ["utf8"], () => {}]) {
+    expect(os.userInfo(options)).toEqual(info);
+  }
+});
+
+it("setPriority without arguments throws ERR_MISSING_ARGS", () => {
+  expect(() => os.setPriority()).toThrow(
+    expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS", message: "Not enough arguments" }),
+  );
+});

@@ -13,9 +13,6 @@ unsafe impl JsPayload for Socket {
     unsafe fn create_cell(_: *mut JSGlobalObject, _: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void> {
         unreachable!()
     }
-    fn cell_from_js(_: JSValue) -> *mut core::ffi::c_void {
-        unreachable!()
-    }
 }
 pub trait SocketInternalFields<'a>: Copy {
     fn ondata_field(self, heap: &JsHeap<'a>) -> JsValue<'a>;

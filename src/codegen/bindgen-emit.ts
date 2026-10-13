@@ -1,5 +1,4 @@
-// Turns the loaded schema into text: one C++ header and source per `.bind.ts` file, one table header
-// for the whole program, one Rust file per crate, one `.d.ts`.
+// Turns the loaded schema into text.
 
 import assert from "node:assert";
 import {
@@ -319,13 +318,17 @@ template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObje
         ctx.throwNotObject(lexicalGlobalObject, scope);
         return {};
     }
-    bool isArray = JSC::isArray(globalObject, value);
+${
+  type.allowArray
+    ? ""
+    : `    bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
     if (isArray) [[unlikely]] {
         ctx.throwNotObject(lexicalGlobalObject, scope);
         return {};
     }
-    ::Bun::Bindgen::DictionaryMemberReader<${count}> members(vm, globalObject, object, ${type.firstMemberNameIndex});
+`
+}    ::Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, object, ${type.firstMemberNameIndex}, ${count});
     ${type.cpp} result;
 ${members.join("\n")}
     return result;
@@ -359,13 +362,17 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
   const lines: string[] = [];
   if (signature.requiredCount > 0) {
     lines.push(`if (callFrame->argumentCount() < ${signature.requiredCount}) [[unlikely]]
-        return JSC::throwVMError(globalObject, scope, JSC::createNotEnoughArgumentsError(globalObject));`);
+        return JSC::throwVMError(globalObject, scope, WebCore::createNotEnoughArgumentsErrorBun(globalObject));`);
   }
+  const rereads: string[] = [];
   signature.args.forEach(({ name, type }, i) => {
     const argument = i < signature.requiredCount ? "uncheckedArgument" : "argument";
     lines.push(`::JSC::EnsureStillAliveScope argument${i} = callFrame->${argument}(${i});`);
     lines.push(`[[maybe_unused]] auto ctx${i} = ::Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
     const convert = type.cppConvert(`argument${i}.value()`, `ctx${i}`, name);
+    // Converting a later argument can run JavaScript that detaches or resizes the buffer.
+    if (type.borrowsHeap && i < signature.args.length - 1)
+      rereads.push(`value${i} = ${convert};`, `scope.assertNoException();`);
     if (type instanceof DefaultType) {
       const absent = type.onNull ? "isUndefinedOrNull" : "isUndefined";
       lines.push(
@@ -376,6 +383,7 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
     }
     lines.push(`RETURN_IF_EXCEPTION(scope, {});`);
   });
+  lines.push(...rereads);
   const args = signature.args.map(({ type }, i) => {
     const converted = `::Bun::Bindgen::ExternTraits<${implementationType(type)}>::convertToExtern(::std::move(value${i}))`;
     return type instanceof WithValueType
@@ -593,10 +601,6 @@ extern "C" JSC::JSCell* ${symbolName(type, "create")}(JSC::JSGlobalObject* globa
     return ${type.cpp}::create(JSC::getVM(globalObject), structure ? structure : ::Bun::Bindgen::structureForClass(globalObject, ${type.classIndex}));
 }
 
-extern "C" JSC::JSCell* ${symbolName(type, "fromJS")}(JSC::EncodedJSValue value)
-{
-    return dynamicDowncast<${type.cpp}>(JSC::JSValue::decode(value));
-}
 ${
   construct
     ? `
@@ -674,6 +678,7 @@ export function cppSource(file: SchemaFile): string {
   return `${banner(file.origin)}#include "root.h"
 #include "Generated${file.origin.namespace}.h"
 #include "Bindgen/DictionaryMemberReader.h"
+#include "JSDOMOperation.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/JSFunction.h>
@@ -702,10 +707,13 @@ inline constexpr unsigned numberOfClassSubspaces = ${Math.max(tables.classes.len
 }
 
 export function cppTables(tables: Tables): string {
-  const list = (items: readonly string[]) => (items.length > 0 ? items.join(",\n    ") : "{}");
-  const length = (items: readonly unknown[]) => Math.max(items.length, 1);
+  const array = (type: string, name: string, items: readonly string[]) =>
+    `inline constexpr std::array<${type}, ${items.length}> ${name} { {
+    ${items.join(",\n    ")}
+} };`;
   return `${banner(null)}#pragma once
 #include "Bindgen/JSBindgenObject.h"
+#include <array>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace Bun::Bindgen::Generated {
@@ -714,29 +722,25 @@ ${tables.classes.map(type => `extern const ClassDefinition JS${type.name}ClassDe
 
 namespace Bun::Bindgen::Tables {
 
-inline constexpr unsigned memberNameCount = ${tables.memberNames.length};
-inline constexpr WTF::ASCIILiteral memberNames[${length(tables.memberNames)}] = {
-    ${list(tables.memberNames.map(asciiLiteral))}
-};
+${array("WTF::ASCIILiteral", "memberNames", tables.memberNames.map(asciiLiteral))}
 
-inline constexpr unsigned enumerationValueCount = ${tables.enumerationValues.length};
-inline constexpr WTF::ASCIILiteral enumerationValues[${length(tables.enumerationValues)}] = {
-    ${list(tables.enumerationValues.map(asciiLiteral))}
-};
+${array("WTF::ASCIILiteral", "enumerationValues", tables.enumerationValues.map(asciiLiteral))}
 
 struct ObjectStructure {
     unsigned firstMemberNameIndex;
     unsigned memberCount;
 };
-inline constexpr unsigned objectStructureCount = ${tables.objectStructures.length};
-inline constexpr ObjectStructure objectStructures[${length(tables.objectStructures)}] = {
-    ${list(tables.objectStructures.map(structure => `{ ${structure.firstMemberNameIndex}, ${structure.memberCount} }`))}
-};
+${array(
+  "ObjectStructure",
+  "objectStructures",
+  tables.objectStructures.map(structure => `{ ${structure.firstMemberNameIndex}, ${structure.memberCount} }`),
+)}
 
-inline constexpr unsigned classCount = ${tables.classes.length};
-inline constexpr const ClassDefinition* classes[${length(tables.classes)}] = {
-    ${list(tables.classes.map(type => `&Generated::JS${type.name}ClassDefinition`))}
-};
+${array(
+  "const ClassDefinition*",
+  "classes",
+  tables.classes.map(type => `&Generated::JS${type.name}ClassDefinition`),
+)}
 
 }
 `;
@@ -896,15 +900,18 @@ ${type.members.map(member => `                ${member.rustName}: ${member.type.
     text += `unsafe extern "C" {
     fn Bun__Bindgen__${type.name}__fromJS(global: *mut JSGlobalObject, value: JSValue, result: *mut Extern${type.name}) -> bool;
 }
-impl<'a> ${type.name}${lifetime} {
-    /// Reads getters and proxies, so it can run JavaScript.
-    pub fn from_js<T>(cx: &mut bindgen::JsCall<'a>, value: bindgen::JsValue<'a, T>) -> bindgen::Result<'a, Self> {
+impl ${type.name}${lifetime ? "<'_>" : ""} {
+    /// Converts \`value\` and hands it to \`f\`.
+    pub fn from_js<R>(
+        global: &JSGlobalObject,
+        value: JSValue,
+        f: impl ${lifetime ? `for<'call> FnOnce(${type.name}<'call>)` : `FnOnce(${type.name})`} -> bun_jsc::JsResult<R>,
+    ) -> bun_jsc::JsResult<R> {
         let mut result = core::mem::MaybeUninit::<Extern${type.name}>::uninit();
         // SAFETY: C++ fills \`result\` exactly when it returns true.
-        unsafe {
-            bindgen::extern_types::from_js(cx, |global| Bun__Bindgen__${type.name}__fromJS(global, value.to_js(), result.as_mut_ptr()))?;
-            Ok(Self::from_extern(result.assume_init_ref()))
-        }
+        bun_jsc::call_false_is_throw(global, || unsafe { Bun__Bindgen__${type.name}__fromJS(global.as_mut_ptr(), value, result.as_mut_ptr()) })?;
+        // SAFETY: as above; \`value\` is on the caller's stack for all of \`'call\`.
+        f(unsafe { ${type.name}::from_extern(result.assume_init_ref()) })
     }
 }
 `;
@@ -1080,8 +1087,7 @@ ${declarations.map(declaration => `    ${declaration}`).join("\n")}
 }
 
 unsafe extern "C" {
-    fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void>;
-    fn ${symbolName(type, "fromJS")}(value: JSValue) -> *mut core::ffi::c_void;${
+    fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void>;${
       type.construct
         ? `
     fn ${symbolName(type, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;`
@@ -1097,14 +1103,9 @@ unsafe impl bindgen::JsPayload for ${rustPath} {
         // SAFETY: forwarded.
         unsafe { ${symbolName(type, "create")}(global, structure) }
     }
-    #[inline(always)]
-    fn cell_from_js(value: JSValue) -> *mut core::ffi::c_void {
-        // SAFETY: a type check; reads the value's header.
-        unsafe { ${symbolName(type, "fromJS")}(value) }
-    }
 }
-// Cells are 16-byte aligned and the payload starts at a multiple of 8. A cell fits in half a MarkedBlock.
-const _: () = assert!(align_of::<${rustPath}>() <= 8 && size_of::<${rustPath}>() <= 8000);
+// Cells are 16-byte aligned and the payload starts at a multiple of 8.
+const _: () = assert!(align_of::<${rustPath}>() <= 8);
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "payloadSize")}: usize = size_of::<${rustPath}>();
 #[unsafe(no_mangle)]
@@ -1167,7 +1168,8 @@ export function rustForCrate(files: readonly SchemaFile[]): string {
     clippy::identity_op,
     clippy::derivable_impls,
     clippy::large_enum_variant,
-    clippy::trivially_copy_pass_by_ref
+    clippy::trivially_copy_pass_by_ref,
+    clippy::redundant_closure
 )]
 pub mod ${file.origin.rustModule} {
     use bun_jsc::{JSGlobalObject, JSValue, bindgen};
@@ -1214,13 +1216,17 @@ ${[
     getter => `    ${getter.hasSetter ? "" : "readonly "}${JSON.stringify(getter.name)}: ${getter.type.tsType};`,
   ),
 ].join("\n")}
-  }
+  }${
+    type.construct
+      ? `
   interface ${type.name}Constructor {
 ${[
-  ...(type.construct ? [`    new (${parameters(type.construct)}): ${type.name};`] : []),
+  `    new (${parameters(type.construct)}): ${type.name};`,
   `    readonly prototype: ${type.name};`,
   ...type.staticMethods.map(method => member(method.name, false, signatureType(method))),
 ].join("\n")}
+  }`
+      : ""
   }`;
     }),
   );

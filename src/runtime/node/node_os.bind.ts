@@ -2,7 +2,7 @@
 // The entrypoint for node:os is `src/js/node/os.ts`
 import * as b from "../../codegen/bindgen-lib.ts";
 
-export default b.module({ rustPath: "crate::node::os::js_bindings" });
+export default b.module({ rustPath: "crate::node::os" });
 
 export const hostCpuCount = b.fn({ returns: b.i32 });
 export const cpus = b.fn({ returns: b.any, capability: "js", throws: true });
@@ -24,9 +24,7 @@ export const release = b.fn({ returns: b.string });
 export const totalmem = b.fn({ returns: b.u64 });
 export const uptime = b.fn({ returns: b.f64, capability: "js", throws: true });
 
-export const UserInfoOptions = b.dictionary({
-  encoding: b.string.loose.utf8.default(""),
-});
+export const UserInfoOptions = b.dictionary({ encoding: b.string.loose.utf8.default("") }, { allowArray: true });
 export const userInfo = b.fn({
   args: {
     options: UserInfoOptions.nullable.default({}),
@@ -34,7 +32,6 @@ export const userInfo = b.fn({
   returns: b.any,
   capability: "js",
   throws: true,
-  length: 1,
 });
 export const version = b.fn({ returns: b.string, throws: true });
 
@@ -48,7 +45,7 @@ export const setPriority = b.overloads(
     },
     capability: "js",
     throws: true,
-    rustPath: "crate::node::os::js_bindings::set_priority",
+    rustPath: "crate::node::os::set_priority",
     length: 2,
   },
   {
@@ -57,6 +54,6 @@ export const setPriority = b.overloads(
     },
     capability: "js",
     throws: true,
-    rustPath: "crate::node::os::js_bindings::set_priority_of_current_process",
+    rustPath: "crate::node::os::set_priority_of_current_process",
   },
 );

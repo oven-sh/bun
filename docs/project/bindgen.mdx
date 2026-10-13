@@ -18,10 +18,10 @@ The generator lives in `src/codegen/bindgen*.ts`, the Rust it generates against 
 `src/jsc/bindgen.rs`, and the C++ in `src/jsc/bindings/Bindgen/` and
 `src/jsc/bindings/BunIDL*.h`.
 
-These other generators do overlapping work and are to be replaced by this one:
+The body of a binding is always Rust. These do overlapping work:
 
 - "Classes generator", converting `*.classes.ts` for custom classes.
-- "JS2Native", allowing ad-hoc calls from `src/js` to native code.
+- "JS2Native", allowing ad-hoc calls from `src/js` to native code (`$rust`, `$cpp`).
 - `#[bun_jsc::host_fn]` functions, which take a `CallFrame`.
 
 ## Functions
@@ -57,7 +57,8 @@ pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
 
 `b.module` says where the file's functions are; an export named
 `requiredAndOptionalArg` is `required_and_optional_arg` there. A `rustPath` key on
-a function gives its full path instead.
+a function gives its full path instead. `length` sets the function's `.length`,
+which is otherwise the number of required arguments.
 
 Nothing else is written by hand. If the Rust signature does not match the
 schema, the generated code does not compile.
@@ -86,45 +87,50 @@ runs.
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.throw(..)`, `heap.throw_type_error(..)`,
 `heap.throw_range_error(..)` or `heap.throw_value(value)`, or any type that
-implements `bindgen::IntoError` (`bun_sys::Error` does), which lets a
+implements `bindgen::IntoError` (`bun_sys::Error` and `JsError` do), which lets a
 `capability: "none"` function fail too.
 
-`cx.with_global(|global| ..)` and `cx.with_global_value(|global| ..)` run code
-that takes a `&JSGlobalObject`.
+`cx.global()` is the `&JSGlobalObject`, for code that takes one. It borrows all of
+`cx`. Such a function can return `JsResult<T>`, and a plain `JSValue` under
+`returns: b.any`.
 
 ### Overloads
 
 `b.overloads(a, b, ..)` is one JS function with several signatures, told apart by
-how many arguments were passed. Each names its own Rust function.
+how many arguments were passed: the one with the most required arguments that
+the call satisfies. Each names its own Rust function.
 
 ## Types
 
 Conversions are strict unless the schema says otherwise: `b.i32` takes a number
-that is an integer in range, and nothing else. A failed conversion throws
-`ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE` naming the argument or the
-dictionary member.
+that is an integer in range, and nothing else. A failed strict, `.loose` or
+`.validateInteger` conversion throws `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE`
+naming the argument or the dictionary member; `.wrap` and `.enforceRange` throw
+what WebIDL does. Too few arguments throw `ERR_MISSING_ARGS`.
 
-| Schema                                 | Rust, as an argument       | Accepts                                                                |
-| -------------------------------------- | -------------------------- | ---------------------------------------------------------------------- |
-| `b.bool`                               | `bool`                     | a boolean; `.loose` is `ToBoolean`                                     |
-| `b.i8` … `b.u64`, `b.usize`            | `i8` … `u64`, `usize`      | an integer in range; see below                                         |
-| `b.f64`                                | `f64`                      | a number; `.finite` rejects NaN and infinities, `.loose` is `ToNumber` |
-| `b.string`                             | `bun_core::String`         | a string; `.loose` is `ToString`                                       |
-| `b.string.utf8`                        | `&'a [u8]`                 | the same, and a `String` object                                        |
-| `b.bufferSource`                       | `JsValue<'a, ArrayBuffer>` | a typed array, `DataView` or `ArrayBuffer` that is not shared          |
-| `b.bufferSource.bytes`                 | `&'a [u8]`                 | the same; not with `capability: "js"`                                  |
-| `b.bufferSource.arrayBuffer`, `b.blob` | `ExternalShared<..>`       | a reference-counted handle on the native object                        |
-| `b.any`                                | `JsValue<'a>`              | anything                                                               |
-| `b.array(T)`                           | `Vec<T>`                   | an array                                                               |
-| `b.enumeration(values)`                | a generated `enum`         | one of the strings                                                     |
-| `b.dictionary(members)`                | a generated `struct`       | an object that is not an array                                         |
-| `b.union(alternatives)`                | a generated `enum`         | the first alternative that fits                                        |
-| `b.class(options)`                     | `JsWrapper<'a, T>`         | an instance                                                            |
+| Schema                                           | Rust, as an argument             | Accepts                                                       |
+| ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
+| `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
+| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | an integer in range; see below                                |
+| `b.f64`                                          | `f64`                            | a number                                                      |
+| `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
+| `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
+| `b.bufferSource`                                 | `JsValue<'a, ArrayBuffer>`       | a typed array, `DataView` or `ArrayBuffer` that is not shared |
+| `b.bufferSource.bytes`                           | `&'a [u8]`                       | the same; see [Buffers](#buffers)                             |
+| `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | a typed array, `DataView` or `ArrayBuffer`                    |
+| `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
+| `b.any`                                          | `JsValue<'a>`                    | anything                                                      |
+| `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
+| `b.array(T)`                                     | `Vec<T>`                         | an array                                                      |
+| `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
+| `b.dictionary(members)`                          | a generated `struct`             | an object that is not an array                                |
+| `b.union(alternatives)`                          | a generated `enum`               | the first alternative that fits                               |
+| `b.class(options)`                               | `JsWrapper<'a, T>`               | an instance                                                   |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported.
 
-Any type takes one of these, last:
+A type takes one of these, last (`b.any` already accepts `undefined` and `null`, and takes only `.withValue`):
 
 - `.optional`: `undefined` means "not given"; `Option<T>`.
 - `.nullable`: `null` or `undefined` means "not given"; `Option<T>`.
@@ -146,8 +152,10 @@ that is `IntoIterator`.
 
 `b.string.utf8` is the one to reach for. When the JS string is 8-bit and ASCII the
 slice points at the string's own bytes; otherwise it is transcoded into a buffer
-in the generated function's frame. Either way nothing is allocated for a short
-string and nothing needs freeing. An unpaired surrogate becomes U+FFFD.
+in the generated function's frame, which holds 128 bytes and is sized for the worst
+case up front: beyond 64 Latin-1 characters or 42 UTF-16 code units it allocates.
+Nothing needs freeing. An unpaired surrogate becomes U+FFFD. `.loose` comes before
+`.utf8`.
 
 `b.string` shares the JS string's storage and can be stored. It belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
@@ -162,24 +170,29 @@ export const BracesOptions = b.dictionary({
 });
 ```
 
-Members are read and converted in declaration order, each once. A member
+Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, internalName, altNames }` to rename its field or to accept other spellings.
 A dictionary whose members can all be left out implements `Default`.
 
 A member is looked up on the object and its prototype chain, **stopping before
-`Object.prototype`**, so a polluted `Object.prototype` cannot configure a Bun
-API. For a plain object, where the own properties are therefore the whole
-answer, the generated code reads them straight out of the object's property
-table. The two paths are indistinguishable to JavaScript;
+the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
+configure a Bun API. For a plain object, where the own properties are therefore
+the whole answer, the generated code reads the member straight out of the object's
+property table. The two paths are indistinguishable to JavaScript;
 `test/internal/bindgen.test.ts` holds them to that.
 
 Returning a dictionary makes an object with a prebuilt `Structure`: one
 allocation and one store per member. An `.optional` member that is `None` is
-left out.
+left out, and the object is then built one property at a time.
 
-`b.dictionary(members, { fromJS: true })` also generates
-`Name::from_js(cx, value)`, for code that is not a generated binding yet.
+The second argument of `b.dictionary` takes:
+
+| Key              | What it does                                                                             |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| `userFacingName` | what error messages call it, when that is not its name                                   |
+| `allowArray`     | an array is an object with none of the members, not an error                             |
+| `fromJS`         | also generates `Name::from_js(global, value, \|converted\| ..)`, for a `#[host_fn]` body |
 
 ### Enumerations
 
@@ -193,9 +206,11 @@ allocates nothing after the first time.
 
 ### Buffers
 
-`b.bufferSource.bytes` is only for functions that cannot run JavaScript, because JavaScript
-can detach, resize or transfer a buffer. A function that can takes `b.bufferSource`
-itself and looks the bytes up when it needs them:
+JavaScript can detach, resize or transfer a buffer, so `b.bufferSource.bytes` is only
+for an argument (not a member or an alternative) of a function that cannot run
+JavaScript. The generated code reads pointer and length after every other argument
+is converted, since a conversion can run JavaScript too. A function that can run
+JavaScript takes `b.bufferSource` itself and looks the bytes up when it needs them:
 
 ```rust
 let before = buffer.with_bytes(&cx.heap, sum);
@@ -203,7 +218,8 @@ callback.call(cx, JsValue::UNDEFINED, &[])?;
 let after = buffer.with_bytes(&cx.heap, sum);
 ```
 
-Calling `callback.call(cx, ..)` inside the closure does not compile.
+Calling `callback.call(cx, ..)` inside the closure does not compile. A detached or
+out-of-bounds view is empty.
 
 ### Keeping the original value
 
@@ -234,7 +250,7 @@ task or sent to a thread. `JsValue<'a, T>` is one known to be a `JSString`,
 What outlives a call:
 
 - one of a class's **`internalFields`** (below), which the GC visits;
-- a `Strong`, made with `value.to_strong(heap)` and read with `JsValue::from_strong(heap, &strong)`. It is made, read and dropped on the JS thread.
+- a `Strong`, made with `value.to_strong(heap)` and read with `JsValue::new(heap, strong.get())`. It is made, read and dropped on the JS thread.
 
 A list of values goes in a `MarkedArgumentBuffer`, never a `Vec`: the GC does not
 look inside heap allocations.
@@ -283,23 +299,26 @@ runs on the collector's threads.
 
 | Key              | What it declares                                                                             |
 | ---------------- | -------------------------------------------------------------------------------------------- |
+| `rustPath`       | the struct                                                                                   |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.to_js(heap)`. |
 | `proto`          | properties of the prototype                                                                  |
 | `static`         | functions on the constructor                                                                 |
 | `internalFields` | JS values the object holds                                                                   |
+| `configurable`   | `false` makes the native properties of the prototype non-configurable                        |
 
 A property of `proto` is one of:
 
-| Property                                                   | What it is                                                                                  |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `{ args, returns, capability, throws, .. }`                | a native function; `fn` renames the trait method, `privateSymbol` keys it by a private name |
-| `{ getter: T, setter: true, cache: true, capability, .. }` | an accessor; `cache` computes the value once per object                                     |
-| `{ builtin: true, length }`                                | the export of that name in `src/js/builtins/<class name>.ts`                                |
+| Property                                    | What it is                                                                   |
+| ------------------------------------------- | ---------------------------------------------------------------------------- |
+| `{ args, returns, capability, throws, .. }` | a native function; `privateSymbol` keys it by a private name of `src/js`     |
+| `{ getter: T, capability, throws }`         | an accessor; with `setter: true` it can be assigned                          |
+| `{ getter: T, cache: true, .. }`            | an accessor whose value is computed once per object; it cannot have a setter |
+| `{ builtin: true, length }`                 | the export of that name in `src/js/builtins/<class name>.ts`                 |
 
 If any member has `throws: true`, the trait has a
 `type Error<'a>: bindgen::IntoError<'a>` that they all fail with. `b.self` is the
 class itself in its own signatures. `Glob::get_constructor(heap)` is the
-constructor function and `Glob::from_js(value)` the wrapper, if `value` is one.
+constructor function.
 
 ### The receiver
 
@@ -342,5 +361,5 @@ thread when the work completes.
 
 ## Tests
 
-- `test/internal/bindgen.test.ts`: every conversion, with hostile inputs, through `src/jsc/bindgen_test.bind.ts`.
-- `test/internal/bindgen-compile-fail.test.ts`: programs rustc must reject, one per hazard, and the right way to write each. Add a case when adding to `bindgen.rs`.
+- `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. What that schema does not use is covered by the suites of the APIs that do.
+- `test/internal/bindgen-compile-fail.test.ts`: programs rustc must reject, one per hazard, and the right way to write each. Add a case when adding to `bindgen.rs`. It needs a Rust toolchain: the `cargo clippy` job of `rust-lints.yml` runs it, the test lanes skip it.

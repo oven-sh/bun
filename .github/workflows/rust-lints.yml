@@ -10,7 +10,10 @@ on:
       - "src/**/*.rs"
       - "src/**/Cargo.toml"
       - "src/**/*.classes.ts"
+      - "src/**/*.bind.ts"
       - "src/codegen/**"
+      - "test/internal/bindgen-compile-fail.test.ts"
+      - "test/internal/bindgen-compile-fail/**"
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
@@ -72,6 +75,13 @@ jobs:
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: cargo check --workspace --all-targets --keep-going
+
+      - name: bindgen compile-fail cases
+        # Programs `bun_jsc::bindgen` has to make rustc refuse. The test lanes
+        # have no toolchain and skip the file.
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun test test/internal/bindgen-compile-fail.test.ts
 
   miri:
     name: cargo miri test

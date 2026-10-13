@@ -17,8 +17,7 @@ template<> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource> : IDLHumanRe
 
 namespace Bindgen {
 
-// std::nullopt for anything else, a shared buffer included: another thread may be writing to it. A
-// detached or out-of-bounds view is empty.
+// std::nullopt for anything else, a shared buffer included. A detached or out-of-bounds view is empty.
 inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::JSValue value)
 {
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {

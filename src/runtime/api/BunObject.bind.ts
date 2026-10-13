@@ -2,14 +2,17 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::api::bun_object" });
 
-export const BracesOptions = b.dictionary({
-  tokenize: b.bool.loose.default(false),
-  parse: b.bool.loose.default(false),
-});
+export const BracesOptions = b.dictionary(
+  {
+    tokenize: b.bool.loose.default(false),
+    parse: b.bool.loose.default(false),
+  },
+  { allowArray: true },
+);
 
 export const braces = b.fn({
   args: {
-    input: b.string.loose.utf8,
+    input: b.string.loose,
     options: BracesOptions.nullable.default({}),
   },
   returns: b.any,

@@ -22,11 +22,7 @@ export const SocketConfigHandlers = b.dictionary(
     keylog: { type: b.any, internalName: "onKeylog" },
     serverName: { type: b.any, internalName: "onServerName" },
     alpnCallback: { type: b.any, internalName: "onALPNCallback" },
-    binaryType: {
-      type: SocketConfigBinaryType,
-      default: "buffer",
-      internalName: "binary_type",
-    },
+    binaryType: SocketConfigBinaryType.default("buffer"),
   },
   {
     userFacingName: "SocketHandler",
@@ -42,41 +38,16 @@ export const SocketConfigTLS = b.union({
 
 export const SocketConfig = b.dictionary(
   {
-    socket: {
-      type: SocketConfigHandlers,
-      internalName: "handlers",
-    },
+    socket: { type: SocketConfigHandlers, internalName: "handlers" },
     data: b.any,
-    allowHalfOpen: {
-      type: b.bool,
-      default: false,
-      internalName: "allow_half_open",
-    },
-    hostname: {
-      type: b.string.loose.falsyAsNull,
-      altNames: ["host"],
-    },
+    allowHalfOpen: b.bool.default(false),
+    hostname: { type: b.string.loose.falsyAsNull, altNames: ["host"] },
     port: b.u16.loose.nullable,
     tls: SocketConfigTLS,
-    exclusive: {
-      type: b.bool,
-      default: false,
-    },
-    reusePort: {
-      type: b.bool,
-      default: false,
-      internalName: "reuse_port",
-    },
-    ipv6Only: {
-      type: b.bool,
-      default: false,
-      internalName: "ipv6_only",
-    },
-    pauseOnConnect: {
-      type: b.bool.loose,
-      default: false,
-      internalName: "pause_on_connect",
-    },
+    exclusive: b.bool.default(false),
+    reusePort: b.bool.default(false),
+    ipv6Only: b.bool.default(false),
+    pauseOnConnect: b.bool.loose.default(false),
     unix: {
       type: b.string.falsyAsNull,
       internalName: "unix_", // `unix` is a predefined C macro...

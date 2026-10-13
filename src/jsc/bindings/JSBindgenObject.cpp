@@ -34,12 +34,7 @@ JSBindgenConstructor* JSBindgenConstructor::create(VM& vm, JSGlobalObject* globa
     return constructor;
 }
 
-unsigned classCount()
-{
-    return Tables::classCount;
-}
-
-void setupClassStructure(LazyClassStructure::Initializer& init, unsigned classIndex)
+static void setupClassStructure(LazyClassStructure::Initializer& init, unsigned classIndex)
 {
     const ClassDefinition& definition = *Tables::classes[classIndex];
     VM& vm = init.vm;
@@ -59,13 +54,13 @@ void setupClassStructure(LazyClassStructure::Initializer& init, unsigned classIn
 Structure* structureForClass(JSGlobalObject* globalObject, unsigned classIndex)
 {
     auto* global = defaultGlobalObject(globalObject);
-    return global->m_bindgenLazyClasses[classIndex].getInitializedOnMainThread(global);
+    return global->m_bindgenAdditions.m_classes[classIndex].getInitializedOnMainThread(global);
 }
 
 JSObject* constructorForClass(JSGlobalObject* globalObject, unsigned classIndex)
 {
     auto* global = defaultGlobalObject(globalObject);
-    return global->m_bindgenLazyClasses[classIndex].constructorInitializedOnMainThread(global);
+    return global->m_bindgenAdditions.m_classes[classIndex].constructorInitializedOnMainThread(global);
 }
 
 Structure* structureForNewTarget(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned classIndex)
@@ -79,6 +74,32 @@ Structure* structureForNewTarget(JSGlobalObject* globalObject, CallFrame* callFr
     auto* functionGlobalObject = getFunctionRealm(globalObject, newTarget);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, InternalFunction::createSubclassStructure(globalObject, newTarget, structureForClass(functionGlobalObject, classIndex)));
+}
+
+}
+
+namespace Bun {
+
+BindgenAdditionsToGlobalObject::BindgenAdditionsToGlobalObject()
+    : m_objectStructures(Bindgen::Tables::objectStructures.size())
+    , m_classes(Bindgen::Tables::classes.size())
+{
+}
+
+void BindgenAdditionsToGlobalObject::initialize()
+{
+    for (auto& structure : m_objectStructures) {
+        structure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            auto& additions = defaultGlobalObject(init.owner)->m_bindgenAdditions;
+            init.set(Bindgen::createObjectStructure(init.vm, init.owner, &init.property - additions.m_objectStructures.begin()));
+        });
+    }
+    for (auto& lazyClass : m_classes) {
+        lazyClass.initLater([](JSC::LazyClassStructure::Initializer& init) {
+            auto& additions = defaultGlobalObject(init.global)->m_bindgenAdditions;
+            Bindgen::setupClassStructure(init, &init.classStructure - additions.m_classes.begin());
+        });
+    }
 }
 
 }

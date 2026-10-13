@@ -94,7 +94,7 @@ use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::BracesOptions;
 use crate::generated_bindgen::glob::GlobClass as _;
-use bun_jsc::bindgen::{self, JsCall, JsValue};
+use bun_jsc::bindgen::JsCall;
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -386,24 +386,21 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     Ok(jsval)
 }
 
-pub(crate) fn braces<'a>(
-    cx: &mut JsCall<'a>,
-    input: &'a [u8],
-    options: BracesOptions,
-) -> bindgen::Result<'a, JsValue<'a>> {
-    cx.with_global_value(|global| braces_impl(global, input, options))
-}
-
 /// `Bun.gc(force)`: heap size after the collection.
 pub(crate) fn gc_from_js(cx: &mut JsCall<'_>, force: bool) -> usize {
     cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
 }
 
-fn braces_impl(
-    global: &JSGlobalObject,
-    brace_slice: &[u8],
+#[allow(clippy::needless_pass_by_value)] // the generated thunk hands over the string it owns
+pub(crate) fn braces(
+    cx: &mut JsCall<'_>,
+    brace_str: BunString,
     opts: BracesOptions,
 ) -> JsResult<JSValue> {
+    let global = cx.global();
+    let brace_utf8 = brace_str.to_utf8();
+    let brace_slice = brace_utf8.slice();
+
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
@@ -454,7 +451,7 @@ fn braces_impl(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, &[BunString::from_bytes(brace_slice)]);
+        return bun_string_jsc::to_js_array(global, core::slice::from_ref(&brace_str));
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to

@@ -24,7 +24,7 @@ export const requiredAndOptionalArg = b.fn({
 });
 
 export const utf8Echo = b.fn({ args: { text: b.string.utf8 }, returns: b.string.utf8 });
-export const utf8EchoLoose = b.fn({ args: { text: b.string.utf8.loose }, returns: b.string.utf8 });
+export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns: b.string.utf8 });
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
 
@@ -64,17 +64,22 @@ export const range = b.fn({ args: { length: b.u32 }, returns: b.array(b.u32) });
 export const words = b.fn({ args: { text: b.string.utf8 }, returns: b.array(b.string.utf8) });
 
 export const sumBytes = b.fn({ args: { bytes: b.bufferSource.bytes }, returns: b.u32 });
-/** The sum before `callback` runs, then after it, or `null` once the buffer is detached. */
+/** Converting `text` can run JavaScript. */
+export const sumBytesThenText = b.fn({
+  args: { bytes: b.bufferSource.bytes, text: b.string.loose.utf8 },
+  returns: b.u32,
+});
+/** The sum before `callback` runs, then after it. */
 export const sumBeforeAndAfterCallback = b.fn({
   args: { buffer: b.bufferSource, callback: b.any },
-  returns: b.array(b.u32.nullable),
+  returns: b.array(b.u32),
   capability: "js",
   throws: true,
 });
 
 /** The original value if the converted text is not empty. */
 export const withValueEcho = b.fn({
-  args: { text: b.string.utf8.loose.withValue },
+  args: { text: b.string.loose.utf8.withValue },
   returns: b.any,
   capability: "heap",
 });
@@ -89,7 +94,7 @@ export const TestCounter = b.class({
   proto: {
     count: { getter: b.i32 },
     label: { getter: b.string.utf8, setter: true },
-    tag: { getter: b.any, capability: "heap", cache: true },
+    tag: { getter: b.any, capability: "heap", cache: true, throws: true },
     increment: { args: { by: b.i32.default(1) }, returns: b.i32, mutates: true },
     listen: { args: { listener: b.any }, capability: "heap", passThis: true },
     /** Calls the listener, which may call back into this object, then returns the count. */
@@ -100,6 +105,16 @@ export const TestCounter = b.class({
   static: {
     starting: { args: { at: b.i32 }, returns: b.self, capability: "heap" },
     alive: { returns: b.usize },
+  },
+});
+
+/** Keeps a `TestCounter` alive from Rust. */
+export const TestHolder = b.class({
+  rustPath: "crate::bindgen_test::TestHolder",
+  construct: { args: { counter: TestCounter }, capability: "heap" },
+  proto: {
+    counter: { getter: TestCounter, capability: "heap" },
+    incrementCounter: { returns: b.i32, capability: "js" },
   },
 });
 

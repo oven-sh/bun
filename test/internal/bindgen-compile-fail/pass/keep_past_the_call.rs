@@ -9,7 +9,7 @@ fn start<'a>(this: JsWrapper<'a, Socket>, heap: &JsHeap<'a>, callback: JsValue<'
 fn finish<'a>(pending: Pending, cx: &mut JsCall<'a>) -> bindgen::Result<'a, JsValue<'a>> {
     let socket = pending.socket.get(&cx.heap);
     socket.with_mut(&mut cx.payloads, |socket| socket.pending.clear());
-    let Some(callback) = JsValue::from_strong(&cx.heap, &pending.callback).as_function() else {
+    let Some(callback) = JsValue::new(&cx.heap, pending.callback.get()).as_function() else {
         return Ok(JsValue::UNDEFINED);
     };
     callback.call(cx, socket.as_value(), &[])

@@ -6,7 +6,7 @@ export const Formatter = b.enumeration(["highlight-javascript", "highlight-javas
 
 export const fmtString = b.fn({
   args: {
-    code: b.string.utf8.loose,
+    code: b.string.loose.utf8,
     formatter: Formatter,
   },
   returns: b.string,

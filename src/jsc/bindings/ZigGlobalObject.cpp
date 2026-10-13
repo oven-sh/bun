@@ -70,7 +70,6 @@
 #include "BunIDLConvert.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
-#include "Bindgen/JSBindgenObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
@@ -2140,6 +2139,7 @@ void GlobalObject::finishCreation(VM& vm)
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
 
     m_bakeAdditions.initialize();
+    m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
 
     static const LazyClassStructureInit lazyClassStructureInits[] = {
@@ -2753,19 +2753,6 @@ void GlobalObject::finishCreation(VM& vm)
 
     this->initGeneratedLazyClasses();
 
-    for (auto& lazyClass : m_bindgenLazyClasses) {
-        lazyClass.initLater([](LazyClassStructure::Initializer& init) {
-            auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.global);
-            Bun::Bindgen::setupClassStructure(init, &init.classStructure - globalObject->m_bindgenLazyClasses.begin());
-        });
-    }
-    for (auto& structure : m_bindgenObjectStructures) {
-        structure.initLater([](const Initializer<Structure>& init) {
-            auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);
-            init.set(Bun::Bindgen::createObjectStructure(init.vm, globalObject, &init.property - globalObject->m_bindgenObjectStructures.begin()));
-        });
-    }
-
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
     });
@@ -3337,10 +3324,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     WebCore::clientData(visitor.collector().heap().vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
-    for (auto& structure : thisObject->m_bindgenObjectStructures)
-        structure.visit(visitor);
-    for (auto& lazyClass : thisObject->m_bindgenLazyClasses)
-        lazyClass.visit(visitor);
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 

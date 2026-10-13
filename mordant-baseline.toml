@@ -71,7 +71,6 @@
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
 "generic_body_not_generic:src/jsc/ConsoleObject.rs" = 6
 "generic_body_not_generic:src/jsc/JSPropertyIterator.rs" = 1
-"unused_pub:src/jsc/bindgen.rs" = 6
 "unused_pub:src/jsc/host_fn.rs" = 2
 "unused_pub:src/jsc/lib.rs" = 1
 

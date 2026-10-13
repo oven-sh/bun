@@ -14,7 +14,7 @@ fn flush<'a>(
     };
     let result = callback.call(cx, this.as_value(), &[chunk.as_value()])?;
     // Afterwards everything is looked up again. A `JsValue` stays usable: the stack is scanned.
-    let written = extra.with_bytes(&cx.heap, <[u8]>::len).unwrap_or(0);
+    let written = extra.with_bytes(&cx.heap, <[u8]>::len);
     this.with_mut(&mut cx.payloads, |socket| {
         socket.pending.clear();
         socket.bytes_written += written as u64;

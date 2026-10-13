@@ -1,14 +1,7 @@
 #!/usr/bin/env bun
-// Usage: bindgen.ts --sources=<a.bind.ts,b.bind.ts,...> --codegen-path=<dir> --types-path=<dir>
-//
-// Writes, and scripts/build/codegen.ts declares:
-//   <codegen>/Generated<Namespace>.{h,cpp}     per source
-//   <codegen>/GeneratedBindings+Tables.h, GeneratedBindings+Counts.h
-//   <codegen>/generated_bindgen_<crate>.rs     per crate that owns a source
-//   <types>/Bindgen.d.ts
+// Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> (emitBindgen in scripts/build/codegen.ts)
 
 import assert from "node:assert";
-import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -32,26 +25,11 @@ import {
 } from "./bindgen-lib-internal.ts";
 import { argParse, writeIfNotChanged } from "./helpers.ts";
 
-/** The Cargo package whose directory contains `file`. */
-function crateOf(file: string): string {
-  for (let dir = path.dirname(file); dir !== path.dirname(dir); dir = path.dirname(dir)) {
-    const manifest = path.join(dir, "Cargo.toml");
-    if (!fs.existsSync(manifest)) continue;
-    const name = /^\s*name\s*=\s*"([^"]+)"/m.exec(fs.readFileSync(manifest, "utf8"));
-    if (name) return name[1];
-  }
-  throw new Error(`${file} is not inside a Cargo package`);
-}
-
-async function load(file: string): Promise<SchemaFile> {
+async function load(source: string): Promise<SchemaFile> {
+  const crate = source.slice(0, source.indexOf("="));
+  const file = source.slice(crate.length + 1);
   const stem = path.basename(file, ".bind.ts");
-  const origin: Origin = {
-    file,
-    stem,
-    namespace: pascalCase(stem),
-    rustModule: snakeCase(stem),
-    crate: crateOf(file),
-  };
+  const origin: Origin = { stem, namespace: pascalCase(stem), rustModule: snakeCase(stem), crate };
   const result: SchemaFile = { origin, moduleDefinition: null, types: [], functions: [] };
   for (const [name, value] of Object.entries((await import(pathToFileURL(file).href)) as Record<string, unknown>)) {
     if (value instanceof ModuleDefinition) {
@@ -94,10 +72,16 @@ const sources = (args.sources as string)
   .filter(source => source.length > 0)
   .sort();
 
-const files = await Promise.all(sources.map(load));
+const files: SchemaFile[] = [];
+for (const source of sources) files.push(await load(source));
 files.forEach(sortTypes);
-const names = files.flatMap(file => file.types.map(type => type.name));
-assert(new Set(names).size === names.length, "two .bind.ts files export a type with the same name");
+const owners = new Map<string, string>();
+for (const file of files) {
+  for (const { name } of file.types) {
+    assert(!owners.has(name), `${owners.get(name)}.bind.ts and ${file.origin.stem}.bind.ts both export a type ${name}`);
+    owners.set(name, file.origin.stem);
+  }
+}
 const tables = analyze(files);
 
 for (const file of files) {

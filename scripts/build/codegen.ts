@@ -18,8 +18,8 @@
  * depfile entry does that within the same run only if it names a declared
  * output, which ninja re-stats after the step ran. A file no edge declares
  * is stat'd once at startup, so a compile that includes it picks up a rerun
- * of the step one build late. That is why emitBindgen declares the per-file
- * Generated*.h headers and not just the .cpp files that get compiled.
+ * of the step one build late. That is why emitBindgen declares
+ * the per-file Generated*.h headers and not just the .cpp that gets compiled.
  *
  * Files nothing compiles may stay undeclared (bundle-modules' eval/ dir,
  * JSSink.lut.txt consumed within its own step). The .d.ts files src/js is
@@ -884,22 +884,21 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "GeneratedBindings+Tables.h"),
     resolve(cfg.codegenDir, "GeneratedBindings+Counts.h"),
   ];
-  const rust = [...new Set(sources.bindgen.map(crateOf))].map(crate =>
-    resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`),
-  );
+  const crates = sources.bindgen.map(crateOf);
+  const rust = [...new Set(crates)].map(crate => resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`));
   const types = resolve(cfg.typesDir, "Bindgen.d.ts");
 
   n.build({
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
-    inputs: [script, ...sources.bindgen, ...sources.bindgenInternal],
+    inputs: [...sources.bindgen, ...sources.bindgenInternal],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: ".bind.ts → Generated*.{cpp,h}, generated_bindgen_*.rs",
       args: shJoin(cfg, [
         script,
-        `--sources=${sources.bindgen.join(",")}`,
+        `--sources=${sources.bindgen.map((src, i) => `${crates[i]}=${src}`).join(",")}`,
         `--codegen-path=${cfg.codegenDir}`,
         `--types-path=${cfg.typesDir}`,
       ]),
@@ -922,7 +921,7 @@ function pascalCase(s: string): string {
     .join("");
 }
 
-/** Same lookup as `crateOf()` in src/codegen/bindgen.ts: the Cargo package whose directory contains `file`. */
+/** The Cargo package whose directory contains `file`. */
 function crateOf(file: string): string {
   for (let dir = dirname(file); dir !== dirname(dir); dir = dirname(dir)) {
     const manifest = resolve(dir, "Cargo.toml");

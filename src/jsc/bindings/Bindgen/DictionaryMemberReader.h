@@ -8,33 +8,33 @@
 namespace Bun::Bindgen {
 
 // Reads the members of a dictionary, by index into its run of Tables::memberNames.
-//
-// Every lookup follows one rule: own properties, then the prototype chain up to but not including
-// Object.prototype. For a plain object whose prototype is Object.prototype or null, the own property
-// table is therefore the whole answer, and it is read directly: no PropertySlot, no walk. Reading
-// data properties is unobservable, so they are all read up front.
-template<unsigned memberNameCount>
 class DictionaryMemberReader {
 public:
-    DictionaryMemberReader(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, unsigned firstMemberNameIndex)
+    DictionaryMemberReader(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, unsigned firstMemberNameIndex, unsigned memberNameCount)
         : m_vm(vm)
         , m_globalObject(globalObject)
         , m_object(object)
         , m_memberNames(identifiers(vm).identifiersAt(firstMemberNameIndex, memberNameCount))
-        , m_isPlainObject(readPlainObject())
     {
     }
 
     // May throw.
     ALWAYS_INLINE JSC::JSValue get(unsigned index)
     {
-        if (m_isPlainObject) [[likely]]
-            return m_values[index];
+        if (ownPropertiesAreTheWholeAnswer()) [[likely]] {
+            unsigned attributes = 0;
+            JSC::PropertyOffset offset = m_object->structure()->get(m_vm, m_memberNames[index], attributes);
+            if (offset == JSC::invalidOffset)
+                return JSC::jsUndefined();
+            if (!(attributes & (JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::CustomAccessorOrValue))) [[likely]]
+                return m_object->getDirect(offset);
+        }
         return getIfPropertyExistsPrototypePollutionMitigation(m_vm, m_globalObject, m_object, m_memberNames[index]);
     }
 
 private:
-    bool readPlainObject()
+    // The lookup below stops before Object.prototype. Asked per member: converting one can run JavaScript.
+    ALWAYS_INLINE bool ownPropertiesAreTheWholeAnswer() const
     {
         if (m_object->type() != JSC::FinalObjectType)
             return false;
@@ -42,27 +42,13 @@ private:
         if (structure->hasPolyProto())
             return false;
         JSC::JSValue prototype = structure->storedPrototype();
-        if (prototype != m_globalObject->objectPrototype() && !prototype.isNull())
-            return false;
-        for (unsigned i = 0; i < memberNameCount; ++i) {
-            unsigned attributes = 0;
-            JSC::PropertyOffset offset = structure->get(m_vm, m_memberNames[i], attributes);
-            if (offset == JSC::invalidOffset)
-                m_values[i] = JSC::jsUndefined();
-            else if (attributes & (JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::CustomAccessorOrValue)) [[unlikely]]
-                return false;
-            else
-                m_values[i] = m_object->getDirect(offset);
-        }
-        return true;
+        return prototype == m_globalObject->objectPrototype() || prototype.isNull();
     }
 
     JSC::VM& m_vm;
     JSC::JSGlobalObject* m_globalObject;
     JSC::JSObject* m_object;
     const JSC::Identifier* m_memberNames;
-    JSC::JSValue m_values[memberNameCount];
-    bool m_isPlainObject;
 };
 
 }

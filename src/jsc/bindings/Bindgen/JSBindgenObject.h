@@ -11,7 +11,7 @@
 
 namespace Bun::Bindgen {
 
-// What is the same for every generated class, as data. One per class, defined by generated code.
+// One per class, defined by generated code.
 struct ClassDefinition {
     WTF::ASCIILiteral className;
     const JSC::ClassInfo* info;
@@ -25,19 +25,7 @@ struct ClassDefinition {
     unsigned constructorLength;
 };
 
-// The wrapper of a generated class:
-//
-//     JSDestructibleObject | WriteBarrier internalFields[numberOfInternalFields] | the Rust payload
-//
-// The payload is stored in the cell, so a wrapper and its state have one lifetime, and a pointer
-// into the payload keeps the wrapper alive: the conservative scan maps interior pointers to their
-// cell. The collector reads the internal fields and nothing else; no Rust runs on its threads.
-//
-// Traits, generated:
-//     static constexpr ASCIILiteral className;
-//     static constexpr unsigned classIndex, numberOfInternalFields, numberOfCachedGetters;
-//     static size_t payloadSize();            size_of::<T>(), a constant Rust defines
-//     static void finalize(void* payload);    drop_in_place::<T>
+// JSDestructibleObject | WriteBarrier internalFields[numberOfInternalFields] | the Rust payload
 template<typename Traits>
 class JSBindgenObject final : public JSC::JSDestructibleObject {
 public:
@@ -59,6 +47,7 @@ public:
         auto& clientData = *downcast<WebCore::JSVMClientData>(vm.clientData);
         if (auto* space = clientData.clientSubspaces().m_clientSubspaceForBindgenClass[Traits::classIndex]) [[likely]]
             return space;
+        RELEASE_ASSERT(allocationSize() <= JSC::MarkedSpace::largeCutoff);
         return WebCore::subspaceForImplSlow(
             vm,
             WebCore::SubspaceForInit { static_cast<unsigned>(allocationSize()), numberOfLowerTierPreciseCells, WebCore::SubspaceForInit::CellType::Destructible, false },
@@ -156,8 +145,6 @@ private:
 };
 
 // By index into Tables::classes (GeneratedBindings+Tables.h).
-unsigned classCount();
-void setupClassStructure(JSC::LazyClassStructure::Initializer&, unsigned classIndex);
 JSC::Structure* structureForClass(JSC::JSGlobalObject*, unsigned classIndex);
 JSC::JSObject* constructorForClass(JSC::JSGlobalObject*, unsigned classIndex);
 // The class's own, or one for `new.target` (a subclass, Reflect.construct). May throw.

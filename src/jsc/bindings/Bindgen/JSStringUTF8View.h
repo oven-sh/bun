@@ -1,16 +1,13 @@
 #pragma once
 #include "root.h"
+#include <JavaScriptCore/GCOwnedDataScope.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
 #include <wtf/text/ASCIIFastPath.h>
 
 namespace Bun::Bindgen {
 
-// Bun::UTF8View for an argument of a host call: the JS string's own bytes when it is 8-bit ASCII, a
-// converted copy otherwise, which for a short string needs no allocation. Lives in the host
-// function's frame. Holding the JSString until destruction is what keeps borrowed bytes valid: if JSC
-// swaps the string's impl for an atom, it keeps the old one for as long as the conservative scan
-// still finds the JSString.
+// Bun::UTF8View for an argument of a host call. Lives in the host function's frame.
 class JSStringUTF8View {
     WTF_MAKE_NONCOPYABLE(JSStringUTF8View);
 
@@ -19,26 +16,26 @@ public:
     JSStringUTF8View(JSStringUTF8View&&) = default;
     JSStringUTF8View& operator=(JSStringUTF8View&&) = default;
     explicit JSStringUTF8View(WTF::ASCIILiteral literal)
-        : m_borrowed(literal.span8())
+        : m_view(nullptr, literal)
         , m_isNull(false)
     {
     }
-    ~JSStringUTF8View() { JSC::ensureStillAliveHere(m_string); }
 
-    // Resolving a rope can throw.
+    // Resolving a rope and converting can throw.
     static JSStringUTF8View create(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSStringUTF8View result;
-        auto view = string->view(&globalObject);
-        RETURN_IF_EXCEPTION(scope, result);
-        result.m_string = string;
+        result.m_view = string->view(&globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         result.m_isNull = false;
-        if (view->is8Bit() && WTF::charactersAreAllASCII(view->span8())) [[likely]]
-            result.m_borrowed = view->span8();
-        else
-            result.convert(view);
+        if (result.m_view->is8Bit() && WTF::charactersAreAllASCII(result.m_view->span8())) [[likely]]
+            return result;
+        if (!result.convert()) [[unlikely]] {
+            JSC::throwOutOfMemoryError(&globalObject, scope);
+            return {};
+        }
         return result;
     }
 
@@ -49,17 +46,17 @@ public:
     {
         if (m_isNull)
             return {};
-        auto span = m_isConverted ? m_converted.span() : byteCast<uint8_t>(m_borrowed);
+        auto span = m_isConverted ? m_converted.span() : byteCast<uint8_t>(m_view->span8());
         if (!span.data())
             return { reinterpret_cast<const uint8_t*>(""), 0 };
         return span;
     }
 
 private:
-    void convert(WTF::StringView);
+    bool convert();
 
-    JSC::JSString* m_string { nullptr };
-    std::span<const Latin1Character> m_borrowed;
+    // The owner is not always the string: the characters of a substring are its base's.
+    JSC::GCOwnedDataScope<WTF::StringView> m_view;
     WTF::Vector<uint8_t, 128> m_converted;
     bool m_isConverted { false };
     bool m_isNull { true };

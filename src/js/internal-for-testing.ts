@@ -245,10 +245,12 @@ export const bindgen = {
   range: $bindgenFn("bindgen_test.bind.ts", "range"),
   words: $bindgenFn("bindgen_test.bind.ts", "words"),
   sumBytes: $bindgenFn("bindgen_test.bind.ts", "sumBytes"),
+  sumBytesThenText: $bindgenFn("bindgen_test.bind.ts", "sumBytesThenText"),
   sumBeforeAndAfterCallback: $bindgenFn("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
   withValueEcho: $bindgenFn("bindgen_test.bind.ts", "withValueEcho"),
   fail: $bindgenFn("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgenFn("bindgen_test.bind.ts", "TestCounter"),
+  TestHolder: $bindgenFn("bindgen_test.bind.ts", "TestHolder"),
   makeToken: $bindgenFn("bindgen_test.bind.ts", "makeToken"),
 };
 

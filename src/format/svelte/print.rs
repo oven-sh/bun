@@ -676,8 +676,7 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     fn js(&self, expression: Expression) -> Js<'a> {
         // The plugin loses them.
-        let has_comments_around = self.has_comments_around(expression);
-        let (start, end) = match has_comments_around {
+        let (start, end) = match self.has_comments_around(expression) {
             true => (expression.outer.start, expression.outer.end),
             false => (expression.from, expression.span.end),
         };
@@ -687,7 +686,6 @@ impl<'a, 'o> Printer<'a, 'o> {
             has_single_quotes: false,
             is_on_one_line: false,
             is_without_parentheses: false,
-            has_comments_around,
         }
     }
 
@@ -1763,7 +1761,6 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: true,
-                    has_comments_around: false,
                 }),
             ),
             Kind::DeclarationTag(declaration) => tag(
@@ -1774,7 +1771,6 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: false,
-                    has_comments_around: false,
                 }),
             ),
             Kind::DebugTag(identifiers) => {
@@ -1920,7 +1916,6 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: false,
-                    has_comments_around: false,
                 });
                 Doc::List(vec![
                     Doc::Token("{#snippet "),

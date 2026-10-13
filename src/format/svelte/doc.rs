@@ -51,8 +51,6 @@ pub(crate) struct Js<'a> {
     pub(crate) is_on_one_line: bool,
     /// `removeParentheses`
     pub(crate) is_without_parentheses: bool,
-    /// `text` has the comments around the expression, and the parentheses between them, which the plugin leaves out.
-    pub(crate) has_comments_around: bool,
 }
 
 #[derive(Debug, Clone)]

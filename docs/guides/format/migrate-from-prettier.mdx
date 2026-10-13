@@ -101,7 +101,11 @@ Bun doesn't load Prettier plugins. These are built in, with all their options, s
 - `@prettier/plugin-oxc`
 - `prettier-plugin-svelte`
 
-Svelte files are formatted like `prettier-plugin-svelte` 4.1.1 formats them. If you have another version installed, they go to your installed Prettier, because it prints some components differently. Update the plugin to 4.1.1 or uninstall it, and Bun formats them.
+Svelte files are formatted like `prettier-plugin-svelte` 4.1.1 formats them. If you have another version installed, they go to your installed Prettier, because it prints some components differently. Update the plugin to 4.1.1 or uninstall it, and Bun formats them. The version is looked up from the directory you run `bun fmt` in, which is where your Prettier is loaded from.
+
+The plugin's options are those of 4.1.1: `svelteSortOrder`, `svelteAllowShorthand`, and `svelteIndentScriptAndStyle`. 4.1.1 has no `svelteStrictMode`, so Bun ignores it with a warning, like any unknown option. With another version installed, your Prettier formats the files with that version's options.
+
+Svelte files also go to your installed Prettier with `rangeStart`, `rangeEnd`, or `cursorOffset`, as flags or in the config.
 
 ---
 
@@ -153,7 +157,7 @@ If `bun fmt` and Prettier 3 print different code, that's a bug. [Open an issue](
 - **`--cache` does nothing.** Every run formats every file.
 - **Exit code `2` means something went wrong**, like a syntax error or a skipped file. Prettier uses `1` for some of these.
 - **Bytes that aren't valid UTF-8 are kept.** Prettier replaces them.
-- **Where Prettier's output changes what a file means, Bun's differs.** That's rare. In a Handlebars template Prettier drops `<!DOCTYPE html>`, and it joins the lines of a `<script>`, so a `// comment` swallows the code after it. In CSS it turns `Font\ Awesome` into `Font\Awesome`. In Svelte the plugin drops the comment in `{a /* b */}`. Bun keeps all four.
+- **Where Prettier's output changes what a file means, Bun's differs.** That's rare. In a Handlebars template Prettier drops `<!DOCTYPE html>`, and it joins the lines of a `<script>`, so a `// comment` swallows the code after it. In CSS it turns `Font\ Awesome` into `Font\Awesome`. In Svelte the plugin drops the comment in `{a /* b */}` and `{#if a /* b */}`. Bun keeps all of them.
 - **Symlinks that lead out of the repository aren't written through.**
 - **`console.log` in your config file is hidden** unless the config fails to load.
 

@@ -33,10 +33,18 @@ const prettierrc = JSON.stringify({ plugins });
 const oxfmtrc = '{ "svelte": true }';
 /** Matches what is said about a file that is left as it is. */
 const refusalOf = (name: string) => new RegExp(`^    at ${name.replaceAll(".", "\\.")}(:\\d+:\\d+)?$`, "m");
+/** `fill`, `count` times. */
+const repeated = (fill: string, count: number) => Buffer.alloc(count * Buffer.byteLength(fill), fill).toString();
 /** The plugin, as far as it is looked at. */
 const plugin = (version: string) => ({
   "node_modules/prettier-plugin-svelte/package.json": JSON.stringify({ name: "prettier-plugin-svelte", version }),
 });
+
+// Where the plugin loses a comment, Bun keeps it. By the name of the case: what is recorded, once, and what Bun prints in its place.
+const exceptions: Record<string, [recorded: string, printed: string]> = {
+  // The plugin loses the comment of `bind:value={/** ( */ (() => value, (v) => ..)}`.
+  directives: ["() => value,", "/** ( */ () => value,"],
+};
 
 describe.concurrent("Svelte", () => {
   // One run for all the cases with the same options.
@@ -51,7 +59,12 @@ describe.concurrent("Svelte", () => {
       const result = await format({ ...configs[tool], ...files }, names);
       for (const [index, it] of group.entries()) {
         // What is refused stays as it is.
-        const output = it[tool] ?? it.input;
+        let output = it[tool] ?? it.input;
+        if (it.name in exceptions) {
+          const [recorded, printed] = exceptions[it.name];
+          expect({ name: it.name, count: output.split(recorded).length - 1 }).toEqual({ name: it.name, count: 1 });
+          output = output.replace(recorded, printed);
+        }
         expect({ name: it.name, output: result.files[index] }).toEqual({ name: it.name, output });
         expect({ name: it.name, isRefused: refusalOf(names[index]).test(result.stderr) }).toEqual({
           name: it.name,
@@ -63,6 +76,16 @@ describe.concurrent("Svelte", () => {
   }
 
   const [input, output] = ["<p   >a</p>\n<script>let  a</script>\n", "<script>\n  let a;\n</script>\n\n<p>a</p>\n"];
+  // A stand-in for Prettier, which says that it has been there.
+  const prettier = {
+    "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+    "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
+exports.format = async text => "<!-- by Prettier -->\\n" + text;
+`,
+  };
+  const byPrettier = `<!-- by Prettier -->\n${input}`;
+  // A run that asks it starts a VM, and the search for leaks at its end takes seconds with the threads of one.
+  const timeout = isDebug || isASAN ? 120_000 : 5_000;
 
   test("without a Prettier or oxfmt config components are formatted", async () => {
     expect(await format({ "a.svelte": input }, ["a.svelte"])).toMatchObject({
@@ -222,28 +245,127 @@ describe.concurrent("Svelte", () => {
   test(
     "another version of the plugin than 4.1.1 prints in another way, so the Prettier of the project is asked",
     async () => {
-      // A stand-in, which says that it has been there.
-      const prettier = {
-        "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
-        "node_modules/prettier/index.cjs": `exports.resolveConfig = async () => null;
-exports.format = async text => "<!-- by Prettier -->\\n" + text;
-`,
-      };
       const files = { ...prettier, ".prettierrc": prettierrc, "a.svelte": input };
       expect((await format({ ...files, ...plugin("4.1.1") }, ["a.svelte"])).files).toEqual([output]);
       expect((await format(files, ["a.svelte"])).files).toEqual([output]);
       for (const version of ["4.1.0", "4.0.0", "3.5.2", "3.2.6", "4.1.2", "4.2.0", "5.0.0"]) {
         expect({ version, files: (await format({ ...files, ...plugin(version) }, ["a.svelte"])).files }).toEqual({
           version,
-          files: [`<!-- by Prettier -->\n${input}`],
+          files: [byPrettier],
         });
       }
       // So it is for a range.
       const range = await format({ ...files, ...plugin("4.1.1") }, ["a.svelte"], ["--range-start=1"]);
-      expect(range.files).toEqual([`<!-- by Prettier -->\n${input}`]);
+      expect(range.files).toEqual([byPrettier]);
     },
-    isDebug || isASAN ? 120_000 : 10_000,
+    timeout,
   );
+
+  test(
+    "the version is that of the plugin that the Prettier of the project would load: from the working directory",
+    async () => {
+      const inApp = (files: Record<string, string>) =>
+        Object.fromEntries(Object.entries(files).map(([name, text]) => [`packages/app/${name}`, text]));
+      using dir = tempDir("bun-format-svelte", {
+        ".prettierrc": prettierrc,
+        ...inApp({ ...prettier, ...plugin("4.0.0"), "a.svelte": input }),
+      });
+      const app = join(String(dir), "packages/app");
+      expect((await formatIn(app, ["a.svelte"], ["--check", "."])).exitCode).toBe(1);
+      expect((await formatIn(app, ["a.svelte"])).files).toEqual([byPrettier]);
+    },
+    timeout,
+  );
+
+  test(
+    "a range or a cursor in the configuration is one too",
+    async () => {
+      const files = { ...prettier, ...plugin("4.1.1"), "a.svelte": input };
+      const forSvelte = (options: object) => ({ overrides: [{ files: "*.svelte", options }] });
+      for (const config of [
+        { rangeStart: 1 },
+        { rangeEnd: 5 },
+        forSvelte({ cursorOffset: 2 }),
+        forSvelte({ rangeEnd: 5 }),
+      ]) {
+        const result = await format({ ...files, ".prettierrc": JSON.stringify({ plugins, ...config }) }, ["a.svelte"]);
+        expect({ config, files: result.files }).toEqual({ config, files: [byPrettier] });
+      }
+      // Not one for other files.
+      const config = { plugins, overrides: [{ files: "*.js", options: { rangeEnd: 5 } }] };
+      expect((await format({ ...files, ".prettierrc": JSON.stringify(config) }, ["a.svelte"])).files).toEqual([output]);
+    },
+    timeout,
+  );
+
+  describe("a value of an option that this version of the plugin does not take", () => {
+    // What 2.x takes.
+    const options = { svelteSortOrder: "scripts-markup-styles" };
+    const files = { "a.svelte": input, "b.js": "b  ;\n" };
+
+    test("is an error where components are formatted here", async () => {
+      const result = await format({ ...files, ".prettierrc": JSON.stringify({ plugins, ...options }) }, ["a.svelte"]);
+      expect(result.stderr).toContain("error: Invalid svelteSortOrder value: scripts-markup-styles.\n");
+      expect(result).toMatchObject({ files: [input], exitCode: 2 });
+    });
+
+    test("is an unknown option without the plugin", async () => {
+      const result = await format({ ...files, ".prettierrc": JSON.stringify(options) }, ["a.svelte", "b.js"]);
+      expect(result).toMatchObject({
+        stderr: 'warn: Ignored unknown option { svelteSortOrder: "scripts-markup-styles" }.\n',
+        files: [input, "b;\n"],
+        exitCode: 0,
+      });
+    });
+
+    test(
+      "is for the Prettier of the project to judge with another version",
+      async () => {
+        const project = { ...files, ...prettier, ...plugin("2.10.1") };
+        const config = { ".prettierrc": JSON.stringify({ plugins, ...options }) };
+        expect(await format({ ...project, ...config }, ["a.svelte", "b.js"])).toMatchObject({
+          stderr: "",
+          files: [byPrettier, "b;\n"],
+          exitCode: 0,
+        });
+      },
+      timeout,
+    );
+  });
+
+  // 4.1.1 has svelte5CompilerPath, svelteSortOrder, svelteAllowShorthand and svelteIndentScriptAndStyle.
+  describe("svelteStrictMode, which 4.1.1 does not have", () => {
+    const files = { ".prettierrc": JSON.stringify({ plugins, svelteStrictMode: true }), "a.svelte": input };
+
+    test.each([[{}], [plugin("4.1.1")]])("is ignored, which is said, as Prettier says it: %j", async installed => {
+      expect(await format({ ...files, ...installed }, ["a.svelte"])).toMatchObject({
+        stderr: "warn: Ignored unknown option { svelteStrictMode: true }.\n",
+        files: [output],
+        exitCode: 0,
+      });
+    });
+
+    test(
+      "is for another version to judge, whose files go to the Prettier of the project",
+      async () => {
+        expect(await format({ ...files, ...prettier, ...plugin("3.4.0") }, ["a.svelte"])).toMatchObject({
+          stderr: "",
+          files: [byPrettier],
+          exitCode: 0,
+        });
+      },
+      timeout,
+    );
+
+    test("the options that 4.1.1 has are known", async () => {
+      const config = { plugins, svelte5CompilerPath: "", svelteAllowShorthand: true, svelteIndentScriptAndStyle: true };
+      expect(await format({ ".prettierrc": JSON.stringify(config), "a.svelte": input }, ["a.svelte"])).toMatchObject({
+        stderr: "",
+        files: [output],
+        exitCode: 0,
+      });
+    });
+  });
 
   test("from standard input", async () => {
     using dir = tempDir("bun-format-svelte", { ".oxfmtrc.json": oxfmtrc });
@@ -329,6 +451,172 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     }
   });
 
+  // The same for a comment at every place where there is an expression or a pattern.
+  const comments = [
+    ["{#if a  /* b */}c{/if}\n", "{#if a /* b */}c{/if}\n", "{#if a}c{/if}\n"],
+    ["{#if a}c{:else if d  /* b */}e{/if}\n", "{#if a}c{:else if d /* b */}e{/if}\n", "{#if a}c{:else if d}e{/if}\n"],
+    ["{#each a  /* b */ as c}d{/each}\n", "{#each a /* b */ as c}d{/each}\n", "{#each a as c}d{/each}\n"],
+    [
+      "{#each a as c (c.d  /* b */)}e{/each}\n",
+      "{#each a as c (c.d /* b */)}e{/each}\n",
+      "{#each a as c (c.d)}e{/each}\n",
+    ],
+    ["{#each a as { c /* b */ }}d{/each}\n", "{#each a as { c /* b */ }}d{/each}\n", "{#each a as { c }}d{/each}\n"],
+    ["{#each a as [c /* b */, d]}e{/each}\n", "{#each a as [c /* b */, d]}e{/each}\n", "{#each a as [c, d]}e{/each}\n"],
+    [
+      "{#each a as { c, // b\n d }}e{/each}\n",
+      "{#each a as { c, // b\n d }}e{/each}\n",
+      "{#each a as { c, d }}e{/each}\n",
+    ],
+    ["{#await a  /* b */}c{/await}\n", "{#await a /* b */}c{/await}\n", "{#await a}c{/await}\n"],
+    ["{#await a  /* b */ then c}d{/await}\n", "{#await a /* b */ then c}d{/await}\n", "{#await a then c}d{/await}\n"],
+    [
+      "{#await a then { c /* b */ }}d{/await}\n",
+      "{#await a then { c /* b */ }}d{/await}\n",
+      "{#await a then { c }}d{/await}\n",
+    ],
+    ["{#key a  /* b */}c{/key}\n", "{#key a /* b */}c{/key}\n", "{#key a}c{/key}\n"],
+    ["{@debug a /* b */, c}\n", "{@debug a /* b */, c}\n", "{@debug a, c}\n"],
+    ["{@debug /* b */ a}\n", "{@debug /* b */ a}\n", "{@debug a}\n"],
+    ["{@debug a // b\n}\n", "{@debug a // b\n}\n", "{@debug a}\n"],
+    ["<p on:click={a  /* b */}>c</p>\n", "<p on:click={a /* b */}>c</p>\n", "<p on:click={a}>c</p>\n"],
+    ["<p on:click={/* b */ (a)}>c</p>\n", "<p on:click={/* b */ a}>c</p>\n", "<p on:click={a}>c</p>\n"],
+    ["<p bind:a={c  /* b */}>d</p>\n", "<p bind:a={c /* b */}>d</p>\n", "<p bind:a={c}>d</p>\n"],
+    ["<p bind:a={a  /* b */}>d</p>\n", "<p bind:a={a /* b */}>d</p>\n", "<p bind:a>d</p>\n"],
+    [
+      "<p bind:a={/* b */ (() => c, d => e)}>f</p>\n",
+      "<p bind:a={/* b */ () => c, (d) => e}>f</p>\n",
+      "<p bind:a={() => c, (d) => e}>f</p>\n",
+    ],
+    ["<p class:a={c  /* b */}>d</p>\n", "<p class:a={c /* b */}>d</p>\n", "<p class:a={c}>d</p>\n"],
+    ["<p class:a={a  /* b */}>d</p>\n", "<p class:a={a /* b */}>d</p>\n", "<p class:a>d</p>\n"],
+    ["<p let:a={a  /* b */}>d</p>\n", "<p let:a={a /* b */}>d</p>\n", "<p let:a>d</p>\n"],
+    ["<p use:a={c  /* b */}>d</p>\n", "<p use:a={c /* b */}>d</p>\n", "<p use:a={c}>d</p>\n"],
+    ["<p transition:a={c  /* b */}>d</p>\n", "<p transition:a={c /* b */}>d</p>\n", "<p transition:a={c}>d</p>\n"],
+    ["<p animate:a={c  /* b */}>d</p>\n", "<p animate:a={c /* b */}>d</p>\n", "<p animate:a={c}>d</p>\n"],
+    ["<p style:a={a  /* b */}>d</p>\n", "<p style:a={a /* b */}>d</p>\n", "<p style:a>d</p>\n"],
+    [
+      "<svelte:element this={a  /* b */}>c</svelte:element>\n",
+      "<svelte:element this={a /* b */}>c</svelte:element>\n",
+      "<svelte:element this={a}>c</svelte:element>\n",
+    ],
+    [
+      '<svelte:element this={"a"  /* b */}>c</svelte:element>\n',
+      '<svelte:element this={"a" /* b */}>c</svelte:element>\n',
+      '<svelte:element this={"a"}>c</svelte:element>\n',
+    ],
+    [
+      "<svelte:component this={A  /* b */} />\n",
+      "<svelte:component this={A /* b */} />\n",
+      "<svelte:component this={A} />\n",
+    ],
+    // One without a letter.
+    ["{a  /* 1 */}\n", "{a /* 1 */}\n", "{a}\n"],
+    ["{#if a  /* 1 */}c{/if}\n", "{#if a /* 1 */}c{/if}\n", "{#if a}c{/if}\n"],
+    // What follows a `//` has to be on the next line. The plugin has some of it before the comment, which is text then.
+    ["{#if a  // b\n}c{/if}\n", "{#if a // b\n}c{/if}\n", "{#if a}c{/if}\n"],
+    ["{#if a // b\n && c}d{/if}\n", "{#if a && // b\n  c}d{/if}\n", "{#if a && c}d{/if} // b\n"],
+    ["{#key a(c, // b\n d)}e{/key}\n", "{#key a(\n  c, // b\n  d,\n)}e{/key}\n", "{#key a(c, d)}e{/key} // b\n"],
+    ["{#each a  // b\n as c}d{/each}\n", "{#each a // b\n as c}d{/each}\n", "{#each a as c}d{/each}\n"],
+    ["{@const a = c // b\n}\n", "{@const a = c // b\n}\n", "{@const a = c} // b\n"],
+    ["<p on:click={a // b\n}>c</p>\n", "<p\n  on:click={a // b\n  }\n>\n  c\n</p>\n", "<p on:click={a}>c</p>\n"],
+  ];
+  test.each([[{}], [{ ".prettierrc": prettierrc }], [{ ".oxfmtrc.json": oxfmtrc }]])(
+    "no comment is lost: %j",
+    async config => {
+      const names = comments.map((_, index) => `${index}.svelte`);
+      const files = (which: number) => Object.fromEntries(comments.map((it, index) => [names[index], it[which]]));
+      for (const [, after, ofPlugin] of comments) expect(after).not.toBe(ofPlugin);
+      const expected = { stderr: "", files: comments.map(it => it[1]), exitCode: 0 };
+      expect(await format({ ...config, ...files(0) }, names)).toMatchObject(expected);
+      expect(await format({ ...config, ...files(1) }, names)).toMatchObject(expected);
+      const checked = await format({ ...config, ...files(0) }, names, ["--debug-check"]);
+      expect(checked).toMatchObject({ stderr: "", files: comments.map(it => it[0]), exitCode: 0 });
+    },
+  );
+
+  // The plugin writes the error to stderr too, and goes on.
+  describe("what is in a script or a style sheet and cannot be parsed stays as it is, with a warning", () => {
+    const warning = (message: string, [line, column, shown]: [number, number, string], name = "a.svelte") =>
+      `${line} | ${shown}\n${Buffer.alloc(`${line} | `.length + column - 1, " ").toString()}^\n` +
+      `warn: ${message}\n   at ${name}:${line}:${column}\n\n`;
+
+    test.each<[string, string, string, string]>([
+      [
+        "a script",
+        "<script>\n  let a = ;\n</script>\n\n<p   >{a}</p>\n",
+        "<script>\n  let a = ;\n</script>\n\n<p>{a}</p>\n",
+        warning("Expression expected.", [2, 11, "  let a = ;"]),
+      ],
+      [
+        "a style sheet, behind the markup",
+        "<p   >a</p>\n\n<style>\n  a { color: }}\n</style>\n",
+        "<p>a</p>\n\n<style>\n  a { color: }}\n</style>\n",
+        warning('Unexpected "}"', [4, 15, "  a { color: }}"]),
+      ],
+      [
+        "both, in TypeScript and SCSS, with \\r\\n",
+        '<style lang="scss">\r\n  a { b: {{ }\r\n</style>\r\n<script lang="ts">\r\n  let a: = 1;\r\n</script>\r\n<p   >a</p>\r\n',
+        '<script lang="ts">\n  let a: = 1;\n</script>\n\n<p>a</p>\n\n<style lang="scss">\n  a { b: {{ }\n</style>\n',
+        warning("Unclosed block", [2, 7, "  a { b: {{ }"]) + warning("Type expected.", [5, 10, "  let a: = 1;"]),
+      ],
+      [
+        "JSON in an element",
+        '<div   ><script type="application/json">{ "a": }</script></div>\n',
+        '<div>\n  <script type="application/json">\n{ "a": }\n  </script>\n</div>\n',
+        warning("Unexpected token", [1, 48, '<div   ><script type="application/json">{ "a": }</script></div>']),
+      ],
+      [
+        "behind a byte order mark and letters of two bytes",
+        '\uFEFF<script>let é = "é"; let b = ;</script>\n',
+        '\uFEFF<script>\nlet é = "é"; let b = ;\n</script>\n',
+        warning("Expression expected.", [1, 30, '<script>let é = "é"; let b = ;</script>']),
+      ],
+    ])("%s", async (_, before, after, stderr) => {
+      for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }]) {
+        expect(await format({ ...config, "a.svelte": before }, ["a.svelte"])).toMatchObject({
+          stderr,
+          files: [after],
+          exitCode: 0,
+        });
+      }
+    });
+
+    const [before, after] = [
+      "<script>\n  let a = ;\n</script>\n\n<p   >{a}</p>\n",
+      "<script>\n  let a = ;\n</script>\n\n<p>{a}</p>\n",
+    ];
+    const said = warning("Expression expected.", [2, 11, "  let a = ;"]);
+
+    test("--check says it too, about a file that is formatted and about one that is not", async () => {
+      const checked = await format({ "a.svelte": after }, ["a.svelte"], ["--check"]);
+      expect(checked).toMatchObject({ stderr: said, files: [after], exitCode: 0 });
+      const different = await format({ "a.svelte": before }, ["a.svelte"], ["--check"]);
+      const summary = "1 file needs formatting. Run bun fmt to fix it.\n";
+      expect(different).toMatchObject({ stdout: "a.svelte\n", stderr: said + summary, files: [before], exitCode: 1 });
+    });
+
+    test("--log-level=error does not", async () => {
+      const result = await format({ "a.svelte": before }, ["a.svelte"], ["--log-level=error"]);
+      expect(result).toMatchObject({ stderr: "", files: [after], exitCode: 0 });
+    });
+
+    test("from standard input", async () => {
+      using dir = tempDir("bun-format-svelte", {});
+      await using proc = spawn({
+        cmd: [bunExe(), "fmt", "--stdin-filepath=b.svelte"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: Buffer.from(before),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const expected = warning("Expression expected.", [2, 11, "  let a = ;"], "b.svelte");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: after, stderr: expected, exitCode: 0 });
+    });
+  });
+
   test("rows that are closed by the next stay as they are written", async () => {
     // To Svelte the second row ends the cell and is in the first row. The plugin gives every element its end tag, and
     // then the second row ends the first, whose end tag is left over.
@@ -361,7 +649,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       [1, 13, "{#each a as { b = c() }}{b}{/each}"],
     ],
   ])("a syntax error is shown where it is: %s", async (_, text, message, [line, column, shown]) => {
-    const caret = " ".repeat(`${line} | `.length + column - 1) + "^";
+    const caret = Buffer.alloc(`${line} | `.length + column - 1, " ").toString() + "^";
     for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }]) {
       const result = await format({ ...config, "a.svelte": text, "b.svelte": input }, ["a.svelte", "b.svelte"]);
       expect(result.stderr).toStartWith(
@@ -392,102 +680,98 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect(result.exitCode).toBe(2);
   });
 
-  test(
-    "texts that are made to take long do not",
-    async () => {
-      // Where something took time in proportion to the square of this, it took a minute at 40,000.
-      const n = isDebug || isASAN ? 2_000 : 40_000;
-      const depth = 100;
-      const numbered = (text: (index: number) => string) =>
-        Array.from({ length: n }, (_, index) => text(index)).join(" ");
-      const shapes: Record<string, string> = {
-        "paragraphs": "<p>some words here</p>\n".repeat(n),
-        "comments-not-closed": "<!-- ".repeat(n),
-        "scripts-not-closed": "<script>".repeat(n),
-        "styles-with-a-quote-not-closed": '<style a="'.repeat(n),
-        "attributes-of-a-script": `<script ${'a="b" '.repeat(n)}x`,
-        "attributes-of-a-script-next-to-quotes": `<script ${'a="b"c '.repeat(n)}>`,
-        "ends-of-scripts": "</script ".repeat(n),
-        "less-than": "<".repeat(n),
-        "attributes": `<a ${numbered(index => `a${index}`)}></a>`,
-        "attributes-with-values": `<a ${numbered(index => `a${index}="b c"`)}></a>`,
-        "the-same-attribute": `<a ${"b ".repeat(n)}>`,
-        "elements-in-each-other": "<b>".repeat(n),
-        "elements-in-each-other-with-ends": `${"<b>".repeat(depth)}x${"</b>".repeat(depth)}\n`.repeat(n / 400),
-        "inline-elements": "<b>x</b> ".repeat(n),
-        "blocks": "<div>x</div>".repeat(n),
-        "comments": "<!-- a -->".repeat(n),
-        "comments-before-a-script": `${"<!-- a -->\n".repeat(n)}<script></script>`,
-        "words": "word ".repeat(4 * n),
-        "one-word": "w".repeat(8 * n),
-        "line-breaks": "\n".repeat(8 * n),
-        "pre": `<pre>${"a\n".repeat(n)}</pre>`,
-        "textarea": `<textarea>${"a\n".repeat(n)}</textarea>`,
-        "textareas-not-closed": "<textarea>".repeat(n),
-        "ignored": "<!-- prettier-ignore -->\n<p   >a</p>\n".repeat(n),
-        "an-ignored-range": `<!-- prettier-ignore-start -->\n${"<p   >a</p>\n".repeat(n)}<!-- prettier-ignore-end -->`,
-        "classes": `<p class="${"a  b\n".repeat(n)}"></p>`,
-        "the-mark-of-the-plugin": '✂prettier:content✂="1">'.repeat(n),
-        "the-mark-of-the-plugin-in-elements": '<a ✂prettier:content✂="1">'.repeat(n),
-        "paragraphs-not-closed": "<p>".repeat(n),
-        "items-not-closed": `<ul>${"<li>a".repeat(n)}</ul>`,
-        "void-elements": "<br>".repeat(n),
-        "entities": "&amp;".repeat(n),
-        "nul": "\0".repeat(n),
-        "end-tags": "</a>".repeat(n),
-        "starts-of-blocks": "{#".repeat(n),
-        "braces": "{".repeat(n),
-        "closing-braces": "}".repeat(n),
-        "tags": "{a}".repeat(n),
-        "tags-and-backslashes": "\\{a}\n".repeat(n),
-        "tags-and-comments": "<!-- a -->{a}\n".repeat(n),
-        "patterns": "{#each a as { b }}{b}{/each}\n".repeat(n),
-        "parentheses-in-a-tag": `{${"(".repeat(n)}`,
-        "blocks-in-each-other": "{#if a}".repeat(n),
-        "attributes-of-the-options": `<svelte:options ${"a ".repeat(n)}/>`,
-        "ends-of-regions": `<script></script>${"<!-- #endregion -->".repeat(n)}`,
-        "style-sheets": "<style></style>".repeat(n),
-        "scripts-in-an-element": `<div>${"<script>a</script>".repeat(n / 10)}</div>`,
-      };
-      using dir = tempDir("bun-format-svelte", {
-        ".oxfmtrc.json": oxfmtrc,
-        ...Object.fromEntries(Object.entries(shapes).map(([name, text]) => [`${name}.svelte`, text])),
-      });
-      await using proc = spawn({
-        cmd: [bunExe(), "fmt", "--check", "--threads=1", "."],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
-      const refused = Array.from(stderr.matchAll(/^    at ([\w-]+)\.svelte\b/gm), it => it[1]);
-      expect(refused.sort()).toEqual([
-        "attributes-of-a-script",
-        "attributes-of-a-script-next-to-quotes",
-        "attributes-of-the-options",
-        "blocks-in-each-other",
-        "braces",
-        "comments-not-closed",
-        "elements-in-each-other",
-        "end-tags",
-        "ends-of-scripts",
-        "less-than",
-        "paragraphs-not-closed",
-        "parentheses-in-a-tag",
-        "scripts-not-closed",
-        "starts-of-blocks",
-        "style-sheets",
-        "styles-with-a-quote-not-closed",
-        "textareas-not-closed",
-        "the-mark-of-the-plugin-in-elements",
-        "the-same-attribute",
-      ]);
-      expect(exitCode).toBe(2);
-      expect(Number(proc.resourceUsage()!.cpuTime.user) / 1e6).toBeLessThan(isDebug || isASAN ? 60 : 10);
-    },
-    isDebug || isASAN ? 120_000 : 30_000,
-  );
+  test("texts that are made to take long do not", async () => {
+    // Where something takes time in proportion to the square of this, it takes seconds.
+    const n = isDebug || isASAN ? 400 : 24_000;
+    const depth = 100;
+    const numbered = (text: (index: number) => string) =>
+      Array.from({ length: n }, (_, index) => text(index)).join(" ");
+    const shapes: Record<string, string> = {
+      "paragraphs": repeated("<p>some words here</p>\n", n),
+      "comments-not-closed": repeated("<!-- ", n),
+      "scripts-not-closed": repeated("<script>", n),
+      "styles-with-a-quote-not-closed": repeated('<style a="', n),
+      "attributes-of-a-script": `<script ${repeated('a="b" ', n)}x`,
+      "attributes-of-a-script-next-to-quotes": `<script ${repeated('a="b"c ', n)}>`,
+      "ends-of-scripts": repeated("</script ", n),
+      "less-than": repeated("<", n),
+      "attributes": `<a ${numbered(index => `a${index}`)}></a>`,
+      "attributes-with-values": `<a ${numbered(index => `a${index}="b c"`)}></a>`,
+      "the-same-attribute": `<a ${repeated("b ", n)}>`,
+      "elements-in-each-other": repeated("<b>", n),
+      "elements-in-each-other-with-ends": repeated(`${repeated("<b>", depth)}x${repeated("</b>", depth)}\n`, n / 400),
+      "inline-elements": repeated("<b>x</b> ", n),
+      "blocks": repeated("<div>x</div>", n),
+      "comments": repeated("<!-- a -->", n),
+      "comments-before-a-script": `${repeated("<!-- a -->\n", n)}<script></script>`,
+      "words": repeated("word ", 4 * n),
+      "one-word": repeated("w", 8 * n),
+      "line-breaks": repeated("\n", 8 * n),
+      "pre": `<pre>${repeated("a\n", n)}</pre>`,
+      "textarea": `<textarea>${repeated("a\n", n)}</textarea>`,
+      "textareas-not-closed": repeated("<textarea>", n),
+      "ignored": repeated("<!-- prettier-ignore -->\n<p   >a</p>\n", n),
+      "an-ignored-range": `<!-- prettier-ignore-start -->\n${repeated("<p   >a</p>\n", n)}<!-- prettier-ignore-end -->`,
+      "classes": `<p class="${repeated("a  b\n", n)}"></p>`,
+      "the-mark-of-the-plugin": repeated('✂prettier:content✂="1">', n),
+      "the-mark-of-the-plugin-in-elements": repeated('<a ✂prettier:content✂="1">', n),
+      "paragraphs-not-closed": repeated("<p>", n),
+      "items-not-closed": `<ul>${repeated("<li>a", n)}</ul>`,
+      "void-elements": repeated("<br>", n),
+      "entities": repeated("&amp;", n),
+      "nul": repeated("\0", n),
+      "end-tags": repeated("</a>", n),
+      "starts-of-blocks": repeated("{#", n),
+      "braces": repeated("{", n),
+      "closing-braces": repeated("}", n),
+      "tags": repeated("{a}", n),
+      "tags-and-backslashes": repeated("\\{a}\n", n),
+      "tags-and-comments": repeated("<!-- a -->{a}\n", n),
+      "patterns": repeated("{#each a as { b }}{b}{/each}\n", n),
+      "parentheses-in-a-tag": `{${repeated("(", n)}`,
+      "blocks-in-each-other": repeated("{#if a}", n),
+      "attributes-of-the-options": `<svelte:options ${repeated("a ", n)}/>`,
+      "ends-of-regions": `<script></script>${repeated("<!-- #endregion -->", n)}`,
+      "style-sheets": repeated("<style></style>", n),
+      "scripts-in-an-element": `<div>${repeated("<script>a</script>", n / 10)}</div>`,
+    };
+    using dir = tempDir("bun-format-svelte", {
+      ".oxfmtrc.json": oxfmtrc,
+      ...Object.fromEntries(Object.entries(shapes).map(([name, text]) => [`${name}.svelte`, text])),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", "--check", "--threads=1", "."],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    const refused = Array.from(stderr.matchAll(/^    at ([\w-]+)\.svelte\b/gm), it => it[1]);
+    expect(refused.sort()).toEqual([
+      "attributes-of-a-script",
+      "attributes-of-a-script-next-to-quotes",
+      "attributes-of-the-options",
+      "blocks-in-each-other",
+      "braces",
+      "comments-not-closed",
+      "elements-in-each-other",
+      "end-tags",
+      "ends-of-scripts",
+      "less-than",
+      "paragraphs-not-closed",
+      "parentheses-in-a-tag",
+      "scripts-not-closed",
+      "starts-of-blocks",
+      "style-sheets",
+      "styles-with-a-quote-not-closed",
+      "textareas-not-closed",
+      "the-mark-of-the-plugin-in-elements",
+      "the-same-attribute",
+    ]);
+    expect(exitCode).toBe(2);
+    expect(Number(proc.resourceUsage()!.cpuTime.user) / 1e6).toBeLessThan(3);
+  });
 
   test("blocks of Svelte in Markdown are formatted where components are", async () => {
     const block = (text: string) => `# a\n\n\`\`\`svelte\n${text}\`\`\`\n`;

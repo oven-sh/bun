@@ -172,6 +172,8 @@ pub fn format(
             scratch.unformatted.push(Unformatted { message, at });
         }
     }
+    // Scripts are written first, wherever they are.
+    crate::sort::sort_by_key(&mut scratch.unformatted, |it| it.at);
     if original.starts_with(crate::text::BOM) {
         out.extend_from_slice(crate::text::BOM);
     }

@@ -11,6 +11,7 @@ use crate::prelude::*;
 use crate::stack::Stack;
 use crate::syntax_error::{Message, SyntaxError};
 use crate::{FormatError, write};
+use bun_core::strings;
 use bun_lint::linter::{TypesInJavaScript, refusal_of_prettier};
 use std::cell::RefCell;
 
@@ -30,23 +31,25 @@ pub(crate) struct How<'o> {
     pub(crate) unformatted: &'o RefCell<Vec<(usize, Vec<u8>, u32)>>,
 }
 
-/// `textToDoc(forceIntoExpression(text), ..)`, and what is done to the document.
+/// `textToDoc(forceIntoExpression(text), ..)`, and what is done to the document. Returns whether a `//` comment is the last
+/// thing that is written. `None`: nothing is written.
 fn write_js_expression(
     f: &mut Formatter<'_>,
     js: &Js<'_>,
     in_html: InHtml,
     is_typescript: bool,
-) -> bool {
+) -> Option<bool> {
     if !js.is_on_one_line && js::write_path(f, &js.text, Hug::Bare) {
-        return true;
+        return Some(false);
     }
+    let mut ends_with_line_comment = false;
     let wrapped = [b"(", &js.text[..], b"\n)"].concat();
     let paths: &[&[u8]] = match is_typescript {
         true => &[js::EXPRESSION_TSX, js::EXPRESSION_TS],
         false => &[js::EXPRESSION_JSX],
     };
     let (source_type, piece) = (SourceType::Unknown, Piece::Other);
-    js::with_file(
+    let is_written = js::with_file(
         f,
         &wrapped,
         paths,
@@ -57,44 +60,31 @@ fn write_js_expression(
             let Some(e) = js::expression_of(file) else {
                 return false;
             };
-            // `removeParentheses` takes a block comment at the start for one that never ends, and leaves all as it is.
-            let is_bare = js.is_without_parentheses
-                && (js.has_comments_around || !js.text.trim_ascii_start().starts_with(b"/*"));
-            let has_line_comment = has_line_comment(f);
+            let comments = f.comments().unprinted_comments();
+            ends_with_line_comment =
+                (comments.last()).is_some_and(|it| it.is_line() && it.span.start >= e.span().end);
             let content = format_with(|f| {
-                match is_bare {
-                    true if js.has_comments_around => {
+                match js.is_without_parentheses {
+                    // `removeParentheses` takes a block comment at the start for one that never ends, and leaves the
+                    // parentheses, which Svelte refuses around the two functions of a `bind:`.
+                    true => {
                         write!(f, FormatLeadingComments::Node(e.span()));
                         write_expression(e, ExprOptions::None, f);
                     }
-                    true => write_expression(e, ExprOptions::None, f),
                     false => write!(f, e),
                 }
                 let rest = f.comments().unprinted_comments();
                 write!(f, FormatTrailingComments::Comments(rest));
             });
             // Without its line breaks, the plugin has what follows a `//` before it: `{#if a && b} // c`.
-            match js.is_on_one_line && !has_line_comment {
+            match js.is_on_one_line && !comments.iter().any(|it| it.is_line()) {
                 true => f.write_with_lines_removed(&content),
                 false => write!(f, content),
             }
-            end_line_comment(has_line_comment, f);
             true
         },
-    )
-}
-
-/// Whether a `//` comment is still to be written.
-fn has_line_comment(f: &Formatter<'_>) -> bool {
-    (f.comments().unprinted_comments().iter()).any(|it| it.is_line())
-}
-
-/// After code with a `//` comment. If that is the last thing in it, the plugin has what follows the code before the comment:
-/// `{@const a = b} // c`.
-fn end_line_comment(has_line_comment: bool, f: &mut Formatter<'_>) {
-    if has_line_comment {
-        write!(f, line_suffix_boundary());
-    }
+    );
+    is_written.then_some(ends_with_line_comment)
 }
 
 /// The same for `forceIntoFunction(text)`: the name and the parameters.
@@ -118,9 +108,7 @@ fn write_js_function(
             let Some(StmtKind::Fn(function)) = file.body().iter().next().map(|it| it.kind()) else {
                 return false;
             };
-            let has_line_comment = has_line_comment(f);
             write_function(function, FormatFunctionOptions::default(), f);
-            end_line_comment(has_line_comment, f);
             true
         },
     )
@@ -146,9 +134,7 @@ fn write_js_statement(
             let Some(statement) = file.body().iter().next() else {
                 return false;
             };
-            let has_line_comment = has_line_comment(f);
             write!(f, statement);
-            end_line_comment(has_line_comment, f);
             true
         },
     )
@@ -172,14 +158,23 @@ fn write_js(js: &Js<'_>, out: &mut Writer<'_, '_>, how: &How<'_>) {
         has_tree_of_babel: true,
         ..InHtml::default()
     };
-    let is_written = out.foreign(|f| match js.kind {
+    let ends_with_line_comment = out.foreign(|f| match js.kind {
         JsKind::Expression => write_js_expression(f, js, in_html, how.is_typescript),
-        JsKind::Function => write_js_function(f, js, in_html, how.is_typescript),
-        JsKind::Statement => write_js_statement(f, js, in_html, how.is_typescript),
+        JsKind::Function => write_js_function(f, js, in_html, how.is_typescript).then_some(false),
+        JsKind::Statement => write_js_statement(f, js, in_html, how.is_typescript).then_some(false),
     });
-    // `catch (e) { return getText(node, options, true); }`
-    if !is_written {
-        out.string(&js.text);
+    match ends_with_line_comment {
+        // The plugin has what follows the code before the comment: `{@const a = b} // c`.
+        Some(true) => out.hardline(),
+        Some(false) => {}
+        // `catch (e) { return getText(node, options, true); }`
+        None => {
+            out.string(&js.text);
+            let last_line = strings::last_index_of_char(&js.text, b'\n').map_or(0, |it| it + 1);
+            if strings::contains(&js.text[last_line..], b"//") {
+                out.hardline();
+            }
+        }
     }
 }
 

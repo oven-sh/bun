@@ -34,6 +34,8 @@ bun fmt src "test/**/*.ts"
 
 Embedded code is formatted too: `<script>` and `<style>` in HTML, Vue, and Svelte, code blocks in Markdown, and `` css`...` ``, `` html`...` ``, and `` graphql`...` `` templates in JavaScript.
 
+A syntax error inside a `<script>` or `<style>` of a Svelte component is a warning. That block stays as written, and the rest of the file is formatted.
+
 ## Check without writing
 
 `--check` lists the files that need formatting and writes nothing.

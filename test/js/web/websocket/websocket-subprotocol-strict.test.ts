@@ -1,6 +1,7 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import crypto from "node:crypto";
 import net from "node:net";
+import { WebSocket as WsWebSocket } from "ws";
 
 describe("WebSocket strict RFC 6455 subprotocol handling", () => {
   async function createTestServer(
@@ -71,11 +72,13 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     expectedCode = 1002,
     reason = "Mismatch client protocol",
   ) {
-    const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers<void>();
+    const { promise: closePromise, resolve: resolveClose, reject } = Promise.withResolvers<void>();
 
     const ws = new WebSocket(`ws://localhost:${port}`, protocols);
-    const onopenMock = mock(() => {});
-    ws.onopen = onopenMock;
+    ws.onopen = () => {
+      reject(new Error(`the connection opened with the protocol "${ws.protocol}"`));
+      ws.terminate();
+    };
 
     const events: string[] = [];
     ws.onerror = error => events.push(`error: ${(error as ErrorEvent).message}`);
@@ -89,7 +92,6 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
       `error: WebSocket connection to 'ws://localhost:${port}/' failed: ${reason}`,
       `close: ${expectedCode} ${reason}, wasClean false`,
     ]);
-    expect(onopenMock).not.toHaveBeenCalled();
   }
 
   async function expectConnectionSuccess(port: number, protocols: string[], expectedProtocol: string) {
@@ -219,5 +221,32 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     } finally {
       bare.terminate();
     }
+  });
+
+  it.each([
+    ["a subprotocol that was not requested", ["Sec-WebSocket-Protocol: unknown"], "Mismatch client protocol"],
+    ["no subprotocol", [], "Missing client protocol"],
+  ])("the client of the ws module gets 'error', then 'close', for %s", async (_answer, headers, reason) => {
+    await using server = await createTestServer(headers);
+    const { promise: closePromise, resolve: resolveClose, reject } = Promise.withResolvers<void>();
+
+    const ws = new WsWebSocket(`ws://localhost:${server.port}`, ["chat", "echo"]);
+    ws.on("open", () => {
+      reject(new Error(`the connection opened with the protocol "${ws.protocol}"`));
+      ws.terminate();
+    });
+
+    const events: string[] = [];
+    ws.on("error", error => events.push(`error: ${error.message}`));
+    ws.on("close", code => {
+      events.push(`close: ${code}`);
+      resolveClose();
+    });
+
+    await closePromise;
+    expect(events).toEqual([
+      `error: WebSocket connection to 'ws://localhost:${server.port}/' failed: ${reason}`,
+      "close: 1002",
+    ]);
   });
 });

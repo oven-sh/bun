@@ -2342,5 +2342,63 @@
  "audit/unbound-method/option-ignore-static": [
   "sentinel.ts typescript(unbound-method) 8:41+6 \"This reference may be unbound and lose `this` context\" | 8:32+15",
   "static-function-property.ts typescript(unbound-method) 10:32+6 \"This reference may be unbound and lose `this` context\" | 10:23+15"
+ ],
+ "audit/no-unnecessary-type-parameters/default": [
+  "alias-keyof.ts typescript(no-unnecessary-type-parameters) 5:43+1 \"This is the only usage of type parameter T in the signature.\" | 5:30+1",
+  "alias-template-literal.ts typescript(no-unnecessary-type-parameters) 5:65+1 \"This is the only usage of type parameter T in the signature.\" | 5:32+16",
+  "arrow-returns-parenthesized-arrow.ts typescript(no-unnecessary-type-parameters) 4:26+1 \"This is the only usage of type parameter T in the signature.\" | 4:19+1",
+  "class-auto-accessor.ts typescript(no-unnecessary-type-parameters) 5:19+1 \"This is the only usage of type parameter T in the signature.\" | 4:19+1",
+  "class-explicit-constructor.ts typescript(no-unnecessary-type-parameters) 7:23+1 \"This is the only usage of type parameter T in the signature.\" | 7:23+1",
+  "class-extends-anonymous-base.ts typescript(no-unnecessary-type-parameters) 4:42+1 \"This is the only usage of type parameter V in the signature.\" | 4:26+1",
+  "class-extends-anonymous-base.ts typescript(no-unnecessary-type-parameters) 5:38+1 \"This is the only usage of type parameter T in the signature.\" | 5:22+1",
+  "class-index-signature.ts typescript(no-unnecessary-type-parameters) 5:18+1 \"This is the only usage of type parameter T in the signature.\" | 4:18+1",
+  "construct-signature.ts typescript(no-unnecessary-type-parameters) 6:14+1 \"This is the only usage of type parameter U in the signature.\" | 6:4+1",
+  "disable-comment-above-reference.ts typescript(no-unnecessary-type-parameters) 6:10+1 \"This is the only usage of type parameter T in the signature.\" | 4:19+1",
+  "jsdoc-only-reference-position.ts typescript(no-unnecessary-type-parameters) 5:14+1 \"This is the only usage of type parameter T in the signature.\" | 7:27+1",
+  "mapped-instantiated-homomorphic-template.ts typescript(no-unnecessary-type-parameters) 5:34+1 \"This is the only usage of type parameter U in the signature.\" | 5:22+1",
+  "mapped-instantiated-never-keys.ts typescript(no-unnecessary-type-parameters) 5:25+1 \"This is the only usage of type parameter U in the signature.\" | 5:19+1",
+  "mapped-instantiated-template.ts typescript(no-unnecessary-type-parameters) 5:49+1 \"This is the only usage of type parameter U in the signature.\" | 5:37+1",
+  "mapped-name-type-class.ts typescript(no-unnecessary-type-parameters) 5:31+1 \"This is the only usage of type parameter T in the signature.\" | 4:23+16",
+  "mapped-name-type-function-type.ts typescript(no-unnecessary-type-parameters) 4:63+1 \"This is the only usage of type parameter T in the signature.\" | 4:19+16",
+  "mapped-name-type-inferred.ts typescript(no-unnecessary-type-parameters) 5:40+1 \"This is the only usage of type parameter T in the signature.\" | 5:19+16",
+  "merged-class-before-interface.ts typescript(no-unnecessary-type-parameters) 5:11+1 \"This is the only usage of type parameter T in the signature.\" | 4:20+1",
+  "merged-interface-before-class.ts typescript(no-unnecessary-type-parameters) 8:11+1 \"This is the only usage of type parameter T in the signature.\" | 7:18+1",
+  "no-infer-class.ts typescript(no-unnecessary-type-parameters) 5:18+1 \"This is the only usage of type parameter T in the signature.\" | 4:21+1",
+  "qualified-name-reference.ts typescript(no-unnecessary-type-parameters) 4:25+1 \"This is the only usage of type parameter T in the signature.\" | 4:19+1",
+  "sentinel.ts typescript(no-unnecessary-type-parameters) 2:35+1 \"This is the only usage of type parameter T in the signature.\" | 2:29+1",
+  "sentinel.ts typescript(no-unnecessary-type-parameters) 3:32+1 \"This is the only usage of type parameter T in the signature.\" | 3:22+1",
+  "sentinel.ts typescript(no-unnecessary-type-parameters) 6:29+1 \"This is the only usage of type parameter U in the signature.\" | 6:19+1",
+  "string-mapping-class.ts typescript(no-unnecessary-type-parameters) 5:20+1 \"This is the only usage of type parameter T in the signature.\" | 4:20+16",
+  "suggestion-optional-type-parens.ts typescript(no-unnecessary-type-parameters) 4:62+1 \"This is the only usage of type parameter T in the signature.\" | 4:29+25",
+  "symbol-index-signature.ts typescript(no-unnecessary-type-parameters) 5:30+1 \"This is the only usage of type parameter T in the signature.\" | 4:23+1"
+ ],
+ "audit/no-unsafe-assignment/exact-optional-property-types": [
+  "assign-array-hole-literal.ts typescript(no-unsafe-assignment) 6:9+13 \"Destructured source provides type `any`.\" | 6:2+0 \"This binding receives type `any`.\" | 6:2+0",
+  "sentinel.ts typescript(no-unsafe-assignment) 2:11+8 \"Assigned value has type `any`.\" | 2:7+1 \"Target is inferred as `any`.\" | 2:9+1",
+  "sentinel.ts typescript(no-unsafe-assignment) 3:19+8 \"Assigned value has type `any`.\" | 3:10+6 \"Target expects type `string`.\" | 3:17+1",
+  "sentinel.ts typescript(no-unsafe-assignment) 4:13+11 \"Destructured source provides type `any[]`.\" | 4:7+3 \"This binding receives type `any`.\" | 4:7+3",
+  "sentinel.ts typescript(no-unsafe-assignment) 5:24+14 \"Assigned value has type `Set<any>`.\" | 5:10+11 \"Target expects type `Set<string>`.\" | 5:22+1"
+ ],
+ "audit/no-unsafe-assignment/not-strict": [
+  "sentinel.ts typescript(no-unsafe-assignment) 2:11+8 \"Assigned value has type `any`.\" | 2:7+1 \"Target is inferred as `any`.\" | 2:9+1",
+  "sentinel.ts typescript(no-unsafe-assignment) 3:19+8 \"Assigned value has type `any`.\" | 3:10+6 \"Target expects type `string`.\" | 3:17+1",
+  "sentinel.ts typescript(no-unsafe-assignment) 4:13+11 \"Destructured source provides type `any[]`.\" | 4:7+3 \"This binding receives type `any`.\" | 4:7+3",
+  "sentinel.ts typescript(no-unsafe-assignment) 5:24+14 \"Assigned value has type `Set<any>`.\" | 5:10+11 \"Target expects type `Set<string>`.\" | 5:22+1",
+  "this-implicit-any.ts typescript(no-unsafe-assignment) 5:14+4 \"`this` has type `any`.\" | 5:9+1 \"Target is inferred as `any`.\" | 5:11+1",
+  "undefined-initializer.ts typescript(no-unsafe-assignment) 5:20+4 \"Assigned value has type `any`.\" | 5:12+5 \"Target is inferred as `any`.\" | 5:18+1"
+ ],
+ "audit/restrict-template-expressions/default": [
+  "intersection-unconstrained-type-parameter.ts typescript(restrict-template-expressions) 7:8+1 \"Type: {}\" | 7:8+1",
+  "keyof-type-parameter.ts typescript(restrict-template-expressions) 6:8+3 \"Type: string | number | symbol\" | 6:8+3",
+  "keyof-type-parameter.ts typescript(restrict-template-expressions) 7:8+5 \"Type: string | number | symbol\" | 7:8+5",
+  "narrowed-never.ts typescript(restrict-template-expressions) 6:15+1 \"Type: never\" | 6:15+1",
+  "nested-in-tagged.ts typescript(restrict-template-expressions) 6:31+3 \"Type: { a: number; }\" | 6:31+3",
+  "paren-expression-range.ts typescript(restrict-template-expressions) 5:21+5 \"Type: { a: number; }\" | 5:21+5",
+  "paren-template-as-tag.ts typescript(restrict-template-expressions) 7:7+3 \"Type: { a: number; }\" | 7:7+3",
+  "regexp-local-alias.ts typescript(restrict-template-expressions) 6:21+2 \"Type: RegExp\" | 6:21+2",
+  "regexp-local-class.ts typescript(restrict-template-expressions) 8:21+2 \"Type: RegExp\" | 8:21+2",
+  "regexp-namespace-interface.ts typescript(restrict-template-expressions) 10:21+2 \"Type: RegExp\" | 10:21+2",
+  "sentinel.ts typescript(restrict-template-expressions) 3:29+14 \"Type: { a: number; }\" | 3:29+14",
+  "sentinel.ts typescript(restrict-template-expressions) 4:29+7 \"Type: () => number\" | 4:29+7"
  ]
 }

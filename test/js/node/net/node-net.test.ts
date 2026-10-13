@@ -12,6 +12,7 @@ import {
   isDebug,
   isMusl,
   isWindows,
+  nodeExe,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -1664,6 +1665,207 @@ describe("Socket fd adoption", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+  });
+
+  // node's _final hands the shutdown of the socket to libuv, which issues it from the event loop:
+  // the peer reads end-of-file before 'prefinish', the end() callback and 'finish'.
+  // socket-fd-end-fixture.js runs under node unchanged. The reports are what node v26.3.0 gives.
+  describe.skipIf(isWindows)("end() on an adopted socket fd", () => {
+    const fixture = join(import.meta.dir, "socket-fd-end-fixture.js");
+    type Report = Record<string, Record<string, unknown>>;
+    const fifoScenario = "the fd is a FIFO";
+
+    // What the other end of a socket, or the read end of a FIFO, has right now.
+    function peek(fd: number) {
+      const chunk = Buffer.alloc(256);
+      let data = "";
+      for (;;) {
+        let n: number;
+        try {
+          n = fs.readSync(fd, chunk);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "EAGAIN") return { data, eof: false };
+          throw e;
+        }
+        if (n === 0) return { data, eof: true };
+        data += chunk.toString("utf8", 0, n);
+      }
+    }
+    // Whether the write side of a socket is shut, from another fd of the same socket.
+    function isHalfClosed(fd: number) {
+      try {
+        fs.writeSync(fd, "late");
+        return false;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EPIPE") return true;
+        throw e;
+      }
+    }
+
+    // Runs one group of the fixture. To each scenario of the child's report it adds what this
+    // process sees while the child is alive:
+    // - `halfClosed`, for a scenario that expects it. This process and a `cat` hold the socket of
+    //   that scenario too, so a close in the child gives the peer no end-of-file.
+    // - `data` and `eof` for any other scenario: what the other end of the child's fd got.
+    async function reportOf(exe: string, group: string, expected: Report) {
+      const names = Object.keys(expected);
+      const held = names.filter(name => "halfClosed" in expected[name]);
+      await using holder = Bun.spawn({
+        cmd: ["cat"],
+        stdio: ["pipe", "ignore", "ignore", ...held.map(() => "pipe" as const)],
+      });
+      // Reading .stdio makes these fds ours to close.
+      const heldFds = holder.stdio.slice(3) as number[];
+      const open = new Set(heldFds);
+      const close = (fd: number) => open.delete(fd) && fs.closeSync(fd);
+      try {
+        const fifo = names.includes(fifoScenario) ? openFifo(`${group}.fifo`) : undefined;
+        if (fifo) open.add(fifo.rfd).add(fifo.wfd);
+        await using child = Bun.spawn({
+          cmd: [exe, fixture, group],
+          env: bunEnv,
+          stdio: [
+            "pipe",
+            "pipe",
+            "pipe",
+            ...names.map(name =>
+              held.includes(name) ? heldFds[held.indexOf(name)] : name === fifoScenario ? fifo!.wfd : ("pipe" as const),
+            ),
+          ],
+        });
+        // This process's fd for each scenario: the other end of the child's fd, or the fd it passed.
+        const fds = child.stdio.slice(3) as number[];
+        for (const fd of fds) open.add(fd);
+        if (fifo) close(fifo.wfd);
+
+        const stderr = child.stderr.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        const readMore = async () => {
+          const { value, done } = await stderr.read();
+          if (!done) text += decoder.decode(value, { stream: true });
+          return !done;
+        };
+        while (!text.includes("\n") && (await readMore()));
+        const line = text.slice(0, text.indexOf("\n"));
+        if (!line.startsWith("{")) throw new Error(`no report from the "${group}" group: ${text}`);
+
+        // The child has run every scenario, and lives until its stdin closes.
+        const fromChild = JSON.parse(line);
+        const report: Report = {};
+        let onStdout: string | undefined;
+        for (const [i, name] of names.entries()) {
+          const { fd, ...entry } = fromChild[name];
+          if (fd === 1) onStdout = name;
+          report[name] = {
+            ...entry,
+            ...(held.includes(name)
+              ? { halfClosed: isHalfClosed(fds[i]) }
+              : name === fifoScenario
+                ? peek(fifo!.rfd)
+                : fd === 3 + i && peek(fds[i])),
+          };
+        }
+        child.stdin.end();
+        const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+        while (await readMore());
+        if (onStdout) report[onStdout].data = stdout;
+        return { report, stderr: text.slice(line.length + 1), exitCode };
+      } finally {
+        for (const fd of open) close(fd);
+      }
+    }
+
+    const end: Report = {
+      // Nothing destroys these three sockets.
+      "the end() callback throws": { events: ["prefinish", "uncaughtException"], late: "EPIPE", data: "x", eof: true },
+      "a 'finish' listener throws": {
+        events: ["prefinish", "finish", "uncaughtException"],
+        late: "EPIPE",
+        data: "x",
+        eof: true,
+      },
+      // The fd is half-closed when 'prefinish' fires, and the throw is reported in the async context of end().
+      "a 'prefinish' listener throws": {
+        events: ["prefinish", "uncaughtException in store"],
+        late: "EPIPE",
+        data: "x",
+        eof: true,
+      },
+      "autoDestroy is off": { events: ["prefinish", "end callback", "finish"], late: "EPIPE", data: "x", eof: true },
+      "another process holds the socket": { events: ["prefinish", "finish", "close"], halfClosed: true },
+      // destroy() does not close fd 1.
+      "the fd is 1": { events: ["prefinish", "finish", "close"], late: "EPIPE", data: "x" },
+      order: {
+        events: [
+          "end() returned",
+          "nextTick",
+          "microtask",
+          "prefinish",
+          "end callback in store",
+          "finish",
+          "setImmediate",
+        ],
+        data: "x",
+        eof: true,
+      },
+      // shutdown(2) fails on a FIFO: its reader gets end-of-file when the fd closes.
+      [fifoScenario]: { events: ["prefinish", "uncaughtException"], late: "written", data: "xlate", eof: false },
+    };
+    // Nothing of end() is pending at 'close': libuv completes a cancelled shutdown before it.
+    const cancelled = { events: ["end callback ERR_STREAM_DESTROYED", "close"], pendingcb: 0, halfClosed: false };
+    const completed = { events: ["prefinish", "end callback", "finish", "close"], pendingcb: 0, halfClosed: true };
+    const destroy: Report = {
+      "destroy() in the block of end()": cancelled,
+      "destroy() on the next tick": cancelled,
+      "destroy() in a microtask": cancelled,
+      "destroy() after an await": cancelled,
+      // The loop issues the shutdown before it runs the immediate.
+      "destroy() in setImmediate": completed,
+      "write() after end()": {
+        events: [
+          "write callback ERR_STREAM_WRITE_AFTER_END",
+          "end callback ERR_STREAM_WRITE_AFTER_END",
+          "error ERR_STREAM_WRITE_AFTER_END",
+          "close",
+        ],
+        pendingcb: 0,
+        halfClosed: false,
+      },
+      "end() two times": completed,
+      // Nothing finishes the next life: its lookup never answers.
+      "'close' connects the socket again": { events: ["close"], connecting: true, data: "x", eof: true },
+      "the 'finish' of another socket destroys it": cancelled,
+    };
+    // Not in node: its connect() takes no fd, it reads an fd that has no `readable: false`, and it has no Bun.gc().
+    const onlyBun: Report = {
+      // The fd is not end()'s to shut down: _final completes inside end(), as on any socket that has no handle.
+      "connect({ fd }) gave the fd to a handle": { events: ["prefinish", "end() returned"], data: "", eof: true },
+      "connect({ fd }) after the shutdown": { events: ["prefinish", "finish"], data: "x", eof: true },
+      "`readable` is omitted": { events: ["prefinish", "finish", "close"], halfClosed: false },
+      // A FIFO keeps the order it had. In node, 'prefinish' comes after end() returns for a FIFO too.
+      [fifoScenario]: { events: ["prefinish", "end() returned", "finish", "close"], data: "x", eof: true },
+      "nothing else refers to the socket": { events: ["finish"], data: "x", eof: true },
+    };
+
+    it("half-closes the fd from the event loop", async () => {
+      expect(await reportOf(bunExe(), "end", end)).toEqual({ report: end, stderr: "", exitCode: 0 });
+    });
+
+    it("a destroy() before the half-close cancels it", async () => {
+      expect(await reportOf(bunExe(), "destroy", destroy)).toEqual({ report: destroy, stderr: "", exitCode: 0 });
+    });
+
+    it("leaves alone an fd that end() was not called for", async () => {
+      expect(await reportOf(bunExe(), "bun", onlyBun)).toEqual({ report: onlyBun, stderr: "", exitCode: 0 });
+    });
+
+    it.skipIf(!nodeExe())("node gives the same reports", async () => {
+      expect([await reportOf(nodeExe()!, "end", end), await reportOf(nodeExe()!, "destroy", destroy)]).toEqual([
+        { report: end, stderr: "", exitCode: 0 },
+        { report: destroy, stderr: "", exitCode: 0 },
+      ]);
     });
   });
 });

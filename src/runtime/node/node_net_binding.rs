@@ -182,3 +182,17 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         opts,
     )
 }
+
+/// `(fd)` → `shutdown(fd, SHUT_WR)` on a socket that node:net adopted by descriptor. The result is
+/// ignored, as node's `afterShutdown` ignores it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L560-L566
+#[bun_jsc::host_fn]
+pub(crate) fn shutdown_write_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let fd =
+        validators::validate_int32(global, frame.argument(0), format_args!("fd"), Some(0), None)?;
+    // fstat reports no socket on Windows, so node:net adopts none there, and a CRT fd is not a SOCKET.
+    #[cfg(not(windows))]
+    uws::socket_transfer::bsd_shutdown_socket(fd);
+    #[cfg(windows)]
+    let _ = fd;
+    Ok(JSValue::UNDEFINED)
+}

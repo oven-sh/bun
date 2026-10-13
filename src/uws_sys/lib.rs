@@ -195,6 +195,7 @@ pub mod socket_transfer {
         ) -> c_int;
         pub fn bsd_socket_import(info: *mut c_void, err: *mut c_int) -> LIBUS_SOCKET_DESCRIPTOR;
         pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
+        pub safe fn bsd_shutdown_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
         pub fn bsd_create_bound_socket(
             host: *const c_char,
             port: c_int,

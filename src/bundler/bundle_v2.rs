@@ -6506,6 +6506,12 @@ pub mod bv2_impl {
                     unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
                 }
 
+                // The warnings of the parse go where the resolve errors of this file went.
+                result.log.clone_to_with_recycled(
+                    this.log_for_resolution_failures(result.source.path.text, target.bake_graph()),
+                    true,
+                );
+
                 parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                     err,
                     step: crate::parse_task::Step::Resolve,

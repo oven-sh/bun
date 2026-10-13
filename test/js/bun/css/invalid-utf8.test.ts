@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, readdirSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // CSS source files whose bytes are not well-formed UTF-8. css-syntax-3 §3.2
@@ -129,16 +129,44 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
     expect(exitCode).toBe(0);
   });
 
-  test("@import and url() specifiers report resolve errors", async () => {
+  test("@import and url() specifiers report resolve errors, with the warning", async () => {
     // The raw byte used to reach the resolve-error formatter, which renders
     // the specifier lossily and then searched the message for the original
-    // bytes: `panic: unreachable` instead of a diagnostic.
+    // bytes: `panic: unreachable` instead of a diagnostic. The warning is what
+    // explains the U+FFFD in the specifier, so it must print with the errors.
     const { stderr, exitCode } = await build(
       { "in.css": raw`@import "./dep${0xe9}.css"; .a { background: url(./img${0xe2}.png) }` },
       ["./in.css", "--outdir=out"],
     );
+    expect(stderr).toContain(replacedWarning);
+    expect(stderr).toContain("in.css:1:15");
     expect(stderr).toContain(`Could not resolve: "./dep\uFFFD.css"`);
     expect(stderr).toContain(`Could not resolve: "./img\uFFFD.png"`);
+    expect(exitCode).toBe(1);
+  });
+
+  // A Linux file name is bytes, so these files exist under the raw byte. The
+  // specifier is decoded before it reaches the resolver and names neither.
+  test.skipIf(!isLinux)("files named by the raw byte do not resolve, and the warning says why", async () => {
+    using dir = tempDir("css-invalid-utf8", {
+      "in.css": raw`@import "./caf${0xe9}.css";\n.a { background: url(./im${0xe9}.png); }\n`,
+    });
+    const named = (stem: string, ext: string) =>
+      Buffer.concat([Buffer.from(join(String(dir), stem)), Buffer.from([0xe9]), Buffer.from(ext)]);
+    writeFileSync(named("caf", ".css"), ".dep { color: red; }\n");
+    writeFileSync(named("im", ".png"), "");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./in.css", "--outdir=out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(replacedWarning);
+    expect(stderr).toContain("in.css:1:15");
+    expect(stderr).toContain(`Could not resolve: "./caf\uFFFD.css"`);
+    expect(stderr).toContain(`Could not resolve: "./im\uFFFD.png"`);
     expect(exitCode).toBe(1);
   });
 
@@ -289,7 +317,7 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
     expect(exitCode).toBe(0);
   });
 
-  test("Bun.build reports the resolve error on a ResolveMessage", async () => {
+  test("Bun.build reports the resolve error on a ResolveMessage, then the warning", async () => {
     using dir = tempDir("css-invalid-utf8", { "in.css": raw`@import url("./dep${0xe2}x.css");` });
     await using proc = Bun.spawn({
       cmd: [
@@ -297,7 +325,8 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
         "-e",
         `const r = await Bun.build({ entrypoints: ["./in.css"], throw: false });
          const l = r.logs.find(l => l.name === "ResolveMessage");
-         console.log(JSON.stringify({ success: r.success, name: l?.name, message: l?.message }));`,
+         const kinds = r.logs.map(l => [l.level, l.name]);
+         console.log(JSON.stringify({ success: r.success, kinds, message: l?.message }));`,
       ],
       env: bunEnv,
       cwd: String(dir),
@@ -310,7 +339,13 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
     // `ResolveMessage.message` decodes its text as Latin-1 today (pre-existing,
     // reproducible with `import "./café.js"`), so only the ASCII around the
     // replacement character is asserted.
-    expect(log).toMatchObject({ success: false, name: "ResolveMessage" });
+    expect(log).toMatchObject({
+      success: false,
+      kinds: [
+        ["error", "ResolveMessage"],
+        ["warn", "BuildMessage"],
+      ],
+    });
     expect(log.message).toStartWith(`Could not resolve: "./dep`);
     expect(log.message).toEndWith(`x.css"`);
     expect(exitCode).toBe(0);

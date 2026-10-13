@@ -1009,24 +1009,28 @@ impl Run<'_> {
         }
     }
 
-    /// Prettier's `logger.warn`
+    /// A warning looks the same whichever config there is.
     fn warn(&mut self, text: &[u8]) {
-        if self.options.log_level >= LogLevel::Warn && self.is_native {
+        if self.options.log_level >= LogLevel::Warn {
             pretty!(
                 &mut self.out.stderr,
                 self.colors(),
                 "<yellow>warn<r><d>:<r> {}\n",
                 BStr::new(text)
             );
-        } else if self.options.log_level >= LogLevel::Warn {
-            for line in strings::split(text, b"\n") {
-                pretty!(
-                    &mut self.out.stderr,
-                    self.colors(),
-                    "[<yellow>warn<r>] {}\n",
-                    BStr::new(line)
-                );
-            }
+        }
+    }
+
+    /// A line of what Prettier's `--check` prints: a file that isn't formatted, or how many there are. It's the result of the
+    /// run and not a warning about it, so it stays as scripts know it.
+    fn list_as_prettier(&mut self, line: &[u8]) {
+        if self.options.log_level >= LogLevel::Warn {
+            pretty!(
+                &mut self.out.stderr,
+                self.colors(),
+                "[<yellow>warn<r>] {}\n",
+                BStr::new(line)
+            );
         }
     }
 
@@ -1768,7 +1772,7 @@ impl Run<'_> {
                         (true, true) => self.log_with_time(&shown, took),
                         // oxfmt does not name the files that it writes.
                         (true, false) if !options.list_different => {}
-                        (false, true) if !self.is_native => self.warn(&shown),
+                        (false, true) if !self.is_native => self.list_as_prettier(&shown),
                         // The list of files is what `--check` was asked for, so it goes to stdout.
                         (false, true) if options.log_level >= LogLevel::Warn => {
                             self.out.stdout.extend_from_slice(&shown);
@@ -1827,7 +1831,7 @@ impl Run<'_> {
                     self.log(b"All matched files use Prettier code style!");
                 }
             } else if only_looks {
-                self.warn(
+                self.list_as_prettier(
                     format!(
                         "Code style issues found in {}. Run bun fmt to fix.",
                         count(different)
@@ -1835,7 +1839,9 @@ impl Run<'_> {
                     .as_bytes(),
                 );
             } else {
-                self.warn(format!("Code style issues fixed in {}.", count(different)).as_bytes());
+                self.list_as_prettier(
+                    format!("Code style issues fixed in {}.", count(different)).as_bytes(),
+                );
             }
         }
         if asks_for_different && different > 0 && self.out.exit_code == 0 {

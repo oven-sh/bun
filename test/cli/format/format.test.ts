@@ -35,8 +35,8 @@ import { inputs as lineEndingInputs } from "./line-endings.cases.ts";
 afterAll(endChildren);
 
 const command = [bunExe(), "fmt"];
-/** Matches the start of an error line: Prettier's `[error]` or Bun's `error:`. */
-const anError = /^(?:\[error\]|error:) /m;
+/** Matches the start of an error. */
+const anError = /^error: /m;
 
 const env = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined };
 
@@ -134,13 +134,13 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // By runs of Prettier 3.9.9 and oxfmt 0.72.0, which says "Error: " where "[error] " is here. Both say it before they look at
-  // the files, the patterns or the configuration.
+  // By runs of Prettier 3.9.9 and oxfmt 0.72.0, which start with "[error] " and "Error: ". Both say it before they look at the
+  // files, the patterns or the configuration.
   describe("flags that say what the run does, and exclude each other", () => {
-    const together = "[error] Cannot use --check and --list-different together.";
-    const twice = (flag: string) => `[error] argument \`${flag}\` cannot be used multiple times in this context`;
+    const together = "error: Cannot use --check and --list-different together.";
+    const twice = (flag: string) => `error: argument \`${flag}\` cannot be used multiple times in this context`;
     const second = (flag: string, first: string) =>
-      `[error] \`${flag}\` cannot be used at the same time as \`${first}\``;
+      `error: \`${flag}\` cannot be used at the same time as \`${first}\``;
     const [prettier, oxfmt] = [{ ".prettierrc": "{}" }, { ".oxfmtrc.json": "{}" }];
     test.each<[string, Record<string, string>, string[], string]>([
       ["Prettier", prettier, ["-l", "--check", "."], together],
@@ -158,9 +158,9 @@ describe.concurrent("bun fmt", () => {
         "Prettier",
         prettier,
         ["-l", "--check", "--no-config", "--config", "x", "."],
-        "[error] Cannot use --no-config and --config together.",
+        "error: Cannot use --no-config and --config together.",
       ],
-      ["no configuration", {}, ["-l", "--check", "."], together.replace("[error]", "error:")],
+      ["no configuration", {}, ["-l", "--check", "."], together],
       ["oxfmt", oxfmt, ["--list-different", "--check", "."], second("--check", "--list-different")],
       ["oxfmt", oxfmt, ["--check", "--list-different", "."], second("--list-different", "--check")],
       ["oxfmt", oxfmt, ["--list-different", "--write", "."], second("--write", "--list-different")],
@@ -292,61 +292,61 @@ describe.concurrent("bun fmt", () => {
       [
         { ".prettierrc": '{"printWidth": 1.5}' },
         [],
-        "[error] Invalid printWidth value. Expected an integer, but received 1.5.",
+        "error: Invalid printWidth value. Expected an integer, but received 1.5.",
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": "5"}' },
         [],
-        '[error] Invalid printWidth value. Expected an integer, but received "5".',
+        'error: Invalid printWidth value. Expected an integer, but received "5".',
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": true}' },
         [],
-        "[error] Invalid printWidth value. Expected an integer, but received true.",
+        "error: Invalid printWidth value. Expected an integer, but received true.",
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": null}' },
         [],
-        "[error] Invalid printWidth value. Expected an integer, but received null.",
+        "error: Invalid printWidth value. Expected an integer, but received null.",
         1,
       ],
       [
         { ".prettierrc.yaml": "tabWidth: abc\n" },
         [],
-        '[error] Invalid tabWidth value. Expected an integer, but received "abc".',
+        'error: Invalid tabWidth value. Expected an integer, but received "abc".',
         1,
       ],
       [
         { "prettier.config.mjs": "export default { tabWidth: NaN };" },
         [],
-        "[error] Invalid tabWidth value. Expected an integer, but received null.",
+        "error: Invalid tabWidth value. Expected an integer, but received null.",
         1,
       ],
       [
         { ".prettierrc": '{"overrides": [{"files": "*.js", "options": {"tabWidth": 0.5}}]}' },
         [],
-        "[error] Invalid tabWidth value. Expected an integer, but received 0.5.",
+        "error: Invalid tabWidth value. Expected an integer, but received 0.5.",
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": 1.5}' },
         ["--print-width", "1.5"],
-        "[error] Invalid --print-width value. Expected an integer, but received 1.5.",
+        "error: Invalid --print-width value. Expected an integer, but received 1.5.",
         1,
       ],
       [
         { ".prettierrc": '{"printWidth": 1.5}' },
         ["--print-width", "80"],
-        "[error] Invalid printWidth value. Expected an integer, but received 1.5.",
+        "error: Invalid printWidth value. Expected an integer, but received 1.5.",
         1,
       ],
       [
         { ".prettierrc": "{}" },
         ["--print-width", "2.5", "--config-precedence", "prefer-file"],
-        "[error] Invalid --print-width value. Expected an integer, but received 2.5.",
+        "error: Invalid --print-width value. Expected an integer, but received 2.5.",
         1,
       ],
     ])("are refused in the words of Prettier: %j %j", async (configuration, args, stderr, exitCode) => {
@@ -363,7 +363,7 @@ describe.concurrent("bun fmt", () => {
       const files = { ".prettierrc": `{ "printWidth": 1.5 }`, "a.js": ugly, "b.js": ugly };
       const result = await format(files, ["--check", "a.js", "b.js"]);
       expect(result.stdout).toBe("Checking formatting...");
-      expect(result.stderr).toBe("[error] Invalid printWidth value. Expected an integer, but received 1.5.");
+      expect(result.stderr).toBe("error: Invalid printWidth value. Expected an integer, but received 1.5.");
       expect(result.exitCode).toBe(1);
     });
   });
@@ -1396,8 +1396,8 @@ describe.concurrent("bun fmt", () => {
   // What Prettier 3.9.9 does with the flag. oxfmt 0.72 does not have it. The comparison is Bun's own.
   describe.each([
     ["no config", {}, "error: "],
-    [".prettierrc", { ".prettierrc": "{}\n" }, "[error] "],
-    [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }, "[error] "],
+    [".prettierrc", { ".prettierrc": "{}\n" }, "error: "],
+    [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }, "error: "],
   ])("--debug-check with %s", (_, config: Record<string, string>, prefix) => {
     const files = { "a.js": formatted, "b.js": ugly };
     const names = Object.keys(files);
@@ -1566,12 +1566,12 @@ describe.concurrent("bun fmt", () => {
     const result = await format(files, [], { reads });
     expect(result.files).toEqual({ ...left, "c.js": formatted });
     expect(result.stderr.trimEnd().split("\n").slice(-2)).toEqual([
-      `[error] ${text}`,
-      "[error]   Use --allow-unsupported to make this a warning.",
+      `error: ${text}`,
+      "  Use --allow-unsupported to make this a warning.",
     ]);
     expect(result.exitCode).toBe(2);
     const checked = await format({ ...files, "c.js": formatted }, ["--check"], { reads });
-    expect(checked.stderr).toContain(`[error] ${text}`);
+    expect(checked.stderr).toContain(`error: ${text}`);
     expect(checked.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads });
     expect(allowed.files).toEqual({ ...left, "c.js": formatted });
@@ -1664,7 +1664,7 @@ exports.format = async (text, options) => {
         expect(left.files).toEqual({ "package.json": text, "d.js": "d;\n" });
         expect(left.stderr).toContain(`Not installed: prettier, ${plugin}`);
         expect(left.stderr).toContain(
-          `[error] 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: ${plugin}\n[error]   Use --allow-unsupported to format it without the plugins.\n`,
+          `error: 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: ${plugin}\n  Use --allow-unsupported to format it without the plugins.\n`,
         );
         expect(left.stderr).not.toContain("language");
         expect(left.exitCode).toBe(2);
@@ -1760,8 +1760,8 @@ exports.format = async (text, options) => {
     );
 
     test.each<[string[], string, number]>([
-      [[], "[error] stdin: SyntaxError: Unexpected token (1:2)", 2],
-      [["--check"], "[error] Unexpected token (1:2)", 0],
+      [[], "error: stdin: SyntaxError: Unexpected token (1:2)", 2],
+      [["--check"], "error: Unexpected token (1:2)", 0],
     ])(
       "--parser with the plugin's parser, and the code doesn't parse: %j",
       async (flags, stderr, exitCode) => {
@@ -1784,7 +1784,7 @@ exports.format = async (text, { parser }) => {
 `;
         const project = { ...files, "node_modules/prettier/index.cjs": prettier };
         const result = await format(project, ["--parser", "nonsense"], { stdin: "a\n" });
-        expect(result).toMatchObject({ raw: "", stderr: `[error] Couldn't resolve parser "nonsense".`, exitCode: 1 });
+        expect(result).toMatchObject({ raw: "", stderr: `error: Couldn't resolve parser "nonsense".`, exitCode: 1 });
       },
       timeout,
     );
@@ -1797,17 +1797,17 @@ exports.format = async (text, { parser }) => {
       expect(result.stderr.split("\n")).toEqual([
         "[warn] Not installed: prettier, prettier-plugin-svelte",
         "[warn]   Install prettier and every plugin in your config, and bun fmt will use them for these files.",
-        "[error] 1 file was not formatted because bun fmt does not support its language yet: 1 svelte",
-        "[error]   Use --allow-unsupported to make this a warning.",
+        "error: 1 file was not formatted because bun fmt does not support its language yet: 1 svelte",
+        "  Use --allow-unsupported to make this a warning.",
       ]);
       expect(result.exitCode).toBe(2);
     });
 
     // As Prettier 3.9.9 with a plugin that throws this.
     test.each<[string[], string, number]>([
-      [[], "[error] c.svelte: SyntaxError: Unexpected token (1:2)", 2],
-      [["--check"], "[error] Unexpected token (1:2)", 0],
-      [["--list-different"], "[error] Unexpected token (1:2)", 0],
+      [[], "error: c.svelte: SyntaxError: Unexpected token (1:2)", 2],
+      [["--check"], "error: Unexpected token (1:2)", 0],
+      [["--list-different"], "error: Unexpected token (1:2)", 0],
     ])(
       "from standard input, and it does not parse: %j",
       async (flags, stderr, exitCode) => {
@@ -1836,8 +1836,8 @@ exports.format = async (text, { parser }) => {
         expect(result.stderr.split("\n")).toEqual([
           `[warn] Not installed: ${missing}`,
           "[warn]   Install prettier and every plugin in your config, and bun fmt will use them for these files.",
-          `[error] ${unsupported}`,
-          "[error]   Use --allow-unsupported to make this a warning.",
+          `error: ${unsupported}`,
+          "  Use --allow-unsupported to make this a warning.",
         ]);
         expect(result.exitCode).toBe(2);
       });
@@ -1943,7 +1943,7 @@ exports.format = async (text, { parser }) => {
           { reads: ["a.svelte", "c.svelte"] },
         );
         expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.svelte": "<p   >waits</p>\n" });
-        expect(result.stderr).toContain("[error] c.svelte: A promise never settled, and nothing is left to wait for.");
+        expect(result.stderr).toContain("error: c.svelte: A promise never settled, and nothing is left to wait for.");
         expect(result.exitCode).toBe(2);
       },
       timeout,
@@ -1967,7 +1967,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       async () => {
         const result = await format({ ...files, "a.svelte": "broken\n" }, [], { reads });
         expect(result.files["a.svelte"]).toBe("broken\n");
-        expect(result.stderr).toContain("[error] a.svelte: SyntaxError: Unexpected token (1:2)");
+        expect(result.stderr).toContain("error: a.svelte: SyntaxError: Unexpected token (1:2)");
         expect(result.exitCode).toBe(2);
       },
       timeout,
@@ -2195,10 +2195,10 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const result = await format(files, [], { reads });
     expect(result.files).toEqual({ "a.js": ugly, "b.astro": files["b.astro"], "other/c.js": formatted });
     expect(result.stderr).toContain(
-      "[error] 2 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style, ./own.js\n[error]   Use --allow-unsupported to format them without the plugins.",
+      "error: 2 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style, ./own.js\n  Use --allow-unsupported to format them without the plugins.",
     );
     expect(result.stderr).toContain(
-      "[error] 1 file was not formatted because bun fmt does not support its language yet",
+      "error: 1 file was not formatted because bun fmt does not support its language yet",
     );
     expect(result.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads });
@@ -2215,7 +2215,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       const piped = await format(files, [...flags, "--stdin-filepath", "d.js"], { stdin: ugly });
       expect(piped.raw).toBe("");
       expect(piped.stderr).toBe(
-        "[error] 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style, ./own.js\n[error]   Use --allow-unsupported to format it without the plugins.",
+        "error: 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style, ./own.js\n  Use --allow-unsupported to format it without the plugins.",
       );
       expect(piped.exitCode).toBe(2);
     }
@@ -2229,7 +2229,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const result = await format(files, [], { reads: ["a.js", "legacy/b.js"] });
     expect(result.files).toEqual({ "a.js": formatted, "legacy/b.js": ugly });
     expect(result.stderr).toContain(
-      "[error] 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style\n",
+      "error: 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style\n",
     );
     expect(result.exitCode).toBe(2);
     // An override that empties the list takes its files out.
@@ -2565,7 +2565,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       });
       expect(result.raw).toBe("");
       expect(result.stderr).toBe(
-        "[error] 1 file was not formatted because bun fmt does not support its language yet: 1 .astro\n[error]   Use --allow-unsupported to make this a warning.",
+        "error: 1 file was not formatted because bun fmt does not support its language yet: 1 .astro\n  Use --allow-unsupported to make this a warning.",
       );
       expect(result.exitCode).toBe(2);
     });
@@ -4819,25 +4819,25 @@ try {
       expect(result.exitCode).toBe(exitCode);
     });
 
-    test.each<[Record<string, string>, string[], string, number]>([
-      [prettier, [], "[error] ", 1],
-      [prettier, ["--check"], "[error] ", 0],
-      [prettier, ["--list-different"], "[error] ", 0],
-      [prettier, ["--ignore-unknown"], "[error] ", 1],
-      [{}, [], "error: ", 2],
-      [{}, ["--check"], "error: ", 2],
-    ])("a parser nobody has: %j %j", async (config, flags, before, exitCode) => {
+    test.each<[Record<string, string>, string[], number]>([
+      [prettier, [], 1],
+      [prettier, ["--check"], 0],
+      [prettier, ["--list-different"], 0],
+      [prettier, ["--ignore-unknown"], 1],
+      [{}, [], 2],
+      [{}, ["--check"], 2],
+    ])("a parser nobody has: %j %j", async (config, flags, exitCode) => {
       const result = await format({ ...files, ...config }, ["--parser", "nonsense", ...flags], { stdin: js, reads });
       expect(result).toMatchObject({
         raw: "",
-        stderr: `${before}Couldn't resolve parser "nonsense".`,
+        stderr: `error: Couldn't resolve parser "nonsense".`,
         exitCode,
         files,
       });
     });
 
     test("--config-precedence", async () => {
-      const none = "[error] No parser and no file path given, couldn't infer a parser.";
+      const none = "error: No parser and no file path given, couldn't infer a parser.";
       const prefer = ["--config-precedence", "prefer-file"];
       const override = ["--config-precedence", "file-override"];
       const json = { ".prettierrc": `{ "parser": "json" }` };
@@ -4993,8 +4993,8 @@ try {
       expect(result.files).toEqual(files);
       expect(result.raw).toBe("");
       expect(result.stderr.split("\n")).toEqual([
-        `[error] --parser markdown would read every file in "." as markdown`,
-        `[error]   Name the files, or use a glob: bun fmt --parser markdown "**/*.md"`,
+        `error: --parser markdown would read every file in "." as markdown`,
+        `  Name the files, or use a glob: bun fmt --parser markdown "**/*.md"`,
       ]);
       expect(result.exitCode).toBe(2);
     });
@@ -6578,7 +6578,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
         const result = await format(dir, ["--check", "a.js"]);
         // What it prints is seen only if it fails.
         expect(result.stdout + result.stderr).not.toMatch(/\bout\b|\berr\b/);
-        if (!isLoaded) expect(result.stderr).toMatch(/prettier\.config\.mjs:\r?\n\[error\] ./);
+        if (!isLoaded) expect(result.stderr).toMatch(/prettier\.config\.mjs:\r?\n./);
         expect(everythingIn(dir)).toEqual(["a.js", "node_modules", "node_modules/.keep", "prettier.config.mjs"]);
         expect(result.exitCode).toBe(exitCode);
       },

@@ -131,14 +131,14 @@ describe.concurrent("bun fmt --check", () => {
 });
 
 describe.concurrent("bun fmt", () => {
-  test("errors start with Bun's `error:`, or Prettier's `[error]` with a .prettierrc", async () => {
+  test("errors start with `error:`, with a .prettierrc too", async () => {
     const [missing, ofPrettier] = await Promise.all([
       format({ "a.js": formatted }, ["nothing.js"]),
       format({ "a.js": formatted, ".prettierrc": "{}\n" }, ["nothing.js"]),
     ]);
     expect(missing.stderr).toStartWith('error: No files matching the pattern were found: "nothing.js".\n');
     expect(missing.exitCode).toBe(2);
-    expect(ofPrettier.stderr).toStartWith('[error] No files matching the pattern were found: "nothing.js".\n');
+    expect(ofPrettier.stderr).toStartWith('error: No files matching the pattern were found: "nothing.js".\n');
     expect(ofPrettier.exitCode).toBe(2);
   });
 
@@ -151,7 +151,7 @@ describe.concurrent("bun fmt", () => {
     ]);
     expect(refused.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
     expect(allowed.stderr).toStartWith("warn: --plugin has no effect ");
-    expect(ofPrettier.stderr).toStartWith("[error] bun fmt does not include the plugin prettier-plugin-x\n");
+    expect(ofPrettier.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
     expect([refused.exitCode, allowed.exitCode, ofPrettier.exitCode]).toEqual([2, 0, 2]);
   });
 

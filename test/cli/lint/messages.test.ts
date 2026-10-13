@@ -131,7 +131,7 @@ describe.concurrent("bun fmt", () => {
   });
 
   test("oxfmt options in a .prettierrc", async () => {
-    const hint = "\n[error]   Use --allow-unsupported to make this a warning.";
+    const hint = "\n  Use --allow-unsupported to make this a warning.";
     const [one, two, allowed] = await Promise.all([
       bun({ ".prettierrc": `{ "sortTailwindcss": true }\n`, "a.js": "a;\n" }, ["fmt", "a.js"]),
       bun({ ".prettierrc": `{ "sortTailwindcss": true, "experimentalTailwindcss": true }\n`, "a.js": "a;\n" }, [
@@ -140,9 +140,9 @@ describe.concurrent("bun fmt", () => {
       ]),
       bun({ ".prettierrc": `{ "sortTailwindcss": true }\n`, "a.js": "a;\n" }, ["fmt", "--allow-unsupported", "a.js"]),
     ]);
-    expect(one.stderr).toEndWith(`[error] sortTailwindcss is not supported yet and has no effect${hint}`);
+    expect(one.stderr).toEndWith(`error: sortTailwindcss is not supported yet and has no effect${hint}`);
     expect(two.stderr).toEndWith(
-      `[error] sortTailwindcss, experimentalTailwindcss are not supported yet and have no effect${hint}`,
+      `error: sortTailwindcss, experimentalTailwindcss are not supported yet and have no effect${hint}`,
     );
     expect(allowed.stderr).toEndWith("[warn] sortTailwindcss is not supported yet and has no effect");
     expect([one.exitCode, two.exitCode, allowed.exitCode]).toEqual([2, 2, 0]);
@@ -158,7 +158,7 @@ describe.concurrent("bun fmt", () => {
   ])("sortImports: %s", async (sortImports, message) => {
     const files = { ".oxfmtrc.json": `{ "sortImports": ${sortImports} }\n`, "a.js": "a;\n" };
     const { stderr, exitCode } = await bun(files, ["fmt", "a.js"]);
-    expect(stderr).toContain(`[error] Invalid \`sortImports\` configuration: ${message}\n`);
+    expect(stderr).toContain(`error: Invalid \`sortImports\` configuration: ${message}\n`);
     expect(exitCode).toBe(2);
   });
 });

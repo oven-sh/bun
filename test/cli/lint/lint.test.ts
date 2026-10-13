@@ -4435,11 +4435,11 @@ describe.concurrent("bun lint", () => {
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // Each project is a program of its own. In four runs: one takes seconds in a debug build.
-      test.serial.each([0, 1, 2, 3])(
+      // Each project is a program of its own. In twelve runs: one takes seconds in a debug build.
+      test.serial.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
         "the rules that need types report what tsgolint's report: part %d",
         async part => {
-          const some = projects.filter(it => it.typed).filter((_, index) => index % 4 === part);
+          const some = projects.filter(it => it.typed).filter((_, index) => index % 12 === part);
           const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
           for (const { name, config, files: texts } of some) {

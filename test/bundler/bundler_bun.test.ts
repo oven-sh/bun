@@ -230,36 +230,77 @@ error: Hello World`,
       });
     }
   }
-  itBundled("bun/UnknownBunSpecifierDoesNotLoadThePackageNamedLikeItsSuffix", {
-    target: "bun",
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`bun/UnknownBunSpecifierDoesNotLoadThePackageNamedLikeItsSuffix-${format}`, {
+      target: "bun",
+      format,
+      files: {
+        "/entry.js": /* js */ `
+          import real from "bun:not-a-builtin";
+          console.log(real);
+        `,
+        "/node_modules/not-a-builtin/package.json": JSON.stringify({ name: "not-a-builtin", main: "index.js" }),
+        "/node_modules/not-a-builtin/index.js": `module.exports = "the package named like the suffix";`,
+      },
+      run: {
+        exitCode: 1,
+        validate({ stdout, stderr }) {
+          expect(stdout).toBe("");
+          expect(stderr).toContain("'bun:not-a-builtin'");
+        },
+      },
+    });
+    // "bun:fs" is not a module, but it has always loaded "fs", and programs import it.
+    itBundled(`bun/BunPrefixedBuiltinLoadsTheBuiltin-${format}`, {
+      target: "bun",
+      format,
+      files: {
+        "/entry.js": /* js */ `
+          import fs from "bun:fs";
+          const path = require("bun:path");
+          import("bun:fs/promises").then(promises => console.log(typeof fs.readFileSync, typeof path.join, typeof promises.readFile));
+        `,
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js").match(/"(bun:)?(fs|path|fs\/promises)"/g)).toEqual([
+          `"fs"`,
+          `"path"`,
+          `"fs/promises"`,
+        ]);
+      },
+      run: { stdout: "function function function" },
+    });
+  }
+  itBundled("bun/UnknownBunSpecifierInShebangEntry", {
+    // No `target`: the "#!/usr/bin/env bun" line makes the entry point a file for bun.
+    files: {
+      "/entry.js": `#!/usr/bin/env bun\nimport fromImport from "bun:not-a-builtin";\nconsole.log(fromImport);`,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`import fromImport from "bun:not-a-builtin";`);
+    },
+  });
+  itBundled("bun/UnknownBunSpecifierInExecutable", {
+    backend: "cli",
+    compile: true,
+    bytecode: true,
+    format: "cjs",
     files: {
       "/entry.js": /* js */ `
-        import real from "bun:not-a-builtin";
-        console.log(real);
+        const fromRequire = require("bun:not-a-builtin");
+        console.log(fromRequire);
       `,
-      "/node_modules/not-a-builtin/package.json": JSON.stringify({ name: "not-a-builtin", main: "index.js" }),
-      "/node_modules/not-a-builtin/index.js": `module.exports = "the package named like the suffix";`,
+      // What the name without its prefix finds in the directory the executable runs in.
+      "/node_modules/not-a-builtin/index.js": `console.log("LOADED node_modules/not-a-builtin");`,
     },
     run: {
+      setCwd: true,
       exitCode: 1,
       validate({ stdout, stderr }) {
         expect(stdout).toBe("");
-        expect(stderr).toContain("'bun:not-a-builtin'");
+        expect(stderr).toMatch(/^error: Cannot find package 'bun:not-a-builtin' from '.*'\r?$/m);
       },
     },
-  });
-  // "bun:fs" is not a module, but it has always loaded "fs", and programs import it.
-  itBundled("bun/BunPrefixedBuiltinLoadsTheBuiltin", {
-    target: "bun",
-    files: {
-      "/entry.js": /* js */ `
-        import { existsSync } from "bun:fs";
-        const path = require("bun:path");
-        const { EventEmitter } = await import("bun:events");
-        console.log(typeof existsSync, typeof path.join, typeof EventEmitter);
-      `,
-    },
-    run: { stdout: "function function function" },
   });
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {

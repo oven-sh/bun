@@ -481,9 +481,26 @@ pub fn do_patch_commit(
             bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
 
         // `Global::crash()` runs no deferred restore: the patch hash goes back before any exit below.
-        let patch_hash = PatchStamp::take_out(new_folder, pkg.resolution.tag);
+        let patch_hash = match PatchStamp::take_out(new_folder, pkg.resolution.tag) {
+            Ok(patch_hash) => patch_hash,
+            Err(e) => {
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: failed to take the patch hash out of <b>{}<r> for the diff: {}<r>\n",
+                    bstr::BStr::new(new_folder),
+                    e,
+                );
+                Global::crash();
+            }
+        };
         let spawned = bun_spawn::sync::spawn(&opts);
-        PatchStamp::put_back(new_folder, pkg.resolution.tag, patch_hash);
+        if let Err(e) = PatchStamp::put_back(new_folder, pkg.resolution.tag, patch_hash) {
+            bun_core::pretty_error!(
+                "<r><red>error<r>: failed to put the patch hash back into <b>{}<r>: {}<r>\n",
+                bstr::BStr::new(new_folder),
+                e,
+            );
+            Global::crash();
+        }
 
         let mut spawn_result = match spawned {
             Err(e) => {

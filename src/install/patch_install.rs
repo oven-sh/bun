@@ -207,45 +207,74 @@ impl PatchStamp {
         }
     }
 
-    /// Takes the patch hash out of the copy that `bun patch --commit` diffs, for [`Self::put_back`].
-    pub(crate) fn take_out(folder: &[u8], tag: ResolutionTag) -> Option<Vec<u8>> {
+    /// `node_modules/<temporary name>`: outside the folder that `bun patch --commit` diffs, on its filesystem.
+    fn aside(extname: &[u8]) -> ZBox {
+        let mut name_buf = [0u8; 64];
+        let name = FileSystem::tmpname(extname, &mut name_buf, bun_core::fast_random())
+            .expect("a temporary name fits in 64 bytes");
+        let mut buf = bun_paths::path_buffer_pool::get();
+        ZBox::from_bytes(
+            path::resolve_path::join_z_buf::<path::platform::Auto>(
+                &mut buf.0,
+                &[b"node_modules", name.as_bytes()],
+            )
+            .as_bytes(),
+        )
+    }
+
+    /// Swaps [`Self::file`] of the copy for one without the patch hash. Returns where the original waits for [`Self::put_back`].
+    pub(crate) fn take_out(folder: &[u8], tag: ResolutionTag) -> sys::Result<Option<ZBox>> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut buf.0,
             &[folder, Self::file(tag).as_bytes()],
         );
-        let contents = sys::File::read_from(Fd::cwd(), path.as_bytes()).ok()?;
-        let unstamped = Self::unstamped(tag, &contents)?;
-        // A new file: an installed file can share its inode with the cache.
-        let _ = sys::unlink(path);
-        if let Err(e) = sys::File::write_file(Fd::cwd(), path, &unstamped) {
-            bun_core::warn!(
-                "failed removing the patch hash from {}, this may cause issues: {}",
-                BStr::new(path.as_bytes()),
-                e
-            );
-            let _ = sys::File::write_file(Fd::cwd(), path, &contents);
-            return None;
+        let Ok(contents) = sys::File::read_from(Fd::cwd(), path.as_bytes()) else {
+            return sys::Result::Ok(None);
+        };
+        let Some(unstamped) = Self::unstamped(tag, &contents) else {
+            return sys::Result::Ok(None);
+        };
+
+        // The original is renamed, never rewritten: it can share its inode with the cache, and a rename back cannot fail for space.
+        let replacement = Self::aside(b"without-patch-hash");
+        let original = Self::aside(b"with-patch-hash");
+        let mode = sys::stat(path)?.st_mode as sys::Mode;
+        let written = sys::File::openat(
+            Fd::cwd(),
+            replacement.as_bytes(),
+            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+            mode,
+        )
+        .and_then(|file| file.write_all(&unstamped))
+        .and_then(|()| sys::renameat(Fd::cwd(), path, Fd::cwd(), original.as_zstr()));
+        if let Err(e) = written {
+            let _ = sys::unlink(replacement.as_zstr());
+            return sys::Result::Err(e);
         }
-        Some(contents)
+        if let Err(e) = sys::renameat(Fd::cwd(), replacement.as_zstr(), Fd::cwd(), path) {
+            let _ = sys::unlink(replacement.as_zstr());
+            return sys::renameat(Fd::cwd(), original.as_zstr(), Fd::cwd(), path)
+                .and(sys::Result::Err(e));
+        }
+        sys::Result::Ok(Some(original))
     }
 
-    pub(crate) fn put_back(folder: &[u8], tag: ResolutionTag, contents: Option<Vec<u8>>) {
-        let Some(contents) = contents else {
-            return;
+    pub(crate) fn put_back(
+        folder: &[u8],
+        tag: ResolutionTag,
+        original: Option<ZBox>,
+    ) -> sys::Result<()> {
+        let Some(original) = original else {
+            return sys::Result::Ok(());
         };
         let mut buf = bun_paths::path_buffer_pool::get();
         let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut buf.0,
             &[folder, Self::file(tag).as_bytes()],
         );
-        if let Err(e) = sys::File::write_file(Fd::cwd(), path, &contents) {
-            bun_core::warn!(
-                "failed restoring the patch hash in {}, this may cause issues: {}",
-                BStr::new(path.as_bytes()),
-                e
-            );
-        }
+        sys::renameat(Fd::cwd(), original.as_zstr(), Fd::cwd(), path)
+            .map_err(|e| e.with_path(original.as_bytes()))
     }
 
     /// Records `patch_hash` in the patched copy at `package_dir`.

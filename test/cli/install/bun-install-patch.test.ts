@@ -1,7 +1,14 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, runBunInstall, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isWindows,
+  normalizeBunSnapshot as normalizeBunSnapshot_,
+  runBunInstall,
+  tempDir,
+} from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
@@ -1128,7 +1135,7 @@ describe("patchedDependencies contents_hash", () => {
 // copy is patched. The hoisted linker reads it from the package.json of the copy.
 // https://github.com/oven-sh/bun/issues/25932
 describe("a patch that package.json and bun.lock lose in one step", () => {
-  const registry = new VerdaccioRegistry();
+  const registry = new TestRegistry();
 
   beforeAll(async () => {
     await registry.start();
@@ -1297,6 +1304,30 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     expect(await install(packageDir)).toContain("(no changes)");
   });
 
+  // A registry for the one package in `<dir>/<name>`, and a hoisted project in `<dir>/app` that depends on it.
+  async function projectWithPackage(dir: string, name: string) {
+    await bun(join(dir, name), ["pm", "pack", "--destination", dir]);
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (req.url.endsWith(".tgz")) return new Response(Bun.file(join(dir, `${name}-1.0.0.tgz`)));
+        const tarball = `http://localhost:${server.port}/${name}/-/${name}-1.0.0.tgz`;
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball } } },
+        });
+      },
+    });
+    const app = join(dir, "app");
+    await Bun.write(join(app, "package.json"), JSON.stringify({ name: "app", dependencies: { [name]: "1.0.0" } }));
+    await Bun.write(
+      join(app, "bunfig.toml"),
+      `[install]\nlinker = "hoisted"\nregistry = "http://localhost:${server.port}/"\n`,
+    );
+    return { server, app, installed: join(app, "node_modules", name) };
+  }
+
   // A package that someone published from a patched copy has the key in its own package.json.
   test.concurrent("a package that is published with the patch hash key is installed once", async () => {
     using dir = tempDir("published-with-patch-hash", {
@@ -1304,34 +1335,44 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
         "package.json": `{"_bunPatchHash":"0123456789abcdef","name":"ships-key","version":"1.0.0"}`,
         "index.js": "module.exports = 1;\n",
       },
-      app: { "package.json": JSON.stringify({ name: "app", dependencies: { "ships-key": "1.0.0" } }) },
     });
-    await bun(join(String(dir), "ships-key"), ["pm", "pack", "--destination", String(dir)]);
-    using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        if (req.url.endsWith(".tgz")) return new Response(Bun.file(join(String(dir), "ships-key-1.0.0.tgz")));
-        const tarball = `http://localhost:${server.port}/ships-key/-/ships-key-1.0.0.tgz`;
-        return Response.json({
-          name: "ships-key",
-          "dist-tags": { latest: "1.0.0" },
-          versions: { "1.0.0": { name: "ships-key", version: "1.0.0", dist: { tarball } } },
-        });
-      },
-    });
-    const app = join(String(dir), "app");
-    await Bun.write(
-      join(app, "bunfig.toml"),
-      `[install]\nlinker = "hoisted"\nregistry = "http://localhost:${server.port}/"\n`,
-    );
+    const { server, app, installed } = await projectWithPackage(String(dir), "ships-key");
+    using _ = server;
 
     await install(app);
-    expect(Object.entries(await Bun.file(join(app, "node_modules", "ships-key", "package.json")).json())[0]).toEqual([
+    expect(Object.entries(await Bun.file(join(installed, "package.json")).json())[0]).toEqual([
       "_bunPatchHash",
       "0123456789abcdef",
     ]);
     expect(await install(app)).toContain("(no changes)");
   });
+
+  // git records the executable bit of a file, so the diff must see the mode that the package has.
+  test
+    .skipIf(isWindows)
+    .concurrent("`bun patch --commit` keeps an unchanged package.json out of the next patch", async () => {
+      using dir = tempDir("patched-executable-manifest", {
+        "exec-manifest": {
+          "package.json": JSON.stringify({ name: "exec-manifest", version: "1.0.0" }),
+          "index.js": "module.exports = 1;\n",
+        },
+      });
+      await $`chmod 755 ${join(String(dir), "exec-manifest", "package.json")}`;
+      const { server, app, installed } = await projectWithPackage(String(dir), "exec-manifest");
+      using _ = server;
+
+      await install(app);
+      for (const edit of ["first", "second"]) {
+        await bun(app, ["patch", "exec-manifest"]);
+        await Bun.write(join(installed, `${edit}.txt`), `${edit}\n`);
+        await bun(app, ["patch", "--commit", "node_modules/exec-manifest"]);
+      }
+
+      expect((await Bun.file(join(installed, "package.json")).stat()).mode & 0o111).not.toBe(0);
+      const patch = await Bun.file(join(app, "patches", "exec-manifest@1.0.0.patch")).text();
+      expect(patch).toContain("second.txt");
+      expect(patch).not.toContain("package.json");
+    });
 
   // The hoisted linker reads `.bun-tag` of a git dependency, not its package.json.
   test.concurrent("a git dependency is installed again as committed", async () => {
@@ -1408,9 +1449,10 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 
       await bun(packageDir, ["patch", "no-deps"]);
       await Bun.write(join(noDeps, "second.txt"), "second\n");
-      // With no git to run, the commit stops before it writes a patch.
+      // With no git to run, the commit stops before it writes a patch. Windows spells the variable `Path`.
+      const noPath = Object.fromEntries(Object.entries(bunEnv).filter(([name]) => name.toUpperCase() !== "PATH"));
       const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"], {
-        ...bunEnv,
+        ...noPath,
         PATH: join(packageDir, "no-git-here"),
       });
       expect(commit.stderr).toContain("git must be installed");

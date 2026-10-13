@@ -59,17 +59,13 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
 extern "C" SYSV_ABI void Bun__setupLazyMetafile(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue buildOutputEncoded,
-    JSC::EncodedJSValue metafileJsonStringEncoded,
-    JSC::EncodedJSValue metafileMarkdownStringEncoded)
+    JSC::EncodedJSValue metafileJsonStringEncoded)
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* buildOutput = JSValue::decode(buildOutputEncoded).getObject();
     ASSERT(buildOutput);
 
     JSValue metafileJsonString = JSValue::decode(metafileJsonStringEncoded);
-    // metafileMarkdownString is currently unused for backward compatibility
-    // (we only set the JSON on result.metafile directly)
-    (void)metafileMarkdownStringEncoded;
 
     // Store raw JSON string in private property on buildOutput and set up lazy getter for "metafile"
     // This returns the parsed JSON directly for backward compatibility with esbuild API

@@ -1,16 +1,16 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { closeSync, createReadStream } from "fs";
-import { bunEnv, bunExe, isMusl, isWindows, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
-let registry: VerdaccioRegistry;
+let registry: TestRegistry;
 let registryUrl: string;
 
-beforeAll(async () => {
-  registry = new VerdaccioRegistry();
+beforeAll(() => {
+  registry = new TestRegistry().start();
   registryUrl = registry.registryUrl();
-  await registry.start();
 });
 
 afterAll(() => {
@@ -878,7 +878,7 @@ describe.concurrent("bun update --interactive", () => {
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"] });
 
     expect(stdout).toContain("Selected 2 packages to update");
-    expect(stdout).toContain("Dry run");
+    expect(stdout).toContain("would be updated");
     expect(exitCode).toBe(0);
 
     const afterContent = await Bun.file(join(dir, "package.json")).text();

@@ -101,24 +101,6 @@ export function getStdioWriteStream(
   };
 
   const { kWriteStreamFastPath, kOnPendingWrite } = require("internal/fs/streams");
-  stream._final = function (cb) {
-    try {
-      const sink = this[kWriteStreamFastPath];
-      if (sink && sink !== true) {
-        const result = sink.flush();
-        if ($isPromise(result)) {
-          result.then(
-            () => cb(null),
-            err => cb(err),
-          );
-          return;
-        }
-      }
-      cb(null);
-    } catch (err) {
-      cb(err);
-    }
-  };
 
   // console.* writes straight to the shared native sink unless doing so could
   // be told apart from a `write()` call: while this Writable is corked, is
@@ -207,6 +189,20 @@ export function flushStdioWriteStreamOnExit(stream) {
   }
 }
 
+// node:worker_threads worker: process.stdout/stderr write to the parent Worker over a
+// MessagePort; process.stdin reads from one for { stdin: true }, else is already ended.
+export function getNodeWorkerStdioStream(process: typeof globalThis.process, fd: number, ports: any) {
+  const stdio = require("internal/worker/stdio");
+  if (fd === 0) {
+    return ports.stdin ? stdio.makePortReadable(ports.stdin, true) : stdio.makeEndedReadable();
+  }
+  const stream = stdio.makePortWritable(fd === 1 ? ports.stdout : ports.stderr);
+  // A synchronous exit leaves no loop turn for the reader's ack; complete the parked
+  // writev so buffered chunks are posted before the thread goes away (node's flushSync).
+  process.on("exit", stream[stdio.kFlushSync]);
+  return stream;
+}
+
 export function getStdinStream(
   process: typeof globalThis.process,
   fd: number,
@@ -217,7 +213,7 @@ export function getStdinStream(
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 
-  var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  var reader: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
 
   let needsInternalReadRefresh = false;
   // if true, while the stream is own()ed it will not
@@ -418,18 +414,12 @@ export function getStdinStream(
 
   return stream;
 }
-export function initializeNextTickQueue(
-  process: typeof globalThis.process,
-  nextTickQueue,
-  drainMicrotasksFn,
-  reportUncaughtExceptionFn,
-) {
+export function initializeNextTickQueue(process: typeof globalThis.process, nextTickQueue, drainMicrotasksFn) {
   var queue;
   var tickInitHooks;
-  var process;
+  var process: typeof globalThis.process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
-  var reportUncaughtException = reportUncaughtExceptionFn;
 
   const { validateFunction } = require("internal/validators");
 
@@ -448,37 +438,38 @@ export function initializeNextTickQueue(
           var frame = tock.frame;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame);
-          try {
-            if (args === undefined) {
-              callback();
-            } else {
-              switch (args.length) {
-                case 1:
-                  callback(args[0]);
-                  break;
-                case 2:
-                  callback(args[0], args[1]);
-                  break;
-                case 3:
-                  callback(args[0], args[1], args[2]);
-                  break;
-                case 4:
-                  callback(args[0], args[1], args[2], args[3]);
-                  break;
-                default:
-                  callback(...args);
-                  break;
-              }
+          // No catch and no finally: what a tick throws leaves this function as it was thrown, with
+          // the tick's frame still current. JSNextTickQueue::drain reports it there (so an
+          // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
+          // async context back, and calls in again for the ticks after it.
+          if (args === undefined) {
+            callback();
+          } else {
+            switch (args.length) {
+              case 1:
+                callback(args[0]);
+                break;
+              case 2:
+                callback(args[0], args[1]);
+                break;
+              case 3:
+                callback(args[0], args[1], args[2]);
+                break;
+              case 4:
+                callback(args[0], args[1], args[2], args[3]);
+                break;
+              default:
+                callback(...args);
+                break;
             }
-          } catch (e) {
-            reportUncaughtException(e);
-          } finally {
-            $putInternalField($asyncContext, 0, restore);
           }
+          $putInternalField($asyncContext, 0, restore);
         }
 
         drainMicrotasks();
       } while (!queue.isEmpty());
+      // Without this, every checkpoint after the first tick calls this function to find an empty queue.
+      $putInternalField(nextTickQueue, 0, 0);
     }
 
     $putInternalField(nextTickQueue, 0, 0);
@@ -519,7 +510,9 @@ export function initializeNextTickQueue(
           // never surfaced to the process.nextTick() caller. console is a
           // user-mutable global, so shield the print; exit regardless.
           try {
-            console.error(typeof err?.stack === "string" ? err.stack : err);
+            console.error(
+              typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
+            );
           } catch {}
           process.exit(1);
         }
@@ -540,7 +533,7 @@ export function windowsEnv(
   envMapList: Array<string>,
   editWindowsEnvVar: EditWindowsEnvVarCb,
   coerceForWrite,
-  resetTZ,
+  resetForDelete,
 ) {
   (internalEnv as any)[Bun.inspect.custom] = () => {
     let o = {};
@@ -569,8 +562,8 @@ export function windowsEnv(
     // name-matching TZ here survives a prior `delete process.env.TZ`.
     const coerced = coerceForWrite(k, value);
     // Track the key for enumeration if it isn't already there. Don't gate on
-    // `k in internalEnv`: the proxy accessors (HTTP_PROXY, ...) always exist
-    // as DontEnum CustomAccessors even when the variable was never set.
+    // `k in internalEnv`: the TZ and NODE_TLS_REJECT_UNAUTHORIZED accessors
+    // always exist as DontEnum CustomAccessors even when the variable was never set.
     if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
       envMapList.push(p);
     }
@@ -580,7 +573,7 @@ export function windowsEnv(
     }
   }
 
-  return new Proxy(internalEnv, {
+  const envProxy = new Proxy(internalEnv, {
     get(_, p) {
       if (typeof p !== "string") {
         // Symbol keys (e.g. Bun.inspect.custom) live on internalEnv as-is.
@@ -597,7 +590,12 @@ export function windowsEnv(
       // matching node where `process.env.hasOwnProperty` is callable.
       return internalEnv[p];
     },
-    set(_, p, value) {
+    set(_, p, value, receiver) {
+      // A write to an object that inherits from process.env is that object's
+      // own: OrdinarySet past a prototype chain that does not have the key.
+      if (receiver !== envProxy) {
+        return Reflect.set({ __proto__: null }, p, value, receiver);
+      }
       // Node's process.env throws a TypeError for symbol keys and symbol
       // values (ToString on a Symbol throws).
       if (typeof p === "symbol" || typeof value === "symbol") {
@@ -633,10 +631,9 @@ export function windowsEnv(
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
-      // Node's RealEnvStore::Delete resets Date caches for TZ; internalEnv
-      // is a plain object here so `delete internalEnv[k]` never reaches the
-      // TZ setter — fire the reset explicitly.
-      if (k === "TZ") resetTZ();
+      // internalEnv is a plain object here so `delete internalEnv[k]` never
+      // reaches the CustomAccessor — undo the native side effect explicitly.
+      if (k === "TZ" || k === "NODE_TLS_REJECT_UNAUTHORIZED") resetForDelete(k);
       return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {
@@ -690,6 +687,7 @@ export function windowsEnv(
       return envMapList.slice();
     },
   });
+  return envProxy;
 }
 
 export function getChannel() {
@@ -724,9 +722,10 @@ export function rawDebug() {
   } catch {}
 }
 
-export function installOnWarningListener(process, redirectPath, disabledArr) {
-  // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning,
-  // registered as a real 'warning' listener so removeAllListeners('warning') silences it.
+// Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
+// The 'warning' listener itself is a native trampoline registered when `process` is created
+// (BunProcess.cpp); this builds the printer it forwards to on the first warning.
+export function createOnWarning(process, redirectPath, disabledArr) {
   const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
@@ -734,7 +733,7 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
   let traceWarningHelperShown = false;
 
   function writeOut(message) {
-    if (redirectPath) {
+    if (appendFileSync) {
       try {
         appendFileSync(redirectPath, message + "\n");
         return;
@@ -750,7 +749,10 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
     process.stderr.write(message + "\n");
   }
 
-  function onWarning(warning) {
+  interface ProcessWarning extends Error {
+    detail?: unknown;
+  }
+  return function onWarning(warning: ProcessWarning) {
     if (!(warning instanceof Error)) return;
     const name = warning.name || "Warning";
     const isDeprecation = name === "DeprecationWarning";
@@ -781,11 +783,7 @@ export function installOnWarningListener(process, redirectPath, disabledArr) {
         `(Use \`${basename(process.argv0 || "node")} --trace-warnings ...\` to show where the warning was created)`,
       );
     }
-  }
-
-  // prependListener: user listeners added before the first emitWarning must
-  // still fire *after* the print, matching Node's bootstrap ordering.
-  process.prependListener("warning", onWarning);
+  };
 }
 
 export function loadEnvFile(path) {
@@ -946,16 +944,16 @@ export function buildAllowedNodeEnvironmentFlags() {
     get size() {
       return canonicalSet.size;
     }
-    *[Symbol.iterator]() {
+    *[Symbol.iterator](): SetIterator<string> {
       yield* canonical;
     }
-    *values() {
+    *values(): SetIterator<string> {
       yield* canonical;
     }
-    *keys() {
+    *keys(): SetIterator<string> {
       yield* canonical;
     }
-    *entries() {
+    *entries(): SetIterator<[string, string]> {
       for (const flag of canonical) yield [flag, flag];
     }
   }

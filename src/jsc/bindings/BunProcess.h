@@ -13,7 +13,9 @@ class GlobalObject;
 namespace Bun {
 using namespace JSC;
 
+// Bytes. phys_footprint (Activity Monitor's number) on macOS, the resident set size elsewhere.
 extern "C" int getRSS(size_t* rss);
+extern "C" int getPeakRSS(size_t* peak);
 
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
@@ -34,6 +36,10 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
+    // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
+    WriteBarrier<JSObject> m_onWarning;
+
+    void installDefaultWarningListener(JSC::VM&);
 
     // ── console ⇄ process.stdout/stderr binding (index 0 = fd 1, 1 = fd 2) ──
     //
@@ -104,8 +110,6 @@ public:
 
     bool m_isExitCodeObservable = false;
     bool m_sourceMapsEnabled = false;
-    // Lazy install guard for the JS onWarning 'warning' listener.
-    bool m_warningListenerInstalled = false;
     // Node's per-Environment EmitProcessEnvWarning one-shot for DEP0104.
     bool m_emitEnvNonstringWarning = true;
     // Re-entry guard for dispatchExitInternal. Per-Process (i.e. per-VM): a
@@ -131,6 +135,8 @@ public:
     // This is equivalent to `process.nextTick(() => process.emit(eventName, event))` from JavaScript.
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
 
+    JSObject* ensureOnWarning(Zig::GlobalObject*);
+
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
@@ -147,8 +153,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype,
-            JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static Process* create(WebCore::JSDOMGlobalObject& globalObject, JSC::Structure* structure)
@@ -166,12 +171,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<Process, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForProcessObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForProcessObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForProcessObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForProcessObject = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<Process, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForProcessObject, m_subspaceForProcessObject));
     }
 
     void finishCreation(JSC::VM& vm);
@@ -203,9 +203,11 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionSetConsoleChannels);
 // $newCppFunction("BunProcess.cpp", "jsFunctionConsoleStream", 1)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionConsoleStream);
 
-// Routes its argument onto the uncaught-exception path. Used by the
-// process.nextTick drain and, via $newCppFunction, by the node-style
-// callback shims in src/js.
+// Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
+// node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+// process.cwd() as a JSString, cached on the process object until it changes.
+JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
 
 } // namespace Bun

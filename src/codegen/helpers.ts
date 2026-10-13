@@ -1,4 +1,5 @@
 import { isAscii } from "buffer";
+import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -14,8 +15,13 @@ export function low(str: string) {
   return str[0].toLowerCase() + str.slice(1);
 }
 
+/** Every file under `root`, sorted by name in each directory. */
 export function readdirRecursive(root: string): string[] {
-  const files = fs.readdirSync(root, { withFileTypes: true });
+  // The order of readdirSync() depends on the runtime and the file system:
+  // node sorts the entries, and bun does not.
+  const files = fs
+    .readdirSync(root, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return files.flatMap(file => {
     const fullPath = path.join(root, file.name);
     return file.isDirectory() ? readdirRecursive(fullPath) : fullPath;
@@ -38,6 +44,13 @@ export function checkAscii(str: string) {
   return str;
 }
 
+/** The first four bytes of the SHA-256 digest of the sources, read as a big-endian u32. */
+export function sourceStamp(sources: Iterable<string>): number {
+  const hash = createHash("sha256");
+  for (const source of sources) hash.update(source);
+  return hash.digest().readUInt32BE(0);
+}
+
 export function writeIfNotChanged(file: string, contents: string) {
   if (Array.isArray(contents)) contents = contents.join("");
   contents = contents.replaceAll("\r\n", "\n").trim() + "\n";
@@ -49,12 +62,16 @@ export function writeIfNotChanged(file: string, contents: string) {
     }
   } catch (e) {}
 
+  // Through a rename, so a reader never sees half a file: the build directories of two profiles both write the
+  // declarations in build/types, and tsc or an editor may be reading them.
+  const temporary = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(file, contents);
+    fs.writeFileSync(temporary, contents);
   } catch (error) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, contents);
+    fs.writeFileSync(temporary, contents);
   }
+  fs.renameSync(temporary, file);
 
   if (fs.readFileSync(file, "utf8") !== contents) {
     throw new Error(`Failed to write file ${file}`);

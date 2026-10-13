@@ -24,13 +24,16 @@
 #include <optional>
 #include <unordered_set>
 #include <variant>
+#include <vector>
 
-extern "C" void napi_internal_register_cleanup_zig(napi_env env);
-extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
-extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
+extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
+extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
+extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
-static bool equal(napi_async_cleanup_hook_handle, napi_async_cleanup_hook_handle);
+namespace Zig {
+class NapiRef;
+}
 
 namespace Napi {
 
@@ -80,15 +83,7 @@ struct AsyncCleanupHook : CleanupHook {
 
     bool operator==(const AsyncCleanupHook& other) const
     {
-        if (this == &other || (function == other.function && data == other.data)) {
-            if (handle && other.handle) {
-                return equal(handle, other.handle);
-            }
-
-            return !handle && !other.handle;
-        }
-
-        return false;
+        return this == &other || (function == other.function && data == other.data && handle == other.handle);
     }
 };
 
@@ -126,41 +121,25 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ExceptionScope& scope);
 }
 
+// Owned by the addon: allocated by napi_add_async_cleanup_hook and freed only
+// by napi_remove_async_cleanup_hook, which the addon may call after the hook
+// itself has already run (that call is how it signals completion).
 struct napi_async_cleanup_hook_handle__ {
     napi_env env;
-    Napi::HookSet::iterator iter;
 
-    napi_async_cleanup_hook_handle__(napi_env env, decltype(iter) iter)
+    explicit napi_async_cleanup_hook_handle__(napi_env env)
         : env(env)
-        , iter(iter)
     {
-    }
-
-    bool operator==(const napi_async_cleanup_hook_handle__& other) const
-    {
-        return this == &other || (env == other.env && iter == other.iter);
     }
 };
 
-static bool equal(napi_async_cleanup_hook_handle one, napi_async_cleanup_hook_handle two)
-{
-    return one == two || *one == *two;
-}
-
 #define NAPI_ABORT(message)                                    \
     do {                                                       \
-        napi_internal_suppress_crash_on_abort_if_desired();    \
+        Bun__napi_suppress_crash_on_abort_if_desired();        \
         Bun__crashHandler(message "", sizeof(message "") - 1); \
-    } while (0)
-
-#define NAPI_PERISH(...)                                                      \
-    do {                                                                      \
-        WTFReportError(__FILE__, __LINE__, __PRETTY_FUNCTION__, __VA_ARGS__); \
-        WTFReportBacktrace();                                                 \
-        NAPI_ABORT("Aborted");                                                \
     } while (0)
 
 #define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
@@ -183,7 +162,7 @@ public:
         , m_vm(JSC::getVM(globalObject))
         , m_vmHandle(Bun__VmHandle__retainRef(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
     {
-        napi_internal_register_cleanup_zig(this);
+        Bun__napi_register_cleanup_zig(this);
     }
 
     static Ref<NapiEnv> create(Zig::GlobalObject* globalObject, const napi_module& napiModule)
@@ -276,6 +255,8 @@ public:
 
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
+        // napi_get_instance_data is ungated: never hand out the finalized pointer.
+        instanceData = nullptr;
         clearExceptionsBetweenFinalizers();
     }
 
@@ -309,7 +290,7 @@ public:
             tsfns = std::exchange(m_threadSafeFunctions, WTF::HashSet<void*> {});
         }
         for (void* tsfn : tsfns) {
-            napi_internal_threadsafe_function_env_teardown(tsfn);
+            Bun__napi_threadsafe_function_env_teardown(tsfn);
         }
     }
 
@@ -337,9 +318,18 @@ public:
         return *m_finalizers.add({ callback, hint, data }).iterator;
     }
 
-    bool hasFinalizers() const
+    // Node's pending_finalizers: refs whose value was swept during GC and whose finalizer runs on a later event-loop turn; ~NapiRef removes itself.
+    void enqueueRefFinalizer(Zig::NapiRef* ref)
     {
-        return !m_finalizers.isEmpty();
+        bool wasEmpty = m_pendingRefFinalizers.isEmpty();
+        m_pendingRefFinalizers.add(ref);
+        if (wasEmpty)
+            Bun__napi_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
+    }
+
+    void dequeueRefFinalizer(Zig::NapiRef* ref)
+    {
+        m_pendingRefFinalizers.remove(ref);
     }
 
     /// Will abort the process if a duplicate entry would be added.
@@ -382,33 +372,28 @@ public:
             }
         }
 
-        auto handle = std::make_unique<napi_async_cleanup_hook_handle__>(this, m_cleanupHooks.end());
+        auto handle = std::make_unique<napi_async_cleanup_hook_handle__>(this);
 
-        auto [iter, inserted] = m_cleanupHooks.emplace(Napi::AsyncCleanupHook(function, handle.get(), data, ++m_cleanupHookCounter));
+        bool inserted = m_cleanupHooks.emplace(Napi::AsyncCleanupHook(function, handle.get(), data, ++m_cleanupHookCounter)).second;
         NAPI_RELEASE_ASSERT(inserted, "Attempted to add a duplicate async NAPI environment cleanup hook");
-        handle->iter = iter;
         return handle.release();
     }
 
-    bool removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
+    // The caller has already rejected null handles (napi_invalid_arg).
+    void removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
     {
-        if (handle == nullptr) {
-            return false; // Invalid handle
-        }
-
-        for (const auto& hook : m_cleanupHooks) {
-            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&hook)) {
+        for (auto iter = m_cleanupHooks.begin(), end = m_cleanupHooks.end(); iter != end; ++iter) {
+            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&*iter)) {
                 if (async->handle == handle) {
-                    m_cleanupHooks.erase(handle->iter);
-                    delete handle;
-                    return true;
+                    m_cleanupHooks.erase(iter);
+                    break;
                 }
             }
         }
 
-        // Node.js silently ignores removal of non-existent handles
-        // See: node/src/node_api.cc:849-855
-        return false;
+        // Freed unconditionally, matching Node: for an already-drained hook
+        // this call is the addon's completion signal.
+        delete handle;
     }
 
     bool inGC() const
@@ -432,19 +417,15 @@ public:
         }
     }
 
-    bool isVMTerminating() const
-    {
-        return this->vm().hasTerminationRequest();
-    }
-
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
     {
         if (!finalize_cb) {
             return;
         }
 
-        if (mustDeferFinalizers() && inGC()) {
-            napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
+        // A collection's end phase can run on the collector thread; an addon's finalizer only ever runs on the JS thread.
+        if (inGC() && (mustDeferFinalizers() || WTF::Thread::mayBeGCThread())) {
+            Bun__napi_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
             throwPendingException();
@@ -523,8 +504,19 @@ public:
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
-    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
-    inline const BoundFinalizer* currentFinalizer() const { return m_currentFinalizer; }
+
+    // Node's env->can_call_into_js(). False for the whole of cleanup(): on_exit() stops the handle first.
+    // And while a completion runs for a Bun.ModuleGraph context that has stopped (see below).
+    inline bool canCallIntoJS() const
+    {
+        return !m_isCompletingForStoppedContext && !WebCore::clientData(m_vm)->isStoppingOrStopped(m_vm);
+    }
+
+    // The status of a call that Node refuses because !can_call_into_js().
+    inline napi_status cannotCallIntoJSStatus() const
+    {
+        return m_napiModule.nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception;
+    }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
@@ -609,8 +601,19 @@ private:
     // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
     // (LIFO), matching Node.js teardown semantics for napi_wrap references.
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
+    static void drainOneRefFinalizer(napi_env, void*, void*);
+    WTF::ListHashSet<Zig::NapiRef*> m_pendingRefFinalizers;
+    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
+
+public:
+    // Set while a completion (async work's complete, a threadsafe function's call_js) runs for a
+    // Bun.ModuleGraph context that has stopped. The addon's callback has to run, since it owns
+    // memory only it can free; what it may not do is run that graph's script.
+    bool m_isCompletingForStoppedContext = false;
+
+private:
     JSC::VM& m_vm;
     const ::BunVmHandleRef* m_vmHandle;
     Napi::HookSet m_cleanupHooks;
@@ -656,8 +659,9 @@ private:
             } else {
                 auto& async = std::get<Napi::AsyncCleanupHook>(hook);
                 ASSERT(async.function != nullptr);
+                // The addon owns the handle and frees it via
+                // napi_remove_async_cleanup_hook, possibly after this returns (#37201).
                 async.function(async.handle, async.data);
-                delete async.handle;
             }
             // Same invariant as the finalizer loop in cleanup(): a hook
             // that leaked an exception must not poison the next hook.
@@ -666,8 +670,8 @@ private:
     }
 };
 
-extern "C" void napi_internal_cleanup_env_cpp(napi_env);
-extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
+extern "C" void Bun__napi_cleanup_env_cpp(napi_env);
+extern "C" void Bun__napi_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
 namespace Napi {
 
@@ -812,8 +816,7 @@ public:
             strongRef.set(globalObject->vm(), value);
         }
 
-        // In NAPI non-experimental, types other than object, function and symbol can't be used as values for references.
-        // In NAPI experimental, they can be, but we must not store weak references to them.
+        // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
         if (can_be_weak) {
             weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
         }
@@ -832,6 +835,7 @@ public:
         }
     }
 
+    // Queues a copy when in GC, which a later delete of this ref cannot cancel: only for runtime-owned refs and env cleanup.
     void callFinalizer()
     {
         // Calling the finalizer may delete `this`, so we have to do state changes on `this` before
@@ -841,9 +845,13 @@ public:
         saved_finalizer.call(env.ptr(), nativeObject, !env->mustDeferFinalizers() || !env->inGC());
     }
 
+    // For a ref the addon owns: napi_delete_reference before the queued finalizer runs cancels it (Node's ~ReferenceWithFinalizer).
+    void callFinalizerFromGC();
+
     ~NapiRef()
     {
         NAPI_LOG("destruct napi ref %p", this);
+        env->dequeueRefFinalizer(this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
             boundCleanup = nullptr;
@@ -888,12 +896,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiClass = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiClass = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNapiClass, m_subspaceForNapiClass));
     }
 
     DECLARE_EXPORT_INFO;
@@ -908,7 +911,7 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         ASSERT(globalObject);
-        return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
     inline napi_callback constructor() const { return m_constructor; }
@@ -961,7 +964,7 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         ASSERT(globalObject);
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
     }
 
     NapiPrototype* subclass(JSC::JSGlobalObject* globalObject, JSC::JSObject* newTarget)
@@ -1002,21 +1005,11 @@ public:
         : m_callFrame(callFrame)
         , m_dataPtr(dataPtr)
     {
-        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict
-        // mode. So if `this` is null or undefined, we use globalThis instead; otherwise, we convert
-        // `this` to an object.
-        // TODO change to global? or find another way to avoid JSGlobalProxy
-        JSC::JSObject* jscThis = globalObject->globalThis();
-        if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            // TopExceptionScope: this runs before the addon's callback and its
-            // first NAPI_PREAMBLE; a ThrowScope would simulate a throw on
-            // destruction that the next preamble would see as unchecked.
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
-            jscThis = m_callFrame->thisValue().toObject(globalObject);
-            // https://tc39.es/ecma262/#sec-toobject
-            // toObject only throws for undefined and null, which we checked for
-            scope.assertNoException();
-        }
+        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict mode.
+        // Not a ThrowScope: its simulated throw would reach the addon's first NAPI_PREAMBLE unchecked.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+        JSValue jscThis = m_callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy());
+        scope.assertNoException();
         m_callFrame->setThisValue(jscThis);
     }
 

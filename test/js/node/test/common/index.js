@@ -164,10 +164,11 @@ if (process.argv.length === 2 &&
         (process.features.inspector || !flag.startsWith('--inspect'))) {
       if (flag === "--no-warnings" && process.versions.bun) {
         // Keep scanning so a later --expose-internals / --expose-gc in the
-        // same Flags line still installs its shim in-process. Bun's onWarning
-        // printer installs lazily on the first emitWarning and honors Node's
-        // process.noProcessWarnings alias read at that point, so set it here.
+        // same Flags line still installs its shim in-process. This runs before
+        // the test registers any listener, so dropping the bootstrap printer
+        // plus seeding the alias is exactly the state --no-warnings produces.
         process.noProcessWarnings = true;
+        process.removeAllListeners('warning');
         continue;
       }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
@@ -307,10 +308,9 @@ const isFreeBSD = process.platform === 'freebsd';
 const isOpenBSD = process.platform === 'openbsd';
 const isLinux = process.platform === 'linux';
 const isMacOS = process.platform === 'darwin';
-const isASan = process.config.variables.asan === 1;
 const isRiscv64 = process.arch === 'riscv64';
 const isDebug = process.features.debug;
-const isPi = (() => {
+function isPi() {
   try {
     // Normal Raspberry Pi detection is to find the `Raspberry Pi` string in
     // the contents of `/sys/firmware/devicetree/base/model` but that doesn't
@@ -322,7 +322,7 @@ const isPi = (() => {
   } catch {
     return false;
   }
-})();
+}
 
 const isDumbTerminal = process.env.TERM === 'dumb';
 
@@ -450,7 +450,7 @@ function platformTimeout(ms) {
   if (exports.isAIX || exports.isIBMi)
     return multipliers.two * ms; // Default localhost speed is slower on AIX
 
-  if (isPi)
+  if (isPi())
     return multipliers.two * ms;  // Raspberry Pi devices
 
   if (isRiscv64) {
@@ -1222,7 +1222,21 @@ const common = {
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,
-  isASan,
+  // Bun reports `process.config.variables.asan` as 0 even in ASan builds (so
+  // node-gyp does not add -fsanitize=address to addons), so ask the runtime.
+  get isASan() {
+    let value = process.config.variables.asan === 1;
+    if (!value && process.versions.bun) {
+      try {
+        const { isASANEnabled } = require('bun:internal-for-testing');
+        value = typeof isASANEnabled === 'function' && !!isASANEnabled();
+      } catch {
+        value = path.basename(process.execPath).includes('bun-asan');
+      }
+    }
+    Object.defineProperty(this, 'isASan', { value, enumerable: true });
+    return value;
+  },
   isDebug,
   isDumbTerminal,
   isFreeBSD,

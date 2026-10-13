@@ -3,16 +3,16 @@
 //! `console.count`/`time`/`timeEnd`, and the C ABI shims that JavaScriptCore
 //! calls into.
 
-use crate::{ComptimeStringMapExt as _, StringJsc as _, ZigStringJsc as _};
+use crate::{ComptimeStringMapExt as _, StringJsc as _};
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsError, JsResult, ZigString};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsError, JsResult};
 use bun_collections::HashMap;
+use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
-use bun_core::{OwnedString, String as BunString, strings};
 use bun_io::Write as _;
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
@@ -743,21 +743,10 @@ struct Column {
     width: u32,
 }
 
-impl Default for Column {
-    fn default() -> Self {
-        Self {
-            name: BunString::empty(),
-            width: 1,
-        }
-    }
-}
-
 enum RowKey {
-    /// Property-name UTF-8 slice + visible width (plain-object tabular data).
-    /// `to_utf8` refs the WTF impl (or owns a transcoded copy) and Drop
-    /// releases it, so the slice is safe to keep past the property iterator.
+    /// Property-name UTF-8 bytes + visible width (plain-object tabular data).
     Str {
-        text: bun_core::ZigStringSlice,
+        text: bun_core::Utf8Bytes<'static>,
         width: u32,
     },
     /// Row index (array / iterable tabular data). Rendered on demand.
@@ -765,10 +754,10 @@ enum RowKey {
 }
 
 impl RowKey {
-    fn str(name: &BunString) -> Self {
+    fn str(name: &bun_core::StringView) -> Self {
         Self::Str {
             width: u32::try_from(name.visible_width_exclude_ansi_colors(false)).expect("int cast"),
-            text: name.to_utf8(),
+            text: (**name).clone().into_utf8(),
         }
     }
 
@@ -840,6 +829,11 @@ impl<'a> TablePrinter<'a> {
             values_col_width: None,
             values_col_idx: usize::MAX,
         })
+    }
+
+    /// Cells start at nesting level `depth`, out of the formatter's `max_depth`.
+    pub fn set_start_depth(&mut self, depth: u16) {
+        self.value_formatter.depth = depth.min(self.value_formatter.max_depth);
     }
 
     /// Format `value` exactly once (bare for strings, quoted otherwise),
@@ -919,7 +913,7 @@ impl<'a> TablePrinter<'a> {
                     }
                 }
             } else {
-                let mut cols_iter = jsc::JSPropertyIterator::init(
+                let cols_iter = jsc::JSPropertyIterator::init(
                     self.global_object,
                     obj,
                     jsc::PropertyIteratorOptions {
@@ -928,27 +922,18 @@ impl<'a> TablePrinter<'a> {
                     },
                 )?;
 
-                while let Some(col_key) = cols_iter.next()? {
-                    let value = cols_iter.value;
-
+                while let Some((col_key, value)) = cols_iter.next()? {
                     // find or create the column for the property
                     let col_idx: usize = 'brk: {
-                        let col_str = BunString::init(col_key);
-
                         // reshaped for borrowck — split find/append.
                         if let Some(idx) =
-                            columns[1..].iter().position(|col| col.name.eql(&col_str))
+                            columns[1..].iter().position(|col| col.name.eql(&col_key))
                         {
                             break 'brk 1 + idx;
                         }
 
-                        // Need to ref this string because JSPropertyIterator
-                        // uses `toString` instead of `toStringRef` for property
-                        // names.
-                        col_str.ref_();
-
                         columns.push(Column {
-                            name: col_str,
+                            name: (*col_key).clone(),
                             width: 1,
                         });
                         break 'brk columns.len() - 1;
@@ -993,29 +978,27 @@ impl<'a> TablePrinter<'a> {
         row: &CollectedRow,
         cell_text: &[u8],
     ) {
-        writer.write_all("│".as_bytes()).ok();
+        let _ = writer.write_all("│".as_bytes());
         {
             let needed = columns[0].width.saturating_sub(row.key.width());
 
             // Right-align the number column
-            writer
-                .splat_byte_all(b' ', (needed + PADDING) as usize)
-                .ok();
+            let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
             match &row.key {
                 RowKey::Str { text, .. } => {
-                    writer.write_all(text.slice()).ok();
+                    let _ = writer.write_all(text.slice());
                 }
                 RowKey::Num(value) => {
-                    write!(writer, "{value}").ok();
+                    let _ = write!(writer, "{value}");
                 }
             }
-            writer.splat_byte_all(b' ', PADDING as usize).ok();
+            let _ = writer.splat_byte_all(b' ', PADDING as usize);
         }
 
         for col_idx in 1..columns.len() {
             let col = &columns[col_idx];
 
-            writer.write_all("│".as_bytes()).ok();
+            let _ = writer.write_all("│".as_bytes());
 
             let cell = if col_idx == self.values_col_idx {
                 row.values_cell
@@ -1025,21 +1008,17 @@ impl<'a> TablePrinter<'a> {
 
             match cell {
                 None => {
-                    writer
-                        .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', (col.width + PADDING * 2) as usize);
                 }
                 Some(cell) => {
                     let needed = col.width.saturating_sub(cell.width);
-                    writer.splat_byte_all(b' ', PADDING as usize).ok();
-                    writer.write_all(cell.text(cell_text)).ok();
-                    writer
-                        .splat_byte_all(b' ', (needed + PADDING) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', PADDING as usize);
+                    let _ = writer.write_all(cell.text(cell_text));
+                    let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
                 }
             }
         }
-        writer.write_all("│\n".as_bytes()).ok();
+        let _ = writer.write_all("│\n".as_bytes());
     }
 
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
@@ -1049,13 +1028,6 @@ impl<'a> TablePrinter<'a> {
         let global_object = self.global_object;
 
         let mut columns: Vec<Column> = Vec::with_capacity(16);
-        let mut _deref_names = scopeguard::guard(&mut columns, |cols| {
-            for col in cols.iter_mut() {
-                col.name.deref();
-            }
-        });
-        // reshaped for borrowck — re-borrow through the guard.
-        let columns: &mut Vec<Column> = &mut **_deref_names;
 
         // create the first column " " which is always present
         columns.push(Column {
@@ -1102,7 +1074,7 @@ impl<'a> TablePrinter<'a> {
                 let mut ctx = Ctx {
                     this: self,
                     cell_text: &mut cell_text,
-                    columns,
+                    columns: &mut columns,
                     rows: &mut rows,
                     idx: 0,
                     err: None,
@@ -1142,7 +1114,7 @@ impl<'a> TablePrinter<'a> {
                 }
             } else {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
-                let mut rows_iter = jsc::JSPropertyIterator::init(
+                let rows_iter = jsc::JSPropertyIterator::init(
                     global_object,
                     tabular_obj,
                     jsc::PropertyIteratorOptions {
@@ -1151,13 +1123,13 @@ impl<'a> TablePrinter<'a> {
                     },
                 )?;
 
-                while let Some(row_key) = rows_iter.next()? {
-                    let key = RowKey::str(&BunString::init(row_key));
+                while let Some((row_key, value)) = rows_iter.next()? {
+                    let key = RowKey::str(&row_key);
                     let row = self.collect_row::<ENABLE_ANSI_COLORS>(
                         &mut cell_text,
-                        columns,
+                        &mut columns,
                         key,
-                        rows_iter.value,
+                        value,
                     )?;
                     rows.push(row);
                 }
@@ -1183,77 +1155,73 @@ impl<'a> TablePrinter<'a> {
                 );
             }
 
-            writer.write_all("┌".as_bytes()).ok();
+            let _ = writer.write_all("┌".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┬".as_bytes()).ok();
+                    let _ = writer.write_all("┬".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
 
-            writer.write_all("┐\n│".as_bytes()).ok();
+            let _ = writer.write_all("┐\n│".as_bytes());
 
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("│".as_bytes()).ok();
+                    let _ = writer.write_all("│".as_bytes());
                 }
                 let len = col.name.visible_width_exclude_ansi_colors(false);
                 let needed = (col.width as usize).saturating_sub(len);
-                writer.splat_byte_all(b' ', 1).ok();
+                let _ = writer.splat_byte_all(b' ', 1);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r><b>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r><b>", true).as_bytes());
                 }
-                write!(writer, "{}", col.name).ok();
+                let _ = write!(writer, "{}", col.name);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
-                writer.splat_byte_all(b' ', needed + PADDING as usize).ok();
+                let _ = writer.splat_byte_all(b' ', needed + PADDING as usize);
             }
 
-            writer.write_all("│\n├".as_bytes()).ok();
+            let _ = writer.write_all("│\n├".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┼".as_bytes()).ok();
+                    let _ = writer.write_all("┼".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┤\n".as_bytes()).ok();
+            let _ = writer.write_all("┤\n".as_bytes());
         }
 
         // render pass: replay each row's pre-formatted cell bytes
         for row in rows.iter() {
-            self.print_row(writer, columns, row, &cell_text);
+            self.print_row(writer, &columns, row, &cell_text);
         }
 
         // print the table bottom border
         {
-            writer.write_all("└".as_bytes()).ok();
-            Self::write_string_n_times(
+            let _ = writer.write_all("└".as_bytes());
+            let _ = Self::write_string_n_times(
                 writer,
                 "─".as_bytes(),
                 (columns[0].width + PADDING * 2) as usize,
-            )
-            .ok();
+            );
             for column in columns[1..].iter() {
-                writer.write_all("┴".as_bytes()).ok();
-                Self::write_string_n_times(
+                let _ = writer.write_all("┴".as_bytes());
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (column.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┘\n".as_bytes()).ok();
+            let _ = writer.write_all("┘\n".as_bytes());
         }
 
         Ok(())
@@ -1319,13 +1287,10 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
 
-    let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
+    let mut source_code_slice: Option<bun_core::Utf8Bytes> = None;
 
-    let err = ZigString::init(b"trace output").to_error_instance(global);
-    {
-        let exception = holder.zig_exception();
-        err.to_zig_exception(global, exception);
-    }
+    let err = global.create_error_instance(format_args!("trace output"));
+    // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
     // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
     // two simultaneous `&mut` into `holder`. Capture the flag in a local and
     // write it back after.
@@ -1347,7 +1312,6 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         Output::enable_ansi_colors_stderr(),
     );
 
-    // `ZigStringSlice` frees on `Drop`.
     drop(source_code_slice);
     holder.deinit(vm);
 }
@@ -1398,14 +1362,14 @@ pub enum Colon {
     ExcludeColon,
 }
 
-pub struct ErrorDisplayLevelFormatter {
-    pub name: BunString,
+pub struct ErrorDisplayLevelFormatter<'a> {
+    pub name: &'a BunString,
     pub(crate) level: ErrorDisplayLevel,
     pub(crate) enable_colors: bool,
     pub(crate) colon: Colon,
 }
 
-impl core::fmt::Display for ErrorDisplayLevelFormatter {
+impl core::fmt::Display for ErrorDisplayLevelFormatter<'_> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.enable_colors {
             match self.level {
@@ -1416,7 +1380,7 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
         }
 
         if !self.name.is_empty() {
-            core::fmt::Display::fmt(&self.name, writer)?;
+            core::fmt::Display::fmt(self.name, writer)?;
         } else if self.level == ErrorDisplayLevel::Warn {
             writer.write_str("warn")?;
         } else {
@@ -1442,10 +1406,10 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
 impl ErrorDisplayLevel {
     pub(crate) fn formatter(
         self,
-        error_name: BunString,
+        error_name: &BunString,
         enable_colors: bool,
         colon: Colon,
-    ) -> ErrorDisplayLevelFormatter {
+    ) -> ErrorDisplayLevelFormatter<'_> {
         ErrorDisplayLevelFormatter {
             name: error_name,
             level: self,
@@ -1461,24 +1425,7 @@ impl FormatOptions {
 
         if arg1.is_object() {
             if let Some(opt) = arg1.get_truthy(global_this, "depth")? {
-                if opt.is_int32() {
-                    let arg = opt.to_int32();
-                    if arg < 0 {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "expected depth to be greater than or equal to 0, got {arg}"
-                        )));
-                    }
-                    self.max_depth = u32::try_from(arg.min(i32::from(u16::MAX))).unwrap() as u16;
-                } else if opt.is_number() {
-                    let v = opt.coerce_f64(global_this)?;
-                    if v.is_infinite() {
-                        self.max_depth = u16::MAX;
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "expected depth to be an integer, got {v}"
-                        )));
-                    }
-                }
+                self.set_depth(global_this, opt)?;
             }
             if let Some(opt) = arg1.get_boolean_loose(global_this, "colors")? {
                 self.enable_colors = opt;
@@ -1492,29 +1439,35 @@ impl FormatOptions {
         } else {
             // formatOptions.show_hidden = arg1.toBoolean();
             if !arguments.is_empty() {
-                let depth_arg = arg1;
-                if depth_arg.is_int32() {
-                    let arg = depth_arg.to_int32();
-                    if arg < 0 {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "expected depth to be greater than or equal to 0, got {arg}"
-                        )));
-                    }
-                    self.max_depth = u32::try_from(arg.min(i32::from(u16::MAX))).unwrap() as u16;
-                } else if depth_arg.is_number() {
-                    let v = depth_arg.coerce_f64(global_this)?;
-                    if v.is_infinite() {
-                        self.max_depth = u16::MAX;
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "expected depth to be an integer, got {v}"
-                        )));
-                    }
-                }
+                self.set_depth(global_this, arg1)?;
                 if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
                     self.enable_colors = arguments[1].to_boolean();
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// `depth`: a non-negative integer (clamped to `u16::MAX`) or `Infinity`; non-numbers are
+    /// ignored. Decided on the number's value, so an integer JSC boxed as a double (a
+    /// `Float64Array` element, `-0`) is accepted like its int32 twin.
+    fn set_depth(&mut self, global_this: &JSGlobalObject, depth: JSValue) -> JsResult<()> {
+        if !depth.is_number() {
+            return Ok(());
+        }
+        let depth = depth.as_number();
+        if depth.is_infinite() {
+            self.max_depth = u16::MAX;
+        } else if depth.trunc() != depth {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "expected depth to be an integer, got {depth}"
+            )));
+        } else if depth < 0.0 {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "expected depth to be greater than or equal to 0, got {depth}"
+            )));
+        } else {
+            self.max_depth = depth.min(f64::from(u16::MAX)) as u16;
         }
         Ok(())
     }
@@ -1800,6 +1753,8 @@ pub mod formatter {
         pub(crate) indent: u32,
         pub depth: u16,
         pub(crate) max_depth: u16,
+        /// `max_depth` before the error property dump narrowed it.
+        pub(crate) outer_max_depth: Option<u16>,
         pub quote_strings: bool,
         pub quote_keys: bool,
         pub(crate) failed: bool,
@@ -1830,6 +1785,7 @@ pub mod formatter {
                 indent: 0,
                 depth: 0,
                 max_depth: 8,
+                outer_max_depth: None,
                 quote_strings: false,
                 quote_keys: false,
                 failed: false,
@@ -1868,6 +1824,7 @@ pub mod formatter {
                 indent: self.indent,
                 depth: self.depth,
                 max_depth: self.max_depth,
+                outer_max_depth: self.outer_max_depth,
                 quote_strings: self.quote_strings,
                 quote_keys: self.quote_keys,
                 failed: self.failed,
@@ -1942,6 +1899,11 @@ pub mod formatter {
         pub fn add_for_new_line(&mut self, len: usize) {
             self.estimated_line_length = self.estimated_line_length.saturating_add(len);
         }
+
+        /// Depth cap for the `cause` and `AggregateError.errors` walks.
+        pub(crate) fn error_chain_max_depth(&self) -> u16 {
+            self.outer_max_depth.unwrap_or(self.max_depth)
+        }
     }
 
     /// `Display` adapter that formats a single `JSValue` through a borrowed
@@ -1968,28 +1930,16 @@ pub mod formatter {
 
     impl core::fmt::Display for ZigFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            // Move the unique `&mut Formatter` out of the cell for the body;
-            // re-seat it (and clear `remaining_values`) on the way out so the
-            // adapter stays reusable.
             let formatter: &mut Formatter<'_> = self
                 .formatter
                 .take()
                 .expect("ZigFormatter::fmt re-entered or used after consumption");
 
-            let one = [self.value];
-            formatter.remaining_values = bun_ptr::RawSlice::new(&one);
+            let mut sink = bun_io::FmtAdapter::new(f);
+            let result = formatter
+                .format_value::<false>(self.value, &mut sink)
+                .map_err(|_| core::fmt::Error);
 
-            let result = (|| {
-                let tag =
-                    Tag::get(self.value, formatter.global_this).map_err(|_| core::fmt::Error)?;
-                let mut sink = bun_io::FmtAdapter::new(f);
-                let global = formatter.global_this;
-                formatter
-                    .format::<false>(tag, &mut sink, self.value, global)
-                    .map_err(|_| core::fmt::Error)
-            })();
-
-            formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
             self.formatter.set(Some(formatter));
             result
         }
@@ -2162,12 +2112,6 @@ pub mod formatter {
     }
 
     impl TagPayload {
-        /// The constructor lives here as well as on the bare
-        /// discriminant `Tag`. Callers in sibling modules use either name.
-        #[inline]
-        pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
-            Tag::get(value, global_this)
-        }
         pub(crate) fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }
@@ -2416,20 +2360,15 @@ pub mod formatter {
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
                 if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
                     // React 18 and below
-                    let mut react_element_legacy = ZigString::init(b"react.element");
-                    // For React 19 - https://github.com/oven-sh/bun/issues/17223
-                    let mut react_element_transitional =
-                        ZigString::init(b"react.transitional.element");
-                    let mut react_fragment = ZigString::init(b"react.fragment");
-
                     if typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_element_legacy),
+                        JSValue::symbol_for(global_this, b"react.element"),
                         global_this,
                     )? || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_element_transitional),
+                        // For React 19 - https://github.com/oven-sh/bun/issues/17223
+                        JSValue::symbol_for(global_this, b"react.transitional.element"),
                         global_this,
                     )? || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_fragment),
+                        JSValue::symbol_for(global_this, b"react.fragment"),
                         global_this,
                     )? {
                         return Ok(TagResult {
@@ -2808,10 +2747,7 @@ pub mod formatter {
                             PercentTag::J => {
                                 // JSON.stringify the value using FastStringifier
                                 // for SIMD optimization
-                                // `OwnedString` releases the
-                                // +1 WTF ref on every exit (incl. the `?` below).
-                                let mut str = OwnedString::new(BunString::empty());
-                                next_value.json_stringify_fast(global, &mut str)?;
+                                let str = next_value.json_stringify_fast(global)?;
                                 writer.add_for_new_line(str.length());
                                 writer.print(format_args!("{str}"));
                             }
@@ -2931,7 +2867,7 @@ pub mod formatter {
         }
 
         #[inline]
-        pub(crate) fn write_string(&mut self, str: &ZigString) {
+        pub(crate) fn write_string(&mut self, str: &bun_core::String) {
             self.print(format_args!("{str}"));
         }
 
@@ -3194,7 +3130,7 @@ pub mod formatter {
         #[inline(never)]
         fn write_property_key(
             writer: &mut WrappedWriter<'_>,
-            key: &ZigString,
+            key: &EncodedSlice,
             is_symbol: bool,
             is_private_symbol: bool,
             quote_keys: bool,
@@ -3202,11 +3138,10 @@ pub mod formatter {
         ) {
             if !is_symbol {
                 // TODO: make this one pass?
-                if (!key.is_16_bit()
+                if (!key.is_16bit()
                     && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
-                    || (key.is_16_bit()
-                        && (!quote_keys
-                            && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned())))
+                    || (key.is_16bit()
+                        && (!quote_keys && JSLexer::is_latin1_identifier_u16(key.utf16_slice())))
                 {
                     writer.add_for_new_line(key.len + 1);
                     writer.print(format_args!(
@@ -3215,8 +3150,8 @@ pub mod formatter {
                         key,
                         pfmt!("<d>:<r> ", C),
                     ));
-                } else if key.is_16_bit() {
-                    let mut utf16_slice = key.utf16_slice_aligned();
+                } else if key.is_16bit() {
+                    let mut utf16_slice = key.utf16_slice();
 
                     writer.add_for_new_line(utf16_slice.len() + 2);
 
@@ -3285,14 +3220,14 @@ pub mod formatter {
         fn for_each_prelude(
             ctx: &mut Self,
             global_this: &JSGlobalObject,
-            key: *mut ZigString,
+            key: *mut EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            // SAFETY: caller passes a valid `*ZigString`.
+            // SAFETY: caller passes a valid `*EncodedSlice`.
             let key = unsafe { &*key };
-            if key.eql_comptime(b"constructor") {
+            if key.eq_ascii(b"constructor") {
                 return None;
             }
             if ctx.formatter.failed {
@@ -3365,7 +3300,7 @@ pub mod formatter {
         pub(crate) extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
-            key: *mut ZigString,
+            key: *mut EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
@@ -3400,13 +3335,12 @@ pub mod formatter {
     fn get_object_name(
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<Option<ZigString>> {
-        let mut name_str = ZigString::init(b"");
-        value.get_class_name(global_this, &mut name_str)?;
-        if !name_str.eql_comptime(b"Object") {
+    ) -> JsResult<Option<bun_core::String>> {
+        let name_str = value.get_class_name(global_this)?;
+        if !name_str.eq_ascii(b"Object") {
             return Ok(Some(name_str));
-        } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
-            return Ok(Some(ZigString::static_("[Object: null prototype]")));
+        } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
+            return Ok(Some(bun_core::String::static_("[Object: null prototype]")));
         }
         Ok(None)
     }
@@ -3740,7 +3674,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let str = value.to_slice(self.global_this)?;
+            let str = value.to_utf8(self.global_this)?;
             let slice = str.slice();
             self.add_for_new_line(slice.len());
             self.write_with_formatting::<C>(writer_, slice, self.global_this)
@@ -3755,7 +3689,7 @@ pub mod formatter {
         ) -> JsResult<()> {
             // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
-            let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
+            let str = BunString::from_js(value, self.global_this)?;
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3897,8 +3831,8 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let zstr = value.get_zig_string(self.global_this)?;
-            let out_str = zstr.slice();
+            let view = value.to_js_string_view(self.global_this)?;
+            let out_str = view.latin1();
             writer.add_for_new_line(out_str.len());
             writer.print(format_args!(
                 "{}{}n{}",
@@ -3929,15 +3863,13 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut number_name = ZigString::EMPTY;
-                value.get_class_name(self.global_this, &mut number_name)?;
+                let number_name = value.get_class_name(self.global_this)?;
 
-                let mut number_value = ZigString::EMPTY;
-                value.to_zig_string(&mut number_value, self.global_this)?;
+                let number_value = value.to_js_string_view(self.global_this)?;
 
-                if number_name.slice() != b"Number" {
+                if !number_name.eq_ascii(b"Number") {
                     writer.add_for_new_line(
-                        number_name.len + number_value.len + "[Number ():]".len(),
+                        number_name.length() + number_value.length() + "[Number ():]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
@@ -3952,7 +3884,7 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                writer.add_for_new_line(number_name.len + number_value.len + 4);
+                writer.add_for_new_line(number_name.length() + number_value.length() + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
                     pf!("<r><yellow>"),
@@ -4052,8 +3984,8 @@ pub mod formatter {
             let description = value.get_description(self.global_this);
             writer.add_for_new_line("Symbol".len());
 
-            if description.len > 0 {
-                writer.add_for_new_line(description.len + "()".len());
+            if !description.is_empty() {
+                writer.add_for_new_line(description.length() + "()".len());
                 writer.print(format_args!(
                     "{}Symbol({}){}",
                     pfmt!("<r><blue>", C),
@@ -4128,22 +4060,22 @@ pub mod formatter {
             // `Function.prototype.constructor === Function`, returning
             // "Function". The `.name` property is set to the real class name
             // on the constructor itself. See #29225.
-            let printable = OwnedString::new(value.get_name(self.global_this)?);
+            let printable = value.get_name(self.global_this)?;
             writer.add_for_new_line(printable.length());
 
             // Only report `extends` when the parent is itself a class
             // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
             // have `Function.prototype` as their prototype, which would
             // render as `[class X extends Function]` and is noise.
-            let proto = value.get_prototype(self.global_this);
+            let proto = value.get_prototype(self.global_this)?;
             let proto_is_class = !proto.is_empty_or_undefined_or_null()
                 && proto.is_cell()
                 && proto.is_class(self.global_this);
-            let printable_proto = OwnedString::new(if proto_is_class {
+            let printable_proto = if proto_is_class {
                 proto.get_name(self.global_this)?
             } else {
-                BunString::empty()
-            });
+                BunString::EMPTY
+            };
             writer.add_for_new_line(printable_proto.length());
 
             if printable.is_empty() {
@@ -4199,11 +4131,11 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            let printable = OwnedString::new(value.get_name(self.global_this)?);
+            let printable = value.get_name(self.global_this)?;
 
-            let proto = value.get_prototype(self.global_this);
+            let proto = value.get_prototype(self.global_this)?;
             // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
-            let func_name = OwnedString::new(proto.get_name(self.global_this)?);
+            let func_name = proto.get_name(self.global_this)?;
 
             if printable.is_empty() || func_name.eql(&printable) {
                 if func_name.is_empty() {
@@ -4337,14 +4269,13 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut bool_name = ZigString::EMPTY;
-                value.get_class_name(self.global_this, &mut bool_name)?;
-                let mut bool_value = ZigString::EMPTY;
-                value.to_zig_string(&mut bool_value, self.global_this)?;
+                let bool_name = value.get_class_name(self.global_this)?;
+                let bool_value = value.to_js_string_view(self.global_this)?;
 
-                if bool_name.slice() != b"Boolean" {
-                    writer
-                        .add_for_new_line(bool_value.len + bool_name.len + "[Boolean (): ]".len());
+                if !bool_name.eq_ascii(b"Boolean") {
+                    writer.add_for_new_line(
+                        bool_value.length() + bool_name.length() + "[Boolean (): ]".len(),
+                    );
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
                         pf!("<r><yellow>"),
@@ -4357,7 +4288,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 }
-                writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
+                writer.add_for_new_line(bool_value.length() + "[Boolean: ]".len());
                 writer.print(format_args!(
                     "{}[Boolean: {}]{}",
                     pf!("<r><yellow>"),
@@ -4389,18 +4320,12 @@ pub mod formatter {
             value: JSValue,
         ) -> JsResult<()> {
             if let Some(func) = value.get(self.global_this, "toJSON")? {
-                match func.call(self.global_this, value, &[]) {
-                    Err(_) => {
-                        self.global_this.clear_exception();
-                    }
-                    Ok(result) => {
-                        let prev_quote_keys = self.quote_keys;
-                        self.quote_keys = true;
-                        let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-                        let tag = Tag::get(result, self.global_this)?;
-                        return self.format::<C>(tag, writer_, result, self.global_this);
-                    }
-                }
+                let result = func.call(self.global_this, value, &[])?;
+                let prev_quote_keys = self.quote_keys;
+                self.quote_keys = true;
+                let _r = defer_restore!(self.quote_keys, prev_quote_keys);
+                let tag = Tag::get(result, self.global_this)?;
+                return self.format::<C>(tag, writer_, result, self.global_this);
             }
 
             if writer_.write_all(b"{}").is_err() {
@@ -4421,9 +4346,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let mut str = OwnedString::new(BunString::empty());
-
-            value.json_stringify(self.global_this, self.indent, &mut str)?;
+            let str = value.json_stringify(self.global_this, self.indent)?;
             writer.add_for_new_line(str.length());
             if js_type == jsc::JSType::JSDate {
                 // in the code for printing dates, it never exceeds this amount
@@ -4470,6 +4393,10 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
+            let len = value.get_length(self.global_this)?;
+            if len != 0 && self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, "Array");
+            }
             // Cache once: `disable_inspect_custom` does not change inside this
             // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
             // which prevents calling `&self` methods while it is live.
@@ -4484,8 +4411,6 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-
-            let len = value.get_length(self.global_this)?;
 
             // TODO: DerivedArray does not get passed along in JSType, and it's
             // not clear why.
@@ -4512,7 +4437,7 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
                 'first: {
-                    let element = value.get_direct_index(self.global_this, 0);
+                    let element = value.get_direct_index(self.global_this, 0)?;
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
@@ -4552,7 +4477,7 @@ pub mod formatter {
                 let mut nonempty_count: u32 = 1;
 
                 while (i as u64) < len {
-                    let element = value.get_direct_index(self.global_this, i);
+                    let element = value.get_direct_index(self.global_this, i)?;
                     if element.is_empty() {
                         if empty_start.is_none() {
                             empty_start = Some(i);
@@ -4757,13 +4682,7 @@ pub mod formatter {
             // formatted `value`; otherwise we fall through to the generic
             // object printer below.
             if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-                // The hook only ever
-                // seeds a `ZigString` that `get_class_name` immediately
-                // overwrites with JSC-owned bytes, so a shared zero buffer is
-                // sufficient and keeps 512B off every recursive frame.
-                static NAME_BUF: [u8; 512] = [0; 512];
-                let handled =
-                    (hooks.console_print_runtime_object)(self, writer_, value, &NAME_BUF, C)?;
+                let handled = (hooks.console_print_runtime_object)(self, writer_, value, C)?;
                 if handled {
                     return Ok(());
                 }
@@ -4777,9 +4696,7 @@ pub mod formatter {
                     self.quote_keys = true;
                     let _r = defer_restore!(self.quote_keys, prev_quote_keys);
 
-                    let result = to_json_function
-                        .call(self.global_this, value, &[])
-                        .unwrap_or_else(|err| self.global_this.take_exception(err));
+                    let result = to_json_function.call(self.global_this, value, &[])?;
                     return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
                 }
 
@@ -4837,6 +4754,10 @@ pub mod formatter {
             if length == 0 {
                 let _ = write!(writer_, "{map_name} {{}}");
                 return Ok(());
+            }
+
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, map_name);
             }
 
             if self.single_line {
@@ -4898,6 +4819,9 @@ pub mod formatter {
             value: JSValue,
             label: &'static str,
         ) -> JsResult<()> {
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, label);
+            }
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
@@ -4979,6 +4903,10 @@ pub mod formatter {
             if length == 0 {
                 let _ = write!(writer_, "{set_name} {{}}");
                 return Ok(());
+            }
+
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, set_name);
             }
 
             if self.single_line {
@@ -5081,6 +5009,9 @@ pub mod formatter {
                 EventType::ErrorEvent => "ErrorEvent",
                 _ => unreachable!(),
             };
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, event_tag_name);
+            }
             let _ = writeln!(
                 writer_,
                 "{}{}{} {{",
@@ -5238,37 +5169,35 @@ pub mod formatter {
             writer.write_all(pf!("<r>").as_bytes());
             writer.write_all(b"<");
 
-            // Both arms of the `type` if/else below assign these, so deferred
-            // init avoids the dead-store warning.
             let mut needs_space: bool;
-            let mut tag_name_str = ZigString::init(b"");
-
-            // `ZigStringSlice` frees on `Drop`, so no explicit cleanup is
-            // needed.
-            let tag_name_slice: bun_core::ZigStringSlice;
+            let tag_name_view;
+            let tag_name_slice: bun_core::Utf8Bytes;
             let mut is_tag_kind_primitive = false;
 
             if let Some(type_value) = value.get(self.global_this, "type")? {
                 let _tag = Tag::get_advanced(type_value, self.global_this, tag_opts)?;
 
                 if _tag.cell == jsc::JSType::Symbol {
-                    // nothing
+                    tag_name_slice = bun_core::Utf8Bytes::EMPTY;
                 } else if _tag.cell.is_string_like() {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                    tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                    tag_name_slice = tag_name_view.to_utf8();
                     is_tag_kind_primitive = true;
                 } else if _tag.cell.is_object() || type_value.is_callable() {
-                    type_value.get_name_property(self.global_this, &mut tag_name_str)?;
-                    if tag_name_str.len == 0 {
-                        tag_name_str = ZigString::init(b"NoName");
-                    }
+                    let name = type_value.get_name_property(self.global_this)?;
+                    tag_name_slice = if name.is_empty() {
+                        bun_core::Utf8Bytes::Borrowed(b"NoName")
+                    } else {
+                        name.into_utf8()
+                    };
                 } else {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
+                    tag_name_view = type_value.to_js_string_view(self.global_this)?;
+                    tag_name_slice = tag_name_view.to_utf8();
                 }
 
-                tag_name_slice = tag_name_str.to_slice();
                 needs_space = true;
             } else {
-                tag_name_slice = ZigString::init(b"unknown").to_slice();
+                tag_name_slice = bun_core::Utf8Bytes::Borrowed(b"unknown");
                 needs_space = true;
             }
 
@@ -5325,7 +5254,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 };
-                let mut props_iter = jsc::JSPropertyIterator::init(
+                let props_iter = jsc::JSPropertyIterator::init(
                     self.global_this,
                     props_obj,
                     jsc::PropertyIteratorOptions {
@@ -5342,13 +5271,11 @@ pub mod formatter {
                         let count_without_children =
                             props_iter.len - usize::from(children_prop.is_some());
 
-                        while let Some(prop) = props_iter.next()? {
-                            let props_i = props_iter.i as usize;
-                            if prop.eql_comptime("children") {
+                        while let Some((prop, property_value)) = props_iter.next()? {
+                            if prop.eq_ascii(b"children") {
                                 continue;
                             }
 
-                            let property_value = props_iter.value;
                             let tag =
                                 Tag::get_advanced(property_value, self.global_this, tag_opts)?;
 
@@ -5368,6 +5295,7 @@ pub mod formatter {
                                 pf!("<d>"),
                                 pf!("<r>")
                             ));
+                            let props_i = props_iter.i.get() as usize;
 
                             if tag.cell.is_string_like() && C {
                                 writer.write_all(pfmt!("<r><green>", true).as_bytes());
@@ -5420,15 +5348,15 @@ pub mod formatter {
                                 match tag.tag.tag() {
                                     Tag::String => {
                                         let children_string =
-                                            children.get_zig_string(self.global_this)?;
-                                        if children_string.len == 0 {
+                                            children.to_js_string_view(self.global_this)?;
+                                        if children_string.is_empty() {
                                             break 'print_children;
                                         }
                                         if C {
                                             writer.write_all(pfmt!("<r>", true).as_bytes());
                                         }
                                         writer.write_all(b">");
-                                        if children_string.len < 128 {
+                                        if children_string.length() < 128 {
                                             writer.write_string(&children_string);
                                         } else {
                                             self.indent += 1;
@@ -5671,6 +5599,23 @@ pub mod formatter {
         }
 
         #[inline(never)]
+        fn print_depth_exceeded_marker<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            name: &str,
+        ) -> JsResult<()> {
+            self.add_for_new_line(name.len() + 6);
+            let _ = write!(
+                writer_,
+                "{}[{} ...]{}",
+                pfmt!("<r><cyan>", C),
+                name,
+                pfmt!("<r>", C)
+            );
+            Ok(())
+        }
+
+        #[inline(never)]
         fn print_object_tail<const C: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,
@@ -5809,38 +5754,45 @@ pub mod formatter {
             writer: &mut WrappedWriter<'_>,
             slice: &[N],
         ) {
-            writer.print(format_args!(
-                "{}{}{}{}",
-                pfmt!("<r><yellow>", C),
-                N::display(slice[0]),
-                if N::IS_BIGINT { "n" } else { "" },
-                pfmt!("<r>", C),
-            ));
-            let leftover = &slice[1..];
+            // Only the per-element `Display` differs by `N`; the loop is shared.
+            Self::write_typed_array_elements::<C>(
+                writer,
+                slice.len(),
+                N::IS_BIGINT,
+                &mut |w, i| w.print(format_args!("{}", N::display(slice[i]))),
+            );
+        }
+
+        fn write_typed_array_elements<const C: bool>(
+            writer: &mut WrappedWriter<'_>,
+            len: usize,
+            is_bigint: bool,
+            print_element: &mut dyn FnMut(&mut WrappedWriter<'_>, usize),
+        ) {
+            let suffix = if is_bigint { "n" } else { "" };
+            writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+            print_element(writer, 0);
+            writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
             const MAX: usize = 512;
-            let leftover = &leftover[..leftover.len().min(MAX)];
-            for &el in leftover {
+            let shown = len.min(MAX + 1);
+            for i in 1..shown {
                 writer.print_comma::<C>();
                 if writer.failed {
                     return;
                 }
                 writer.space();
 
-                writer.print(format_args!(
-                    "{}{}{}{}",
-                    pfmt!("<r><yellow>", C),
-                    N::display(el),
-                    if N::IS_BIGINT { "n" } else { "" },
-                    pfmt!("<r>", C),
-                ));
+                writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+                print_element(writer, i);
+                writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
             }
 
-            if slice.len() > MAX + 1 {
+            if len > MAX + 1 {
                 writer.print(format_args!(
                     "{}{}, ... {} more{}",
                     pfmt!("<r><d>", C),
-                    if N::IS_BIGINT { "n" } else { "" },
-                    slice.len() - MAX - 1,
+                    suffix,
+                    len - MAX - 1,
                     pfmt!("<r>", C),
                 ));
             }
@@ -6013,8 +5965,7 @@ thread_local! {
 /// `process.emitWarning(text)` for the console timers, as Node does; a
 /// failure to warn is not the caller's problem.
 fn console_warn(global: &JSGlobalObject, args: core::fmt::Arguments<'_>) {
-    let text = OwnedString::new(BunString::create_format(args));
-    let Ok(js) = text.to_js(global) else {
+    let Ok(js) = BunString::create_format(args).into_js(global) else {
         return;
     };
     let _ = global.emit_warning(

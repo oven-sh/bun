@@ -4,9 +4,11 @@ import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDir
 import path from "path";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlColumnDefinition,
   mysqlHandshakeV10,
   mysqlLenencInt,
+  mysqlLenencStr,
   mysqlOkPacket,
   mysqlRawPacket,
   mysqlReadPackets,
@@ -85,7 +87,7 @@ if (isDockerEnabled()) {
       name: "MySQL with TLS",
       image: "mysql_tls",
     },
-  ].filter(Boolean);
+  ].filter(Boolean) as { name: string; image: string; env?: Record<string, string> }[];
 
   for (const image of images) {
     describeWithContainer(
@@ -116,9 +118,29 @@ if (isDockerEnabled()) {
           expect(err).toEqual({ code: "ERR_MYSQL_OVERFLOW" });
         });
 
+        test("returns column values that span more than one wire packet intact", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1 });
+
+          for (const n of [0xffffff - 6, 2 * 0xffffff + 10]) {
+            const [row] = await db`select repeat('a', ${n}) as s`;
+            expect(typeof row.s).toBe("string");
+            expect(row.s.length).toBe(n);
+            expect(row.s === Buffer.alloc(n, "a").toString()).toBe(true);
+          }
+
+          for (const n of [0xffffff - 4, 0xffffff + 85]) {
+            const [row] = await db.unsafe("select repeat('a', " + n + ") as s");
+            expect(typeof row.s).toBe("string");
+            expect(row.s.length).toBe(n);
+            expect(row.s === Buffer.alloc(n, "a").toString()).toBe(true);
+          }
+
+          expect(await db`select 1 as x`).toEqual([{ x: 1 }]);
+        }, 60_000);
+
         let sql: SQL;
         const password = image.image === "mysql_plain" ? "" : "bun";
-        const getOptions = (): Bun.SQL.Options => ({
+        const getOptions = (): Bun.SQL.PostgresOrMySQLOptions => ({
           url: `mysql://root:${password}@${container.host}:${container.port}/bun_sql_test`,
           max: 1,
           allowPublicKeyRetrieval: true,
@@ -133,11 +155,44 @@ if (isDockerEnabled()) {
           sql = new SQL(getOptions());
         });
 
+        test.skipIf(image.image !== "mysql_tls")(
+          "a BunFile tls option is the CA that the server certificate is verified against",
+          async () => {
+            await container.ready;
+            // getOptions() passes the issuing CA as `tls: Bun.file(ca.pem)`: the
+            // chain and the hostname are verified (verify-full) and the query runs.
+            {
+              await using db = new SQL({ ...getOptions(), max: 1 });
+              expect(db.options.sslMode).toBe(4); // SSLMode.verify_full
+              expect(await db`select 1 as x`).toEqual([{ x: 1 }]);
+            }
+            // The server certificate does not chain to this unrelated CA, so the
+            // connection must be refused instead of proceeding over unverified TLS.
+            {
+              await using db = new SQL({
+                ...getOptions(),
+                max: 1,
+                tls: Bun.file(path.join(import.meta.dir, "docker-tls", "server.crt")),
+              });
+              const error = await db`select 1 as x`.then(
+                () => null,
+                e => e,
+              );
+              // Which code depends on whether the server sends its CA in the chain.
+              expect([
+                "SELF_SIGNED_CERT_IN_CHAIN",
+                "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+                "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+              ]).toContain(error?.code);
+            }
+          },
+        );
+
         test("process should exit when idle", async () => {
           expect(
             await bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
               ...bunEnv,
-              MYSQL_URL: getOptions().url,
+              MYSQL_URL: getOptions().url as string,
               CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
             }),
           ).toSpawn();
@@ -444,12 +499,12 @@ if (isDockerEnabled()) {
 
         test("Uses default database without slash", async () => {
           const sql = new SQL("mysql://localhost");
-          expect("mysql").toBe(sql.options.database);
+          expect("mysql").toBe(sql.options.database!);
         });
 
         test("Uses default database with slash", async () => {
           const sql = new SQL("mysql://localhost/");
-          expect("mysql").toBe(sql.options.database);
+          expect("mysql").toBe(sql.options.database!);
         });
 
         test("Result is array", async () => {
@@ -751,7 +806,7 @@ if (isDockerEnabled()) {
         });
 
         test("Fragments in transactions", async () => {
-          const sql = new SQL({ ...getOptions(), debug: true, idle_timeout: 1, fetch_types: false });
+          const sql = new SQL({ ...getOptions(), debug: true, idle_timeout: 1, fetch_types: false } as Bun.SQL.Options);
           expect((await sql.begin(sql => sql`select 1 as x where ${sql`1=1`}`))[0].x).toBe(1);
         });
 
@@ -1186,7 +1241,7 @@ if (isDockerEnabled()) {
               try {
                 await sql`select 1`;
                 throw new Error("should not reach");
-              } catch (e) {
+              } catch (e: any) {
                 expect(e).toBeInstanceOf(Error);
                 expect(e.code).toBe("ERR_MYSQL_CONNECTION_TIMEOUT" as any);
                 expect(e.message).toMatch(/Connection time(d out|out) after 200ms/);
@@ -1222,13 +1277,14 @@ test("MySQL: binary TIME with a very large days field formats without integer wr
     let buffered = Buffer.alloc(0);
     let authed = false;
     socket.write(mysqlHandshakeV10());
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         if (payload[0] === COM_STMT_PREPARE) {
           socket.write(mysqlStmtPrepareOk(1, 1, 0, 0));
         } else if (payload[0] === COM_STMT_EXECUTE) {
@@ -1276,3 +1332,89 @@ test("MySQL: binary TIME with a very large days field formats without integer wr
     await new Promise<void>(r => server.close(() => r()));
   }
 });
+
+test("MySQL: a row split across several maximum-size wire packets is reassembled into one value", async () => {
+  const COM_QUERY = 0x03;
+  const MYSQL_TYPE_VAR_STRING = 0xfd;
+  const MAX_PACKET_PAYLOAD = 0xffffff;
+  const lengths = [MAX_PACKET_PAYLOAD + 85, 2 * MAX_PACKET_PAYLOAD + 10, MAX_PACKET_PAYLOAD - 4, 300];
+
+  function framePayload(startSeq: number, payload: Buffer): { packets: Buffer[]; nextSeq: number } {
+    const packets: Buffer[] = [];
+    let seq = startSeq;
+    let offset = 0;
+    while (true) {
+      const chunk = payload.subarray(offset, offset + MAX_PACKET_PAYLOAD);
+      packets.push(mysqlRawPacket(seq++, chunk));
+      offset += chunk.length;
+      if (chunk.length < MAX_PACKET_PAYLOAD) break;
+    }
+    return { packets, nextSeq: seq };
+  }
+
+  const framing = lengths.map(n => framePayload(3, mysqlLenencStr(Buffer.alloc(n, "a"))).packets.length);
+  expect(framing).toEqual([2, 3, 2, 1]);
+
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    let queryIndex = 0;
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", (chunk: Buffer) => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+          return;
+        }
+        if (mysqlAckSessionSetup(socket, payload)) return;
+        if (payload[0] !== COM_QUERY || queryIndex >= lengths.length) {
+          socket.end();
+          return;
+        }
+        const { packets, nextSeq } = framePayload(3, mysqlLenencStr(Buffer.alloc(lengths[queryIndex++], "a")));
+        socket.write(
+          Buffer.concat([
+            mysqlRawPacket(1, mysqlLenencInt(1)),
+            mysqlColumnDefinition(2, { name: "s", type: MYSQL_TYPE_VAR_STRING }),
+            ...packets,
+            mysqlOkPacket(nextSeq, 0xfe),
+          ]),
+        );
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  try {
+    const fixture = /* js */ `
+      const { SQL } = require("bun");
+      const sql = new SQL({ url: "mysql://root@127.0.0.1:${port}/db", max: 1 });
+      const out = [];
+      for (let i = 0; i < ${lengths.length}; i++) {
+        const rows = await sql\`select s\`.simple();
+        out.push(rows.map(r => [typeof r.s, r.s.length, r.s === Buffer.alloc(r.s.length, "a").toString()]));
+      }
+      console.log(JSON.stringify(out));
+      await sql.close().catch(() => {});
+      process.exit(0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, stdout: stdout.trim() }).toEqual({
+      stderr: expect.any(String),
+      stdout: JSON.stringify(lengths.map(n => [["string", n, true]])),
+    });
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+}, 90_000);

@@ -101,33 +101,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
         let p = self;
-        // Parse a yield-from expression, which yields from an iterator
-        let is_star = p.lexer.token == T::TAsterisk;
-
-        if is_star {
-            if p.lexer.has_newline_before {
-                p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
-            }
-            p.lexer.next()?;
-        }
-
+        let mut is_star = false;
         let mut value: Option<ExprNodeIndex> = None;
-        match p.lexer.token {
-            T::TCloseBrace
-            | T::TCloseParen
-            | T::TCloseBracket
-            | T::TColon
-            | T::TComma
-            | T::TSemicolon => {}
-            _ => {
-                if is_star || !p.lexer.has_newline_before {
-                    value = Some(p.parse_expr(Level::Yield)?);
-                }
+        // Nothing after a line break belongs to the "yield".
+        if !p.lexer.has_newline_before {
+            // Parse a yield-from expression, which yields from an iterator
+            is_star = p.lexer.token == T::TAsterisk;
+            if is_star {
+                p.lexer.next()?;
+            }
+            // After "*" the operand is parsed whatever follows.
+            if is_star || p.is_start_of_expression_or_shift_assign() {
+                value = Some(p.parse_expr(Level::Yield)?);
             }
         }
 
+        // `parseAssignmentExpressionOrHigher` returns it as it is: like the body of an arrow
+        // function it ends the assignment expression.
+        p.after_arrow_body_loc = p.lexer.loc();
         Ok(p.new_expr(E::Yield { value, is_star }, loc))
+    }
+
+    /// `isStartOfExpression`. TypeScript's scanner always produces `>` first and only rescans on request, so until then `>>=` and `>>>=`
+    /// count as binary operators, and a binary operator counts as the start of an expression with a missing left operand.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn is_start_of_expression_or_shift_assign(&mut self) -> bool {
+        self.is_start_of_expression()
+            || matches!(
+                self.lexer.token,
+                T::TGreaterThanGreaterThanEquals | T::TGreaterThanGreaterThanGreaterThanEquals
+            )
     }
 
     // By the time we call this, the identifier and type parameters have already
@@ -221,6 +225,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // read fields before move (G::Property is not Copy).
                 let prop_kind = property.kind;
                 let prop_key = property.key;
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    let named_at = match property.class_static_block_ref() {
+                        Some(block) => Some(block.loc),
+                        None => prop_key.map(|key| key.loc),
+                    };
+                    if let Some(named_at) = named_at {
+                        starts
+                            .class_elements
+                            .insert(named_at.start, first_decorator_loc.start);
+                    }
+                }
                 properties.push(property);
                 has_auto_accessor =
                     has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
@@ -498,7 +513,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         // Are these arguments to an arrow function?
-        if p.lexer.token == T::TEqualsGreaterThan
+        let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
+        if is_arrow_fn
             || opts.force_arrow_fn
             || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
         {
@@ -541,17 +557,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
 
+            let mut arrow_data = FnOrArrowDataParse {
+                allow_await: if opts.is_async {
+                    AwaitOrYield::AllowExpr
+                } else {
+                    AwaitOrYield::AllowIdent
+                },
+                ..Default::default()
+            };
+
             // Avoid parsing TypeScript code like "a ? (1 + 2) : (3 + 4)" as an arrow
             // function. The ":" after the ")" may be a return type annotation, so we
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if p.lexer.token == T::TEqualsGreaterThan
-                || (Self::IS_TYPESCRIPT_ENABLED
-                    && invalid_log.is_empty()
-                    && p.try_skip_type_script_arrow_return_type_with_backtracking())
-                || opts.force_arrow_fn
-            {
+            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
+                if opts.is_after_question_and_before_colon {
+                    // Only do this very expensive check if we must
+                    is_arrow_fn = p
+                        .is_type_script_arrow_return_type_after_question_and_before_colon(
+                            &arrow_data,
+                        )?;
+                    if is_arrow_fn {
+                        // We know this will succeed because we've already done it once above
+                        p.lexer.next()?;
+                        p.skip_typescript_return_type()?;
+                    }
+                } else {
+                    // Otherwise, do the less expensive check
+                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
+                }
+            }
+
+            if is_arrow_fn || opts.force_arrow_fn {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
 
@@ -562,14 +600,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc_.add_error(p.log(), p.source);
                     }
                 }
-                let mut arrow_data = FnOrArrowDataParse {
-                    allow_await: if opts.is_async {
-                        AwaitOrYield::AllowExpr
-                    } else {
-                        AwaitOrYield::AllowIdent
-                    },
-                    ..Default::default()
-                };
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
                 let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
                 arrow.is_async = opts.is_async;
@@ -1562,8 +1592,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         async_range: bun_ast::Range,
         level: Level,
+        flags: EFlags,
     ) -> Result<Expr, Error> {
         let p = self;
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts
+                .async_arrow_parameters
+                .insert(async_range.loc.start, p.lexer.loc().start);
+        }
         // "async function() {}"
         if !p.lexer.has_newline_before && p.lexer.token == T::TFunction {
             return p.parse_fn_expr(async_range.loc, true);
@@ -1654,6 +1690,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         level,
                         ParenExprOpts {
                             is_async: true,
+                            is_after_question_and_before_colon: flags
+                                == EFlags::AfterQuestionAndBeforeColon,
                             ..Default::default()
                         },
                     );
@@ -1667,7 +1705,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
-                            ) {
+                            )? {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.lexer.next()?;

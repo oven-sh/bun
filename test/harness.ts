@@ -6,12 +6,12 @@
  */
 
 import * as numeric from "_util/numeric.ts";
-import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
-import { ChildProcess, execSync, fork } from "child_process";
-import { readdir, rm, writeFile } from "fs/promises";
-import fs, { closeSync, openSync, rmSync } from "node:fs";
+import { execSync } from "child_process";
+import { readdir, writeFile } from "fs/promises";
+import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
 
@@ -20,7 +20,9 @@ export const BREAKING_CHANGES_BUN_1_2 = false;
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isFreeBSD = process.platform === "freebsd";
-export const isPosix = isMacOS || isLinux || isFreeBSD;
+/** Bun (like Node) reports `"android"` on Android; it is not folded into `isLinux`. */
+export const isAndroid = process.platform === "android";
+export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
@@ -127,6 +129,40 @@ export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
 }
+
+/**
+ * Source for a `bun -e` script: binds `port`, where a dial to 127.0.0.1 sits in
+ * EINPROGRESS for good, and `filler`, to `destroy()` when done. Not on Windows or musl.
+ *
+ * A listener nobody accepts from, with a backlog one filler connection fills, so the
+ * kernel drops every later SYN. Needs listen(2) with the smallest backlog that admits
+ * exactly one connection (macOS treats 0 as unlimited), which Bun's own listeners do
+ * not expose, so the listener is a raw libc socket.
+ */
+export const blackholePortSource = `
+const net = require("node:net");
+const { dlopen, ptr } = require("bun:ffi");
+const darwin = process.platform === "darwin";
+const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
+  socket:      { args: ["int", "int", "int"],  returns: "int" },
+  bind:        { args: ["int", "ptr", "int"],  returns: "int" },
+  listen:      { args: ["int", "int"],         returns: "int" },
+  getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+});
+const AF_INET = 2, SOCK_STREAM = 1;
+const addr = new Uint8Array(16);
+if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
+addr.set([127, 0, 0, 1], 4);
+const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+const len = new Uint32Array([16]);
+if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
+const port = (addr[2] << 8) | addr[3];
+// The error listener outlives the await, so a later error on the filler
+// is swallowed rather than thrown.
+const filler = net.connect(port, "127.0.0.1");
+await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
+`;
 
 export function nodeExe(): string | null {
   return which("node") || null;
@@ -250,8 +286,8 @@ let canBuildNodeAddonsCached: boolean | undefined;
 export function canBuildNodeAddons(): boolean {
   if (canBuildNodeAddonsCached === undefined) {
     if (!isMacOS) {
-      // Linux and Windows CI toolchains are provisioned by the bootstrap
-      // scripts in lockstep with the reported Node version; only macOS test
+      // Linux and Windows CI toolchains are baked into the images
+      // (scripts/build/ci-images/spec.ts) in lockstep with the reported Node version; only macOS test
       // boxes have independently-managed Xcode installs.
       canBuildNodeAddonsCached = true;
     } else {
@@ -335,6 +371,35 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
   expect(maxRSS).toBeGreaterThan(1024 * 1024);
   return maxRSS;
 }
+
+/**
+ * Runs `cmd` (a script that prints `{"deltaMiB": number}` as its last stdout
+ * line) under bun with ASAN quarantine disabled, and asserts the delta is below
+ * `release` MiB (or `debug` MiB under ASAN/debug builds).
+ */
+export async function expectRssDeltaBelow(
+  cmd: string[] /* args after bunExe(), e.g. ["--smol", "-e", code] or [fixturePath] */,
+  bounds: { release: number; debug: number },
+): Promise<void> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.trim()).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? bounds.debug : bounds.release);
+  expect(exitCode).toBe(0);
+}
+
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {
   return (emptyBunMaxRSS ??= (async () => {
@@ -488,7 +553,7 @@ export interface BunRunResult {
   stdout: string;
   stderr: string;
   exitCode: number;
-  signalCode: NodeJS.Signals | null;
+  signalCode: NodeJS.Signals | number | null;
 }
 
 /**
@@ -644,6 +709,10 @@ const binaryTypes = {
 } as const;
 if (expect.extend)
   expect.extend({
+    toMatchNodeModulesAt,
+    toHaveBins,
+    toBeValidBin,
+    toBeWorkspaceLink,
     toHaveTestTimedOutAfter(actual: any, expected: number) {
       if (typeof actual !== "string") {
         return {
@@ -708,7 +777,7 @@ if (expect.extend)
         }
       }
     },
-    toSpawn(actual: BunRunResult, expectedStdout?: string) {
+    toSpawn(actual: any, expectedStdout?: string) {
       if (actual == null || typeof actual !== "object" || typeof actual.exitCode !== "number") {
         throw new TypeError(
           `expect(received).toSpawn()\n\nExpected a BunRunResult (did you forget to await bunRun()?)`,
@@ -745,7 +814,7 @@ if (expect.extend)
         message: () => `Expected process to fail but it exited with code 0\nstdout: ${actual.stdout}`,
       };
     },
-    toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    toThrowWithCode(fn: any, cls: CallableFunction, code: string) {
       try {
         fn();
         return {
@@ -757,7 +826,7 @@ if (expect.extend)
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -782,7 +851,7 @@ if (expect.extend)
         };
       }
     },
-    async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+    async toThrowWithCodeAsync(fn: any, cls: CallableFunction, code: string) {
       try {
         await fn();
         return {
@@ -794,7 +863,7 @@ if (expect.extend)
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -984,10 +1053,12 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
   };
 }
 
-export function toHaveBins(actual: string[], expectedBins: string[]) {
+export function toHaveBins(actual: any, expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
+    // Each bin is a pair of files, `name.exe` and `name.bunx`.
+    if (actual.length !== expectedBins.length * 2) return { pass: false, message };
     for (var i = 0; i < actual.length; i += 2) {
       if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
         return { pass: false, message };
@@ -996,10 +1067,10 @@ export function toHaveBins(actual: string[], expectedBins: string[]) {
     return { pass: true, message };
   }
 
-  return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
+  return { pass: actual.length === expectedBins.length && actual.every((bin, i) => bin === expectedBins[i]), message };
 }
 
-export function toBeValidBin(actual: string, expectedLinkPath: string) {
+export function toBeValidBin(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1011,7 +1082,7 @@ export function toBeValidBin(actual: string, expectedLinkPath: string) {
   return { pass: fs.readlinkSync(actual) === expectedLinkPath, message };
 }
 
-export function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+export function toBeWorkspaceLink(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1176,7 +1247,6 @@ export async function describeWithContainer(
     "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,
     "redis_unified": 6379,
-    "minio": 9000,
     "autobahn": 9002,
   };
 
@@ -1281,7 +1351,7 @@ function failTestsOnBlockingWriteCall() {
     Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
       ...prop,
       get() {
-        const actual = prop.get.call(this);
+        const actual = prop.get!.call(this);
         if (actual?.write && !actual.__proto__[didAttachSymbol]) {
           actual.__proto__[didAttachSymbol] = true;
           attachWriteMeasurement(actual);
@@ -1613,6 +1683,10 @@ interface BunHarnessTestMatchers {
   toSpawn(expectedStdout?: string): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
+  toMatchNodeModulesAt(root: string): Promise<void>;
+  toHaveBins(expectedBins: string[]): void;
+  toBeValidBin(expectedLinkPath: string): void;
+  toBeWorkspaceLink(expectedLinkPath: string): void;
 }
 
 declare module "bun:test" {
@@ -1843,8 +1917,12 @@ export function libcPathForDlopen() {
       }
     case "darwin":
       return "libc.dylib";
+    case "android":
+      return "libc.so";
+    case "freebsd":
+      return "libc.so.7";
     default:
-      throw new Error("TODO");
+      throw new Error(`libcPathForDlopen: unsupported platform ${process.platform}`);
   }
 }
 
@@ -1873,157 +1951,6 @@ export function textLockfile(version: number, pkgs: any): string {
     ...pkgs,
   });
 }
-
-export class VerdaccioRegistry {
-  port: number;
-  process: ChildProcess | undefined;
-  configPath: string;
-  packagesPath: string;
-  users: Record<string, string> = {};
-
-  constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
-    this.port = randomPort();
-    this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
-    this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
-  }
-
-  async start(silent: boolean = true) {
-    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
-    // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
-    // while the install client connects to 127.0.0.1 and every request is refused.
-    const listen = `127.0.0.1:${this.port}`;
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
-      silent,
-      // Prefer using a release build of Bun since it's faster
-      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
-      env: {
-        ...(bunEnv as any),
-        NODE_NO_WARNINGS: "1",
-      },
-    });
-
-    this.process.stderr?.on("data", data => {
-      console.error(`[verdaccio] stderr: ${data}`);
-    });
-
-    const started = Promise.withResolvers();
-
-    this.process.on("error", error => {
-      console.error(`Failed to start verdaccio: ${error}`);
-      started.reject(error);
-    });
-
-    this.process.on("exit", (code, signal) => {
-      if (code !== 0) {
-        console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
-      } else {
-        console.log("Verdaccio exited successfully");
-      }
-    });
-
-    this.process.on("message", (message: { verdaccio_started: boolean }) => {
-      if (message.verdaccio_started) {
-        started.resolve();
-      }
-    });
-
-    await started.promise;
-  }
-
-  registryUrl() {
-    return `http://localhost:${this.port}/`;
-  }
-
-  stop() {
-    rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
-  }
-
-  /**
-   * returns auth token
-   */
-  async generateUser(username: string, password: string): Promise<string> {
-    if (this.users[username]) {
-      throw new Error(`User ${username} already exists`);
-    } else this.users[username] = password;
-
-    const url = `http://localhost:${this.port}/-/user/org.couchdb.user:${username}`;
-    const user = {
-      name: username,
-      password: password,
-      email: `${username}@example.com`,
-    };
-
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(user),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      return data.token;
-    }
-
-    throw new Error("Failed to create user:", response.statusText);
-  }
-
-  async authBunfig(user: string) {
-    const authToken = await this.generateUser(user, user);
-    return Bun.TOML.stringify({
-      install: {
-        cache: false,
-        registry: { url: `http://localhost:${this.port}/`, token: authToken },
-      },
-    });
-  }
-
-  async createTestDir(
-    opts: { bunfigOpts?: BunfigOpts; files?: DirectoryTree | string } = {
-      bunfigOpts: { linker: "hoisted" },
-      files: {},
-    },
-  ) {
-    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
-    const packageDir = tempDir("verdaccio-test-", opts.files ?? {});
-    const packageJson = join(packageDir, "package.json");
-    await this.writeBunfig(packageDir, opts.bunfigOpts);
-    this.users = {};
-    return { packageDir: String(packageDir), packageJson };
-  }
-
-  async writeBunfig(dir: string, opts: BunfigOpts = {}) {
-    await write(
-      join(dir, "bunfig.toml"),
-      Bun.TOML.stringify({
-        install: {
-          cache: join(dir, ".bun-cache"),
-          saveTextLockfile: opts.saveTextLockfile,
-          registry: opts.npm ? undefined : this.registryUrl(),
-          linker: opts.linker,
-          globalStore: opts.globalStore,
-          publicHoistPattern: opts.publicHoistPattern,
-          hoistPattern: opts.hoistPattern,
-          hoist: opts.hoist,
-        },
-      }),
-    );
-  }
-}
-
-type BunfigOpts = {
-  saveTextLockfile?: boolean;
-  npm?: boolean;
-  linker?: "isolated" | "hoisted";
-  globalStore?: boolean;
-  publicHoistPattern?: string | string[];
-  hoistPattern?: string | string[];
-  hoist?: boolean;
-};
 
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);
@@ -2269,7 +2196,64 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
   return outPath;
 }
 
-export const rss: () => number =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? (Bun.unsafe.memoryFootprint as () => number)
-    : process.memoryUsage.rss;
+export const rss: () => number = process.memoryUsage.rss;
+
+/** Read exactly `len` bytes from `fd` at absolute `offset`. */
+export function preadExact(fd: number, offset: number, len: number): Buffer {
+  const buf = Buffer.alloc(len);
+  let got = 0;
+  while (got < len) {
+    const n = fs.readSync(fd, buf, got, len - got, offset + got);
+    if (n === 0) throw new Error(`short read at ${offset}`);
+    got += n;
+  }
+  return buf;
+}
+
+/** One ELF64 program header, fields as in Elf64_Phdr. */
+export interface Elf64ProgramHeader {
+  type: number;
+  flags: number;
+  offset: bigint;
+  vaddr: bigint;
+  paddr: bigint;
+  filesz: bigint;
+  memsz: bigint;
+  align: bigint;
+}
+
+/** Program headers of an ELF64 binary (either endianness). */
+export function readElf64ProgramHeaders(path: string): Elf64ProgramHeader[] {
+  const fd = openSync(path, "r");
+  try {
+    const ehdr = preadExact(fd, 0, 64);
+    if (ehdr.readUInt32BE(0) !== 0x7f454c46) throw new Error("not ELF");
+    if (ehdr[4] !== 2) throw new Error("only ELF64 supported"); // EI_CLASS
+    const le = ehdr[5] === 1; // EI_DATA
+    const u16 = (b: Buffer, o: number) => (le ? b.readUInt16LE(o) : b.readUInt16BE(o));
+    const u32 = (b: Buffer, o: number) => (le ? b.readUInt32LE(o) : b.readUInt32BE(o));
+    const u64 = (b: Buffer, o: number) => (le ? b.readBigUInt64LE(o) : b.readBigUInt64BE(o));
+
+    const e_phoff = Number(u64(ehdr, 32));
+    const e_phentsize = u16(ehdr, 54);
+    const e_phnum = u16(ehdr, 56);
+
+    const headers: Elf64ProgramHeader[] = [];
+    for (let i = 0; i < e_phnum; i++) {
+      const ph = preadExact(fd, e_phoff + i * e_phentsize, e_phentsize);
+      headers.push({
+        type: u32(ph, 0),
+        flags: u32(ph, 4),
+        offset: u64(ph, 8),
+        vaddr: u64(ph, 16),
+        paddr: u64(ph, 24),
+        filesz: u64(ph, 32),
+        memsz: u64(ph, 40),
+        align: u64(ph, 48),
+      });
+    }
+    return headers;
+  } finally {
+    closeSync(fd);
+  }
+}

@@ -11,7 +11,7 @@ use crate::{fs, paths};
 use bun_core::printer::json_stringify_alloc;
 use bun_core::strings;
 use bun_format::FormatOptions;
-use bun_format::tailwind::{Names, Orders, Rank, Tailwind};
+use bun_format::tailwind::{Names, Orders, Oxc, Rank, Tailwind};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
@@ -408,6 +408,7 @@ pub(crate) fn for_file(
         preserves_whitespace: is_on(b"preserveWhitespace"),
         preserves_duplicates: is_on(b"preserveDuplicates"),
         follows_plugin,
+        oxc: Oxc::Absent,
         orders: Box::new(OfGroup {
             classes: Arc::clone(classes),
             which,
@@ -474,7 +475,7 @@ impl Classes {
 }
 
 /// Takes `sortTailwindcss` from `options`, which are for a file of this kind, if oxfmt does not sort in that language. The
-/// plugin of Prettier sorts in LWC too.
+/// plugin of Prettier sorts in LWC and in MDX too.
 pub(crate) fn only_where_sorted(options: &mut FormatOptions, kind: Option<Kind>) {
     use bun_format::html::Parser;
     let is_sorted = match kind {
@@ -486,7 +487,7 @@ pub(crate) fn only_where_sorted(options: &mut FormatOptions, kind: Option<Kind>)
             | Kind::Handlebars
             | Kind::Html(Parser::Html | Parser::Vue | Parser::Angular),
         ) => true,
-        Some(Kind::Html(Parser::Lwc)) => {
+        Some(Kind::Html(Parser::Lwc) | Kind::Mdx) => {
             (options.tailwind.as_deref()).is_some_and(|it| it.follows_plugin)
         }
         Some(_) => false,

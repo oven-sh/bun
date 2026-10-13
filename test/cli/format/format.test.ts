@@ -1572,6 +1572,46 @@ exports.format = async (text, options) => {
       timeout,
     );
 
+    // The order of prettier-plugin-packagejson is that of the package sort-package-json, not that of `sortPackageJson`.
+    test(
+      "so does a package.json with prettier-plugin-packagejson, and no other file",
+      async () => {
+        const plugin = "prettier-plugin-packagejson";
+        const project = {
+          ...packages,
+          [`node_modules/${plugin}/package.json`]: `{ "name": "${plugin}", "version": "3.0.0" }`,
+          ".prettierrc": `{ "plugins": ["${plugin}"], "packageSortOrder": ["version"] }\n`,
+          "package.json": '{  "a":  1 }\n',
+          "packages/b/package.json": '{  "b":  1 }\n',
+          "my-package.json": '{  "c":  1 }\n',
+          "d.js": "d  ;\n",
+        };
+        const names = ["package.json", "packages/b/package.json", "my-package.json", "d.js"];
+        const result = await format(project, [], { reads: names });
+        expect(result.files).toEqual({
+          "package.json": '{ "a": 1 }\n',
+          "packages/b/package.json": '{ "b": 1 }\n',
+          "my-package.json": '{ "c": 1 }\n',
+          "d.js": "d;\n",
+        });
+        expect(result.stderr).toContain("Used your installed Prettier for 2 files");
+        expect(result.stderr).not.toContain("[warn]");
+        expect(result.exitCode).toBe(0);
+
+        // Without Prettier only those files are left, and with the flag they are formatted without the plugin.
+        const { ".prettierrc": config, "package.json": text } = project;
+        const alone = { ".prettierrc": config, "package.json": text, "d.js": "d  ;\n" };
+        const left = await format(alone, [], { reads: ["package.json", "d.js"] });
+        expect(left.files).toEqual({ "package.json": text, "d.js": "d;\n" });
+        expect(left.stderr).toContain(`Not installed: prettier, ${plugin}`);
+        expect(left.exitCode).toBe(2);
+        const allowed = await format(alone, ["--allow-unsupported"], { reads: ["package.json"] });
+        expect(allowed.files).toEqual({ "package.json": '{\n  "a": 1\n}\n' });
+        expect(allowed.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
     test("a path reaches Prettier and its plugins as the system writes it, also on Windows", async () => {
       const worker = join(import.meta.dir, "../../../src/lint/js_plugin/worker");
       const head = { usesConfig: true, editorconfig: true, flags: {}, precedence: "cli-override" };
@@ -2099,7 +2139,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     expect(result.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads });
     expect(allowed.files).toEqual({ "a.js": formatted, "b.astro": files["b.astro"], "other/c.js": formatted });
-    expect(allowed.stderr).toContain("has no effect because bun fmt does not load Prettier plugins");
+    expect(allowed.stderr).toMatch(
+      /\[warn\] prettier-plugin-brace-style, \.\/own\.js in \S+\.prettierrc have no effect because bun fmt does not include those plugins\n/,
+    );
     expect(allowed.exitCode).toBe(0);
     const flag = await format({ "a.js": ugly }, ["--plugin", "prettier-plugin-brace-style"], { reads: ["a.js"] });
     expect(flag.files["a.js"]).toBe(ugly);
@@ -2136,6 +2178,40 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     });
     expect(other.files).toEqual({ "a.js": ugly, "legacy/b.js": formatted });
     expect(other.exitCode).toBe(2);
+  });
+
+  // Prettier 3.9.9 prints 3,939 files of JavaScript and TypeScript the same with and without @prettier/plugin-oxc 0.2.3.
+  test.each<[string, Record<string, string>, string[]?]>([
+    ["its name", { ".prettierrc": '{ "plugins": ["@prettier/plugin-oxc"] }' }],
+    [
+      "the module",
+      {
+        "prettier.config.mjs": 'import * as oxc from "@prettier/plugin-oxc";\nexport default { plugins: [oxc] };',
+        "node_modules/@prettier/plugin-oxc/package.json":
+          '{ "name": "@prettier/plugin-oxc", "exports": "./index.mjs" }',
+        "node_modules/@prettier/plugin-oxc/index.mjs":
+          'export const parsers = { oxc: { astFormat: "estree" }, "oxc-ts": { astFormat: "estree" } };\n',
+      },
+    ],
+    [
+      "overrides with its parsers",
+      {
+        ".prettierrc": JSON.stringify({
+          overrides: [
+            { files: "*.js", options: { parser: "oxc", plugins: ["@prettier/plugin-oxc"] } },
+            { files: "*.ts", options: { parser: "oxc-ts", plugins: ["@prettier/plugin-oxc"] } },
+          ],
+        }),
+      },
+    ],
+    ["--plugin", {}, ["--plugin", "@prettier/plugin-oxc"]],
+  ])("the plugin that only reads with another parser, named by %s, changes nothing", async (_, files, flags = []) => {
+    const result = await format({ ...files, "a.js": ugly, "a.ts": "let  a: 1\n" }, ["--log-level=warn", ...flags], {
+      reads: ["a.js", "a.ts"],
+    });
+    expect(result.stderr).toBe("");
+    expect(result.files).toEqual({ "a.js": formatted, "a.ts": "let a: 1;\n" });
+    expect(result.exitCode).toBe(0);
   });
 
   test("a plugin that only adds a language: the rest is formatted, and the files of that language are counted", async () => {

@@ -9,10 +9,11 @@ use crate::js::comments::collect;
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
+use crate::js::utils::tailwindcss::{Texts, collapse_among, ends_in_template};
 use crate::options::{Code, Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript, Then};
 use crate::prelude::*;
-use crate::tailwind::{Ends, Tailwind};
-use crate::{format_args, text, write};
+use crate::tailwind::Tailwind;
+use crate::{format_args, write};
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::linter::{TypesInJavaScript, refused_by_prettier_with};
@@ -278,80 +279,72 @@ pub(crate) fn sorted_script(parse: Parse<'_>, code: &[u8], how: &SortImports) ->
 }
 
 /// Finds the strings and the templates of a program, and sorts the classes in them.
-struct ClassSorter<'t> {
+struct ClassSorter<'t, 'a> {
     tailwind: &'t Tailwind,
-    /// The plugin's `canCollapseWhitespaceIn`: every `+` around a text counts. If not, the nearest does.
     is_angular: bool,
-    /// The operands of each `+` around what is visited, and on which sides of those further out it is.
-    concatenations: Vec<(Span, Span, (bool, bool))>,
+    /// Each `+` and each template around what is visited, from the outside to the inside.
+    around: Vec<Expr<'a>>,
     /// What is written in the place of what, in the order of the text.
     changes: Vec<(Span, Vec<u8>)>,
 }
 
-impl ClassSorter<'_> {
-    /// Whether what is at `span` is on the left, and on the right, of a `+` that counts.
-    fn sides_of(&self, span: Span) -> (bool, bool) {
-        let is_in = |operand: Span| operand.start <= span.start && span.end <= operand.end;
-        self.concatenations
-            .last()
-            .map_or((false, false), |&(left, right, outer)| {
-                (outer.0 || is_in(left), outer.1 || is_in(right))
-            })
-    }
-
-    /// `text`, which is at `span`, is text of a template, or what is between the quotes of a string. `index`, `count`: which of
-    /// how many texts of the template.
-    fn sort(&mut self, text: &[u8], span: Span, (index, count): (usize, usize)) {
-        // What is added to has to stay apart.
-        let (is_left, is_right) = self.sides_of(span);
-        let ends = Ends {
-            ignores_first: index > 0 && !text::starts_with_white_space(text),
-            ignores_last: index + 1 < count
-                && strings::trim_js_whitespace_end(text).len() == text.len(),
-            collapses_start: !is_right && index == 0,
-            collapses_end: !is_left && index + 1 == count,
+impl ClassSorter<'_, '_> {
+    /// `texts`: those of the template at `whole`, or what is between the quotes of the string there, and where each is.
+    fn sort<'s>(&mut self, whole: Span, texts: impl ExactSizeIterator<Item = (&'s [u8], Span)>) {
+        let rules = match self.is_angular {
+            true => (true, Texts::AsWritten),
+            false => (false, Texts::Unseen),
         };
-        let sorted = self.tailwind.sorted_between(text, ends);
-        if *sorted != *text {
-            self.changes.push((span, sorted.into_owned()));
+        let around = collapse_among(&self.around, whole, self.tailwind, rules);
+        let count = texts.len();
+        for (index, (text, span)) in texts.enumerate() {
+            let ends = ends_in_template(text, (index == 0, index + 1 == count), around);
+            let sorted = self.tailwind.sorted_between(text, ends);
+            if *sorted != *text {
+                self.changes.push((span, sorted.into_owned()));
+            }
         }
     }
 
     /// `span`: of a string with its quotes, or of a template without substitutions.
     fn sort_literal(&mut self, file: &File<'_>, span: Span) {
         if let [b'"' | b'\'' | b'`', content @ .., _] = file.slice(span) {
-            self.sort(content, Span::new(span.start + 1, span.end - 1), (0, 1));
+            let inner = Span::new(span.start + 1, span.end - 1);
+            self.sort(span, std::iter::once((content, inner)));
         }
     }
 }
 
-impl<'a> Visitor<'a> for ClassSorter<'_> {
+fn is_around_classes(e: Expr<'_>) -> bool {
+    matches!(
+        e.kind(),
+        ExprKind::Template(_) | ExprKind::Binary { op: BinOp::Add, .. }
+    )
+}
+
+impl<'a> Visitor<'a> for ClassSorter<'_, 'a> {
     fn enter(&mut self, node: Node<'a>) {
         match node {
-            Node::Expr(e) => match e.kind() {
-                ExprKind::Binary {
-                    op: BinOp::Add,
-                    left,
-                    right,
-                } => {
-                    let outer = match self.is_angular {
-                        true => self.sides_of(e.span()),
-                        false => (false, false),
-                    };
-                    self.concatenations.push((left.span(), right.span(), outer));
-                }
-                ExprKind::String(_) if !e.is_jsx_text() => self.sort_literal(e.file(), e.span()),
-                ExprKind::Template(template) => {
-                    let count = template.quasi_count();
-                    for index in 0..count {
-                        let span = template.quasi_span(index);
-                        let end = span.end - if index + 1 == count { 1 } else { 2 };
-                        let span = Span::new(span.start + 1, end);
-                        self.sort(template.raw(index), span, (index, count));
+            Node::Expr(e) => {
+                match e.kind() {
+                    ExprKind::String(_) if !e.is_jsx_text() => {
+                        self.sort_literal(e.file(), e.span())
                     }
+                    ExprKind::Template(template) => {
+                        let count = template.quasi_count();
+                        let text = |index: usize| {
+                            let span = template.quasi_span(index);
+                            let end = span.end - if index + 1 == count { 1 } else { 2 };
+                            (template.raw(index), Span::new(span.start + 1, end))
+                        };
+                        self.sort(e.span(), (0..count).map(text));
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+                if is_around_classes(e) {
+                    self.around.push(e);
+                }
+            }
             Node::Prop(property) => {
                 if let Some(key) = property.key()
                     && matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
@@ -365,9 +358,8 @@ impl<'a> Visitor<'a> for ClassSorter<'_> {
     }
 
     fn exit(&mut self, node: Node<'a>) {
-        if matches!(node, Node::Expr(e) if matches!(e.kind(), ExprKind::Binary { op: BinOp::Add, .. }))
-        {
-            self.concatenations.pop();
+        if matches!(node, Node::Expr(e) if is_around_classes(e)) {
+            self.around.pop();
         }
     }
 }
@@ -389,7 +381,7 @@ pub(crate) fn with_sorted_classes(
                 let mut sorter = ClassSorter {
                     tailwind,
                     is_angular,
-                    concatenations: Vec::new(),
+                    around: Vec::new(),
                     changes: Vec::new(),
                 };
                 walk(file, &mut sorter);

@@ -21,6 +21,7 @@ use bun_collections::index_sort::sort_slice;
 use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
+use bun_format::tailwind::Oxc;
 use bun_lint::glob::Picomatch;
 use bun_lint::json::{self, Notation};
 use bun_lint::linter::config::{glob_refusal, strings_of};
@@ -158,6 +159,7 @@ struct Plugins {
     names_others: bool,
     /// One of them is `prettier-plugin-tailwindcss`.
     sorts_classes: bool,
+    oxc: Oxc,
     /// Those that may print what this formatter formats in another way.
     missing: Vec<Vec<u8>>,
     /// How the names of the files end that they add to what Prettier reads.
@@ -223,6 +225,8 @@ fn patterns_of<'t>(all: impl Iterator<Item = &'t [u8]>, is_oxfmt: bool) -> Vec<P
 }
 
 const PLUGIN_FOR_CLASSES: &[u8] = b"prettier-plugin-tailwindcss";
+/// It reads JavaScript and TypeScript with another parser, and what is printed is the same.
+const PLUGIN_OF_OXC: &[u8] = b"@prettier/plugin-oxc";
 
 /// What the plugins that sort imports and classes do is built in.
 pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
@@ -230,15 +234,32 @@ pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
     name.ends_with(b"/prettier-plugin-sort-imports")
         || name == b"prettier-plugin-organize-imports"
         || name == PLUGIN_FOR_CLASSES
+        || name == PLUGIN_OF_OXC
 }
 
-/// What an element of `plugins` names. One that is no string is a module that a configuration in JavaScript has imported:
-/// the plugin that sorts classes is known by its options.
+/// What an element of `plugins` names. One that is no string is a module that a configuration in JavaScript has imported,
+/// which is known by what it exports.
 fn name_of(plugin: &Json) -> Option<&[u8]> {
-    let is_for_classes = || plugin.get(b"options")?.get(b"tailwindConfig");
-    plugin
-        .as_str()
-        .or_else(|| is_for_classes().map(|_| PLUGIN_FOR_CLASSES))
+    let has =
+        |export: &[u8], key: &[u8]| plugin.get(export).is_some_and(|it| it.get(key).is_some());
+    match plugin.as_str() {
+        None if has(b"options", b"tailwindConfig") => Some(PLUGIN_FOR_CLASSES),
+        None if has(b"parsers", b"oxc") => Some(PLUGIN_OF_OXC),
+        name => name,
+    }
+}
+
+/// See [`Oxc`]. `plugins`: in the order of their list.
+fn oxc_among<'p>(plugins: impl Iterator<Item = &'p [u8]>) -> Oxc {
+    let mut oxc = Oxc::Absent;
+    for name in plugins.map(package_of) {
+        oxc = match (name == PLUGIN_OF_OXC, oxc) {
+            (true, _) => Oxc::Behind,
+            (false, Oxc::Behind) if name == PLUGIN_FOR_CLASSES => Oxc::Before,
+            (false, oxc) => oxc,
+        };
+    }
+    oxc
 }
 
 fn is_plugin_for_classes(name: &[u8]) -> bool {
@@ -249,9 +270,11 @@ fn is_built_in(plugin: &Json) -> bool {
     name_of(plugin).is_some_and(is_built_in_plugin)
 }
 
-/// Plugins that add a language to Prettier and leave the others as they are, with how the names of its files end.
-/// Without them the rest of a project is formatted the same.
-const PLUGINS_FOR_LANGUAGES: [(&[u8], &[&[u8]]); 22] = [
+/// Plugins that add a language to Prettier, or change what it makes of one kind of file, and leave the others as they are, with
+/// how the names of those files end. Without them the rest of a project is formatted the same.
+const PLUGINS_FOR_LANGUAGES: [(&[u8], &[&[u8]]); 23] = [
+    // Its order of the fields is not that of `sortPackageJson`, which is oxfmt's.
+    (b"prettier-plugin-packagejson", &[b"/package.json"]),
     (b"prettier-plugin-svelte", &[b".svelte"]),
     (b"prettier-plugin-astro", &[b".astro"]),
     (b"@prettier/plugin-pug", &[b".pug", b".jade"]),
@@ -764,6 +787,7 @@ impl Plugins {
         Some(Plugins {
             names_others: !plugins.iter().all(is_built_in),
             sorts_classes: (plugins.iter().filter_map(name_of)).any(is_plugin_for_classes),
+            oxc: oxc_among(plugins.iter().filter_map(name_of)),
             missing: (plugins.iter())
                 .map(|it| name_of(it).unwrap_or(b"(an object)"))
                 .filter(|it| is_missing_plugin(it))
@@ -1258,15 +1282,22 @@ impl<'c> Configs<'c> {
         }
         let config = Config::new(path, &json, is_oxfmt);
         let of_overrides = config.overrides.iter().filter_map(|it| it.plugins.as_ref());
-        if of_overrides
-            .chain([&config.plugins])
-            .any(|it| !it.missing.is_empty())
+        let mut missing: Vec<&[u8]> = Vec::new();
+        for name in [&config.plugins]
+            .into_iter()
+            .chain(of_overrides)
+            .flat_map(|it| &it.missing)
         {
-            self.warn(&[
-                b"\"plugins\" in ",
-                path,
-                b" has no effect because bun fmt does not load Prettier plugins",
-            ]);
+            if !missing.contains(&&name[..]) {
+                missing.push(name);
+            }
+        }
+        if !missing.is_empty() {
+            let end: &[u8] = match missing.len() {
+                1 => b" has no effect because bun fmt does not include that plugin",
+                _ => b" have no effect because bun fmt does not include those plugins",
+            };
+            self.warn(&[&missing.join(&b", "[..]), b" in ", path, end]);
         }
         Ok(Some(Arc::new(config)))
     }
@@ -1548,6 +1579,20 @@ impl<'c> Configs<'c> {
             || (self.options.plugins.iter()).any(|it| is_plugin_for_classes(it))
     }
 
+    /// See [`Oxc`], for the file at `path`, which has `scope` and the option `parser`.
+    fn oxc_for(&self, scope: &Scope, path: Option<&[u8]>, parser: Option<&[u8]>) -> Oxc {
+        let of_config = self
+            .plugins_for(scope, path)
+            .map_or(Oxc::Absent, |it| it.oxc);
+        match of_config {
+            _ if parser.is_some_and(|it| !it.starts_with(b"oxc")) => Oxc::Absent,
+            // The code in MDX is Babel's.
+            _ if path.is_some_and(|it| it.ends_with(b".mdx")) => Oxc::Absent,
+            Oxc::Absent => oxc_among(self.options.plugins.iter().map(|it| &it[..])),
+            oxc => oxc,
+        }
+    }
+
     /// See [`Plugins::endings`], for the file at `path`, which has `scope`.
     fn endings_of_plugins<'s>(
         &'s self,
@@ -1567,6 +1612,11 @@ impl<'c> Configs<'c> {
     /// Whether Prettier reads the file at `path`, which has `scope`, with a plugin that adds a language.
     pub(crate) fn is_read_by_plugin(&self, scope: &Scope, path: &[u8]) -> bool {
         (self.endings_of_plugins(scope, path)).any(|ending| path.ends_with(ending))
+    }
+
+    /// The same for a file that is formatted here too, without the plugin, if that is allowed.
+    pub(crate) fn is_changed_by_plugin(&self, scope: &Scope, path: &[u8]) -> bool {
+        !self.options.allow_unsupported && self.is_read_by_plugin(scope, path)
     }
 
     /// The plugin that adds the language of the file at `path`, which has `scope`, if Prettier reads it with one.
@@ -1855,7 +1905,8 @@ impl<'c> Configs<'c> {
         };
         if value != b"false" {
             let places = (set_by, directory);
-            let tailwind = tailwind::for_file(&self.classes, self.environment, &value, places);
+            let mut tailwind = tailwind::for_file(&self.classes, self.environment, &value, places);
+            tailwind.oxc = self.oxc_for(scope, path, resolved.options.parser.as_deref());
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }
         Ok(resolved)

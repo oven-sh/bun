@@ -20,6 +20,7 @@ enum Irregular {
 }
 
 /// What irregular whitespace character `text` starts with, and its length in bytes.
+#[inline]
 fn irregular_at(text: &[u8]) -> Option<(Irregular, usize)> {
     Some(match text {
         [0x0B | 0x0C, ..] => (Irregular::Whitespace, 1),

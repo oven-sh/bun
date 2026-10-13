@@ -125,6 +125,30 @@ describe.concurrent("globals", () => {
     expect(exitCode).toBe(1);
   });
 
+  // Which names `**/*{.,_,-}{test,spec,e2e,cy}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}` is for. A global of a test runner can't be
+  // assigned to. In another file nothing defines it, which is only reported in JavaScript.
+  test("a file is a test by what its name ends with", async () => {
+    const [stems, separators] = [
+      ["a", "", "a.b", "test"],
+      [".", "_", "-", "", "+"],
+    ];
+    const words = ["test", "spec", "e2e", "cy", "tes", "tests", "Test", "atest"];
+    const extensions = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"];
+    const names = stems.flatMap(stem =>
+      separators.flatMap(separator =>
+        words.flatMap(word => extensions.map(extension => `${stem}${separator}${word}.${extension}`)),
+      ),
+    );
+    names.push("a.test.js.js", "a.test.jsx.ts", "a.test.d.ts", "a.test..js", "a.spec.ts.mts");
+    names.push("src/deep/a_e2e.cts", "src/a.cy/b.js", "src/a.test.js/b.ts");
+    const expected = [...new Set(names)].flatMap(name => {
+      if (/[._-](test|spec|e2e|cy)\.(js|mjs|cjs|jsx|ts|mts|cts|tsx)$/.test(name)) return [`${name} no-global-assign`];
+      return /\.[mc]?jsx?$/.test(name) ? [`${name} no-undef`] : [];
+    });
+    const { reports } = await lint(Object.fromEntries(names.map(name => [name, "describe = 1;\n"])), []);
+    expect(reports.map(it => it.replace(/:1:1 \w+ /, " ")).sort()).toEqual(expected.sort());
+  });
+
   test("an eslint-env comment defines its globals, and is only an error with an ESLint config", async () => {
     const files = { "a.js": '/* eslint-env mocha, nonsense */\ndescribe("a", () => {});\njQuery("a");\n' };
     const config = { "eslint.config.mjs": `export default [{ rules: { "no-undef": "error" } }];\n` };

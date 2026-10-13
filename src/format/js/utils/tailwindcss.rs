@@ -8,9 +8,11 @@
 //! has one context then, and what is around a text says whether it is sorted: [`collapse_by_plugin`].
 
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
+use crate::options::HtmlRoot;
 use crate::prelude::*;
-use crate::tailwind::{Ends, Names, Tailwind};
+use crate::tailwind::{Ends, Names, Oxc, Tailwind};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 
 /// What is written is in the value of an attribute, or among the arguments of a function, that takes classes.
 #[derive(Clone, Copy, Debug)]
@@ -34,9 +36,9 @@ pub(crate) struct TailwindContext {
 
 /// Whether the white space at the start and at the end of a text can go. If not, one blank stays of it.
 #[derive(Clone, Copy, Debug)]
-struct Collapse {
-    start: bool,
-    end: bool,
+pub(crate) struct Collapse {
+    pub(crate) start: bool,
+    pub(crate) end: bool,
 }
 
 impl Collapse {
@@ -180,6 +182,13 @@ pub(crate) fn context_of_string(source: &[u8], f: &Formatter<'_>) -> Option<Tail
         .filter(|context| !context.is_disabled && has_white_space(source))
 }
 
+/// Whether the plugin has made one line of the string `e` by the time that Prettier looks at it.
+pub(crate) fn loses_line_breaks<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    (f.context().tailwind_context()).is_some_and(|it| it.follows_plugin && !it.preserves_whitespace)
+        && !bun_core::strings::contains(e.text(), b"{{")
+        && collapse_by_plugin(e.span(), e.ast_parent(), f).is_some()
+}
+
 /// Whether the value of the JSX attribute called `name` is classes.
 fn is_class_attribute(name: &[u8], tailwind: &Tailwind) -> bool {
     matches!(name, b"class" | b"className")
@@ -192,10 +201,21 @@ fn has(names: &Names, name: &[u8], tailwind: &Tailwind) -> bool {
     names.has_name(name) || (tailwind.follows_plugin && names.has_pattern_for(name))
 }
 
+/// Whether `@prettier/plugin-oxc` reads what is written.
+fn is_read_by_oxc(tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
+    tailwind.oxc != Oxc::Absent
+        && (!f.context().has_tree_of_babel() || f.options().in_html.root == HtmlRoot::None)
+}
+
+/// Whether the plugin looks at the tree of Babel.
+fn is_babel(tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
+    f.context().has_tree_of_babel() && !is_read_by_oxc(tailwind, f)
+}
+
 /// Whether what is in an optional chain with `e` is another kind of node to the plugin than a call or a member access: to
 /// Babel every link from the `?.` on is, to the other parsers what is around the whole chain.
-fn is_other_node_to_plugin(e: Expr<'_>, f: &Formatter<'_>) -> bool {
-    match f.context().has_tree_of_babel() {
+fn is_other_node_to_plugin(e: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
+    match is_babel(tailwind, f) {
         true => e.is_in_optional_chain(),
         false => e.is_chain_root(),
     }
@@ -208,7 +228,7 @@ fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -
     }
     let mut node = callee;
     loop {
-        if tailwind.follows_plugin && is_other_node_to_plugin(node, f) {
+        if tailwind.follows_plugin && is_other_node_to_plugin(node, tailwind, f) {
             return false;
         }
         node = match node.kind() {
@@ -225,6 +245,9 @@ fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -
 /// function that take classes, however deep (`sortInside`), and the template behind such a function.
 fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -> Option<Collapse> {
     let tailwind = f.options().tailwind.as_deref()?;
+    if tailwind.oxc == Oxc::Behind && is_read_by_oxc(tailwind, f) {
+        return None;
+    }
     let is_in = |span: Span| span.start <= leaf.start && leaf.end <= span.end;
     // Each `+` and each template around it, from the inside to the outside.
     let mut around: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
@@ -249,7 +272,7 @@ fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -
             AstNodes::CallExpression(e) => {
                 if let ExprKind::Call(call) = e.kind()
                     && call.args().iter().any(|it| is_in(it.span()))
-                    && !(f.context().has_tree_of_babel() && e.is_in_optional_chain())
+                    && !(is_babel(tailwind, f) && e.is_in_optional_chain())
                     && is_class_function(call.callee(), tailwind, f)
                 {
                     is_sorted = true;
@@ -263,68 +286,97 @@ fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -
     if !is_sorted {
         return None;
     }
-    let mut collapse = Collapse::ALL;
+    let texts = match f.context().has_tree_of_babel() || is_read_by_oxc(tailwind, f) {
+        true => Texts::Sorted,
+        false => Texts::Unseen,
+    };
+    around.reverse();
+    Some(collapse_among(&around, leaf, tailwind, (true, texts)))
+}
+
+/// What the plugin sees of the texts of a template when it decides about what is between them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Texts {
+    /// Nothing: the tree of TypeScript does not have the positions that it asks for, and in Vue it does not ask.
+    Unseen,
+    AsWritten,
+    /// It has sorted them by then.
+    Sorted,
+}
+
+/// What stays of the white space at the ends of the string or the template at `leaf`. `around`: each `+` and each template
+/// around it, from the outside to the inside. `every_plus`: all of them count, as in the plugin's `canCollapseWhitespaceIn`.
+/// If not, the innermost does.
+pub(crate) fn collapse_among(
+    around: &[Expr<'_>],
+    leaf: Span,
+    tailwind: &Tailwind,
+    (every_plus, texts): (bool, Texts),
+) -> Collapse {
+    let is_in = |span: Span| span.start <= leaf.start && leaf.end <= span.end;
+    // What the plugin lets go, and where nothing touches it.
+    let (mut collapse, mut free) = (Collapse::ALL, Collapse::ALL);
     if tailwind.preserves_whitespace {
-        return Some(collapse);
+        return collapse;
     }
-    // `canCollapseWhitespaceIn`
-    for e in around.into_iter().rev() {
-        match e.kind() {
+    for e in around {
+        let template = match e.kind() {
             ExprKind::Binary {
                 op: BinOp::Add,
                 left,
                 right,
             } => {
-                collapse = collapse.and(!is_in(right.span()), !is_in(left.span()));
+                let outer = if every_plus { collapse } else { Collapse::ALL };
+                collapse = outer.and(!is_in(right.span()), !is_in(left.span()));
+                continue;
             }
-            ExprKind::Template(template) => {
-                let is_babel = f.context().has_tree_of_babel();
-                collapse = collapse_in_template(template, leaf, collapse, (tailwind, is_babel));
-            }
-            _ => {}
-        }
-    }
-    Some(collapse)
-}
-
-/// The same for what is at `leaf` between a `${` and a `}` of `template`, of whose own ends `around` stays.
-fn collapse_in_template(
-    template: Template<'_>,
-    leaf: Span,
-    around: Collapse,
-    (tailwind, is_babel): (&Tailwind, bool),
-) -> Collapse {
-    let (count, mut collapse) = (template.quasi_count(), around);
-    let mut expressions = template.exprs().iter().enumerate();
-    let Some((index, expression)) =
-        expressions.find(|(_, it)| it.span().start <= leaf.start && leaf.end <= it.span().end)
-    else {
-        return around;
-    };
-    // The plugin looks at the texts behind it, and at the one before it if nothing is between the `${` and it, as it has
-    // sorted them, and at the start of each for the start. The tree of TypeScript does not have the positions that it asks for.
-    if is_babel {
+            ExprKind::Template(template) => template,
+            _ => continue,
+        };
+        let count = template.quasi_count();
+        let mut expressions = template.exprs().iter().enumerate();
+        let Some((index, expression)) = expressions.find(|it| is_in(it.1.span())) else {
+            continue;
+        };
+        // It looks at the texts behind it, and at the one before it if nothing is between the `${` and it, and for the start
+        // at the start of each.
         let touches_brace = template.quasi_span(index).end == expression.span().start;
-        for i in (index + usize::from(!touches_brace))..count {
+        let seen = match texts {
+            Texts::Unseen => count,
+            _ => index + usize::from(!touches_brace),
+        };
+        let of_template = collapse;
+        for i in seen..count {
             let raw = template.raw(i);
-            let sorted = tailwind
-                .sorted_between(raw, ends_in_template(raw, (i == 0, i + 1 == count), around));
+            let text = match texts {
+                Texts::Sorted => tailwind.sorted_between(
+                    raw,
+                    ends_in_template(raw, (i == 0, i + 1 == count), of_template),
+                ),
+                _ => Cow::Borrowed(raw),
+            };
             collapse = collapse.and(
-                starts_with_white_space(&sorted),
-                i == index || ends_with_white_space(&sorted),
+                starts_with_white_space(&text),
+                i == index || ends_with_white_space(&text),
             );
         }
+        // So the blank goes in `` `a${" b"}` ``, and `a` and `b` are one class. Here what touches a text stays apart from it.
+        let (before, behind) = (template.raw(index), template.raw(index + 1));
+        free = Collapse {
+            start: ends_with_white_space(before) || (before.is_empty() && index == 0 && free.start),
+            end: starts_with_white_space(behind)
+                || (behind.is_empty() && index + 2 == count && free.end),
+        };
     }
-    // That takes the blank away in `` `a${" b"}` ``, and `a` and `b` are one class. Here what touches a text stays apart from it.
-    let (before, behind) = (template.raw(index), template.raw(index + 1));
-    collapse.and(
-        ends_with_white_space(before) || (before.is_empty() && index == 0),
-        starts_with_white_space(behind) || (behind.is_empty() && index + 2 == count),
-    )
+    collapse.and(free.start, free.end)
 }
 
 /// What the plugin's `sortTemplateLiteral` calls `sortClasses` with for `text`. `around`: what stays at the ends of the template.
-fn ends_in_template(text: &[u8], (is_first, is_last): (bool, bool), around: Collapse) -> Ends {
+pub(crate) fn ends_in_template(
+    text: &[u8],
+    (is_first, is_last): (bool, bool),
+    around: Collapse,
+) -> Ends {
     Ends {
         ignores_first: !is_first && !starts_with_white_space(text),
         ignores_last: !is_last && !ends_with_white_space(text),

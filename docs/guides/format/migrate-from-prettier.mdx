@@ -98,10 +98,11 @@ Bun doesn't load Prettier plugins. These are built in, with all their options, s
 - `@trivago/prettier-plugin-sort-imports`
 - `@ianvs/prettier-plugin-sort-imports`
 - `prettier-plugin-organize-imports`
+- `@prettier/plugin-oxc`
 
 ---
 
-Svelte, Astro, and other languages that come from a plugin go to your installed Prettier. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
+Svelte, Astro, and other languages that come from a plugin go to your installed Prettier. So does `package.json` if you use `prettier-plugin-packagejson`. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
 
 ```txt
 Using .prettierrc (Prettier config)

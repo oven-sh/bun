@@ -404,28 +404,39 @@ fn order_in_table<'d, 'a>(
     table.iter().collect()
 }
 
-/// Of `candidates`, which are positions in `declared`, the one that oxlint comes to first: it has them in a hash table.
-fn first_of_oxlint<'a>(
-    candidates: &[usize],
+/// The place of each of `declared` in the hash table in which oxlint has them.
+fn places_in_table<'a>(
     declared: &[(Dependency<'a>, u32)],
     file: &'a File<'a>,
     memo: &mut Memo<'a>,
-) -> Option<usize> {
-    if candidates.len() < 2 {
-        return candidates.first().copied();
-    }
-    let mut is_candidate = vec![false; declared.len()];
-    for at in candidates {
-        if let Some(it) = is_candidate.get_mut(*at) {
-            *it = true;
-        }
-    }
+) -> Vec<usize> {
     let symbols = memo
         .places_of_symbols
         .get_or_insert_with(|| places_of_symbols(file));
     let mut inserted = (declared.iter().enumerate()).map(|(at, it)| (&it.0, at as u32));
-    let order = order_in_table(&mut inserted, symbols);
-    (order.into_iter().map(|at| at as usize)).find(|at| is_candidate.get(*at) == Some(&true))
+    let mut places = vec![0; declared.len()];
+    for (place, at) in order_in_table(&mut inserted, symbols)
+        .into_iter()
+        .enumerate()
+    {
+        if let Some(it) = places.get_mut(at as usize) {
+            *it = place;
+        }
+    }
+    places
+}
+
+/// Puts `positions`, which are in `declared`, in the order in which oxlint comes to them.
+fn sort_as_oxlint<'a>(
+    positions: &mut [usize],
+    declared: &[(Dependency<'a>, u32)],
+    file: &'a File<'a>,
+    memo: &mut Memo<'a>,
+) {
+    if positions.len() > 1 {
+        let places = places_in_table(declared, file, memo);
+        utils::sort::sort_unstable_by_key(positions, |at| places.get(*at).copied());
+    }
 }
 
 /// A dependency that is hashed and compared as oxlint's `Dependency`.
@@ -1223,7 +1234,8 @@ pub(crate) fn run<'a, R: Rule>(
         }
         outer.push(at);
     }
-    let first_outer = first_of_oxlint(&outer, &declared, cx.file(), memo);
+    sort_as_oxlint(&mut outer, &declared, cx.file(), memo);
+    let first_outer = outer.first().copied();
     for (at, (dependency, _)) in outer
         .iter()
         .filter_map(|at| Some((*at, declared.get(*at)?)))
@@ -1288,15 +1300,21 @@ pub(crate) fn run<'a, R: Rule>(
         );
     }
 
-    for (dependency, _) in &declared {
-        if let Some(Declared::Variable(declarator)) = dependency.symbol.and_then(declaration_of)
-            && let Some(init) = declarator.init().filter(|it| !it.is_parenthesized())
-            && let ExprKind::Call(call) = init.kind()
-            && func_call_without_react_namespace(call).is_some_and(|it| it.is("useEffectEvent"))
-        {
-            cx.report(dependency.span, USE_EFFECT_EVENT)
-                .called_with(node);
-        }
+    let is_effect_event = |dependency: &Dependency<'a>| {
+        matches!(dependency.symbol.and_then(declaration_of), Some(Declared::Variable(declarator))
+        if declarator.init().filter(|it| !it.is_parenthesized()).is_some_and(|init| {
+            matches!(init.kind(), ExprKind::Call(call)
+                if func_call_without_react_namespace(call).is_some_and(|it| it.is("useEffectEvent")))
+        }))
+    };
+    let mut effect_events: Vec<usize> = (declared.iter().enumerate())
+        .filter(|(_, it)| is_effect_event(&it.0))
+        .map(|it| it.0)
+        .collect();
+    sort_as_oxlint(&mut effect_events, &declared, cx.file(), memo);
+    for (dependency, _) in effect_events.iter().filter_map(|at| declared.get(*at)) {
+        cx.report(dependency.span, USE_EFFECT_EVENT)
+            .called_with(node);
     }
 
     // Effects may have more dependencies than they need.
@@ -1316,31 +1334,47 @@ pub(crate) fn run<'a, R: Rule>(
                 .filter_map(|it| (it.declared as usize).checked_sub(1));
             pairs.extend(above.map(|other| (at.min(other), at.max(other), at)));
         }
+        // oxlint goes through the pairs of its hash table.
+        if pairs.len() > 1 {
+            let places = places_in_table(&declared, cx.file(), memo);
+            let place = |at: usize| places.get(at).copied().unwrap_or(0);
+            for it in &mut pairs {
+                let (first, second) = (place(it.0), place(it.1));
+                (it.0, it.1) = (first.min(second), first.max(second));
+            }
+        }
         utils::sort::sort_unstable(&mut pairs);
         for (dependency, _) in pairs.iter().filter_map(|it| declared.get(it.2)) {
             unnecessary(dependency);
         }
-        for (dependency, number) in declared.iter().filter(|it| !paths.get(it.1).is_found) {
-            let is_needed = paths.get(*number).is_found_within
-                || paths.get(*number).is_undeclared
+        let is_needed = |number: u32| {
+            paths.get(number).is_found
+                || paths.get(number).is_found_within
+                || paths.get(number).is_undeclared
                 || paths
-                    .above(*number)
-                    .any(|it| it.is_undeclared || it.declared != 0);
-            if !is_needed {
-                unnecessary(dependency);
-            }
+                    .above(number)
+                    .any(|it| it.is_undeclared || it.declared != 0)
+        };
+        let mut not_needed: Vec<usize> = (declared.iter().enumerate())
+            .filter(|(_, it)| !is_needed(it.1))
+            .map(|it| it.0)
+            .collect();
+        sort_as_oxlint(&mut not_needed, &declared, cx.file(), memo);
+        for (dependency, _) in not_needed.iter().filter_map(|at| declared.get(*at)) {
+            unnecessary(dependency);
         }
     }
 
     let is_unique = |it: &Dependency<'a>| {
         it.chain.is_empty() && it.symbol.is_some_and(is_declaration_referentially_unique)
     };
-    let changing: Vec<usize> = (declared.iter().enumerate())
+    let mut changing: Vec<usize> = (declared.iter().enumerate())
         .filter(|(_, it)| is_unique(&it.0))
         .map(|it| it.0)
         .collect();
-    let first_changing = first_of_oxlint(&changing, &declared, cx.file(), memo)
-        .filter(|_| outer.is_empty() && undeclared.is_empty());
+    sort_as_oxlint(&mut changing, &declared, cx.file(), memo);
+    let first_changing =
+        (changing.first().copied()).filter(|_| outer.is_empty() && undeclared.is_empty());
     for (at, (dependency, _)) in changing
         .iter()
         .filter_map(|at| Some((*at, declared.get(*at)?)))

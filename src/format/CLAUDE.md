@@ -298,12 +298,13 @@ oxfmt's option, which is made of `prettier-plugin-tailwindcss`: the classes of T
 - **Handlebars**: the plugin changes the tree, and so does `handlebars/tailwind.rs`.
 - **HTML, Vue and Angular**: the plugin rewrites the values of attributes in the tree, so `html/tailwind.rs` rewrites the text before it is parsed. Of the code in HTML the plugin takes over programs and `__js_expression`, nothing else: `js.rs::with_file`.
 - **`--debug-check`** knows that words change places and that one that is there twice is there once: `verify/tree.rs::has_same_words`. HTML is compared without the option: `html::has_same_content`.
+- **`prettier-plugin-tailwindcss` in a Prettier config** turns it on too, with the plugin's options and defaults (`SetBy::Plugin` in `fmt/tailwind.rs`): `Tailwind::follows_plugin`. Where oxfmt has rules of its own, the plugin's count then. In JavaScript that is its `transformJavaScript`: the stack has one context, and a string or a template walks up its ancestors to see whether it is sorted (`collapse_by_plugin`). `collapse_among` is its `canCollapseWhitespaceIn`, for JavaScript, Vue and Angular. What the plugin sees depends on the parser: Babel, TypeScript, or `@prettier/plugin-oxc` (`Oxc`). Where it takes away the blank that keeps two classes apart, the blank stays. If the project has no `tailwindcss`, or an option is for the other major version, the order is read off the plugin's own `createSorter` (`loadBundled` in `tailwind.js`).
 - **Not there**: with `preserveWhitespace`, a line break in a list does not break the groups around it in oxfmt. oxfmt does not sort in the cells of a `test.each` table. Without the package oxfmt takes a Tailwind that the plugin brings along, also for `config` with version 4 installed.
 - **Tests**: `test/cli/format/tailwind`, with a stand-in for the package. `test/cli/format/oracle/tailwind/make-fixtures.ts` makes what is expected with the real tools.
 
 ## Languages that only a plugin of Prettier reads
 
-`.svelte`, `.astro`, `.php` and the like. In Prettier's flavor, a file whose language a plugin of the configuration reads is handed to the Prettier of the project.
+`.svelte`, `.astro`, `.php` and the like. In Prettier's flavor, a file whose language a plugin of the configuration reads is handed to the Prettier of the project. So is a `package.json` with `prettier-plugin-packagejson`, whose order is not that of `sortPackageJson`.
 
 - **Where**: `src/lint/driver/fmt/prettier.rs`, which talks to the host of the JS plugins of `bun lint`: `src/lint/js_plugin/prettier.rs` and `worker/prettier.js`.
 - **When**: `prettier` and every package that the configuration names as a plugin are installed. Prettier loads all of them, also those that are built in here. Else the files are named and left as they are.

@@ -233,32 +233,43 @@ fn rules_of<'r>(problems: impl Iterator<Item = Problem<'r>>) -> Option<Vec<&'r R
 /// Groups problems that have the same rule and message, largest group first. With `by_rule`, the message is ignored and
 /// groups of errors come before groups of warnings.
 fn grouped<'r>(problems: &[Problem<'r>], by_rule: bool) -> Vec<Vec<Problem<'r>>> {
-    let mut index: FxHashMap<(Rule, &[u8]), usize> = FxHashMap::default();
-    // With `by_rule`: the group of a rule that is built in, by where the rule is. That saves reading its name for each problem.
-    let mut known: FxHashMap<usize, usize> = FxHashMap::default();
+    // A number for each rule, and that of a rule that is built in by where the rule is: its name is read once, not for each problem.
+    let mut numbers: FxHashMap<Rule, u32> = FxHashMap::default();
+    let mut numbers_by_address: FxHashMap<usize, u32> = FxHashMap::default();
+    let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::default();
     let mut groups: Vec<Vec<Problem>> = Vec::new();
     for problem in problems {
-        let address = match &problem.message.rule_id {
-            Some(RuleId::Known(meta)) if by_rule => Some(std::ptr::from_ref(*meta).addr()),
-            _ => None,
+        let mut number_of = || {
+            let next = numbers.len() as u32;
+            *numbers.entry(Rule::of(problem)).or_insert(next)
         };
-        if let Some(at) = address.and_then(|it| known.get(&it)) {
-            groups[*at].push(*problem);
-            continue;
-        }
-        let key = match Rule::of(problem) {
-            Rule::None => (Rule::None, &problem.message.message[..]),
-            rule if by_rule => (rule, &b""[..]),
-            rule => (rule, &problem.message.message[..]),
+        let rule = match &problem.message.rule_id {
+            Some(RuleId::Known(meta)) => {
+                let address = std::ptr::from_ref(*meta).addr();
+                match numbers_by_address.get(&address) {
+                    Some(number) => *number,
+                    None => {
+                        let number = number_of();
+                        numbers_by_address.insert(address, number);
+                        number
+                    }
+                }
+            }
+            _ => number_of(),
         };
-        let at = *index.entry(key).or_insert_with(|| {
-            groups.push(Vec::new());
-            groups.len() - 1
-        });
+        let key = match by_rule && problem.message.rule_id.is_some() {
+            true => (rule, &b""[..]),
+            false => (rule, &problem.message.message[..]),
+        };
+        let at = match index.get(&key) {
+            Some(at) => *at,
+            None => {
+                groups.push(Vec::new());
+                index.insert(key, groups.len() - 1);
+                groups.len() - 1
+            }
+        };
         groups[at].push(*problem);
-        if let Some(address) = address {
-            known.insert(address, at);
-        }
     }
     bun_lint::utils::sort::sort_by_key(&mut groups, |group| {
         let is_first = by_rule && group[0].is_error();

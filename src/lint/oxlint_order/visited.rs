@@ -55,6 +55,7 @@ struct Known {
     switch_case: u8,
     // What has no node here.
     chain_expression: u8,
+    ts_type_annotation: u8,
     export_default_declaration: u8,
     export_declaration: u8,
     function_body: u8,
@@ -242,6 +243,7 @@ static KNOWN: LazyLock<Known> = LazyLock::new(|| {
         array_pattern: kind("ArrayPattern"),
         switch_case: kind("SwitchCase"),
         chain_expression: kind("ChainExpression"),
+        ts_type_annotation: kind("TSTypeAnnotation"),
         export_default_declaration: kind("ExportDefaultDeclaration"),
         export_declaration: kind("ExportDeclaration"),
         function_body: kind("FunctionBody"),
@@ -433,6 +435,17 @@ impl Known {
         {
             return Some(found);
         }
+        // The `: T` of a variable, a parameter or a property, or of what a function returns.
+        if kinds.has(self.ts_type_annotation)
+            && let Node::Type(ty) = node
+            && matches!(
+                ty.parent(),
+                Node::Param(_) | Node::VarDecl(_) | Node::Pat(_) | Node::Member(_) | Node::Func(_)
+            )
+            && let Some(found) = found(ty.annotation_span(), CHAIN, false)
+        {
+            return Some(found);
+        }
         if !kinds.has(self.export_declaration) && !kinds.has(self.export_default_declaration) {
             return None;
         }
@@ -448,6 +461,7 @@ impl Known {
 
 // Which of the nodes of oxc that a node here stands for, from the outside in.
 const EXPORT: u8 = 0;
+/// A `ChainExpression`, or the annotation that a type is in.
 const CHAIN: u8 = 1;
 const ITSELF: u8 = 2;
 /// A body, or the opening tag.

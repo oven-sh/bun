@@ -35,31 +35,31 @@ pub fn text(bytes: &[u8]) -> String {
 /// The category and the text of the message with `code`. `{0}`, `{1}`, ... are placeholders for its
 /// arguments.
 pub fn message(code: u32) -> Option<(Category, &'static str)> {
-    static MESSAGES: bun_core::Once<Vec<(u32, &'static [u8])>> = bun_core::Once::new();
+    static MESSAGES: bun_core::Once<Vec<(u32, Category, &'static str)>> = bun_core::Once::new();
     let messages = MESSAGES.get_or_init(parse);
     let at = messages.binary_search_by_key(&code, |m| m.0).ok()?;
-    let [_, category, _, text @ ..] = messages[at].1 else {
-        return None;
-    };
-    let category = match category {
-        b'E' => Category::Error,
-        _ => Category::Message,
-    };
-    Some((category, core::str::from_utf8(text).ok()?))
+    messages.get(at).map(|m| (m.1, m.2))
 }
 
-/// Each line's code, and the rest of the line from the first tab on.
-fn parse() -> Vec<(u32, &'static [u8])> {
-    let mut rest: &[u8] =
+fn parse() -> Vec<(u32, Category, &'static str)> {
+    let bytes: &'static [u8] =
         bun_zstd::embed_compressed!("src/sema/messages.txt", include_bytes!("messages.txt"));
-    let mut messages = Vec::new();
-    while let Some((line, after)) = strings::split_once_char(rest, b'\n') {
+    let all = core::str::from_utf8(bytes).unwrap_or_default();
+    let (mut messages, mut start) = (Vec::new(), 0);
+    while let Some(len) = strings::index_of_char_usize(&bytes[start..], b'\n') {
+        let line = &bytes[start..start + len];
         let digits = line.iter().take_while(|b| b.is_ascii_digit()).count();
         let code = line[..digits]
             .iter()
             .fold(0, |n, b| n * 10 + u32::from(b - b'0'));
-        messages.push((code, &line[digits..]));
-        rest = after;
+        let category = match line.get(digits + 1) {
+            Some(b'E') => Category::Error,
+            _ => Category::Message,
+        };
+        if let Some(text) = all.get(start + digits + 3..start + len) {
+            messages.push((code, category, text));
+        }
+        start += len + 1;
     }
     messages
 }

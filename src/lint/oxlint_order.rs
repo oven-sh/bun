@@ -142,7 +142,11 @@ fn once(rule: &Meta) -> Once {
     let as_reported = match rule.plugin.in_oxlint() {
         Plugin::Eslint if rule.name == "max-statements" => return Once::ByEnd,
         Plugin::Eslint => rule.name == "no-undef",
-        Plugin::Import => matches!(rule.name, "extensions" | "no-duplicates" | "no-self-import"),
+        Plugin::Import => matches!(
+            rule.name,
+            "extensions" | "group-exports" | "no-duplicates" | "no-self-import"
+        ),
+        Plugin::Jest => rule.name == "no-export",
         Plugin::Node => rule.name == "exports-style",
         Plugin::React => rule.name == "only-export-components",
         _ => false,

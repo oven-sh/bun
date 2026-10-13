@@ -2615,6 +2615,29 @@ describe("Glob.match", () => {
     ["**/x/!{é,}*", ["q/x/!a", "x/!é", "x/!"], ["q/x/a"]],
     ["**/[!a]/b", ["c/b", "x/c/b"], ["a/b", "x/a/b"]],
     ["a/**/b/**/c/*.ts", ["a/b/c/x.ts", "a/1/b/2/3/c/x.ts"], ["a/b/x.ts", "a/b/c/d/x.ts"]],
+    [
+      "**/node_modules/**",
+      ["node_modules/a", "a/node_modules/b", "a/b/node_modules/", "/node_modules/a"],
+      ["node_modules", "a/node_modules", "xnode_modules/a", "node_modules_x/a", "a/node_modulesx/b", "src/a.ts", ""],
+    ],
+    ["!**/node_modules/**", ["src/a.ts", "node_modules"], ["a/node_modules/b", "node_modules/a"]],
+    ["**/a/b/**", ["a/b/c", "x/a/b/", "a/a/b/c"], ["a/b", "a/x/b/c", "x/a/bc/d"]],
+    ["a/**/b", ["a/b", "a/x/b", "a/x/y/b", "a/b/b"], ["a/xb", "ab", "a/b/c", "b", "a/"]],
+    ["a/**/b/c", ["a/b/c", "a/x/b/c", "a/b/b/c"], ["a/b/x/c", "a/xb/c", "a/b/c/d"]],
+    ["a/**/b/**/c", ["a/b/c", "a/x/b/y/c", "a/b/b/c/c", "a/b/x/y/c"], ["a/c/b", "a/b", "a/xb/c", "a/b/xc"]],
+    ["**/a/**/b/**", ["a/b/c", "x/a/y/b/z", "a/a/b/b/"], ["a/b", "b/a/c", "a/xb/c"]],
+    ["**/{a,ab}/**", ["a/x", "ab/x", "x/ab/y", "x/a/"], ["abc/x", "a", "ab", "xa/y", "x/aab/y"]],
+    [
+      "**/{src,lib}/**/{test,spec}/**/*.{ts,js}",
+      ["src/test/a.ts", "packages/a/src/x/test/y/z.ts", "lib/spec/x/a.js", "x/lib/src/spec/a.ts"],
+      ["src/a.ts", "test/src/a.ts", "src/test/a.css", "src/tests/a.ts", "src/test/ts"],
+    ],
+    ["**/{a,b}/c/**", ["a/c/x", "x/b/c/", "a/b/c/d"], ["a/x/c/d", "c/a/x", "a/c"]],
+    ["**/{1..3}/**", ["1/a", "x/2/a", "3/"], ["4/a", "1..3/a", "1"]],
+    ["**/{a,}/**", ["a/x", "x//y", "x/a/", "/x"], ["x/y", "x"]],
+    ["**/{a}/**", ["a/x", "x/a/y"], ["{a}/x", "b/x"]],
+    ["**/x{a,b}/**", ["xa/c", "y/xb/c"], ["x/c", "xab/c", "a/c"]],
+    ["x/**/{a,b}/**/*[!a]", ["x/a/b", "x/y/b/c/d", "x/a/b/"], ["x/a/a", "x/a/ba", "x/c/d"]],
   ])("what follows the last `**/` matches the last segments: %s", (pattern, matches, others) => {
     const glob = new Glob(pattern);
     for (let round = 0; round < 12; round++) {
@@ -2625,7 +2648,7 @@ describe("Glob.match", () => {
 
   test.each([
     ["*[!abc]", ["d", "xyzd", "abcd"], ["", "xyzb", "a"]],
-    ["*[!a]", ["x/", "b"], ["xa", "x/a"]],
+    ["*[!a]", ["x/", "b", "ab", "é"], ["xa", "x/a", "a", "a/b/"]],
     ["*\\*", ["*", "ab*"], ["ab", "a*b"]],
     ["*\\[a\\]", ["[a]", "x[a]"], ["xa", "x[a"]],
     ["*?.ts", ["a.ts", "index.ts", "é.ts"], [".ts", "a.js", "a/.ts"]],
@@ -2635,6 +2658,10 @@ describe("Glob.match", () => {
     ["*?[ab]/x", ["ca/x", "xxcb/x"], ["a/x", "cc/x", "ca/y"]],
     ["*?[^/]_*1", ["_xa_aab1", "ab_1"], ["a_1", "ab_2"]],
     ["*[0-9].log", ["1.log", "server12.log"], ["server.log", "1.logs", "a/1.log"]],
+    ["*?.ts", ["ab.ts", "a.ts", "index.ts", "é.ts"], [".ts", "a/b.ts"]],
+    ["[a-c]*[x-z]", ["ax", "abcxyz", "az"], ["a", "a/z", "dx", "abc"]],
+    ["a*[bc]?", ["abx", "axcx"], ["ab", "a/bx", "abxy"]],
+    ["*\\*?", ["*a", "x*a"], ["*", "a*", "", "x*/"]],
     ["*[+-9]/x", ["a1/x", "a//x"], ["aa/x"]],
     ["*{a,}", ["", "a", "xx", "xxa"], ["x/a"]],
     ["*{,a}/y", ["/y", "xxa/y", "xx/y"], ["xxa", "x/x/y"]],
@@ -2651,7 +2678,7 @@ describe("Glob.match", () => {
     for (let round = 0; round < 12; round++) {
       expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
       expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
-      expect(matches.filter(path => !glob.match(long + path))).toEqual([]);
+      if (pattern.startsWith("*")) expect(matches.filter(path => !glob.match(long + path))).toEqual([]);
     }
   });
 
@@ -2667,6 +2694,18 @@ describe("Glob.match", () => {
     ["{a,b{c,d}}e", ["ae", "bce", "bde"], ["be", "bcde"]],
     ["{a,b{c,{d,e}}}", ["a", "bc", "bd", "be"], ["b", "bf"]],
     ["a{,b}c", ["ac", "abc"], ["adc", "a", "abbc"]],
+    ["{a,b}{c,d}", ["ac", "bd", "ad"], ["a", "abcd", "cd"]],
+    ["x{a,ab}b/{c,d}", ["xab/c", "xabb/d"], ["xb/c", "xab/e", "xabbb/c"]],
+    ["{a/**/b,c}/d", ["a/b/d", "a/x/y/b/d", "c/d"], ["a/d", "a/b", "c/x/d", "a/x/b/d/d"]],
+    ["{src/**,lib/**}", ["src/a", "lib/a/b.ts", "src/"], ["src", "lib", "test/a", "srcx/a"]],
+    ["{**/*.ts,**/*.js}", ["a.ts", "x/y/a.js"], ["a.css", "x/a.tsx", "ts"]],
+    ["x/{**/a,b}", ["x/a", "x/y/a", "x/b"], ["x/y/b", "xa", "x/"]],
+    ["x{**/a,b}", ["xb", "x/a", "xy/a", "x/y/a", "xa"], ["ya", "x"]],
+    ["{a/**,b}c", ["bc", "a/c", "a/xc"], ["a/x/c", "ac", "a/"]],
+    ["{a*,b}*c", ["ac", "axc", "bc", "bxc"], ["a/c", "c"]],
+    ["{a/**/*,b}", ["a/x", "a/x/y", "b", "a/"], ["a", "c"]],
+    ["{a,b/**}/c", ["a/c", "b/c", "b/x/c", "b/x/y/c"], ["c", "a/x/c"]],
+    ["!{a/**/b,c}", ["d", "a/x"], ["a/b", "c", "a/x/b"]],
     ["x{a,bc}*", ["xa", "xbcd", "xab"], ["xb", "ybc"]],
     ["{a,ab}*c", ["ac", "abc", "abxc"], ["ab", "bc"]],
     ["{a,ab}c", ["ac", "abc"], ["abbc", "c"]],
@@ -2732,6 +2771,28 @@ describe("Glob.match", () => {
       expect(differs).toEqual([]);
     },
   );
+
+  test.each([
+    ["\\{a,b\\}", ["{a,b}"], ["a", "b", "{a,b", "{a,b}x", ""]],
+    ["\\*.ts", ["*.ts"], ["a.ts", ".ts", "*.tsx", "x*.ts"]],
+    ["a\\[b\\].ts", ["a[b].ts"], ["ab.ts", "a[b]xts", "a[b].t"]],
+    ["é\\*é", ["é*é"], ["éxé", "é*", "*é"]],
+    ["a\\tb", ["a\tb"], ["atb", "a\\tb"]],
+    ["!\\*a", ["b", "*b"], ["*a"]],
+    ["a+b@c", ["a+b@c"], ["aab@c", "a+b@"]],
+    ["a\\/b", ["a/b"], ["a\\/b", "ab"]],
+    ["[!abc]", ["d", "/", "é"], ["a", "b", "dd", ""]],
+    ["[^a]b", ["cb", "/b"], ["ab", "b"]],
+    ["a[!b]c", ["axc", "a/c"], ["abc", "ac"]],
+    ["?[!a]?", ["xbx", "x/x"], ["xax", "x/", "/b/"]],
+    ["[/]a", ["/a"], ["aa", "a"]],
+  ])("a pattern with only one way to match, however often it's asked: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 40; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
 
   test.each([
     ["*[éa]", "é", "ü"],

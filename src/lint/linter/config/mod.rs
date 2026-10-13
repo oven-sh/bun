@@ -111,8 +111,61 @@ struct Pattern {
     is_universal: bool,
     /// What it matches ends with `.` and one of these, [packed](packed_extension). Empty: it cannot be told.
     extensions: SmallVec<[u64; 8]>,
+    /// It is `**/*.` and `extensions`, so it says the same about all files of a directory that have the same extension.
+    is_by_extension: bool,
     /// It ends with `/**`, so it says the same about all files of a directory.
     is_about_directory: bool,
+    /// Of `**/*{.,_}{test,spec}.{js,ts}`, a pattern that only asks what the name of a file ends with, and gives a choice more
+    /// than once: the parts after `**/*`, the last one first, each with what it can be. Otherwise empty.
+    ending: Vec<SmallVec<[Box<[u8]>; 8]>>,
+}
+
+/// [`Pattern::ending`] of a pattern without a leading `!`.
+fn ending_of(pattern: &[u8]) -> Vec<SmallVec<[Box<[u8]>; 8]>> {
+    let is_plain = |it: &u8| it.is_ascii_alphanumeric() || matches!(it, b'.' | b'_' | b'-');
+    let is_text = |it: &[u8]| !it.is_empty() && it.iter().all(is_plain);
+    let (mut parts, mut choices) = (Vec::new(), 0);
+    let mut rest = pattern.strip_prefix(b"**/*").unwrap_or_default();
+    while let Some(first) = rest.first() {
+        let len = match first {
+            b'{' => bun_core::strings::index_of_char_usize(rest, b'}').map_or(0, |end| end + 1),
+            _ => rest.iter().take_while(|it| is_plain(it)).count(),
+        };
+        let (part, after) = rest.split_at(len);
+        let texts: SmallVec<[&[u8]; 8]> = match part {
+            [b'{', texts @ .., b'}'] => bun_core::strings::split(texts, b",").collect(),
+            text => smallvec::smallvec![text],
+        };
+        // Braces around one text are no choice.
+        if !texts.iter().all(|it| is_text(it)) || (*first == b'{' && texts.len() < 2) {
+            return Vec::new();
+        }
+        choices += usize::from(texts.len() > 1);
+        parts.push(texts.iter().map(|it| Box::from(*it)).collect());
+        rest = after;
+    }
+    parts.reverse();
+    match choices > 1 {
+        true => parts,
+        false => Vec::new(),
+    }
+}
+
+/// Whether `name` ends with one text of each of `parts`, the last one first.
+fn ends_with_all(name: &[u8], parts: &[SmallVec<[Box<[u8]>; 8]>]) -> bool {
+    let Some((last, before)) = parts.split_first() else {
+        return true;
+    };
+    last.iter().any(|text| {
+        // They are a few bytes, and most differ in the last one.
+        name.len() >= text.len()
+            && name
+                .iter()
+                .rev()
+                .zip(text.iter().rev())
+                .all(|(a, b)| a == b)
+            && ends_with_all(&name[..name.len() - text.len()], before)
+    })
 }
 
 /// An extension of 8 bytes at most as a number.
@@ -150,6 +203,10 @@ impl Pattern {
         };
         let bangs = normalized.iter().take_while(|it| **it == b'!').count();
         let says_what_it_matches = bangs == 0 && !normalized.starts_with(b"#");
+        let extensions = match says_what_it_matches {
+            true => extensions_of(&normalized),
+            false => SmallVec::new(),
+        };
         Pattern {
             matcher: bun_glob::Pattern::with_dots(
                 &crate::glob::from_minimatch(&normalized[bangs..]),
@@ -163,11 +220,15 @@ impl Pattern {
                 || normalized.starts_with(b"!")
                 || normalized.ends_with(b"/*")
                 || normalized.ends_with(b"/**"),
-            extensions: match says_what_it_matches {
-                true => extensions_of(&normalized),
-                false => SmallVec::new(),
-            },
+            is_by_extension: !extensions.is_empty()
+                && normalized.starts_with(b"**/*.")
+                && bun_core::strings::last_index_of_char(&normalized, b'.') == Some(4),
+            extensions,
             is_about_directory: says_what_it_matches && normalized.ends_with(b"/**"),
+            ending: match says_what_it_matches {
+                true => ending_of(&normalized),
+                false => Vec::new(),
+            },
         }
     }
 
@@ -191,8 +252,29 @@ impl Pattern {
             matches_without_slash: false,
             is_universal: true,
             extensions: SmallVec::new(),
+            is_by_extension: false,
             is_about_directory: false,
+            ending: Vec::new(),
         }
+    }
+
+    /// What `matcher` says about a file, where [`Pattern::ending`] tells. `**` doesn't go through a `.` or a `..`.
+    #[inline]
+    fn matches_by_ending(&self, path: &Candidate) -> Option<bool> {
+        if self.ending.is_empty() {
+            return None;
+        }
+        let (name, path_len) = (path.name(), path.path().len());
+        let answer = match ends_with_all(name, &self.ending) {
+            true if matches!(name, b"." | b"..") => None,
+            true => {
+                let before = path.path().get(..path_len - name.len())?;
+                (!bun_core::strings::contains(before, b"./")).then_some(true)
+            }
+            false => Some(false),
+        };
+        debug_assert!(answer.is_none_or(|it| it == self.matcher.matches_candidate(path)));
+        answer
     }
 
     /// `flip_negate`: a `!` at the start of the pattern is left out of the answer. Only ESLint asks for that.
@@ -202,7 +284,9 @@ impl Pattern {
                 self.matches_without_slash && self.matcher.matches_candidate(&directory)
                     || self.matcher.matches_candidate(path)
             }
-            None => self.matcher.matches_candidate(path),
+            None => self
+                .matches_by_ending(path)
+                .unwrap_or_else(|| self.matcher.matches_candidate(path)),
         };
         !self.is_comment && hit != (self.is_inverted && !flip_negate)
     }
@@ -358,6 +442,26 @@ struct Heads {
     without_extension: OfExtension,
     /// A bit for each object that is [about directories](ConfigObject::is_about_directories).
     about_directories: Bits,
+    /// The patterns in `files` that look at more of the name of a file than its extension. `None`: the objects that are for a
+    /// file don't follow from what these say about it, its extension and its directory, or there are more than 64.
+    by_name: Option<Vec<Place>>,
+}
+
+/// Where a pattern is: in which element of `files` of which object.
+#[derive(Copy, Clone)]
+struct Place {
+    object: u32,
+    element: u32,
+    pattern: u32,
+}
+
+/// What [`Heads::by_name`] say about a file, a bit for each, with its [extension](extension_of).
+type SaidOfName = (Option<u64>, u64);
+
+/// The extension of the file at `path`, [packed](packed_extension). A `/` in it is in no extension that a pattern has.
+fn extension_of(path: &[u8]) -> Option<u64> {
+    let dot = bun_core::strings::last_index_of_char(path, b'.')?;
+    packed_extension(path.get(dot + 1..)?)
 }
 
 type Bits = SmallVec<[u64; 4]>;
@@ -452,14 +556,47 @@ impl Heads {
         for (at, _) in (objects.iter().enumerate()).filter(|it| it.1.is_about_directories()) {
             heads.about_directories[at / 64] |= 1 << (at % 64);
         }
+        let (mut by_name, mut follows) = (Vec::new(), true);
+        for (at, object) in objects.iter().enumerate() {
+            follows &= object.ignores.is_none() || object.is_global_ignores;
+            for (element, patterns) in object.files.iter().flatten().enumerate() {
+                let looks_at_name = |it: &&Pattern| !it.is_by_extension && !it.is_about_directory;
+                for (pattern, _) in patterns
+                    .iter()
+                    .enumerate()
+                    .filter(|it| looks_at_name(&it.1))
+                {
+                    // It would have to be asked about another path.
+                    follows &= object.base_path.is_none();
+                    by_name.push(Place {
+                        object: at as u32,
+                        element: element as u32,
+                        pattern: pattern as u32,
+                    });
+                }
+            }
+        }
+        heads.by_name = (follows && by_name.len() <= 64).then_some(by_name);
         heads
+    }
+
+    /// Two files of a directory for which this is the same have the same objects.
+    fn said_of_name(&self, objects: &[ConfigObject], path: &Candidate) -> Option<SaidOfName> {
+        let extension = extension_of(path.path());
+        let mut said = 0;
+        for (bit, place) in self.by_name.as_ref()?.iter().enumerate() {
+            let files = objects.get(place.object as usize)?.files.as_ref()?;
+            let pattern = (files.get(place.element as usize)?).get(place.pattern as usize)?;
+            let can_match = pattern.extensions.is_empty()
+                || extension.is_some_and(|it| pattern.extensions.contains(&it));
+            said |= u64::from(can_match && pattern.matches(path, false)) << bit;
+        }
+        Some((extension, said))
     }
 
     /// What can match `path`, going by its extension.
     fn of_extension(&self, path: &[u8]) -> &OfExtension {
-        // A `/` in it is in no extension that is known.
-        let extension = bun_core::strings::last_index_of_char(path, b'.')
-            .and_then(|at| packed_extension(path.get(at + 1..)?));
+        let extension = extension_of(path);
         let mut known = self.by_extension.iter();
         known
             .find(|it| Some(it.0) == extension)
@@ -575,6 +712,7 @@ pub struct Within<'c> {
     /// The objects that were merged last, and what they make.
     merged: Option<(Indices, Arc<ResolvedConfig>)>,
     said: Said,
+    known: Known,
     /// [`Within::outside_of_react`]
     is_outside_of_react: bool,
 }
@@ -583,11 +721,15 @@ pub struct Within<'c> {
 /// the directory, and whether that makes ESLint lint them.
 type Said = std::cell::RefCell<SmallVec<[(u32, bool, bool); 2]>>;
 
+/// [`Config::matching`] for the files of the directory, by [`Heads::said_of_name`].
+type Known = std::cell::RefCell<Vec<(SaidOfName, Option<Indices>)>>;
+
 /// An entry of the directory of a [`Within`].
 struct Entry<'w> {
     name: &'w [u8],
     seen_by_objects: &'w [(u32, BeforeName)],
     said: &'w Said,
+    known: &'w Known,
 }
 
 impl Entry<'_> {
@@ -635,6 +777,7 @@ impl Within<'_> {
                 name,
                 seen_by_objects: &self.seen.by_objects,
                 said: &self.said,
+                known: &self.known,
             },
         ))
     }
@@ -698,7 +841,27 @@ impl Within<'_> {
             if config.is_ignored_globally_as(&parts, Some(&entry), dotfiles) {
                 return FileConfig::Ignored;
             }
-            config.matching(path, &parts, Some(&entry), must_match)
+            let matching = || config.matching(path, &parts, Some(&entry), must_match);
+            let said = match must_match {
+                true => config.heads.said_of_name(&config.objects, &parts),
+                false => None,
+            };
+            let find = |said: SaidOfName| {
+                let known = entry.known.borrow();
+                known.iter().find(|it| it.0 == said).map(|it| it.1.clone())
+            };
+            match (said, said.and_then(find)) {
+                (_, Some(known)) => {
+                    debug_assert_eq!(known, matching());
+                    known
+                }
+                (Some(said), None) => {
+                    let made = matching();
+                    entry.known.borrow_mut().push((said, made.clone()));
+                    made
+                }
+                (None, None) => matching(),
+            }
         };
         let Some(mut matching) = matching else {
             return FileConfig::Unconfigured;
@@ -977,6 +1140,7 @@ impl Config {
             relative: seen.before_name.clone().unwrap_or_default(),
             merged: None,
             said: Said::default(),
+            known: Known::default(),
             is_outside_of_react: false,
         }
     }

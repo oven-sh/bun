@@ -660,10 +660,167 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       const files = { ".prettierrc": JSON.stringify({ plugins: [plugin, "prettier-plugin-other"] }), "a.jsx": input };
       const result = await format({ ...project, ...files }, ["a.jsx"], ["--log-level=log", "--check"]);
       expect(result.stderr).toContain("plugins that bun fmt does not include: prettier-plugin-other\n");
+      expect(result.stderr).toMatch(
+        /\[warn\] prettier-plugin-other in \S+ has no effect because bun fmt does not include that plugin\n/,
+      );
       // Nothing is said about files that have not been looked at.
       expect(result.stdout).toBe("Checking formatting...\n");
       expect(result.files).toEqual([input]);
       expect(result.exitCode).toBe(2);
+    });
+
+    const names = { tailwindFunctions: ["cn", "/^tw/"], tailwindAttributes: ["mine", "/^data-cls/"] };
+
+    test("where classes are is what it says, not oxfmt", async () => {
+      // The lines of a file, before and after.
+      const rows: Record<string, [string, string][]> = {
+        "a.jsx": [
+          // However deep in an argument or in the value of an attribute.
+          ['cn(other("p-4 flex"));', 'cn(other("flex p-4"));'],
+          ['<a className={other("p-4 flex")} />;', '<a className={other("flex p-4")} />;'],
+          ['cn(a === "p-4 flex" && "flex m-2");', 'cn(a === "flex p-4" && "m-2 flex");'],
+          ['cn(<b title={"p-4 flex"} />);', 'cn(<b title={"flex p-4"} />);'],
+          ["cn(other`p-4 flex`);", "cn(other`flex p-4`);"],
+          [
+            'cn({ "p-4 flex": a, [`p-1 m-2`]: b, ["p-2 m-3"]: c });',
+            'cn({ "flex p-4": a, [`m-2 p-1`]: b, ["m-3 p-2"]: c });',
+          ],
+          // In chains.
+          ['cn("p-4 flex").b("p-4 flex");', 'cn("flex p-4").b("flex p-4");'],
+          ['cn.a.b.c("p-4 flex").d("p-4 flex").e("p-4 flex");', 'cn.a.b.c("flex p-4").d("flex p-4").e("flex p-4");'],
+          ['x.cn("p-4 flex");', ""],
+          ['new cn("p-4 flex");', ""],
+          // Patterns.
+          ['twx("p-4 flex");', 'twx("flex p-4");'],
+          [
+            '<a data-cls-x="p-4 flex" mine="p-4 flex" a:className="p-4 flex" />;',
+            '<a data-cls-x="flex p-4" mine="flex p-4" a:className="p-4 flex" />;',
+          ],
+          // To Babel a call in an optional chain is another kind of node.
+          ['cn?.("p-4 flex");', ""],
+          ['cn?.x.y("p-4 flex");', ""],
+          // What is added to stays apart, up to the innermost function.
+          ['cn(a + (b ? " p-4 flex " : c));', 'cn(a + (b ? " flex p-4" : c));'],
+          ['cn("x " + cn(" p-4 flex "));', 'cn("x " + cn("flex p-4"));'],
+          ['"x " + cn` p-4 flex ` + " y";', '"x " + cn` flex p-4 ` + " y";'],
+          // Of the texts of a template it looks at the wrong ends, which leaves more blanks than are needed.
+          ['cn(`x ${" p-4 flex "} y`);', 'cn(`x ${" flex p-4 "} y`);'],
+          ['cn(`${" p-4 flex "}`);', 'cn(`${" flex p-4 "}`);'],
+          ['cn(` ${" p-4 flex "} `);', 'cn(` ${"flex p-4"} `);'],
+          ["cn(`p-4 flex${a}m-2 p-1`);", ""],
+          ["cn(` p-4 flex ${a} p-1 m-2 `);", "cn(`flex p-4 ${a} m-2 p-1`);"],
+          // A list that was on several lines does not keep the element open.
+          ['<a\n  className="\n    p-4\n    flex\n  "\n/>;', '<a className="flex p-4" />;'],
+        ],
+        "a.tsx": [
+          ['cn?.("p-4 flex");', 'cn?.("flex p-4");'],
+          ['cn?.x.y("p-4 flex");', 'cn?.x.y("flex p-4");'],
+          ['(cn?.x)("p-4 flex");', ""],
+          ['cn!("p-4 flex");', ""],
+          ['cn<string>("p-4 flex" as string);', 'cn<string>("flex p-4" as string);'],
+          // In this tree it does not find the texts of a template.
+          ['cn(`x ${" p-4 flex "} y`);', 'cn(`x ${"flex p-4"} y`);'],
+          ['cn(`${" p-4 flex "}`);', 'cn(`${"flex p-4"}`);'],
+          ['cn(`x${`p-4 flex ${" p-1 m-2 "} p-2 m-3`}y`);', 'cn(`x${`flex p-4 ${"m-2 p-1"} m-3 p-2`}y`);'],
+        ],
+        "a.css": [["a {\n  @apply p-4 /* c */ flex;\n}", "a {\n  @apply /* c */ flex p-4;\n}"]],
+        "a.html": [['<DIV CLASS="p-4 flex">x</DIV>', '<div class="flex p-4">x</div>']],
+        "a.mdx": [
+          ['<a className="p-4 flex" />\n', '<a className="flex p-4" />\n'],
+          ['export const a = cn("p-4 flex");', 'export const a = cn("flex p-4");'],
+        ],
+        "lwc/a.html": [
+          [
+            '<template><a class="p-4 flex" onclick={b}>x</a></template>',
+            '<template><a class="flex p-4" onclick={b}>x</a></template>',
+          ],
+        ],
+        "a.vue": [
+          [
+            `<template>\n  <a #x="{ a = cn('p-4 flex') }" v-for="(a = cn('p-4 flex')) in b"></a>\n</template>`,
+            `<template>\n  <a #x="{ a = cn('flex p-4') }" v-for="a = cn('flex p-4') in b"></a>\n</template>`,
+          ],
+        ],
+      };
+      const text = (at: 0 | 1) => (lines: [string, string][]) => lines.map(it => it[at] || it[0]).join("\n") + "\n";
+      const options = { ...names, overrides: [{ files: "lwc/**", options: { parser: "lwc" } }] };
+      const files = Object.fromEntries(Object.entries(rows).map(([name, lines]) => [name, text(0)(lines)]));
+      const result = await format({ ...project, ...config(options), ...files }, Object.keys(rows));
+      expect(result.stderr).toBe("");
+      expect(Object.fromEntries(Object.keys(rows).map((name, index) => [name, result.files[index]]))).toEqual(
+        Object.fromEntries(Object.entries(rows).map(([name, lines]) => [name, text(1)(lines)])),
+      );
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("a class stays apart from the text of a template that it touches", async () => {
+      // The code, what Bun makes of it, and what the plugin makes of it: one class of `x` and `flex`.
+      const rows: Record<string, [string, string, string][]> = {
+        "a.tsx": [
+          [
+            '<a className={`x${a ? " p-4 flex" : ""}`} />;',
+            '<a className={`x${a ? " flex p-4" : ""}`} />;',
+            '<a className={`x${a ? "flex p-4" : ""}`} />;',
+          ],
+          [
+            '<a className={`${a ? "p-4 flex " : ""}x`} />;',
+            '<a className={`${a ? "flex p-4 " : ""}x`} />;',
+            '<a className={`${a ? "flex p-4" : ""}x`} />;',
+          ],
+          ['cn(`x${" p-4 flex "}y`);', 'cn(`x${" flex p-4 "}y`);', 'cn(`x${"flex p-4"}y`);'],
+          ['cn(`${a}${" p-4 flex "}${b}`);', 'cn(`${a}${" flex p-4 "}${b}`);', 'cn(`${a}${"flex p-4"}${b}`);'],
+          ["cn(`x${` p-4 flex `} e`);", "cn(`x${` flex p-4`} e`);", "cn(`x${`flex p-4`} e`);"],
+        ],
+        "a.jsx": [
+          ['cn(`x ${a} b${" p-4 flex "} e`);', 'cn(`x ${a} b${" flex p-4 "} e`);', 'cn(`x ${a} b${"flex p-4 "} e`);'],
+          ['cn(` x${" p-4 flex "} e`);', 'cn(` x${" flex p-4 "} e`);', 'cn(` x${"flex p-4 "} e`);'],
+          ['cn(`x${ " p-4 flex "} e`);', 'cn(`x${" flex p-4 "} e`);', 'cn(`x${"flex p-4 "} e`);'],
+        ],
+        "a.vue": [
+          [
+            "<template>\n  <a :class=\"`x${a ? ' p-4 flex' : ''}`\"></a>\n</template>",
+            "<template>\n  <a :class=\"`x${a ? ' flex p-4' : ''}`\"></a>\n</template>",
+            "<template>\n  <a :class=\"`x${a ? 'flex p-4' : ''}`\"></a>\n</template>",
+          ],
+        ],
+      };
+      const text = (at: 0 | 1) => (lines: string[][]) => lines.map(it => it[at]).join("\n") + "\n";
+      for (const lines of Object.values(rows)) for (const it of lines) expect(it[1]).not.toBe(it[2]);
+      const files = Object.fromEntries(Object.entries(rows).map(([name, lines]) => [name, text(0)(lines)]));
+      const result = await format({ ...project, ...config(names), ...files }, Object.keys(rows));
+      expect(result.stderr).toBe("");
+      expect(result.files).toEqual(Object.values(rows).map(text(1)));
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("with @prettier/plugin-oxc before it, it looks at the tree of that, and behind that it does nothing", async () => {
+      const code = 'cn?.("p-4 flex");\ncn(`x ${" p-4 flex "} y`);\n';
+      const sortedCode = 'cn?.("flex p-4");\ncn(`x ${" flex p-4 "} y`);\n';
+      const inVue = (text: string, lang = "") => `<script${lang}>\n${text}</script>\n`;
+      const files = { "a.js": code, "a.ts": code, "a.vue": inVue(code), "b.vue": inVue(code, ' lang="ts"') };
+      const run = (plugins: string[]) =>
+        format(
+          { ...project, ".prettierrc": JSON.stringify({ plugins, tailwindFunctions: ["cn"] }), ...files },
+          Object.keys(files),
+        );
+      // It does not read the JavaScript in HTML.
+      const byBabel = inVue('cn?.("p-4 flex");\ncn(`x ${" flex p-4 "} y`);\n');
+      expect(await run(["@prettier/plugin-oxc", plugin])).toMatchObject({
+        stderr: "",
+        files: [sortedCode, sortedCode, byBabel, inVue(sortedCode, ' lang="ts"')],
+      });
+      expect(await run([plugin, "@prettier/plugin-oxc"])).toMatchObject({
+        stderr: "",
+        files: [code, code, byBabel, inVue(code, ' lang="ts"')],
+      });
+    });
+
+    test("in Angular it looks at the texts of a template as they are written", async () => {
+      const before = "<a [ngClass]=\"`x${a ? ' p-4 flex' : ''}`\" [class]=\"`x ${a ? ' p-4 flex ' : ''} y`\"></a>\n";
+      const after =
+        "<a\n  [ngClass]=\"`x${a ? ' flex p-4' : ''}`\"\n  [class]=\"`x ${a ? ' flex p-4 ' : ''} y`\"\n></a>\n";
+      const result = await format({ ...project, ...config({}), "a.component.html": before }, ["a.component.html"]);
+      expect(result).toMatchObject({ stderr: "", files: [after], exitCode: 0 });
     });
 
     describe("the Tailwind CSS that it brings along", () => {

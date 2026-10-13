@@ -70,6 +70,17 @@ impl Names {
     }
 }
 
+/// Whether `@prettier/plugin-oxc` is among the plugins. It reads TypeScript, and the JavaScript that is not in HTML.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Oxc {
+    #[default]
+    Absent,
+    /// The plugin that sorts classes looks at its tree.
+    Before,
+    /// It is behind that plugin and takes its place: in what it reads nothing is sorted.
+    Behind,
+}
+
 /// `sortTailwindcss`, for one file.
 #[derive(Debug)]
 pub struct Tailwind {
@@ -81,6 +92,7 @@ pub struct Tailwind {
     pub preserves_duplicates: bool,
     /// `prettier-plugin-tailwindcss` in a Prettier config has turned it on: where oxfmt has rules of its own, the plugin's count.
     pub follows_plugin: bool,
+    pub oxc: Oxc,
     pub orders: Box<dyn Orders>,
     /// See [`Tailwind::has_missed`].
     pub has_missed: AtomicBool,

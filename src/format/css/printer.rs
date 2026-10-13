@@ -1113,10 +1113,11 @@ impl<'a> Printer<'a, '_> {
                     self.sink.text(&adjust_strings(params, self.single_quote));
                 }
                 Params::Text(params) | Params::Unknown(params) => {
-                    let is_sorted = node.name == b"apply"
-                        && !node.has_block
-                        && !bun_core::strings::contains(params, b"/*");
-                    let sorted = (self.tailwind.as_deref().filter(|_| is_sorted))
+                    let is_sorted = node.name == b"apply" && !node.has_block;
+                    // To the plugin the parts of a comment are classes like others. oxfmt leaves such a list alone.
+                    let has_comment = bun_core::strings::contains(params, b"/*");
+                    let sorted = (self.tailwind.as_deref())
+                        .filter(|it| is_sorted && (it.follows_plugin || !has_comment))
                         .and_then(|tailwind| tailwind.sorted_to_apply(params));
                     self.sink.text(sorted.as_deref().unwrap_or(params));
                 }

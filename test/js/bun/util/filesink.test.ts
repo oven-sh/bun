@@ -1465,6 +1465,7 @@ process.on("unhandledRejection", e => {
 });
 const sink = Bun.stdout.writer();
 const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
+fs.writeSync(2, "first write is " + Bun.peek.status(first) + "\\n");
 fs.readSync(0, Buffer.alloc(1));
 const second = sink.write("tail");
 try {
@@ -1476,20 +1477,24 @@ try {
 `,
     ],
     env: bunEnv,
+    // Nothing reads stdout, so the first write cannot finish.
+    lazy: true,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  // Take one chunk, close the read end while most of the first write is still pending, and only then let the
-  // child make its second write.
-  const reader = proc.stdout.getReader();
-  await reader.read();
-  await reader.cancel();
-  proc.stdin.write("x");
-  await proc.stdin.end();
-
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("caught EPIPE, same promise: true\n");
-  expect(exitCode).toBe(0);
+  // Close the read end once the child says its first write() has returned: any sooner and that write is the one
+  // that fails. Only then let the child make its second write.
+  let stderr = "";
+  for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
+    if (stderr === "") {
+      await proc.stdout.cancel();
+      proc.stdin.write("x");
+      await proc.stdin.end();
+    }
+    stderr += chunk;
+  }
+  expect(stderr).toBe("first write is pending\ncaught EPIPE, same promise: true\n");
+  expect(await proc.exited).toBe(0);
 });

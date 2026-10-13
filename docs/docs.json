@@ -324,19 +324,25 @@
             "pages": ["/lint/rules/index", "/lint/plugins"]
           },
           {
-            "group": "Formatter",
-            "icon": "braces",
+            "group": "Migrate",
+            "icon": "arrow-right",
+            "pages": ["/guides/lint/migrate-from-eslint", "/guides/lint/migrate-from-oxlint"]
+          }
+        ]
+      },
+      {
+        "tab": "Formatter",
+        "icon": "braces",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "circle-play",
             "pages": ["/format/index"]
           },
           {
             "group": "Migrate",
             "icon": "arrow-right",
-            "pages": [
-              "/guides/lint/migrate-from-eslint",
-              "/guides/lint/migrate-from-oxlint",
-              "/guides/format/migrate-from-prettier",
-              "/guides/format/migrate-from-oxfmt"
-            ]
+            "pages": ["/guides/format/migrate-from-prettier", "/guides/format/migrate-from-oxfmt"]
           }
         ]
       },

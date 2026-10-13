@@ -49,4 +49,33 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     const [row] = await sql`SELECT ${literal}::numeric AS n`;
     expect(row.n).toBe(literal);
   });
+
+  // A value of 131072 digits has 32768 digit words. The count is an unsigned
+  // 16-bit field on the wire (numeric_recv), and 32768 is negative as int16.
+  test("binary NUMERIC decodes a value of 131072 digits", async () => {
+    await container.ready;
+    await using sql = new SQL({
+      url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+      max: 1,
+    });
+    const nines = Buffer.alloc(131072, "9").toString();
+    const runs: { length: number; same: boolean }[] = [];
+    // The first run of a statement gets text, the later runs get binary.
+    for (let run = 0; run < 3; run++) {
+      const [integer] = await sql`SELECT repeat('9', 131072)::numeric AS n`;
+      const [fraction] = await sql`SELECT (repeat('9', 131072) || '.12345678')::numeric AS n`;
+      runs.push(
+        { length: integer.n.length, same: integer.n === nines },
+        { length: fraction.n.length, same: fraction.n === nines + ".12345678" },
+      );
+    }
+    expect(runs).toEqual([
+      { length: 131072, same: true },
+      { length: 131081, same: true },
+      { length: 131072, same: true },
+      { length: 131081, same: true },
+      { length: 131072, same: true },
+      { length: 131081, same: true },
+    ]);
+  });
 });

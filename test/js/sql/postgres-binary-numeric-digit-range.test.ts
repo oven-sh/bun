@@ -98,3 +98,14 @@ test("binary NUMERIC still decodes in-range digit words", async () => {
   // ndigits=2 weight=1 digits=[1,2345] -> "1" + "2345" -> "12345"
   expect(await selectNumeric(numericDatum(2, 1, 0x0000, 0, [1, 2345]))).toEqual({ value: "12345" });
 });
+
+test("binary NUMERIC rejects a word count that the datum does not hold", async () => {
+  // ndigits=0xFFFF weight=0 sign=+ dscale=0 and no digit word. numeric_recv
+  // reads ndigits as uint16 and stops with "insufficient data left in message".
+  const { value, error } = await selectNumeric(numericDatum(0xffff, 0, 0x0000, 0, []));
+  expect(value).toBeUndefined();
+  expect({ code: error?.code, name: error?.name }).toEqual({
+    code: "ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT",
+    name: "PostgresError",
+  });
+});

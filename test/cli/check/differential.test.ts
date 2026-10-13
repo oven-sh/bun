@@ -3,7 +3,7 @@ import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, longLimit, spawn } from "../children";
-import { env, inTurns, linesOf, modulesInRings, tsc } from "./differential";
+import { env, inTurns, linesOf, modulesInRings, post4913Tsc, tsc } from "./differential";
 
 afterAll(endChildren);
 
@@ -30,19 +30,23 @@ const tsconfig = JSON.stringify({
   },
 });
 
-test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleThreaded` does", async () => {
-  using dir = tempDir("bun-check-differential", {
-    "tsconfig.json": tsconfig,
-    ...modulesInRings(isDebug || isASAN ? 24 : 60),
-  });
-  const root = String(dir);
-  const [theirs, ours] = await Promise.all([
-    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
-    linesOf([bunExe(), "check", "--threads=1"], root, root),
-  ]);
-  expect(theirs.length).toBeGreaterThan(100);
-  expect(ours).toEqual(theirs);
-});
+test.concurrent.skipIf(!tsc || !post4913Tsc)(
+  "one thread enters every cycle where `tsc --singleThreaded` does",
+  async () => {
+    expect(post4913Tsc, "TypeScript oracle after the mapped-type identity backport").toBeDefined();
+    using dir = tempDir("bun-check-differential", {
+      "tsconfig.json": tsconfig,
+      ...modulesInRings(isDebug || isASAN ? 24 : 60),
+    });
+    const root = String(dir);
+    const [theirs, ours] = await Promise.all([
+      linesOf([post4913Tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+      linesOf([bunExe(), "check", "--threads=1"], root, root),
+    ]);
+    expect(theirs.length).toBeGreaterThan(100);
+    expect(ours).toEqual(theirs);
+  },
+);
 
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
 async function errorsOf(cmd: string[], cwd: string) {

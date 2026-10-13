@@ -784,10 +784,14 @@ impl<'a, 'o> Printer<'a, 'o> {
             start = self.tree[previous].start;
         }
         newlines.resize(comments.len(), None);
-        // The plugin takes the white space out too, which can be all there is between two words: `a<!-- b -->\n<script>`, `c`.
-        // It has `siblings.splice(siblings.indexOf(it), 1)` for each. Where there is no white space behind a comment, that is
-        // the index -1, and the last node of the markup goes.
-        let gone: FxHashSet<Id> = comments.iter().copied().collect();
+        // The plugin has `siblings.splice(siblings.indexOf(it), 1)` for each. Where there is no white space behind a comment,
+        // that is the index -1, and the last node of the markup goes.
+        let mut gone: FxHashSet<Id> = comments.iter().copied().collect();
+        // Where the comments go elsewhere, the white space can be all there is between two words: `a<!-- b -->\n<script>`, `c`.
+        // The plugin takes it out there too.
+        if self.svelte.sort_order.is_none() {
+            gone.extend(newlines.iter().copied().flatten());
+        }
         self.tree.fragments[root as usize].retain(|it| !gone.contains(it));
         let mut result: Vec<LeadingComment> = (comments.iter().zip(&newlines))
             .map(|(&comment, text)| {

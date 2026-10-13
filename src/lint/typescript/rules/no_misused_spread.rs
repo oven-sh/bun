@@ -166,6 +166,21 @@ fn is_in_unvisited_computed_name(node: Node) -> bool {
     false
 }
 
+/// Whether an `await` at `node` is a syntax error: the innermost function around it is not `async`, or it is in the
+/// initializer of a class member.
+fn is_outside_await_context(node: Node) -> bool {
+    let mut below = node;
+    for above in node.ancestors() {
+        match above {
+            Node::Func(func) => return !func.is_async(),
+            Node::Member(member) if member.init().map(Node::Expr) == Some(below) => return true,
+            _ => {}
+        }
+        below = above;
+    }
+    false
+}
+
 impl NoMisusedSpread {
     fn check_array_or_call_spread<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Spread(argument) = node.kind() else {
@@ -181,14 +196,10 @@ impl NoMisusedSpread {
             _ => return,
         }
         let ty = get_constrained_type_at_location(argument);
-        let is_misused = match cx.state.in_lists.get(ty) {
-            Some(&it) => it,
-            None => {
-                let it = is_string(ty) && !type_matches_some_specifier(ty, &self.allow);
-                cx.state.in_lists.insert(ty, it);
-                it
-            }
-        };
+        let is_misused = *cx
+            .state
+            .in_lists
+            .get_or_insert_with(ty, || is_string(ty) && !type_matches_some_specifier(ty, &self.allow));
         if is_misused
             && !(node.file().language().is_oxlint && is_in_unvisited_computed_name(Node::Expr(node)))
         {
@@ -231,14 +242,7 @@ impl NoMisusedSpread {
             return;
         }
         let ty = get_constrained_type_at_location(argument);
-        let misuse = match cx.state.in_objects.get(ty) {
-            Some(&it) => it,
-            None => {
-                let it = self.misuse_in_object(ty);
-                cx.state.in_objects.insert(ty, it);
-                it
-            }
-        };
+        let misuse = *cx.state.in_objects.get_or_insert_with(ty, || self.misuse_in_object(ty));
         let Some(misuse) = misuse else {
             return;
         };
@@ -258,6 +262,8 @@ impl NoMisusedSpread {
             },
         );
         match misuse {
+            // tsgolint adds the `await` there too, which does not parse.
+            Misuse::Promise if node.file().language().is_oxlint && is_outside_await_context(Node::Prop(node)) => {}
             Misuse::Promise => {
                 report.suggest(ADD_AWAIT, |fixer| match is_higher_precedence_than_await(argument) {
                     true => vec![fixer.insert_before(argument, "await ")],

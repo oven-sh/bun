@@ -26,10 +26,9 @@ fn discriminate_any_type_worker<'a>(
     ts_node: TsNode<'a>,
     visited: &mut IdSet<Type<'a>>,
 ) -> AnyType {
-    if visited.contains(ty) || !has_room_on_the_stack() {
+    if !has_room_on_the_stack() || !visited.insert(ty) {
         return AnyType::Safe;
     }
-    visited.insert(ty);
     if is_type_any_type(ty) {
         return AnyType::Any;
     }

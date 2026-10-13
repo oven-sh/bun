@@ -579,10 +579,9 @@ impl<'a> Components<'a> {
         }
         let answer = ask(node);
         let mut returning = self.returning.borrow_mut();
-        let mut known = returning.get(func).copied().unwrap_or_default();
+        let known = returning.get_or_insert_with(func, Returning::default);
         known.asked |= bit;
         known.answers |= u8::from(answer) << question;
-        returning.insert(func, known);
         answer
     }
 
@@ -635,12 +634,8 @@ impl<'a> Components<'a> {
     /// now, or makes a new one.
     fn node_wraps_component(&mut self, node: Call<'a>) -> bool {
         let child_component = node.args().first().and_then(|first| {
-            if let Some(&known) = self.wrapped.get(first) {
-                return known;
-            }
-            let name = get_name_of_wrapped_component(node.args());
-            self.wrapped.insert(first, name);
-            name
+            let name = || get_name_of_wrapped_component(node.args());
+            *self.wrapped.get_or_insert_with(first, name)
         });
         // `getDetectedComponents` asks for the list, which moves the props that are used.
         if !self.stages.is_empty() {
@@ -869,9 +864,8 @@ impl<'a> Components<'a> {
             }
             current = it.parent();
         };
-        for it in passed {
-            self.candidates.insert(it, found);
-        }
+        self.candidates
+            .extend(passed.into_iter().map(|it| (it, found)));
         found
     }
 

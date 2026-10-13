@@ -82,7 +82,7 @@ impl<'a> Memo<'a> {
             return matches!(declaration, Some(Declaration::Param(_)));
         }
         let scope = Node::Expr(identifier).scope();
-        if !self.from_parameter.contains_key(scope) {
+        let first_references = self.from_parameter.get_or_insert_with(scope, || {
             let mut first_references = FxHashMap::default();
             for reference in scope.references() {
                 first_references.entry(reference.name()).or_insert_with(|| {
@@ -92,23 +92,22 @@ impl<'a> Memo<'a> {
                     )
                 });
             }
-            self.from_parameter.insert(scope, first_references);
-        }
-        let first_references = self.from_parameter.get(scope);
-        first_references.is_some_and(|it| it.get(&name).is_some_and(|it| *it))
+            first_references
+        });
+        first_references.get(&name).is_some_and(|it| *it)
     }
 
     fn has_parameter_property(&mut self, constructor: Func<'a>, name: Name<'a>) -> bool {
-        if !self.parameter_properties.contains_key(constructor) {
-            let properties = constructor
-                .params()
-                .iter()
-                .filter(|it| it.is_parameter_property());
-            let names = properties.filter_map(|it| it.pat().as_ident()).collect();
-            self.parameter_properties.insert(constructor, names);
-        }
-        let names = self.parameter_properties.get(constructor);
-        names.is_some_and(|it| it.contains(&name))
+        let names = self
+            .parameter_properties
+            .get_or_insert_with(constructor, || {
+                let properties = constructor
+                    .params()
+                    .iter()
+                    .filter(|it| it.is_parameter_property());
+                properties.filter_map(|it| it.pat().as_ident()).collect()
+            });
+        names.contains(&name)
     }
 }
 

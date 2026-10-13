@@ -1,6 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::types::IdMap;
-use rustc_hash::FxHashSet;
+use bun_lint::types::{IdMap, IdSet};
 
 /// Require rest parameters instead of `arguments`.
 pub struct PreferRestParams;
@@ -20,7 +19,7 @@ fn is_normal_member_access(e: Expr<'_>) -> bool {
 pub struct State<'a> {
     /// `arguments`
     name: Name<'a>,
-    counted: FxHashSet<Symbol<'a>>,
+    counted: IdSet<Symbol<'a>>,
     /// How many of the references to what is `counted` an identifier is.
     references: IdMap<Expr<'a>, u32>,
 }
@@ -31,12 +30,7 @@ impl<'a> State<'a> {
     fn count(&mut self, symbol: Symbol<'a>, e: Expr<'a>) -> u32 {
         if self.counted.insert(symbol) {
             for identifier in symbol.references().filter_map(Reference::expr) {
-                match self.references.get_mut(identifier) {
-                    Some(count) => *count += 1,
-                    None => {
-                        self.references.insert(identifier, 1);
-                    }
-                }
+                *self.references.get_or_insert_with(identifier, || 0) += 1;
             }
         }
         self.references.get(e).copied().unwrap_or(0)
@@ -58,7 +52,7 @@ impl Rule for PreferRestParams {
         }
         Some(State {
             name: file.name_of("arguments"),
-            counted: FxHashSet::default(),
+            counted: IdSet::new(),
             references: IdMap::new(),
         })
     }

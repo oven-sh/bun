@@ -86,12 +86,9 @@ fn get_type_parameters_from_type(
 /// `type_parameters`, so without type arguments they would be inferred from the arguments of `new`.
 fn tsgolint_arguments_can_infer<'a>(constructor: TsNode<'a>, type_parameters: &[TsNode<'a>]) -> bool {
     let names = type_parameters.iter().filter_map(|it| it.name());
-    let mut symbols: IdSet<TsSymbol> = IdSet::new();
-    for symbol in names.filter_map(|it| it.get_symbol_at_location()) {
-        symbols.insert(symbol);
-    }
+    let symbols: IdSet<TsSymbol> = names.filter_map(|it| it.get_symbol_at_location()).collect();
     let parameters = constructor.children().filter(|it| it.kind() == SyntaxKind::Parameter);
-    let mut pending: Vec<TsNode> = parameters.filter_map(TsNode::type_node).collect();
+    let mut pending: SmallVec<[TsNode; 8]> = parameters.filter_map(TsNode::type_node).collect();
     while let Some(node) = pending.pop() {
         if node.kind() == SyntaxKind::Identifier
             && node.get_symbol_at_location().is_some_and(|it| symbols.contains(it))

@@ -1,9 +1,9 @@
 use bun_lint::prelude::*;
+use bun_lint::types::Type;
 use bun_lint::types::tsutils::{
     get_call_signatures_of_type, is_intrinsic_unknown_type, is_thenable_type, union_constituents,
 };
 use bun_lint::types::utils::{get_static_member_access_value, is_rest_parameter_declaration};
-use bun_lint::types::Type;
 use bun_lint::utils::ts_utils::is_parenless_arrow_function;
 use smallvec::SmallVec;
 
@@ -78,6 +78,14 @@ fn is_flaggable_handler_type(ty: Type) -> bool {
     false
 }
 
+/// tsgolint replaces the type alone, typescript-eslint the annotation from its colon.
+fn replace_type_annotation<'a>(fixer: Fixer<'a>, ty: TypeNode<'a>, unknown: &str) -> Fix {
+    match fixer.file().language().is_oxlint {
+        true => fixer.replace(ty.outer_span(), unknown),
+        false => fixer.replace(ty.annotation_span(), [": ", unknown].concat()),
+    }
+}
+
 /// Reports `argument`, a function whose first parameter is known not to be `unknown`, at that
 /// parameter.
 fn report<'a>(argument: Func<'a>, info: PromiseMethod, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>) {
@@ -86,28 +94,34 @@ fn report<'a>(argument: Func<'a>, info: PromiseMethod, cx: &Cx<'a, UseUnknownInC
     };
     let outer = utils::estree_span(Node::Param(catch_variable));
     let at_variable = |message: Message| cx.report(outer, message).data("method", info.method).data("append", info.append);
-    let type_annotation = catch_variable.ty().map(TypeNode::annotation_span);
+    let type_annotation = catch_variable.ty();
 
     if catch_variable.is_rest() {
         match type_annotation {
             None => at_variable(USE_UNKNOWN).suggest(ADD_UNKNOWN_REST_TYPE_ANNOTATION_SUGGESTION, |fixer| {
                 fixer.insert_after(outer, ": [unknown]")
             }),
-            Some(annotation) => at_variable(USE_UNKNOWN)
-                .suggest(WRONG_REST_TYPE_ANNOTATION_SUGGESTION, |fixer| fixer.replace(annotation, ": [unknown]")),
+            Some(ty) => at_variable(USE_UNKNOWN)
+                .suggest(WRONG_REST_TYPE_ANNOTATION_SUGGESTION, |fixer| replace_type_annotation(fixer, ty, "[unknown]")),
         };
         return;
     }
     match (catch_variable.pat().tag(), type_annotation) {
         (PatTag::Ident, None) => at_variable(USE_UNKNOWN).suggest(ADD_UNKNOWN_TYPE_ANNOTATION_SUGGESTION, |fixer| {
             let inner = catch_variable.binding_span();
-            if argument.is_arrow() && is_parenless_arrow_function(argument) {
+            let file = fixer.file();
+            // For tsgolint only `a => b`, where the `=>` follows the parameter, has no parentheses: `(a,) => b` has.
+            let is_parenless = match file.language().is_oxlint {
+                true => argument.arrow_span().is_some_and(|arrow| skip_trivia(file.text(), inner.end) == arrow.start),
+                false => argument.is_arrow() && is_parenless_arrow_function(argument),
+            };
+            if is_parenless {
                 return vec![fixer.insert_before(inner, "("), fixer.insert_after(inner, ": unknown)")];
             }
             vec![fixer.insert_after(inner, ": unknown")]
         }),
-        (PatTag::Ident, Some(annotation)) => {
-            at_variable(USE_UNKNOWN).suggest(WRONG_TYPE_ANNOTATION_SUGGESTION, |fixer| fixer.replace(annotation, ": unknown"))
+        (PatTag::Ident, Some(ty)) => {
+            at_variable(USE_UNKNOWN).suggest(WRONG_TYPE_ANNOTATION_SUGGESTION, |fixer| replace_type_annotation(fixer, ty, "unknown"))
         }
         (PatTag::Array, _) => at_variable(USE_UNKNOWN_ARRAY_DESTRUCTURING_PATTERN),
         (PatTag::Object, _) => at_variable(USE_UNKNOWN_OBJECT_DESTRUCTURING_PATTERN),

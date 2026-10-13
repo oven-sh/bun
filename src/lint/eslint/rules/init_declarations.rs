@@ -143,14 +143,9 @@ fn is_inside_declared_namespace<'a>(statement: Stmt<'a>, state: &mut State<'a>) 
         _ => None,
     });
     namespace.is_some_and(|namespace| {
-        let first_end = match state.first_ends.get(namespace.stmt()) {
-            Some(first_end) => *first_end,
-            None => {
-                let first_end = end_of_first_declared_namespace_in(namespace);
-                state.first_ends.insert(namespace.stmt(), first_end);
-                first_end
-            }
-        };
+        let first_end = *state
+            .first_ends
+            .get_or_insert_with(namespace.stmt(), || end_of_first_declared_namespace_in(namespace));
         first_end.is_none_or(|end| end > statement.span().start)
     })
 }

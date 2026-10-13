@@ -103,14 +103,9 @@ impl Rule for RestrictTemplateExpressions {
         }
         for expression in template.exprs() {
             let expression_type = get_constrained_type_at_location(expression);
-            let is_allowed = match cx.state.get(expression_type).copied() {
-                Some(is_allowed) => is_allowed,
-                None => {
-                    let is_allowed = self.recursively_check_type(expression_type, &mut IdSet::new());
-                    cx.state.insert(expression_type, is_allowed);
-                    is_allowed
-                }
-            };
+            let is_allowed = *cx.state.get_or_insert_with(expression_type, || {
+                self.recursively_check_type(expression_type, &mut IdSet::new())
+            });
             if !is_allowed {
                 // tsgolint reports the ParenthesizedExpression.
                 let report = match cx.language().is_oxlint {

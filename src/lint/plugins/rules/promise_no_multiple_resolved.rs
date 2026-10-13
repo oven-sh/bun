@@ -2,7 +2,7 @@ use crate::oxlint::promise::is_promise_constructor;
 use bun_lint::code_path::{Event, Step, steps_of_code_path};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint::types::IdMap;
+use bun_lint::types::{IdMap, IdSet};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -48,9 +48,9 @@ impl Rule for NoMultipleResolved {
             let Node::Func(func) = reference.scope().variable_scope().node() else {
                 continue;
             };
-            let count = references_in.get(func).map_or(1, |it| it + 1);
-            references_in.insert(func, count);
-            if count == 2 && func.kind() != FnKind::StaticBlock {
+            let count = references_in.get_or_insert_with(func, || 0);
+            *count += 1;
+            if *count == 2 && func.kind() != FnKind::StaticBlock {
                 check(func, resolve_finder, &mut diagnostics);
             }
         }
@@ -160,8 +160,8 @@ struct Walk<'a> {
     side_by_side: Vec<(Segment<'a>, Segment<'a>)>,
     /// The segment that each `catch` starts with, and the segments in the block of its `try` statement.
     catch_starts: Vec<(Segment<'a>, Vec<Segment<'a>>)>,
-    /// The ids of the segments that start in the block of a `try` statement with a `catch`.
-    in_try_block: FxHashSet<u32>,
+    /// The segments that start in the block of a `try` statement with a `catch`.
+    in_try_block: IdSet<Segment<'a>>,
     /// By the id of the segment.
     found: FxHashMap<u32, Found<'a>>,
 }
@@ -196,7 +196,7 @@ impl<'a> Walk<'a> {
                         innermost.segments.push(segment);
                     }
                     if try_block_depth > 0 {
-                        walk.in_try_block.insert(segment.id());
+                        walk.in_try_block.insert(segment);
                     }
                 }
                 Step::Event(Event::SegmentEnd(segment, _)) => current_segments.retain(|it| *it != segment),
@@ -329,21 +329,21 @@ impl<'a> Blocks<'a> {
     fn new(walk: Walk<'a>) -> Option<Blocks<'a>> {
         let initial_segment = walk.code_path?.initial_segment();
         let mut segments = vec![initial_segment];
-        let mut number_of: FxHashMap<u32, usize> = FxHashMap::default();
-        number_of.insert(initial_segment.id(), 0);
+        let mut number_of: IdMap<Segment<'a>, usize> = IdMap::new();
+        number_of.insert(initial_segment, 0);
         let mut at = 0;
         while let Some(&segment) = segments.get(at) {
             at += 1;
             for next in segment.next_segments() {
-                number_of.entry(next.id()).or_insert_with(|| {
+                number_of.get_or_insert_with(next, || {
                     segments.push(next);
                     segments.len() - 1
                 });
             }
         }
-        let number = |segment: Segment<'a>| number_of.get(&segment.id()).copied();
-        let catch_starts: FxHashSet<u32> = walk.catch_starts.iter().map(|it| it.0.id()).collect();
-        let is_catch_start = |segment: Segment<'a>| catch_starts.contains(&segment.id());
+        let number = |segment: Segment<'a>| number_of.get(segment).copied();
+        let catch_starts: IdSet<Segment<'a>> = walk.catch_starts.iter().map(|it| it.0).collect();
+        let is_catch_start = |segment: Segment<'a>| catch_starts.contains(segment);
 
         // The set of segments that each segment is in: that of the segment with this number, or its own.
         let mut sets: Vec<usize> = (0..segments.len()).collect();
@@ -488,7 +488,7 @@ impl<'a> Blocks<'a> {
             if let Some(slot) = blocks.is_catch_start.get_mut(block).filter(|_| is_catch_start(*segment)) {
                 *slot = true;
             }
-            if let Some(slot) = blocks.is_in_try_block.get_mut(block).filter(|_| walk.in_try_block.contains(&segment.id())) {
+            if let Some(slot) = blocks.is_in_try_block.get_mut(block).filter(|_| walk.in_try_block.contains(*segment)) {
                 *slot = true;
             }
             if let (Some(of_segment), Some(of_block)) = (found.remove(&segment.id()), blocks.found.get_mut(block)) {

@@ -1,7 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_flag_set;
-use bun_lint::types::{NameOf, SyntaxKind, TsNode, Type, TypeFlags};
-use rustc_hash::FxHashMap;
+use bun_lint::types::{IdMap, NameOf, SyntaxKind, TsNode, Type, TypeFlags};
 
 /// Disallow enums from having both number and string members.
 pub struct NoMixedEnums;
@@ -18,7 +17,7 @@ enum AllowedType {
 /// By a variable, [`get_type_from_imported`] of the first of its declarations that has one: an enum that is declared
 /// many times has as many declarations to go through for each of them.
 #[derive(Default)]
-pub struct State<'a>(FxHashMap<Symbol<'a>, Option<AllowedType>>);
+pub struct State<'a>(IdMap<Symbol<'a>, Option<AllowedType>>);
 
 /// Whether it is in quotes, and one name of upstream's `getModuleName`.
 fn name_part<'a>(module: Module<'a>) -> (bool, &'a [u8]) {
@@ -131,7 +130,7 @@ fn get_desired_type_for_definition<'a>(
             continue;
         };
         let find = || variable.declarations().find_map(|it| get_type_from_imported(file, it));
-        if let Some(from_imported) = *known.0.entry(variable).or_insert_with(find) {
+        if let Some(from_imported) = *known.0.get_or_insert_with(variable, find) {
             return from_imported;
         }
     }

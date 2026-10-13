@@ -140,10 +140,8 @@ fn get_type_of_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) -> Opti
         // tsgolint knows the type of an optional property only where every branch of the initializer writes it.
         match init.filter(|init| is_oxlint || is_conditional_or_logical(*init)) {
             Some(init) => {
-                if !cx.state.contains_key(init) {
-                    cx.state.insert(init, get_properties_in_all_branches(init, is_oxlint));
-                }
-                if !cx.state.get(init).is_some_and(|properties| properties.contains(property_name)) {
+                let properties = cx.state.get_or_insert_with(init, || get_properties_in_all_branches(init, is_oxlint));
+                if !properties.contains(property_name) {
                     return None;
                 }
             }

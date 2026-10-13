@@ -115,18 +115,13 @@ impl NoEval {
         };
         let Known { at, in_function, bindings, .. } = &mut cx.state;
         let is_global_object = at.find(Node::Expr(e), |child, ancestor| match ancestor {
-            Node::Func(func) if !func.is_arrow() => Some(match in_function.get(func).copied() {
-                Some(known) => known,
-                None => {
-                    // oxlint takes a function for a constructor by its own name alone, and knows the capitals of ASCII.
-                    let is_ascii = |it: Ident<'a>| it.bytes().first().is_some_and(u8::is_ascii);
-                    let cap_is_constructor = !is_oxlint || func.name().is_some_and(is_ascii);
-                    let known = !func.scope().is_none_or(is_strict)
-                        && ast_utils::is_default_this_binding_with(func, cap_is_constructor, bindings);
-                    in_function.insert(func, known);
-                    known
-                }
-            }),
+            Node::Func(func) if !func.is_arrow() => Some(*in_function.get_or_insert_with(func, || {
+                // oxlint takes a function for a constructor by its own name alone, and knows the capitals of ASCII.
+                let is_ascii = |it: Ident<'a>| it.bytes().first().is_some_and(u8::is_ascii);
+                let cap_is_constructor = !is_oxlint || func.name().is_some_and(is_ascii);
+                !func.scope().is_none_or(is_strict)
+                    && ast_utils::is_default_this_binding_with(func, cap_is_constructor, bindings)
+            })),
             // In the initializer of a field it is the instance or the class.
             Node::Member(field)
                 if field.kind() == MemberKind::Property

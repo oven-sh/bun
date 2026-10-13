@@ -161,16 +161,9 @@ impl<'a> UsageCounter<'a, '_> {
         if self.without_type_parameters.contains(ty) {
             return;
         }
-        let usages = match self.type_usages.get_mut(ty) {
-            Some(usages) => {
-                *usages += 1;
-                *usages
-            }
-            None => {
-                self.type_usages.insert(ty, 1);
-                1
-            }
-        };
+        let usages = self.type_usages.get_or_insert_with(ty, || 0);
+        *usages += 1;
+        let usages = *usages;
         if usages > 9 || !bun_core::StackCheck::init().is_safe_to_recurse() {
             self.found_or_left_out += 1;
             return;
@@ -389,11 +382,39 @@ fn replace_usages_with_constraint<'a>(
         )
     });
 
+    let removed = if type_parameters.len() == 1 {
+        type_parameters.angle_brackets_span()?
+    } else if type_parameters.first() == Some(es_type_parameter) {
+        let comma_after = file.tokens_after(es_type_parameter).find(|token| token.value() == b",")?;
+        let token_after_comma = file.tokens_after(comma_after).with_comments().next()?;
+        Span::new(es_type_parameter.span().start, token_after_comma.start())
+    } else {
+        let comma_before = file.tokens_before(es_type_parameter).find(|token| token.value() == b",")?;
+        Span::new(comma_before.start(), es_type_parameter.span().end)
+    };
+    let is_oxlint = file.language().is_oxlint;
+
     let mut fixes = Vec::new();
-    for reference in variable.references().filter(|reference| reference.is_type()) {
-        let Node::Type(type_reference) = reference.node() else {
-            continue;
+    for reference in variable.references() {
+        let is_reference = match is_oxlint {
+            true => is_identifier_of_type_node(reference),
+            false => reference.is_type(),
         };
+        let type_reference = match reference.node() {
+            Node::Type(type_reference) if is_reference => type_reference,
+            // tsgolint replaces the parent of the identifier, which is the `typeof T` of a value of the name.
+            Node::Expr(operand) if is_reference && is_oxlint => match operand.parent() {
+                Node::Type(type_query) => type_query,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        // tsgolint leaves what goes with the type parameter, as in `<T extends { a: T }>`.
+        let identifier = reference.span();
+        if is_oxlint && identifier.start < removed.end && identifier.end > removed.start {
+            continue;
+        }
+        // tsgolint has a node for parentheses: `(T)[]` needs no more of them.
         let is_weak_precedence_type_parent = matches!(
             type_reference.parent(),
             Node::Type(grandparent) if matches!(
@@ -406,23 +427,14 @@ fn replace_usages_with_constraint<'a>(
                     | TypeKind::Keyof(_)
                     | TypeKind::Readonly(_)
             )
-        );
+        ) && !(is_oxlint && type_reference.is_parenthesized());
         fixes.push(match is_weak_precedence_constraint && is_weak_precedence_type_parent {
             true => fixer.replace(type_reference, [&b"("[..], constraint_text, b")"].concat()),
             false => fixer.replace(type_reference, constraint_text),
         });
     }
 
-    fixes.push(if type_parameters.len() == 1 {
-        fixer.remove(type_parameters.angle_brackets_span()?)
-    } else if type_parameters.first() == Some(es_type_parameter) {
-        let comma_after = file.tokens_after(es_type_parameter).find(|token| token.value() == b",")?;
-        let token_after_comma = file.tokens_after(comma_after).with_comments().next()?;
-        fixer.remove(Span::new(es_type_parameter.span().start, token_after_comma.start()))
-    } else {
-        let comma_before = file.tokens_before(es_type_parameter).find(|token| token.value() == b",")?;
-        fixer.remove(Span::new(comma_before.start(), es_type_parameter.span().end))
-    });
+    fixes.push(fixer.remove(removed));
     Some(fixes)
 }
 
@@ -524,14 +536,7 @@ impl Rule for NoUnnecessaryTypeParameters {
                 // Each overload of a function has the type of the function, with the signatures of all of them.
                 _ => {
                     let ty = ts_node.get_type_at_location();
-                    match counts_by_type.get(ty) {
-                        Some(counts) => Rc::clone(counts),
-                        None => {
-                            let counts = count();
-                            counts_by_type.insert(ty, Rc::clone(&counts));
-                            counts
-                        }
-                    }
+                    Rc::clone(counts_by_type.get_or_insert_with(ty, count))
                 }
             }
         });

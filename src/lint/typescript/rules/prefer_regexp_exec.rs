@@ -2,12 +2,14 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::union_constituents;
 use bun_lint::types::utils::get_type_name;
-use bun_lint::types::Type;
+use bun_lint::types::{IdMap, IdSet, Type};
 use bun_lint::utils::eslint_utils::{find_variable_of, get_static_value};
 use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer_for_chain_element, is_static_member_access_of_value,
+    needs_preceding_semicolon,
 };
-use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
+use std::borrow::Cow;
 
 /// Enforce `RegExp#exec` over `String#match` if no global flag is provided.
 pub struct PreferRegexpExec;
@@ -94,7 +96,9 @@ fn get_static_reg_exp_constructor_call_value(node: Expr<'_>) -> StaticArgumentVa
     if pattern_node.is_some() != pattern.is_some() || flags_node.is_some() != flags.is_some() {
         return StaticArgumentValue::Unknown;
     }
-    if pattern.is_some_and(|it| Regex::from_bytes(it.bytes(), b"").is_err()) {
+    if pattern.is_some_and(|it| {
+        Regex::from_bytes(it.bytes(), b"").is_err() && !compiles_with_regexp2(it.bytes())
+    }) {
         return StaticArgumentValue::Unknown;
     }
     StaticArgumentValue::RegExp { flags: flags.map_or(&b""[..], |it| it.bytes()) }
@@ -102,7 +106,7 @@ fn get_static_reg_exp_constructor_call_value(node: Expr<'_>) -> StaticArgumentVa
 
 /// tsgolint's `getStaticArgumentValue`.
 fn get_static_argument_value(mut node: Expr<'_>) -> StaticArgumentValue<'_> {
-    let mut visited = Vec::new();
+    let mut visited = IdSet::new();
     loop {
         node = match node.kind() {
             ExprKind::String(_) => return StaticArgumentValue::String,
@@ -113,16 +117,24 @@ fn get_static_argument_value(mut node: Expr<'_>) -> StaticArgumentValue<'_> {
             ExprKind::Template(template) if template.quasi_count() == 1 => return StaticArgumentValue::Other,
             ExprKind::As { expr, .. } | ExprKind::AsConst(expr) | ExprKind::NonNull(expr) => expr,
             ExprKind::Ident(_) => {
-                let variable = find_variable_of(node).filter(|it| !visited.contains(it));
+                let variable = find_variable_of(node).filter(|&it| visited.insert(it));
                 let Some(initializer) = variable.and_then(initializer_of_const) else {
                     return StaticArgumentValue::Unknown;
                 };
-                visited.extend(variable);
                 initializer
             }
             _ => return get_static_reg_exp_constructor_call_value(node),
         };
     }
+}
+
+/// `new RegExp(/a/g)`: tsgolint takes it for a pattern without flags. Its fix would give one match where `match` gave all.
+fn is_reg_exp_of_global_literal(node: Expr) -> bool {
+    as_reg_exp_constructor_call(node).is_some_and(|call| {
+        let args = call.args();
+        args.get(1).is_none()
+            && matches!(args.first().map(|it| it.kind()), Some(ExprKind::Regex(literal)) if strings::contains_char(literal.flags(), b'g'))
+    })
 }
 
 /// Whether the syntax proves that there is no `g` flag. If not, there may or may not be one.
@@ -153,6 +165,164 @@ fn definitely_does_not_contain_global_flag(node: Expr) -> bool {
         .is_some_and(|value| !value.as_str().is_some_and(|flags| strings::contains_char(flags, b'g')))
 }
 
+/// Whether regexp2, which compiles the pattern for tsgolint, takes a pattern that ECMAScript does
+/// not: it has .NET's `(?>..)`, `(?'name'..)`, `(?#..)`, `(?i)` or `(?i:..)`, and is valid without.
+fn compiles_with_regexp2(pattern: &[u8]) -> bool {
+    let mut ecma_script: SmallVec<[u8; 64]> = SmallVec::new();
+    let (mut is_in_class, mut has_dot_net_group) = (false, false);
+    let mut rest = pattern;
+    while let [byte, after @ ..] = rest {
+        let byte = *byte;
+        rest = after;
+        match byte {
+            b'\\' => {
+                ecma_script.push(b'\\');
+                if let [escaped, after @ ..] = rest {
+                    ecma_script.push(*escaped);
+                    rest = after;
+                }
+                continue;
+            }
+            b'[' => is_in_class = true,
+            b']' => is_in_class = false,
+            b'(' if !is_in_class && rest.first() == Some(&b'?') => {
+                let group = rest.get(1..).unwrap_or_default();
+                let (replacement, len): (&[u8], usize) = match group {
+                    [b'>', ..] => (&b"(?:"[..], 1),
+                    // It ends at the first `)`.
+                    [b'#', comment @ ..] => match strings::index_of_char_usize(comment, b')') {
+                        Some(end) => (&b""[..], end + 2),
+                        None => return false,
+                    },
+                    [b'\'', name @ ..] => match strings::index_of_char_usize(name, b'\'') {
+                        Some(end) => {
+                            ecma_script.extend_from_slice(b"(?<");
+                            ecma_script.extend_from_slice(name.get(..end).unwrap_or_default());
+                            (&b">"[..], end + 2)
+                        }
+                        None => return false,
+                    },
+                    _ => {
+                        let options = group
+                            .iter()
+                            .take_while(|it| strings::contains_char(b"imnsxdu+-", it.to_ascii_lowercase()))
+                            .count();
+                        match group.get(options) {
+                            Some(b')') if options > 0 => (&b""[..], options + 1),
+                            Some(b':') if options > 0 => (&b"(?:"[..], options + 1),
+                            _ => {
+                                ecma_script.push(b'(');
+                                continue;
+                            }
+                        }
+                    }
+                };
+                ecma_script.extend_from_slice(replacement);
+                rest = group.get(len..).unwrap_or_default();
+                has_dot_net_group = true;
+                continue;
+            }
+            _ => {}
+        }
+        ecma_script.push(byte);
+    }
+    has_dot_net_group && Regex::from_bytes(&ecma_script, b"").is_ok()
+}
+
+/// tsgolint's `buildStringToRegExpLiteral`: a `\` before every `/`. Unlike it, not before one that
+/// has one, and an empty pattern and a line terminator are as in `source`.
+fn build_string_to_reg_exp_literal(reg_exp: &Regex, pattern: &[u8]) -> Vec<u8> {
+    let mut literal = Vec::with_capacity(pattern.len() + 4);
+    literal.push(b'/');
+    if pattern.is_empty() || strings::index_of_any(pattern, b"\n\r\xE2").is_some() {
+        literal.extend_from_slice(reg_exp.source());
+    } else {
+        let mut is_escaped = false;
+        for &byte in pattern {
+            if byte == b'/' && !is_escaped {
+                literal.push(b'\\');
+            }
+            is_escaped = !is_escaped && byte == b'\\';
+            literal.push(byte);
+        }
+    }
+    literal.push(b'/');
+    literal
+}
+
+/// tsgolint's `IsStrongPrecedenceNode`: also all of an optional chain and a template without
+/// substitutions. Unlike it, not `new C`: `new C.exec(a)` is `new (C.exec)(a)`.
+fn is_strong_precedence_node(node: Expr<'_>) -> bool {
+    match node.tag() {
+        ExprTag::True
+        | ExprTag::False
+        | ExprTag::Number
+        | ExprTag::String
+        | ExprTag::BigInt
+        | ExprTag::Regex
+        | ExprTag::Ident
+        | ExprTag::Array
+        | ExprTag::Object
+        | ExprTag::Call
+        | ExprTag::Dot
+        | ExprTag::Index
+        | ExprTag::TaggedTemplate
+        | ExprTag::Instantiation => true,
+        ExprTag::New => matches!(node.kind(), ExprKind::New(call) if call.close_paren().is_some()),
+        ExprTag::Template => {
+            matches!(node.kind(), ExprKind::Template(template) if template.quasi_count() == 1)
+        }
+        _ => false,
+    }
+}
+
+/// tsgolint's `isWeakPrecedenceParent`: also an assignment and `,`, and not `typeof`, `void` and `delete`.
+fn is_weak_precedence_parent(node: Expr<'_>) -> bool {
+    let Node::Expr(parent) = node.parent() else {
+        return false;
+    };
+    match parent.kind() {
+        ExprKind::Unary { op, .. } => !matches!(op, UnOp::Typeof | UnOp::Void | UnOp::Delete),
+        ExprKind::Binary { .. } | ExprKind::Assign { .. } | ExprKind::Cond { .. } | ExprKind::Await(_) => true,
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == node,
+        ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => call.callee() == node,
+        _ => false,
+    }
+}
+
+/// The code of an inner node of tsgolint's `buildWrappingFix`: with the parentheses it has, or in
+/// new ones if it is not a strong precedence node.
+fn inner_code<'a>(node: Expr<'a>) -> Cow<'a, [u8]> {
+    if node.is_parenthesized() {
+        return Cow::Borrowed(node.file().slice(node.outer_span()));
+    }
+    match is_strong_precedence_node(node) {
+        true => Cow::Borrowed(node.text()),
+        false => Cow::Owned([&b"("[..], node.text(), b")"].concat()),
+    }
+}
+
+/// tsgolint's `buildWrappingFix`. Unlike it, with a `;` before code that would continue the
+/// statement before.
+fn build_wrapping_fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, mut code: Vec<u8>) -> Fix {
+    if is_weak_precedence_parent(node) && !node.is_parenthesized() {
+        code.insert(0, b'(');
+        code.push(b')');
+    }
+    let starts_expression_statement = || {
+        Node::Expr(node).ancestors().find_map(Node::as_stmt).is_some_and(|statement| {
+            matches!(statement.tag(), StmtTag::Expr) && statement.span().start == node.span().start
+        })
+    };
+    if matches!(code.first(), Some(b'(' | b'[' | b'`' | b'/'))
+        && starts_expression_statement()
+        && needs_preceding_semicolon(node)
+    {
+        code.insert(0, b';');
+    }
+    fixer.replace(node, code)
+}
+
 impl Rule for PreferRegexpExec {
     const META: Meta = Meta::typescript("prefer-regexp-exec", Kind::Suggestion)
         .fixable(Fixable::Code)
@@ -160,14 +330,14 @@ impl Rule for PreferRegexpExec {
         .requires_types();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// Whether the value of a variable can have the global flag. All its references are looked at to find its value.
-    type State<'a> = FxHashMap<Symbol<'a>, bool>;
+    type State<'a> = IdMap<Symbol<'a>, bool>;
 
     fn new(_: &Options) -> Self {
         PreferRegexpExec
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashMap<Symbol<'a>, bool>> {
-        Some(FxHashMap::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<IdMap<Symbol<'a>, bool>> {
+        Some(IdMap::new())
     }
 
     fn expr<'a>(&self, call_node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -213,7 +383,7 @@ impl Rule for PreferRegexpExec {
                 Some(value) => value.as_regex().is_some_and(|(_, flags)| strings::contains_char(flags, b'g')),
             };
             let can_have_global_flag = match find_variable_of(argument_node) {
-                Some(variable) => *cx.state.entry(variable).or_insert_with(can_have_global_flag),
+                Some(variable) => *cx.state.get_or_insert_with(variable, can_have_global_flag),
                 None => can_have_global_flag(),
             };
             if can_have_global_flag {
@@ -226,10 +396,22 @@ impl Rule for PreferRegexpExec {
             // For tsgolint a string literal in parentheses is not one.
             && !(is_oxlint && argument_node.is_parenthesized())
         {
-            let Ok(reg_exp) = Regex::from_bytes(pattern.bytes(), b"") else {
-                return;
+            let reg_exp = match Regex::from_bytes(pattern.bytes(), b"") {
+                Ok(reg_exp) => reg_exp,
+                // No fix: tsgolint's literal of such a pattern does not parse.
+                Err(_) if is_oxlint && compiles_with_regexp2(pattern.bytes()) => {
+                    cx.report(property, REG_EXP_EXEC_OVER_STRING_MATCH);
+                    return;
+                }
+                Err(_) => return,
             };
             cx.report(property, REG_EXP_EXEC_OVER_STRING_MATCH).fix(|fixer| {
+                if is_oxlint {
+                    let literal = build_string_to_reg_exp_literal(&reg_exp, pattern.bytes());
+                    let object = inner_code(object_node);
+                    let code = [&literal[..], b".exec(", &object[..], b")"].concat();
+                    return build_wrapping_fix(fixer, call_node, code);
+                }
                 get_wrapping_fixer_for_chain_element(
                     fixer,
                     WrappingFixerParams {
@@ -255,7 +437,17 @@ impl Rule for PreferRegexpExec {
             ArgumentType::String => b"RegExp(",
             ArgumentType::Other | ArgumentType::Both => return,
         };
+        if is_oxlint && is_reg_exp_of_global_literal(argument_node) {
+            cx.report(property, REG_EXP_EXEC_OVER_STRING_MATCH);
+            return;
+        }
         cx.report(property, REG_EXP_EXEC_OVER_STRING_MATCH).fix(|fixer| {
+            if is_oxlint {
+                let (object, argument) = (inner_code(object_node), inner_code(argument_node));
+                let suffix: &[u8] = if prefix.is_empty() { b"" } else { b")" };
+                let code = [prefix, &argument[..], suffix, b".exec(", &object[..], b")"].concat();
+                return build_wrapping_fix(fixer, call_node, code);
+            }
             get_wrapping_fixer_for_chain_element(
                 fixer,
                 WrappingFixerParams {

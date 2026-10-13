@@ -200,6 +200,13 @@ impl ReturnAwait {
         };
         match should_await_in_current_context {
             WhetherToAwait::Await if !is_await => {
+                // tsgolint adds the `await` in a class static block too, where it is a syntax error.
+                let is_in_class_static_block = cx.language().is_oxlint
+                    && Node::Expr(node).enclosing_function().is_some_and(|func| func.kind() == FnKind::StaticBlock);
+                let fix_or_suggest = match is_in_class_static_block {
+                    true => FixOrSuggest::None,
+                    false => fix_or_suggest,
+                };
                 get_fix_or_suggest(
                     cx.report(node, REQUIRED_PROMISE_AWAIT),
                     fix_or_suggest,

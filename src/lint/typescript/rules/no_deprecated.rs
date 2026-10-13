@@ -8,6 +8,7 @@ use bun_lint::types::{
     CheckFlags, IdMap, IdSet, Literal as LiteralValue, NameOf, Signature, SymbolFlags, SyntaxKind, TsNode, TsSymbol,
     Type,
 };
+use smallvec::SmallVec;
 use std::borrow::Cow;
 
 /// Disallow using code marked as `@deprecated`.
@@ -59,29 +60,21 @@ impl<'a> Deprecations<'a> {
     /// `getJsDocDeprecation(symbol)`
     fn of_symbol(&mut self, symbol: Option<TsSymbol<'a>>) -> Option<&'a [u8]> {
         let symbol = symbol?;
-        if let Some(&reason) = self.of_symbols.get(symbol) {
-            return reason;
-        }
-        let reason = match self.is_nothing_inherited {
+        let is_nothing_inherited = self.is_nothing_inherited;
+        *self.of_symbols.get_or_insert_with(symbol, || match is_nothing_inherited {
             true => symbol.declarations().find_map(deprecation_of_declaration),
             false => symbol.deprecation(),
-        };
-        self.of_symbols.insert(symbol, reason);
-        reason
+        })
     }
 
     /// `getJsDocDeprecation(signature)`
     fn of_signature(&mut self, signature: Option<Signature<'a>>) -> Option<&'a [u8]> {
         let signature = signature?;
-        if let Some(&reason) = self.of_signatures.get(signature) {
-            return reason;
-        }
-        let reason = match self.is_nothing_inherited {
+        let is_nothing_inherited = self.is_nothing_inherited;
+        *self.of_signatures.get_or_insert_with(signature, || match is_nothing_inherited {
             true => signature.declaration().and_then(deprecation_of_declaration),
             false => signature.deprecation(),
-        };
-        self.of_signatures.insert(signature, reason);
-        reason
+        })
     }
 
     /// `searchForDeprecationInAliasesChain`: an alias on the way from an import to what it finally refers to can be deprecated:
@@ -288,7 +281,7 @@ fn is_deprecated_symbol(symbol: TsSymbol<'_>) -> bool {
 /// from the parameter, property by property. `None` where it gives up.
 fn get_binding_pattern_source_type(binding_pattern: TsNode<'_>) -> Option<Type<'_>> {
     // The `BindingElement`s and `ArrayBindingPattern`s on the way up: each takes a property of the type of what is above it.
-    let mut steps = Vec::new();
+    let mut steps: SmallVec<[TsNode<'_>; 4]> = SmallVec::new();
     let mut current = binding_pattern;
     let mut source_type = loop {
         match current.kind() {
@@ -884,7 +877,6 @@ impl Rule for NoDeprecated {
     /// Upstream does not take the key of an abstract member for a declaration.
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if member.flags().contains(Flags::ABSTRACT)
-            && !cx.language().is_oxlint
             && let Some(key) = member.key()
             && let KeyKind::Ident(name) = key.kind()
         {

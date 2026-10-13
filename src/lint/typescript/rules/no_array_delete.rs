@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::Type;
 use bun_lint::types::utils::get_constrained_type_at_location;
+use bun_lint::utils::ts_utils::{is_start_of_expression_statement, needs_preceding_semicolon};
 
 /// Disallow using the `delete` operator on array values.
 pub struct NoArrayDelete;
@@ -38,12 +39,32 @@ fn use_splice<'a>(fixer: Fixer<'a>, node: Expr<'a>, object: Expr<'a>, key: Span,
     fixer.replace(node, suggestion)
 }
 
-/// What tsgolint suggests: the `delete` goes, the token after the array (the `[`, or the `?.` of
-/// `a?.[b]`) becomes `.splice(` and the `]` becomes `, 1)`.
-fn use_splice_as_tsgolint<'a>(fixer: Fixer<'a>, keyword: Span, object: Expr<'a>, argument: Expr<'a>) -> Option<[Fix; 3]> {
-    let open = fixer.file().token_after(object.outer_span())?;
-    let close = fixer.file().last_token(argument)?;
-    Some([fixer.remove(keyword), fixer.replace(open, ".splice("), fixer.replace(close, ", 1)")])
+/// What tsgolint suggests: the `delete` goes, the `[` becomes `.splice(` and the `]` becomes `, 1)`.
+/// For `a?.[b]` tsgolint puts `.splice(` over the `?.` and keeps the `[`, which does not parse: here
+/// the `[` goes too. Nor does tsgolint add the `;` without which a `(` or `[` continues the line before.
+fn use_splice_as_tsgolint<'a>(
+    fixer: Fixer<'a>,
+    node: Expr<'a>,
+    keyword: Span,
+    object: Expr<'a>,
+    argument: Expr<'a>,
+) -> Option<Vec<Fix>> {
+    let file = fixer.file();
+    let first = file.token_after(keyword)?;
+    let add_semi_colon = (first.is_punctuator("(") || first.is_punctuator("["))
+        && is_start_of_expression_statement(node)
+        && needs_preceding_semicolon(node);
+    let open = file.token_after(object.outer_span())?;
+    let close = file.last_token(argument)?;
+    let mut changes = vec![
+        fixer.replace(keyword, if add_semi_colon { ";" } else { "" }),
+        fixer.replace(open, ".splice("),
+        fixer.replace(close, ", 1)"),
+    ];
+    if open.is_punctuator("?.") {
+        changes.push(fixer.remove(file.token_after(open)?));
+    }
+    Some(changes)
 }
 
 impl Rule for NoArrayDelete {
@@ -89,7 +110,7 @@ impl Rule for NoArrayDelete {
                 labels.push(keyword, "");
             });
         match is_oxlint {
-            true => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice_as_tsgolint(fixer, keyword, object, argument)),
+            true => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice_as_tsgolint(fixer, node, keyword, object, argument)),
             false => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice(fixer, node, object, key, is_sequence)),
         };
     }

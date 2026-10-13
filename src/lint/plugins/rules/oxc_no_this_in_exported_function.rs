@@ -54,14 +54,7 @@ impl Rule for NoThisInExportedFunction {
             return;
         };
         // It is reported for each export.
-        let count = match cx.state.exports.get(func) {
-            Some(&count) => count,
-            None => {
-                let count = export_count(func);
-                cx.state.exports.insert(func, count);
-                count
-            }
-        };
+        let count = *cx.state.exports.get_or_insert_with(func, || export_count(func));
         for _ in 0..count {
             cx.report(this, NO_THIS_IN_EXPORTED_FUNCTION);
         }

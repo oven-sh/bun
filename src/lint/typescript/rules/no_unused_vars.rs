@@ -1892,9 +1892,9 @@ impl NoUnusedVars {
                     && let Some(function) = function_of_plain_parameter(def, is_oxlint)
                     && let Declaration::Param(pat) = def
                     && pat.span().start
-                        < last_used_args.get(function).copied().unwrap_or_else(|| {
+                        < *last_used_args.get_or_insert_with(function, || {
                             // Upstream takes every reference for a use, also the default value. oxlint does not.
-                            let last = last_used_arg(function, |it| match (is_oxlint, Variable::new(it)) {
+                            last_used_arg(function, |it| match (is_oxlint, Variable::new(it)) {
                                 (true, it) if unused_for_oxlint.contains(it.symbol()) => false,
                                 (true, it) => {
                                     !analysis.is_unused(it.symbol())
@@ -1907,9 +1907,7 @@ impl NoUnusedVars {
                                 (false, it) => {
                                     it.references().next().is_some() || analysis.is_eslint_used(it)
                                 }
-                            });
-                            last_used_args.insert(function, last);
-                            last
+                            })
                         })
                 {
                     return false;

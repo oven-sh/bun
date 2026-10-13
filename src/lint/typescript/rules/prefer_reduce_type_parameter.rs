@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
+use bun_lint::types::Type;
 use bun_lint::types::tsutils::{intersection_constituents, union_constituents};
 use bun_lint::types::utils::get_constrained_type_at_location;
-use bun_lint::types::Type;
 use bun_lint::utils::ts_utils::is_static_member_access_of_value;
 
 /// Enforce using type parameter when calling `Array#reduce` instead of using a type assertion.
@@ -74,22 +74,36 @@ impl Rule for PreferReduceTypeParameter {
             return;
         }
         cx.report(second_arg, PREFER_TYPE_PARAMETER).fix(|fixer| {
-            let (mut outer, inner) = (second_arg.span(), expression.span());
-            let mut type_annotation = type_annotation;
-            // For tsgolint a node begins where the token before it ends.
             let file = fixer.file();
-            if file.language().is_oxlint {
+            let outer = second_arg.span();
+            let (mut fixes, type_annotation) = if is_oxlint {
+                // tsgolint makes `reduce<const>(..)`, which does not parse.
+                let Some(asserted) = asserted_type else {
+                    return Vec::new();
+                };
+                // For tsgolint a node begins where the token before it ends, and parentheses are nodes:
+                // it removes `<T>` from the end of the token before it, or from the operand to the end of `as T`.
+                let inner = expression.outer_span();
+                let mut type_annotation = asserted.outer_span();
                 type_annotation.start = file.end_of_token_before(type_annotation.start);
-                if outer.start < inner.start {
-                    outer.start = file.end_of_token_before(outer.start);
-                }
-            }
-            let mut fixes = vec![
-                fixer.remove(Span::new(outer.start, inner.start)),
-                fixer.remove(Span::new(inner.end, outer.end)),
-            ];
+                let assertion = match second_arg.is_angle_bracket_assertion() {
+                    true => {
+                        let greater_than_end = file.end_of_token_before(inner.start);
+                        Span::new(file.end_of_token_before(outer.start), greater_than_end)
+                    }
+                    false => Span::new(inner.end, type_annotation.end),
+                };
+                (vec![fixer.remove(assertion)], type_annotation)
+            } else {
+                let inner = expression.span();
+                let fixes = vec![
+                    fixer.remove(Span::new(outer.start, inner.start)),
+                    fixer.remove(Span::new(inner.end, outer.end)),
+                ];
+                (fixes, type_annotation)
+            };
             if call.type_args().is_empty() {
-                let type_argument = [&b"<"[..], fixer.file().slice(type_annotation), b">"].concat();
+                let type_argument = [&b"<"[..], file.slice(type_annotation), b">"].concat();
                 fixes.push(fixer.insert_after(callee, type_argument));
             }
             fixes

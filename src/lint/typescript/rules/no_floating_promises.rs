@@ -310,12 +310,7 @@ impl NoFloatingPromises {
         if self.check_thenables {
             return self.is_promise_like_at(node, ty);
         }
-        if let Some(&is_promise_like) = known.promise_likes.get(ty) {
-            return is_promise_like;
-        }
-        let is_promise_like = self.is_promise_like_at(node, ty);
-        known.promise_likes.insert(ty, is_promise_like);
-        is_promise_like
+        *known.promise_likes.get_or_insert_with(ty, || self.is_promise_like_at(node, ty))
     }
 
     fn is_promise_like_at<'a>(&self, node: Expr<'a>, ty: Type<'a>) -> bool {

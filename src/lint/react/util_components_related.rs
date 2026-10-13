@@ -183,16 +183,15 @@ impl<'a> Related<'a> {
             let ExprKind::Object(properties) = component_node.kind() else {
                 break;
             };
-            if !self.properties.contains_key(component_node) {
+            let by_name = self.properties.get_or_insert_with(component_node, || {
                 let mut by_name = FxHashMap::default();
                 for property in properties {
                     if let Some(name) = property.key().and_then(name_of_key) {
                         by_name.entry(name).or_insert(property);
                     }
                 }
-                self.properties.insert(component_node, by_name);
-            }
-            let by_name = self.properties.get(component_node)?;
+                by_name
+            });
             component_node = by_name.get(name.bytes())?.value()?;
         }
         Some(Node::Expr(component_node))

@@ -300,9 +300,8 @@ impl<'a> Tops<'a> {
             }
         };
         if passed.len() >= LONG {
-            for it in passed {
-                self.known.insert(it, found.0);
-            }
+            self.known
+                .extend(passed.into_iter().map(|it| (it, found.0)));
         }
         found
     }

@@ -110,14 +110,9 @@ impl NoUselessUndefined {
                 };
                 let first_optional = match func.params().len() {
                     0..=8 => first_optional(),
-                    _ => match state.first_optional_parameters.get(func).copied() {
-                        Some(it) => it,
-                        None => {
-                            let it = first_optional();
-                            state.first_optional_parameters.insert(func, it);
-                            it
-                        }
-                    },
+                    _ => *state
+                        .first_optional_parameters
+                        .get_or_insert_with(func, first_optional),
                 };
                 if first_optional.is_some_and(|it| it < parameter.span().start) {
                     return;

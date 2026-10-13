@@ -108,16 +108,84 @@ fn mark_as_has_await<'a>(node: Node<'a>, cx: &mut Cx<'a, RequireAwait>) {
     }
 }
 
+/// Whether `func` still awaits where tsgolint has another scope: in the key or a decorator of a method in it.
+fn awaits_in_key_or_decorator(func: Func) -> bool {
+    let span = func.span();
+    func.file()
+        .exprs_of_kind(ExprTag::Await)
+        .any(|it| span.contains(it.span()) && Node::from(it).enclosing_function() == Some(func))
+}
+
+/// tsgolint's `needsPrecedingSemicolon` for a member of a class: by the last character before it that is no white
+/// space, which can be the end of a comment.
+fn tsgolint_needs_preceding_semicolon(member: Member) -> bool {
+    let text = member.file().text();
+    let before = text
+        .get(..member.span().start as usize)
+        .unwrap_or_default()
+        .trim_ascii_end();
+    let Some(&last) = before.last() else {
+        return false;
+    };
+    if matches!(last, b';' | b':' | b'{' | b',' | b'(' | b'[')
+        || before.ends_with(b"=>")
+        || before.ends_with(b"++")
+        || before.ends_with(b"--")
+    {
+        return false;
+    }
+    if last != b'}' {
+        return true;
+    }
+    // The `}` of the method, the accessor or the constructor before it.
+    let Node::Class(class) = member.parent() else {
+        return true;
+    };
+    let previous = class.members().iter().take_while(|it| *it != member).last();
+    !previous.is_some_and(|it| {
+        matches!(
+            it.kind(),
+            MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor
+        )
+    })
+}
+
+/// Whether `name` is one name. tsgolint's `isTypeReferenceNamed` also takes one after `globalThis.`.
+fn is_global_name(name: EntityName, is_oxlint: bool) -> bool {
+    match name.len() {
+        1 => true,
+        2 => is_oxlint && name.first().is_some_and(|it| it.name().is("globalThis")),
+        _ => false,
+    }
+}
+
 fn remove_async<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Option<Vec<Fix>> {
     let file = fixer.file();
+    let is_oxlint = file.language().is_oxlint;
+    // tsgolint removes the `async` of a function that goes on awaiting, which is a syntax error.
+    if is_oxlint && awaits_in_key_or_decorator(func) {
+        return None;
+    }
     let node = node_with_async_keyword(func);
     let async_token = file.tokens_in(node).find(|token| token.value() == b"async")?;
     let after = file.tokens_after(async_token).with_comments().next()?;
     let next_token = file.token_after(async_token)?;
     // Without the `async`, what follows could continue the line before.
-    let add_semi_colon = (next_token.is_punctuator("[") || next_token.is_punctuator("("))
-        && (matches!(node, Node::Member(_)) || is_start_of_expression_statement(node))
-        && needs_preceding_semicolon(node);
+    let add_semi_colon = match node {
+        // tsgolint goes by the character before the member. It also writes the `;` after a modifier, where it declares
+        // a property, and none before the `*` of a generator, which then multiplies the property before it.
+        Node::Member(member) if is_oxlint => {
+            async_token.start() == member.span().start
+                && ast_utils::can_continue_expression_in_class_body(&next_token)
+                && (ast_utils::needs_preceding_semicolon(node)
+                    || next_token.is_punctuator("[") && tsgolint_needs_preceding_semicolon(member))
+        }
+        _ => {
+            (next_token.is_punctuator("[") || next_token.is_punctuator("("))
+                && (matches!(node, Node::Member(_)) || is_start_of_expression_statement(node))
+                && needs_preceding_semicolon(node)
+        }
+    };
     let mut changes = vec![fixer.replace(
         Span::new(async_token.start(), after.start()),
         if add_semi_colon { ";" } else { "" },
@@ -126,17 +194,18 @@ fn remove_async<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Option<Vec<Fix>> {
     // `Promise<T>` becomes `T`, and `AsyncGenerator<T>` becomes `Generator<T>`.
     if let Some(return_type) = func.return_type()
         && let TypeKind::Ref { name, args } = return_type.kind()
-        && let Some(type_name) = name.as_ident()
+        && is_global_name(name, is_oxlint)
     {
+        let type_name = name.span();
         if func.is_generator() {
-            if type_name.name().is("AsyncGenerator") {
+            if name.last().is_some_and(|it| it.name().is("AsyncGenerator")) {
                 changes.push(fixer.replace(type_name, "Generator"));
             }
-        } else if type_name.name().is("Promise")
+        } else if name.last().is_some_and(|it| it.name().is("Promise"))
             && let Some(angles) = args.angle_brackets_span()
         {
             changes.push(fixer.remove(Span::new(angles.end - 1, angles.end)));
-            changes.push(fixer.remove(Span::new(type_name.start(), angles.start + 1)));
+            changes.push(fixer.remove(Span::new(type_name.start, angles.start + 1)));
         }
     }
     Some(changes)

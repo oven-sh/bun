@@ -7,7 +7,8 @@ use bun_lint::types::tsutils::{
 };
 use bun_lint::types::utils::get_constrained_type_at_location;
 use bun_lint::utils::eslint_utils::{StaticValue, get_static_value};
-use bun_lint::utils::ts_utils::is_static_member_access_of_value;
+use bun_lint::utils::is_assignment_target;
+use bun_lint::utils::ts_utils::{is_assignee, is_static_member_access_of_value};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
@@ -294,10 +295,18 @@ impl PreferFind {
         object: Expr<'a>,
         filter_expressions: &FilterExpressions,
     ) {
+        let is_oxlint = cx.language().is_oxlint;
         cx.report(whole, PREFER_FIND).suggest(PREFER_FIND_SUGGESTION, |fixer| {
-            // The `.` of `(..).at(0)`, the `[` of `(..)[0]` or `(..)["at"](0)`.
-            let token_to_start_deleting_from =
-                fixer.file().tokens_after(object).find(|token| token.is(".") || token.is("["))?;
+            // tsgolint also suggests `a.find(f) = 1` and `a.find(f)++`, which do not parse.
+            if is_oxlint && (is_assignee(whole) || is_assignment_target(whole)) {
+                return None;
+            }
+            // The `.` of `(..).at(0)`, the `[` of `(..)[0]` or `(..)["at"](0)`, the `?.` of `(..)?.at(0)`.
+            let token_to_start_deleting_from = fixer
+                .file()
+                .tokens_after(object)
+                .find(|token| !token.is(")"))
+                .filter(|token| token.is(".") || token.is("[") || token.is("?."))?;
             let mut fixes: Vec<Fix> = filter_expressions
                 .iter()
                 .map(|filter_expression| {
@@ -309,6 +318,16 @@ impl PreferFind {
                 })
                 .collect();
             fixes.push(fixer.remove(Span::new(token_to_start_deleting_from.start(), whole.span().end)));
+            // `(filtered.at)(0)`, which only tsgolint reports with a chain in the parentheses: their `(` goes too.
+            if is_oxlint
+                && let Some(callee) = whole.callee()
+                && callee.is_parenthesized()
+            {
+                if callee.is_chain_root() {
+                    return None;
+                }
+                fixes.push(fixer.remove(Span::new(callee.outer_span().start, callee.span().start)));
+            }
             Some(fixes)
         });
     }

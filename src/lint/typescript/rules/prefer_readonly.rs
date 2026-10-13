@@ -3,7 +3,7 @@ use bun_lint::types::tsutils::{
     is_intersection_type, is_literal_type, is_object_flag_set, is_object_type, is_type_flag_set,
 };
 use bun_lint::types::utils::type_is_or_has_base_type;
-use bun_lint::types::{IdSet, ObjectFlags, Type, TypeFlags};
+use bun_lint::types::{IdMap, IdSet, ObjectFlags, Type, TypeFlags};
 use bun_lint::utils::eslint_utils::find_variable;
 use bun_lint::utils::ts_scope::is_type_definition;
 use bun_lint::utils::ts_utils::{
@@ -48,6 +48,7 @@ struct PrivateModifiable<'a> {
 }
 
 struct ClassScope<'a> {
+    class: Class<'a>,
     class_type: Option<Type<'a>>,
     private_modifiables: SmallVec<[PrivateModifiable<'a>; 4]>,
     /// Where each is in `private_modifiables`, by its name and whether it is static.
@@ -55,7 +56,11 @@ struct ClassScope<'a> {
 }
 
 /// The classes that have a private member that is not `readonly`.
-pub struct ClassScopes<'a>(FxHashMap<Class<'a>, ClassScope<'a>>);
+pub struct ClassScopes<'a> {
+    scopes: Vec<ClassScope<'a>>,
+    /// Where the scope of each class is in `scopes`.
+    positions: IdMap<Class<'a>, usize>,
+}
 
 fn get_member_name<'a>(key: Key<'a>, file: &'a File<'a>) -> Option<&'a [u8]> {
     match key.kind() {
@@ -234,7 +239,6 @@ impl<'a> ClassScope<'a> {
 
     fn add_variable_modification_by_name(
         &mut self,
-        class: Class<'a>,
         expression: Expr<'a>,
         member_name: &[u8],
         is_directly_inside_constructor: bool,
@@ -243,6 +247,7 @@ impl<'a> ClassScope<'a> {
         if named == [None, None] {
             return;
         }
+        let class = self.class;
         let class_type = *self.class_type.get_or_insert_with(|| {
             let class_type = class.type_at_location();
             match is_intersection_type(class_type) {
@@ -488,6 +493,7 @@ fn report<'a>(cx: &Cx<'a, PreferReadonly>, violating: &PrivateModifiable<'a>) {
 impl PreferReadonly {
     fn new_class_scope<'a>(&self, class: Class<'a>) -> ClassScope<'a> {
         let mut scope = ClassScope {
+            class,
             class_type: None,
             private_modifiables: SmallVec::new(),
             positions: FxHashMap::default(),
@@ -532,14 +538,18 @@ impl Rule for PreferReadonly {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<ClassScopes<'a>> {
-        let mut class_scopes = FxHashMap::default();
+        let mut class_scopes = ClassScopes {
+            scopes: Vec::new(),
+            positions: IdMap::new(),
+        };
         for class in file.classes() {
             let class_scope = self.new_class_scope(class);
             if !class_scope.private_modifiables.is_empty() {
-                class_scopes.insert(class, class_scope);
+                class_scopes.positions.insert(class, class_scopes.scopes.len());
+                class_scopes.scopes.push(class_scope);
             }
         }
-        (!class_scopes.is_empty()).then_some(ClassScopes(class_scopes))
+        (!class_scopes.scopes.is_empty()).then_some(class_scopes)
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -562,7 +572,10 @@ impl Rule for PreferReadonly {
         let Some((class, is_directly_inside_constructor)) = enclosing_class(node) else {
             return;
         };
-        let Some(class_scope) = cx.state.0.get_mut(&class) else {
+        let Some(&position) = cx.state.positions.get(class) else {
+            return;
+        };
+        let Some(class_scope) = cx.state.scopes.get_mut(position) else {
             return;
         };
         let (expression, member_name) = match node.kind() {
@@ -574,7 +587,6 @@ impl Rule for PreferReadonly {
             _ => return,
         };
         class_scope.add_variable_modification_by_name(
-            class,
             expression,
             &member_name,
             is_directly_inside_constructor,
@@ -582,7 +594,7 @@ impl Rule for PreferReadonly {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        for (_, class_scope) in utils::sort::in_order_of(&cx.state.0, |it| it.0.span().start) {
+        for class_scope in utils::sort::in_order_of(&cx.state.scopes, |it| it.class.span().start) {
             for violating in class_scope
                 .private_modifiables
                 .iter()

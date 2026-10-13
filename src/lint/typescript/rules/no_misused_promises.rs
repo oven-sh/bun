@@ -117,6 +117,8 @@ fn can_be_thenable(node: Expr, known: &ThenablePrimitives) -> bool {
         ExprKind::Number(_) => 1,
         ExprKind::BigInt(_) => 2,
         ExprKind::String(_) | ExprKind::Template(_) | ExprKind::Unary { op: UnOp::Typeof, .. } => 3,
+        // A number, a bigint or a string. tsgolint asks for the type of these as of any test.
+        ExprKind::Unary { .. } => return node.file().language().is_oxlint,
         ExprKind::Binary { op, .. } => match op {
             BinOp::Lt
             | BinOp::Le
@@ -128,7 +130,8 @@ fn can_be_thenable(node: Expr, known: &ThenablePrimitives) -> bool {
             | BinOp::NotEqEq
             | BinOp::In
             | BinOp::Instanceof => 0,
-            _ => return true,
+            BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => return true,
+            _ => return node.file().language().is_oxlint,
         },
         _ => return true,
     };

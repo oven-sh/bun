@@ -80,7 +80,7 @@ fn is_number(node: Expr, value: f64) -> bool {
 /// Whether `node` is a string of one UTF-16 code unit.
 fn is_character(node: Expr) -> bool {
     if node.file().language().is_oxlint {
-        return tsgolint_static_string(node).is_some_and(|it| strings::utf8_lossy_len_utf16(it) == 1);
+        return tsgolint_static_string(node, true).is_some_and(|it| strings::utf8_lossy_len_utf16(it) == 1);
     }
     static_value(node).is_some_and(|evaluated| evaluated.as_str().is_some_and(|it| strings::wtf8_len_utf16(it) == 1))
 }
@@ -97,8 +97,11 @@ fn is_negative(op: BinOp) -> bool {
 const MAX_INITIALIZERS: usize = 8;
 
 /// What tsgolint evaluates in place of `node`, an identifier: the initializer of the variable, whatever else is
-/// assigned to it.
-fn tsgolint_initializer<'a>(node: Expr<'a>) -> Option<Expr<'a>> {
+/// assigned to it. `for_fix`: of a variable alone that nothing else is assigned to.
+fn tsgolint_initializer<'a>(node: Expr<'a>, for_fix: bool) -> Option<Expr<'a>> {
+    if for_fix && node.symbol().is_none_or(|it| it.has_modifying_references() || it.declaration_count() != 1) {
+        return None;
+    }
     match node.ts_symbol()?.value_declaration()?.to_ast()? {
         Node::VarDecl(declaration) => declaration.init(),
         _ => None,
@@ -115,12 +118,12 @@ fn tsgolint_static_number(mut node: Expr) -> Option<f64> {
 }
 
 /// tsgolint's `staticString`: a string, a template without substitutions, or a variable with one as its initializer.
-fn tsgolint_static_string<'a>(mut node: Expr<'a>) -> Option<&'a [u8]> {
+fn tsgolint_static_string<'a>(mut node: Expr<'a>, for_fix: bool) -> Option<&'a [u8]> {
     for _ in 0..MAX_INITIALIZERS {
         match node.kind() {
             ExprKind::String(value) => return Some(value.bytes()),
             ExprKind::Template(template) => return Some(template.as_static()?.bytes()),
-            ExprKind::Ident(_) => node = tsgolint_initializer(node)?,
+            ExprKind::Ident(_) => node = tsgolint_initializer(node, for_fix)?,
             _ => return None,
         }
     }
@@ -129,13 +132,19 @@ fn tsgolint_static_string<'a>(mut node: Expr<'a>) -> Option<&'a [u8]> {
 
 /// tsgolint's `getNullishKind`: `null`, and with `is_loose`, which is for `==` and `!=`, also `void` and whatever is
 /// named `undefined`. Or a variable with one of these as its initializer.
-fn tsgolint_is_nullish(mut node: Expr, is_loose: bool) -> bool {
+fn tsgolint_is_nullish(mut node: Expr, is_loose: bool, for_fix: bool) -> bool {
     for _ in 0..MAX_INITIALIZERS {
         match node.kind() {
             ExprKind::Null => return true,
             ExprKind::Unary { op: UnOp::Void, .. } => return is_loose,
-            ExprKind::Ident(name) if name.is("undefined") => return is_loose,
-            ExprKind::Ident(_) => match tsgolint_initializer(node) {
+            // `for_fix`: not an `undefined` that the file declares, unless its type is `null` or `undefined`.
+            ExprKind::Ident(name) if name.is("undefined") => {
+                return is_loose
+                    && !(for_fix
+                        && node.symbol().is_some()
+                        && !node.ty().has_flags(TypeFlags::NULL | TypeFlags::UNDEFINED));
+            }
+            ExprKind::Ident(_) => match tsgolint_initializer(node, for_fix) {
                 Some(initializer) => node = initializer,
                 None => return false,
             },
@@ -160,31 +169,37 @@ fn tsgolint_property_name<'a>(node: Expr<'a>) -> Option<&'a [u8]> {
 }
 
 /// tsgolint's `isSameTokens`: the same text without its white space, of which only that of ASCII is left out here.
-fn tsgolint_is_same_tokens<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
+/// `for_fix`: and the same tokens, which `"a b"` and `"ab"` are not, nor `x as T` and `xasT`.
+fn tsgolint_is_same_tokens<'a>(left: Expr<'a>, right: Expr<'a>, for_fix: bool) -> bool {
     let without_white_space = |text: &'a [u8]| text.iter().filter(|byte| !matches!(**byte, b'\t'..=b'\r' | b' '));
     without_white_space(left.text()).eq(without_white_space(right.text()))
+        && (!for_fix || ast_utils::equal_tokens(left.file(), left, right))
 }
 
 /// tsgolint's `isLengthExpression`. A string is as long as Go has it: half a surrogate pair counts as three.
-fn tsgolint_is_length_expression<'a>(node: Expr<'a>, expected_object: Expr<'a>) -> bool {
+/// `for_fix`: and as long as it is, and `foo?.length` is the length of a string alone.
+fn tsgolint_is_length_expression<'a>(node: Expr<'a>, expected_object: Expr<'a>, for_fix: bool) -> bool {
     if let Some(object) = node.object()
         && tsgolint_property_name(node).is_some_and(|name| name == b"length")
-        && tsgolint_is_same_tokens(object, expected_object)
+        && tsgolint_is_same_tokens(object, expected_object, for_fix)
+        && !(for_fix && node.is_optional() && !is_string_type(object))
     {
         return true;
     }
     let Some(evaluated_length) = tsgolint_static_number(node) else {
         return false;
     };
-    tsgolint_static_string(expected_object)
-        .is_some_and(|it| evaluated_length == f64::from(strings::utf8_lossy_len_utf16(it)))
+    tsgolint_static_string(expected_object, for_fix).is_some_and(|it| {
+        evaluated_length == f64::from(strings::utf8_lossy_len_utf16(it))
+            && (!for_fix || evaluated_length == f64::from(strings::wtf8_len_utf16(it)))
+    })
 }
 
 /// Whether `node` is the length of the string `expected_object_node`: its `length` property, or
-/// for a string that is known, the number.
-fn is_length_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>) -> bool {
+/// for a string that is known, the number. `for_fix`: not what tsgolint reports for its text alone.
+fn is_length_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>, for_fix: bool) -> bool {
     if node.file().language().is_oxlint {
-        return tsgolint_is_length_expression(node, expected_object_node);
+        return tsgolint_is_length_expression(node, expected_object_node, for_fix);
     }
     if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = node.kind()
         && !node.is_chain_root()
@@ -200,22 +215,22 @@ fn is_length_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>) -> b
 }
 
 /// Whether `node` is `-substring.length` or `parentString.length - substring.length`.
-fn is_length_ahead_of_end<'a>(node: Expr<'a>, substring: Expr<'a>, parent_string: Expr<'a>) -> bool {
+fn is_length_ahead_of_end<'a>(node: Expr<'a>, substring: Expr<'a>, parent_string: Expr<'a>, for_fix: bool) -> bool {
     match node.kind() {
-        ExprKind::Unary { op: UnOp::Minus, operand } => is_length_expression(operand, substring),
+        ExprKind::Unary { op: UnOp::Minus, operand } => is_length_expression(operand, substring, for_fix),
         ExprKind::Binary { op: BinOp::Sub, left, right } => {
-            is_length_expression(left, parent_string) && is_length_expression(right, substring)
+            is_length_expression(left, parent_string, for_fix) && is_length_expression(right, substring, for_fix)
         }
         _ => false,
     }
 }
 
 /// `foo.length - 1`
-fn is_last_index_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>) -> bool {
+fn is_last_index_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>, for_fix: bool) -> bool {
     matches!(
         node.kind(),
         ExprKind::Binary { op: BinOp::Sub, left, right }
-            if is_length_expression(left, expected_object_node) && is_number(right, 1.0)
+            if is_length_expression(left, expected_object_node, for_fix) && is_number(right, 1.0)
     )
 }
 
@@ -295,13 +310,18 @@ fn tsgolint_text(content: &[u8]) -> Vec<u8> {
 
 /// tsgolint's `parseRegExp`: a literal, `new RegExp` of one or two strings, or a variable with one of these as its
 /// initializer. `RegExp` is whatever has the name, and the pattern has a `$` at its end also after a `\`.
-fn tsgolint_parse_reg_exp<'a>(mut node: Expr<'a>) -> Option<(Side, Vec<u8>)> {
+/// `for_fix`: not a `RegExp` that the file declares.
+fn tsgolint_parse_reg_exp<'a>(mut node: Expr<'a>, for_fix: bool) -> Option<(Side, Vec<u8>)> {
     // Here it does not skip parentheses.
     let string_literal = |argument: Expr<'a>| argument.as_string().filter(|_| !argument.is_parenthesized());
     for _ in 0..MAX_INITIALIZERS {
         let (pattern, flags) = match node.kind() {
             ExprKind::Regex(regex) => (regex.pattern(), regex.flags()),
-            ExprKind::New(call) if call.callee().is_ident("RegExp") && !call.callee().is_parenthesized() => {
+            ExprKind::New(call)
+                if call.callee().is_ident("RegExp")
+                    && !call.callee().is_parenthesized()
+                    && !(for_fix && call.callee().symbol().is_some()) =>
+            {
                 let args = call.args();
                 let pattern = string_literal(args.first()?)?.bytes();
                 match args.get(1) {
@@ -310,7 +330,7 @@ fn tsgolint_parse_reg_exp<'a>(mut node: Expr<'a>) -> Option<(Side, Vec<u8>)> {
                 }
             }
             ExprKind::Ident(_) => {
-                node = tsgolint_initializer(node)?;
+                node = tsgolint_initializer(node, for_fix)?;
                 continue;
             }
             _ => return None,
@@ -331,7 +351,7 @@ fn tsgolint_parse_reg_exp<'a>(mut node: Expr<'a>) -> Option<(Side, Vec<u8>)> {
 /// What `node` matches, if it is a `RegExp` for a string at the start or at the end.
 fn parse_reg_exp(node: Expr) -> Option<(Side, Vec<u8>)> {
     if node.file().language().is_oxlint {
-        return tsgolint_parse_reg_exp(node);
+        return tsgolint_parse_reg_exp(node, false);
     }
     let evaluated = static_value(node)?;
     let (source, flags) = evaluated.as_regex()?;
@@ -348,12 +368,44 @@ fn parse_reg_exp(node: Expr) -> Option<(Side, Vec<u8>)> {
     Some((if is_starts_with { Side::Start } else { Side::End }, text))
 }
 
+/// `JSON.stringify(text)`. tsgolint has Go's `strconv.Quote`: `\v`, and `\x00` for `\u0000`.
+fn to_string_literal(text: &[u8], is_oxlint: bool) -> Vec<u8> {
+    let json = json_stringify_alloc(text);
+    if !is_oxlint {
+        return json;
+    }
+    let mut quoted = Vec::with_capacity(json.len());
+    let mut rest = json.as_slice();
+    while let Some((&byte, after)) = rest.split_first() {
+        quoted.push(byte);
+        rest = match after {
+            _ if byte != b'\\' => after,
+            [b'u', b'0', b'0', b'0', b'b', after @ ..] => {
+                quoted.push(b'v');
+                after
+            }
+            // Not `\a`, which is `a` in JavaScript.
+            [b'u', b'0', b'0', high, low, after @ ..] if [*high, *low] != *b"07" => {
+                quoted.extend_from_slice(&[b'x', *high, *low]);
+                after
+            }
+            [escaped, after @ ..] => {
+                quoted.push(*escaped);
+                after
+            }
+            [] => after,
+        };
+    }
+    quoted
+}
+
 /// A comparison whose left side is `member`, or a call of it.
 #[derive(Copy, Clone)]
 struct Comparison<'a> {
     /// The `BinaryExpression`.
     node: Expr<'a>,
     op: BinOp,
+    left: Expr<'a>,
     right: Expr<'a>,
     /// The `MemberExpression`.
     member: Expr<'a>,
@@ -361,24 +413,53 @@ struct Comparison<'a> {
 }
 
 impl<'a> Comparison<'a> {
+    /// The operator and the right side. tsgolint and typescript-eslint take the `)` of `(foo.indexOf(bar)) === 0` with
+    /// them, and what is left cannot be parsed.
+    fn after_left(self) -> Span {
+        let left = match self.node.file().language().is_oxlint {
+            true => self.left.outer_span(),
+            false => self.left.span(),
+        };
+        Span::new(left.end, self.node.span().end)
+    }
+
     /// `foo.slice(0, 3) === 'bar'` → `foo.startsWith('bar')`
     fn fix_with_right_operand(self, fixer: Fixer<'a>, side: Side) -> Vec<Fix> {
+        let file = self.node.file();
         let property_range = get_property_range(self.member, self.object);
-        let (node, right) = (self.node.span(), self.right.span());
-        let mut fixes = Vec::with_capacity(3);
+        let (node, mut right) = (self.node.span(), self.right.span());
+        let access = side.access(self.member.is_optional());
+        let mut fixes = Vec::with_capacity(4);
         if is_negative(self.op) {
             fixes.push(fixer.insert_before(node, "!"));
         }
-        fixes.push(fixer.replace(
-            Span::new(property_range.start, right.start),
-            [side.access(self.member.is_optional()), "("].concat(),
-        ));
+        if file.language().is_oxlint {
+            // `(a, b)` is one argument with its parentheses alone.
+            if matches!(self.right.kind(), ExprKind::Binary { op: BinOp::Comma, .. }) {
+                right = self.right.outer_span();
+            }
+            // tsgolint takes the `)` of `(foo[0]) === 'a'` and of `(foo?.slice)(0, 3) === 'bar'` away with the rest.
+            if self.left.is_parenthesized() || self.member.is_parenthesized() {
+                let call = [b"(".as_slice(), file.slice(right), b")".as_slice()].concat();
+                let end_of_left = self.left.span().end;
+                if property_range.end == end_of_left {
+                    fixes.push(fixer.replace(property_range, [access.as_bytes(), call.as_slice()].concat()));
+                } else {
+                    fixes.push(fixer.replace(property_range, access));
+                    let after_member = self.member.outer_span().end;
+                    fixes.push(fixer.replace(Span::new(after_member, end_of_left), call));
+                }
+                fixes.push(fixer.remove(self.after_left()));
+                return fixes;
+            }
+        }
+        fixes.push(fixer.replace(Span::new(property_range.start, right.start), [access, "("].concat()));
         fixes.push(fixer.replace(Span::new(right.end, node.end), ")"));
         fixes
     }
 
     /// `foo.indexOf('bar') === 0` → `foo.startsWith('bar')`
-    fn fix_with_argument(self, fixer: Fixer<'a>, call_node: Expr<'a>, side: Side) -> Vec<Fix> {
+    fn fix_with_argument(self, fixer: Fixer<'a>, side: Side) -> Vec<Fix> {
         let mut fixes = Vec::with_capacity(3);
         if is_negative(self.op) {
             fixes.push(fixer.insert_before(self.node, "!"));
@@ -387,7 +468,7 @@ impl<'a> Comparison<'a> {
             get_property_range(self.member, self.object),
             side.access(self.member.is_optional()),
         ));
-        fixes.push(fixer.remove(Span::new(call_node.span().end, self.node.span().end)));
+        fixes.push(fixer.remove(self.after_left()));
         fixes
     }
 }
@@ -402,7 +483,7 @@ impl PreferStringStartsEndsWith {
         {
             return;
         }
-        let side = if is_last_index_expression(index_node, it.object) {
+        let side = if is_last_index_expression(index_node, it.object, false) {
             Side::End
         } else if is_number(index_node, 0.0) {
             Side::Start
@@ -411,12 +492,14 @@ impl PreferStringStartsEndsWith {
         };
         cx.report(it.node, side.message()).fix(|fixer| {
             // Anything else can change the behavior.
-            is_character(it.right).then(|| it.fix_with_right_operand(fixer, side))
+            let is_valid = is_character(it.right)
+                && (side == Side::Start || is_last_index_expression(index_node, it.object, true));
+            is_valid.then(|| it.fix_with_right_operand(fixer, side))
         });
     }
 
     /// `foo.indexOf('bar') === 0`
-    fn check_index_of<'a>(it: &Comparison<'a>, call_node: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
+    fn check_index_of<'a>(it: &Comparison<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
         if call.args().len() != 1
             || !is_equality_comparison(it.op)
             || !is_number(it.right, 0.0)
@@ -425,11 +508,11 @@ impl PreferStringStartsEndsWith {
             return;
         }
         cx.report(it.node, PREFER_STARTS_WITH)
-            .fix(|fixer| it.fix_with_argument(fixer, call_node, Side::Start));
+            .fix(|fixer| it.fix_with_argument(fixer, Side::Start));
     }
 
     /// `foo.lastIndexOf('bar') === foo.length - 3`, `foo.lastIndexOf(bar) === foo.length - bar.length`
-    fn check_last_index_of<'a>(it: &Comparison<'a>, call_node: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
+    fn check_last_index_of<'a>(it: &Comparison<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
         let Some(argument) = call.args().first().filter(|_| call.args().len() == 1) else {
             return;
         };
@@ -439,24 +522,28 @@ impl PreferStringStartsEndsWith {
         if !is_equality_comparison(it.op)
             // tsgolint skips no parentheses here.
             || (cx.language().is_oxlint && it.right.is_parenthesized())
-            || !is_length_expression(left, it.object)
-            || !is_length_expression(right, argument)
+            || !is_length_expression(left, it.object, false)
+            || !is_length_expression(right, argument, false)
             || !is_string_type(it.object)
         {
             return;
         }
-        cx.report(it.node, PREFER_ENDS_WITH)
-            .fix(|fixer| it.fix_with_argument(fixer, call_node, Side::End));
+        cx.report(it.node, PREFER_ENDS_WITH).fix(|fixer| {
+            let is_valid = is_length_expression(left, it.object, true) && is_length_expression(right, argument, true);
+            is_valid.then(|| it.fix_with_argument(fixer, Side::End))
+        });
     }
 
     /// `foo.match(/^bar/) === null`, `foo.match(/bar$/) === null`
-    fn check_match<'a>(it: &Comparison<'a>, call_node: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
+    fn check_match<'a>(it: &Comparison<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
         let Some(argument) = call.args().first().filter(|_| call.args().len() == 1) else {
             return;
         };
-        let is_nullish = match cx.language().is_oxlint {
+        let is_oxlint = cx.language().is_oxlint;
+        let is_loose = matches!(it.op, BinOp::EqEq | BinOp::NotEq);
+        let is_nullish = match is_oxlint {
             // What `match` gives is never `undefined`: tsgolint leaves `=== undefined`.
-            true => tsgolint_is_nullish(it.right, matches!(it.op, BinOp::EqEq | BinOp::NotEq)),
+            true => tsgolint_is_nullish(it.right, is_loose, false),
             false => is_null(it.right),
         };
         if !is_nullish || !is_string_type(it.object) {
@@ -466,8 +553,16 @@ impl PreferStringStartsEndsWith {
             return;
         };
         // typescript-eslint reports the call, tsgolint the comparison.
-        let reported = if cx.language().is_oxlint { it.node } else { call_node };
+        let reported = if is_oxlint { it.node } else { it.left };
         cx.report(reported, side.message()).fix(|fixer| {
+            let mut argument_range = argument.span();
+            if is_oxlint {
+                // tsgolint also fixes what only looks like `null` and like a `RegExp`.
+                if !tsgolint_is_nullish(it.right, is_loose, true) || tsgolint_parse_reg_exp(argument, true).is_none() {
+                    return None;
+                }
+                argument_range = argument.outer_span();
+            }
             let mut fixes = Vec::with_capacity(4);
             if !is_negative(it.op) {
                 fixes.push(fixer.insert_before(it.node, "!"));
@@ -476,9 +571,9 @@ impl PreferStringStartsEndsWith {
                 get_property_range(it.member, it.object),
                 side.access(it.member.is_optional()),
             ));
-            fixes.push(fixer.replace(argument, json_stringify_alloc(&text)));
-            fixes.push(fixer.remove(Span::new(call_node.span().end, it.node.span().end)));
-            fixes
+            fixes.push(fixer.replace(argument_range, to_string_literal(&text, is_oxlint)));
+            fixes.push(fixer.remove(it.after_left()));
+            Some(fixes)
         });
     }
 
@@ -490,37 +585,48 @@ impl PreferStringStartsEndsWith {
             return;
         }
         let args = call.args();
-        let side = match (args.len(), args.first(), args.get(1)) {
+        let side_of = |for_fix: bool| match (args.len(), args.first(), args.get(1)) {
             // `foo.slice(-bar.length) === bar`, `foo.slice(foo.length - bar.length) === bar`
-            (1, Some(start), _) if is_length_ahead_of_end(start, it.right, it.object) => Side::End,
+            (1, Some(start), _) if is_length_ahead_of_end(start, it.right, it.object, for_fix) => Some(Side::End),
             // `foo.slice(0, bar.length) === bar`
-            (2, Some(start), Some(end)) if is_number(start, 0.0) && is_length_expression(end, it.right) => {
-                Side::Start
+            (2, Some(start), Some(end)) if is_number(start, 0.0) && is_length_expression(end, it.right, for_fix) => {
+                Some(Side::Start)
             }
             // `foo.slice(foo.length - bar.length, foo.length) === bar`, `foo.slice(-bar.length, 0) === bar`
             (2, Some(start), Some(end))
-                if (is_length_expression(end, it.object) || is_number(end, 0.0))
-                    && is_length_ahead_of_end(start, it.right, it.object) =>
+                if (is_length_expression(end, it.object, for_fix) || is_number(end, 0.0))
+                    && is_length_ahead_of_end(start, it.right, it.object, for_fix) =>
             {
-                Side::End
+                Some(Side::End)
             }
-            _ => return,
+            _ => None,
+        };
+        let Some(side) = side_of(false) else {
+            return;
         };
         cx.report(it.node, side.message()).fix(|fixer| {
             // `==` converts what is not a string.
             if matches!(it.op, BinOp::EqEq | BinOp::NotEq) && it.right.tag() != ExprTag::String {
                 return None;
             }
+            // tsgolint also fixes what only looks like the lengths, and `foo.slice(-bar.length, 0)`, which is empty.
+            if it.node.file().language().is_oxlint
+                && (side_of(true) != Some(side)
+                    || (side == Side::End
+                        && args.get(1).is_some_and(|end| !is_length_expression(end, it.object, true))))
+            {
+                return None;
+            }
             // The code is likely a mistake if the lengths differ, or if it relies on `substring`
             // taking a negative index for 0.
             let is_valid = match side {
-                Side::Start => is_length_expression(args.get(1)?, it.right),
+                Side::Start => is_length_expression(args.get(1)?, it.right, true),
                 Side::End => match args.first()?.kind() {
                     ExprKind::Binary { op: BinOp::Sub, left, right } => {
-                        is_length_expression(left, it.object) && is_length_expression(right, it.right)
+                        is_length_expression(left, it.object, true) && is_length_expression(right, it.right, true)
                     }
                     ExprKind::Unary { op: UnOp::Minus, operand } => {
-                        negative_index_supported && is_length_expression(operand, it.right)
+                        negative_index_supported && is_length_expression(operand, it.right, true)
                     }
                     _ => false,
                 },
@@ -543,6 +649,7 @@ impl PreferStringStartsEndsWith {
         let comparison = |member: Expr<'a>, object: Expr<'a>| Comparison {
             node,
             op,
+            left,
             right,
             member,
             object,
@@ -581,9 +688,9 @@ impl PreferStringStartsEndsWith {
                     self.check_single_element(it, index_node, cx);
                 }
             }
-            b"indexOf" => Self::check_index_of(it, left, call, cx),
-            b"lastIndexOf" => Self::check_last_index_of(it, left, call, cx),
-            b"match" => Self::check_match(it, left, call, cx),
+            b"indexOf" => Self::check_index_of(it, call, cx),
+            b"lastIndexOf" => Self::check_last_index_of(it, call, cx),
+            b"match" => Self::check_match(it, call, cx),
             b"slice" => Self::check_slice(it, call, true, cx),
             b"substring" => Self::check_slice(it, call, false, cx),
             _ => {}
@@ -596,7 +703,8 @@ impl PreferStringStartsEndsWith {
             return;
         };
         let callee = call.callee();
-        let obj = if cx.language().is_oxlint {
+        let is_oxlint = cx.language().is_oxlint;
+        let obj = if is_oxlint {
             // tsgolint's `callMemberCallee` and `getPropertyName`: also `/a/["test"]` and `(/a/?.test)`, not `#test`.
             match (callee.object(), tsgolint_property_name(callee)) {
                 (Some(obj), Some(name)) if name == b"test" => obj,
@@ -618,27 +726,37 @@ impl PreferStringStartsEndsWith {
             return;
         };
         cx.report(call_node, side.message()).fix(|fixer| {
+            // tsgolint also fixes what only looks like a `RegExp`, and has `(...a).startsWith("a")` for `...a`.
+            if is_oxlint
+                && (tsgolint_parse_reg_exp(obj, true).is_none() || matches!(arg_node.kind(), ExprKind::Spread(_)))
+            {
+                return None;
+            }
             let needs_paren = match arg_node.kind() {
+                // tsgolint has parentheses around `null`, and none around `a?.b`.
+                ExprKind::True | ExprKind::False | ExprKind::Null => is_oxlint,
                 ExprKind::String(_)
                 | ExprKind::Number(_)
                 | ExprKind::BigInt(_)
                 | ExprKind::Regex(_)
-                | ExprKind::True
-                | ExprKind::False
-                | ExprKind::Null
                 | ExprKind::Template(_)
                 | ExprKind::Ident(_) => false,
-                ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => arg_node.is_chain_root(),
+                ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => {
+                    !is_oxlint && arg_node.is_chain_root()
+                }
                 _ => true,
             };
-            let mut fixes = vec![fixer.remove(Span::new(call_node.span().start, arg_node.span().start))];
+            // tsgolint leaves the `)` of `(a)` behind. Here both stay, and no more are needed.
+            let needs_paren = needs_paren && !(is_oxlint && arg_node.is_parenthesized());
+            let arg = if is_oxlint { arg_node.outer_span() } else { arg_node.span() };
+            let mut fixes = vec![fixer.remove(Span::new(call_node.span().start, arg.start))];
             if needs_paren {
-                fixes.push(fixer.insert_before(arg_node, "("));
-                fixes.push(fixer.insert_after(arg_node, ")"));
+                fixes.push(fixer.insert_before(arg, "("));
+                fixes.push(fixer.insert_after(arg, ")"));
             }
-            let (access, search) = (side.access(callee.is_optional()).as_bytes(), json_stringify_alloc(&text));
-            fixes.push(fixer.insert_after(arg_node, [access, b"(", search.as_slice()].concat()));
-            fixes
+            let (access, search) = (side.access(callee.is_optional()).as_bytes(), to_string_literal(&text, is_oxlint));
+            fixes.push(fixer.insert_after(arg, [access, b"(", search.as_slice()].concat()));
+            Some(fixes)
         });
     }
 }

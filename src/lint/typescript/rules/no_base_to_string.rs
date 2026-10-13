@@ -273,25 +273,15 @@ impl NoBaseToString {
         walk.assumed = None;
         let come_across = std::mem::take(&mut walk.come_across);
         if others.is_empty() {
-            for t in assumed {
-                walk.is_always.insert(t, true);
-            }
+            walk.is_always.extend(assumed.into_iter().map(|t| (t, true)));
             return true;
         }
         // All that one of `others` is in, however deep.
         let mut around: IdMap<Type<'a>, SmallVec<[Type<'a>; 1]>> = IdMap::new();
         for (inner, outer) in come_across {
-            match around.get_mut(inner) {
-                Some(it) => it.extend(outer),
-                None => {
-                    around.insert(inner, outer.into_iter().collect());
-                }
-            }
+            around.get_or_insert_with(inner, SmallVec::new).extend(outer);
         }
-        let mut has_other = IdSet::new();
-        for &t in &others {
-            has_other.insert(t);
-        }
+        let mut has_other: IdSet<Type<'a>> = others.iter().copied().collect();
         while let Some(t) = others.pop() {
             for &outer in around.get(t).map(|it| it.as_slice()).unwrap_or_default() {
                 if has_other.insert(outer) {
@@ -299,9 +289,7 @@ impl NoBaseToString {
                 }
             }
         }
-        for t in assumed {
-            walk.is_always.insert(t, !has_other.contains(t));
-        }
+        walk.is_always.extend(assumed.into_iter().map(|t| (t, !has_other.contains(t))));
         false
     }
 
@@ -559,14 +547,8 @@ impl NoBaseToString {
         if ty.has_flags(TypeFlags::PRIMITIVE | TypeFlags::ANY | TypeFlags::NEVER) {
             return;
         }
-        let certainty = match cx.state.known[0].get(ty).copied() {
-            Some(certainty) => certainty,
-            None => {
-                let certainty = self.collect_to_string_certainty(ty, &mut Walk::default());
-                cx.state.known[0].insert(ty, certainty);
-                certainty
-            }
-        };
+        let certainty =
+            *cx.state.known[0].get_or_insert_with(ty, || self.collect_to_string_certainty(ty, &mut Walk::default()));
         Self::report(node, BASE_TO_STRING, certainty, cx);
     }
 
@@ -636,14 +618,9 @@ impl NoBaseToString {
             let ty = get_constrained_type_at_location(object);
             let certainty = match is_oxlint {
                 true => self.tsgolint_collect_join_certainty(ty, &mut cx.state),
-                false => match cx.state.known[1].get(ty).copied() {
-                    Some(certainty) => certainty,
-                    None => {
-                        let certainty = self.collect_join_certainty(ty, &mut Walk::default());
-                        cx.state.known[1].insert(ty, certainty);
-                        certainty
-                    }
-                },
+                false => {
+                    *cx.state.known[1].get_or_insert_with(ty, || self.collect_join_certainty(ty, &mut Walk::default()))
+                }
             };
             Self::report(object, BASE_ARRAY_JOIN, certainty, cx);
         } else {

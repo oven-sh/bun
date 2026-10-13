@@ -329,7 +329,7 @@ impl<'a> Captures<'a> {
         // The scopes of these functions and those in them.
         let mut inside: Vec<Scope<'a>> = Vec::new();
         // The scopes of `path` that refer to a variable.
-        let mut direct: FxHashMap<Symbol<'a>, SmallVec<[Direct<'a>; 2]>> = FxHashMap::default();
+        let mut direct: IdMap<Symbol<'a>, SmallVec<[Direct<'a>; 2]>> = IdMap::new();
         for scope in file.scopes() {
             while path.last().is_some_and(|it| !it.contains(scope)) {
                 path.pop();
@@ -354,7 +354,7 @@ impl<'a> Captures<'a> {
                     continue;
                 };
                 let at = reference.ident().start();
-                let entries = direct.entry(symbol).or_default();
+                let entries = direct.get_or_insert_with(symbol, SmallVec::new);
                 while entries.last().is_some_and(|it| !it.scope.contains(scope)) {
                     entries.pop();
                 }
@@ -566,12 +566,7 @@ fn private_references<'a>(file: &'a File<'a>) -> IdMap<Scope<'a>, Vec<(Name<'a>,
         };
         let scope = Node::Expr(usage).scope();
         let reference = (name, usage.span().start);
-        match found.get_mut(scope) {
-            Some(list) => list.push(reference),
-            None => {
-                found.insert(scope, vec![reference]);
-            }
-        }
+        found.get_or_insert_with(scope, Vec::new).push(reference);
     }
     found
 }
@@ -681,12 +676,8 @@ fn outermost_captures<'a>(
         let is_in_region = regions
             .get(parent)
             .is_some_and(|it| it.contains(scope.span().start));
-        if !from_inside.contains_key(parent) {
-            from_inside.insert(parent, Default::default());
-        }
-        let Some((all_of_parent, in_region_of_parent)) = from_inside.get_mut(parent) else {
-            continue;
-        };
+        let (all_of_parent, in_region_of_parent) =
+            from_inside.get_or_insert_with(parent, Default::default);
         for referenced in all.into_iter().filter(|it| it.scope() != parent) {
             add_outermost(all_of_parent, referenced);
             if is_in_region {
@@ -767,9 +758,9 @@ fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>, state: &mut State<'a
             break;
         }
     }
-    for it in passed {
-        state.is_strict.insert(it, answer);
-    }
+    state
+        .is_strict
+        .extend(passed.into_iter().map(|it| (it, answer)));
     answer
 }
 

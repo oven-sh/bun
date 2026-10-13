@@ -11,7 +11,7 @@
 use crate::jsx::Child;
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::types::IdSet;
+use bun_lint::types::{IdMap, IdSet};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{
     as_call_expression, as_function, as_function_expression, as_member_expression,
@@ -317,7 +317,7 @@ struct Visited<'a> {
 /// is declared with: `const a = b || c`. One of these is for one meaning of the flags.
 #[derive(Default)]
 pub(crate) struct FlagsOfVariables<'a> {
-    known: FxHashMap<Symbol<'a>, u8>,
+    known: IdMap<Symbol<'a>, u8>,
 }
 
 impl<'a> FlagsOfVariables<'a> {
@@ -330,7 +330,7 @@ impl<'a> FlagsOfVariables<'a> {
         variable: Symbol<'a>,
         declared_with: impl Fn(Symbol<'a>) -> (u8, Variables<'a>),
     ) -> u8 {
-        if let Some(&known) = self.known.get(&variable) {
+        if let Some(&known) = self.known.get(variable) {
             return known;
         }
         let (flags, rest) = declared_with(variable);
@@ -347,13 +347,13 @@ impl<'a> FlagsOfVariables<'a> {
         }];
         // Those whose circle is not closed.
         let mut open = vec![variable];
-        let mut indices = FxHashMap::default();
+        let mut indices: IdMap<Symbol<'a>, usize> = IdMap::new();
         indices.insert(variable, 0);
         while let Some(at) = path.last_mut() {
             if let Some(next) = at.rest.pop() {
-                if let Some(&known) = self.known.get(&next) {
+                if let Some(&known) = self.known.get(next) {
                     at.flags |= known;
-                } else if let Some(&index) = indices.get(&next) {
+                } else if let Some(&index) = indices.get(next) {
                     at.low = at.low.min(index);
                 } else {
                     let index = indices.len();

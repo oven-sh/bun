@@ -226,9 +226,14 @@ fn report<'a>(
     let is_union_or_intersection_token =
         |token: &Token<'a>| (token.is("&") || token.is("|")) && parent.contains(token.span());
 
-    // The `|` or `&` and the parentheses around the constituent, which go with it.
+    // The `|` or `&` and the parentheses around the constituent, which go with it. tsgolint's constituent is the
+    // parenthesized type: it goes whole, with the comments and line breaks between its parentheses.
+    let is_oxlint = cx.language().is_oxlint;
     let mut removed: SmallVec<[Span; 8]> = SmallVec::new();
-    removed.push(constituent_node.span());
+    removed.push(match is_oxlint {
+        true => constituent_node.outer_span(),
+        false => constituent_node.span(),
+    });
     let before_union_or_intersection_token = file
         .tokens_before(constituent_node)
         .take_while(|token| token.start() >= parent.start)
@@ -255,14 +260,16 @@ fn report<'a>(
         }
     };
     let mut end = constituent_node.span().end;
-    removed.extend(bracket_before_tokens.map(|token| token.span()));
-    for token in bracket_after_tokens {
-        end = token.end();
-        removed.push(token.span());
+    if !is_oxlint {
+        removed.extend(bracket_before_tokens.map(|token| token.span()));
+        for token in bracket_after_tokens {
+            end = token.end();
+            removed.push(token.span());
+        }
     }
 
     // oxlint points at the first of the two. tsgolint's constituent is the parenthesized type.
-    let place = match (cx.language().is_oxlint, previous) {
+    let place = match (is_oxlint, previous) {
         (true, Some((_, previous))) => previous.outer_span(),
         (true, None) => constituent_node.outer_span(),
         (false, _) => Span::new(constituent_node.span().start, end),
@@ -318,7 +325,12 @@ impl<'a> Constituents<'a> {
         if is_intrinsic_error_type(ty) || ty.is_unresolved() {
             return;
         }
-        if let Some(&previous) = self.cached_type_map.get(ty) {
+        let mut is_new = false;
+        let previous = *self.cached_type_map.get_or_insert_with(ty, || {
+            is_new = true;
+            constituent_node
+        });
+        if !is_new {
             report_duplicate(previous);
             return;
         }
@@ -326,7 +338,6 @@ impl<'a> Constituents<'a> {
         if self.is_of_optional_parameter && ty.has_flags(TypeFlags::UNDEFINED) {
             report(cx, UNNECESSARY, constituent_node, None);
         }
-        self.cached_type_map.insert(ty, constituent_node);
         self.unique_constituents.push(constituent_node);
 
         if constituent_node.tag() == self.tag

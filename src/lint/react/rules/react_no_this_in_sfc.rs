@@ -96,9 +96,7 @@ impl Rule for NoThisInSfc {
             }
             current = func.enclosing();
         };
-        for it in passed {
-            cx.state.is_in_candidate.insert(it, is_in_candidate);
-        }
+        cx.state.is_in_candidate.extend(passed.into_iter().map(|it| (it, is_in_candidate)));
         if is_in_candidate {
             cx.state.members.push(At::enter(node), 0, node);
         }

@@ -238,24 +238,100 @@ fn is_trivial_interpolation<'a>(
         && !cx.file().comments_exist_between(head, tail)
 }
 
-/// Whether tsgolint puts parentheses around `moved` where `template` was: unless it binds more tightly than what the
-/// template is in. For typescript-go a call binds like a member access, and an arrow function like an assignment.
+/// typescript-go's `GetExpressionPrecedence` of an expression without parentheses, where it is not typescript-eslint's
+/// `getOperatorPrecedence`: a call binds like a member access, `??` like `||`, and `=` and `satisfies` are not
+/// `Invalid`. Its `OptionalChain`, between `LeftHandSide` and `Member`, is `LeftHandSide` here.
+fn get_expression_precedence(node: Expr) -> OperatorPrecedence {
+    use OperatorPrecedence as P;
+    if node.chain() != Chain::No {
+        return P::LeftHandSide;
+    }
+    match node.kind() {
+        ExprKind::Call(_) | ExprKind::ImportCall { .. } | ExprKind::Instantiation { .. } => P::Member,
+        ExprKind::Binary { op: BinOp::Nullish, .. } => P::LogicalOR,
+        ExprKind::Binary { op: BinOp::EqEq, .. } => P::Equality,
+        ExprKind::Assign { .. } => P::Assignment,
+        ExprKind::Satisfies { .. } => P::Relational,
+        ExprKind::Fn(func) if func.is_arrow() => P::Assignment,
+        _ => get_operator_precedence_for_node(node),
+    }
+}
+
+/// Whether tsgolint puts parentheses around `moved` where `template` was: if the parent of the template is an
+/// expression, unless `moved` binds more tightly than it. A `ParenthesizedExpression` binds the most tightly.
 fn is_wrapped_by_tsgolint(template: Expr, moved: Expr) -> bool {
     use OperatorPrecedence as P;
-    let like_member = |it: P| if it == P::LeftHandSide { P::Member } else { it };
+    if template.is_parenthesized() {
+        return true;
+    }
+    if moved.is_parenthesized() {
+        return false;
+    }
     let around = match template.parent() {
-        _ if template.is_parenthesized() => P::Primary,
         Node::Func(func) if func.is_arrow() => P::Assignment,
-        // `a || b ?? c` is a syntax error.
-        Node::Expr(parent)
-            if parent.binary_op() == Some(BinOp::Nullish)
-                && matches!(moved.binary_op(), Some(BinOp::And | BinOp::Or)) =>
-        {
-            P::Primary
-        }
-        _ => like_member(get_operator_precedence_of_ts_parent(template)),
+        Node::Expr(parent) => match get_operator_precedence_of_ts_parent(template) {
+            // The parent is not an expression for TypeScript: a `TemplateSpan`, a `JsxExpression`.
+            P::Invalid => return false,
+            _ if parent.chain() != Chain::No => P::LeftHandSide,
+            P::LeftHandSide if parent.tag() != ExprTag::New => P::Member,
+            // `a || b ?? c` is a syntax error.
+            _ if parent.binary_op() == Some(BinOp::Nullish) => match moved.binary_op() {
+                Some(BinOp::And | BinOp::Or) => return true,
+                _ => P::LogicalOR,
+            },
+            around => around,
+        },
+        _ => return false,
     };
-    !moved.is_parenthesized() && like_member(get_operator_precedence_for_node(moved)) <= around
+    get_expression_precedence(moved) <= around
+}
+
+/// Whether the parent of the `TemplateLiteralType` is an expression for typescript-go, which the
+/// `ExpressionWithTypeArguments` after `extends` or `implements` is: tsgolint then puts parentheses around the type.
+fn is_type_of_expression(template: TypeNode) -> bool {
+    match template.parent() {
+        // The type arguments of `<a<T>></a>` are those of the `JsxOpeningElement`, which is no expression.
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::Jsx(jsx) => jsx.is_self_closing(),
+            _ => true,
+        },
+        Node::Func(func) => matches!(func.kind(), FnKind::Arrow | FnKind::Expr),
+        // `extends B<Args>`
+        Node::Class(_) => true,
+        Node::Type(heritage) => match heritage.parent() {
+            Node::Class(class) => class.implements().iter().any(|it| it.span() == heritage.span()),
+            Node::Stmt(statement) => statement.as_interface().is_some(),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Whether the type around `template` would take `moved` apart: `A | B` in `T[]`, `T[K]`, `keyof T`, `T & C` or
+/// `[T?]`, a conditional type in a union or before the `?` of another. tsgolint writes no parentheses there.
+fn moved_type_needs_parentheses(template: TypeNode, moved: TypeNode) -> bool {
+    let binding = match moved.kind() {
+        TypeKind::Cond { .. } | TypeKind::Fn(_) => 0,
+        TypeKind::Union(_) => 1,
+        TypeKind::Intersection(_) => 2,
+        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) | TypeKind::Infer(_) => 3,
+        _ => return false,
+    };
+    let is_template = |it: TypeNode| it.span() == template.span();
+    let needed = match template.parent() {
+        Node::TupleElem(element) if element.is_optional() && element.name().is_none() => 4,
+        Node::Type(parent) => match parent.kind() {
+            TypeKind::Array(_) => 4,
+            TypeKind::IndexedAccess { obj, .. } if is_template(obj) => 4,
+            TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::Unique(_) => 3,
+            TypeKind::Intersection(_) => 2,
+            TypeKind::Union(_) => 1,
+            TypeKind::Cond { check, extends, .. } if is_template(check) || is_template(extends) => 1,
+            _ => 0,
+        },
+        _ => 0,
+    };
+    binding < needed
 }
 
 /// `head` is the text before the interpolation, `outer` the interpolation with its parentheses.
@@ -266,25 +342,30 @@ fn report_single_interpolation<'a>(
     outer: Span,
     cx: &Context<'a>,
 ) {
-    let is_oxlint = cx.language().is_oxlint;
-    let span = interpolation.span();
-    // tsgolint reports from the `${`, whatever space follows, to the character after the interpolation and its
-    // parentheses.
-    let place = match is_oxlint {
-        true => Span::new(head.end - 2, outer.end + 1),
-        false => Span::new(span.start.saturating_sub(2), span.end + 1),
-    };
-    // For tsgolint parentheses are a part of what is in them.
-    if let (Node::Expr(template), Node::Expr(moved), true) = (node, interpolation, is_oxlint) {
-        cx.report(place, NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-            .fix(|fixer| match is_wrapped_by_tsgolint(template, moved) {
-                true => fixer.replace(node, [&b"("[..], moved.text(), b")"].concat()),
-                false => fixer.replace(node, cx.slice(outer)),
-            });
+    if !cx.language().is_oxlint {
+        let span = interpolation.span();
+        cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+            .fix(|fixer| fixer.replace(node, get_moved_node_code(node, interpolation)));
         return;
     }
-    cx.report(place, NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-        .fix(|fixer| fixer.replace(node, get_moved_node_code(node, interpolation)));
+    // tsgolint reports from the `${`, whatever space follows, to the character after the interpolation and its
+    // parentheses, which are a part of what is in them.
+    cx.report(Span::new(head.end - 2, outer.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+        .fix(|fixer| {
+            let is_wrapped = match (node, interpolation) {
+                (Node::Expr(template), Node::Expr(moved)) => is_wrapped_by_tsgolint(template, moved),
+                (Node::Type(template), Node::Type(moved)) => {
+                    !template.is_parenthesized()
+                        && (is_type_of_expression(template)
+                            || !moved.is_parenthesized() && moved_type_needs_parentheses(template, moved))
+                }
+                _ => false,
+            };
+            match is_wrapped {
+                true => fixer.replace(node, [&b"("[..], cx.slice(outer), b")"].concat()),
+                false => fixer.replace(node, cx.slice(outer)),
+            }
+        });
 }
 
 fn report_interpolations<'a>(
@@ -354,7 +435,8 @@ fn report_infos<'a>(infos: &[InterpolationInfo<'a>], cx: &Context<'a>) {
                         text: b"\\".to_vec(),
                     });
                 }
-                if quasi_count == 1 && !first_raw.is_empty() {
+                // tsgolint also looks at the head of a template with substitutions.
+                if (quasi_count == 1 || cx.language().is_oxlint) && !first_raw.is_empty() {
                     next_character_is_opening_curly_brace = first_raw.starts_with(b"{");
                 }
                 fixes.push(remove(Span::new(interpolation.start, interpolation.start + 1)));

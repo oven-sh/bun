@@ -1192,9 +1192,9 @@ pub(crate) mod no_standalone_expect {
                 enclosing = enclosing_function(func);
             }
             if passed.spilled() {
-                for it in &passed {
-                    places.functions_in_place.insert(*it, is_correct);
-                }
+                places
+                    .functions_in_place
+                    .extend(passed.iter().map(|it| (*it, is_correct)));
             }
             is_correct
         }
@@ -1214,9 +1214,7 @@ pub(crate) mod no_standalone_expect {
                 ctx,
             );
             if passed.spilled() {
-                for it in &passed {
-                    places.blocks.insert(*it, answer);
-                }
+                places.blocks.extend(passed.iter().map(|it| (*it, answer)));
             }
             answer
         }

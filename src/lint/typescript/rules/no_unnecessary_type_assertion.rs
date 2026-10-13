@@ -2,12 +2,12 @@ use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{
     CompilerOption, is_boolean_literal_type, is_compiler_option_enabled,
-    is_property_readonly_in_type, is_strict_compiler_option_enabled, is_type_parameter,
-    is_type_reference, union_constituents,
+    intersection_constituents, is_falsy_type, is_property_readonly_in_type,
+    is_strict_compiler_option_enabled, is_type_parameter, is_type_reference, union_constituents,
 };
 use bun_lint::types::utils::{
     get_constrained_type_at_location, get_constraint_of_type_parameter, get_contextual_type,
-    get_declaration, is_nullable_type, is_type_flag_set,
+    get_declaration, is_nullable_type, is_possibly_falsy, is_possibly_truthy, is_type_flag_set,
 };
 use bun_lint::types::{IdSet, Signature, SyntaxKind, TsNode, Type, TypeFlags};
 use bun_lint::utils::ast_utils::is_member_expression;
@@ -454,10 +454,7 @@ fn are_union_parts_equivalent_ignoring_undefined<'a>(uncast: Type<'a>, cast: Typ
     if parts(uncast).count() != parts(cast).count() {
         return false;
     }
-    let mut uncast_parts = IdSet::new();
-    for part in parts(uncast) {
-        uncast_parts.insert(part);
-    }
+    let uncast_parts: IdSet<Type<'a>> = parts(uncast).collect();
     parts(cast).all(|part| uncast_parts.contains(part))
 }
 
@@ -888,12 +885,64 @@ fn get_assignment_reduced_type<'a>(
     }
 }
 
+/// tsgolint's `getLogicalResultType`, for the right operand of `op`: adds to `others` what the left operand can be
+/// where it is the value. `None`: it always is. `Some(true)`: a `string`, a `number` or a `bigint` is there for the
+/// `""`, the `0` or the `0n` that `&&` leaves of it.
+fn tsgolint_get_logical_result_type<'a>(
+    op: BinOp,
+    left: Type<'a>,
+    others: &mut SmallVec<[Type<'a>; 4]>,
+) -> Option<bool> {
+    let options = left.file().type_checker().compiler_options();
+    let is_strict = is_strict_compiler_option_enabled(options, CompilerOption::StrictNullChecks);
+    // TypeScript's `hasTypeFacts` asks the constraint of a type variable. Here it can be everything.
+    let has_part = |flags: TypeFlags| {
+        union_constituents(left).iter().flat_map(intersection_constituents).any(|part| part.has_flags(flags))
+    };
+    match op {
+        // Without `strictNullChecks` the falsy part is that of the right operand: nothing is added.
+        BinOp::And if is_strict => {
+            if !is_possibly_truthy(left) {
+                return None;
+            }
+            let zeroes = TypeFlags::STRING | TypeFlags::NUMBER | TypeFlags::BIG_INT;
+            let falsy = TypeFlags::ANY | TypeFlags::UNKNOWN | zeroes;
+            let parts = union_constituents(left);
+            others.extend(parts.iter().filter(|part| is_falsy_type(*part) || part.has_flags(falsy)));
+            Some(parts.iter().any(|part| part.has_flags(zeroes)))
+        }
+        BinOp::Or => {
+            let can_be_falsy = !is_strict
+                || is_possibly_falsy(left)
+                || has_part(TypeFlags::ANY | TypeFlags::UNKNOWN | TypeFlags::INSTANTIABLE)
+                || union_constituents(left)
+                    .iter()
+                    .any(|part| part.has_flags(TypeFlags::OBJECT) && is_empty_object_type(part));
+            if !can_be_falsy {
+                return None;
+            }
+            let truthy = union_constituents(left.get_non_nullable_type());
+            others.extend(truthy.iter().filter(|part| !is_falsy_type(*part)));
+            Some(false)
+        }
+        BinOp::Nullish => {
+            if is_strict && !is_nullable_type(left) && !has_part(TypeFlags::INSTANTIABLE) {
+                return None;
+            }
+            others.extend(union_constituents(left.get_non_nullable_type()).iter());
+            Some(false)
+        }
+        _ => Some(false),
+    }
+}
+
 /// tsgolint's `isInNarrowingAssignment`, for an assertion that is all of what is assigned: `a = b as C;` narrows `a`
 /// for the statements that follow, so that `a` accepts `b` does not make the assertion unnecessary.
 fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>, cast_type: Type<'a>) -> bool {
     // Up to the assignment that `node` can be the value of, or a part of the value: `a = b && (a as C)`,
-    // `[a] = [a as C]`. What else can be the value is not looked at, which leaves more alone than tsgolint does.
+    // `[a] = [a as C]`.
     let (mut current, mut is_in_literal) = (node, false);
+    let mut has_stand_in = false;
     // The constituents of what else can be assigned: tsgolint unites them with both types.
     let mut others: SmallVec<[Type<'a>; 4]> = SmallVec::new();
     let target = loop {
@@ -910,6 +959,14 @@ fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>
                 // These discard `null` and `undefined` themselves.
                 if uncast_type.get_non_nullable_type() == cast_type.get_non_nullable_type() {
                     return false;
+                }
+            }
+            ExprKind::Binary { op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish), left, right }
+                if right == current && !is_in_literal =>
+            {
+                match tsgolint_get_logical_result_type(op, left.ty(), &mut others) {
+                    Some(it) => has_stand_in |= it,
+                    None => return false,
                 }
             }
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => {}
@@ -940,9 +997,15 @@ fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>
         (true, _) => return false,
     };
     let receiver_type = receiver_type.get_base_constraint_of_type().unwrap_or(receiver_type);
-    receiver_type.is_union()
-        && get_assignment_reduced_type(receiver_type, uncast_type, &others)
-            != get_assignment_reduced_type(receiver_type, cast_type, &others)
+    if !receiver_type.is_union() {
+        return false;
+    }
+    // Which members accept `""`, `0` or `0n` is not known from what stands for them: such an assignment is left alone.
+    if has_stand_in && receiver_type.types().iter().any(|member| member.is_literal() && is_falsy_type(member)) {
+        return true;
+    }
+    get_assignment_reduced_type(receiver_type, uncast_type, &others)
+        != get_assignment_reduced_type(receiver_type, cast_type, &others)
 }
 
 fn should_skip_contextual_type_fallback<'a>(

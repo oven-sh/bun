@@ -864,6 +864,9 @@ fn tests_member_or_call(operand: Expr) -> bool {
         } => false,
         ExprKind::Binary { op: BinOp::Nullish, .. } if !operand.file().language().is_oxlint => false,
         ExprKind::Binary { left, right, .. } => is_member_or_call(left) || is_member_or_call(right),
+        ExprKind::Assign { target, value, .. } if operand.file().language().is_oxlint => {
+            is_member_or_call(target) || is_member_or_call(value)
+        }
         ExprKind::Unary {
             op: UnOp::Not,
             operand,
@@ -1058,6 +1061,22 @@ impl PreferOptionalChain {
             ExprKind::Binary { op, left, right } if op != BinOp::Comma => {
                 return Self::get_binary_operand(operator, operand, op, left, right);
             }
+            // tsgolint's `parseOperand` takes an assignment for a comparison too: `a && (a.b = 1)`.
+            ExprKind::Assign { target, value, .. } if is_oxlint && operator == BinOp::And => {
+                let (compared_name, comparison_value, yoda) =
+                    match (tsgolint_is_access_expression(target), tsgolint_is_access_expression(value)) {
+                        (true, false) => (target, value, Yoda::No),
+                        (false, true) => (value, target, Yoda::Yes),
+                        _ => return Operand::Invalid,
+                    };
+                return Operand::Last(LastChainOperand {
+                    compared_name,
+                    comparison_type: ComparisonType::Other,
+                    comparison_value,
+                    yoda,
+                    node: operand,
+                });
+            }
             ExprKind::Unary {
                 op: UnOp::Not,
                 operand: argument,
@@ -1099,6 +1118,23 @@ fn tsgolint_would_change_return_type(node: Expr) -> bool {
         TypeFlags::BOOLEAN_LITERAL | TypeFlags::NUMBER_LITERAL | TypeFlags::STRING_LITERAL | TypeFlags::BIG_INT_LITERAL;
     let types = union_constituents(node.ty());
     types.iter().any(|ty| is_type_flag_set(ty, literal)) && !types.iter().any(|ty| is_type_flag_set(ty, NULLISH_FLAGS))
+}
+
+/// Whether `operand`, which ends a chain of `&&`, can be truthy where the chain is `undefined`, which `a && operand` is
+/// not. A comparison that tsgolint takes is `false` there, and arithmetic with a number is `NaN`.
+fn can_be_truthy_of_undefined(operand: Expr) -> bool {
+    let ExprKind::Binary { op, left, right } = operand.kind() else {
+        return true;
+    };
+    match op {
+        BinOp::EqEq | BinOp::EqEqEq | BinOp::NotEq | BinOp::NotEqEq => false,
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
+            let other = if tsgolint_is_access_expression(left) { right } else { left };
+            let number = TypeFlags::NUMBER | TypeFlags::NUMBER_LITERAL;
+            !union_constituents(other.ty()).iter().all(|ty| is_type_flag_set(ty, number))
+        }
+        _ => true,
+    }
 }
 
 /// Where the chain ends early, what follows it compares `undefined`. tsgolint 7.0 leaves the whole chain alone if that
@@ -1556,6 +1592,16 @@ fn get_new_code<'a>(file: &'a File<'a>, chain: &[ValidOperand<'a>]) -> Option<Ve
     for current in chain {
         flatten_chain_expression(current.compared_name.expr(), &mut next_operand)?;
         known = parts.len();
+        // tsgolint writes what is in brackets as the last operand has it: `o['k'] && o["k"].x` is `o["k"]?.x`.
+        if file.language().is_oxlint {
+            for (part, later) in parts.iter_mut().zip(&next_operand) {
+                if let PartText::Computed(span) = &later.text
+                    && matches!(part.text, PartText::Computed(_))
+                {
+                    part.text = PartText::Computed(*span);
+                }
+            }
+        }
         for (i, mut part) in next_operand.drain(..).skip(known).enumerate() {
             part.optional |= i == 0 && known > 0;
             parts.push(part);
@@ -1822,7 +1868,8 @@ impl PreferOptionalChain {
     }
 
     /// `checkNullishAndReport` of what `getReportDescriptor` returns. `chain`: the operands with
-    /// `lastChain`, if there is one. `node`: the whole logical expression.
+    /// `lastChain`, if there is one. `node`: the whole logical expression. `is_truncated`: tsgolint ended the chain
+    /// before the last operand that continues it, and nothing is offered.
     fn report_chain<'a>(
         &self,
         cx: &Cx<'a, Self>,
@@ -1830,6 +1877,7 @@ impl PreferOptionalChain {
         operator: BinOp,
         chain: &[ValidOperand<'a>],
         has_last_chain: bool,
+        is_truncated: bool,
     ) {
         use NullishComparisonType as T;
         let Some((last_operand, maybe_nullish)) = chain.split_last() else {
@@ -1859,6 +1907,7 @@ impl PreferOptionalChain {
         let first = chain.first().map_or(T::Other, |it| it.comparison_type);
         // `!a || a.b === null`: tsgolint leaves it alone.
         if is_oxlint
+            && !is_truncated
             && matches!((operator, first, last_operand.comparison_type), (BinOp::Or, T::NotBoolean, T::StrictEqualNull))
         {
             return;
@@ -1903,6 +1952,8 @@ impl PreferOptionalChain {
 
         // An optional chain adds `undefined` to the type, which is safe only if nobody can tell.
         let use_suggestion_fixer = match last_operand.comparison_type {
+            // tsgolint fixes whatever follows the chain: `a?.b ?? c` and `a?.b + ''` too.
+            T::Other if is_oxlint && can_be_truthy_of_undefined(last_operand.node) => true,
             _ if self.allow_potentially_unsafe_fixes_that_modify_the_return_type_i_know_what_im_doing => false,
             // tsgolint fixes where a comparison follows the chain, but for `a === undefined || a.b === undefined`.
             T::StrictEqualUndefined if is_oxlint && operator == BinOp::Or => {
@@ -1915,6 +1966,14 @@ impl PreferOptionalChain {
             }),
             _ if is_oxlint && has_last_chain => {
                 operator == BinOp::Or && tsgolint_strict_check_requires_suggestion(chain)
+            }
+            // After `typeof a !== 'undefined'` it fixes where a type has `undefined`.
+            T::Boolean
+                if is_oxlint
+                    && operator == BinOp::And
+                    && chain.first().is_some_and(|it| tsgolint_is_typeof_check(*it) && !it.has_complementary_check) =>
+            {
+                !chain.iter().any(|it| includes_type(it.compared_name.expr(), TypeFlags::UNDEFINED))
             }
             // It only suggests `a?.b` for `a != null && a.b`.
             T::Boolean
@@ -1948,14 +2007,37 @@ impl PreferOptionalChain {
             }
             _ => chain,
         };
+        // tsgolint's `a?.b` is not `a && (a.b = 1)`, and its `a?.b === null || !a.b.c` is `false` where
+        // `!a || a.b === null || !a.b.c` is `true`.
+        let is_assignment = matches!(last_operand.node.kind(), ExprKind::Assign { .. });
+        let fix_or_suggest = match use_suggestion_fixer {
+            _ if is_truncated || is_assignment => FixOrSuggest::None,
+            true => FixOrSuggest::Suggest,
+            false => FixOrSuggest::Fix,
+        };
         let report_range = get_report_range(cx.file(), fixed, node.span());
         // oxlint points at the whole logical expression.
         get_fix_or_suggest(
             cx.report(if is_oxlint { node.span() } else { report_range }, PREFER_OPTIONAL_CHAIN),
-            if use_suggestion_fixer { FixOrSuggest::Suggest } else { FixOrSuggest::Fix },
+            fix_or_suggest,
             OPTIONAL_CHAIN_SUGGEST,
             |fixer| {
-                let new_code = get_new_code(fixer.file(), chain)?;
+                let mut new_code = get_new_code(fixer.file(), chain)?;
+                // `??` cannot be an operand of `&&` or `||`.
+                if matches!(last_operand.node.kind(), ExprKind::Binary { op: BinOp::Nullish, .. })
+                    && (report_range != node.span()
+                        || !node.is_parenthesized()
+                            && matches!(
+                                node.parent(),
+                                Node::Expr(parent) if matches!(
+                                    parent.kind(),
+                                    ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. }
+                                )
+                            ))
+                {
+                    new_code.insert(0, b'(');
+                    new_code.push(b')');
+                }
                 Some(fix_chain(fixer, node.span(), report_range, new_code))
             },
         );
@@ -1974,7 +2056,7 @@ impl PreferOptionalChain {
         let is_chain = sub_chain.len + usize::from(last_chain.is_some()) > 1;
         if is_chain {
             sub_chain.operands.extend(last_chain);
-            self.report_chain(cx, node, operator, &sub_chain.operands, last_chain.is_some());
+            self.report_chain(cx, node, operator, &sub_chain.operands, last_chain.is_some(), false);
         }
         sub_chain.operands.clear();
         sub_chain.operands.extend_from_slice(new_chain_seed);
@@ -2044,6 +2126,27 @@ impl PreferOptionalChain {
                             && tsgolint_takes_nothing_after(operator, last_operand, operand.comparison_type))
                 });
                 let first = sub_chain.operands.first().map_or(T::Other, |it| it.comparison_type);
+                // tsgolint's `validateOrChainNullishChecks` ends the chain at `a.b === null` where `a.b` can also be
+                // `undefined` and more of the chain follows: `!a || a.b === null || !a.b.c`.
+                if goes_on
+                    && builds_one_chain
+                    && stops_at_calls
+                    && first == T::NotBoolean
+                    && operand.comparison_type == T::StrictEqualNull
+                    && sub_chain
+                        .operands
+                        .first()
+                        .is_some_and(|it| !tsgolint_is_access_expression(it.compared_name.expr()))
+                    && matches!(tsgolint_nullable_types(operand.compared_name.expr()), (true, true, _))
+                    && chain.get(i + 1).is_some_and(|next| {
+                        cx.state.compare_nodes(operand.compared_name, next.compared_name) == Subset
+                    })
+                {
+                    sub_chain.push(operand);
+                    let is_truncated = true;
+                    self.report_chain(cx, node, operator, &sub_chain.operands, false, is_truncated);
+                    return true;
+                }
                 if goes_on && cx.language().is_oxlint && tsgolint_leaves_chain_before(operator, first, operand) {
                     if builds_one_chain {
                         return true;

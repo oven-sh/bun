@@ -141,11 +141,6 @@ impl<T: Indexed> IdSet<T> {
     }
 
     #[inline]
-    pub fn len(&self) -> usize {
-        self.ids.len
-    }
-
-    #[inline]
     pub fn clear(&mut self) {
         self.ids.clear();
     }
@@ -315,13 +310,5 @@ impl<T: Indexed, V> Extend<(T, V)> for IdMap<T, V> {
         for (key, value) in iter {
             self.insert(key, value);
         }
-    }
-}
-
-impl<T: Indexed, V> FromIterator<(T, V)> for IdMap<T, V> {
-    fn from_iter<I: IntoIterator<Item = (T, V)>>(iter: I) -> Self {
-        let mut map = IdMap::default();
-        map.extend(iter);
-        map
     }
 }

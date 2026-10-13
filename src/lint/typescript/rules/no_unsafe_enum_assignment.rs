@@ -154,17 +154,15 @@ impl<'a> TypeCache<'a> {
                     Some((_, Some(false))) => {}
                     Some((part, None)) => break part,
                     Some((_, Some(true))) => {
-                        for &(outer, _) in &open {
-                            self.generic_types.insert(outer, true);
-                        }
+                        self.generic_types
+                            .extend(open.iter().map(|it| (it.0, true)));
                         return true;
                     }
                 }
             };
         }
-        for &(outer, _) in &open {
-            self.generic_types.insert(outer, true);
-        }
+        self.generic_types
+            .extend(open.iter().map(|it| (it.0, true)));
         true
     }
 
@@ -307,14 +305,11 @@ fn describe_enum_types(types: &[Type]) -> Vec<u8> {
 
 fn report<'a>(cx: &mut Context<'a>, node: Span, message: Message, receiver_types: &[Type<'a>]) {
     let enum_names = match receiver_types {
-        &[only] => match cx.state.descriptions.get(only).cloned() {
-            Some(description) => description,
-            None => {
-                let description = describe_enum_types(receiver_types);
-                cx.state.descriptions.insert(only, description.clone());
-                description
-            }
-        },
+        &[only] => cx
+            .state
+            .descriptions
+            .get_or_insert_with(only, || describe_enum_types(receiver_types))
+            .clone(),
         _ => describe_enum_types(receiver_types),
     };
     if cx.state.is_about_itself {

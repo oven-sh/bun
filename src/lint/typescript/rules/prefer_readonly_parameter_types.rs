@@ -1,6 +1,11 @@
 use bun_lint::prelude::*;
-use bun_lint::types::utils::{ReadonlynessOptions, is_type_branded_literal_like, is_type_readonly};
-use bun_lint::types::{IdMap, Type};
+use bun_lint::types::tsutils::{is_intersection_type, is_object_type, is_union_type};
+use bun_lint::types::utils::{
+    ReadonlynessOptions, is_type_branded_literal_like, is_type_readonly, type_matches_some_specifier,
+};
+use bun_lint::types::{
+    CheckFlags, IdMap, IdSet, ModifierFlags, NodeFlags, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type,
+};
 
 /// Require function parameters to be typed as `readonly` to prevent accidental mutation of inputs.
 pub struct PreferReadonlyParameterTypes {
@@ -25,6 +30,115 @@ fn get_parameter_type(param: Param<'_>, is_oxlint: bool) -> Type<'_> {
     match param.default().is_some() || param.is_rest() {
         true => param.type_at_location(),
         false => param.pat().ty(),
+    }
+}
+
+/// tsgolint's `propertyHasPrivateIdentifierName`
+fn property_has_private_identifier_name(property: TsSymbol<'_>) -> bool {
+    let is_private_identifier =
+        |declaration: TsNode<'_>| declaration.name().is_some_and(|name| name.kind() == SyntaxKind::PrivateIdentifier);
+    match property.value_declaration() {
+        Some(declaration) => is_private_identifier(declaration),
+        None => property.declarations().any(is_private_identifier),
+    }
+}
+
+/// tsgolint's `propertyIsReadonly`, with `checker.isReadonlySymbol`: by the symbol, where typescript-eslint asks every
+/// declaration.
+fn property_is_readonly(property: TsSymbol<'_>) -> bool {
+    let check_flags = property.check_flags();
+    if check_flags.intersects(CheckFlags::READONLY | CheckFlags::SYNTHETIC_METHOD)
+        || property.has_flags(SymbolFlags::ENUM_MEMBER)
+        || property.flags() & SymbolFlags::ACCESSOR == SymbolFlags::GET_ACCESSOR
+    {
+        return true;
+    }
+    let Some(declaration) = property.value_declaration() else {
+        return check_flags.contains(CheckFlags::MAPPED);
+    };
+    declaration.has_modifier(ModifierFlags::READONLY)
+        || property.has_flags(SymbolFlags::METHOD) && check_flags.contains(CheckFlags::MAPPED)
+        || property.has_flags(SymbolFlags::VARIABLE) && declaration.flags().intersects(NodeFlags::CONST | NodeFlags::USING)
+}
+
+/// tsgolint's `isTypeReadonlyRecurser` and what it calls, which are part of its rule.
+struct Recurser<'o, 'a> {
+    options: &'o ReadonlynessOptions,
+    seen_types: IdSet<Type<'a>>,
+}
+
+impl<'a> Recurser<'_, 'a> {
+    fn is_seen_or_readonly(&mut self, ty: Type<'a>) -> bool {
+        self.seen_types.contains(ty) || self.is_type_readonly_recurser(ty)
+    }
+
+    /// `None`: neither an array nor a tuple.
+    fn is_type_readonly_array_or_tuple(&mut self, ty: Type<'a>) -> Option<bool> {
+        if ty.is_array_type() {
+            if ty.get_symbol().is_some_and(|symbol| symbol.escaped_name() == b"Array") {
+                return Some(false);
+            }
+        } else if !ty.tuple_target()?.readonly() {
+            return Some(false);
+        }
+        // tsgolint looks into a type argument that it has seen, and does not end for `type A = readonly A[]`.
+        Some(ty.get_type_arguments().iter().all(|type_arg| self.is_seen_or_readonly(type_arg)))
+    }
+
+    fn is_type_readonly_object(&mut self, ty: Type<'a>) -> bool {
+        let properties = ty.get_properties();
+        for property in properties {
+            let is_skipped = self.options.treat_methods_as_readonly && property.has_flags(SymbolFlags::METHOD);
+            if !is_skipped && !property_is_readonly(property) && !property_has_private_identifier_name(property) {
+                return false;
+            }
+        }
+        for property in properties {
+            if property.has_flags(SymbolFlags::METHOD) || property_has_private_identifier_name(property) {
+                continue;
+            }
+            let property_type = ty.get_type_of_property(property.name()).unwrap_or_else(|| property.get_type());
+            if !self.is_seen_or_readonly(property_type) {
+                return false;
+            }
+        }
+        for info in ty.get_index_infos() {
+            if !info.is_readonly() || info.ty() != ty && !self.is_seen_or_readonly(info.ty()) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn is_type_readonly_recurser(&mut self, ty: Type<'a>) -> bool {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            return true;
+        }
+        self.seen_types.insert(ty);
+        if type_matches_some_specifier(ty, &self.options.allow) {
+            return true;
+        }
+        if is_union_type(ty) {
+            return ty.types().iter().all(|t| self.is_seen_or_readonly(t));
+        }
+        if is_intersection_type(ty) {
+            // Readonly arrays and tuples have methods, which look mutable.
+            return match ty.types().iter().any(|t| t.is_array_type() || t.is_tuple_type()) {
+                true => ty.types().iter().all(|t| self.is_seen_or_readonly(t)),
+                false => self.is_type_readonly_object(ty),
+            };
+        }
+        if !is_object_type(ty) {
+            return true;
+        }
+        // A type that is only a function.
+        if !ty.get_call_signatures().is_empty() && ty.get_properties().is_empty() {
+            return true;
+        }
+        match self.is_type_readonly_array_or_tuple(ty) {
+            Some(is_readonly) => is_readonly,
+            None => self.is_type_readonly_object(ty),
+        }
     }
 }
 
@@ -67,14 +181,14 @@ impl Rule for PreferReadonlyParameterTypes {
                 continue;
             }
             let ty = get_parameter_type(param, is_oxlint);
-            let is_mutable = match cx.state.get(ty).copied() {
-                Some(is_mutable) => is_mutable,
-                None => {
-                    let is_mutable = !is_type_readonly(ty, &self.readonlyness) && !is_type_branded_literal_like(ty);
-                    cx.state.insert(ty, is_mutable);
-                    is_mutable
-                }
-            };
+            let is_mutable = *cx.state.get_or_insert_with(ty, || {
+                let is_readonly = match is_oxlint {
+                    true => Recurser { options: &self.readonlyness, seen_types: IdSet::new() }
+                        .is_type_readonly_recurser(ty),
+                    false => is_type_readonly(ty, &self.readonlyness),
+                };
+                !is_readonly && !is_type_branded_literal_like(ty)
+            });
             if is_mutable {
                 // oxlint points at the decorators of what is no parameter property.
                 let place = match is_oxlint && !is_parameter_property {

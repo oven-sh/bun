@@ -1426,7 +1426,9 @@ module.exports = {
       found({
         ...files,
         ...react,
-        ...packaged("eslint-plugin-react", "react"),
+        // ESLint 8 looks for the package. The rule that runs is Bun's.
+        "node_modules/eslint-plugin-react/package.json": `{ "name": "eslint-plugin-react", "version": "7.37.5", "main": "index.js" }`,
+        "node_modules/eslint-plugin-react/index.js": `module.exports = { rules: { "jsx-key": { create: () => ({}) } } };\n`,
         ".eslintrc.json": `{ "root": true, "parserOptions": { "sourceType": "module", "ecmaVersion": 2022, "ecmaFeatures": { "jsx": true } } }`,
       }),
     ]);

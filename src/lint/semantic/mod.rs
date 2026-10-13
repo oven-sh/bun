@@ -50,11 +50,31 @@
 //!   resolve to. The name of a class *expression* is a symbol of the scope of the class, as in
 //!   ESLint.
 //! - `x as const` has no reference to a type `const`.
-//! - References are in source order, but for the names of a destructuring pattern, which come
-//!   before what is in its defaults and computed keys, as in ESLint. ESLint has them in the order
-//!   it visits them, which also differs from the source in this: the type parameters of a function
-//!   after its parameters and its return type, the type of a variable after its initializer, the
-//!   decorators of a member after the member, the index of `a[b]` in a pattern before `a`.
+//! - `(a.b as T)++` has one reference to `T`. typescript-eslint visits the type twice.
+//! - In `[a as T] = b` the `T` is a type that is read. typescript-eslint takes every name in the
+//!   type of an assertion in a destructuring pattern for a variable that is written.
+//!
+//! # The order of references
+//!
+//! The scope manager makes the references in the order in which it visits the nodes.
+//! [`Scope::references`] and [`File::references_as_visited`] have that order, so the first
+//! reference to a name is the one that a rule for ESLint finds first. It is worked out when one of
+//! them is asked for the first time. It is the order of the source, but for this:
+//! - the names of a destructuring pattern come before what is in its defaults and computed keys,
+//!   and the index of `a[b]` in a pattern, or at the head of a `for`-`in` or `for`-`of`, before `a`
+//! - the type of a variable comes after its initializer, that of a parameter after its default,
+//!   that of a property of a class after its value and its decorators
+//! - the type arguments of a call, a `new` and a tagged template come after the arguments
+//! - the type parameters of a function come after its parameters and its return type, those of a
+//!   class after what it extends. Signatures and function types are visited as they are written
+//! - the type of `<T>e` comes after `e`, and that of `e as T` before `e` where it is assigned to:
+//!   `(e as T) = 1`, `(e as T)++`
+//! - the decorators of a member come after the member, those of the parameters of a method before
+//!   all its parameters
+//! - the use that JSX makes of `React` is where the first element is
+//!
+//! [`Symbol::references`] has only the first half of the first of these. [`File::references`]
+//! and what else says so is in source order.
 
 use crate::ast::{
     Alias, Class, Enum, EnumMember, Expr, ExprKind, File, Func, Ident, Import, ImportEquals,
@@ -68,6 +88,7 @@ use bun_sema::hir;
 use rustc_hash::FxHashSet;
 use std::cell::{OnceCell, RefCell};
 
+mod order;
 mod references;
 mod scopes;
 mod table_of_oxc;
@@ -252,8 +273,8 @@ impl<'a> Symbol<'a> {
         all.iter().map(move |&decl| Declaration::new(file, decl))
     }
 
-    /// Everything in the file that refers to it, in [ESLint's order](self), which is the source
-    /// order but for the names of destructuring patterns with defaults. A declaration is not a
+    /// Everything in the file that refers to it, in source order but for the names of destructuring
+    /// patterns, which [come before the defaults](self#the-order-of-references). A declaration is not a
     /// reference, but one that gives its name a value makes a write reference of the name, as in
     /// ESLint: `let a = 1`, `function f(a = 1) {}`, `for (const a of b)`.
     #[inline]
@@ -1024,14 +1045,14 @@ impl<'a> Scope<'a> {
         self.data().is_strict
     }
 
-    /// The references that are written directly in it, not in a scope inside it, in source order:
-    /// ESLint's `scope.references`.
+    /// The references that are written directly in it, not in a scope inside it: ESLint's
+    /// `scope.references`, in [its order](self#the-order-of-references).
     pub fn references(
         self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
         Reference::all_at(
             self.file,
-            self.file.reference_list().in_scopes(self.id.0, self.id.0),
+            (self.file.reference_list()).in_scopes(self.file, self.id.0, self.id.0),
         )
     }
 
@@ -1040,7 +1061,8 @@ impl<'a> Scope<'a> {
     pub fn through(self) -> impl Iterator<Item = Reference<'a>> + 'a {
         let (file, id) = (self.file, self.id.0);
         let (tree, variables) = (file.scope_tree(), file.variables());
-        let all = Reference::all_at(file, file.reference_list().in_scopes(id, self.data().last));
+        let in_it = (file.reference_list()).in_scopes_in_some_order(id, self.data().last);
+        let all = Reference::all_at(file, in_it);
         all.filter(
             move |it| match variables.list.get(it.raw().variable as usize) {
                 Some(variable) => !tree.contains(id, variable.scope),
@@ -1205,12 +1227,27 @@ impl<'a> File<'a> {
         within.iter().map(move |raw| Reference { file: self, raw })
     }
 
-    /// Every reference, in [the order ESLint makes them](self).
+    /// Every reference, in [the order ESLint makes them](self#the-order-of-references).
     pub fn references_as_visited(
         &'a self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        let references = self.reference_list();
-        let (all, order) = (&references.all[..], references.visiting_order());
+        self.references_in(self.reference_list().as_made(self))
+    }
+
+    /// Every reference, in source order but for the names of destructuring patterns, which come before what else is in the
+    /// pattern.
+    pub(crate) fn references_with_names_of_patterns_first(
+        &'a self,
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        self.references_in(self.reference_list().visiting_order())
+    }
+
+    /// `order`: indices into `References::all`, or nothing for the order of that.
+    fn references_in(
+        &'a self,
+        order: &'a [u32],
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        let all = &self.reference_list().all[..];
         (0..all.len()).map(move |i| Reference {
             file: self,
             raw: &all[order.get(i).map_or(i, |&it| it as usize)],

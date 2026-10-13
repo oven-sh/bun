@@ -514,15 +514,14 @@ fn use_tabs_in<'s>(
     Some(value == b"true")
 }
 
-/// Of a file that `--config` names: `.oxfmtrc.json`, `oxfmt.config.ts`, `config/oxfmtrc.json`.
 /// Where the first key is that a map in `value` has for the second time. Only scalars are compared, by what they stand for:
-/// `a` is `"a"`, and `1` is not `"1"`.
-fn repeated_key(value: &Expr) -> Option<i32> {
+/// `a` is `"a"`. `as_texts`: `1` is `"1"` too.
+fn repeated_key(value: &Expr, as_texts: bool) -> Option<i32> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
     match &value.data {
-        Data::EArray(it) => it.slice().iter().find_map(repeated_key),
+        Data::EArray(it) => (it.slice().iter()).find_map(|it| repeated_key(it, as_texts)),
         Data::EObject(it) => {
             let mut seen: Vec<Json> = Vec::new();
             for property in it.properties.iter() {
@@ -530,13 +529,18 @@ fn repeated_key(value: &Expr) -> Option<i32> {
                     continue;
                 };
                 let is_scalar = !matches!(key.data, Data::EArray(_) | Data::EObject(_));
-                if let Some(scalar) = json::from_parsed(key).filter(|_| is_scalar) {
+                if let Some(mut scalar) = json::from_parsed(key).filter(|_| is_scalar) {
+                    if as_texts && scalar.as_str().is_none() {
+                        let mut text = Vec::new();
+                        write_json(&mut text, &scalar);
+                        scalar = Json::String(text);
+                    }
                     if seen.contains(&scalar) {
                         return Some(key.loc.start);
                     }
                     seen.push(scalar);
                 }
-                if let Some(at) = repeated_key(value) {
+                if let Some(at) = repeated_key(value, as_texts) {
                     return Some(at);
                 }
             }
@@ -546,20 +550,96 @@ fn repeated_key(value: &Expr) -> Option<i32> {
     }
 }
 
-/// What the `yaml` package, which reads YAML for Prettier, says about a key that a map in `text` has twice: its
-/// `prettifyError`.
-fn repeated_key_in_yaml(text: &[u8]) -> Option<Vec<u8>> {
-    use bstr::ByteSlice;
-    // Here `<<` puts the keys of another map into this one. There it is a key like any other.
+/// The first key that a map in a text has for the second time.
+struct RepeatedKey<'a> {
+    /// Without a byte order mark.
+    text: &'a [u8],
+    /// What of `text` is before the key.
+    before: &'a [u8],
+}
+
+fn before_repeated_key(text: &[u8], as_texts: bool) -> Option<RepeatedKey<'_>> {
+    // Here `<<` puts the keys of another map into this one.
     if strings::contains(text, b"<<") {
         return None;
     }
-    let at = json::with_parsed(Notation::Yaml, text, repeated_key).ok()??;
+    let find = |it: &Expr| repeated_key(it, as_texts);
+    let at = json::with_parsed(Notation::Yaml, text, find).ok()??;
     let text = strings::without_utf8_bom(text);
     let before = text.get(..usize::try_from(at).ok()?)?;
     // A key in quotes is where its text starts.
     let before = before.strip_suffix(b"\"").unwrap_or(before);
     let before = before.strip_suffix(b"'").unwrap_or(before);
+    Some(RepeatedKey { text, before })
+}
+
+/// What js-yaml, which reads YAML for ESLint 8, throws about a key that a map in `text` has twice: the message of its
+/// `YAMLException`, with `makeSnippet`.
+pub(crate) fn duplicated_mapping_key(text: &[u8]) -> Option<Vec<u8>> {
+    use bstr::ByteSlice;
+    let RepeatedKey { text, before } = before_repeated_key(text, true)?;
+    let position = before.chars().count();
+    let mut buffer: Vec<char> = text.chars().collect();
+    if !matches!(buffer.last(), Some('\n' | '\r')) {
+        buffer.push('\n');
+    }
+    // Where each line starts and ends.
+    let mut lines: Vec<(usize, usize)> = Vec::new();
+    let (mut start, mut at) = (0, 0);
+    while let Some(&c) = buffer.get(at) {
+        let len = match (c, buffer.get(at + 1)) {
+            ('\r', Some('\n')) => 2,
+            ('\n' | '\r' | '\0', _) => 1,
+            _ => 0,
+        };
+        if len > 0 {
+            lines.push((start, at));
+            start = at + len;
+        }
+        at += len.max(1);
+    }
+    let found = lines.iter().position(|it| position <= it.1)?;
+    let number_width = (found + 2).min(lines.len()).to_string().len();
+    let half = (79 - (1 + number_width + 3)) / 2 - 1;
+    let column = position - lines[found].0;
+    // `getLine`: the text, and where that column is in it.
+    let line = |at: usize| {
+        let (mut start, mut end) = lines[at];
+        let position = start + column;
+        let (mut head, mut tail) = ("", "");
+        if position > start + half {
+            head = " ... ";
+            start = position - half + head.len();
+        }
+        if end > position + half {
+            tail = " ...";
+            end = position + half - tail.len();
+        }
+        let shown = buffer.get(start..end).unwrap_or_default().iter();
+        let shown: String = shown.map(|&c| if c == '\t' { '→' } else { c }).collect();
+        let text = format!(" {:>number_width$} | {head}{shown}{tail}\n", at + 1);
+        (text, (position + head.len()).saturating_sub(start))
+    };
+    let mut out = format!("duplicated mapping key ({}:{})\n\n", found + 1, column + 1);
+    for at in found.saturating_sub(3)..found {
+        out.push_str(&line(at).0);
+    }
+    let (text, caret) = line(found);
+    out.push_str(&text);
+    out.extend(std::iter::repeat_n('-', 1 + number_width + 3 + caret));
+    out.push_str("^\n");
+    for at in (found + 1..lines.len()).take(2) {
+        out.push_str(&line(at).0);
+    }
+    out.pop();
+    Some(out.into_bytes())
+}
+
+/// What the `yaml` package, which reads YAML for Prettier, says about a key that a map in `text` has twice: its
+/// `prettifyError`.
+fn repeated_key_in_yaml(text: &[u8]) -> Option<Vec<u8>> {
+    use bstr::ByteSlice;
+    let RepeatedKey { text, before } = before_repeated_key(text, false)?;
     let line_start = strings::last_index_of_char(before, b'\n').map_or(0, |it| it + 1);
     let line_end = strings::index_of_char_usize(&text[line_start..], b'\n')
         .map_or(text.len(), |it| line_start + it);
@@ -601,6 +681,7 @@ fn repeated_key_in_yaml(text: &[u8]) -> Option<Vec<u8>> {
     Some(out.into_bytes())
 }
 
+/// Of a file that `--config` names: `.oxfmtrc.json`, `oxfmt.config.ts`, `config/oxfmtrc.json`.
 fn is_name_of_oxfmt(name: &[u8]) -> bool {
     strings::contains(name, b"oxfmt")
 }

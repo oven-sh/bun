@@ -520,7 +520,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return self.error_at_token(1436, &[]);
         }
         if self.token() == T::OpenParen {
-            self.error_at_token(1441, &[]);
+            match self.options.dialect.oxc {
+                true => self.expected(T::Semicolon),
+                false => self.error_at_token(1441, &[]),
+            }
             return self.next();
         }
         match (has_initializer, has_type, name) {
@@ -972,8 +975,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ListKind::HeritageClauseElement => {
                 matches!(token, T::OpenBrace | T::Extends | T::Implements)
             }
+            // "For better error recovery, if we see an '=>' then we just stop immediately." oxc does not.
             ListKind::VariableDeclarations => {
-                self.can_parse_semicolon() || matches!(token, T::In | T::Of | T::EqualsGreaterThan)
+                self.can_parse_semicolon()
+                    || matches!(token, T::In | T::Of)
+                    || token == T::EqualsGreaterThan && !self.options.dialect.oxc
             }
             ListKind::TypeParameters => matches!(
                 token,

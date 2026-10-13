@@ -6,7 +6,7 @@
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
-    Class, Expr, ExprKind, File, Flags, FnKind, Func, Handle, MemberKind, Node, Pat, Stmt,
+    self, Class, Expr, ExprKind, File, Flags, FnKind, Func, Handle, MemberKind, Node, Pat, Stmt,
     StmtKind, StmtTag, TypeKind, TypeNode, TypeParam, UnOp, VarDecl, VarKind,
 };
 use crate::language::SourceType;
@@ -166,24 +166,19 @@ impl<'a> Checks<'a> {
             match above {
                 // The head of an arrow function is in the context of what is around, too.
                 Node::Func(func) if func.kind() == FnKind::Arrow => {
-                    let is_head = matches!(below, Node::Param(_) | Node::TypeParam(_));
+                    let is_head =
+                        matches!(below, Node::Param(_) | Node::Type(_) | Node::TypeParam(_));
                     if func.is_async() || !is_head {
                         return Some(func.is_async());
                     }
                 }
-                Node::Func(func) => {
-                    let is_block = func.kind() == FnKind::StaticBlock;
-                    return Some(has_own_context(func) && (func.is_async() || is_block));
+                Node::Func(func) if has_own_context(func) => {
+                    return Some(func.is_async() || func.kind() == FnKind::StaticBlock);
                 }
-                Node::Type(_) => return Some(false),
                 Node::Member(member) if member.init().map(Node::Expr) == Some(below) => {
                     return Some(false);
                 }
-                Node::Stmt(it)
-                    if it.tag() == StmtTag::Module || it.flags().contains(Flags::AMBIENT) =>
-                {
-                    return Some(false);
-                }
+                Node::Stmt(it) if is_read_outside_the_await_context(it) => return Some(false),
                 _ => {}
             }
             below = above;
@@ -202,6 +197,81 @@ impl<'a> Checks<'a> {
         }
         self.settled.push(at);
         let error = SyntaxError::of_oxc(Span::new(arrow, arrow + 2), "Unexpected token");
+        self.errors.push(error.stage(Stage::Fatal));
+        true
+    }
+
+    /// What oxc says about `pattern` where it reads it as a type: an object pattern as a type literal, an array pattern as a
+    /// tuple.
+    fn pattern_as_type(&self, pattern: Pat<'a>) -> Option<SyntaxError> {
+        let semicolon = |after: u32| {
+            let message =
+                "Expected a semicolon or an implicit semicolon after a statement, but found none";
+            SyntaxError::of_oxc(Span::empty(after), message).help("Try inserting a semicolon here")
+        };
+        let unexpected = |at: u32| self.error(at, b"Unexpected token".to_vec());
+        match pattern.kind() {
+            ast::PatKind::Object(properties) => properties.iter().find_map(|it| {
+                if it.is_rest() {
+                    return Some(unexpected(it.span().start));
+                }
+                let value = it.value();
+                let default = || it.default().map(|_| semicolon(value.span().end));
+                self.pattern_as_type(value).or_else(default)
+            }),
+            ast::PatKind::Array(elements) => elements.iter().find_map(|it| {
+                let Some(element) = it.pat() else {
+                    return Some(unexpected(skip_trivia(self.file.text(), it.span().start)));
+                };
+                let default = || {
+                    it.default()?;
+                    let (equals, ..) = self.token_after(element.span().end);
+                    let error = self.error(equals, b"Expected `,` or `]` but found `=`".to_vec());
+                    let opening = Span::new(pattern.span().start, pattern.span().start + 1);
+                    Some(
+                        error
+                            .says("`,` or `]` expected")
+                            .and(opening, "Opened here"),
+                    )
+                };
+                self.pattern_as_type(element).or_else(default)
+            }),
+            _ => None,
+        }
+    }
+
+    /// `({ await }: T) => void` where `await` is a keyword, at the name, and the same for `yield`. oxc tells a function type
+    /// from a type in parentheses by what follows the `(`. A pattern that it has an error about is none, so it reads a type.
+    /// Returns whether it gives up on that.
+    fn function_type_as_type(&mut self, func: Func<'a>, at: u32) -> bool {
+        let Some(first) = func.params().first().filter(|it| {
+            it.pat().span().contains_offset(at)
+                && !it.is_rest()
+                && func.kind() == FnKind::FunctionType
+                && func.type_params().is_empty()
+                && func.this_param().is_none()
+        }) else {
+            return false;
+        };
+        let pattern = first.pat();
+        self.settled.push(at);
+        // One of the names in it has been here.
+        if self.settled.contains(&pattern.span().start) {
+            return true;
+        }
+        let after_pattern = || {
+            let (mut next, mut token, _) = self.token_after(pattern.span().end);
+            if token == b"?" {
+                (next, token, _) = self.token_after(next + 1);
+            }
+            let message = [b"Expected `)` but found `", token, b"`"].concat();
+            (token != b")").then(|| self.error(next, message).says("`)` expected"))
+        };
+        let Some(error) = self.pattern_as_type(pattern).or_else(after_pattern) else {
+            self.settled.pop();
+            return false;
+        };
+        self.settled.push(pattern.span().start);
         self.errors.push(error.stage(Stage::Fatal));
         true
     }
@@ -291,20 +361,11 @@ impl<'a> Checks<'a> {
                 SyntaxError::of_oxc(Span::empty(after), message)
                     .help("Try inserting a semicolon here")
             }
+            // An escape, however it is written, is part of a name for oxc's lexer, which has reported it.
+            false if token.starts_with(b"\\") => return,
             false => {
                 let label = Span::new(next, next + token.len() as u32);
-                match is_reserved_word(token) {
-                    true => SyntaxError::of_oxc(
-                        label,
-                        [
-                            b"Identifier expected. '",
-                            token,
-                            b"' is a reserved word that cannot be used here.",
-                        ]
-                        .concat(),
-                    ),
-                    false => SyntaxError::of_oxc(label, "Unexpected token"),
-                }
+                SyntaxError::of_oxc(label, "Unexpected token")
             }
         };
         self.errors.push(error.stage(Stage::Fatal));
@@ -507,49 +568,6 @@ impl<'a> Checks<'a> {
     }
 }
 
-/// oxc's `Kind::is_reserved_keyword`, but for `await` and `yield`, which can be names.
-fn is_reserved_word(word: &[u8]) -> bool {
-    matches!(
-        word,
-        b"break"
-            | b"case"
-            | b"catch"
-            | b"class"
-            | b"const"
-            | b"continue"
-            | b"debugger"
-            | b"default"
-            | b"delete"
-            | b"do"
-            | b"else"
-            | b"enum"
-            | b"export"
-            | b"extends"
-            | b"false"
-            | b"finally"
-            | b"for"
-            | b"function"
-            | b"if"
-            | b"import"
-            | b"in"
-            | b"instanceof"
-            | b"new"
-            | b"null"
-            | b"return"
-            | b"super"
-            | b"switch"
-            | b"this"
-            | b"throw"
-            | b"true"
-            | b"try"
-            | b"typeof"
-            | b"var"
-            | b"void"
-            | b"while"
-            | b"with"
-    )
-}
-
 /// The `e` of `catch (e)` is a declaration here, and none to oxc.
 fn is_catch_parameter(it: VarDecl) -> bool {
     matches!(it.parent(), Node::Stmt(it) if matches!(it.kind(), StmtKind::Try { .. }))
@@ -595,6 +613,34 @@ fn has_own_context(func: Func) -> bool {
         ),
         _ => true,
     }
+}
+
+/// oxc leaves the await context for a declaration that starts with one of these words. One after `export` or a decorator does
+/// not start with it. A type is in the context of what is around it.
+fn is_read_outside_the_await_context(it: Stmt) -> bool {
+    let text = it.text();
+    matches!(
+        it.tag(),
+        StmtTag::Class
+            | StmtTag::Enum
+            | StmtTag::Fn
+            | StmtTag::Interface
+            | StmtTag::Module
+            | StmtTag::TypeAlias
+            | StmtTag::Var
+    ) && matches!(
+        text.get(..token_len(text)),
+        Some(
+            b"abstract"
+                | b"declare"
+                | b"enum"
+                | b"global"
+                | b"interface"
+                | b"module"
+                | b"namespace"
+                | b"type"
+        )
+    )
 }
 
 /// Whether oxc's parser is in the yield context at `node`. Unlike the await context, that goes on in types.
@@ -709,6 +755,18 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 // The parser here reads the head of an arrow function outside the context around it, and knows late that one is
                 // async.
                 let is_keyword_here = match function_of_parameter(node) {
+                    Some((func, false))
+                        if !has_own_context(func)
+                            && match name == known::r#await {
+                                true => checks.is_in_async(Node::Func(func), raw.pos),
+                                false => {
+                                    name == known::r#yield && is_in_generator(Node::Func(func))
+                                }
+                            }
+                            && checks.function_type_as_type(func, raw.pos) =>
+                    {
+                        false
+                    }
                     Some((func, true))
                         if name == known::r#await
                             && func.kind() == FnKind::Arrow
@@ -719,7 +777,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                     }
                     Some((func, _)) if name == known::r#await => {
                         func.is_async()
-                            || func.kind() == FnKind::Arrow
+                            || (func.kind() == FnKind::Arrow || !has_own_context(func))
                                 && checks.is_in_async(Node::Func(func), raw.pos)
                     }
                     Some((func, is_all)) if name == known::r#yield => {
@@ -809,6 +867,18 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 && checks.is_module_at(raw.name_pos)
             {
                 checks.keyword_in_its_context(raw.name, raw.name_pos);
+            }
+            if let hir::ImportEqualsTarget::Entity(names) = raw.target
+                && let Some(first) = hir.names.get(names.start as usize)
+                && !names.is_empty()
+                && is_keyword(first.text)
+            {
+                checks.check(
+                    Role::Reference,
+                    first.text,
+                    first.pos(),
+                    statement(raw.stmt),
+                );
             }
         }
         let named = (hir

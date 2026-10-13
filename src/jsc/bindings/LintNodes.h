@@ -9,6 +9,7 @@
 #include <JavaScriptCore/WriteBarrier.h>
 #include <array>
 #include <span>
+#include <utility>
 #include <wtf/Vector.h>
 
 namespace Bun {
@@ -43,6 +44,7 @@ struct LintNodeState {
         Deprecated,
         False,
         EmptyList,
+        Value,
     };
 
     // The nodes of a type.
@@ -60,27 +62,43 @@ struct LintNodeState {
         uint32_t firstTemplate { 0 };
     };
 
+    // How a node is filled in from its template. It's made with the template.
+    struct Plan {
+        // The offsets of what is the same in all the nodes. The template has it.
+        WTF::Vector<uint8_t> same;
+        // The others: an offset, and a `What` or the number of a field.
+        WTF::Vector<std::pair<uint8_t, uint8_t>> own;
+        // The offset of `parent`, which is one of `same` until the parent is made.
+        uint8_t parent { 0 };
+    };
+    struct Template {
+        JSC::JSObject* like;
+        const Plan* plan;
+    };
+
     bool isLoaded() const { return !m_words.isEmpty(); }
     // Asks Rust. Something has to be handled at the time. Returns false if the answer isn't as expected.
     bool load(JSC::JSGlobalObject*, LintHost*);
 
-    LayoutKind kindFor(bool isEspree, bool isOxlint, bool shortensIdentifiers) const
+    LayoutKind kindFor(bool isEspree, bool isOxlint, bool shortensNodes) const
     {
         if (isOxlint)
-            return shortensIdentifiers ? OxlintJavaScript : Oxlint;
+            return shortensNodes ? OxlintJavaScript : Oxlint;
         return isEspree ? Espree : TypeScript;
     }
 
     size_t typeCount() const { return m_typeNames.size(); }
     const Layout& layout(LayoutKind kind, uint8_t type) const { return m_layouts[kind][type]; }
     // An object with the Structure of the nodes, and with what is the same in all of them. `which`: a bit for each of the fields in
-    // `leftOut`, the first being the lowest: whether it's there.
-    JSC::JSObject* templateFor(JSC::JSGlobalObject* globalObject, LintHost* host, LayoutKind kind, uint8_t type, unsigned which, bool isAlternate)
+    // `leftOut`, the first being the lowest: whether it's there. The object is null if an exception was thrown.
+    Template templateFor(JSC::JSGlobalObject* globalObject, LintHost* host, LayoutKind kind, uint8_t type, unsigned which, bool isAlternate)
     {
         const Layout& layout = m_layouts[kind][type];
         unsigned index = layout.firstTemplate + which + (isAlternate ? 1u << std::popcount(layout.leftOut) : 0);
         JSC::JSObject* made = m_templates[index].get();
-        return made ? made : makeTemplate(globalObject, host, kind, type, which, isAlternate, index);
+        if (!made) [[unlikely]]
+            made = makeTemplate(globalObject, host, kind, type, which, isAlternate, index);
+        return { made, &m_plans[index] };
     }
     // `node.type`
     JSC::JSString* typeName(JSC::VM&, LintHost*, uint8_t type);
@@ -97,6 +115,7 @@ struct LintNodeState {
     void visit(Visitor& visitor)
     {
         visitor.append(deprecated);
+        visitor.append(m_lazyEmptyList);
         for (auto& it : m_visitorKeys)
             visitor.append(it);
         for (auto& it : m_sharedPrototypes)
@@ -128,6 +147,10 @@ private:
     static constexpr std::array<ASCIILiteral, 5> keysOfOtherTypes { "argument"_s, ""_s, "expression"_s, "typeAnnotation"_s, "name arguments"_s };
     // Empty until they are needed.
     WTF::Vector<JSC::WriteBarrier<JSC::JSObject>> m_templates;
+    // One for each of the templates.
+    WTF::Vector<Plan> m_plans;
+    // What a template has for `What::EmptyList`.
+    JSC::WriteBarrier<JSC::JSCell> m_lazyEmptyList;
     WTF::Vector<JSC::WriteBarrier<JSC::JSString>> m_typeNames;
     WTF::Vector<JSC::WriteBarrier<JSC::JSString>> m_knownStrings;
     // By `LayoutKind`

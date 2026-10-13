@@ -90,6 +90,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.f.classes.get(class.idx()).is_some_and(lacks_name) {
             let is_in_list_of_file = self.lists == 1 << ListKind::SourceElements as u32;
             match self.recovers() {
+                // The linter has oxc's words for it.
+                _ if is_ecmascript && self.options.dialect.oxc => {}
                 true if is_in_list_of_file => {}
                 true if !is_ecmascript => {
                     if let Some(class) = self.f.classes.get_mut(class.idx()) {
@@ -705,12 +707,21 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.function_rest_or(code, fn_kind, fn_flags, (name, name_pos), start.pos);
         } else {
             // `parsePropertyDeclaration`
-            if !flags.contains(Flags::OPTIONAL)
-                && self.token() == T::Exclamation
-                && !self.newline_before()
-            {
-                self.next();
-                member.flags |= Flags::DEFINITE;
+            if self.token() == T::Exclamation {
+                let is_definite = match question {
+                    None => !self.newline_before(),
+                    // oxc reports the two and goes on.
+                    Some(question) => {
+                        if self.is_for_oxc() {
+                            oxc::optional_and_definite(&mut self.f.diagnostics, question);
+                        }
+                        self.is_for_oxc()
+                    }
+                };
+                if is_definite {
+                    self.next();
+                    member.flags |= Flags::DEFINITE;
+                }
             }
             member.ty = self.type_annotation();
             let cleared = ctx::YIELD | ctx::AWAIT | ctx::DISALLOW_IN | ctx::TOP_LEVEL;

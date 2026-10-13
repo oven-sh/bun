@@ -10,7 +10,7 @@ use crate::hir::{
 };
 use crate::resolve::Host;
 use crate::session::Session;
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 
@@ -217,6 +217,36 @@ impl Json {
                 out.push(b'}');
             }
         }
+    }
+
+    /// An object with `entries` as a text has them. A key that is written more than once is there once, at its first place and
+    /// with its last value: what `JSON.parse` makes of it, and an object to which each entry is assigned in turn. Everything that
+    /// reads a text makes its objects with this, so whoever walks the entries sees what [`Json::get`] finds.
+    pub fn object(entries: Vec<(Vec<u8>, Json)>) -> Json {
+        // Comparing all pairs is faster than hashing for the few keys that most objects have.
+        let has_repeats = match entries.len() {
+            0..=16 => (entries.iter().enumerate())
+                .any(|(at, entry)| entries[..at].iter().any(|it| it.0 == entry.0)),
+            len => {
+                let keys: FxHashSet<&[u8]> = entries.iter().map(|it| &it.0[..]).collect();
+                keys.len() < len
+            }
+        };
+        if !has_repeats {
+            return Json::Object(entries);
+        }
+        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut kept: Vec<(Vec<u8>, Json)> = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            match places.entry(key) {
+                Entry::Occupied(place) => kept[*place.get()].1 = value,
+                Entry::Vacant(place) => {
+                    kept.push((place.key().clone(), value));
+                    place.insert(kept.len() - 1);
+                }
+            }
+        }
+        Json::Object(kept)
     }
 
     /// Of two entries with one key the last counts, as for `JSON.parse`.
@@ -676,20 +706,11 @@ impl<'s> TsConfigSourceFile<'s> {
             ),
             // `convertObjectLiteralExpressionToJson`
             ExprKind::Object(_) => {
-                let mut result: Vec<(Vec<u8>, Json)> = Vec::new();
-                // `paths` can have thousands of keys.
-                let mut positions: FxHashMap<&[u8], usize> = Default::default();
-                for (p, key) in self.properties(e) {
+                let entries = self.properties(e).map(|(p, key)| {
                     let value = self.convert_property_value_to_json(hir[p].value);
-                    match positions.entry(key) {
-                        Entry::Occupied(at) => result[*at.get()].1 = value,
-                        Entry::Vacant(at) => {
-                            at.insert(result.len());
-                            result.push((key.to_vec(), value));
-                        }
-                    }
-                }
-                Json::Object(result)
+                    (key.to_vec(), value)
+                });
+                Json::object(entries.collect())
             }
             _ => Json::Null,
         }

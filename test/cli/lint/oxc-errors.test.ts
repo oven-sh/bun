@@ -782,8 +782,41 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["ts", "class A { a!?: number; }", [" | Expected `;` but found `?` |  | 12+1 `;` expected"]],
       [
         "ts",
+        "class A { a?! }",
+        [
+          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
+          "TS(1264) | Declarations with definite assignment assertions must also have type annotations. |  | 12+1",
+        ],
+      ],
+      [
+        "ts",
+        "class A { a?!; b c }",
+        [
+          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
+          "TS(1264) | Declarations with definite assignment assertions must also have type annotations. |  | 12+1",
+          " | Expected `;` but found `Identifier` |  | 17+1 `;` expected",
+        ],
+      ],
+      [
+        "ts",
         'class A { "a"?!: number; }',
         [" | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 13+2"],
+      ],
+      [
+        "ts",
+        "class A { a?!(): void }",
+        [
+          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
+          " | Expected `;` but found `(` |  | 13+1 `;` expected",
+        ],
+      ],
+      [
+        "ts",
+        "let a?!: number;",
+        [
+          " | Optional declaration is not allowed here | Remove the `?` | 5+1",
+          " | Expected a semicolon or an implicit semicolon after a statement, but found none | Try inserting a semicolon here | 6+0",
+        ],
       ],
       ["js ts", "class A { static constructor = 1 }", [" | Classes can't have a field named 'constructor' |  | 17+11"]],
       ["js ts", "class A { constructor = 1 }", [" | Expected `(` but found `=` |  | 22+1 `(` expected"]],
@@ -800,6 +833,26 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ],
       ["ts", "class A { constructor?: 1 }", [" | Expected `(` but found `?` |  | 21+1 `(` expected"]],
       ["js ts", "class A { constructor = 1; b c }", [" | Expected `(` but found `=` |  | 22+1 `(` expected"]],
+      ["ts", "export let = 1;", [" | Unexpected token |  | 11+1"]],
+      ["ts", "export let: for (;;) {}", [" | Unexpected token |  | 10+1"]],
+      ["ts", "namespace W { export let(); }", [" | Unexpected token |  | 24+1"]],
+      ["ts", "namespace W { export const = 1; }", [" | Unexpected token |  | 27+1"]],
+      ["ts", "namespace W { export var: 1; }", [" | Unexpected token |  | 24+1"]],
+      ["ts", "namespace W { export let }", [" | Unexpected token |  | 25+1"]],
+      ["ts", "namespace W { export let; }", [" | Unexpected token |  | 24+1"]],
+      ["ts", "namespace W { export let\n= 1; }", [" | Unexpected token |  | 25+1"]],
+      ["ts", "namespace W { export declare let: 1; }", [" | Unexpected token |  | 32+1"]],
+      ["ts", "declare let: 1;", [" | Unexpected token |  | 11+1"]],
+      ["ts", "declare let = 1;", [" | Unexpected token |  | 12+1"]],
+      ["js", "export let = 1;", [" | Unexpected token |  | 11+1"]],
+      ["js", "export const;", [" | Unexpected token |  | 12+1"]],
+      [
+        "ts",
+        "export let if = 1;",
+        [" | Identifier expected. 'if' is a reserved word that cannot be used here. |  | 11+2"],
+      ],
+      ["ts", "let = 1;", []],
+      ["ts", "const = 1;", [" | Unexpected token |  | 6+1"]],
     ],
   ],
   [
@@ -1071,6 +1124,22 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
           " | Expected `;` but found `Identifier` |  | 36+1 `;` expected",
         ],
       ],
+      [
+        "ts",
+        "class A { a?!: number; b c }",
+        [
+          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
+          " | Expected `;` but found `Identifier` |  | 25+1 `;` expected",
+        ],
+      ],
+      [
+        "ts",
+        "class A { a?!: number; m() { const a; } }",
+        [
+          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
+          " | Missing initializer in const declaration | Add an initializer (e.g. ` = undefined`) here | 35+1",
+        ],
+      ],
       ["js ts", "export {}; for (await of []) {}", [" | Unexpected token |  | 26+1"]],
       ["js ts", "function* g() { for (yield of []) {} }", [" | Unexpected token |  | 31+1"]],
       ["js ts", "a[];", [" | Unexpected token |  | 2+1"]],
@@ -1104,6 +1173,22 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["js ts", "function* g() { f(yield.a); }", [" | Unexpected token |  | 23+1"]],
       [
         "ts",
+        "(static satisfies any) = 1;",
+        [
+          "TS(1090) | 'static' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+6",
+          " | Expected `,` or `)` but found `any` |  | 18+3 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "{ (yield as any)++; }",
+        [
+          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 3+5",
+          " | Expected `,` or `)` but found `any` |  | 12+3 `,` or `)` expected | 2+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
         "(a as any b);",
         [" | Expected `,` or `)` but found `Identifier` |  | 10+1 `,` or `)` expected | 0+1 Opened here"],
       ],
@@ -1120,6 +1205,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
           " | Expected a semicolon or an implicit semicolon after a statement, but found none | Try inserting a semicolon here | 29+0",
         ],
       ],
+      ["ts", "namespace W { export let: for (;;) {} }", [" | Unexpected token |  | 24+1"]],
       [
         "ts",
         "function* g() { type yield = 1; }",
@@ -1255,6 +1341,177 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
         "(a = 1, {b: 2}) => 1;",
         [
           " | Expected a semicolon or an implicit semicolon after a statement, but found none | Try inserting a semicolon here | 15+0",
+        ],
+      ],
+      ["js ts", "function* w() { ({ yield = 1 } = {}); }", [" | Expected `:` but found `=` |  | 25+1 `:` expected"]],
+      ["js ts", "function* w() { x = { yield = 1 }; }", [" | Expected `:` but found `=` |  | 28+1 `:` expected"]],
+      ["js ts", "function* w() { ({ a, yield = 1 } = {}); }", [" | Expected `:` but found `=` |  | 28+1 `:` expected"]],
+      ["js ts", "function* w() { ({ yield }); }", [" | Expected `:` but found `}` |  | 25+1 `:` expected"]],
+      [
+        "ts",
+        "(static satisfies any) = 1;",
+        [
+          "TS(1090) | 'static' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+6",
+          " | Expected `,` or `)` but found `any` |  | 18+3 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(static a) = 1;",
+        [
+          "TS(1090) | 'static' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+6",
+          " | Expected `=>` but found `=` |  | 11+1 `=>` expected",
+        ],
+      ],
+      [
+        "ts",
+        "(static a);",
+        [
+          "TS(1090) | 'static' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+6",
+          " | Expected `=>` but found `;` |  | 10+1 `=>` expected",
+        ],
+      ],
+      [
+        "ts",
+        "(public a b);",
+        [
+          "TS(1090) | 'public' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+6",
+          " | Expected `,` or `)` but found `Identifier` |  | 10+1 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(readonly a b);",
+        [
+          "TS(1090) | 'readonly' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+8",
+          " | Expected `,` or `)` but found `Identifier` |  | 12+1 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(declare a b);",
+        [
+          "TS(1090) | 'declare' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+7",
+          " | Expected `,` or `)` but found `Identifier` |  | 11+1 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(abstract a b);",
+        [
+          "TS(1090) | 'abstract' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+8",
+          " | Expected `,` or `)` but found `Identifier` |  | 12+1 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(async a b);",
+        [" | Expected `,` or `)` but found `Identifier` |  | 7+1 `,` or `)` expected | 0+1 Opened here"],
+      ],
+      [
+        "ts",
+        "(override a b);",
+        [
+          "TS(1090) | 'override' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+8",
+          " | Expected `,` or `)` but found `Identifier` |  | 12+1 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(static a, b c);",
+        [
+          "TS(1090) | 'static' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+6",
+          " | Expected `,` or `)` but found `Identifier` |  | 13+1 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(a, static b c);",
+        [" | Expected `,` or `)` but found `Identifier` |  | 11+1 `,` or `)` expected | 0+1 Opened here"],
+      ],
+      [
+        "ts",
+        "(static static a b);",
+        [
+          "TS(1090) | 'static' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+6",
+          " | Expected `,` or `)` but found `Identifier` |  | 15+1 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      ["ts", "(static as any) = 1;", []],
+      [
+        "ts",
+        "{ (yield as any)++; }",
+        [
+          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 3+5",
+          " | Expected `,` or `)` but found `any` |  | 12+3 `,` or `)` expected | 2+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(yield as any)++;",
+        [
+          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 1+5",
+          " | Expected `,` or `)` but found `any` |  | 10+3 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(yield a b);",
+        [
+          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 1+5",
+          " | Expected `,` or `)` but found `Identifier` |  | 9+1 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "(yield a);",
+        [
+          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 1+5",
+        ],
+      ],
+      [
+        "js",
+        "(yield a b);",
+        [
+          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 1+5",
+          " | Expected `,` or `)` but found `Identifier` |  | 9+1 `,` or `)` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "f(yield a b);",
+        [
+          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 2+5",
+          " | Expected `,` or `)` but found `Identifier` |  | 10+1 `,` or `)` expected | 1+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "[yield a b];",
+        [
+          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 1+5",
+          " | Expected `,` or `]` but found `Identifier` |  | 9+1 `,` or `]` expected | 0+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "x = yield a b;",
+        [
+          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 4+5",
+          " | Expected a semicolon or an implicit semicolon after a statement, but found none | Try inserting a semicolon here | 11+0",
+        ],
+      ],
+      [
+        "ts",
+        "(await as any)++;",
+        [" | Expected `,` or `)` but found `any` |  | 10+3 `,` or `)` expected | 0+1 Opened here"],
+      ],
+      [
+        "ts",
+        "function f() { (await a b); }",
+        [
+          " | `await` is only allowed within async functions and at the top levels of modules | Either remove this `await` or add the `async` keyword to the enclosing function | 16+5",
+          " | Expected `,` or `)` but found `Identifier` |  | 24+1 `,` or `)` expected | 15+1 Opened here",
         ],
       ],
     ],
@@ -2003,6 +2260,8 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["js", "x = 09.5;", []],
       ["js", "x = 1n.a; y = 1.5n;", [" | Invalid characters after number |  | 17+1"]],
       ["js", "x = @;", [" | Unexpected token |  | 5+1"]],
+      ["js", "x = \\;", [" | Invalid Unicode escape sequence |  | 5+1"]],
+      ["js", "x = a\\u{110000};", [" | Invalid Unicode escape sequence |  | 6+8", " | Unexpected token |  | 14+1"]],
       ["js", 'x = "\\u{110000}";', [" | Invalid escape sequence |  | 5+9"]],
       ["js", 'x = "\\xg";', [" | Invalid escape sequence |  | 5+2"]],
       ["js", 'x = "\\u12";', [" | Invalid escape sequence |  | 5+4"]],
@@ -2034,6 +2293,106 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
           " | Missing initializer in const declaration | Add an initializer (e.g. ` = undefined`) here | 6+1",
         ],
       ],
+      ["js ts", "00k0;", [" | Invalid characters after number |  | 2+1"]],
+      ["js ts", "000000k000;", [" | Invalid characters after number |  | 6+1"]],
+      ["js ts", "x = 000k0;", [" | Invalid characters after number |  | 7+1"]],
+      ["js ts", '"use strict"; 000k;', [" | Invalid characters after number |  | 17+1"]],
+      ["js ts", "09k;", [" | Invalid characters after number |  | 2+1"]],
+      ["js ts", "08.5k;", [" | Invalid characters after number |  | 4+1"]],
+      ["js ts", "0x1k;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "0b1k;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "0o1k;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "007n;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "007e1;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "007_1;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "0k0;", [" | Invalid characters after number |  | 1+1"]],
+      ["js ts", "1k;", [" | Invalid characters after number |  | 1+1"]],
+      ["js ts", "0.5k;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "1e3k;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "1nk;", [" | Invalid characters after number |  | 2+1"]],
+      ["js ts", "1_0k;", [" | Invalid characters after number |  | 3+1"]],
+      [
+        "js ts",
+        "00 k;",
+        [
+          " | Expected a semicolon or an implicit semicolon after a statement, but found none | Try inserting a semicolon here | 2+0",
+        ],
+      ],
+      [
+        "js ts",
+        "007.5;",
+        [
+          " | Expected a semicolon or an implicit semicolon after a statement, but found none | Try inserting a semicolon here | 3+0",
+        ],
+      ],
+      ["js ts", "007;", []],
+      ["js ts", "0x1n2;", [" | Invalid characters after number |  | 4+1"]],
+      ["js ts", "0b12;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "0o18;", [" | Invalid characters after number |  | 3+1"]],
+      ["js ts", "0x1_;", [" | Invalid Character `;` |  | 4+0"]],
+      ["js ts", "1.k;", [" | Invalid characters after number |  | 2+1"]],
+      ["js ts", "1..k;", []],
+      ["js", "x = \\;", [" | Invalid Unicode escape sequence |  | 5+1"]],
+      ["js", "x = a\\u{110000};", [" | Invalid Unicode escape sequence |  | 6+8", " | Unexpected token |  | 14+1"]],
+      ["js", "x = \\u;", [" | Invalid Unicode escape sequence |  | 5+1"]],
+      ["js", "x = \\u12;", [" | Invalid Unicode escape sequence |  | 5+3"]],
+      ["js", "x = \\u{;", [" | Invalid Unicode escape sequence |  | 5+2"]],
+      ["js", "x = \\u{};", [" | Invalid Unicode escape sequence |  | 5+2", " | Unexpected token |  | 7+1"]],
+      ["js", "x = \\x41;", [" | Invalid Unicode escape sequence |  | 5+1"]],
+      ["js", "x = a\\;", [" | Invalid Unicode escape sequence |  | 6+1"]],
+      ["js", "x = a\\ b;", [" | Invalid Unicode escape sequence |  | 6+1"]],
+      ["js", "x = \\u0030;", [" | Invalid Character `0` |  | 10+0"]],
+      ["js", "x = a\\u0020;", [" | Invalid Character ` ` |  | 11+0"]],
+      ["js", "x = a\\u0020b;", [" | Invalid Character ` ` |  | 11+0"]],
+      ["js", "x = \\u{61;", [" | Invalid Unicode escape sequence |  | 5+4"]],
+      ["js", "x = \\u{61}b\\;", [" | Invalid Unicode escape sequence |  | 12+1"]],
+      [
+        "js",
+        "x = \\u12; const c;",
+        [
+          " | Invalid Unicode escape sequence |  | 5+3",
+          " | Missing initializer in const declaration | Add an initializer (e.g. ` = undefined`) here | 16+1",
+        ],
+      ],
+      [
+        "js",
+        "const c; x = \\u12;",
+        [
+          " | Invalid Unicode escape sequence |  | 14+3",
+          " | Missing initializer in const declaration | Add an initializer (e.g. ` = undefined`) here | 6+1",
+        ],
+      ],
+      [
+        "js",
+        "x = a\\u{110000}; const c;",
+        [" | Invalid Unicode escape sequence |  | 6+8", " | Unexpected token |  | 14+1"],
+      ],
+      ["js", "x = \\a;", [" | Invalid Unicode escape sequence |  | 5+1"]],
+      ["js", "\\", [" | Invalid Unicode escape sequence |  | 1+1"]],
+      ["js", "x.\\u12;", [" | Invalid Unicode escape sequence |  | 3+3"]],
+      ["js", "x = { \\u12: 1 };", [" | Invalid Unicode escape sequence |  | 7+3"]],
+      ["js", "let \\u12 = 1;", [" | Invalid Unicode escape sequence |  | 5+3"]],
+      ["js", "x = \\u{zz};", [" | Invalid Unicode escape sequence |  | 5+2", " | Unexpected token |  | 9+1"]],
+      ["js", "x = \\uD800;", [" | Invalid Unicode escape sequence |  | 5+5"]],
+      ["js", "x = #\\u12;", [" | Expected `in` but found `;` |  | 9+1 `in` expected"]],
+      ["js", "x = #\\;", [" | Expected `in` but found `EOF` |  | 8+0 `in` expected"]],
+      ["js", "x = #\\u{};", [" | Expected `in` but found `}` |  | 8+1 `in` expected"]],
+      ["js", "x = #\\u{110000};", [" | Expected `in` but found `}` |  | 14+1 `in` expected"]],
+      ["js", "x = #\\u0061;", [" | Expected `in` but found `;` |  | 11+1 `in` expected"]],
+      ["js", "x = #\\u0030;", [" | Expected `in` but found `;` |  | 11+1 `in` expected"]],
+      ["js", "x = #a\\u12;", [" | Expected `in` but found `;` |  | 10+1 `in` expected"]],
+      ["js", "x = #a\\;", [" | Expected `in` but found `EOF` |  | 9+0 `in` expected"]],
+      ["js", "class A { #\\u12 = 1 }", [" | Invalid Unicode escape sequence |  | 12+3"]],
+      [
+        "js",
+        "class A { #\\u12; m() { this.#\\u12; } }",
+        [" | Invalid Unicode escape sequence |  | 12+3", " | Invalid Unicode escape sequence |  | 30+3"],
+      ],
+      ["js", "class A { #a\\u12 = 1 }", [" | Invalid Unicode escape sequence |  | 13+3"]],
+      ["js", "x.#\\u12;", [" | Invalid Unicode escape sequence |  | 4+3"]],
+      ["js", "x = #\\u12 in y;", [" | Invalid Unicode escape sequence |  | 6+3"]],
+      ["js", "x = #a;", [" | Expected `in` but found `;` |  | 6+1 `in` expected"]],
+      ["js", "x = # a;", [" | Invalid Character ` ` |  | 5+1"]],
     ],
   ],
   [
@@ -2079,6 +2438,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["js", "for (x in /a", [" | Unexpected token |  | 10+3"]],
       ["js", "switch (/a", [" | Unterminated regular expression |  | 8+3"]],
       ["js", "with (/a", [" | Unexpected token |  | 6+3"]],
+      ["js", "do {} while (/a", [" | Unterminated regular expression |  | 13+3"]],
       ["js", "{ x = /a", [" | Unterminated regular expression |  | 6+3"]],
       ["js", "{ /a", [" | Unterminated regular expression |  | 2+3"]],
       ["js", "x = () => /a", [" | Unterminated regular expression |  | 10+3", " | Unexpected token |  | 10+3"]],
@@ -2106,6 +2466,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["js", "var x = 1, y = /a", [" | Unterminated regular expression |  | 15+3", " | Unexpected token |  | 15+3"]],
       ["js", "const [a = /a", [" | Unterminated regular expression |  | 11+3"]],
       ["js", "function f(a = /a", [" | Unterminated regular expression |  | 15+3"]],
+      ["js", "x = {[/a", [" | Unexpected token |  | 6+3"]],
       ["js", "x = {...(/a", [" | Unterminated regular expression |  | 9+3"]],
       ["js", "yield /a", []],
       ["js", "typeof /a", [" | Unterminated regular expression |  | 7+3", " | Unexpected token |  | 7+3"]],
@@ -2183,6 +2544,11 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["ts", "async function f() { interface A { m(a: { [await (k)]: number }): void } }", []],
       ["ts", "async function f() { type A = (a: { [await (k)]: number }) => void; }", []],
       ["ts", "function f() { let g: (a: { [await (k)]: number }) => void; }", []],
+      [
+        "ts",
+        "async function f() { let g: (await: number) => void; }",
+        [" | Cannot use `await` as an identifier in an async context |  | 29+5"],
+      ],
       ["ts", "async function f() { function h(a: { [await (k)]: number }) {} }", []],
       [
         "ts",
@@ -2300,6 +2666,14 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ],
       [
         "jsx tsx",
+        "<a><b></a></b>;",
+        [
+          " | Expected corresponding JSX closing tag for 'b'. |  | 8+1 Expected `</b>` | 4+1 Opened here",
+          " | Expected corresponding JSX closing tag for 'a'. |  | 12+1 Expected `</a>` | 1+1 Opened here",
+        ],
+      ],
+      [
+        "jsx tsx",
         "<a.b></a.c>;",
         [" | Expected corresponding JSX closing tag for 'a.b'. |  | 7+3 Expected `</a.b>` | 1+3 Opened here"],
       ],
@@ -2366,6 +2740,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["jsx tsx", "<a.b:c />;", [" | Unexpected token |  | 4+1"]],
       ["jsx tsx", "<a:b.c />;", [" | Unexpected token |  | 4+1"]],
       ["jsx tsx", "<a-b.c />;", []],
+      ["jsx tsx", "<1 />;", [" | Unexpected token |  | 1+1"]],
       ["jsx tsx", "< a />;", []],
       ["jsx tsx", "<a / >;", []],
       ["jsx tsx", "<a></ a>;", []],
@@ -2374,6 +2749,17 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["jsx tsx", "<a>{b c}</a>;", [" | Expected `}` but found `Identifier` |  | 6+1 `}` expected"]],
       ["jsx tsx", "<a b={c d} />;", [" | Expected `}` but found `Identifier` |  | 8+1 `}` expected"]],
       ["jsx tsx", "<a>&foo;</a>;", []],
+      ["jsx tsx", "<1 />;", [" | Unexpected token |  | 1+1"]],
+      ["jsx tsx", '<"a" />;', [" | Unexpected token |  | 1+3"]],
+      ["jsx tsx", "x = <1>;", [" | Unexpected token |  | 5+1"]],
+      ["jsx tsx", "<{} />;", [" | Unexpected token |  | 1+1"]],
+      ["jsx tsx", "<(a) />;", [" | Unexpected token |  | 1+1"]],
+      ["jsx tsx", "<[a] />;", [" | Unexpected token |  | 1+1"]],
+      ["jsx tsx", "<+ />;", [" | Unexpected token |  | 1+1"]],
+      ["jsx tsx", "<. />;", [" | Unexpected token |  | 1+1"]],
+      ["jsx tsx", "< />;", [" | Unexpected token |  | 2+1"]],
+      ["jsx tsx", "<a><1 /></a>;", [" | Unexpected token |  | 4+1"]],
+      ["js", "<1 />;", [" | Unexpected token |  | 1+1"]],
     ],
   ],
   [
@@ -2456,6 +2842,7 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["ts", "type A = (", [" | Unexpected token |  | 11+0"]],
       ["js ts", "const {", [" | Expected `}` but found `EOF` |  | 8+0 `}` expected"]],
       ["js ts", "function f({", [" | Expected `}` but found `EOF` |  | 13+0 `}` expected"]],
+      ["js ts", "import {", [" | Expected `}` but found `EOF` |  | 9+0 `}` expected"]],
       ["js ts", "export {", [" | Expected `}` but found `EOF` |  | 9+0 `}` expected"]],
       ["js ts", "x = () => {", [" | Expected `}` but found `EOF` |  | 12+0 `}` expected | 10+1 Opened here"]],
       ["js ts", "class A { m() {", [" | Expected `}` but found `EOF` |  | 16+0 `}` expected | 14+1 Opened here"]],
@@ -2495,6 +2882,78 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ["ts", "type A = { [K in B]: {", [" | Expected `}` but found `EOF` |  | 23+0 `}` expected | 21+1 Opened here"]],
       ["jsx tsx", "<a b={", [" | Unexpected token |  | 7+0"]],
       ["jsx tsx", "<a>{", [" | Unexpected token |  | 5+0"]],
+      [
+        "ts",
+        "function f(public a b) {}",
+        [
+          "TS(1090) | 'public' modifier cannot appear on a parameter. | No modifiers are allowed here. | 11+6",
+          " | Expected `,` or `)` but found `Identifier` |  | 20+1 `,` or `)` expected | 10+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "class A { m(public a b) {} }",
+        [
+          "TS(1090) | 'public' modifier cannot appear on a parameter. | No modifiers are allowed here. | 12+6",
+          " | Expected `,` or `)` but found `Identifier` |  | 21+1 `,` or `)` expected | 11+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "function f(a?, b c) {}",
+        [
+          "TS(1016) | A required parameter cannot follow an optional parameter. |  | 15+1",
+          " | Expected `,` or `)` but found `Identifier` |  | 17+1 `,` or `)` expected | 10+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "function f(y: readonly number, a b) { }",
+        [
+          "TS(1354) | 'readonly' type modifier is only permitted on array and tuple literal types. |  | 14+8",
+          " | Expected `,` or `)` but found `Identifier` |  | 33+1 `,` or `)` expected | 10+1 Opened here",
+        ],
+      ],
+      [
+        "ts",
+        "function f(public a, b = ) {}",
+        [
+          "TS(1090) | 'public' modifier cannot appear on a parameter. | No modifiers are allowed here. | 11+6",
+          " | Unexpected token |  | 25+1",
+        ],
+      ],
+      [
+        "ts",
+        "let y: readonly number; function f(a b) { }",
+        [
+          "TS(1354) | 'readonly' type modifier is only permitted on array and tuple literal types. |  | 7+8",
+          " | Expected `,` or `)` but found `Identifier` |  | 37+1 `,` or `)` expected | 34+1 Opened here",
+        ],
+      ],
+      ["js", "x = [const c, a b];", [" | Unexpected token |  | 5+5"]],
+      [
+        "js",
+        "f(a ? b c);",
+        [" | Expected `:` but found `Identifier` |  | 8+1 `:` expected | 4+1 Conditional starts here"],
+      ],
+      [
+        "ts",
+        "x = a ? (public b c) : d;",
+        [
+          "TS(1090) | 'public' modifier cannot appear on a parameter. | No modifiers are allowed here. | 9+6",
+          " | Expected `,` or `)` but found `Identifier` |  | 18+1 `,` or `)` expected | 8+1 Opened here",
+        ],
+      ],
+      [
+        "js",
+        "x = { a: 08, b c };",
+        [" | Expected `,` or `}` but found `Identifier` |  | 15+1 `,` or `}` expected | 4+1 Opened here"],
+      ],
+      [
+        "js",
+        "f(08, a b);",
+        [" | Expected `,` or `)` but found `Identifier` |  | 8+1 `,` or `)` expected | 1+1 Opened here"],
+      ],
     ],
   ],
   [
@@ -2643,6 +3102,11 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ],
       [
         "js ts",
+        'import a from "m" with { a: "1" + "2" };',
+        [" | Expected `,` or `}` but found `+` |  | 32+1 `,` or `}` expected | 23+1 Opened here"],
+      ],
+      [
+        "js ts",
         'import a from "m" with { a: "1" } with { b: "2" };',
         [
           " | Expected a semicolon or an implicit semicolon after a statement, but found none | Try inserting a semicolon here | 33+0",
@@ -2724,15 +3188,143 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
     "a reserved word where a name is wanted",
     undefined,
     [
+      ["js ts", "var enum;", [" | Identifier expected. 'enum' is a reserved word that cannot be used here. |  | 4+4"]],
+      [
+        "js ts",
+        "let\nfunction f() {}",
+        [" | Identifier expected. 'function' is a reserved word that cannot be used here. |  | 4+8"],
+      ],
+      [
+        "js ts",
+        "let\nif (x) y;",
+        [" | Identifier expected. 'if' is a reserved word that cannot be used here. |  | 4+2"],
+      ],
+      [
+        "js ts",
+        "let\nclass A {}",
+        [" | Identifier expected. 'class' is a reserved word that cannot be used here. |  | 4+5"],
+      ],
+      ["js ts", "let\nvar x;", [" | Identifier expected. 'var' is a reserved word that cannot be used here. |  | 4+3"]],
+      [
+        "js ts",
+        "let\nthis.x;",
+        [" | Identifier expected. 'this' is a reserved word that cannot be used here. |  | 4+4"],
+      ],
+      ["js ts", "let\nnull;", [" | Identifier expected. 'null' is a reserved word that cannot be used here. |  | 4+4"]],
       [
         "js ts",
         "const class = 1;",
         [" | Identifier expected. 'class' is a reserved word that cannot be used here. |  | 6+5"],
       ],
       ["js ts", "var if = 1;", [" | Identifier expected. 'if' is a reserved word that cannot be used here. |  | 4+2"]],
+      [
+        "js ts",
+        "let a, enum;",
+        [" | Identifier expected. 'enum' is a reserved word that cannot be used here. |  | 7+4"],
+      ],
       ["js ts", "let a, if;", [" | Identifier expected. 'if' is a reserved word that cannot be used here. |  | 7+2"]],
+      [
+        "js ts",
+        "function f() { let\nreturn; }",
+        [" | Identifier expected. 'return' is a reserved word that cannot be used here. |  | 19+6"],
+      ],
+      [
+        "js ts",
+        "var function;",
+        [" | Identifier expected. 'function' is a reserved word that cannot be used here. |  | 4+8"],
+      ],
       ["js ts", "using\nnew X;", []],
+      [
+        "js ts",
+        "let\nimport('a');",
+        [" | Identifier expected. 'import' is a reserved word that cannot be used here. |  | 4+6"],
+      ],
+      [
+        "js ts",
+        "let [enum] = a;",
+        [" | Identifier expected. 'enum' is a reserved word that cannot be used here. |  | 5+4"],
+      ],
       ["js ts", "let {enum} = a;", [" | Expected `:` but found `}` |  | 9+1 `:` expected"]],
+      ["js ts", "function enum() {}", [" | Expected `Identifier` but found `enum` |  | 9+4 `Identifier` expected"]],
+      [
+        "js ts",
+        "function f(enum) {}",
+        [" | Identifier expected. 'enum' is a reserved word that cannot be used here. |  | 11+4"],
+      ],
+      ["js ts", "class enum {}", [" | Expected `{` but found `enum` |  | 6+4 `{` expected"]],
+      [
+        "js ts",
+        "let a,\nfunction f() {}",
+        [" | Identifier expected. 'function' is a reserved word that cannot be used here. |  | 7+8"],
+      ],
+      [
+        "js ts",
+        "let a,\nif (x) y;",
+        [" | Identifier expected. 'if' is a reserved word that cannot be used here. |  | 7+2"],
+      ],
+      [
+        "js ts",
+        "const a = 1,\nclass B {}",
+        [" | Identifier expected. 'class' is a reserved word that cannot be used here. |  | 13+5"],
+      ],
+      [
+        "js ts",
+        "const\nclass A {}",
+        [" | Identifier expected. 'class' is a reserved word that cannot be used here. |  | 6+5"],
+      ],
+      [
+        "js ts",
+        "var\nfunction f() {}",
+        [" | Identifier expected. 'function' is a reserved word that cannot be used here. |  | 4+8"],
+      ],
+      ["js ts", "let a, ;", [" | Unexpected token |  | 7+1"]],
+      ["js ts", "let a,\n1;", [" | Unexpected token |  | 7+1"]],
+      ["js ts", "const\n1;", [" | Unexpected token |  | 6+1"]],
+      ["js ts", "var\n;", [" | Unexpected token |  | 4+1"]],
+      ["js ts", "using\nfunction f() {}", []],
+      ["js ts", "function* enum() {}", [" | Expected `Identifier` but found `enum` |  | 10+4 `Identifier` expected"]],
+      [
+        "js ts",
+        "async function enum() {}",
+        [" | Expected `Identifier` but found `enum` |  | 15+4 `Identifier` expected"],
+      ],
+      [
+        "js ts",
+        "export function enum() {}",
+        [" | Expected `Identifier` but found `enum` |  | 16+4 `Identifier` expected"],
+      ],
+      ["js ts", "function if() {}", [" | Expected `Identifier` but found `if` |  | 9+2 `Identifier` expected"]],
+      ["js ts", "x = function enum() {};", [" | Expected `(` but found `enum` |  | 13+4 `(` expected"]],
+      ["js ts", "export default function enum() {}", [" | Expected `(` but found `enum` |  | 24+4 `(` expected"]],
+      ["js ts", "x = a * enum;", [" | Unexpected token |  | 8+4"]],
+    ],
+  ],
+  [
+    "a class without a name",
+    undefined,
+    [
+      ["js ts", "class {}", [" | A class name is required. |  | 0+5"]],
+      ["js ts", "class extends A {}", [" | A class name is required. |  | 0+5"]],
+      ["js ts", "{ class {} }", [" | A class name is required. |  | 2+5"]],
+      ["js ts", "export class {}", [" | A class name is required. |  | 7+5"]],
+      ["js ts", "export default class {}", []],
+      [
+        "js ts",
+        "let zz; let zz; class {}",
+        [
+          " | Identifier `zz` has already been declared |  | 4+2 `zz` has already been declared here | 12+2 It can not be redeclared here",
+          " | A class name is required. |  | 16+5",
+        ],
+      ],
+      ["js ts", "class {} let a = ;", [" | Unexpected token |  | 17+1"]],
+      [
+        "js ts",
+        "if (a) class {}",
+        [" | Invalid class declaration | Classes can only be declared at top level or inside a block | 7+6"],
+      ],
+      ["ts", "namespace N { export class {} }", [" | A class name is required. |  | 21+5"]],
+      ["ts", "abstract class {}", [" | A class name is required. |  | 0+5"]],
+      ["ts", "declare class {}", [" | A class name is required. |  | 0+5"]],
     ],
   ],
   [
@@ -2907,6 +3499,282 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
           "eslint(no-undef) | 't2' is not defined. | Either define 't2' or remove the reference to it. If 't2' is a global variable, add it to the 'globals' configuration. | 11+2",
           "eslint(no-undef) | 't3' is not defined. | Either define 't3' or remove the reference to it. If 't3' is a global variable, add it to the 'globals' configuration. | 46+2",
           "eslint(no-debugger) | `debugger` statement is not allowed | Remove the debugger statement | 15+9",
+        ],
+      ],
+    ],
+  ],
+  [
+    "a rule that is called with a node reports when oxlint comes to the node",
+    {
+      "categories": { "correctness": "off" },
+      "plugins": ["typescript", "unicorn", "jest", "react"],
+      "rules": {
+        "eqeqeq": "error",
+        "curly": "error",
+        "no-magic-numbers": "error",
+        "no-param-reassign": "error",
+        "func-style": "error",
+        "max-params": ["error", { "max": 0 }],
+        "id-length": "error",
+        "block-scoped-var": "error",
+        "no-var": "error",
+        "vars-on-top": "error",
+        "no-multi-assign": "error",
+        "no-ternary": "error",
+        "no-plusplus": "error",
+        "init-declarations": "error",
+        "no-undefined": "error",
+        "typescript/explicit-function-return-type": "error",
+        "typescript/explicit-member-accessibility": "error",
+        "typescript/explicit-module-boundary-types": "error",
+        "unicorn/no-useless-undefined": "error",
+        "unicorn/catch-error-name": "error",
+        "unicorn/no-null": "error",
+        "jest/require-hook": "error",
+        "no-implicit-coercion": "error",
+        "prefer-template": "error",
+        "no-else-return": "error",
+        "class-methods-use-this": "error",
+      },
+    },
+    [
+      [
+        "js",
+        "function f(a, b) {\n  if (a == 0) return 1;\n  a = b;\n  return -2;\n}\nf();",
+        [
+          "jest(require-hook) | Require setup and teardown code to be within a hook. | This should be done within a hook | 67+3",
+          "eslint(func-style) | Expected a function expression. | Enforce the consistent use of either `function` declarations or expressions assigned to variables | 0+66",
+          "eslint(max-params) | Function 'f' has too many parameters (2). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 10+6",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 9+1",
+          "eslint(no-param-reassign) | Assignment to function parameter 'a'. | Consider using a different variable to avoid unintended side effects on the parameter. | 45+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 11+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 14+1",
+          "eslint(curly) | Expected { after 'if' condition. | Replace `return 1;` with `{return 1;}`. | 33+9",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 27+2",
+          "eslint(no-magic-numbers) | No magic number: 0 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 30+1",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 40+1",
+          "eslint(no-magic-numbers) | No magic number: -2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 61+2",
+        ],
+      ],
+      [
+        "js",
+        "if (x === 1) y(); else if (x === 2) z(); else w(3);",
+        [
+          "eslint(curly) | Expected { after 'if' condition. | Replace `y();` with `{y();}`. | 13+4",
+          "eslint(curly) | Expected { after 'if' condition. | Replace `z();` with `{z();}`. | 36+4",
+          "eslint(curly) | Expected { after 'else'. | Replace `w(3);` with `{w(3);}`. | 46+5",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 10+1",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 33+1",
+          "eslint(no-magic-numbers) | No magic number: 3 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 48+1",
+        ],
+      ],
+      [
+        "js",
+        "class A {\n  get b() { return 1; }\n  c(d) { d = 2; }\n}\nnew A();",
+        [
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 6+1",
+          "eslint(class-methods-use-this) | Expected method `b` to have this. | Consider converting method `b` to a static method. | 16+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 16+1",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 29+1",
+          "eslint(class-methods-use-this) | Expected method `c` to have this. | Consider converting method `c` to a static method. | 36+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 36+1",
+          "eslint(max-params) | Function has too many parameters (1). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 37+3",
+          "eslint(no-param-reassign) | Assignment to function parameter 'd'. | Consider using a different variable to avoid unintended side effects on the parameter. | 43+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 38+1",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 47+1",
+        ],
+      ],
+      [
+        "ts",
+        "class A {\n  get b() { return 1; }\n  c(d: number) { d = 2; }\n}\nnew A();",
+        [
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 6+1",
+          "eslint(class-methods-use-this) | Expected method `b` to have this. | Consider converting method `b` to a static method. | 16+1",
+          "typescript(explicit-member-accessibility) | Missing accessibility modifier on get property accessor b. | Add an explicit 'public', 'private', or 'protected' modifier. Members without a modifier are implicitly public, which may not be intentional. | 16+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 16+1",
+          "typescript(explicit-function-return-type) | Missing return type on function. | Require explicit return types on functions and class methods. | 12+5",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 29+1",
+          "eslint(class-methods-use-this) | Expected method `c` to have this. | Consider converting method `c` to a static method. | 36+1",
+          "typescript(explicit-member-accessibility) | Missing accessibility modifier on method definition c. | Add an explicit 'public', 'private', or 'protected' modifier. Members without a modifier are implicitly public, which may not be intentional. | 36+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 36+1",
+          "eslint(max-params) | Function has too many parameters (1). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 37+11",
+          "typescript(explicit-function-return-type) | Missing return type on function. | Require explicit return types on functions and class methods. | 36+1",
+          "eslint(no-param-reassign) | Assignment to function parameter 'd'. | Consider using a different variable to avoid unintended side effects on the parameter. | 51+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 38+1",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 55+1",
+        ],
+      ],
+      [
+        "ts",
+        "class A { m(a) { return a; } }\nfunction g(b) { return b; }\nexport default { g, A };",
+        [
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 6+1",
+          "eslint(class-methods-use-this) | Expected method `m` to have this. | Consider converting method `m` to a static method. | 10+1",
+          "typescript(explicit-member-accessibility) | Missing accessibility modifier on method definition m. | Add an explicit 'public', 'private', or 'protected' modifier. Members without a modifier are implicitly public, which may not be intentional. | 10+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 10+1",
+          "eslint(max-params) | Function has too many parameters (1). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 11+3",
+          "typescript(explicit-function-return-type) | Missing return type on function. | Require explicit return types on functions and class methods. | 10+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 12+1",
+          "eslint(func-style) | Expected a function expression. | Enforce the consistent use of either `function` declarations or expressions assigned to variables | 31+27",
+          "eslint(max-params) | Function 'g' has too many parameters (1). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 41+3",
+          "typescript(explicit-function-return-type) | Missing return type on function. | Require explicit return types on functions and class methods. | 31+10",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 40+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 42+1",
+          "typescript(explicit-module-boundary-types) | Missing argument type on function | Define an explicit argument type for each argument. | 42+1",
+          "typescript(explicit-module-boundary-types) | Missing return type on function | Define an explicit return type for the function. | 40+1",
+          "typescript(explicit-module-boundary-types) | Missing argument type on function | Define an explicit argument type for each argument. | 12+1",
+          "typescript(explicit-module-boundary-types) | Missing return type on function | Define an explicit return type for the function. | 10+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 76+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 79+1",
+        ],
+      ],
+      [
+        "ts",
+        "export function f(a) { return a; }\nexport const g = (b) => b;",
+        [
+          "typescript(explicit-module-boundary-types) | Missing argument type on function | Define an explicit argument type for each argument. | 18+1",
+          "typescript(explicit-module-boundary-types) | Missing return type on function | Define an explicit return type for the function. | 16+1",
+          "eslint(func-style) | Expected a function expression. | Enforce the consistent use of either `function` declarations or expressions assigned to variables | 7+27",
+          "eslint(max-params) | Function 'f' has too many parameters (1). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 17+3",
+          "typescript(explicit-function-return-type) | Missing return type on function. | Require explicit return types on functions and class methods. | 7+10",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 16+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 18+1",
+          "typescript(explicit-module-boundary-types) | Missing argument type on function | Define an explicit argument type for each argument. | 53+1",
+          "typescript(explicit-module-boundary-types) | Missing return type on function | Define an explicit return type for the function. | 56+2",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 48+1",
+          "eslint(max-params) | Arrow function has too many parameters (1). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 52+3",
+          "typescript(explicit-function-return-type) | Missing return type on function. | Require explicit return types on functions and class methods. | 56+2",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 53+1",
+        ],
+      ],
+      [
+        "js",
+        "function f() {\n  if (a) { var x = 1; }\n  const y = x + 2;\n  return x + y;\n}\nf();",
+        [
+          "jest(require-hook) | Require setup and teardown code to be within a hook. | This should be done within a hook | 76+3",
+          "eslint(func-style) | Expected a function expression. | Enforce the consistent use of either `function` declarations or expressions assigned to variables | 0+75",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 9+1",
+          "eslint(block-scoped-var) | 'x' is used outside of binding context. | Variable 'x' is used outside its declaration block. Declare it outside the block or use 'let'/'const'. | 51+1 'x' is used here | 30+1 It is declared in a different scope here",
+          "eslint(block-scoped-var) | 'x' is used outside of binding context. | Variable 'x' is used outside its declaration block. Declare it outside the block or use 'let'/'const'. | 67+1 'x' is used here | 30+1 It is declared in a different scope here",
+          "eslint(no-var) | Unexpected var, use let or const instead. | Replace var with let or const | 26+3",
+          "eslint(vars-on-top) | All 'var' declarations must be at the top of the function scope. | Consider moving this to the top of the functions scope or using let or const to declare this variable. | 26+10",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 30+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 47+1",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 55+1",
+        ],
+      ],
+      [
+        "js",
+        "a = b = 1;\nconst c = d = 2;",
+        [
+          "eslint(no-multi-assign) | Do not use chained assignment | Separate each assignment into its own statement | 4+5",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 8+1",
+          "eslint(no-multi-assign) | Do not use chained assignment | Separate each assignment into its own statement | 21+5",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 17+1",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 25+1",
+        ],
+      ],
+      [
+        "js",
+        "foo(undefined);\nbar(1, undefined, undefined);",
+        [
+          "jest(require-hook) | Require setup and teardown code to be within a hook. | This should be done within a hook | 0+14",
+          "jest(require-hook) | Require setup and teardown code to be within a hook. | This should be done within a hook | 16+28",
+          "unicorn(no-useless-undefined) | Do not use useless `undefined`. | Consider removing `undefined` or using `null` instead. | 4+9",
+          "eslint(no-undefined) | Unexpected use of `undefined` |  | 4+9",
+          "unicorn(no-useless-undefined) | Do not use useless `undefined`. | Consider removing `undefined` or using `null` instead. | 23+9 | 34+9",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 20+1",
+          "eslint(no-undefined) | Unexpected use of `undefined` |  | 23+9",
+          "eslint(no-undefined) | Unexpected use of `undefined` |  | 34+9",
+        ],
+      ],
+      [
+        "js",
+        "try { f(); } catch (e) { g(e == 1); }",
+        [
+          'unicorn(catch-error-name) | The catch parameter "e" should be named "error" | Rename `e` to `error` | 20+1',
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 20+1",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 29+2",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 32+1",
+        ],
+      ],
+      [
+        "js",
+        "const o = {\n  m(a) { return a == 1; },\n  n: function (b) { return b == 2; },\n  p: (c) => c == 3,\n};\no.m();",
+        [
+          "jest(require-hook) | Require setup and teardown code to be within a hook. | This should be done within a hook | 100+5",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 6+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 14+1",
+          "eslint(max-params) | Function has too many parameters (1). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 15+3",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 16+1",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 30+2",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 33+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 41+1",
+          "eslint(max-params) | Function has too many parameters (1). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 53+3",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 54+1",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 68+2",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 71+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 79+1",
+          "eslint(max-params) | Arrow function has too many parameters (1). Maximum allowed is 0. | This rule enforces a maximum number of parameters allowed in function definitions. | 82+3",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 83+1",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 91+2",
+          "eslint(no-magic-numbers) | No magic number: 3 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 94+1",
+        ],
+      ],
+      [
+        "js",
+        "x = `${a == 1}${b == 2}`;",
+        [
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 9+2",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 12+1",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 18+2",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 21+1",
+        ],
+      ],
+      [
+        "jsx",
+        "const a = <b c={d == 1}>{e == 2}</b>;",
+        [
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 6+1",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 18+2",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 21+1",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 27+2",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 30+1",
+        ],
+      ],
+      [
+        "js",
+        "for (let i = 0; i < 10; i++) f(i == 5);",
+        [
+          "eslint(curly) | Expected { after 'for' condition. | Replace `f(i == 5);` with `{f(i == 5);}`. | 29+10",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 9+1",
+          "eslint(no-magic-numbers) | No magic number: 10 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 20+2",
+          "eslint(no-plusplus) | Unary operator '++' used. | Use the assignment operator `+=` instead. | 24+3",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 33+2",
+          "eslint(no-magic-numbers) | No magic number: 5 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 36+1",
+        ],
+      ],
+      [
+        "js",
+        "export default function () { return a == 1 ? 2 : 3; }",
+        [
+          "eslint(no-ternary) | Unexpected use of ternary expression | Do not use the ternary expression. | 36+14",
+          "eslint(eqeqeq) | Expected === and instead saw == | Prefer === operator | 38+2",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 41+1",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 45+1",
+          "eslint(no-magic-numbers) | No magic number: 3 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 49+1",
+        ],
+      ],
+      [
+        "test.js",
+        'foo();\ndescribe("a", () => {\n  bar(1);\n  it("b", () => { baz(2); });\n});\nlet q = 3;',
+        [
+          "jest(require-hook) | Require setup and teardown code to be within a hook. | This should be done within a hook | 0+5",
+          "jest(require-hook) | Require setup and teardown code to be within a hook. | This should be done within a hook | 73+10",
+          "jest(require-hook) | Require setup and teardown code to be within a hook. | This should be done within a hook | 31+6",
+          "eslint(no-magic-numbers) | No magic number: 1 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 35+1",
+          "eslint(no-magic-numbers) | No magic number: 2 | Use a named constant instead of a magic number to make the code more readable and maintainable. | 61+1",
+          "eslint(id-length) | Identifier name is too short (< 2). |  | 77+1",
         ],
       ],
     ],
@@ -3465,6 +4333,13 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ],
       [
         "jsx",
+        'import { useRef, useCallback } from "react";\nexport function C() { const ref = useRef(0); const o = { g1: () => ref.current }; const g2 = () => o.g1(); return <div>{g2()}</div>; }',
+        [
+          "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 165+2 This function accesses a ref value | 144+4 The ref is accessed here",
+        ],
+      ],
+      [
+        "jsx",
         'import { useRef, useCallback } from "react";\nexport function C() { const ref = useRef(0); const g2 = () => { const a = ref.current; return a; }; return <div>{g2()}</div>; }',
         [
           "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 158+2 This function accesses a ref value | 119+11 The ref is accessed here",
@@ -3487,6 +4362,13 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
       ],
       [
         "jsx",
+        'import { useRef, useCallback } from "react";\nexport function C() { const ref = useRef(0); const g2 = () => { const a = ref.current; const b = ref.current.x; return h(b, a); }; return <div>{g2()}</div>; }',
+        [
+          "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 189+2 This function accesses a ref value | 166+1 The ref is accessed here",
+        ],
+      ],
+      [
+        "jsx",
         'import { useRef, useCallback } from "react";\nexport function C() { const ref = useRef(0); const g2 = () => { let a; a = ref.current; return a; }; return <div>{g2()}</div>; }',
         [
           "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 159+2 This function accesses a ref value | 120+11 The ref is accessed here",
@@ -3504,6 +4386,242 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
         [
           "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 163+2 This function accesses a ref value | 111+11 The ref is accessed here",
           "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 163+4 Cannot access ref value during render",
+        ],
+      ],
+      [
+        "jsx",
+        'import { useRef, useCallback } from "react";\nexport function C() { const ref = useRef(0); const g2 = () => { const { x } = ref.current; return x; }; return <div>{g2()}</div>; }',
+        [
+          "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 162+2 This function accesses a ref value | 143+1 The ref is accessed here",
+          "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 162+4 Cannot access ref value during render",
+        ],
+      ],
+    ],
+  ],
+  [
+    "no-unnecessary-parameter-property-assignment asks what the name itself refers to, and for writes before",
+    {
+      "categories": { "correctness": "off" },
+      "plugins": ["typescript"],
+      "rules": { "typescript/no-unnecessary-parameter-property-assignment": "error" },
+    },
+    [
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    const w: size = size;\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 145+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    let w: size;\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 136+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    g<size>(size);\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 138+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    g?.<size>(size);\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 140+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    new Set<size>([size]);\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 146+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    g<size>`${size}`;\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 141+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    <size>size;\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 135+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    (<size>size)++;\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 139+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    (this.size as size) = size;\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 151+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    let n = { m: 0 }; (n.m as size)++; size;\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 164+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    const w: size = g<number>(size);\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 156+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    const w: number = g<size>(size);\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 156+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    g<Array<size>>(g<number>(size));\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 156+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    (size as size) = 0;\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    (size as size) += 0;\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    (size as size)++;\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    ((size as size)!) = 0;\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    (size satisfies size) = 0;\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    (<size>size) = 0;\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 141+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    size = 0;\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    size++;\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    [size] = [0];\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    ({ size } = { size: 0 });\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    (() => { size = 0; })();\n    this.size = size;\n  }\n}",
+        [],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    (() => { size = 0; });\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 146+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    function h() { size = 0; }\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 150+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    g(size);\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 132+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor(public size: number) {\n    \n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 124+16",
+        ],
+      ],
+      [
+        "ts",
+        "type size = number;\nexport class Box {\n  constructor(public size: number, w: size = size) {\n    this.size = size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 96+16",
+        ],
+      ],
+      [
+        "ts",
+        "export class Box {\n  constructor(public size: number) {\n    this.size = <number>size;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 60+24",
+        ],
+      ],
+      [
+        "ts",
+        "export class Box {\n  constructor(public size: number) {\n    this.size = size satisfies number;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 60+33",
+        ],
+      ],
+      [
+        "ts",
+        "export class Box {\n  constructor(public size: number) {\n    this.size = size as number;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 60+26",
+        ],
+      ],
+      [
+        "ts",
+        "export class Box {\n  constructor(public size: number) {\n    this.size = size!;\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 60+17",
+        ],
+      ],
+      [
+        "ts",
+        "export class Box {\n  constructor(public size: number) {\n    this.size = (size);\n  }\n}",
+        [
+          "typescript(no-unnecessary-parameter-property-assignment) | Assignment of parameter property is unnecessary | Remove the unnecessary assignment | 60+18",
         ],
       ],
     ],
@@ -3607,249 +4725,12 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
   ],
 ];
 
-// What oxlint 1.87 prints and `bun lint` does not yet, in the same form.
-const knownDifferences: [title: string, config: object | undefined, rows: Row[]][] = [
-  [
-    "what follows `a?!` in a class, and `let a?!`",
-    undefined,
-    [
-      [
-        "ts",
-        "class A { a?! }",
-        [
-          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
-          "TS(1264) | Declarations with definite assignment assertions must also have type annotations. |  | 12+1",
-        ],
-      ],
-      [
-        "ts",
-        "class A { a?!; b c }",
-        [
-          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
-          "TS(1264) | Declarations with definite assignment assertions must also have type annotations. |  | 12+1",
-          " | Expected `;` but found `Identifier` |  | 17+1 `;` expected",
-        ],
-      ],
-      [
-        "ts",
-        "class A { a?!(): void }",
-        [
-          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
-          " | Expected `;` but found `(` |  | 13+1 `;` expected",
-        ],
-      ],
-      [
-        "ts",
-        "let a?!: number;",
-        [
-          " | Optional declaration is not allowed here | Remove the `?` | 5+1",
-          " | Expected a semicolon or an implicit semicolon after a statement, but found none | Try inserting a semicolon here | 6+0",
-        ],
-      ],
-      [
-        "ts",
-        "class A { a?!: number; b c }",
-        [
-          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
-          " | Expected `;` but found `Identifier` |  | 25+1 `;` expected",
-        ],
-      ],
-      [
-        "ts",
-        "class A { a?!: number; m() { const a; } }",
-        [
-          " | A property cannot be both optional and definite. | Remove either the `?` or the `!` | 11+2",
-          " | Missing initializer in const declaration | Add an initializer (e.g. ` = undefined`) here | 35+1",
-        ],
-      ],
-    ],
-  ],
-  [
-    "modifiers and keywords in parentheses that are assigned to",
-    undefined,
-    [
-      [
-        "ts",
-        "(static satisfies any) = 1;",
-        [
-          "TS(1090) | 'static' modifier cannot appear on a parameter. | No modifiers are allowed here. | 1+6",
-          " | Expected `,` or `)` but found `any` |  | 18+3 `,` or `)` expected | 0+1 Opened here",
-        ],
-      ],
-      [
-        "ts",
-        "{ (yield as any)++; }",
-        [
-          " | A 'yield' expression is only allowed in a generator body. | Either remove this `yield` or change the enclosing function to a generator function (`function*`) | 3+5",
-          " | Expected `,` or `)` but found `any` |  | 12+3 `,` or `)` expected | 2+1 Opened here",
-        ],
-      ],
-    ],
-  ],
-  [
-    "`let` as a label after `export`",
-    undefined,
-    [["ts", "namespace W { export let: for (;;) {} }", [" | Unexpected token |  | 24+1"]]],
-  ],
-  [
-    "an escape that is wrong in a name",
-    undefined,
-    [
-      ["js", "x = \\;", [" | Invalid Unicode escape sequence |  | 5+1"]],
-      ["js", "x = a\\u{110000};", [" | Invalid Unicode escape sequence |  | 6+8", " | Unexpected token |  | 14+1"]],
-    ],
-  ],
-  [
-    "a regular expression without an end after `do {} while (` and in a computed key",
-    undefined,
-    [
-      ["js", "do {} while (/a", [" | Unterminated regular expression |  | 13+3"]],
-      ["js", "x = {[/a", [" | Unexpected token |  | 6+3"]],
-    ],
-  ],
-  [
-    "`await` as the name of a parameter in a function type",
-    undefined,
-    [
-      [
-        "ts",
-        "async function f() { let g: (await: number) => void; }",
-        [" | Cannot use `await` as an identifier in an async context |  | 29+5"],
-      ],
-    ],
-  ],
-  [
-    "the second closing tag with the wrong name, and a number as a tag",
-    undefined,
-    [
-      [
-        "jsx tsx",
-        "<a><b></a></b>;",
-        [
-          " | Expected corresponding JSX closing tag for 'b'. |  | 8+1 Expected `</b>` | 4+1 Opened here",
-          " | Expected corresponding JSX closing tag for 'a'. |  | 12+1 Expected `</a>` | 1+1 Opened here",
-        ],
-      ],
-      ["jsx tsx", "<1 />;", [" | Unexpected token |  | 1+1"]],
-    ],
-  ],
-  [
-    "`import {` at the end of a JavaScript file",
-    undefined,
-    [["js ts", "import {", [" | Expected `}` but found `EOF` |  | 9+0 `}` expected"]]],
-  ],
-  [
-    "an attribute value that goes on after a string",
-    undefined,
-    [
-      [
-        "js ts",
-        'import a from "m" with { a: "1" + "2" };',
-        [" | Expected `,` or `}` but found `+` |  | 32+1 `,` or `}` expected | 23+1 Opened here"],
-      ],
-    ],
-  ],
-  [
-    "a reserved word where a name is wanted",
-    undefined,
-    [
-      ["js ts", "var enum;", [" | Identifier expected. 'enum' is a reserved word that cannot be used here. |  | 4+4"]],
-      [
-        "js ts",
-        "let\nfunction f() {}",
-        [" | Identifier expected. 'function' is a reserved word that cannot be used here. |  | 4+8"],
-      ],
-      [
-        "js ts",
-        "let\nif (x) y;",
-        [" | Identifier expected. 'if' is a reserved word that cannot be used here. |  | 4+2"],
-      ],
-      [
-        "js ts",
-        "let\nclass A {}",
-        [" | Identifier expected. 'class' is a reserved word that cannot be used here. |  | 4+5"],
-      ],
-      ["js ts", "let\nvar x;", [" | Identifier expected. 'var' is a reserved word that cannot be used here. |  | 4+3"]],
-      [
-        "js ts",
-        "let\nthis.x;",
-        [" | Identifier expected. 'this' is a reserved word that cannot be used here. |  | 4+4"],
-      ],
-      ["js ts", "let\nnull;", [" | Identifier expected. 'null' is a reserved word that cannot be used here. |  | 4+4"]],
-      [
-        "js ts",
-        "let a, enum;",
-        [" | Identifier expected. 'enum' is a reserved word that cannot be used here. |  | 7+4"],
-      ],
-      [
-        "js ts",
-        "function f() { let\nreturn; }",
-        [" | Identifier expected. 'return' is a reserved word that cannot be used here. |  | 19+6"],
-      ],
-      [
-        "js ts",
-        "var function;",
-        [" | Identifier expected. 'function' is a reserved word that cannot be used here. |  | 4+8"],
-      ],
-      [
-        "js ts",
-        "let\nimport('a');",
-        [" | Identifier expected. 'import' is a reserved word that cannot be used here. |  | 4+6"],
-      ],
-      [
-        "js ts",
-        "let [enum] = a;",
-        [" | Identifier expected. 'enum' is a reserved word that cannot be used here. |  | 5+4"],
-      ],
-      ["js ts", "function enum() {}", [" | Expected `Identifier` but found `enum` |  | 9+4 `Identifier` expected"]],
-      [
-        "js ts",
-        "function f(enum) {}",
-        [" | Identifier expected. 'enum' is a reserved word that cannot be used here. |  | 11+4"],
-      ],
-      ["js ts", "class enum {}", [" | Expected `{` but found `enum` |  | 6+4 `{` expected"]],
-    ],
-  ],
-  [
-    "react/refs: what only the compiler knows about a helper",
-    { "categories": { "correctness": "off" }, "plugins": ["react"], "rules": { "react/refs": "error" } },
-    [
-      [
-        "jsx",
-        'import { useRef, useCallback } from "react";\nexport function C() { const ref = useRef(0); const o = { g1: () => ref.current }; const g2 = () => o.g1(); return <div>{g2()}</div>; }',
-        [
-          "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 165+2 This function accesses a ref value | 144+4 The ref is accessed here",
-        ],
-      ],
-      [
-        "jsx",
-        'import { useRef, useCallback } from "react";\nexport function C() { const ref = useRef(0); const g2 = () => { const a = ref.current; const b = ref.current.x; return h(b, a); }; return <div>{g2()}</div>; }',
-        [
-          "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 189+2 This function accesses a ref value | 166+1 The ref is accessed here",
-        ],
-      ],
-      [
-        "jsx",
-        'import { useRef, useCallback } from "react";\nexport function C() { const ref = useRef(0); const g2 = () => { const { x } = ref.current; return x; }; return <div>{g2()}</div>; }',
-        [
-          "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 162+2 This function accesses a ref value | 143+1 The ref is accessed here",
-          "react(refs) | Cannot access refs during render | React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected | 162+4 Cannot access ref value during render",
-        ],
-      ],
-    ],
-  ],
-];
-
 describe.concurrent("bun lint with .oxlintrc.json", () => {
   test("has every error of a file that oxc refuses, in oxlint's order and words", async () => {
     await expectErrors(rows);
   });
 
   test.each(tables)("%s", async (_, config, table) => {
-    await expectErrors(table, config);
-  });
-
-  test.todo.each(knownDifferences)("%s", async (_, config, table) => {
     await expectErrors(table, config);
   });
 

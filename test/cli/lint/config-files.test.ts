@@ -3932,6 +3932,173 @@ test("--print-config of oxlint: what each plugin is called in the name of a rule
   expect(Object.keys(JSON.parse(stdout).rules).sort()).toEqual(names);
 });
 
+// A rule is handed such a key once, at its first place and with its last value, as `JSON.parse` makes it. So it sees the same
+// whether it asks for the key or walks the entries.
+describe.concurrent("a key that is written more than once in what a rule is handed", () => {
+  const plugin = `
+    const show = (name, value) => console.log(name + " " + JSON.stringify(value) + " " + JSON.stringify(Object.keys(value)));
+    const create = context => (show("options", context.options[0]), show("settings", context.settings.mine ?? {}), {});
+    module.exports = { meta: { name: "mine" }, rules: { show: { meta: { schema: false }, create } } };\n`;
+  const printed = (result: { raw: string; stderr: string }, name: string) =>
+    (result.raw + result.stderr).split("\n").filter(it => it.startsWith(name + " "));
+
+  // What oxlint 1.87 prints.
+  test.each([
+    [
+      '{"size": 1, "color": "red", "size": 3, "shape": null, "size": 5}',
+      '{"size":5,"color":"red","shape":null} ["size","color","shape"]',
+    ],
+    // The whole of the last one: nothing is merged.
+    ['{"box": {"w": 1, "h": 2}, "n": 0, "box": {"h": 3}}', '{"box":{"h":3},"n":0} ["box","n"]'],
+    [
+      '{"deep": {"list": [{"k": 1, "k": 2}], "list": [{"k": 3, "j": 4, "k": 5}]}}',
+      '{"deep":{"list":[{"k":5,"j":4}]}} ["deep"]',
+    ],
+    ['{"size": "big", "size": ["small"]}', '{"size":["small"]} ["size"]'],
+    ['{"size": 1, "\\u0073ize": 2}', '{"size":2} ["size"]'],
+    // A property like any other.
+    [
+      '{"__proto__": {"size": 1}, "color": "red", "__proto__": {"size": 2}}',
+      '{"__proto__":{"size":2},"color":"red"} ["__proto__","color"]',
+    ],
+  ])("a rule in JavaScript, from an .oxlintrc.json: %s", async (written, handed) => {
+    const config = `{ "jsPlugins": ["./plugin.cjs"], "settings": { "mine": ${written} }, "rules": { "mine/show": ["error", ${written}] } }`;
+    const result = await lint({ ".oxlintrc.json": config, "plugin.cjs": plugin, "a.js": "export {};\n" }, ["a.js"]);
+    expect(printed(result, "options")).toEqual([`options ${handed}`]);
+    expect(printed(result, "settings")).toEqual([`settings ${handed}`]);
+    expect(result.exitCode).toBe(0);
+  });
+
+  // What oxlint 1.87 reports. The rule walks its one option, a map from the name of a matcher to what is said about it.
+  test.each([
+    ['{"toBe": "first", "toEqual": "other", "toBe": "last"}', ["2 toBe last", "3 toEqual other"]],
+    ['{"toBe": "first", "toBe": null}', ["2 toBe undefined"]],
+    // The first value, which no map of the rule can have, is not looked at.
+    ['{"toBe": 1, "toBe": "last"}', ["2 toBe last"]],
+  ])("a built-in rule that walks the entries, from an .oxlintrc.json: %s", async (written, found) => {
+    const files = {
+      ".oxlintrc.json": `{ "plugins": ["jest"], "categories": { "correctness": "off" }, "rules": { "jest/no-restricted-matchers": ["error", ${written}] } }`,
+      "a.test.js": 'test("t", () => {\n  expect(a).toBe(1);\n  expect(a).toEqual(1);\n});\n',
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "json", "a.test.js"]);
+    type Diagnostic = { message: string; help?: string; labels: { span: { line: number } }[] };
+    const diagnostics: Diagnostic[] = JSON.parse(raw).diagnostics;
+    const shown = diagnostics.map(it => `${it.labels[0].span.line} ${it.message.split("`")[1]} ${it.help}`);
+    expect(shown).toEqual(found);
+    expect(exitCode).toBe(1);
+  });
+
+  // What oxlint 1.87 and ESLint 10.12 do: `true` if the file, which has three lines, has too many, a text if the options are refused.
+  describe.each<[written: string, outcome: boolean | string]>([
+    ['{"max": 1, "max": 100}', false],
+    ['{"max": 100, "max": 1}', true],
+    ['{"max": "many", "max": 100}', false],
+    ['{"max": 100, "max": "many"}', "many"],
+  ])("a built-in rule that asks for the key: %s", (written, outcome) => {
+    const found = outcome === true ? ["max-lines"] : [];
+    const rulesOf = (problems: string[]) => problems.map(it => it.split(" ")[1]);
+
+    test("from an .oxlintrc.json", async () => {
+      const config = `{ "categories": { "correctness": "off" }, "rules": { "max-lines": ["error", ${written}] } }`;
+      const { problems, raw, exitCode } = await lint({ ".oxlintrc.json": config, "a.js": "a;\nb;\nc;\n" }, ["a.js"]);
+      expect(rulesOf(problems)).toEqual(found);
+      if (typeof outcome === "string") expect(raw).toContain(`invalid type: string "${outcome}", expected u32`);
+      expect(exitCode).toBe(outcome === false ? 0 : 1);
+    });
+
+    test("from a comment", async () => {
+      const files = {
+        "eslint.config.mjs": "export default [{ rules: {} }];\n",
+        "a.js": `/* eslint max-lines: ["error", ${written}] */\na;\nb;\n`,
+      };
+      const { problems, raw, exitCode } = await lint(files, ["a.js"]);
+      expect(rulesOf(problems)).toEqual(outcome === false ? [] : ["max-lines"]);
+      if (typeof outcome === "string") expect(raw).toContain(`Value \\"${outcome}\\" should be integer.`);
+      expect(exitCode).toBe(outcome === false ? 0 : 1);
+    });
+
+    test("from --rule", async () => {
+      const files = { "eslint.config.mjs": "export default [{ rules: {} }];\n", "a.js": "a;\nb;\nc;\n" };
+      const { problems, stderr, exitCode } = await lint(files, ["--rule", `max-lines: ["error", ${written}]`, "a.js"]);
+      expect(rulesOf(problems)).toEqual(found);
+      if (typeof outcome === "string") expect(stderr).toContain(`Value "${outcome}" should be integer.`);
+      expect(exitCode).toBe(typeof outcome === "string" ? 2 : Number(outcome));
+    });
+  });
+
+  // What ESLint 10.12 prints. It reads both with levn, which assigns each entry to an object: `__proto__` is no property then.
+  describe.each([
+    [
+      '{"size": 1, "color": "red", "size": 3, "shape": null, "size": 5}',
+      '{"size":5,"color":"red","shape":null} ["size","color","shape"]',
+    ],
+    ['{"box": {"w": 1, "h": 2}, "n": 0, "box": {"h": 3}}', '{"box":{"h":3},"n":0} ["box","n"]'],
+    [
+      '{"deep": {"list": [{"k": 1, "k": 2}], "list": [{"k": 3, "j": 4, "k": 5}]}}',
+      '{"deep":{"list":[{"k":5,"j":4}]}} ["deep"]',
+    ],
+    [`{size: 1, "size": 2, 'size': 3}`, '{"size":3} ["size"]'],
+    ['{"__proto__": {"size": 1}, "color": "red"}', '{"color":"red"} ["color"]'],
+  ])("a rule in JavaScript, with an eslint.config.mjs: %s", (written, handed) => {
+    const files = {
+      "eslint.config.mjs": `import mine from "./plugin.cjs";\nexport default [{ plugins: { mine } }];\n`,
+      "plugin.cjs": plugin,
+    };
+
+    test("from a comment", async () => {
+      const code = `/* eslint mine/show: ["error", ${written}] */\nexport {};\n`;
+      expect(printed(await lint({ ...files, "a.js": code }, ["a.js"]), "options")).toEqual([`options ${handed}`]);
+    });
+
+    test("from --rule", async () => {
+      const result = await lint({ ...files, "a.js": "export {};\n" }, [
+        "--rule",
+        `mine/show: ["error", ${written}]`,
+        "a.js",
+      ]);
+      expect(printed(result, "options")).toEqual([`options ${handed}`]);
+    });
+  });
+
+  // TOML has no such thing.
+  test.each([
+    'max-lines = ["error", { max = 100, max = 1 }]\n',
+    'max-lines = "off"\nmax-lines = ["error", { max = 1 }]\n',
+    '"max-lines" = "off"\nmax-lines = ["error", { max = 1 }]\n',
+  ])("a bunfig.toml is refused: %j", async rules => {
+    const { problems, stderr, exitCode } = await lint({ "bunfig.toml": `[lint.rules]\n${rules}`, "a.js": "a;\nb;\n" }, [
+      "a.js",
+    ]);
+    expect(problems).toEqual([]);
+    expect(stderr).toContain("error: Cannot redefine key");
+    expect(exitCode).toBe(2);
+  });
+
+  // The words of js-yaml 4, which reads these files for ESLint 8 and throws. It reads an `.eslintrc` too, which can be JSON.
+  test.each([
+    [
+      ".eslintrc.yaml",
+      "root: true\nrules:\n  max-lines: [error, {max: 100, max: 1}]\n",
+      "duplicated mapping key (3:33)\n\n 1 | root: true\n 2 | rules:\n 3 |   max-lines: [error, {max: 100, max: 1}]\n-------------------------------------^",
+    ],
+    [
+      ".eslintrc.yml",
+      'root: true\nrules:\n  "no-var": off\n  eqeqeq: off\n  no-var: error\nenv: {}\nglobals: {}\nsettings: {}\n',
+      'duplicated mapping key (5:3)\n\n 2 | rules:\n 3 |   "no-var": off\n 4 |   eqeqeq: off\n 5 |   no-var: error\n-------^\n 6 | env: {}\n 7 | globals: {}',
+    ],
+    [
+      ".eslintrc",
+      '{ "root": true, "rules": { "no-var": "off", "no-var": "error" } }\n',
+      'duplicated mapping key (1:45)\n\n 1 |  ... e, "rules": { "no-var": "off", "no-var": "error" } }\n-----------------------------------------^',
+    ],
+  ])("a %s is refused", async (name, text, why) => {
+    const { problems, stderr, exitCode } = await lint({ [name]: text, "a.js": "var a;\n" }, ["a.js"]);
+    expect(problems).toEqual([]);
+    expect(stderr).toContain(`Cannot read config file: <dir>/${name}\nError: ${why}`);
+    expect(exitCode).toBe(2);
+  });
+});
+
 describe.concurrent("the configuration files of ESLint 8", () => {
   test.each([
     [".eslintrc.json", rc(eqeqeq)],

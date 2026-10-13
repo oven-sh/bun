@@ -590,7 +590,9 @@ pub(super) fn function(f: &mut FileBuilder, src: &[u8], id: FnId, open_brace: u3
                 error(1222, (start, now), message, "")
             }
         };
-        f.diagnostics.push(noticed_at(found, now));
+        // At the token after the signature: in `function* enum() {}` oxc has given up there.
+        let next = skip_trivia(src, now as usize) as u32;
+        f.diagnostics.push(noticed_at(found, next));
     }
 }
 
@@ -709,6 +711,12 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
     // The `?` or the `!` after the name.
     let postfix = skip_trivia(src, it.name.1 as usize) as u32;
     let postfix = (postfix, postfix + 1);
+    // The `!` of `a?!`.
+    let exclamation = match member.flags.contains(Flags::OPTIONAL) {
+        true => skip_trivia(src, postfix.1 as usize) as u32,
+        false => postfix.0,
+    };
+    let exclamation = (exclamation, exclamation + 1);
     let place_of = |modifier: Flags| {
         let found = written.iter().rfind(|it| it.kind.flag() == modifier);
         found.map_or(0, |it| it.pos)
@@ -875,7 +883,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
                 || is_abstract
                 || seen.contains(Flags::STATIC);
             if member.flags.contains(Flags::DEFINITE) {
-                let found = definite(postfix, initializer.is_some(), member.ty, is_refused);
+                let found = definite(exclamation, initializer.is_some(), member.ty, is_refused);
                 errors.extend(found.map(|it| noticed_at(it, now)));
             }
         }
@@ -905,7 +913,7 @@ pub(super) fn class_member(f: &mut FileBuilder, src: &[u8], it: &ClassMember) {
             }
             if member.flags.contains(Flags::DEFINITE) {
                 let is_refused = is_ambient || is_abstract || seen.contains(Flags::STATIC);
-                let found = definite(postfix, initializer.is_some(), member.ty, is_refused);
+                let found = definite(exclamation, initializer.is_some(), member.ty, is_refused);
                 errors.extend(found.map(|it| noticed_at(it, now)));
             }
         }
@@ -1437,7 +1445,7 @@ pub(super) fn type_modifier_twice(errors: &mut Errors, at: u32, of: Specifier) {
     ));
 }
 
-/// The statements `list` of a declaration file: only declarations can be there.
+/// The statements `list` of a declaration file: only declarations can be there. oxc says it about the first that is none.
 #[cold]
 #[inline(never)]
 pub(super) fn statements_in_ambient_context(f: &mut FileBuilder, src: &[u8], list: IdList<StmtId>) {
@@ -1477,16 +1485,22 @@ pub(super) fn statements_in_ambient_context(f: &mut FileBuilder, src: &[u8], lis
                 | StmtKind::Continue(_)
                 | StmtKind::Labeled { .. }
         );
-        // oxc has given up in the statement, or where it lacks its semicolon.
+        if !is_statement || is_prologue {
+            continue;
+        }
+        // oxc has given up in the statement, or where something is missing after what there is of it.
         let next = skip_trivia(src, it.loc.end as usize) as u32;
         let is_cut_off = |error: &Diagnostic| {
-            error.kind == DiagnosticKind::Parse && (it.start..=next).contains(&error.start)
+            error.kind == DiagnosticKind::Parse
+                && ((it.start..it.loc.end).contains(&error.start)
+                    || error.start == next && error.code == 1005)
         };
-        if is_statement && !is_prologue && !errors.iter().any(is_cut_off) {
+        if !errors.iter().any(is_cut_off) {
             let message = "Statements are not allowed in ambient contexts.";
             let found = error(1036, (it.start, it.loc.end), message, "");
             errors.push(noticed_at(found, it.loc.end));
         }
+        return;
     }
 }
 
@@ -1795,17 +1809,35 @@ pub(super) fn import_call(
     }
 }
 
-/// A pattern without an initializer, where nothing else gives it a value: `let [a];`.
+/// `let a?: T`: the `?`.
 #[cold]
 #[inline(never)]
-pub(super) fn pattern_without_initializer(f: &mut FileBuilder, pattern: PatId) {
+pub(super) fn optional_declaration(errors: &mut Errors, at: (u32, u32)) {
+    let message = "Optional declaration is not allowed here";
+    errors.push(error(0, at, message, "Remove the `?`"));
+}
+
+/// `a?!: T` in a class, with the `?` at `question`.
+#[cold]
+#[inline(never)]
+pub(super) fn optional_and_definite(errors: &mut Errors, question: u32) {
+    let message = "A property cannot be both optional and definite.";
+    let help = "Remove either the `?` or the `!`";
+    errors.push(error(0, (question, question + 2), message, help));
+}
+
+/// A pattern without an initializer, where nothing else gives it a value: `let [a];`. `next`: the token after the declaration,
+/// where oxc is when it looks.
+#[cold]
+#[inline(never)]
+pub(super) fn pattern_without_initializer(f: &mut FileBuilder, pattern: PatId, next: u32) {
     let Some(it) = f.pats.get(pattern.idx()) else {
         return;
     };
     let message = "Missing initializer in destructuring declaration";
     let help = "Add an initializer (e.g. ` = undefined`) here";
-    f.diagnostics
-        .push(error(0, (it.pos, it.end), message, help));
+    let found = error(0, (it.pos, it.end), message, help);
+    f.diagnostics.push(noticed_at(found, next));
 }
 
 /// `for (let.a of b)`: `at` is the `let.a`.

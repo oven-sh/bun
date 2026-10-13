@@ -637,6 +637,8 @@ impl Context<'_, '_> {
                     return self.result(path, verify(&text), text, was_fixed, config);
                 }
                 result.messages = fixed.remaining;
+                // They are by place now. oxlint prints what is left in the order in which it has run its rules.
+                bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| it.reported);
                 let is_fixed = fixed.is_fixed || was_fixed;
                 let mut result = self.result(path, result, text, is_fixed, config);
                 result.fixed_text = fixed.is_fixed.then_some(fixed.output);

@@ -222,6 +222,296 @@ describe.concurrent("with an oxlint config", () => {
       }
     });
   });
+
+  // When a rule of a JavaScript plugin throws, oxlint has nothing from any rule of any JavaScript plugin for that file, and everything
+  // from its own rules.
+  describe("what the other rules found in the file", () => {
+    const alpha = `
+      const boom = where => { throw new Error("boom " + where); };
+      const at = (name, where) => ({ create: () => ({ Identifier(node) { if (node.name === name) boom(where); } }) });
+      const says = (type, message) => ({ create: context => ({ [type]: node => context.report({ node, message }) }) });
+      export default {
+        meta: { name: "alpha" },
+        rules: {
+          vars: says("VariableDeclaration", "alpha saw a declaration"),
+          start: says("Program", "alpha saw the start"),
+          "throws-in-create": { create: () => boom("in create") },
+          "throws-early": at("early", "early"),
+          "throws-late": at("late", "late"),
+          "throws-at-exit": { create: () => ({ "Program:exit": () => boom("at exit") }) },
+          "throws-in-before": { createOnce: () => ({ before: () => boom("in before"), Identifier() {} }) },
+          "throws-in-after": { createOnce: () => ({ after: () => boom("in after"), Identifier() {} }) },
+          "reports-then-throws": {
+            create: context => ({
+              Program: node => context.report({ node, message: "alpha reported, then threw" }),
+              "Program:exit": () => boom("after reporting"),
+            }),
+          },
+        },
+      };
+    `;
+    const beta = `
+      const says = (type, message) => ({ create: context => ({ [type]: node => context.report({ node, message }) }) });
+      export default {
+        meta: { name: "beta" },
+        rules: {
+          calls: says("CallExpression", "beta saw a call"),
+          end: says("Program:exit", "beta saw the end"),
+          fixes: {
+            meta: { fixable: "code" },
+            create: context => ({
+              Literal(node) {
+                if (node.value === 1) context.report({ node, message: "beta wants 2", fix: it => it.replaceText(node, "2") });
+              },
+            }),
+          },
+        },
+      };
+    `;
+    const plugins = { "alpha.mjs": alpha, "beta.mjs": beta };
+    const code =
+      "debugger;\nvar first = early == 1;\nuse(first);\ndebugger;\nvar second = late == 1;\nuse(second);\ndebugger;\n";
+    const on = {
+      "alpha/vars": "warn",
+      "alpha/start": "warn",
+      "beta/calls": "warn",
+      "beta/end": "warn",
+      "no-debugger": "warn",
+      "no-var": "warn",
+      eqeqeq: "warn",
+    };
+    const config = (rules: Record<string, unknown>, more = {}) =>
+      oxlintrc({ ...on, ...rules }, { jsPlugins: ["./alpha.mjs", "./beta.mjs"], ...more });
+
+    type Labeled = {
+      filename: string;
+      code?: string;
+      message: string;
+      labels: { span: { offset: number; length: number } }[];
+    };
+    /** Every diagnostic in the order it's printed, as `file code offset+length`, or `file Error: message` for a rule that threw. */
+    const inOrder = ({ stdout }: { stdout: string }) =>
+      (JSON.parse(stdout).diagnostics as Labeled[]).map(it => {
+        if (it.message.startsWith("Error running JS plugin.")) return `${it.filename} ${it.message.split("\n")[2]}`;
+        const [{ span }] = it.labels;
+        return `${it.filename} ${it.code ?? it.message.split(" (")[0]} ${span.offset}+${span.length}`;
+      });
+    const inFile = (file: string, found: string[]) => found.map(it => `${file} ${it}`);
+    const builtIn = [
+      "eslint(no-debugger) 0+9",
+      "eslint(no-var) 10+3",
+      "eslint(eqeqeq) 28+2",
+      "eslint(no-debugger) 46+9",
+      "eslint(no-var) 56+3",
+      "eslint(eqeqeq) 74+2",
+      "eslint(no-debugger) 93+9",
+    ];
+    const ofPlugins = [
+      "alpha(start) 0+103",
+      "alpha(vars) 10+23",
+      "beta(calls) 34+10",
+      "alpha(vars) 56+23",
+      "beta(calls) 80+11",
+      "beta(end) 0+103",
+    ];
+
+    // All of this is what oxlint 1.87 prints, in its order.
+    test("is all there when nothing throws", async () => {
+      const result = await lint({ ...plugins, ...config({}), "a.js": code }, ["-f", "json", "a.js"]);
+      expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, ...ofPlugins]));
+      expect(result.exitCode).toBe(0);
+    });
+
+    test.each([
+      ["throws-in-create", "in create"],
+      ["throws-early", "early"],
+      ["throws-late", "late"],
+      ["throws-at-exit", "at exit"],
+      ["throws-in-before", "in before"],
+      ["throws-in-after", "in after"],
+      ["reports-then-throws", "after reporting"],
+    ])("alpha/%s: the built-in rules' findings stay, those of both plugins go", async (rule, where) => {
+      const files = { ...plugins, ...config({ [`alpha/${rule}`]: "warn" }), "a.js": code };
+      const result = await lint(files, ["-f", "json", "a.js"]);
+      expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, `Error: boom ${where}`]));
+      expect(result.exitCode).toBe(1);
+    });
+
+    test("the first throw counts", async () => {
+      const files = {
+        ...plugins,
+        ...config({ "alpha/throws-late": "warn", "alpha/throws-early": "warn" }),
+        "a.js": code,
+      };
+      const result = await lint(files, ["-f", "json", "a.js"]);
+      expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, "Error: boom early"]));
+      expect(result.exitCode).toBe(1);
+    });
+
+    test("another file keeps everything", async () => {
+      const files = { "a.js": code, "b.js": code.replace("late", "soon") };
+      const result = await lint({ ...plugins, ...config({ "alpha/throws-late": "warn" }), ...files }, [
+        "-f",
+        "json",
+        "--threads",
+        "1",
+        "a.js",
+        "b.js",
+      ]);
+      expect(inOrder(result)).toEqual([
+        ...inFile("a.js", [...builtIn, "Error: boom late"]),
+        ...inFile("b.js", [...builtIn, ...ofPlugins]),
+      ]);
+      expect(result.exitCode).toBe(1);
+    });
+
+    test("a comment that disables a plugin's rule is unused then", async () => {
+      const disabled = `/* oxlint-disable alpha/vars, no-debugger */\n${code}`;
+      const flags = ["-f", "json", "--report-unused-disable-directives", "a.js"];
+      const kept = ["eslint(no-var) 55+3", "eslint(eqeqeq) 73+2", "eslint(no-var) 101+3", "eslint(eqeqeq) 119+2"];
+      const [fine, thrown, all] = await Promise.all([
+        lint({ ...plugins, ...config({}), "a.js": disabled }, flags),
+        lint({ ...plugins, ...config({ "alpha/throws-late": "warn" }), "a.js": disabled }, flags),
+        lint(
+          { ...plugins, ...config({ "alpha/throws-late": "warn" }), "a.js": `/* oxlint-disable */\n${code}` },
+          flags,
+        ),
+      ]);
+      expect(inOrder(fine)).toEqual(
+        inFile("a.js", [...kept, "alpha(start) 45+103", "beta(calls) 79+10", "beta(calls) 125+11", "beta(end) 45+103"]),
+      );
+      expect(inOrder(thrown)).toEqual(
+        inFile("a.js", [...kept, "Error: boom late", "Unused oxlint-disable directive 18+10"]),
+      );
+      expect(inOrder(all)).toEqual(["a.js Error: boom late"]);
+      expect([fine.exitCode, thrown.exitCode, all.exitCode]).toEqual([0, 1, 1]);
+    });
+
+    test("with a rule about several files", async () => {
+      const importing = (other: string) =>
+        `import { it as other } from "./${other}";\nexport const it = other;\n${code}`;
+      const files = { "a.js": importing("b.js"), "b.js": importing("a.js").replace("late", "soon") };
+      const rules = { "import/no-cycle": "warn", "alpha/throws-late": "warn" };
+      const result = await lint({ ...plugins, ...config(rules, { plugins: ["import"] }), ...files }, [
+        "-f",
+        "json",
+        "--threads",
+        "1",
+        "a.js",
+        "b.js",
+      ]);
+      const own = [
+        "import(no-cycle) 28+8",
+        "eslint(no-debugger) 63+9",
+        "eslint(no-var) 73+3",
+        "eslint(eqeqeq) 91+2",
+        "eslint(no-debugger) 109+9",
+        "eslint(no-var) 119+3",
+        "eslint(eqeqeq) 137+2",
+        "eslint(no-debugger) 156+9",
+      ];
+      expect(inOrder(result)).toEqual([
+        ...inFile("a.js", [...own, "Error: boom late"]),
+        ...inFile("b.js", [
+          ...own,
+          "alpha(start) 0+166",
+          "alpha(vars) 45+17",
+          "alpha(vars) 73+23",
+          "beta(calls) 97+10",
+          "alpha(vars) 119+23",
+          "beta(calls) 143+11",
+          "beta(end) 0+166",
+        ]),
+      ]);
+      expect(result.exitCode).toBe(1);
+    });
+
+    test.each(["throws-in-create", "throws-late", "throws-at-exit"])(
+      "--fix still applies the built-in rules' fixes: alpha/%s",
+      async rule => {
+        using dir = tempDir("bun-lint-rule-throws", {
+          ...plugins,
+          ...config({ "beta/fixes": "warn", [`alpha/${rule}`]: "warn" }),
+          "a.js": code,
+        });
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "-f", "json", "--fix", "a.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        const found = inOrder({ stdout }).map(it => it.replace(/boom .*/, "boom"));
+        const left = builtIn.filter(it => !it.includes("no-var"));
+        expect(found.sort()).toEqual(inFile("a.js", [...left, "Error: boom"]).sort());
+        expect(await Bun.file(`${dir}/a.js`).text()).toBe(code.replaceAll("var ", "const "));
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    // oxlint has neither react/jsx-indent, react/jsx-indent-props nor import/no-extraneous-dependencies. It could only run them as rules
+    // of a JavaScript plugin, so here they share the fate of those. The lists are what oxlint 1.87 prints for this file with the
+    // rules that it has.
+    describe("native rules that oxlint doesn't have count as rules of a JavaScript plugin", () => {
+      const element =
+        'import x from "listed";\ndebugger;\nvar first = use(x);\nconst a = (\n  <b\n    c="d"\n  >\n    <e />\n  </b>\n);\ndebugger;\nvar second = use(a, first);\n';
+      const project = (rules: Record<string, unknown>) => ({
+        ...plugins,
+        ...oxlintrc(
+          {
+            "alpha/vars": "warn",
+            "beta/calls": "warn",
+            "beta/end": "warn",
+            "no-debugger": "warn",
+            "no-var": "warn",
+            "import/no-extraneous-dependencies": "warn",
+            "react/jsx-indent-props": ["warn", 8],
+            ...rules,
+          },
+          { plugins: ["react", "import"], jsPlugins: ["./alpha.mjs", "./beta.mjs"] },
+        ),
+        "package.json": `{"name":"root"}`,
+        "node_modules/listed/package.json": `{"name":"listed","main":"index.js"}`,
+        "node_modules/listed/index.js": "module.exports = 1;\n",
+        "a.jsx": element,
+      });
+      const own = [
+        "eslint(no-debugger) 24+9",
+        "eslint(no-var) 34+3",
+        "eslint(no-debugger) 105+9",
+        "eslint(no-var) 115+3",
+      ];
+
+      test("they report when nothing throws", async () => {
+        const result = await lint(project({}), ["-f", "json", "a.jsx"]);
+        expect(inOrder(result).sort()).toEqual(
+          inFile("a.jsx", [
+            ...own,
+            "import(no-extraneous-dependencies) 0+23",
+            "react(jsx-indent-props) 75+5",
+            "alpha(vars) 34+19",
+            "beta(calls) 46+6",
+            "alpha(vars) 54+50",
+            "alpha(vars) 115+27",
+            "beta(calls) 128+13",
+            "beta(end) 0+143",
+          ]).sort(),
+        );
+        expect(result.exitCode).toBe(0);
+      });
+
+      test.each([
+        ["one of them throws", { "react/jsx-indent": ["warn", -1] }, "RangeError: Invalid count value: -1"],
+        ["a JavaScript rule throws", { "alpha/throws-at-exit": "warn" }, "Error: boom at exit"],
+        ["both throw", { "alpha/throws-at-exit": "warn", "react/jsx-indent": ["warn", -1] }, "Error: boom at exit"],
+      ])("%s: only the findings of oxlint's own rules stay", async (_, rules, error) => {
+        const result = await lint(project(rules), ["-f", "json", "a.jsx"]);
+        expect(inOrder(result)).toEqual(inFile("a.jsx", [...own, error]));
+        expect(result.exitCode).toBe(1);
+      });
+    });
+  });
 });
 
 describe.concurrent("with an ESLint config", () => {

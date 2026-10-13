@@ -221,6 +221,8 @@ pub(crate) fn problem_of_oxlint(
         // Those of oxlint have none.
         message.message_id.clear();
     }
+    // As they were recorded, which keeps the order of oxlint only among those that start at one place.
+    sort::sort_by_key(&mut outcome.messages, |it| (it.line, it.column));
     // `output` is compared below.
     outcome.output = string_of(case, b"output").map(<[u8]>::to_vec);
     if let Some(problem) = problem_of(Some(outcome), case, counts) {

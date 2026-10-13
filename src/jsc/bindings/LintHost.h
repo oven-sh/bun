@@ -63,8 +63,8 @@ public:
     bool isEspree() const { return m_flags & 4; }
     // The configuration is oxlint's, so plugins get what oxlint would give them.
     bool isOxlint() const { return m_flags & 16; }
-    // See `shortens_identifiers` in src/lint/js_plugin/ast.rs.
-    bool shortensIdentifiers() const { return m_flags & 256; }
+    // See `shortens_nodes` in src/lint/js_plugin/ast.rs.
+    bool shortensNodes() const { return m_flags & 256; }
 
     // The index where each line starts. The first is 0.
     const WTF::Vector<uint32_t>& lineStarts()

@@ -31,11 +31,12 @@
 
 use super::ast::Numbered;
 use super::wire::{self, push_list};
-use crate::ast::{ExprKind, File, Node};
+use crate::ast::{File, Node};
 use crate::estree::{Dialect, Field, NodeType, VNode, Value};
 use crate::language::{Global, SourceType};
 use crate::semantic::{Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind};
 use crate::span::Span;
+use crate::utils::estree_compat::normalize;
 use crate::utils::sort;
 use bun_core::strings::Utf16OffsetTable;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -128,12 +129,7 @@ fn name_at(base: Node<'_>, start: u32) -> Option<VNode<'_>> {
 
 /// What the ESTree has where the expression `e` is.
 fn expression<'a>(e: crate::ast::Expr<'a>) -> Option<VNode<'a>> {
-    let base = match e.kind() {
-        ExprKind::Fn(func) => Node::Func(func),
-        ExprKind::Class(class) => Node::Class(class),
-        _ => Node::Expr(e),
-    };
-    find(base, |_, _| true)
+    find(normalize(Node::Expr(e)), |_, _| true)
 }
 
 /// ESLint's `scope.block`.
@@ -376,23 +372,35 @@ impl<'t, 'a> Tree<'t, 'a> {
     }
 
     /// The members such as `a[b]` that a pattern or a `for-in` or `for-of` loop assigns to. Both scope managers visit `b` first.
+    /// `a[b]!` and `a[b] as T` are the same to typescript-eslint's `PatternVisitor`, which goes through what is around the member.
     fn computed_members_in_patterns(&self) -> Vec<u32> {
         let member = NodeType::MemberExpression as u8;
         (self.types.iter().zip(0..))
             .filter(|it| *it.0 == member)
             .map(|it| it.1)
             .filter(|&member| {
-                let parent = self.parent(member);
+                let (mut target, mut parent) = (member, self.parent(member));
+                while matches!(
+                    self.node_type(parent),
+                    Some(
+                        NodeType::TSNonNullExpression
+                            | NodeType::TSAsExpression
+                            | NodeType::TSSatisfiesExpression
+                            | NodeType::TSTypeAssertion
+                    )
+                ) {
+                    (target, parent) = (parent, self.parent(parent));
+                }
                 let is_target = match self.node_type(parent) {
                     Some(NodeType::ArrayPattern | NodeType::RestElement) => true,
                     Some(
                         NodeType::AssignmentPattern
                         | NodeType::ForInStatement
                         | NodeType::ForOfStatement,
-                    ) => self.is_field(parent, Field::Left, member),
+                    ) => self.is_field(parent, Field::Left, target),
                     Some(NodeType::Property) => {
                         self.is(self.parent(parent), NodeType::ObjectPattern)
-                            && self.is_field(parent, Field::Value, member)
+                            && self.is_field(parent, Field::Value, target)
                     }
                     _ => false,
                 };
@@ -1014,7 +1022,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         let mut late = VecDeque::from(self.references_to_const());
         let mut is_first_to_const = true;
         let mut seen = FxHashSet::default();
-        for reference in file.references_as_visited() {
+        for reference in file.references_with_names_of_patterns_first() {
             // A rule can't see a reference whose identifier isn't in the tree.
             let identifier = id(identifier(reference));
             if identifier == NONE {

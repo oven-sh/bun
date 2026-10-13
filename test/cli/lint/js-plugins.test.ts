@@ -3706,6 +3706,147 @@ describe.concurrent("what a JavaScript plugin sees with an oxlint config", () =>
     timeout,
   );
 
+  // In a JavaScript file nothing can fill in the fields of TypeScript, so they aren't made for each node, and an empty list is only made
+  // when it's read. A plugin must not be able to tell. All of this is what the same plugin says under oxlint 1.87.
+  describe("the fields of TypeScript in a JavaScript file", () => {
+    const plugin = String.raw`const describe = (object, key) => { const it = Object.getOwnPropertyDescriptor(object, key); return it && JSON.stringify(it); };
+const rule = { create: context => { const ids = []; return { Identifier(node) { ids.push(node); }, "Program:exit"(program) {
+  const next = () => ids.pop();
+  const said = {};
+  let a = next(), b = next();
+  said.keys = Object.keys(a).join();
+  said.forIn = (() => { const keys = []; for (const key in a) keys.push(key); return keys.join(); })();
+  said.has = [Object.hasOwn(a, "decorators"), "decorators" in a, a.propertyIsEnumerable("decorators")].join();
+  said.descriptor = describe(a, "decorators");
+  said.identity = [a.decorators === a.decorators, a.decorators === b.decorators, Array.isArray(a.decorators), Object.isFrozen(a.decorators), Object.getPrototypeOf(a.decorators) === Array.prototype].join();
+  a.decorators.push(1); said.pushed = a.decorators.length + "/" + b.decorators.length;
+  a = next(); said.json = JSON.stringify(a, (key, value) => (key === "parent" ? undefined : value));
+  a = next(); said.spread = ({ ...a }).decorators === a.decorators;
+  a = next(); said.assign = Object.assign({}, a).decorators === a.decorators;
+  a = next(); said.entries = JSON.stringify(Object.entries(a).find(it => it[0] === "decorators"));
+  a = next(); said.values = Object.values(a).filter(Array.isArray).map(it => it.length).join();
+  a = next(); a.decorators = 5; said.written = [a.decorators, describe(a, "decorators"), Object.keys(a).join() === said.keys].join(" ");
+  a = next(); said.deleted = [delete a.decorators, "decorators" in a, Object.keys(a).length].join();
+  a = next(); Object.freeze(a); said.frozen = [Object.isFrozen(a), describe(a, "decorators"), a.decorators === a.decorators, Object.isFrozen(a.decorators), Object.isFrozen(a)].join(" ");
+  a = next(); Object.seal(a); said.sealed = [describe(a, "decorators"), a.decorators === a.decorators, Object.isSealed(a)].join(" ");
+  a = next(); Object.preventExtensions(a); said.closed = [a.decorators === a.decorators, Object.isExtensible(a), describe(a, "decorators")].join(" ");
+  a = next(); Object.defineProperty(a, "decorators", { enumerable: false }); said.hidden = [describe(a, "decorators"), Object.keys(a).includes("decorators"), a.decorators === a.decorators].join(" ");
+  a = next(); Object.defineProperty(a, "decorators", { writable: false }); said.readOnly = [describe(a, "decorators"), a.decorators === a.decorators].join(" ");
+  a = next(); Object.defineProperty(a, "decorators", { get: () => 7, configurable: true }); said.getter = a.decorators;
+  a = next(); said.inherited = Object.create(a).decorators === a.decorators;
+  a = next(); said.reflect = [Reflect.get(a, "decorators", {}) === a.decorators, Reflect.has(a, "decorators"), Reflect.ownKeys(a).join() === said.keys].join();
+  a = next(); said.reflectSet = [Reflect.set(a, "decorators", 1), a.decorators].join();
+  a = next(); { const other = {}; said.setOnOther = [Reflect.set(a, "decorators", 1, other), other.decorators, Array.isArray(a.decorators)].join(); }
+  a = next(); { const child = Object.create(a); child.decorators = 3; said.setOnChild = [child.decorators, Object.hasOwn(child, "decorators"), Array.isArray(a.decorators)].join(); }
+  a = next(); said.descriptors = JSON.stringify(Object.getOwnPropertyDescriptors(a).decorators);
+  a = next(); said.destructured = (({ decorators, ...rest }) => [decorators === a.decorators, "decorators" in rest].join())(a);
+  a = next(); said.clone = JSON.stringify(structuredClone({ ...a, parent: null }).decorators);
+  a = next(); a.extra = 1; said.added = [Object.keys(a).at(-1), a.decorators.length, a.decorators === a.decorators].join();
+  said.others = [...new Set(ids.map(it => it.decorators))].length === ids.length;
+  context.report({ node: program, message: JSON.stringify(said) });
+} }; } };
+const kinds = { create: context => { const said = []; return {
+  "ObjectPattern, ArrayPattern, AssignmentPattern, RestElement"(node) { said.push(node.type + " " + describe(node, "decorators") + " " + (node.decorators === node.decorators) + " " + Object.keys(node)); },
+  "ImportSpecifier, ExportSpecifier, ExportNamedDeclaration, ExportDefaultDeclaration, ExportAllDeclaration, CallExpression, NewExpression, TaggedTemplateExpression, VariableDeclaration, VariableDeclarator, ArrowFunctionExpression, FunctionExpression, FunctionDeclaration, Property, JSXOpeningElement"(node) { said.push(node.type + " " + JSON.stringify(node, (key, value) => (key === "" || value === null || typeof value !== "object" ? value : Array.isArray(value) ? value.length : "{}"))); },
+  "Program:exit"(node) { context.report({ node, message: said.join("\n") }); } }; } };
+export default { meta: { name: "lazy" }, rules: { rule, kinds } };
+`;
+    const config = oxlintrc({
+      jsPlugins: ["./plugin.mjs"],
+      overrides: [
+        { files: ["ids.js"], rules: { "lazy/rule": "error" } },
+        { files: ["kinds.jsx"], rules: { "lazy/kinds": "error" } },
+      ],
+    });
+    const said = async (file: string, text: string) => {
+      const files = { "plugin.mjs": plugin, ".oxlintrc.json": config, [file]: text };
+      const { raw, exitCode } = await lint(files, ["-f", "json", file]);
+      const diagnostics: Diagnostic[] = JSON.parse(raw).diagnostics;
+      expect(exitCode).toBe(1);
+      return diagnostics.map(it => it.message);
+    };
+
+    test(
+      "`decorators` of an Identifier is a plain property with an array of its own, whatever is done to it first",
+      async () => {
+        const text = Array.from({ length: 40 }, (_, i) => `i${i}`).join("; ") + ";\n";
+        const [message, ...more] = await said("ids.js", text);
+        expect(JSON.parse(message)).toEqual({
+          "keys": "type,decorators,name,optional,typeAnnotation,start,end,range,parent",
+          "forIn": "type,decorators,name,optional,typeAnnotation,start,end,range,parent,loc",
+          "has": "true,true,true",
+          "descriptor": '{"value":[],"writable":true,"enumerable":true,"configurable":true}',
+          "identity": "true,false,true,false,true",
+          "pushed": "1/0",
+          "json":
+            '{"type":"Identifier","decorators":[],"name":"i37","optional":false,"typeAnnotation":null,"start":175,"end":178,"range":[175,178]}',
+          "spread": true,
+          "assign": true,
+          "entries": '["decorators",[]]',
+          "values": "0,2",
+          "written": '5 {"value":5,"writable":true,"enumerable":true,"configurable":true} true',
+          "deleted": "true,false,8",
+          "frozen": 'true {"value":[],"writable":false,"enumerable":true,"configurable":false} true false true',
+          "sealed": '{"value":[],"writable":true,"enumerable":true,"configurable":false} true true',
+          "closed": 'true false {"value":[],"writable":true,"enumerable":true,"configurable":true}',
+          "hidden": '{"value":[],"writable":true,"enumerable":false,"configurable":true} false true',
+          "readOnly": '{"value":[],"writable":false,"enumerable":true,"configurable":true} true',
+          "getter": 7,
+          "inherited": true,
+          "reflect": "true,true,true",
+          "reflectSet": "true,1",
+          "setOnOther": "true,1,true",
+          "setOnChild": "3,true,true",
+          "descriptors": '{"value":[],"writable":true,"enumerable":true,"configurable":true}',
+          "destructured": "true,false",
+          "clone": "[]",
+          "added": "extra,0,true",
+          "others": true,
+        });
+        expect(more).toEqual([]);
+      },
+      timeout,
+    );
+
+    test(
+      "every type that has them has oxlint's values in oxlint's order",
+      async () => {
+        const text =
+          'import { a as b } from "a";\nexport { b as c };\nexport * from "d";\nexport default b;\nexport const e = ({ f }, [g], h = 1, ...i) => j(f)`k`;\nnew L();\nvar m;\nfunction n() {}\n(function () {});\n({ o: 1, p() {} });\n<Q r />;\n';
+        const [message, ...more] = await said("kinds.jsx", text);
+        expect(message.split("\n")).toEqual([
+          'ImportSpecifier {"type":"ImportSpecifier","imported":"{}","local":"{}","importKind":"value","start":9,"end":15,"range":2,"parent":"{}"}',
+          'ExportNamedDeclaration {"type":"ExportNamedDeclaration","declaration":null,"specifiers":1,"source":null,"exportKind":"value","attributes":0,"start":28,"end":46,"range":2,"parent":"{}"}',
+          'ExportSpecifier {"type":"ExportSpecifier","local":"{}","exported":"{}","exportKind":"value","start":37,"end":43,"range":2,"parent":"{}"}',
+          'ExportAllDeclaration {"type":"ExportAllDeclaration","exported":null,"source":"{}","attributes":0,"exportKind":"value","start":47,"end":65,"range":2,"parent":"{}"}',
+          'ExportDefaultDeclaration {"type":"ExportDefaultDeclaration","declaration":"{}","exportKind":"value","start":66,"end":83,"range":2,"parent":"{}"}',
+          'ExportNamedDeclaration {"type":"ExportNamedDeclaration","declaration":"{}","specifiers":0,"source":null,"exportKind":"value","attributes":0,"start":84,"end":138,"range":2,"parent":"{}"}',
+          'VariableDeclaration {"type":"VariableDeclaration","kind":"const","declarations":1,"declare":false,"start":91,"end":138,"range":2,"parent":"{}"}',
+          'VariableDeclarator {"type":"VariableDeclarator","id":"{}","init":"{}","definite":false,"start":97,"end":137,"range":2,"parent":"{}"}',
+          'ArrowFunctionExpression {"type":"ArrowFunctionExpression","expression":true,"async":false,"typeParameters":null,"params":4,"returnType":null,"body":"{}","id":null,"generator":false,"start":101,"end":137,"range":2,"parent":"{}"}',
+          'ObjectPattern {"value":[],"writable":true,"enumerable":true,"configurable":true} true type,decorators,properties,optional,typeAnnotation,start,end,range,parent',
+          'Property {"type":"Property","kind":"init","key":"{}","value":"{}","method":false,"shorthand":true,"computed":false,"optional":false,"start":104,"end":105,"range":2,"parent":"{}"}',
+          'ArrayPattern {"value":[],"writable":true,"enumerable":true,"configurable":true} true type,decorators,elements,optional,typeAnnotation,start,end,range,parent',
+          'AssignmentPattern {"value":[],"writable":true,"enumerable":true,"configurable":true} true type,decorators,left,right,optional,typeAnnotation,start,end,range,parent',
+          'RestElement {"value":[],"writable":true,"enumerable":true,"configurable":true} true type,decorators,argument,optional,typeAnnotation,value,start,end,range,parent',
+          'TaggedTemplateExpression {"type":"TaggedTemplateExpression","tag":"{}","typeArguments":null,"quasi":"{}","start":130,"end":137,"range":2,"parent":"{}"}',
+          'CallExpression {"type":"CallExpression","callee":"{}","typeArguments":null,"arguments":1,"optional":false,"start":130,"end":134,"range":2,"parent":"{}"}',
+          'NewExpression {"type":"NewExpression","callee":"{}","typeArguments":null,"arguments":0,"start":139,"end":146,"range":2,"parent":"{}"}',
+          'VariableDeclaration {"type":"VariableDeclaration","kind":"var","declarations":1,"declare":false,"start":148,"end":154,"range":2,"parent":"{}"}',
+          'VariableDeclarator {"type":"VariableDeclarator","id":"{}","init":null,"definite":false,"start":152,"end":153,"range":2,"parent":"{}"}',
+          'FunctionDeclaration {"type":"FunctionDeclaration","id":"{}","generator":false,"async":false,"declare":false,"typeParameters":null,"params":0,"returnType":null,"body":"{}","expression":false,"start":155,"end":170,"range":2,"parent":"{}"}',
+          'FunctionExpression {"type":"FunctionExpression","id":null,"generator":false,"async":false,"declare":false,"typeParameters":null,"params":0,"returnType":null,"body":"{}","expression":false,"start":172,"end":186,"range":2,"parent":"{}"}',
+          'Property {"type":"Property","kind":"init","key":"{}","value":"{}","method":false,"shorthand":false,"computed":false,"optional":false,"start":192,"end":196,"range":2,"parent":"{}"}',
+          'Property {"type":"Property","kind":"init","key":"{}","value":"{}","method":true,"shorthand":false,"computed":false,"optional":false,"start":198,"end":204,"range":2,"parent":"{}"}',
+          'FunctionExpression {"type":"FunctionExpression","id":null,"generator":false,"async":false,"declare":false,"typeParameters":null,"params":0,"returnType":null,"body":"{}","expression":false,"start":199,"end":204,"range":2,"parent":"{}"}',
+          'JSXOpeningElement {"type":"JSXOpeningElement","name":"{}","typeArguments":null,"attributes":1,"selfClosing":true,"start":209,"end":216,"range":2,"parent":"{}"}',
+        ]);
+        expect(more).toEqual([]);
+      },
+      timeout,
+    );
+  });
+
   const plugin = `const property = (object, key) => {
         const it = Object.getOwnPropertyDescriptor(object, key);
         return key + (it.get ? ":get" : "") + (it.enumerable ? "" : ":hidden");
@@ -3982,6 +4123,63 @@ describe.concurrent("what a JavaScript plugin sees with an oxlint config", () =>
               it.messages.map(message => message.message).join("|"),
             ]);
       expect(Object.fromEntries(said)).toEqual(expected);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // What oxlint 1.87 says, and ESLint 10.12 with @typescript-eslint/parser 8.71.1: the same.
+  test.each(["oxlint", "eslint"])(
+    "the index of `a[b]!` in a pattern is referred to before the object, like that of `a[b]`, with a config of %s",
+    async whose => {
+      const rule = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
+        "Program:exit"(node) {
+          const lines = {};
+          for (const it of context.sourceCode.scopeManager.scopes.flatMap(scope => scope.references))
+            (lines[it.identifier.loc.start.line] ??= []).push(it.identifier.name);
+          context.report({ node, message: Object.values(lines).map(it => it.join(" ")).join("|") });
+        },
+      }) } } };`;
+      const rows = [
+        ["[a[b]] = c;", "b a c"],
+        ["[a![b]] = c;", "b a c"],
+        ["[a[b]!] = c;", "b a c"],
+        ["[a![b]!] = c;", "b a c"],
+        ["[a[b]!!] = c;", "b a c"],
+        ["[...a[b]!] = c;", "b a c"],
+        ["[a[b]! = d] = c;", "b a d c"],
+        ["({ k: a[b]! } = c);", "b a c"],
+        ["({ k: a[b]! = d } = c);", "b a d c"],
+        ["({ ...a[b]! } = c);", "b a c"],
+        ["for (a[b]! of c);", "b a c"],
+        ["for (a[b]! in c);", "b a c"],
+        ["a[b]! = c;", "a b c"],
+        ["[a.b!] = c;", "a c"],
+        ["[a[b][d]!] = c;", "d a b c"],
+        ["[a[b]![d]] = c;", "d a b c"],
+        ["[a[b]![d]!] = c;", "d a b c"],
+        ["[[a[b]!]] = c;", "b a c"],
+        ["[x, a[b]!, y[z]] = c;", "x b a z y c"],
+        ["[f(a[b])!.g] = c;", "f a b c"],
+        ["[f(a[b])![g]!] = c;", "g f a b c"],
+      ];
+      const configs = {
+        oxlint: { ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "p/rule": "error" } }) },
+        eslint: {
+          "eslint.config.mjs": `import p from "./plugin.mjs";
+            const parser = { meta: { name: "typescript-eslint/parser" } };
+            export default [{ files: ["**/*.ts"], plugins: { p }, rules: { "p/rule": "error" }, languageOptions: { parser } }];`,
+        },
+      };
+      const files = {
+        "plugin.mjs": rule,
+        ...configs[whose as keyof typeof configs],
+        "a.ts": rows.map(it => `${it[0]}\n`).join(""),
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+      const message: string =
+        whose === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
+      expect(message.split("|").map((said, i) => [rows[i][0], said])).toEqual(rows);
       expect(exitCode).toBe(1);
     },
     timeout,

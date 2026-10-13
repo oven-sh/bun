@@ -172,7 +172,7 @@ A JavaScript rule that can't do its job throws: a file named in its options is m
 
 What `cx.throw` does is what the real tool does with a rule that throws, whatever severity the rule has:
 
-- **oxlint config**: the file gets one error, `Error running JS plugin.`, with the path and `Error: message`. It has no rule name, no comment disables it, `--quiet` keeps it, and the exit code is 1. Nothing else this rule reports in the file is kept. Other rules still run, and so does the next file.
+- **oxlint config**: the file gets one error, `Error running JS plugin.`, with the path and `Error: message`. It has no rule name, no comment disables it, `--quiet` keeps it, and the exit code is 1. The file keeps what the rules that oxlint has itself report, and loses what every other rule reports: this rule, the JavaScript plugins, and the other native rules that oxlint doesn't have. That's what oxlint does when a rule of a JS plugin throws. A comment that disabled one of the lost reports then counts as unused. The next file is linted as usual.
 - **ESLint config, or none**: the run ends with exit code 2 and `message`, `Occurred while linting <file>:<line>`, `Rule: "<id>"`.
 
 Only one throw per file counts, so calling it from a listener that runs for every node prints one error. `start` has no `cx`: keep the problem in the state and throw from `finish` or the first listener. See `test/cli/lint/rule-throws.test.ts`.

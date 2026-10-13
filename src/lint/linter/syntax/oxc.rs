@@ -120,16 +120,35 @@ fn declaration_list<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         return Vec::new();
     }
     let text = file.text();
-    let unexpected = |at: Span| SyntaxError::of_oxc(at, "Unexpected token").stage(Stage::Fatal);
+    // Where oxc wants the name of a variable.
+    let unexpected = |at: Span| {
+        let error = match RESERVED.binary_search(&file.slice(at)).is_ok() {
+            true => SyntaxError::of_oxc(
+                at,
+                [
+                    b"Identifier expected. '",
+                    file.slice(at),
+                    b"' is a reserved word that cannot be used here.",
+                ]
+                .concat(),
+            ),
+            false => SyntaxError::of_oxc(at, "Unexpected token"),
+        };
+        error.stage(Stage::Fatal)
+    };
     let incomplete = file.stmts_of_kind(StmtTag::Var).filter_map(|it| {
         let raw = it.try_raw()?;
         let StmtKind::Var(list) = raw.kind else {
             return None;
         };
         let Some(last) = file.hir.var_decls.get(list.range())?.last() else {
-            let keyword = token_len(text.get(raw.start as usize..)?) as u32;
             let is_head = loop_with_head(file, it.id().idx()).is_some();
-            return (!is_head).then(|| unexpected(next_token(text, raw.start + keyword)));
+            // Past `export` and `declare`.
+            let mut keyword = next_token(text, raw.start);
+            while matches!(file.slice(keyword), b"export" | b"declare") {
+                keyword = next_token(text, keyword.end);
+            }
+            return (!is_head).then(|| unexpected(next_token(text, keyword.end)));
         };
         let comma = skip_trivia(text, last.loc.end);
         (text.get(comma as usize) == Some(&b',')).then(|| unexpected(next_token(text, comma + 1)))
@@ -169,7 +188,14 @@ fn class_without_name<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     });
     without_name
         .map(|(i, _)| {
+            // Five characters from the first modifier or decorator, but for `export`.
             let start = Class::from_raw(file, i as u32).span().start;
+            let start = match file.text().get(start as usize..) {
+                Some(rest) if rest.starts_with(b"export") => {
+                    skip_trivia(file.text(), start + "export".len() as u32)
+                }
+                _ => start,
+            };
             let keyword = Span::new(start, start + "class".len() as u32);
             SyntaxError::of_oxc(keyword, "A class name is required.")
         })
@@ -650,6 +676,7 @@ fn is_modifier(word: &[u8]) -> bool {
 /// What oxc's parser says about the private name `name` where an operand starts. It can only be the left side of an `in`, which
 /// nothing that binds as tightly can have as an operand.
 pub(super) fn private_name_as_operand<'a>(file: &'a File<'a>, name: Span) -> Option<SyntaxError> {
+    let name = Span::new(name.start, end_of_name(file.text(), name.end));
     let previous = file.token_before(name);
     let operator = previous.map_or(&b""[..], |it| it.text());
     // After what ends an operand `+` and `-` have two.
@@ -684,6 +711,16 @@ pub(super) fn private_name_as_operand<'a>(file: &'a File<'a>, name: Span) -> Opt
     Some(error.stage(Stage::Fatal))
 }
 
+/// The name `closing` is in the closing tag of the element whose name is at `opening`.
+fn wrong_closing_tag<'a>(file: &'a File<'a>, closing: Span, opening: Span) -> SyntaxError {
+    let name = bstr::BStr::new(file.slice(opening));
+    let message = format!("Expected corresponding JSX closing tag for '{name}'.");
+    SyntaxError::of_oxc(closing, message)
+        .says(format!("Expected `</{name}>`"))
+        .and(opening, "Opened here")
+        .noticed_at(closing.start)
+}
+
 /// An error of TypeScript's parser about JSX in the words of oxc's. It goes on after a closing tag with the wrong name.
 fn of_jsx<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<SyntaxError> {
     let (hir, text) = (&file.hir, file.text());
@@ -694,14 +731,7 @@ fn of_jsx<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syntax
         let element = hir.jsx.iter().find(|it| it.close_pos == at)?;
         span_of(element.tag)
     };
-    let mismatch = |closing: Span, opening: Span| {
-        let name = bstr::BStr::new(file.slice(opening));
-        let message = format!("Expected corresponding JSX closing tag for '{name}'.");
-        SyntaxError::of_oxc(closing, message)
-            .says(format!("Expected `</{name}>`"))
-            .and(opening, "Opened here")
-            .noticed_at(closing.start)
-    };
+    let mismatch = |closing: Span, opening: Span| wrong_closing_tag(file, closing, opening);
     // The text of JSX that the end of the file ends.
     let to_the_end = || {
         let last = bun_core::strings::last_index_of_any(text, b">}").map_or(0, |it| it + 1);
@@ -797,14 +827,19 @@ fn of_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Synt
     let is_literal = |at: Span| matches!(slice(at), [b'0'..=b'9' | b'"' | b'\'', ..]);
 
     // What touches a number and could go on a name. TypeScript's scanner has an error for that after some kinds of number only.
+    // The text tells: the two can be one token in the list of tokens.
+    let touches_number = || {
+        let before = file.text().get(..label.start as usize).unwrap_or_default();
+        let is_part = |it: &&u8| it.is_ascii_alphanumeric() || matches!(**it, b'_' | b'.');
+        let number = before.len() - before.iter().rev().take_while(is_part).count();
+        before.get(number).is_some_and(u8::is_ascii_digit)
+    };
     if (lacks_semicolon || matches!(it.code, 1131 | 1144 | 1440))
-        && previous.is_some_and(|it| {
-            it.end == label.start && slice(it).first().is_some_and(u8::is_ascii_digit)
-        })
         && matches!(
-            slice(label),
-            [b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$', ..]
+            file.text().get(label.start as usize),
+            Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
         )
+        && touches_number()
     {
         let first = Span::new(label.start, label.start + 1);
         return Some(SyntaxError::of_oxc(
@@ -814,6 +849,8 @@ fn of_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Synt
     }
     // After `yield` oxc reads an operand, unless the expression can end there.
     if it.code == 1005
+        // `{ yield = 1 }`: it is a key there.
+        && wanted != b":"
         && let Some(keyword) = previous.filter(|it| slice(*it) == b"yield")
         && !bun_core::strings::contains_js_line_break(slice(keyword.between(label)))
         && !matches!(slice(label), b"" | b")" | b"]" | b"}" | b"," | b";" | b":")
@@ -849,17 +886,6 @@ fn of_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Synt
             1434 => after(label),
             _ => label,
         };
-        let both = |question: Span, exclamation: Span| {
-            let signs = Span::new(question.start, exclamation.end);
-            SyntaxError::of_oxc(signs, "A property cannot be both optional and definite.")
-                .help("Remove either the `?` or the `!`")
-        };
-        if slice(wrong) == b"?" && slice(after(wrong)) == b"!" {
-            return Some(both(wrong, after(wrong)));
-        }
-        if slice(wrong) == b"!" && text_before(wrong) == b"?" {
-            return before(wrong).map(|question| both(question, wrong));
-        }
         if slice(wrong) == b"!" && it.code == 1434 {
             wrong = after(wrong);
         }
@@ -955,6 +981,17 @@ fn of_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Synt
     if slice(label).starts_with(b"<") && file.text().get(label.start as usize + 1) == Some(&b'/') {
         return Some(unexpected(Span::new(label.start + 1, label.start + 2)));
     }
+    // `<1 />`: it is after the `<`, and wants a name. The `/` is a token of its own.
+    if slice(label) == b"<"
+        && text_before(label) != b"?."
+        && !matches!(file.path(), [.., b't', b's'])
+    {
+        let next = after(label);
+        return Some(unexpected(match slice(next) {
+            [b'/', _, ..] => Span::new(next.start, next.start + 1),
+            _ => next,
+        }));
+    }
     // `<a b={} />`
     if slice(label) == b"}"
         && let Some(open) = previous.filter(|it| slice(*it) == b"{")
@@ -1031,17 +1068,39 @@ fn around_unterminated<'a>(file: &'a File<'a>, at: u32) -> Around {
     {
         around = Around::Brackets;
     }
+    let is_object = |open: Span| {
+        let mut all = file.hir.exprs.iter();
+        all.any(|it| it.pos == open.start && matches!(it.kind, bun_sema::hir::ExprKind::Object(_)))
+    };
+    // The `while` ends a `do { .. }`.
+    let ends_do = |keyword: Span| {
+        let close = file.token_before(keyword).filter(|it| it.text() == b"}");
+        let open = close.and_then(|it| opener(file, it.span().start, (b'{', b'}')));
+        open.and_then(|it| file.token_before(it))
+            .is_some_and(|it| it.text() == b"do")
+    };
+    // The last `[` may be that of a key.
+    let mut may_be_key = false;
     let mut tokens = file.tokens_before(Span::empty(at)).peekable();
     while let Some(it) = tokens.next() {
+        let before = tokens.peek().copied();
         match it.text() {
             b")" | b"]" | b"}" => closed += 1,
             b"(" | b"[" | b"{" if closed > 0 => closed -= 1,
-            b"(" => match tokens.peek().map_or(&b""[..], |it| it.text()) {
+            b"(" => match before.map_or(&b""[..], |it| it.text()) {
+                b"while" if before.is_some_and(|it| ends_do(it.span())) => {
+                    (around, may_be_key) = (Around::Brackets, false);
+                }
                 b"if" | b"while" | b"for" | b"with" | b"await" => return Around::Head,
-                b"import" => {}
-                _ => around = Around::Brackets,
+                b"import" => may_be_key = false,
+                _ => (around, may_be_key) = (Around::Brackets, false),
             },
-            b"[" | b"{" => around = Around::Brackets,
+            b"[" => {
+                may_be_key = matches!(before.map(|it| it.text()), Some(b"{" | b","));
+                around = Around::Brackets;
+            }
+            b"{" if may_be_key && is_object(it.span()) => return Around::Head,
+            b"{" => (around, may_be_key) = (Around::Brackets, false),
             _ => {}
         }
     }
@@ -1168,6 +1227,172 @@ fn of_scanner<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Sy
     })
 }
 
+/// How much oxc's lexer reads after a backslash in a name, of which `rest` is what follows, and the character if the escape is
+/// written as it has to be.
+fn escape_after_backslash(rest: &[u8]) -> (usize, Option<char>) {
+    let digits = |from: usize, most: usize| {
+        let all = rest.get(from..).unwrap_or_default().iter();
+        all.take(most)
+            .take_while(|it| it.is_ascii_hexdigit())
+            .count()
+    };
+    let value = |from: usize, len: usize| {
+        let digits = rest.get(from..from + len).unwrap_or_default().iter();
+        digits.fold(0u32, |it, digit| {
+            let digit = (*digit as char).to_digit(16).unwrap_or_default();
+            it.saturating_mul(16).saturating_add(digit)
+        })
+    };
+    match rest {
+        [b'u', b'{', ..] => {
+            let len = digits(2, usize::MAX);
+            let is_closed = len > 0 && rest.get(2 + len) == Some(&b'}');
+            match char::from_u32(value(2, len)).filter(|_| is_closed) {
+                Some(it) => (3 + len, Some(it)),
+                None => (2 + len, None),
+            }
+        }
+        [b'u', ..] => {
+            let len = digits(1, 4);
+            (1 + len, char::from_u32(value(1, len)).filter(|_| len == 4))
+        }
+        _ => {
+            let first = rest.utf8_chunks().next();
+            let first = first.and_then(|it| it.valid().chars().next());
+            (first.map_or(1, char::len_utf8).min(rest.len()), None)
+        }
+    }
+}
+
+fn is_in_ascii_name(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
+}
+
+/// Where the name ends for oxc's lexer that `at` is in or at the end of. An escape is a part of it however it is written.
+fn end_of_name(text: &[u8], mut at: u32) -> u32 {
+    loop {
+        match text.get(at as usize) {
+            Some(byte) if is_in_ascii_name(*byte) => at += 1,
+            Some(b'\\') => {
+                let rest = text.get(at as usize + 1..).unwrap_or_default();
+                at += 1 + escape_after_backslash(rest).0 as u32;
+            }
+            _ => return at,
+        }
+    }
+}
+
+/// What oxc says about the backslash at `at`, which is in a name or where one can start, and is no escape that a name can have. Its
+/// lexer goes on, so what it reports is printed first. TypeScript's parser is lost.
+fn escape_in_name<'a>(file: &'a File<'a>, at: u32) -> Vec<SyntaxError> {
+    let text = file.text();
+    let rest = text.get(at as usize + 1..).unwrap_or_default();
+    let (read, character) = escape_after_backslash(rest);
+    let (start, end) = (at + 1, at + 1 + read as u32);
+    let before = text.get(..at as usize).unwrap_or_default().iter().rev();
+    let first = at - before.take_while(|it| is_in_ascii_name(**it)).count() as u32;
+    let hash = first
+        .checked_sub(1)
+        .filter(|it| text.get(*it as usize) == Some(&b'#'));
+    // Where an operand starts, a private name wants an `in`. Of the attempt that fails for that nothing else is left.
+    if let Some(hash) = hash
+        && is_where_operand_starts(file, hash)
+        && let Some(error) = private_name_as_operand(file, Span::new(hash, end))
+    {
+        return vec![error];
+    }
+    if let Some(character) = character.filter(|_| hash.is_none()) {
+        let message = format!("Invalid Character `{character}`");
+        return vec![SyntaxError::of_oxc(Span::empty(end), message).stage(Stage::Fatal)];
+    }
+    let escape = SyntaxError::of_oxc(Span::new(start, end), "Invalid Unicode escape sequence");
+    let mut all = vec![escape.stage(Stage::Parser).noticed_at(0)];
+    // What follows goes on with the name. The `}` is left.
+    let after = end_of_name(text, end);
+    if rest.starts_with(b"u{") && text.get(after as usize) == Some(&b'}') {
+        let brace = Span::new(after, after + 1);
+        all.push(SyntaxError::of_oxc(brace, "Unexpected token").stage(Stage::Fatal));
+    }
+    // The parser has a name there. An operand before it or after it on the line is a statement of its own.
+    let semicolon = |after: u32| {
+        let message =
+            "Expected a semicolon or an implicit semicolon after a statement, but found none";
+        SyntaxError::of_oxc(Span::empty(after), message)
+            .help("Try inserting a semicolon here")
+            .stage(Stage::Fatal)
+    };
+    let is_on_one_line =
+        |between: Span| !bun_core::strings::contains_js_line_break(file.slice(between));
+    let is_operand = |it: &[u8]| match it {
+        [b')' | b']'] | [b'0'..=b'9' | b'"' | b'\'' | b'`', ..] => true,
+        _ => name_of_token(it) == "Identifier",
+    };
+    let name = Span::new(hash.unwrap_or(first), after);
+    if let Some(previous) = file.token_before(Span::empty(name.start))
+        && is_operand(previous.text())
+        && is_on_one_line(previous.span().between(name))
+    {
+        all.push(semicolon(previous.span().end));
+    }
+    let next = next_token(text, after);
+    if is_operand(file.slice(next))
+        && !matches!(file.slice(next), b")" | b"]")
+        && is_on_one_line(name.between(next))
+    {
+        all.push(semicolon(after));
+    }
+    all
+}
+
+/// Whether the private name that starts at `hash` is neither the name of a member of an object nor that of a member of a class.
+fn is_where_operand_starts<'a>(file: &'a File<'a>, hash: u32) -> bool {
+    let previous = file.token_before(Span::empty(hash));
+    let previous = previous.map_or(&b""[..], |it| it.text());
+    let starts_member = matches!(previous, b"{" | b";" | b"}" | b"*")
+        || previous.first().is_some_and(|it| is_in_ascii_name(*it));
+    let is_in_class_body = || {
+        let open = opener(file, hash, (b'{', b'}'));
+        open.is_some_and(|open| file.classes().any(|it| it.body_span().start == open.start))
+    };
+    !matches!(previous, b"." | b"?.") && !(starts_member && is_in_class_body())
+}
+
+/// `<a><b></a></b>`: for TypeScript's parser the `</a>` closes the `a`, and the `b` is not closed. For oxc's each closing tag
+/// closes the innermost element that is open. `None`: it is not known how oxc goes on after the first.
+fn closing_tags_of_others<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Vec<SyntaxError>> {
+    let (hir, text) = (&file.hir, file.text());
+    let name_of = |id: bun_sema::hir::ExprId| {
+        let name = hir.exprs.get(id.idx())?;
+        Some(Span::new(name.pos, name.end))
+    };
+    let mismatch = |closing: Span, opening: Span| wrong_closing_tag(file, closing, opening);
+    let inner =
+        (hir.jsx.iter()).find(|jsx| name_of(jsx.tag).is_some_and(|tag| tag.start == it.start))?;
+    // The element around, which TypeScript's parser ends with the tag.
+    let outer = hir
+        .jsx
+        .iter()
+        .find(|jsx| jsx.close_pos == inner.close_pos && jsx.end > inner.end)?;
+    let next = skip_trivia(text, outer.end);
+    if !text.get(inner.close_pos as usize..)?.starts_with(b"</")
+        || !text.get(next as usize..)?.starts_with(b"</")
+    {
+        return None;
+    }
+    let (first, second) = (
+        next_token(text, inner.close_pos + 2),
+        next_token(text, next + 2),
+    );
+    let opening = name_of(outer.tag)?;
+    if file.slice(second) == file.slice(opening) {
+        return None;
+    }
+    Some(vec![
+        mismatch(first, name_of(inner.tag)?).stage(Stage::Parser),
+        mismatch(second, opening).stage(Stage::Fatal),
+    ])
+}
+
 /// An error of TypeScript's parser in the words of oxc's. Empty: they are not known. oxc has two errors for some.
 pub(super) fn of_typescript<'a>(file: &'a File<'a>, it: &Diagnostic) -> Vec<SyntaxError> {
     let rest = file.text().get(it.start as usize..).unwrap_or_default();
@@ -1190,6 +1415,22 @@ pub(super) fn of_typescript<'a>(file: &'a File<'a>, it: &Diagnostic) -> Vec<Synt
             Around::Brackets => vec![of_lexer.stage(Stage::Fatal)],
             Around::Head => vec![of_parser],
         };
+    }
+    // A backslash, or the `#` before one.
+    let text = file.text();
+    let backslash = [it.start, it.start + 1].into_iter().find(|at| {
+        text.get(*at as usize) == Some(&b'\\')
+            && (*at == it.start || text.get(it.start as usize) == Some(&b'#'))
+    });
+    if it.code == 1127
+        && let Some(backslash) = backslash
+    {
+        return escape_in_name(file, backslash);
+    }
+    if it.code == 17008
+        && let Some(both) = closing_tags_of_others(file, it)
+    {
+        return both;
     }
     let one = of_scanner(file, it, label).or_else(|| of_parser(file, it, label));
     one.into_iter().collect()
@@ -1226,9 +1467,18 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                 None => semicolon(file.end_of_token_before(it.start)),
             }
         }
+        // Where a statement starts `let` declares, unless an operator follows: oxc wants a name. As the body of a statement it
+        // is a name.
+        (1434 | 1440, _)
+            if file.slice(label) == b"let" && !matches!(before(label), b")" | b"else" | b"do") =>
+        {
+            SyntaxError::of_oxc(token_after(file, label), "Unexpected token")
+        }
         (1131 | 1434 | 1440, _) => semicolon(label.end),
         (1209, _) => SyntaxError::of_oxc(label, "Invalid optional chain from new expression."),
-        (1389, _) if before(label) == b"function" => expected(file, "Identifier", label),
+        (1359, _) if matches!(before(label), b"function" | b"*") => {
+            expected(file, "Identifier", label)
+        }
         (1181 | 1390, _) if RESERVED.binary_search(&file.slice(label)).is_ok() => {
             let message = format!(
                 "Identifier expected. '{}' is a reserved word that cannot be used here.",
@@ -1290,7 +1540,18 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                 .help("Add an identifier after '?.'")
         }
         (1128, _) if file.slice(label) == b"export" => {
-            let next = file.token_after(label).map_or(label, |it| it.span());
+            // It takes a modifier that a word follows, on the line unless it is `static`, and wants a declaration then.
+            let is_before_word = |it: Span| {
+                let next = token_after(file, it);
+                let between = file.slice(it.between(next));
+                file.slice(next).first().is_some_and(|it| is_in_ascii_name(*it))
+                    && (file.slice(it) == b"static"
+                        || !bun_core::strings::contains_js_line_break(between))
+            };
+            let mut next = token_after(file, label);
+            while is_modifier(file.slice(next)) && is_before_word(next) {
+                next = token_after(file, next);
+            }
             SyntaxError::of_oxc(next, "Unexpected token")
         }
         (1005, [expected, found, ..]) => {
@@ -1334,6 +1595,8 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                 _ if *expected == b")" => opened.is_some_and(|it| before(it) != b"catch"),
                 _ => is_list || !it.related.is_empty(),
             };
+            // It is noticed where it is, not where the other label is.
+            let error = error.noticed_at(label.start);
             match opened.filter(|_| has_opener) {
                 Some(opened) => error.and(opened, "Opened here"),
                 None if *expected == b":" => match question_mark(file, label.start) {
@@ -1343,7 +1606,9 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                 None => error,
             }
         }
-        (1003 | 1109 | 1110 | 1128 | 1134 | 1138 | 1145 | 1478, _) if label.end > label.start => {
+        (1003 | 1109 | 1110 | 1128 | 1134 | 1137 | 1138 | 1145 | 1478 | 18029, _)
+            if label.end > label.start =>
+        {
             SyntaxError::of_oxc(label, "Unexpected token")
         }
         _ => return None,
@@ -1357,9 +1622,10 @@ fn module_attributes<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let mut all = Vec::new();
     for &(keyword, _) in file.hir.import_attributes.iter() {
         // In an import type `with` is the name of a property, and any value is taken.
-        let after = skip_trivia(text, next_token(text, keyword).end);
+        let after_keyword = skip_trivia(text, next_token(text, keyword).end);
         let clause = ImportAttributes::within(file, Span::new(keyword, keyword + 1));
-        let Some(clause) = clause.filter(|_| text.get(after as usize) == Some(&b'{')) else {
+        let Some(clause) = clause.filter(|_| text.get(after_keyword as usize) == Some(&b'{'))
+        else {
             continue;
         };
         let mut seen: SmallVec<[(Name, Span); 2]> = SmallVec::new();
@@ -1372,6 +1638,18 @@ fn module_attributes<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 let message = "Only string literals are allowed as module attribute values.";
                 let error = SyntaxError::of_oxc(next_token(text, value.start), message);
                 all.push(error.help("Wrap this with quotes").stage(Stage::Fatal));
+            } else if let Some(after) = value
+                .map(|it| (it, next_token(text, next_token(text, it.start).end)))
+                .and_then(|(value, after)| (after.start < value.end).then_some(after))
+            {
+                // It reads a string, and nothing more.
+                let found = name_of_token(file.slice(after));
+                let error =
+                    SyntaxError::of_oxc(after, format!("Expected `,` or `}}` but found `{found}`"))
+                        .says("`,` or `}` expected")
+                        .and(Span::new(after_keyword, after_keyword + 1), "Opened here")
+                        .noticed_at(after.start);
+                all.push(error.stage(Stage::Fatal));
             }
             let Some(KeyKind::Ident(name) | KeyKind::String(name)) =
                 entry.key().map(|it| it.kind())
@@ -1420,11 +1698,11 @@ pub(super) fn errors<'a>(
     };
     all.extend(of_typescript);
     all.extend(module_attributes(file));
-    // acorn's checks have these for JavaScript.
+    // JavaScript has no `declare`.
     if !file.is_javascript() {
         all.extend(declare_in_ambient_context(file));
     }
-    if !file.is_javascript() && is_whole {
+    if is_whole {
         all.extend(class_without_name(file));
     }
     match file.path() {

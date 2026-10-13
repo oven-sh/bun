@@ -4595,6 +4595,36 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
+      // The order is oxlint 1.87.0's, with --fix and without types.
+      test.each([[["--fix"]], [["--fix", "--type-aware"]]])(
+        "what %j leaves is printed in the order in which the rules ran",
+        async flags => {
+          const names = ["eqeqeq", "no-empty", "no-unused-vars", "no-var", "no-debugger", "prefer-const"];
+          const { stdout, exitCode, files } = await lint(
+            {
+              ".oxlintrc.json": rc({ rules: Object.fromEntries(names.map(it => [it, "error"])) }),
+              "tsconfig.json": `{"compilerOptions":{"strict":true}}`,
+              "a.ts":
+                "export function f(a: number, b: number) {\n  if (a == b) {\n  }\n  var left = 1;\n  let kept = 2;\n" +
+                "  debugger;\n  return a != b;\n}\n",
+            },
+            ["-f", "unix", ...flags],
+            { reads: ["a.ts"] },
+          );
+          const found = [...stdout.matchAll(/^a\.ts:(\d+:\d+): .*\((.*)\)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
+          expect(found).toEqual([
+            "4:7 no-unused-vars",
+            "5:7 no-unused-vars",
+            "2:9 eqeqeq",
+            "2:15 no-empty",
+            "6:3 no-debugger",
+            "7:12 eqeqeq",
+          ]);
+          expect(files["a.ts"]).toContain("  const left = 1;\n  const kept = 2;\n");
+          expect(exitCode).toBe(1);
+        },
+      );
+
       // What oxlint 1.87.0 with tsgolint 7.0.2003 does. Added to the project as root files, the two .mjs would be errors of the
       // program (6504), and the tsconfig.json would be refused for them.
       test("--tsconfig is the project of the files that it includes, the others are in no project", async () => {
@@ -5203,6 +5233,114 @@ describe.concurrent("bun lint", () => {
       const places = [...stdout.matchAll(/([\w-]+\.ts):(\d+):(\d+): /g)].map(it => `${it[1]}:${it[2]}:${it[3]}`);
       expect(places.sort()).toEqual(["arrow.ts:3:5", "function.ts:3:5", "no-decorator.ts:3:5", "no-function.ts:3:5"]);
       expect(exitCode).toBe(1);
+    });
+  });
+
+  // A rule for ESLint that takes the first reference to a name in a scope gets the one the scope manager makes first. That isn't
+  // always the one that is written first: it visits a type after the value, type arguments after the arguments, type parameters
+  // after the parameters, decorators after the member, and the `b` of `[a[b]] = c` before `a`. The two rules here take the first
+  // reference. What they report is what ESLint 10.12.0 reports with typescript-eslint 8.71.1 and eslint-plugin-react 7.37.5.
+  describe("the references of a scope are in the order in which the scope manager makes them", () => {
+    const reported = async (plugin: string, name: string, rule: string, sources: Record<string, string>) => {
+      const configuration = `export default [{
+        files: ["**/*.ts"],
+        plugins: { "${plugin}": { meta: { name: "${name}" } } },
+        languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+        settings: { react: { version: "18.0" } },
+        rules: { "${plugin}/${rule}": "error" },
+      }];`;
+      const files = Object.fromEntries(Object.entries(sources).map(([name, source]) => [`${name}.ts`, source]));
+      const { stdout } = await lint({ "eslint.config.mjs": configuration, ...files }, [
+        "-f",
+        "unix",
+        ...Object.keys(files),
+      ]);
+      return [...stdout.matchAll(/([\w-]+)\.ts:\d+:\d+: /g)].map(it => it[1]).sort();
+    };
+
+    // `size` is a type outside the class and a parameter property in it. The last line of the constructor is reported if the
+    // first reference to `size` in the constructor is to the parameter.
+    test("types", async () => {
+      const box = (parameters: string, body: string, typeParameters = "") =>
+        `type size = number;\ndeclare function g<T>(x?: unknown): T;\nexport class Box {\n  constructor${typeParameters}(public size: number${parameters}) {\n    ${body}\n    this.size = size;\n  }\n}\n`;
+      const theParameterIsFirst = {
+        "nothing-else": box("", ""),
+        "variable": box("", "const w: size = size;"),
+        "variable-and-call": box("", "const w: size = g<number>(size);"),
+        "call-in-variable": box("", "const w: number = g<size>(size);"),
+        "call": box("", "g<size>(size);"),
+        "optional-call": box("", "g?.<size>(size);"),
+        "nested-calls": box("", "g<Array<size>>(g<number>(size));"),
+        "new": box("", "new Set<size>([size]);"),
+        "tagged-template": box("", "g<size>`${size}`;"),
+        "parameter": box(", w: size = size", ""),
+        "pattern-parameter": box(", { w = size }: size = size", ""),
+        "type-parameters": box(", w = size", "", "<T extends size>"),
+        "type-parameters-and-type": box(", w: number = size", "", "<T extends size>"),
+        "angle-brackets": box("", "<size>size;"),
+        "as": box("", "size as size;"),
+        "satisfies-assigned-to": box("", "(size satisfies size) = 0;"),
+        "as-and-non-null-assigned-to": box("", "((size as size)!) = 0;"),
+        "another-scope": box("", "const f = (w: size = size) => w;"),
+      };
+      const theTypeIsFirst = {
+        "variable-without-value": box("", "let w: size;"),
+        "type-parameters-alone": box("", "", "<T extends size>"),
+        "as-assigned-to": box("", "(size as size) = 0;"),
+        "as-added-to": box("", "(size as size) += 0;"),
+        "as-incremented": box("", "(size as size)++;"),
+        "member-as-assigned-to": box("", "(this.size as size) = size;"),
+        "member-as-incremented": box("", "let n = { m: 0 }; (n.m as size)++; size;"),
+        "angle-brackets-assigned-to": box("", "(<size>size) = 0;"),
+        "angle-brackets-incremented": box("", "(<size>size)++;"),
+      };
+      const found = await reported(
+        "@typescript-eslint",
+        "@typescript-eslint/eslint-plugin",
+        "no-unnecessary-parameter-property-assignment",
+        { ...theParameterIsFirst, ...theTypeIsFirst },
+      );
+      expect(found).toEqual(Object.keys(theParameterIsFirst).sort());
+    });
+
+    // `useState` is a parameter of the function, and `useMemo` is React's. The call of `useState` is reported if the first reference
+    // in its scope to one of the two is to `useMemo`.
+    test("members in patterns, decorators, and what a class extends", async () => {
+      const panel = (body: string) =>
+        `import { useMemo, useState } from "react";\nexport function Panel(useState: any, rows: any) {\n  ${body}\n}\n`;
+      const call = "const a = useState(0);";
+      const useMemoIsFirst = {
+        "written-first": panel(`useMemo; ${call}`),
+        "array-pattern": panel(`[useState[useMemo]] = rows; ${call}`),
+        "object-pattern": panel(`({ a: useState[useMemo] } = rows); ${call}`),
+        "nested-patterns": panel(`[{ a: [useState[useMemo]] }] = rows; ${call}`),
+        "with-default": panel(`[useState[useMemo] = 1] = rows; ${call}`),
+        "rest": panel(`[...useState[useMemo]] = rows; ${call}`),
+        "non-null": panel(`[useState[useMemo]!] = rows; ${call}`),
+        "last-index": panel(`[rows[useState][useMemo]] = rows; ${call}`),
+        "for-of": panel(`for (useState[useMemo] of rows); ${call}`),
+        "for-in": panel(`for (useState[useMemo] in rows); ${call}`),
+        "decorated-method": panel("class A { @useState(0) [useMemo]() {} }"),
+        "decorated-getter": panel("class A { @useState(0) get [useMemo]() { return 1; } }"),
+        "decorated-property": panel("class A { @useState(0) [useMemo] = 1; }"),
+        "decorated-static-property": panel("class A { @useState(0) static [useMemo] = 1; }"),
+        "decorated-accessor": panel("class A { @useState(0) accessor [useMemo] = 1; }"),
+        "decorated-parameter": panel("class A { @useState(0) a(@useMemo b: any) {} }"),
+        "decorated-class": panel("@useState(0) class A extends useMemo {}"),
+      };
+      const useStateIsFirst = {
+        "written-last": panel(`${call} useMemo;`),
+        "assignment": panel(`useState[useMemo] = rows; ${call}`),
+        "array": panel(`[useState[useMemo]]; ${call}`),
+        "index-before-a-name": panel(`[useState[useMemo].a] = rows; ${call}`),
+        "type-of-decorated-property": panel("class A { @useState(0) a: typeof useMemo = 1; }"),
+        "type-parameters-of-class": panel("class A<T extends typeof useMemo> extends useState(0) {}"),
+      };
+      const found = await reported("react", "eslint-plugin-react", "hook-use-state", {
+        ...useMemoIsFirst,
+        ...useStateIsFirst,
+      });
+      expect(found).toEqual(Object.keys(useMemoIsFirst).sort());
     });
   });
 
@@ -13552,6 +13690,490 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ],
       ["000000k000;", "Invalid characters after number @6+1"],
       ["0k0;", "Invalid characters after number @1+1"],
+      ["class {}", "A class name is required. @0+5"],
+      [
+        "class {} a ?? b || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @9+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "let zz; let zz; class {}",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "A class name is required. @16+5",
+      ],
+      ["export class {}", "A class name is required. @7+5"],
+      ["{ class {} }", "A class name is required. @2+5"],
+      ["abstract class {}", "A class name is required. @0+5"],
+      ["declare class {}", "A class name is required. @0+5"],
+      ["class {} let a = ;", "Unexpected token @17+1"],
+      ["namespace N { export class {} }", "A class name is required. @21+5"],
+      ["class implements A {}", "A class name is required. @0+5"],
+      ["declare namespace N { a; b; }", "TS(1036) Statements are not allowed in ambient contexts. @22+2"],
+      [
+        "(static satisfies any) = 1;",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `any` @18+3 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(public a b);",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @10+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(readonly a b);",
+        "TS(1090) 'readonly' modifier cannot appear on a parameter. @1+8 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @12+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(declare a b);",
+        "TS(1090) 'declare' modifier cannot appear on a parameter. @1+7 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @11+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(abstract a b);",
+        "TS(1090) 'abstract' modifier cannot appear on a parameter. @1+8 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @12+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(override a b);",
+        "TS(1090) 'override' modifier cannot appear on a parameter. @1+8 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @12+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(static a, b c);",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @13+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(static static a b);",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @15+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      ["(async a b);", 'Expected `,` or `)` but found `Identifier` @7+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      ["(a, static b c);", 'Expected `,` or `)` but found `Identifier` @11+1 "`,` or `)` expected", 0+1 "Opened here"'],
+      [
+        "(static a);",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `=>` but found `;` @10+1 "`=>` expected"',
+      ],
+      [
+        "(static a) = 1;",
+        "TS(1090) 'static' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `=>` but found `=` @11+1 "`=>` expected"',
+      ],
+      [
+        "(public a) => 1;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+      ],
+      [
+        "(public a, b c) => 1;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @13+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(yield a b);",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `Identifier` @9+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "(yield as any)++;",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `any` @10+3 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "{ (yield as any)++; }",
+        "A 'yield' expression is only allowed in a generator body. @3+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `any` @12+3 "`,` or `)` expected", 2+1 "Opened here"',
+      ],
+      [
+        "f(yield a b);",
+        "A 'yield' expression is only allowed in a generator body. @2+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `Identifier` @10+1 "`,` or `)` expected", 1+1 "Opened here"',
+      ],
+      [
+        "[yield a b];",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `]` but found `Identifier` @9+1 "`,` or `]` expected", 0+1 "Opened here"',
+      ],
+      [
+        "x = yield a b;",
+        "A 'yield' expression is only allowed in a generator body. @4+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f() { (await a b); }",
+        "`await` is only allowed within async functions and at the top levels of modules @16+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+        'Expected `,` or `)` but found `Identifier` @24+1 "`,` or `)` expected", 15+1 "Opened here"',
+      ],
+      ["(await as any)++;", 'Expected `,` or `)` but found `any` @10+3 "`,` or `)` expected", 0+1 "Opened here"'],
+      [
+        "class A { a?! }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @12+1",
+      ],
+      [
+        "class A { a?!; b c }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @12+1",
+        'Expected `;` but found `Identifier` @17+1 "`;` expected"',
+      ],
+      [
+        "class A { a?!: number; b c }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        'Expected `;` but found `Identifier` @25+1 "`;` expected"',
+      ],
+      [
+        "class A { a?!: number; m() { const a; } }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "Missing initializer in const declaration @35+1 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      [
+        "class A { a?!(): void }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        'Expected `;` but found `(` @13+1 "`;` expected"',
+      ],
+      [
+        "let a?!: number;",
+        "Optional declaration is not allowed here @5+1 help: Remove the `?`",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @6+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "class A { a?!: number; }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+      ],
+      ["class A { a!?: number; }", 'Expected `;` but found `?` @12+1 "`;` expected"'],
+      [
+        "class A { a?! = 1; }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "TS(1263) Declarations with initializers cannot also have definite assignment assertions. @12+1",
+      ],
+      [
+        "class A { static a?!: number; }",
+        "A property cannot be both optional and definite. @18+2 help: Remove either the `?` or the `!`",
+        "TS(1255) A definite assignment assertion '!' is not permitted in this context. @19+1",
+      ],
+      [
+        "class A { a? !: number; }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+      ],
+      [
+        "class A { a?\n!: number; }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+      ],
+      ["let a?: number;", "Optional declaration is not allowed here @5+1 help: Remove the `?`"],
+      ["let a?;", "Optional declaration is not allowed here @5+1 help: Remove the `?`"],
+      ["let a? = 1;", "Optional declaration is not allowed here @5+1 help: Remove the `?`"],
+      ["const a?: number = 1;", "Optional declaration is not allowed here @7+1 help: Remove the `?`"],
+      ["let a, b?: number;", "Optional declaration is not allowed here @8+1 help: Remove the `?`"],
+      [
+        "let [a]?: number;",
+        "Optional declaration is not allowed here @7+1 help: Remove the `?`",
+        "Missing initializer in destructuring declaration @4+3 help: Add an initializer (e.g. ` = undefined`) here",
+      ],
+      ["for (let a? of b) {}", "Optional declaration is not allowed here @10+1 help: Remove the `?`"],
+      [
+        "let a?: number; let y: readonly number;",
+        "Optional declaration is not allowed here @5+1 help: Remove the `?`",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @23+8",
+      ],
+      ["import {", 'Expected `}` but found `EOF` @9+0 "`}` expected"'],
+      ["function enum() {}", 'Expected `Identifier` but found `enum` @9+4 "`Identifier` expected"'],
+      [
+        "(public a, b) => 1;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+      ],
+      [
+        "(public a b) => 1;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @10+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "function f(public a b) {}",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @20+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "function f(public a, b c) {}",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @23+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "class A { m(public a b) {} }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @12+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @21+1 "`,` or `)` expected", 11+1 "Opened here"',
+      ],
+      [
+        "function f(a?, b c) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
+        'Expected `,` or `)` but found `Identifier` @17+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "function f(a?, b, c d) {}",
+        "TS(1016) A required parameter cannot follow an optional parameter. @15+1",
+        "TS(1016) A required parameter cannot follow an optional parameter. @18+1",
+        'Expected `,` or `)` but found `Identifier` @20+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "(public a b",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @1+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @10+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "function f(public a) {} x y;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @25+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f(public a, b = ) {}",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Unexpected token @25+1",
+      ],
+      [
+        "function f(public a) { x y; }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @24+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f(public a, b c) { }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @23+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "function f(public a, b: ) { }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Unexpected token @24+1",
+      ],
+      [
+        "function f(public a, 1) { }",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        "Unexpected token @21+1",
+      ],
+      [
+        "function f(public a b) { } let y: readonly number;",
+        "TS(1090) 'public' modifier cannot appear on a parameter. @11+6 help: No modifiers are allowed here.",
+        'Expected `,` or `)` but found `Identifier` @20+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      [
+        "let y: readonly number; function f(a b) { }",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @7+8",
+        'Expected `,` or `)` but found `Identifier` @37+1 "`,` or `)` expected", 34+1 "Opened here"',
+      ],
+      [
+        "function f(y: readonly number, a b) { }",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @14+8",
+        'Expected `,` or `)` but found `Identifier` @33+1 "`,` or `)` expected", 10+1 "Opened here"',
+      ],
+      ["function* enum() {}", 'Expected `Identifier` but found `enum` @10+4 "`Identifier` expected"'],
+      ["function* if() {}", 'Expected `Identifier` but found `if` @10+2 "`Identifier` expected"'],
+      [
+        "function* () {}",
+        "Expected function name @10+1 help: Function name is required in function declaration or named export",
+      ],
+      ["function* f();", "TS(1222) An overload signature cannot be declared as a generator. @0+14"],
+      [
+        "function* f(); let y: readonly number;",
+        "TS(1222) An overload signature cannot be declared as a generator. @0+14",
+        "TS(1354) 'readonly' type modifier is only permitted on array and tuple literal types. @22+8",
+      ],
+      ["class A { *enum(); }", "TS(1222) An overload signature cannot be declared as a generator. @10+8"],
+      ["a?.<;", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["class A { a: T() }", 'Expected `;` but found `(` @14+1 "`;` expected"'],
+      ["class A { a: T(); }", 'Expected `;` but found `(` @14+1 "`;` expected"'],
+      ["class A { a!() {} }", 'Expected `;` but found `(` @12+1 "`;` expected"'],
+      [
+        "class A { a?!() {} }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        'Expected `;` but found `(` @13+1 "`;` expected"',
+      ],
+      ["class A { a: T(b) {} }", 'Expected `;` but found `(` @14+1 "`;` expected"'],
+      [
+        "function* w() { interface A extends yield {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+        'Expected `{` but found `}` @45+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A extends yield { a: 1 } }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+14",
+        'Expected `{` but found `}` @51+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A extends yield {} x; }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+        'Expected `{` but found `Identifier` @45+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A extends yield {} {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+      ],
+      [
+        "function* w() { interface A extends yield {} { a: 1 } }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+      ],
+      [
+        "function* w() { interface A extends yield, B {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+5",
+      ],
+      [
+        "function* w() { interface A extends yield\n{} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+5",
+      ],
+      [
+        "function* w() { interface A extends B, yield {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @39+8",
+        'Expected `{` but found `}` @48+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A extends yield<T> {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+11",
+        'Expected `{` but found `}` @48+1 "`{` expected"',
+      ],
+      [
+        "function* w() { interface A<T> extends yield {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @39+8",
+        'Expected `{` but found `}` @48+1 "`{` expected"',
+      ],
+      [
+        "function* w() { declare interface A extends yield {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @44+8",
+        'Expected `{` but found `}` @53+1 "`{` expected"',
+      ],
+      ["function* w() { interface A extends yield.b {} }", "Unexpected token @41+1"],
+      [
+        "function* w() { interface A extends yield { a; b } }",
+        'Expected `,` or `}` but found `;` @45+1 "`,` or `}` expected", 42+1 "Opened here"',
+      ],
+      [
+        "function* w() { interface A extends (yield) {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+7",
+      ],
+      [
+        "function* w() { interface A extends yield a {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+7",
+      ],
+      [
+        "function* w() { interface A extends yield* a {} }",
+        "TS(2499) An interface can only extend an identifier/qualified-name with optional type arguments. @36+8",
+      ],
+      [
+        "function* w() { class A extends yield {} }",
+        "Cannot use `yield` as an identifier in a generator context @32+5",
+      ],
+      ["let \\u12 = 1;", "Invalid Unicode escape sequence @5+3"],
+      ["let a,\nfunction f() {}", "Identifier expected. 'function' is a reserved word that cannot be used here. @7+8"],
+      ["let a,\nif (x) y;", "Identifier expected. 'if' is a reserved word that cannot be used here. @7+2"],
+      ["const a = 1,\nclass B {}", "Identifier expected. 'class' is a reserved word that cannot be used here. @13+5"],
+      ["let a, function", "Identifier expected. 'function' is a reserved word that cannot be used here. @7+8"],
+      ["let a, if;", "Identifier expected. 'if' is a reserved word that cannot be used here. @7+2"],
+      ["let \\u12;", "Invalid Unicode escape sequence @5+3"],
+      ["const \\u12 = 1;", "Invalid Unicode escape sequence @7+3"],
+      ["let x, \\u12 = 1;", "Invalid Unicode escape sequence @8+3"],
+      ["var x, \\u12 = 1;", "Invalid Unicode escape sequence @8+3"],
+      ["let \\u12", "Invalid Unicode escape sequence @5+3"],
+      [
+        "foo \\u12 = 1;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      ["let\n\\u12 = 1;", "Invalid Unicode escape sequence @5+3"],
+      ["{ let \\u12 = 1; }", "Invalid Unicode escape sequence @7+3"],
+      ["let \\x = 1;", "Invalid Unicode escape sequence @5+1"],
+      ["let \\ = 1;", "Invalid Unicode escape sequence @5+1"],
+      ["let @ = 1;", "Unexpected token @4+1"],
+      ["var @ = 1;", "Unexpected token @4+1"],
+      ["let # = 1;", "Invalid Character ` ` @5+1"],
+      ["export static as any = 1;", "Unexpected token @14+2"],
+      ["namespace W { export static as any = 1; }", "Unexpected token @28+2"],
+      ["export static a;", "Unexpected token @14+1"],
+      ["export static;", "Unexpected token @7+6"],
+      ["export static readonly a;", "Unexpected token @23+1"],
+      ["export public static as;", "Unexpected token @21+2"],
+      ["export static\nas;", "Unexpected token @14+2"],
+      ["export declare as;", "Unexpected token @15+2"],
+      ["export abstract as;", "Unexpected token @16+2"],
+      ["export async as;", "Unexpected token @13+2"],
+      ["export let => 1;", "Unexpected token @11+2"],
+      ["namespace W { export let => 1; }", "Unexpected token @25+2"],
+      ["var => 1;", "Unexpected token @4+2"],
+      ["const => 1;", "Unexpected token @6+2"],
+      ["let a, => 1;", "Unexpected token @7+2"],
+      ["let g: keyof (a: any) => void;", 'Expected `)` but found `:` @15+1 "`)` expected"'],
+      ["let g: keyof (a, b) => void;", 'Expected `)` but found `,` @15+1 "`)` expected"'],
+      ["let g: keyof (a = 1) => void;", 'Expected `)` but found `=` @16+1 "`)` expected"'],
+      ["let g: keyof (a", 'Expected `)` but found `EOF` @16+0 "`)` expected"'],
+      ["let g: (a b);", 'Expected `)` but found `Identifier` @10+1 "`)` expected"'],
+      ["let g: 1 | (a: any) => void;", 'Expected `)` but found `:` @13+1 "`)` expected"'],
+      ["let g: 1 | () => void;", "Unexpected token @12+1"],
+      [
+        "let g: 1 | (a) => void;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @14+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let g: 1 | new () => void;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @14+0 help: Try inserting a semicolon here",
+      ],
+      ["type G = (a b);", 'Expected `)` but found `Identifier` @12+1 "`)` expected"'],
+      ["x as (a b);", 'Expected `)` but found `Identifier` @8+1 "`)` expected"'],
+      ["let g: [(a b)];", 'Expected `)` but found `Identifier` @11+1 "`)` expected"'],
+      [
+        "foo \\u12;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      ["foo\n\\u12;", "Invalid Unicode escape sequence @5+3"],
+      [
+        "a.b \\u12;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "f() \\u12;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "1 \\u12;",
+        "Invalid Unicode escape sequence @3+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @1+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a[0] \\u12;",
+        "Invalid Unicode escape sequence @6+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      [
+        '"a" \\u12;',
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      ["typeof \\u12;", "Invalid Unicode escape sequence @8+3"],
+      ["return \\u12;", "Invalid Unicode escape sequence @8+3"],
+      [
+        "foo \\u12 bar;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "\\u12 bar;",
+        "Invalid Unicode escape sequence @1+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "let \\u12 bar;",
+        "Invalid Unicode escape sequence @5+3",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      ["let ! y;", "Unexpected token @4+1"],
+      ["let 1;", "Unexpected token @4+1"],
+      ['let "a";', "Unexpected token @4+3"],
+      ["let @d class A {}", "Unexpected token @4+1"],
+      ["let ) ;", "Unexpected token @4+1"],
+      ["let ? a : b;", "Unexpected token @4+1"],
+      ["let `a`;", "Unexpected token @4+3"],
+      ["let => 1;", "Unexpected token @4+2"],
+      ["let , a;", "Unexpected token @4+1"],
+      ["let #a;", "Unexpected token @4+2"],
+      ["let ...a;", "Unexpected token @4+3"],
+      ["let\n@d class A {}", "Unexpected token @4+1"],
+      ["let\n1;", "Unexpected token @4+1"],
     ],
     "d.ts": [
       ["const a: number = 1;", "TS(1039) Initializers are not allowed in ambient contexts. @18+1"],
@@ -13717,6 +14339,49 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
         "TS(1036) Statements are not allowed in ambient contexts. @0+2",
         "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
       ],
+      [
+        "{} b c;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+2",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @4+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a\nb c;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+1",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @3+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "if (a) b; c d;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+9",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "a; b; c d;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+2",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      ["a; b;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; b; c;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; {} if (x) y;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      ["a; declare let z: 1; b;", "TS(1036) Statements are not allowed in ambient contexts. @0+2"],
+      [
+        "namespace N { a; b; } c; d;",
+        "TS(1036) Statements are not allowed in ambient contexts. @14+2",
+        "TS(1036) Statements are not allowed in ambient contexts. @22+2",
+      ],
+      [
+        "a; b; c; d e;",
+        "TS(1036) Statements are not allowed in ambient contexts. @0+2",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @10+0 help: Try inserting a semicolon here",
+      ],
+      ["(await as any) = 1;", 'Expected `,` or `)` but found `any` @10+3 "`,` or `)` expected", 0+1 "Opened here"'],
+      [
+        "(yield as any)++;",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `any` @10+3 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      ["f(a b);", 'Expected `,` or `)` but found `Identifier` @4+1 "`,` or `)` expected", 1+1 "Opened here"'],
+      ["[a b];", 'Expected `,` or `]` but found `Identifier` @3+1 "`,` or `]` expected", 0+1 "Opened here"'],
+      ["a ? b;", 'Expected `:` but found `;` @5+1 "`:` expected", 2+1 "Conditional starts here"'],
     ],
     "tsx": [
       ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
@@ -13787,6 +14452,7 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
         "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @10+2",
       ],
       ["let zz; let zz; <a b={} />;", "TS(17000) JSX attributes must only be assigned a non-empty 'expression'. @21+2"],
+      ["< />;", "Unexpected token @2+1"],
     ],
     "mts": [
       ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
@@ -15710,6 +16376,77 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["007n;", "Invalid characters after number @3+1"],
       ["007e1;", "Invalid characters after number @3+1"],
       ["007_1;", "Invalid characters after number @3+1"],
+      ["class {}", "A class name is required. @0+5"],
+      [
+        "class {} a ?? b || c;",
+        "Logical expressions and coalesce expressions cannot be mixed @9+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "a ?? b || c; class {}",
+        "Logical expressions and coalesce expressions cannot be mixed @0+11 help: Wrap either expression by parentheses",
+      ],
+      [
+        "let zz; let zz; class {}",
+        'Identifier `zz` has already been declared @4+2 "`zz` has already been declared here", 12+2 "It can not be redeclared here"',
+        "A class name is required. @16+5",
+      ],
+      ["export class {}", "A class name is required. @7+5"],
+      ["export class extends A {}", "A class name is required. @7+5"],
+      ["{ class {} }", "A class name is required. @2+5"],
+      ["function f() { class {} }", "A class name is required. @15+5"],
+      [
+        "if (a) class {}",
+        "Invalid class declaration @7+6 help: Classes can only be declared at top level or inside a block",
+      ],
+      ["@d class {}", "A class name is required. @0+5"],
+      ["class { m(): void {} }", "Expected function body @9+2 help: Add a function body (`{}`)."],
+      ["class {} let a = ;", "Unexpected token @17+1"],
+      ["class implements A {}", "TS(8005) 'implements' clauses can only be used in TypeScript files. @6+10"],
+      [
+        "(yield a b);",
+        "A 'yield' expression is only allowed in a generator body. @1+5 help: Either remove this `yield` or change the enclosing function to a generator function (`function*`)",
+        'Expected `,` or `)` but found `Identifier` @9+1 "`,` or `)` expected", 0+1 "Opened here"',
+      ],
+      [
+        "let a?;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "class A { a?! }",
+        "A property cannot be both optional and definite. @11+2 help: Remove either the `?` or the `!`",
+        "TS(1264) Declarations with definite assignment assertions must also have type annotations. @12+1",
+      ],
+      ["import {", 'Expected `}` but found `EOF` @9+0 "`}` expected"'],
+      ["import { a", 'Expected `}` but found `EOF` @11+0 "`}` expected"'],
+      ["import { a,", 'Expected `}` but found `EOF` @12+0 "`}` expected"'],
+      ["export {", 'Expected `}` but found `EOF` @9+0 "`}` expected"'],
+      ["import a, {", 'Expected `}` but found `EOF` @12+0 "`}` expected"'],
+      ["import {} from", "Unexpected token @15+0"],
+      ["function enum() {}", 'Expected `Identifier` but found `enum` @9+4 "`Identifier` expected"'],
+      ["function* enum() {}", 'Expected `Identifier` but found `enum` @10+4 "`Identifier` expected"'],
+      ["async function enum() {}", 'Expected `Identifier` but found `enum` @15+4 "`Identifier` expected"'],
+      ["x = function enum() {};", 'Expected `(` but found `enum` @13+4 "`(` expected"'],
+      ["function if() {}", 'Expected `Identifier` but found `if` @9+2 "`Identifier` expected"'],
+      ["export function enum() {}", 'Expected `Identifier` but found `enum` @16+4 "`Identifier` expected"'],
+      ["export default function enum() {}", 'Expected `(` but found `enum` @24+4 "`(` expected"'],
+      ["import a from b;", "Unexpected token @14+1"],
+      ["import a from", "Unexpected token @14+0"],
+      ["export * from b;", "Unexpected token @14+1"],
+      ["export { a } from b;", "Unexpected token @18+1"],
+      ["import { a } from 1;", "Unexpected token @18+1"],
+      ["a?.<T>;", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["a?.<;", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["a?.1;", 'Expected `:` but found `;` @4+1 "`:` expected", 1+1 "Conditional starts here"'],
+      ["a?.;", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["a?.<T>(); b", "Identifier expected after '?.' @1+2 help: Add an identifier after '?.'"],
+      ["let \\u12 = 1;", "Invalid Unicode escape sequence @5+3"],
+      ["var \\u12 = 1;", "Invalid Unicode escape sequence @5+3"],
+      ["x = \\u12;", "Invalid Unicode escape sequence @5+3"],
+      ["let a\\u12 = 1;", "Invalid Unicode escape sequence @6+3"],
+      ["let \\u{zz} = 1;", "Invalid Unicode escape sequence @5+2", "Unexpected token @9+1"],
+      ["let a,\nfunction f() {}", "Identifier expected. 'function' is a reserved word that cannot be used here. @7+8"],
+      ["let @ = 1;", "Unexpected token @4+1"],
+      ["let 1;", "Unexpected token @4+1"],
     ],
     "cjs": [
       ["await /k/;", "Unexpected token @9+1"],
@@ -15786,6 +16523,11 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
         "await using a = b;",
         "`await` is only allowed within async functions and at the top levels of modules @0+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
       ],
+    ],
+    "jsx": [
+      ["< />;", "Unexpected token @2+1"],
+      ["<1 />;", "Unexpected token @1+1"],
+      ["</>;", "Unexpected token @1+1"],
     ],
   };
 
@@ -16461,6 +17203,20 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "class A { #a!: number; }",
       "class A { accessor a!: number; }",
       "for (const of of a);",
+      "(static as any) = 1;",
+      "class A { a = 1() }",
+      "let a = 1;",
+      "let g: (a: any) => void;",
+      "let + 1;",
+      "let (a);",
+      "let .a;",
+      "let = 1;",
+      "let;",
+      "let * 2;",
+      "let / 2;",
+      "let < 1;",
+      "let in a;",
+      "let instanceof a;",
     ],
     "ts tsx mts": [
       "using a = b; await using c = d; export {};",
@@ -16665,6 +17421,7 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "export default interface A\n{}",
       "<a-b.c />;",
       "007;",
+      "export default class {}",
     ],
     "cts": [
       "for (var a = 1 in {}) {}",
@@ -16688,6 +17445,7 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "a <!--b",
       "let await;",
     ],
+    "jsx": ["< a />;"],
   };
 
   test("every error of a file is printed like oxlint's, in its order", async () => {

@@ -734,6 +734,10 @@ pub(crate) fn lint(
                 context.should_fix(message)
             });
             result.messages = fixed.remaining;
+            if file.config.language.is_oxlint {
+                // They are by place now. oxlint prints what is left in the order in which it has run its rules.
+                bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| it.reported);
+            }
             if !fixed.is_fixed {
                 let text = state.current.take().or(Some(fixed.output));
                 finish(result, text, (state.is_fixed, state.fixes));

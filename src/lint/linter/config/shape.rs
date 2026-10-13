@@ -2,9 +2,7 @@
 //! another kind than it expects. The words are those of its reader.
 
 use super::flat::ConfigError;
-use super::oxlint_options::{
-    check_as, compact, is_integer, unique, write_debug, write_number, wrong_type,
-};
+use super::oxlint_options::{check_as, compact, is_integer, write_debug, write_number, wrong_type};
 use crate::options::Json;
 use bun_core::strings as bytes;
 use bun_glob::pattern::{Unclosed, UnclosedKind, unclosed};
@@ -179,7 +177,7 @@ fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
         b"jsPlugins" => sequence(json).map(|_| ()),
         b"rules" => {
             let expected = "Record<string, SeverityConf | [SeverityConf, ...any[]]>";
-            (unique(map(json, expected)?).iter()).try_for_each(|it| rule(it.1))
+            map(json, expected)?.iter().try_for_each(|it| rule(&it.1))
         }
         b"globals" => map(json, "a map")?.iter().try_for_each(|it| global(&it.1)),
         b"env" => map(json, "a map")?.iter().try_for_each(|it| boolean(&it.1)),
@@ -217,7 +215,7 @@ fn write_debug_of_value(out: &mut Vec<u8>, json: &Json) {
         }
         Json::Object(entries) => {
             out.extend_from_slice(b"Object {");
-            for (at, (key, item)) in unique(entries).into_iter().enumerate() {
+            for (at, (key, item)) in entries.iter().enumerate() {
                 out.extend_from_slice(comma(at));
                 write_debug(out, key);
                 out.extend_from_slice(b": ");
@@ -382,13 +380,9 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
         match &key[..] {
             b"$schema" if json.as_str().is_none() => return Err(wrong_kind(json, "a string")),
             b"categories" => {
-                let entries = map(json, "a map")?;
-                for (at, entry) in entries.iter().enumerate() {
+                for entry in map(json, "a map")? {
                     known_keys(std::slice::from_ref(entry), CATEGORIES, "variant")?;
-                    // Of two entries with one key the last counts.
-                    if !entries[at + 1..].iter().any(|later| later.0 == entry.0) {
-                        check_as(b"A", &entry.1).map_err(|why| refusal_in_words(&why))?;
-                    }
+                    check_as(b"A", &entry.1).map_err(|why| refusal_in_words(&why))?;
                 }
             }
             b"settings" => settings(json)?,

@@ -363,10 +363,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.finish_type(TypeNodeKind::Intersection(members), start)
     }
 
-    /// `parseFunctionOrConstructorTypeToError(true, parseIntersectionTypeOrHigher)`, after a `|`.
+    /// `parseFunctionOrConstructorTypeToError(true, parseIntersectionTypeOrHigher)`, after a `|`. oxc doesn't look for a function
+    /// type there.
     #[inline]
     fn member_of_union(&mut self) -> TypeNodeId {
-        if self.is_start_of_function_or_constructor_type() {
+        if self.is_start_of_function_or_constructor_type() && !self.options.dialect.oxc {
             return self.function_type_without_parentheses(T::Bar);
         }
         self.intersection_type()
@@ -375,7 +376,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseFunctionOrConstructorTypeToError(false, parseTypeOperatorOrHigher)`, after a `&`.
     #[inline]
     fn member_of_intersection(&mut self) -> TypeNodeId {
-        if self.is_start_of_function_or_constructor_type() {
+        if self.is_start_of_function_or_constructor_type() && !self.options.dialect.oxc {
             return self.function_type_without_parentheses(T::Ampersand);
         }
         self.type_operator()
@@ -714,7 +715,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 // `parseParenthesizedType`, which has no node.
                 self.next();
                 let ty = self.ty();
-                self.expect(T::CloseParen);
+                match self.token() {
+                    T::CloseParen => self.next(),
+                    _ => self.unclosed_type_in_parentheses(),
+                }
                 return ty;
             }
             T::Import => return self.import_type(),
@@ -1258,19 +1262,38 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
+    /// `parseParenthesizedType`, where the `)` is missing. oxc looks for no comma there.
+    #[cold]
+    #[inline(never)]
+    fn unclosed_type_in_parentheses(&mut self) {
+        if self.recovers() && self.is_for_oxc() {
+            self.expected_like_oxc(")");
+        }
+        self.expect(T::CloseParen);
+    }
+
+    /// `yield` in a generator.
+    #[inline]
+    fn is_at_yield_operator(&self) -> bool {
+        self.token() == T::Yield && self.has_context(ctx::YIELD)
+    }
+
     /// An element of the `extends` clause of an interface as oxc reads it: a name with type arguments if the clause goes on or
     /// ends after it, and else an expression.
     #[cold]
     #[inline(never)]
     fn extended_like_oxc(&mut self, is_checked: bool) -> TypeNodeId {
-        let name = self.try_parse(|p| {
-            let name = p.heritage_entity_name(is_checked, 2499)?;
-            let is_all = matches!(
-                p.token(),
-                T::Comma | T::OpenBrace | T::Extends | T::Implements | T::Eof
-            );
-            is_all.then_some(name)
-        });
+        let name = match self.is_at_yield_operator() {
+            true => None,
+            false => self.try_parse(|p| {
+                let name = p.heritage_entity_name(is_checked, 2499)?;
+                let is_all = matches!(
+                    p.token(),
+                    T::Comma | T::OpenBrace | T::Extends | T::Implements | T::Eof
+                );
+                is_all.then_some(name)
+            }),
+        };
         if let Some(name) = name {
             return name;
         }
@@ -1382,17 +1405,25 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.is_in_implements_for_oxc = !is_extends && self.is_for_oxc();
             let (count, comma) = self.heritage_elements(|p, _| {
                 let first_token = (p.lx.start, p.lx.end);
-                let ty = match p.is_in_interface_extends_for_oxc && p.recovers() {
+                let is_yield = p.is_in_interface_extends_for_oxc && p.is_at_yield_operator();
+                let ty = match p.is_in_interface_extends_for_oxc && (p.recovers() || is_yield) {
                     true => p.extended_like_oxc(is_first_extends),
                     false => p.heritage_type(is_first_extends, 2499),
                 };
                 let is_name = |it: &TypeNode| !matches!(it.kind, TypeNodeKind::Heritage { .. });
-                // oxc gives up after `#a` alone.
-                let is_private_name = p.lx.src.get(first_token.0 as usize) == Some(&b'#')
-                    && p.prev_end() == first_token.1;
+                // oxc gives up after `#a` alone, and after `yield` where it wants an operand.
+                let is_one_token = p.prev_end() == first_token.1;
+                let is_private_name =
+                    p.lx.src.get(first_token.0 as usize) == Some(&b'#') && is_one_token;
+                let can_end = p.newline_before()
+                    || matches!(
+                        p.token(),
+                        T::Comma | T::OpenBrace | T::Extends | T::Implements | T::Eof
+                    );
                 if is_extends
                     && p.is_for_oxc()
                     && !is_private_name
+                    && !(is_yield && is_one_token && !can_end)
                     && !p.f.types.get(ty.idx()).is_some_and(is_name)
                 {
                     let at = (first_token.0, p.prev_end());

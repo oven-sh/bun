@@ -110,6 +110,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     fn expression_as_module_specifier(&mut self, is_export: bool) {
         if self.is_read_as_by_other_parsers() {
+            // oxc's errors before this one count, so the file is not given up.
+            if self.recovers() && self.options.dialect.oxc {
+                return self.error_at_token(1109, &[]);
+            }
             return self.refuse(Refusal::Reported);
         }
         let at = self.pos();

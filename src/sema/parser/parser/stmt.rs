@@ -817,7 +817,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.token(),
                     T::OpenBracket | T::OpenBrace | T::PrivateIdentifier
                 )
-                && !self.is_ecmascript
+                // The linter has oxc's words for what follows the comma.
+                && (!self.is_ecmascript
+                    || self.options.dialect.oxc && self.s.var_decls.len() > base)
                 && (self.can_parse_semicolon() || matches!(self.token(), T::In | T::Of))
             {
                 self.f.rare_syntax |= rare::ODD_DECLARATION;
@@ -852,27 +854,36 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.next();
                 flags |= Flags::DEFINITE;
             }
-            let ty = self.type_annotation();
+            let mut ty = self.type_annotation();
             let is_name = |it: &Pat| matches!(it.kind, PatKind::Ident(_));
-            let init = match self.token() {
-                T::Equals => self.initializer(),
-                token => {
-                    if !flags.contains(Flags::AMBIENT)
-                        && !(is_in_for && matches!(token, T::Of | T::In))
-                        && (kind == VarKind::Const
-                            || !self.f.pats.get(pat.idx()).is_some_and(is_name))
-                    {
-                        self.f.rare_syntax |= rare::ODD_DECLARATION;
+            let init = loop {
+                let token = match self.token() {
+                    T::Equals => break self.initializer(),
+                    // oxc reports the `?` and goes on.
+                    T::Question if ty.is_none() && self.reports_like_oxc() => {
+                        let at = (self.lx.start, self.lx.end);
+                        oxc::optional_declaration(&mut self.f.diagnostics, at);
+                        self.next();
+                        ty = self.type_annotation();
+                        continue;
                     }
-                    if self.reports_like_oxc()
-                        && !flags.contains(Flags::AMBIENT)
-                        && !self.f.pats.get(pat.idx()).is_some_and(is_name)
-                        && !(is_in_for && matches!(token, T::Of | T::In))
-                    {
-                        oxc::pattern_without_initializer(&mut self.f, pat);
-                    }
-                    ExprId::NONE
+                    token => token,
+                };
+                if !flags.contains(Flags::AMBIENT)
+                    && !(is_in_for && matches!(token, T::Of | T::In))
+                    && (kind == VarKind::Const || !self.f.pats.get(pat.idx()).is_some_and(is_name))
+                {
+                    self.f.rare_syntax |= rare::ODD_DECLARATION;
                 }
+                if self.reports_like_oxc()
+                    && !flags.contains(Flags::AMBIENT)
+                    && !self.f.pats.get(pat.idx()).is_some_and(is_name)
+                    && !(is_in_for && matches!(token, T::Of | T::In))
+                {
+                    let next = self.pos();
+                    oxc::pattern_without_initializer(&mut self.f, pat, next);
+                }
+                break ExprId::NONE;
             };
             let declaration = VarDecl {
                 pat,

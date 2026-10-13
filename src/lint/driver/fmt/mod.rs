@@ -39,6 +39,7 @@ use bun_sema::session::Session;
 use bun_sema_parser::Summary;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
+pub(crate) use config::duplicated_mapping_key;
 use config::{Configs, Flavor, Resolved};
 use files::{Expanded, Ignored, Kind, Language, Target};
 pub use for_rules::ForRules;

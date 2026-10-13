@@ -159,8 +159,10 @@ impl<'a, R: Rule> Cx<'a, R> {
     /// a file named in its options is missing. `name` is the class of the error, and `at` is the node whose listener throws.
     ///
     /// The severity of the rule doesn't matter. With an oxlint config, the file gets one error that has no rule name and that no
-    /// comment disables, and nothing else from this rule. Other rules still run. With an ESLint config, or with none, the run
-    /// ends with exit code 2.
+    /// comment disables. The rest is what oxlint does when a rule of a JavaScript plugin throws. The findings of the rules that
+    /// oxlint has itself stay. Those of every other rule for the file go: this rule's, the JavaScript plugins', and those of the
+    /// other native rules that oxlint doesn't have, which it could only run as rules of a JavaScript plugin. With an ESLint
+    /// config, or with none, the run ends with exit code 2.
     ///
     /// Only one throw per file counts, so it's fine to call this for every node. The call returns, so `return` after it.
     #[inline]

@@ -190,7 +190,7 @@ struct Pending<'a> {
 pub(super) struct Writer<'a, 's> {
     text: &'a [u8],
     dialect: Dialect,
-    shortens_identifiers: bool,
+    shortens_nodes: bool,
     offsets: &'s Utf16OffsetTable,
     selectors: &'s [Option<&'s Selector>],
     /// The nodes that match each of `selectors`.
@@ -343,8 +343,8 @@ impl<'a> Writer<'a, '_> {
         self.tree.ends.push(self.offsets.to_utf16(span.end));
         self.tree.parents.push(parent);
         let open_before = self.open.len();
-        let without_typescript = self.dialect == Dialect::Espree
-            || (self.shortens_identifiers && node_type == NodeType::Identifier);
+        let without_typescript =
+            self.dialect == Dialect::Espree || (self.shortens_nodes && is_short(node_type));
         node_type.emit_fields(
             node,
             without_typescript,
@@ -495,10 +495,41 @@ impl<'a> Writer<'a, '_> {
     }
 }
 
-/// Whether only the `name` of an `Identifier` is written. With oxlint it also has `decorators`, `optional` and `typeAnnotation`. In a
-/// JavaScript file, where to write one of these is a syntax error, they are `[]`, `false` and `null`, which `layouts.rs` says once.
-pub(super) fn shortens_identifiers(file: &File) -> bool {
+/// Whether the fields that only TypeScript can fill in aren't written for the types that [`is_short`] lists. With oxlint a node of
+/// a JavaScript file has them all the same: an `Identifier` has `decorators`, `optional` and `typeAnnotation`. There they are
+/// always `[]`, `false` and `null`, which `layouts.rs` says once for the type.
+pub(super) fn shortens_nodes(file: &File) -> bool {
     file.language().is_oxlint && file.is_javascript()
+}
+
+/// The types whose TypeScript-only fields are the same in every node of a JavaScript file, because what would change one is a syntax
+/// error there, for oxlint and here. That isn't so for every type: JavaScript has decorators on classes and their members and
+/// `import defer`, and both parsers let `class C { m?() {} p?; }` pass. None of these types has a field that only espree has,
+/// which `emit_fields` would write for them.
+pub(super) fn is_short(node_type: NodeType) -> bool {
+    matches!(
+        node_type,
+        NodeType::Identifier
+            | NodeType::CallExpression
+            | NodeType::NewExpression
+            | NodeType::TaggedTemplateExpression
+            | NodeType::VariableDeclaration
+            | NodeType::VariableDeclarator
+            | NodeType::ArrowFunctionExpression
+            | NodeType::FunctionExpression
+            | NodeType::FunctionDeclaration
+            | NodeType::Property
+            | NodeType::ObjectPattern
+            | NodeType::ArrayPattern
+            | NodeType::AssignmentPattern
+            | NodeType::RestElement
+            | NodeType::JSXOpeningElement
+            | NodeType::ImportSpecifier
+            | NodeType::ExportSpecifier
+            | NodeType::ExportNamedDeclaration
+            | NodeType::ExportDefaultDeclaration
+            | NodeType::ExportAllDeclaration
+    )
 }
 
 /// Goes through the tree of `file`, numbers the nodes, and notes which match `selectors`.
@@ -510,7 +541,7 @@ pub(super) fn walk<'a, 's>(
     let mut writer = Writer {
         text: file.text(),
         dialect: Dialect::of(file),
-        shortens_identifiers: shortens_identifiers(file),
+        shortens_nodes: shortens_nodes(file),
         offsets,
         selectors,
         matches: vec![Vec::new(); selectors.len()],

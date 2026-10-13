@@ -354,18 +354,6 @@ fn write_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'"');
 }
 
-/// The entries as the map of serde_json has them: each key once, where it is first, with its last value.
-pub(super) fn unique(entries: &[(Vec<u8>, Json)]) -> Vec<(&[u8], &Json)> {
-    let mut all: Vec<(&[u8], &Json)> = Vec::with_capacity(entries.len());
-    for (key, value) in entries {
-        match all.iter_mut().find(|it| it.0 == &key[..]) {
-            Some(known) => known.1 = value,
-            None => all.push((key, value)),
-        }
-    }
-    all
-}
-
 /// `is_spaced`: with blanks where `serde_json::to_string_pretty` has line breaks.
 fn write_value(out: &mut Vec<u8>, value: &Json, is_spaced: bool) {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
@@ -394,7 +382,7 @@ fn write_value(out: &mut Vec<u8>, value: &Json, is_spaced: bool) {
         }
         Json::Object(entries) => {
             out.push(b'{');
-            for (at, (key, item)) in unique(entries).into_iter().enumerate() {
+            for (at, (key, item)) in entries.iter().enumerate() {
                 out.extend_from_slice(if at == 0 { open } else { comma });
                 write_string(out, key);
                 out.extend_from_slice(colon);
@@ -479,8 +467,8 @@ fn expected_one_of(names: &[&[u8]], none: &str) -> Vec<u8> {
 fn check_enum(variants: &[&'static [u8]], value: &Json) -> Checked {
     let (name, content) = match value {
         Json::String(name) => (&name[..], None),
-        Json::Object(entries) => match unique(entries)[..] {
-            [(name, content)] => (name, Some(content)),
+        Json::Object(entries) => match &entries[..] {
+            [(name, content)] => (&name[..], Some(content)),
             _ => return Err(b"invalid value: map, expected map with a single key".to_vec()),
         },
         _ => return invalid_type(value, b"string or map"),
@@ -520,20 +508,20 @@ fn check_struct(it: &Struct, value: &Json) -> Checked {
                 false => Ok(()),
             };
         }
-        Json::Object(entries) => unique(entries),
+        Json::Object(entries) => entries,
         _ => return invalid_type(value, &expected()),
     };
     let place_of = |key: &[u8]| it.fields.iter().position(|field| field.name == key);
     let mut seen: Vec<usize> = Vec::new();
     for is_flattened in [false, true] {
-        for &(key, item) in &entries {
+        for (key, item) in entries {
             let Some(at) = place_of(key) else {
                 if it.ignores_unknown_fields || it.has_flattened {
                     continue;
                 }
                 let names: Vec<&[u8]> = it.fields.iter().map(|field| field.name).collect();
                 let known = expected_one_of(&names, "there are no fields");
-                return Err([b"unknown field `", key, b"`, ", &known].concat());
+                return Err([b"unknown field `", &key[..], b"`, ", &known].concat());
             };
             let field = &it.fields[at];
             if field.is_flattened != is_flattened {
@@ -553,9 +541,9 @@ fn check_struct(it: &Struct, value: &Json) -> Checked {
     }
     if it.has_flattened
         && !it.ignores_unknown_fields
-        && let Some(&(key, _)) = entries.iter().find(|entry| place_of(entry.0).is_none())
+        && let Some((key, _)) = entries.iter().find(|entry| place_of(&entry.0).is_none())
     {
-        return Err([b"unknown field `", key, b"`"].concat());
+        return Err([b"unknown field `", &key[..], b"`"].concat());
     }
     let mut fields = it.fields.iter().enumerate();
     match fields.find(|(at, field)| field.is_required && !seen.contains(at)) {
@@ -659,7 +647,7 @@ fn check(ty: &Type, value: &Json) -> Checked {
             invalid_type(value, expected.as_deref().unwrap_or(b"a sequence"))
         }
         (Type::Map(item, _), Json::Object(entries)) => {
-            (unique(entries).iter()).try_for_each(|it| check(item, it.1))
+            entries.iter().try_for_each(|it| check(item, &it.1))
         }
         (Type::Map(_, expected), _) => invalid_type(value, expected.as_deref().unwrap_or(b"a map")),
         (Type::Enum(variants), _) => check_enum(variants, value),

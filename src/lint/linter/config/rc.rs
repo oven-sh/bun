@@ -491,10 +491,8 @@ impl Rc<'_, '_> {
     ) -> Result<(), ConfigError> {
         let js_plugins = &self.reader.js_plugins;
         let mut refusals: Vec<Vec<u8>> = Vec::new();
-        for (at, &(id, setting)) in rules.iter().enumerate() {
-            // Of two entries with one key the last counts.
-            let is_replaced = rules[at + 1..].iter().any(|later| later.0 == id);
-            if is_replaced || find_js_rule(js_plugins, id).is_some() {
+        for &(id, setting) in rules {
+            if find_js_rule(js_plugins, id).is_some() {
                 continue;
             }
             let (key, (written, name)) = (oxlint_rule_key(id), parse_rule_id(id));

@@ -45,8 +45,14 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
         ErrorCategory::MemoDependencies | ErrorCategory::EffectExhaustiveDependencies
     );
     let has_list = is_read_by_babel || !is_about_dependencies;
-    let details =
-        (finding.details.iter()).filter(|it| has_list || inferred_dependencies(it).is_none());
+    // The plugin does not say where a function accesses a ref.
+    let is_of_plugin = |it: &&Detail| {
+        !matches!(it, Detail::Error { message: Some(said), .. }
+            if finding.category == ErrorCategory::Refs
+                && matches!(&**said, "The ref is accessed here" | "The ref is updated here"))
+    };
+    let details = finding.details.iter().filter(is_of_plugin);
+    let details = details.filter(|it| has_list || inferred_dependencies(it).is_none());
     let mut details: Vec<&Detail> = details.collect();
     if is_about_dependencies {
         let missing = (details.iter()).take_while(|it| missing_dependency(it).is_some());

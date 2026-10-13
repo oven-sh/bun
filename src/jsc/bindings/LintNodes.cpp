@@ -232,7 +232,7 @@ private:
             return {};
         if (tag == 9 || tag == 10) {
             // acorn and oxlint have `{ pattern, flags }` and `{ raw, cooked }`. typescript-estree has both by name.
-            auto kind = m_host->nodes.kindFor(m_host->isEspree(), m_host->isOxlint(), m_host->shortensIdentifiers());
+            auto kind = m_host->nodes.kindFor(m_host->isEspree(), m_host->isOxlint(), m_host->shortensNodes());
             bool secondIsFirst = tag == 9 ? kind == LintNodeState::TypeScript : kind >= LintNodeState::Espree;
             JSObject* object = constructEmptyObject(m_globalObject);
             if (secondIsFirst)
@@ -302,6 +302,21 @@ private:
 
 } // namespace
 
+// What's in a property that is `[]` in every node of a type, until it's read. To a plugin it's a plain property all along, and each
+// node has an array of its own. Few rules read `decorators` of an `Identifier`, and a third of all nodes are `Identifier`s.
+JSC_DEFINE_CUSTOM_GETTER(lintLazyEmptyList, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* list = tryCreateFilledLintArray(vm, globalObject, 0);
+    if (!list) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    lintReplaceCustomValue(vm, LintHost::from(globalObject), asObject(JSValue::decode(thisValue)), name, list);
+    return JSValue::encode(list);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsLintIllegalConstructor, (JSGlobalObject * globalObject, CallFrame*))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -350,7 +365,7 @@ __attribute__((minsize)) bool LintNodeState::load(JSGlobalObject* globalObject, 
                 bool hasParent = false;
                 for (size_t i = 0; i < length; i += 2) {
                     uint32_t what = properties[i + 1];
-                    if (!isName(properties[i]) || (what >= layout.fieldCount && (what < What::Type || what > What::EmptyList)))
+                    if (!isName(properties[i]) || (what >= layout.fieldCount && (what < What::Type || what > What::Value)))
                         return false;
                     hasParent |= what == What::Parent;
                 }
@@ -393,6 +408,7 @@ __attribute__((minsize)) bool LintNodeState::load(JSGlobalObject* globalObject, 
     m_layouts = WTF::move(byKind);
     m_visitorKeyOrders = orders;
     m_templates.grow(templateCount);
+    m_plans.grow(templateCount);
     m_typeNames.grow(typeCount);
     m_knownStrings.grow(stringCount);
     return true;
@@ -456,10 +472,19 @@ __attribute__((minsize)) JSObject* LintNodeState::makeTemplate(JSGlobalObject* g
     // It's made the way a plugin could make it, so that the Structure knows about what isn't a plain property.
     JSFinalObject* like = JSFinalObject::create(vm, JSFinalObject::createStructure(vm, globalObject, prototype(vm, globalObject, host, kind), count));
     m_templates[index].set(vm, host, like);
+    Plan& plan = m_plans[index];
+    uint8_t offset = 0;
     for (size_t i = 0; i < properties.size(); i += 2) {
         uint32_t what = properties[i + 1];
         if (!has(what))
             continue;
+        if (what < What::Type || what == What::Start || what == What::End || what == What::Range)
+            plan.own.append(std::pair<uint8_t, uint8_t> { offset, static_cast<uint8_t>(what) });
+        else
+            plan.same.append(offset);
+        if (what == What::Parent)
+            plan.parent = offset;
+        ++offset;
         Identifier key = Identifier::fromString(vm, AtomString(name(properties[i])));
         if (what == What::Loc) {
             // As in a token: a plain property to a plugin, which is computed from `range` when it's first read.
@@ -485,9 +510,20 @@ __attribute__((minsize)) JSObject* LintNodeState::makeTemplate(JSGlobalObject* g
                 return nullptr;
             }
             like->putDirectNonIndexAccessor(vm, key, GetterSetter::create(vm, globalObject, asObject(getter), asObject(setter)), PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
-        } else
-            like->putDirect(vm, key, what == What::False ? jsBoolean(false) : kind >= Oxlint ? jsNull()
-                                                                                             : jsUndefined());
+        } else if (what == What::EmptyList) {
+            if (!m_lazyEmptyList)
+                m_lazyEmptyList.set(vm, host, CustomGetterSetter::create(vm, lintLazyEmptyList, nullptr));
+            like->putDirectCustomAccessor(vm, key, m_lazyEmptyList.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
+        } else {
+            JSValue same = kind >= Oxlint || what == What::Parent ? jsNull() : jsUndefined();
+            if (what == What::Type)
+                same = typeName(vm, host, type);
+            else if (what == What::False)
+                same = jsBoolean(false);
+            else if (what == What::Value)
+                same = jsOwnedString(vm, AtomString("value"_s));
+            like->putDirect(vm, key, same);
+        }
     }
     RELEASE_ASSERT(like->structure()->maxOffset() == static_cast<PropertyOffset>(count) - 1);
     return like;
@@ -563,7 +599,7 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
     if (!state.isLoaded() || !tree.read(bytes))
         return outOfStep();
     uint32_t count = tree.count;
-    auto kind = state.kindFor(host->isEspree(), host->isOxlint(), host->shortensIdentifiers());
+    auto kind = state.kindFor(host->isEspree(), host->isOxlint(), host->shortensNodes());
 
     // Where the words of each node start.
     Vector<uint32_t> offsets(count);
@@ -584,7 +620,6 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
         return nullptr;
     }
     Structure* rangeStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32);
-    Structure* listStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
     LintNodeMaker maker(globalObject, tree, nodes, host->text());
     // Where each node has `parent`.
     Vector<uint8_t> parentOffsets(count);
@@ -607,65 +642,36 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
         bool isAlternate = alternatesLeft && tree.alternates[alternatesLeft - 1] == id;
         alternatesLeft -= isAlternate;
         isAlternate &= !layout.alternate.empty();
-        JSObject* like = state.templateFor(globalObject, host, kind, type, which, isAlternate);
+        auto [like, plan] = state.templateFor(globalObject, host, kind, type, which, isAlternate);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        JSString* typeName = state.typeName(vm, host, type);
         JSFinalObject* node = JSFinalObject::create(vm, like->structure());
         nodes->setIndexQuickly(vm, id, node);
-        auto properties = isAlternate ? layout.alternate : layout.properties;
-        PropertyOffset offset = 0;
-        for (size_t i = 1; i < properties.size(); i += 2) {
-            uint32_t what = properties[i];
+        parentOffsets[id] = plan->parent;
+        for (uint8_t offset : plan->same)
+            node->putDirectOffset(vm, offset, like->getDirect(offset));
+        for (auto [offset, what] : plan->own) {
             JSValue value;
             if (what < What::Type) [[likely]] {
-                if ((layout.leftOut >> what & 1) && !words[what]) [[unlikely]]
-                    continue;
                 value = maker.value(words[what], start, end);
                 RETURN_IF_EXCEPTION(scope, nullptr);
                 if (!value) [[unlikely]]
                     return outOfStep();
-            } else {
-                switch (what) {
-                case What::Type:
-                    value = typeName;
-                    break;
-                case What::Start:
-                    value = jsNumber(start);
-                    break;
-                case What::End:
-                    value = jsNumber(end);
-                    break;
-                case What::Parent:
-                    parentOffsets[id] = static_cast<uint8_t>(offset);
-                    value = jsNull();
-                    break;
-                case What::Range: {
-                    ObjectInitializationScope initializationScope(vm);
-                    JSArray* range = JSArray::tryCreateUninitializedRestricted(initializationScope, rangeStructure, 2);
-                    if (!range) [[unlikely]] {
-                        throwOutOfMemoryError(globalObject, scope);
-                        return nullptr;
-                    }
-                    range->initializeIndex(initializationScope, 0, jsNumber(start));
-                    range->initializeIndex(initializationScope, 1, jsNumber(end));
-                    value = range;
-                    break;
+            } else if (what == What::Start)
+                value = jsNumber(start);
+            else if (what == What::End)
+                value = jsNumber(end);
+            else {
+                ObjectInitializationScope initializationScope(vm);
+                JSArray* range = JSArray::tryCreateUninitializedRestricted(initializationScope, rangeStructure, 2);
+                if (!range) [[unlikely]] {
+                    throwOutOfMemoryError(globalObject, scope);
+                    return nullptr;
                 }
-                case What::EmptyList: {
-                    ObjectInitializationScope initializationScope(vm);
-                    JSArray* list = JSArray::tryCreateUninitializedRestricted(initializationScope, listStructure, 0);
-                    if (!list) [[unlikely]] {
-                        throwOutOfMemoryError(globalObject, scope);
-                        return nullptr;
-                    }
-                    value = list;
-                    break;
-                }
-                default:
-                    value = like->getDirect(offset);
-                }
+                range->initializeIndex(initializationScope, 0, jsNumber(start));
+                range->initializeIndex(initializationScope, 1, jsNumber(end));
+                value = range;
             }
-            node->putDirectOffset(vm, offset++, value);
+            node->putDirectOffset(vm, offset, value);
         }
     }
     for (uint32_t id = 1; id < count; ++id)

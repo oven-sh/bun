@@ -168,8 +168,11 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
     }
     let text = fs::read(path).map_err(|error| cannot_read(path, &fs::describe(&error)))?;
     let json = || json::parse(&text).ok_or_else(|| cannot_read(path, b"Invalid JSON."));
+    // js-yaml throws.
+    let repeated = || crate::fmt::duplicated_mapping_key(&text).map(|why| cannot_read(path, &why));
     // `yaml.load(text) || {}`
     let yaml = || match json::parse_as(Notation::Yaml, &text) {
+        _ if let Some(why) = repeated() => Err(why),
         Ok(Json::Null) => Ok(Json::Object(Vec::new())),
         Ok(value) => Ok(value),
         Err(why) => Err(cannot_read(path, &why)),
@@ -190,6 +193,7 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
     } else {
         // YAML, which JSON is a part of, with the comments of JavaScript.
         match json::parse(&text) {
+            Some(_) if let Some(why) = repeated() => return Err(why),
             Some(value) => value,
             None => yaml()?,
         }

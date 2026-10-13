@@ -170,7 +170,13 @@ fn errors_of_parser_for_oxc<'a>(file: &'a File<'a>) -> (Vec<SyntaxError>, Option
     let of_parser = file.hir.diagnostics.iter().enumerate();
     let mut of_parser = of_parser.filter(|it| it.1.kind == DiagnosticKind::Parse);
     let mut all = Vec::new();
+    // After a character that it does not know TypeScript's parser is lost, where oxc's lexer goes on. Only what it says about other
+    // such characters still counts.
+    let mut lost = None;
     for (place, it) in of_parser.clone().filter(|it| !is_tolerated(file, it.1)) {
+        if lost.is_some() && it.code != 1127 {
+            continue;
+        }
         let mut errors = oxc::of_typescript(file, it);
         if errors.is_empty() {
             let mut message = Vec::new();
@@ -190,8 +196,14 @@ fn errors_of_parser_for_oxc<'a>(file: &'a File<'a>) -> (Vec<SyntaxError>, Option
         let is_last = it.code == 1010 || errors.iter().any(|it| it.of_oxc.stage == Stage::Fatal);
         all.append(&mut errors);
         if is_last {
-            return (all, Some((place, it.start)));
+            return (all, lost.or(Some((place, it.start))));
         }
+        if it.code == 1127 {
+            lost = lost.or(Some((place, it.start)));
+        }
+    }
+    if lost.is_some() {
+        return (all, lost);
     }
     // It gave up without saying why.
     if all.is_empty() && of_parser.next().is_none() {

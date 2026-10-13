@@ -12,9 +12,7 @@ use bun_parsers::json::ParsedJson;
 use bun_parsers::json5::JSON5Parser;
 use bun_parsers::toml::TOML;
 use bun_parsers::yaml::{CyclicAliases, YAML};
-use rustc_hash::FxHashMap;
 use std::borrow::Cow;
-use std::collections::hash_map::Entry;
 
 /// Limits how deep a value from a config file can be nested. Most code that walks a config recurses without checking the
 /// stack, with frames of other sizes and maybe on another thread. So whatever builds a value for it only gets a quarter of
@@ -43,7 +41,8 @@ pub fn parse(text: &[u8]) -> Option<Json> {
     let mut allocator = ASTMemoryAllocator::default();
     let _scope = allocator.enter();
     let source = Source::init_path_string(b"".as_slice(), text);
-    let parsed = ParsedJson::parse_jsonc_document(&source, &mut Log::init()).ok()?;
+    let mut log = Log::init();
+    let parsed = ParsedJson::parse_jsonc_document(&source, &mut log).ok()?;
     let root = match parsed.root.data {
         Data::ENull(_) => JsonValue::Null,
         Data::EBoolean(it) => JsonValue::Boolean(it.value),
@@ -53,11 +52,12 @@ pub fn parse(text: &[u8]) -> Option<Json> {
         Data::EObjectJSON(it) => JsonValue::Object(it),
         _ => return None,
     };
-    convert(&root, RoomToNest::new())
+    // The parser warns about a key that is written twice.
+    convert(&root, RoomToNest::new(), log.warnings > 0)
 }
 
 /// `None`: it is nested too deeply.
-fn convert(value: &JsonValue, room: RoomToNest) -> Option<Json> {
+fn convert(value: &JsonValue, room: RoomToNest, has_repeats: bool) -> Option<Json> {
     if !room.has_more() {
         return None;
     }
@@ -69,25 +69,20 @@ fn convert(value: &JsonValue, room: RoomToNest) -> Option<Json> {
         JsonValue::Array(it) => {
             let mut items = Vec::with_capacity(it.get().items().len());
             for item in it.get().items() {
-                items.push(convert(item, room)?);
+                items.push(convert(item, room, has_repeats)?);
             }
             Json::Array(items)
         }
         JsonValue::Object(it) => {
             let mut entries = Vec::with_capacity(it.get().properties().len());
-            // As for `JSON.parse`, the last of two values with one key counts, at the place of the first.
-            let mut places: FxHashMap<&[u8], usize> = FxHashMap::default();
             for property in it.get().properties() {
-                let (key, value) = (property.key.slice(), convert(&property.value, room)?);
-                match places.entry(key) {
-                    Entry::Occupied(place) => entries[*place.get()] = (key.to_vec(), value),
-                    Entry::Vacant(place) => {
-                        place.insert(entries.len());
-                        entries.push((key.to_vec(), value));
-                    }
-                }
+                let value = convert(&property.value, room, has_repeats)?;
+                entries.push((property.key.slice().to_vec(), value));
             }
-            Json::Object(entries)
+            match has_repeats {
+                true => Json::object(entries),
+                false => Json::Object(entries),
+            }
         }
     })
 }
@@ -179,7 +174,7 @@ pub enum Notation {
 
 /// The value that `text` is in `notation`, as `JSON.stringify` writes it: what is not a finite number
 /// is `null`, a date of TOML is a string, as it is written. No document of YAML is `null`, several are
-/// an array. A repeated key is there as often as it is written. `Err`: what is wrong with `text`.
+/// an array. A repeated key is there once, at its first place, with its last value. `Err`: what is wrong with `text`.
 pub fn parse_as(notation: Notation, text: &[u8]) -> Result<Json, Vec<u8>> {
     with_parsed(notation, text, from_parsed)
         .map_err(|error| error.message)?
@@ -265,7 +260,7 @@ fn from_expr(expr: &Expr, room: RoomToNest) -> Option<Json> {
                 };
                 entries.push((key, from_expr(value, room)?));
             }
-            Json::Object(entries)
+            Json::object(entries)
         }
         _ => Json::Null,
     })

@@ -9,7 +9,7 @@
 //!
 //! The orders were read off the nodes that espree 11, typescript-estree 8.71.1 and oxlint 1.87 make of 63,000 files.
 
-use super::ast::STRINGS;
+use super::ast::{self, STRINGS};
 use super::wire;
 use crate::code_path::estree::Tree;
 use crate::estree::{Field, NodeType, Value};
@@ -31,8 +31,10 @@ const TOKENS: u32 = 0xF8;
 /// A getter and a setter from `worker/ast.js`, which aren't enumerable.
 const DEPRECATED: u32 = 0xF9;
 const FALSE: u32 = 0xFA;
-/// An array of its own for each node.
+/// An array of its own for each node, which is made when it's first read.
 const EMPTY_LIST: u32 = 0xFB;
+/// `"value"`, of `importKind` and `exportKind`.
+const VALUE: u32 = 0xFC;
 
 /// The types whose fields aren't in the order that the rule for the tool gives, each with its fields.
 const TYPESCRIPT: &[u8] = b"\
@@ -107,8 +109,9 @@ enum Layout {
     TypeScript,
     Espree,
     Oxlint,
-    /// The same nodes, in a JavaScript file. More than a third of them are `Identifier`s, and only TypeScript can give one a decorator,
-    /// a `?` or a type. So `ast.rs` writes nothing about these: [`super::ast::shortens_identifiers`].
+    /// The same nodes, in a JavaScript file. More than a third of all properties are ones that only TypeScript can fill in: the
+    /// decorators, the `?` and the type of an `Identifier`, the type arguments of a call. `ast.rs` writes nothing about these:
+    /// [`ast::shortens_nodes`].
     OxlintJavaScript,
 }
 
@@ -178,15 +181,16 @@ fn can_be_left_out(node_type: NodeType, field: Field, is_espree: bool) -> bool {
 }
 
 /// The properties between `type` and what all nodes end with: a name and what is in it for each. `fields`: the names of the fields
-/// that `ast.rs` writes, in its order. `hidden`: those of the deprecated ones. `is_short`: it's the `Identifier` of
-/// [`Layout::OxlintJavaScript`].
+/// that `ast.rs` writes, in its order. `hidden`: those of the deprecated ones. `shown`: `fields`, and in between them those that
+/// `ast.rs` leaves out because the type [`ast::is_short`].
 fn fields_in_order(
     layout: Layout,
     listed: Option<&'static [u8]>,
     fields: &[&'static [u8]],
     hidden: &[&'static [u8]],
-    is_short: bool,
+    shown: &[&'static [u8]],
 ) -> Vec<Property> {
+    let is_short = shown.len() != fields.len();
     let what = |name: &'static [u8]| match fields.iter().position(|it| *it == name) {
         Some(field) if !hidden.contains(&name) => field as u32,
         Some(_) => DEPRECATED,
@@ -194,14 +198,15 @@ fn fields_in_order(
         None if name == b"tokens" => TOKENS,
         None if hidden.contains(&name) => DEPRECATED,
         None if is_short && name == b"decorators" => EMPTY_LIST,
-        None if is_short && name == b"optional" => FALSE,
+        None if is_short && matches!(name, b"optional" | b"definite" | b"declare") => FALSE,
+        None if is_short && matches!(name, b"importKind" | b"exportKind") => VALUE,
         None => UNDEFINED,
     };
     if let Some(listed) = listed {
         let names = strings::split(listed, b",").filter(|it| !it.is_empty());
         return names.map(|it| (it, what(it))).collect();
     }
-    let mut names = fields.to_vec();
+    let mut names = shown.to_vec();
     names.retain(|it| !hidden.contains(it));
     if layout == Layout::TypeScript {
         sort::sort_by_cached_key(&mut names, |it| it.to_ascii_lowercase());
@@ -309,20 +314,23 @@ pub(super) fn write(out: &mut Vec<u8>) {
         words.push(names.add(node_type.name().as_bytes()));
         for (layout, exceptions) in Layout::ALL.into_iter().zip(&exceptions) {
             let is_espree = layout.is_espree();
-            let is_short = layout == Layout::OxlintJavaScript && node_type == NodeType::Identifier;
-            let (mut fields, mut hidden) = (Vec::new(), Vec::new());
+            let is_short = layout == Layout::OxlintJavaScript && ast::is_short(node_type);
+            let (mut fields, mut hidden, mut shown) = (Vec::new(), Vec::new(), Vec::new());
             let (mut children, mut left_out) = (0, 0);
             for it in node_type.fields() {
                 if it.is_hidden {
                     hidden.push(it.field.name().as_bytes());
                 }
-                let is_written = !it.is_hidden
-                    && !(if is_espree || is_short {
+                let is_shown = !it.is_hidden
+                    && !(if is_espree {
                         it.is_typescript_only
                     } else {
                         it.is_espree_only
                     });
-                if is_written {
+                if is_shown {
+                    shown.push(it.field.name().as_bytes());
+                }
+                if is_shown && !(is_short && it.is_typescript_only) {
                     let bit = 1 << fields.len();
                     children |= u32::from(it.is_child) * bit;
                     left_out |= u32::from(can_be_left_out(node_type, it.field, is_espree)) * bit;
@@ -334,7 +342,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
                 hidden.push(Field::Computed.name().as_bytes());
             }
             let listed = exceptions.get(node_type.name().as_bytes()).copied();
-            let middle = fields_in_order(layout, listed, &fields, &hidden, is_short);
+            let middle = fields_in_order(layout, listed, &fields, &hidden, &shown);
             let around: (&[Property], &[Property]) = match layout {
                 Layout::Espree => (
                     &[
@@ -364,7 +372,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
             let alternate: Vec<Property> = match (layout, node_type) {
                 (Layout::TypeScript, NodeType::TSModuleDeclaration) => {
                     let order = b"kind,body,declare,global,id";
-                    let middle = fields_in_order(layout, Some(order), &fields, &hidden, false);
+                    let middle = fields_in_order(layout, Some(order), &fields, &hidden, &shown);
                     [around.0, &middle[..], around.1].concat()
                 }
                 // `convertTypeAnnotation` and `convertTSTypeParametersToTypeParametersDeclaration` work out both.

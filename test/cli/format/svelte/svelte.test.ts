@@ -522,6 +522,10 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     ["{#key a(c, // b\n d)}e{/key}\n", "{#key a(\n  c, // b\n  d,\n)}e{/key}\n", "{#key a(c, d)}e{/key} // b\n"],
     ["{#each a  // b\n as c}d{/each}\n", "{#each a // b\n as c}d{/each}\n", "{#each a as c}d{/each}\n"],
     ["{@const a = c // b\n}\n", "{@const a = c // b\n}\n", "{@const a = c} // b\n"],
+    // So has what follows one that is on a line of its own.
+    ["{a // b\n/* c */\n}\n", "{a // b\n/* c */\n}\n", "{a}\n"],
+    ["{a\n/* c */\n}\n", "{a\n/* c */\n}\n", "{a}\n"],
+    ["{#if a\n/* c */\n}d{/if}\n", "{#if a\n/* c */\n}d{/if}\n", "{#if a}d{/if}\n"],
     ["<p on:click={a // b\n}>c</p>\n", "<p\n  on:click={a // b\n  }\n>\n  c\n</p>\n", "<p on:click={a}>c</p>\n"],
   ];
   test.each([[{}], [{ ".prettierrc": prettierrc }], [{ ".oxfmtrc.json": oxfmtrc }]])(
@@ -936,6 +940,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `<script data-b='lang="ts"'></script>\n\n`,
       ],
       ["at the end of another name", '<script data-lang="ts"></script>\n', '<script data-lang="ts"></script>\n\n'],
+      // In double quotes it would not say so any more.
+      ["with a quote behind it", "<script lang=ts'></script>\n", "<script lang=ts'></script>\n\n"],
     ])("%s", async (_, scripts, formatted) => {
       expect(await format({ "a.svelte": scripts + before }, ["a.svelte"])).toMatchObject({
         stderr: "",

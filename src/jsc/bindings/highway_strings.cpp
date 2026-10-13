@@ -307,6 +307,43 @@ size_t CountCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, 
     return count;
 }
 
+// Writes the offset of the byte after each `\n` of the 64 bytes at `block`, which are at `pos` in
+// the text, to `out`. Returns the end of what it wrote.
+static HWY_INLINE uint32_t* LineStartsOfBlock(const uint8_t* HWY_RESTRICT block, size_t pos, uint32_t* HWY_RESTRICT out)
+{
+    const hn::CappedTag<uint8_t, 64> d;
+    const size_t N = hn::Lanes(d);
+    const auto vec_newline = hn::Set(d, '\n');
+
+    uint64_t newlines = 0;
+    for (size_t i = 0; i < 64; i += N) {
+        newlines |= hn::BitsFromMask(d, hn::Eq(hn::LoadU(d, block + i), vec_newline)) << i;
+    }
+    const uint32_t after = static_cast<uint32_t>(pos) + 1;
+    while (newlines != 0) {
+        *out++ = after + static_cast<uint32_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(newlines));
+        newlines &= newlines - 1;
+    }
+    return out;
+}
+
+// Writes the offset of the byte after each `\n` of `text` to `out`, in ascending order, and returns
+// how many it wrote. `out` has room for as many as CountCharImpl counts.
+size_t LineStartsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_t* HWY_RESTRICT out)
+{
+    uint32_t* end = out;
+    const size_t whole_blocks = text_len / 64;
+    for (size_t i = 0; i < whole_blocks; ++i) {
+        end = LineStartsOfBlock(text + 64 * i, 64 * i, end);
+    }
+    if (const size_t rest = text_len % 64) {
+        uint8_t last_block[64] = {};
+        std::memcpy(last_block, text + 64 * whole_blocks, rest);
+        end = LineStartsOfBlock(last_block, 64 * whole_blocks, end);
+    }
+    return static_cast<size_t>(end - out);
+}
+
 // --- Implementation Details ---
 
 size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
@@ -751,22 +788,90 @@ size_t IndexOfInterestingCharacterInMultilineCommentImpl(const uint8_t* HWY_REST
     return text_len;
 }
 
-// `upper[b >> 4] & lower[b & 15]` is nonzero for the bytes an ASCII identifier is made of. Bit r
-// stands for the 16 bytes whose upper half is r.
-struct IdentifierNibbles {
+// The classes of a byte b are `upper[b >> 4] & lower[b & 15]`. A bit stands for the bytes whose upper
+// half is one of `rows` and whose lower half is one of `columns`.
+struct ScannerNibbles {
     alignas(16) uint8_t upper[16] {};
     alignas(16) uint8_t lower[16] {};
-};
-static constexpr IdentifierNibbles kIdentifierNibbles = [] {
-    IdentifierNibbles nibbles;
-    for (unsigned b = 0; b < 0x80; ++b) {
-        if ((b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_' || b == '$') {
-            nibbles.upper[b >> 4] |= 1 << (b >> 4);
-            nibbles.lower[b & 15] |= 1 << (b >> 4);
+
+    constexpr void add(unsigned bit, unsigned rows, unsigned columns)
+    {
+        for (unsigned i = 0; i < 16; ++i) {
+            if ((rows >> i) & 1) upper[i] |= 1 << bit;
+            if ((columns >> i) & 1) lower[i] |= 1 << bit;
         }
     }
+    constexpr uint8_t of(unsigned b) const { return upper[b >> 4] & lower[b & 15]; }
+};
+// A tab or a space has one of the two lowest bits, a byte of an ASCII identifier a higher one.
+static constexpr int8_t kScannerBlankBits = 3;
+static constexpr ScannerNibbles kScannerNameOrBlank = [] {
+    ScannerNibbles nibbles;
+    nibbles.add(0, 1 << 0, 1 << 9); // tab
+    nibbles.add(1, 1 << 2, 1 << 0); // space
+    nibbles.add(2, 1 << 2, 1 << 4); // $
+    nibbles.add(3, 1 << 3, 0x03FF); // 0-9
+    nibbles.add(4, (1 << 4) | (1 << 6), 0xFFFE); // A-O, a-o
+    nibbles.add(5, (1 << 5) | (1 << 7), 0x07FF); // P-Z, p-z
+    nibbles.add(6, 1 << 5, 1 << 15); // _
     return nibbles;
 }();
+static constexpr ScannerNibbles kScannerStringStop = [] {
+    ScannerNibbles nibbles;
+    nibbles.add(0, 0xFF03, 0xFFFF); // control characters, and what is not ASCII
+    nibbles.add(1, 1 << 2, (1 << 2) | (1 << 4) | (1 << 7)); // " $ '
+    nibbles.add(2, 1 << 5, 1 << 12); // backslash
+    nibbles.add(3, 1 << 6, 1 << 0); // `
+    return nibbles;
+}();
+static_assert([] {
+    for (unsigned b = 0; b < 256; ++b) {
+        const bool is_name = (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_' || b == '$';
+        const bool is_blank = b == '\t' || b == ' ';
+        const bool is_string_stop = b == '"' || b == '\'' || b == '`' || b == '$' || b == '\\' || b < 0x20 || b >= 0x80;
+        const int name_or_blank = kScannerNameOrBlank.of(b);
+        if ((name_or_blank > kScannerBlankBits) != is_name) return false;
+        if ((name_or_blank != 0 && name_or_blank <= kScannerBlankBits) != is_blank) return false;
+        if ((kScannerStringStop.of(b) != 0) != is_string_stop) return false;
+    }
+    return true;
+}());
+
+// ScannerRunStopsImpl for the 64 bytes at `block`: 8 bytes for each bitmap, the first at `plane`.
+static HWY_INLINE void ScannerRunStopsOfBlock(const uint8_t* HWY_RESTRICT block, uint8_t* HWY_RESTRICT plane, size_t plane_len)
+{
+    const hn::CappedTag<uint8_t, 64> d;
+    const hn::RebindToSigned<decltype(d)> di;
+    const size_t N = hn::Lanes(d);
+
+    const auto name_or_blank_by_upper = hn::LoadDup128(d, kScannerNameOrBlank.upper);
+    const auto name_or_blank_by_lower = hn::LoadDup128(d, kScannerNameOrBlank.lower);
+    const auto string_stop_by_upper = hn::LoadDup128(d, kScannerStringStop.upper);
+    const auto string_stop_by_lower = hn::LoadDup128(d, kScannerStringStop.lower);
+    const auto vec_low_half = hn::Set(d, uint8_t { 0x0F });
+    const auto vec_zero = hn::Zero(d);
+    const auto vec_blank_bits = hn::Set(di, kScannerBlankBits);
+
+    uint64_t name = 0, neither = 0, plain = 0;
+    for (size_t i = 0; i < 64; i += N) {
+        const auto vec = hn::LoadU(d, block + i);
+        const auto upper = hn::ShiftRight<4>(vec);
+        const auto lower = hn::And(vec, vec_low_half);
+        const auto name_or_blank = hn::And(hn::TableLookupBytes(name_or_blank_by_upper, upper), hn::TableLookupBytes(name_or_blank_by_lower, lower));
+        const auto stop = hn::And(hn::TableLookupBytes(string_stop_by_upper, upper), hn::TableLookupBytes(string_stop_by_lower, lower));
+        // No class has the sign bit, and x86 before AVX-512 only compares signed bytes.
+        name |= hn::BitsFromMask(di, hn::Gt(hn::BitCast(di, name_or_blank), vec_blank_bits)) << i;
+        neither |= hn::BitsFromMask(d, hn::Eq(name_or_blank, vec_zero)) << i;
+        plain |= hn::BitsFromMask(d, hn::Eq(stop, vec_zero)) << i;
+    }
+    const uint64_t not_identifier = ~name;
+    const uint64_t not_blank = name | neither;
+    const uint64_t string_stop = ~plain;
+
+    std::memcpy(plane, &not_identifier, 8);
+    std::memcpy(plane + plane_len, &not_blank, 8);
+    std::memcpy(plane + 2 * plane_len, &string_stop, 8);
+}
 
 // Stage 1 of the scanner in src/sema/parser/lexer.rs: one pass over the source instead of a call
 // per token. Writes three bitmaps, `plane_len` bytes apart, with one bit per source byte (bit i of
@@ -777,50 +882,14 @@ static constexpr IdentifierNibbles kIdentifierNibbles = [] {
 // Each plane gets ceil(text_len / 64) * 8 bytes. The bits past the end of the source are set.
 void ScannerRunStopsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
 {
-    const hn::CappedTag<uint8_t, 64> d;
-    const size_t N = hn::Lanes(d);
-
-    const auto by_upper = hn::LoadDup128(d, kIdentifierNibbles.upper);
-    const auto by_lower = hn::LoadDup128(d, kIdentifierNibbles.lower);
-    const auto vec_low_half = hn::Set(d, uint8_t { 0x0F });
-    const auto vec_zero = hn::Zero(d);
-    const auto vec_tab = hn::Set(d, '\t');
-    const auto vec_space = hn::Set(d, ' ');
-    const auto vec_double_quote = hn::Set(d, '"');
-    const auto vec_single_quote = hn::Set(d, '\'');
-    const auto vec_backtick = hn::Set(d, '`');
-    const auto vec_dollar = hn::Set(d, '$');
-    const auto vec_backslash = hn::Set(d, '\\');
-    const auto vec_printable = hn::Set(d, uint8_t { 0x7F - 0x20 });
-
-    for (size_t pos = 0; pos < text_len; pos += 64) {
-        const uint8_t* block = text + pos;
-        uint8_t last_block[64];
-        if (text_len - pos < 64) {
-            std::memset(last_block, 0, sizeof(last_block));
-            std::memcpy(last_block, block, text_len - pos);
-            block = last_block;
-        }
-
-        uint64_t not_identifier = 0, blank = 0, string_stop = 0;
-        for (size_t i = 0; i < 64; i += N) {
-            const auto vec = hn::LoadU(d, block + i);
-            const auto rows = hn::And(hn::TableLookupBytes(by_upper, hn::ShiftRight<4>(vec)),
-                hn::TableLookupBytes(by_lower, hn::And(vec, vec_low_half)));
-            not_identifier |= hn::BitsFromMask(d, hn::Eq(rows, vec_zero)) << i;
-            blank |= hn::BitsFromMask(d, hn::Or(hn::Eq(vec, vec_tab), hn::Eq(vec, vec_space))) << i;
-            // Below 0x20 wraps around to above 0x5F, where 0x80 and up land too.
-            const auto mask_not_printable = hn::Gt(hn::Sub(vec, vec_space), vec_printable);
-            const auto mask_quote = hn::Or(hn::Or(hn::Eq(vec, vec_double_quote), hn::Eq(vec, vec_single_quote)), hn::Eq(vec, vec_backtick));
-            const auto mask_escape = hn::Or(hn::Eq(vec, vec_backslash), hn::Eq(vec, vec_dollar));
-            string_stop |= hn::BitsFromMask(d, hn::Or(hn::Or(mask_quote, mask_escape), mask_not_printable)) << i;
-        }
-        const uint64_t not_blank = ~blank;
-
-        uint8_t* plane = out + pos / 8;
-        std::memcpy(plane, &not_identifier, 8);
-        std::memcpy(plane + plane_len, &not_blank, 8);
-        std::memcpy(plane + 2 * plane_len, &string_stop, 8);
+    const size_t whole_blocks = text_len / 64;
+    for (size_t i = 0; i < whole_blocks; ++i) {
+        ScannerRunStopsOfBlock(text + 64 * i, out + 8 * i, plane_len);
+    }
+    if (const size_t rest = text_len % 64) {
+        uint8_t last_block[64] = {};
+        std::memcpy(last_block, text + 64 * whole_blocks, rest);
+        ScannerRunStopsOfBlock(last_block, out + 8 * whole_blocks, plane_len);
     }
 }
 
@@ -2396,6 +2465,7 @@ HWY_EXPORT(IndexOfNotCharImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
 HWY_EXPORT(LastIndexOfAnyCharImpl);
 HWY_EXPORT(LastIndexOfCharImpl);
+HWY_EXPORT(LineStartsImpl);
 HWY_EXPORT(LowerAscii16Impl);
 HWY_EXPORT(LowerAsciiImpl);
 HWY_EXPORT(MemMemImpl);
@@ -2515,6 +2585,11 @@ size_t highway_count_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_
     uint8_t needle)
 {
     return BUN_HWY_DISPATCH(CountCharImpl)(haystack, haystack_len, needle);
+}
+
+size_t highway_line_starts(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_t* HWY_RESTRICT out)
+{
+    return BUN_HWY_DISPATCH(LineStartsImpl)(text, text_len, out);
 }
 
 size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)

@@ -175,6 +175,35 @@ enum ListStep {
     Over,
 }
 
+/// What oxc calls the token `token`, which is written `text`, in "Expected `,` but found `Identifier`".
+#[inline(never)]
+fn name_for_oxc(token: T, text: &[u8]) -> Vec<u8> {
+    let has_any = |of: &[u8]| bun_core::strings::index_of_any(text, of).is_some();
+    let number: &[u8] = match text {
+        [b'0', b'x' | b'X', ..] => b"hex",
+        [b'0', b'b' | b'B', ..] => b"binary",
+        [b'0', b'o' | b'O', ..] => b"octal",
+        [b'0', _, ..] if token == T::Number && !has_any(b"89.eE") => b"octal",
+        _ if has_any(b".eE") => b"float",
+        _ => b"decimal",
+    };
+    match token {
+        T::Eof => b"EOF".to_vec(),
+        T::String => b"string".to_vec(),
+        T::Number => number.to_vec(),
+        T::BigInt => [number, b" bigint"].concat(),
+        T::NoSubstitutionTemplate => b"${}".to_vec(),
+        T::TemplateHead => b"${".to_vec(),
+        T::PrivateIdentifier => b"#identifier".to_vec(),
+        // Keywords of its lexer alone.
+        T::Identifier if matches!(text, b"target" | b"meta" | b"source") => text.to_vec(),
+        T::Identifier => b"Identifier".to_vec(),
+        // It splits these.
+        _ if text.starts_with(b">") => b">".to_vec(),
+        _ => text.to_vec(),
+    }
+}
+
 impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseErrorAtRange`. Without recovery: `fail`.
     #[cold]
@@ -283,31 +312,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !self.options.dialect.oxc {
             return self.error_at_token(1005, &[token.text()]);
         }
-        let text = self.lx.text();
-        let has_any = |of: &[u8]| bun_core::strings::index_of_any(text, of).is_some();
-        let number: &[u8] = match text {
-            [b'0', b'x' | b'X', ..] => b"hex",
-            [b'0', b'b' | b'B', ..] => b"binary",
-            [b'0', b'o' | b'O', ..] => b"octal",
-            [b'0', _, ..] if self.token() == T::Number && !has_any(b"89.eE") => b"octal",
-            _ if has_any(b".eE") => b"float",
-            _ => b"decimal",
-        };
-        let found = match self.token() {
-            T::Eof => b"EOF".to_vec(),
-            T::String => b"string".to_vec(),
-            T::Number => number.to_vec(),
-            T::BigInt => [number, b" bigint"].concat(),
-            T::NoSubstitutionTemplate => b"${}".to_vec(),
-            T::TemplateHead => b"${".to_vec(),
-            T::PrivateIdentifier => b"#identifier".to_vec(),
-            // Keywords of its lexer alone.
-            T::Identifier if matches!(text, b"target" | b"meta" | b"source") => text.to_vec(),
-            T::Identifier => b"Identifier".to_vec(),
-            // It splits these.
-            _ if text.starts_with(b">") => b">".to_vec(),
-            _ => text.to_vec(),
-        };
+        let found = name_for_oxc(self.token(), self.lx.text());
         match closer {
             b"" => self.error_at_token(1005, &[token.text(), &found]),
             _ => self.error_at_token(1005, &[token.text(), &found, closer]),
@@ -780,7 +785,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             | T::Global
             | T::Defer => true,
             T::Accessor | T::Public | T::Private | T::Protected | T::Static | T::Readonly => {
-                self.is_start_of_declaration()
+                self.options.dialect.oxc
+                    || self.is_start_of_declaration()
                     || !self.look_ahead(|p| {
                         p.next();
                         p.token().is_identifier_or_keyword() && !p.newline_before()
@@ -908,7 +914,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ListKind::ArgumentExpressions => token == T::DotDotDot || self.is_start_of_expression(),
             ListKind::Parameters => self.is_start_of_parameter(),
             ListKind::TypeArguments | ListKind::TupleElementTypes => {
-                token == T::Comma || self.is_start_of_type(false)
+                token == T::Comma || self.is_start_of_type(false) || self.is_name_in_type_for_oxc()
             }
             ListKind::HeritageClauses => matches!(token, T::Extends | T::Implements),
             ListKind::ImportOrExportSpecifiers => {

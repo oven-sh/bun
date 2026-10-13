@@ -1243,7 +1243,7 @@ impl<'c> Configs<'c> {
         }
         for directory in missing.into_iter().rev() {
             let entries = fs::list(directory).map_or_else(Vec::new, |it| it.entries);
-            let names = entries.iter().map(|it| &it.name[..]);
+            let names = (entries.iter().filter(|it| !it.is_directory)).map(|it| &it.name[..]);
             let found = match &above {
                 Some(Ok(above)) => self.scope(directory, names, Some(above)),
                 None => self.scope(directory, names, None),

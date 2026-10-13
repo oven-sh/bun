@@ -17,6 +17,7 @@ extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack
 extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 extern "C" size_t highway_index_of_not_char(const uint8_t* haystack, size_t haystack_len, uint8_t value);
 extern "C" size_t highway_count_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+extern "C" size_t highway_line_starts(const uint8_t* text, size_t text_len, uint32_t* out);
 extern "C" size_t highway_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" size_t highway_last_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
@@ -34,6 +35,7 @@ namespace Bun {
 // `haystack.length` meaning "not found" for the index_of family), a count, or
 // for memmem/memrmem the match offset with -1 for "not found". scannerRunStops
 // writes its three bitmaps into `arg`, a third of the view each, and returns 0.
+// lineStarts writes uint32 offsets into `arg` and returns how many.
 BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -105,6 +107,12 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         }
         highway_scanner_run_stops(haystack, len, const_cast<uint8_t*>(needle), plane_len);
         result = 0;
+    } else if (op == "lineStarts"_s) {
+        if (reinterpret_cast<uintptr_t>(needle) % alignof(uint32_t) || needle_len / sizeof(uint32_t) < highway_count_char(haystack, len, '\n')) {
+            throwRangeError(globalObject, scope, "needs an aligned uint32 per line feed"_s);
+            return {};
+        }
+        result = highway_line_starts(haystack, len, reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(needle)));
     } else {
         throwTypeError(globalObject, scope, "unknown op"_s);
         return {};

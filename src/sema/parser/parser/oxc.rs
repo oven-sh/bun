@@ -1815,6 +1815,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.options.dialect.oxc
     }
 
+    /// Where a type has to be, oxc takes `await` and `yield` for names, whatever they are around the type. They start none for
+    /// it where it looks ahead: `a as T ? await b : c`.
+    #[inline(always)]
+    pub(super) fn is_name_in_type_for_oxc(&self) -> bool {
+        use crate::token::T;
+        matches!(self.token(), T::Await | T::Yield) && self.options.dialect.oxc
+    }
+
     #[inline(always)]
     pub(super) fn place(&self) -> Place {
         self.place_in(self.context)

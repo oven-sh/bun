@@ -407,6 +407,49 @@ unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) ->
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_line_starts(p: *const u8, len: usize, out: *mut u32) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    let mut written = 0;
+    for (i, _) in text.iter().enumerate().filter(|it| *it.1 == b'\n') {
+        // SAFETY: `out` has room for one number for every line feed of the text.
+        unsafe { out.add(written).write(i as u32 + 1) };
+        written += 1;
+    }
+    written
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_scanner_run_stops(
+    p: *const u8,
+    len: usize,
+    out: *mut u8,
+    plane_len: usize,
+) {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let text = unsafe { bytes(p, len) };
+    // SAFETY: `out` has three bitmaps, `plane_len` bytes apart, of 8 bytes for every 64 of the text.
+    let planes =
+        unsafe { core::slice::from_raw_parts_mut(out, 2 * plane_len + len.div_ceil(64) * 8) };
+    for (block, chunk) in text.chunks(64).enumerate() {
+        let mut stops = [u64::MAX; 3];
+        for (i, &c) in chunk.iter().enumerate() {
+            let is_name = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+            let is_blank = c == b'\t' || c == b' ';
+            let is_plain =
+                (0x20..0x80).contains(&c) && !matches!(c, b'"' | b'\'' | b'`' | b'$' | b'\\');
+            for (plane, is_in_run) in stops.iter_mut().zip([is_name, is_blank, is_plain]) {
+                *plane &= !(u64::from(is_in_run) << i);
+            }
+        }
+        for (plane, stops) in stops.iter().enumerate() {
+            let at = plane * plane_len + block * 8;
+            planes[at..at + 8].copy_from_slice(&stops.to_le_bytes());
+        }
+    }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_any_char(
     p: *const u8,
     len: usize,

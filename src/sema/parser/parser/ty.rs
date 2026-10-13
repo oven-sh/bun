@@ -986,7 +986,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let base = self.s.ids.len();
         let lists = self.enter_list(ListKind::TypeArguments);
         let error = loop {
-            if self.token() != T::Comma && !self.is_start_of_type(false) {
+            if self.token() != T::Comma
+                && !self.is_start_of_type(false)
+                && !self.is_name_in_type_for_oxc()
+            {
                 break Some(match self.s.ids.len() == base {
                     // Up to the end of the token after the list, which is one character long.
                     true => ((less_than, self.pos() + 1), 1099),
@@ -1007,7 +1010,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// word starts no type, although it can be the name in a type reference.
     fn type_in_list(&mut self) -> TypeNodeId {
         // With recovery `is_at_element` has asked, and a comma is an element whose type is missing.
-        if !self.recovers() && !self.is_start_of_type(false) {
+        if !self.recovers() && !self.is_start_of_type(false) && !self.is_name_in_type_for_oxc() {
             self.fail();
             return TypeNodeId::NONE;
         }
@@ -1072,6 +1075,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 p.is_start_of_expression()
             }),
             T::LessThan if self.is_ecmascript => true,
+            T::Await | T::Yield if self.has_context(ctx::TYPE) && self.options.dialect.oxc => true,
             _ => self.is_start_of_left_hand_side_expression(),
         }
     }
@@ -1141,7 +1145,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         is_checked: bool,
         not_entity_name: u32,
     ) -> Option<TypeNodeId> {
-        if !self.is_identifier() {
+        if !self.is_identifier() && !self.is_name_in_type_for_oxc() {
             return None;
         }
         let start = self.pos();

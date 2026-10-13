@@ -110,6 +110,8 @@ fn file_of(
     text: &[u8],
     atoms: Option<&dyn Intern>,
 ) -> Box<FileBuilder> {
+    // Another text than the last one, maybe at the same address.
+    scratch.stops.forget();
     let mut file = file_read_as(scratch, how, text, atoms, false);
     let is_refused = |file: &FileBuilder| file.has_errors || file.has_parse_diagnostics;
     let (was_refused, html_opens) = (is_refused(&file), scratch.html_opens);

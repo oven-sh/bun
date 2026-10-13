@@ -6,8 +6,8 @@
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
-    File, Flags, FnKind, Func, Module, ModuleName, Name, Node, PatKind, Stmt, StmtKind, StmtTag,
-    VarKind,
+    File, Flags, FnKind, Func, KeyKind, Module, ModuleName, Name, Node, PatKind, Stmt, StmtKind,
+    StmtTag, VarKind,
 };
 use crate::language::SourceType;
 use crate::semantic::{Declaration, DeclarationKinds, Scope, ScopeKind, Symbol};
@@ -603,7 +603,7 @@ type Found<'a> = (Span, Name<'a>, Declaration<'a>, Scope<'a>);
 /// The members of enums that are written as `["a"]`. To oxc that is the name `a`. Here such a member is no variable.
 fn computed_enum_members<'a>(file: &'a File<'a>) -> Vec<Found<'a>> {
     let mut all = Vec::new();
-    let is_computed = |it: &hir::EnumMember| it.computed_name.is_some();
+    let is_computed = |it: &hir::EnumMember| it.name_kind == hir::NameKind::ComputedString;
     if !file.hir.enum_members.iter().any(is_computed) {
         return all;
     }
@@ -612,10 +612,10 @@ fn computed_enum_members<'a>(file: &'a File<'a>) -> Vec<Found<'a>> {
             continue;
         };
         for member in declaration.members() {
-            if let Some(key) = member.computed_key()
-                && let Some(hir::ExprKind::String(name)) = key.try_raw().map(|it| it.kind)
+            if let Some(key) = member.key()
+                && let KeyKind::ComputedString(name) = key.kind()
             {
-                let (span, name) = (key.span(), file.name(name));
+                let span = key.inner_span(file);
                 let scope = file.scope_at(span.start);
                 all.push((span, name, Declaration::EnumMember(member), scope));
             }

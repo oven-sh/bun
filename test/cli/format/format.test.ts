@@ -3424,6 +3424,20 @@ try {
       expect(result.exitCode).toBe(0);
     });
 
+    // Both ways to a directory: it is walked into, and it is above a file that is named.
+    test.each([
+      ["package.json", ["."]],
+      ["package.json", ["src/a.ts"]],
+      [".prettierrc", ["."]],
+      ["prettier.config.js", ["src/a.ts"]],
+    ])("a directory called %s is no configuration file: %j", async (name, args) => {
+      const files = { ".prettierrc.json": `{ "semi": false }`, [`src/${name}/b.txt`]: "", "src/a.ts": ugly };
+      const result = await format(files, args, { reads: ["src/a.ts"] });
+      expect(result.stderr).toStartWith("Formatted ");
+      expect(result.files).toEqual({ "src/a.ts": noSemi });
+      expect(result.exitCode).toBe(0);
+    });
+
     test.each([
       [".prettierrc", `semi: [\n`],
       [".prettierrc", `1\n`],

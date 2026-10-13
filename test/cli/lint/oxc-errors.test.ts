@@ -318,6 +318,17 @@ const rows: Row[] = [
     "for (var a = 1 of b) ; const c;",
     [" | Missing initializer in const declaration | Add an initializer (e.g. ` = undefined`) here | 29+1"],
   ],
+  ["js ts", "for (let a = 1 in b) ;", [" | for-in loop variable declaration may not have an initializer |  | 5+9"]],
+  ["js ts", "for (var a = 1 of b) ;", [" | for-of loop variable declaration may not have an initializer |  | 5+9"]],
+  ["js ts", "for (const a = 1 of b) ;", [" | for-of loop variable declaration may not have an initializer |  | 5+11"]],
+  ["js ts", "for (using a = 1 of b) ;", [" | for-of loop variable declaration may not have an initializer |  | 5+11"]],
+  ["js ts", "for (var [a] = 1 in b) ;", [" | for-in loop variable declaration may not have an initializer |  | 5+11"]],
+  [
+    "js ts",
+    '"use strict"; for (var a = 1 in b) ;',
+    [" | for-in loop variable declaration may not have an initializer |  | 19+9"],
+  ],
+  ["js ts", "for (var a = 1 in b) ;", []],
 ];
 
 // oxc can't parse Flow, and oxlint says nothing about a file with `@flow` in its first comment that oxc's parser has an error

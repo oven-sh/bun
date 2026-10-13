@@ -402,3 +402,47 @@ describe("scannerRunStops", () => {
     expect(() => hw("scannerRunStops", new Uint8Array(65), new Uint8Array(3 * 8))).toThrow(RangeError);
   });
 });
+
+describe("lineStarts", () => {
+  function expectLineStarts(text: Uint8Array, at: string) {
+    const expected: number[] = [];
+    text.forEach((byte, i) => byte === 0x0a && expected.push(i + 1));
+    // One more than there are line feeds, to see that the kernel stops.
+    const out = new Uint32Array(expected.length + 1).fill(0xdeadbeef);
+    expect(hw("lineStarts", text, new Uint8Array(out.buffer)), at).toBe(expected.length);
+    expect([...out], at).toEqual([...expected, 0xdeadbeef]);
+  }
+
+  it("no line feed, and nothing but line feeds", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        // The others differ from a line feed in one bit, or are what the last block is padded with.
+        for (const byte of [0x0a, 0x61, 0x00, 0x0b, 0x08, 0x0d, 0x1a, 0x2a, 0x8a]) {
+          expectLineStarts(new Uint8Array(len + off).fill(byte).subarray(off), `len=${len} off=${off} byte=${byte}`);
+        }
+      }
+    }
+  });
+
+  it("one line feed at every interesting position", () => {
+    for (const len of LENGTHS) {
+      for (const off of OFFSETS) {
+        for (const pos of positions(len)) {
+          const text = filler(len, off);
+          text[pos] = 0x0a;
+          expectLineStarts(text, `len=${len} off=${off} pos=${pos}`);
+        }
+      }
+    }
+  });
+
+  it("lines of every length up to 130", () => {
+    const lines = Array.from({ length: 131 }, (_, length) => Buffer.alloc(length, "a").toString() + "\n");
+    expectLineStarts(enc(lines.join("")), "ascending");
+    expectLineStarts(enc(lines.reverse().join("") + "no line feed at the end"), "descending");
+  });
+
+  it("rejects a buffer that is too small", () => {
+    expect(() => hw("lineStarts", enc("a\nb\n"), new Uint8Array(4))).toThrow(RangeError);
+  });
+});

@@ -520,12 +520,7 @@ impl<'a> Lexer<'a> {
                     pos = next;
                     continue;
                 }
-                // How far a line is indented is hard to guess, so it is not asked byte by byte.
-                First::LineFeed => {
-                    self.newline_before = true;
-                    pos = self.stops.after_blanks.next(next);
-                    continue;
-                }
+                First::LineFeed => return self.scan_after_line_feed(next),
                 First::CarriageReturn => {
                     self.newline_before = true;
                     pos = next;
@@ -654,6 +649,24 @@ impl<'a> Lexer<'a> {
                 First::Invalid => return self.invalid_character(Refusal::UnexpectedCharacter, pos),
             }
             return;
+        }
+    }
+
+    /// Scans the token after the line feed before `pos`, and after the indentation and the empty lines there. How far a
+    /// line is indented is hard to guess, so it is not asked byte by byte. With this loop inside `scan`, `bun lint` runs 0.8%
+    /// more instructions.
+    #[inline(never)]
+    fn scan_after_line_feed(&mut self, mut pos: usize) {
+        if self.is_too_deep() {
+            return;
+        }
+        self.newline_before = true;
+        loop {
+            pos = self.stops.after_blanks.next(pos);
+            match self.src.get(pos) {
+                Some(b'\n' | b'\r' | 0x0B | 0x0C) => pos += 1,
+                _ => return self.scan(pos),
+            }
         }
     }
 

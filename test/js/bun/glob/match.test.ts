@@ -2238,6 +2238,59 @@ describe("Glob.match", () => {
     expect(others.filter(path => glob.match(path))).toEqual([]);
   });
 
+  test.each([
+    ["package.json", ["package.json"], ["package.jso", "package.jsonc", "Package.json", "", "a/package.json"]],
+    [
+      "a/b/c/d/e/f/g.ts",
+      ["a/b/c/d/e/f/g.ts"],
+      ["a/b/c/d/e/f/g.t", "a/b/c/d/e/f/g.tsx", "a/b/c/d/e/f", "a/b/c/d/e/f//g.ts"],
+    ],
+    ["", [""], ["a", "/"]],
+    ["/", ["/"], ["", "//", "a"]],
+    ["a(b)|c,d}", ["a(b)|c,d}"], ["ab", "a(b)|c,d"]],
+    ["?ndex.ts", ["index.ts", "éndex.ts", "😀ndex.ts"], ["ndex.ts", "/ndex.ts", "iindex.ts", "index.tsx", "index.t"]],
+    ["a?", ["ab", "aé"], ["a", "a/", "abc"]],
+    ["a/?/b", ["a/x/b", "a/é/b"], ["a//b", "a///b", "a/xy/b"]],
+    ["??", ["ab", "éé", "aé", "éa"], ["a", "é", "abc", "a/", "/a"]],
+    ["a?*.ts", ["ab.ts", "abc.ts", "aé.ts"], ["a.ts", "a/.ts"]],
+    ["a?/**/*.ts", ["ab/c.ts", "ab/c/d.ts"], ["a/c.ts", "abc/d.ts"]],
+    ["a?{b,c}", ["axb", "aéc"], ["ab", "a/b", "axd"]],
+    ["a?(b", ["ax(b"], ["a", "ab", "a(b"]],
+    ["!a?", ["a", "abc", "b"], ["ab"]],
+  ])("a pattern that starts with plain text, `/` or `?`: %j", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    expect(matches.filter(path => !glob.match(path))).toEqual([]);
+    expect(others.filter(path => glob.match(path))).toEqual([]);
+  });
+
+  test.each([
+    [
+      "**/__tests__/**/*.[jt]s?(x)",
+      ["__tests__/a.js", "src/__tests__/a.tsx", "a/__tests__/b/c.jsx", "__tests__/a.js.ts"],
+      ["__tests__/a.jsxx", "__tests__/a.css", "src/a.js", "__tests__/a.jsx/b", "__tests__/a.x"],
+    ],
+    ["*.ts?(x)", ["a.ts", "a.tsx", ".ts", "a.ts.tsx"], ["a.tsxx", "a.t", "a.tsx/b", "a/b.ts"]],
+    ["**/*.ts?(x)", ["a.ts", "a/b.tsx"], ["a.tsxx", "a/b.tsy"]],
+    ["?(x)", ["", "x"], ["xx", "y", "x/"]],
+    ["?()", [""], ["a", "/"]],
+    ["?(a|bc)/d", ["/d", "a/d", "bc/d"], ["b/d", "abc/d", "d", "a/bc/d"]],
+    ["a?(b|cd)", ["a", "ab", "acd"], ["abcd", "ac", "abb", "a/"]],
+    ["src/?(lib)/*.ts", ["src//a.ts", "src/lib/a.ts"], ["src/a.ts", "src/libs/a.ts", "src/li/a.ts"]],
+    ["*?(x)", ["", "a", "x", "ax", "xx"], ["a/x", "/"]],
+    ["*?(x)/", ["/", "a/", "x/", "ax/"], ["a", "a/x"]],
+    ["**/?(x)", ["", "x", "a/", "a/x", "a/b/x"], ["a", "a/y", "xx"]],
+    ["a?(b)c", ["ac", "abc"], ["abbc", "a", "ab"]],
+    ["?(a)?(b)", ["", "a", "b", "ab"], ["ba", "aa", "abb"]],
+    ["{a,?(b)}", ["", "a", "b"], ["ab", "bb"]],
+    ["?(a*)", ["", "a", "ab"], ["b", "a/b"]],
+    ["\\?(x)", ["?(x)"], ["", "x"]],
+    ["!?(x)", ["xx", "y"], ["", "x"]],
+  ])("`?(a)` is `a` or nothing: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    expect(matches.filter(path => !glob.match(path))).toEqual([]);
+    expect(others.filter(path => glob.match(path))).toEqual([]);
+  });
+
   test("a group can be anywhere in a long pattern", () => {
     for (let before = 50; before <= 270; before++) {
       const any = Buffer.alloc(before, "?").toString();
@@ -2305,11 +2358,27 @@ describe("Glob.match", () => {
     ["**/!(*.d).ts", /^(.*\/)?(?![^/]*\.d\.ts$)[^/]*\.ts$/],
     ["**/+([a-z]).@(ts|js)", /^(.*\/)?[a-z]+\.(ts|js)$/],
     ["**/?.{ts,css}", /^(.*\/)?[^/]\.(ts|css)$/],
+    ["**/__tests__/**/*.[jt]s?(x)", /^(.*\/)?__tests__\/(.*\/)?[^/]*\.[jt]sx?$/],
+    ["?(a|src)/**/*.ts?(x)", /^(a|src)?\/(.*\/)?[^/]*\.tsx?$/],
+    ["?/**/f.?s", /^[^/]\/(.*\/)?f\.[^/]s$/],
     ["**/[!/]*.ts", /^(.*\/)?[^/]+\.ts$/],
     ["!**/*.ts", /^(?!(.*\/)?[^/]*\.ts$)/],
   ])("%s", (pattern, expected) => {
     const deep = Buffer.alloc(600, "x/").toString();
-    const folders = ["", "a/", "b/", "c/x/", "d/", "src/", "src/a/b/", "a/é/", ".a/", "a/" + deep, deep];
+    const folders = [
+      "",
+      "a/",
+      "b/",
+      "c/x/",
+      "d/",
+      "src/",
+      "src/a/b/",
+      "a/é/",
+      ".a/",
+      "a/__tests__/",
+      "a/" + deep,
+      deep,
+    ];
     const names = ["f.js", "f.ts", "f.tsx", "f.d.ts", "f.css", "ts", ".ts", "ü.ts"];
     const paths = folders.flatMap(folder => names.map(name => folder + name));
 

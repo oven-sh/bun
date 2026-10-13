@@ -151,6 +151,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::Private | T::Protected | T::Public | T::Accessor | T::Static | T::Readonly
                 if !self.is_ecmascript
                     && !self.recovers()
+                    // To oxc they are names: `static as any = 1`.
+                    && !self.options.dialect.oxc
                     && self.is_followed_by_word_on_same_line() =>
             {
                 self.fail();
@@ -292,8 +294,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 T::Defer if self.recovers() => return self.next_is_identifier_on_same_line(),
                 T::Module | T::Namespace => {
                     self.next();
+                    // oxc leaves the await context for the declaration.
                     return !self.newline_before()
-                        && (self.is_identifier() || self.token() == T::String);
+                        && (self.is_identifier()
+                            || self.token() == T::String
+                            || self.token() == T::Await && self.options.dialect.oxc);
                 }
                 T::Abstract
                 | T::Accessor
@@ -1274,8 +1279,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             init = self.add_stmt(kind, at, Span::EMPTY);
         }
         let is_expression = |it: &Stmt| matches!(it.kind, StmtKind::Expr(_));
-        if self.reports_like_oxc()
-            && matches!(self.token(), T::Of | T::In)
+        // Whatever the dialect: the checks for JavaScript and for oxfmt ask for the bit too.
+        if matches!(self.token(), T::Of | T::In)
             && let Some(StmtKind::Var(list)) = self.f.stmts.get(init.idx()).map(|it| it.kind)
             && let Some(list) = self.f.var_decls.get(list.range())
             && list.iter().any(|it| it.init.is_some() || it.ty.is_some())

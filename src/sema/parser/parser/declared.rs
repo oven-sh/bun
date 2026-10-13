@@ -431,6 +431,93 @@ impl Declared {
         };
         std::mem::replace(entry, stamp_of(names, 0)) == stamp_of(names, 0)
     }
+
+    /// Whether a JavaScript module, which has been parsed, may export a name twice or one that it doesn't declare.
+    #[inline(never)]
+    fn has_odd_exports(&mut self, f: &FileBuilder) -> bool {
+        let kind_of = |id: StmtId| f.stmts.get(id.idx()).map(|it| it.kind);
+        let is_local = |it: &&Export| !it.has_module_specifier && !it.items.is_empty();
+        let mut is_undeclared = false;
+        if f.exports.iter().any(|it| is_local(&it)) {
+            // The names that a statement of the file declares in plain sight. Any other may be undeclared: one in a pattern, a
+            // `var` in a block.
+            self.last += 1;
+            let at_top = self.last;
+            for id in f.ids(f.body) {
+                match kind_of(id) {
+                    Some(StmtKind::Fn(it)) => {
+                        if let Some(it) = f.fns.get(it.idx()) {
+                            self.add_to(at_top, it.name);
+                        }
+                    }
+                    Some(StmtKind::Class(it)) => {
+                        if let Some(it) = f.classes.get(it.idx()) {
+                            self.add_to(at_top, it.name);
+                        }
+                    }
+                    Some(StmtKind::Var(list)) => {
+                        for it in f.var_decls.get(list.range()).unwrap_or_default() {
+                            if let Some(PatKind::Ident(name)) =
+                                f.pats.get(it.pat.idx()).map(|it| it.kind)
+                            {
+                                self.add_to(at_top, name);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for it in f.imports.iter() {
+                self.add_to(at_top, it.default);
+                self.add_to(at_top, it.namespace);
+                for it in f.import_specs.get(it.named.range()).unwrap_or_default() {
+                    self.add_to(at_top, it.local);
+                }
+            }
+            is_undeclared = f.exports.iter().filter(is_local).any(|it| {
+                let items = f.export_specs.get(it.items.range()).unwrap_or_default();
+                !items.iter().all(|it| self.is_in(at_top, it.local))
+            });
+        }
+        self.last += 1;
+        let names = self.last;
+        let mut export = |name: Atom| name.is_some() && self.exports_twice(name, names);
+        let name_or_default = |flags: Flags, name: Atom| match flags.contains(Flags::DEFAULT) {
+            true => known::default,
+            false => name,
+        };
+        let is_twice = f.ids(f.body).any(|id| match kind_of(id) {
+            Some(StmtKind::ExportDefault(_)) => export(known::default),
+            Some(StmtKind::ExportStar { alias, .. }) => export(alias),
+            Some(StmtKind::ExportNamed(it)) => {
+                let items = f.exports.get(it.idx()).map(|it| it.items.range());
+                let items = items.and_then(|it| f.export_specs.get(it));
+                items
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|it| export(it.exported))
+            }
+            Some(StmtKind::Fn(it)) => f.fns.get(it.idx()).is_some_and(|it| {
+                it.flags.contains(Flags::EXPORT) && export(name_or_default(it.flags, it.name))
+            }),
+            Some(StmtKind::Class(it)) => f.classes.get(it.idx()).is_some_and(|it| {
+                it.flags.contains(Flags::EXPORT) && export(name_or_default(it.flags, it.name))
+            }),
+            Some(StmtKind::Var(list)) => {
+                let list = f.var_decls.get(list.range()).unwrap_or_default();
+                let exported = list.iter().filter(|it| it.flags.contains(Flags::EXPORT));
+                exported
+                    .into_iter()
+                    .any(|it| match f.pats.get(it.pat.idx()).map(|it| it.kind) {
+                        Some(PatKind::Ident(name)) => export(name),
+                        // What a pattern binds is not looked at here.
+                        _ => true,
+                    })
+            }
+            _ => false,
+        });
+        is_undeclared || is_twice
+    }
 }
 
 impl<const GENERAL: bool> Parser<'_, GENERAL> {
@@ -571,89 +658,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.has_failed() || self.f.has_parse_diagnostics {
             return;
         }
-        let (f, declared) = (&self.f, &mut self.declared);
-        let kind_of = |id: StmtId| f.stmts.get(id.idx()).map(|it| it.kind);
-        let is_local = |it: &&Export| !it.has_module_specifier && !it.items.is_empty();
-        let mut is_undeclared = false;
-        if f.exports.iter().any(|it| is_local(&it)) {
-            // The names that a statement of the file declares in plain sight. Any other may be undeclared: one in a pattern, a
-            // `var` in a block.
-            declared.last += 1;
-            let at_top = declared.last;
-            for id in f.ids(f.body) {
-                match kind_of(id) {
-                    Some(StmtKind::Fn(it)) => {
-                        if let Some(it) = f.fns.get(it.idx()) {
-                            declared.add_to(at_top, it.name);
-                        }
-                    }
-                    Some(StmtKind::Class(it)) => {
-                        if let Some(it) = f.classes.get(it.idx()) {
-                            declared.add_to(at_top, it.name);
-                        }
-                    }
-                    Some(StmtKind::Var(list)) => {
-                        for it in f.var_decls.get(list.range()).unwrap_or_default() {
-                            if let Some(PatKind::Ident(name)) =
-                                f.pats.get(it.pat.idx()).map(|it| it.kind)
-                            {
-                                declared.add_to(at_top, name);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            for it in f.imports.iter() {
-                declared.add_to(at_top, it.default);
-                declared.add_to(at_top, it.namespace);
-                for it in f.import_specs.get(it.named.range()).unwrap_or_default() {
-                    declared.add_to(at_top, it.local);
-                }
-            }
-            is_undeclared = f.exports.iter().filter(is_local).any(|it| {
-                let items = f.export_specs.get(it.items.range()).unwrap_or_default();
-                !items.iter().all(|it| declared.is_in(at_top, it.local))
-            });
-        }
-        declared.last += 1;
-        let names = declared.last;
-        let mut export = |name: Atom| name.is_some() && declared.exports_twice(name, names);
-        let name_or_default = |flags: Flags, name: Atom| match flags.contains(Flags::DEFAULT) {
-            true => known::default,
-            false => name,
-        };
-        let is_twice = f.ids(f.body).any(|id| match kind_of(id) {
-            Some(StmtKind::ExportDefault(_)) => export(known::default),
-            Some(StmtKind::ExportStar { alias, .. }) => export(alias),
-            Some(StmtKind::ExportNamed(it)) => {
-                let items = f.exports.get(it.idx()).map(|it| it.items.range());
-                let items = items.and_then(|it| f.export_specs.get(it));
-                items
-                    .unwrap_or_default()
-                    .iter()
-                    .any(|it| export(it.exported))
-            }
-            Some(StmtKind::Fn(it)) => f.fns.get(it.idx()).is_some_and(|it| {
-                it.flags.contains(Flags::EXPORT) && export(name_or_default(it.flags, it.name))
-            }),
-            Some(StmtKind::Class(it)) => f.classes.get(it.idx()).is_some_and(|it| {
-                it.flags.contains(Flags::EXPORT) && export(name_or_default(it.flags, it.name))
-            }),
-            Some(StmtKind::Var(list)) => {
-                let list = f.var_decls.get(list.range()).unwrap_or_default();
-                let exported = list.iter().filter(|it| it.flags.contains(Flags::EXPORT));
-                exported
-                    .into_iter()
-                    .any(|it| match f.pats.get(it.pat.idx()).map(|it| it.kind) {
-                        Some(PatKind::Ident(name)) => export(name),
-                        // What a pattern binds is not looked at here.
-                        _ => true,
-                    })
-            }
-            _ => false,
-        });
-        if is_undeclared || is_twice {
+        if self.declared.has_odd_exports(&self.f) {
             self.f.rare_syntax |= rare::ODD_EXPORT;
         }
     }

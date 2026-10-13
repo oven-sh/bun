@@ -330,7 +330,7 @@ pub(crate) fn run<'a>(
         options.dialect.oxc && options.is_javascript,
         options.is_javascript,
     );
-    let stops = scratch.stops.find(text);
+    let stops = scratch.stops.find_again(text);
     let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
     lx.is_jsx = options.is_jsx;
     lx.recovers = options.recovers;

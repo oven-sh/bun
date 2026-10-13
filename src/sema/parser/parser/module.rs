@@ -921,6 +921,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // `parseExportAssignment` has `setAwaitContext(true)`.
         let saved = match self.is_ecmascript {
             true => self.enter_context(0, ctx::DISALLOW_IN),
+            // For oxc only that of the file is in the await context.
+            false if self.options.dialect.oxc && !self.has_context(ctx::TOP_LEVEL) => {
+                self.enter_context(0, ctx::DISALLOW_IN)
+            }
             false => self.enter_context(ctx::AWAIT, ctx::DISALLOW_IN),
         };
         let expression = self.assignment_expression();

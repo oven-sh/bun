@@ -514,32 +514,9 @@ fn mention_bit_without_loop(text: &[u8]) -> u32 {
 
 /// Where the lines of `text` start.
 fn line_starts(text: &[u8], is_plain: bool) -> Vec<u32> {
-    if !is_plain {
-        return bun_sema::check::compute_ecma_line_starts(text);
+    match is_plain {
+        // Only `\n` ends a line, as in nearly every file.
+        true => bun_core::strings::line_starts(text),
+        false => bun_sema::check::compute_ecma_line_starts(text),
     }
-    // Only `\n` ends a line, as in nearly every file: 8 bytes are tested at a time.
-    const ONES: u64 = 0x0101_0101_0101_0101;
-    let mut starts = Vec::with_capacity(text.len() / 32 + 1);
-    starts.push(0);
-    let (words, tail) = text.as_chunks::<8>();
-    let rest = text.len() - tail.len();
-    for (i, word) in words.iter().enumerate() {
-        let others = u64::from_le_bytes(*word) ^ (ONES * b'\n' as u64);
-        // None of the bytes is 0.
-        if others.wrapping_sub(ONES) & !others & (ONES * 0x80) == 0 {
-            continue;
-        }
-        // The high bit of each byte that is a `\n`.
-        let mut found = !(((others & (ONES * 0x7F)) + ONES * 0x7F) | others) & (ONES * 0x80);
-        while found != 0 {
-            starts.push((i * 8) as u32 + found.trailing_zeros() / 8 + 1);
-            found &= found - 1;
-        }
-    }
-    for (i, &byte) in text[rest..].iter().enumerate() {
-        if byte == b'\n' {
-            starts.push((rest + i + 1) as u32);
-        }
-    }
-    starts
 }

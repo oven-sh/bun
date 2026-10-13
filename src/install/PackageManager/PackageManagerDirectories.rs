@@ -830,7 +830,7 @@ pub fn cached_tarball_folder_name(
         ResolutionTag::LocalTarball => resolution.local_tarball(),
         _ => resolution.remote_tarball(),
     };
-    let print = |skips_verify: bool| {
+    let print = |skips_verify: bool, patch_hash: Option<u64>| {
         cached_tarball_folder_name_print(
             cached_package_folder_name_buf(),
             integrity,
@@ -841,16 +841,12 @@ pub fn cached_tarball_folder_name(
         )
     };
     if !this.skips_verify(resolution.tag) {
-        return print(false);
+        return print(false, patch_hash);
     }
-    // Verified bytes are good for every install, so `--no-verify` prefers them.
-    let verified = print(false);
-    if (this.cache_directory.as_ref())
-        .is_some_and(|dir| is_package_in_cache_at(dir.fd(), verified, resolution.tag))
-    {
-        return verified;
-    }
-    print(true)
+    // Verified bytes are good for every install, so `--no-verify` prefers them. A patched entry is made from its base.
+    let has_verified_base = (this.cache_directory.as_ref())
+        .is_some_and(|dir| is_package_in_cache_at(dir.fd(), print(false, None), resolution.tag));
+    print(!has_verified_base, patch_hash)
 }
 
 impl PackageManager {

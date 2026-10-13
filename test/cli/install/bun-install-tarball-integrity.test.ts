@@ -1068,6 +1068,34 @@ describe.concurrent.each(
       expect(box.requests).toEqual(["/pkg.tgz"]);
     });
 
+    // The patched entry is made from the unpatched one, so both have to be looked up under the same base name.
+    it.each(["a verified install cached the package", "the cache is empty"])(
+      "patches a package when %s",
+      async cache => {
+        const real = await tarball("real");
+        using box = noVerifySandbox(`no-verify-patched-${cache.length}`, { app: {} });
+        const app = join(box.root, "app");
+
+        await box.put("app", real);
+        await box.ok("app", "install");
+        const manifest = JSON.parse(await file(join(app, "package.json")).text());
+        await writeFile(
+          join(app, "package.json"),
+          JSON.stringify({ ...manifest, patchedDependencies: { [`pkg@${box.resolution}`]: "pkg.patch" } }),
+        );
+        await writeFile(
+          join(app, "pkg.patch"),
+          `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -1 +1 @@\n-module.exports = "real";\n+module.exports = "patched";\n`,
+        );
+        if (cache === "the cache is empty") await rm(join(box.root, "cache"), { recursive: true });
+
+        await box.reinstall("app", "--no-verify");
+        expect(await box.installed("app")).toBe('module.exports = "patched";\n');
+        await box.reinstall("app", "--no-verify");
+        expect(await box.installed("app")).toBe('module.exports = "patched";\n');
+      },
+    );
+
     it("downloads once and records the hash when the lockfile does not record one", async () => {
       const v1 = await tarball("v1");
       using box = noVerifySandbox("no-verify-unpinned", { app: {} });

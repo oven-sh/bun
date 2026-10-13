@@ -383,8 +383,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     const wrong = await format({ ".oxfmtrc.json": '{ "svelte": { "sortOrder": "a-b" } }', "a.svelte": input }, [
       "a.svelte",
     ]);
-    expect(wrong.files).toEqual([input]);
-    expect(wrong.exitCode).not.toBe(0);
+    // Once for each file: the configuration is one too.
+    const error = "error: Invalid svelteSortOrder value: a-b.\n";
+    expect(wrong).toMatchObject({
+      stderr: `${error}${error}Error occurred when checking code style in the above files.\n`,
+      files: [input],
+      exitCode: 2,
+    });
   });
 
   test("pragmas", async () => {
@@ -870,6 +875,127 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     }
   });
 
+  // `regex_lang_attribute` of Svelte 5.57, which looks at the text before anything is parsed.
+  describe("what says that the markup is TypeScript", () => {
+    const [before, after] = ["{(e  as number)}\n", "{e as number}\n"];
+    // What is before the markup, and what it is formatted to.
+    test.each([
+      ["lang in double quotes", '<script lang="ts"></script>\n', '<script lang="ts"></script>\n\n'],
+      ["in single quotes", "<script lang='ts'></script>\n", '<script lang="ts"></script>\n\n'],
+      ["without quotes", "<script lang=ts></script>\n", '<script lang="ts"></script>\n\n'],
+      [
+        "behind a value in double quotes with a > in it",
+        '<script generics="T extends Map<string, unknown>" lang="ts"></script>\n',
+        '<script generics="T extends Map<string, unknown>" lang="ts"></script>\n\n',
+      ],
+      [
+        "before it",
+        '<script lang="ts" generics="T extends Map<string, unknown>"></script>\n',
+        '<script lang="ts" generics="T extends Map<string, unknown>"></script>\n\n',
+      ],
+      [
+        "behind a value in single quotes with a > in it",
+        "<script generics='T extends Array<string>' lang='ts'></script>\n",
+        '<script generics="T extends Array<string>" lang="ts"></script>\n\n',
+      ],
+      [
+        "behind a > alone",
+        '<script data-b="c>d" lang="ts"></script>\n',
+        '<script data-b="c>d" lang="ts"></script>\n\n',
+      ],
+      [
+        "behind an attribute without a value and one with a >",
+        '<script module data-b=">" lang="ts"></script>\n',
+        '<script module data-b=">" lang="ts"></script>\n\n',
+      ],
+      [
+        "on a line of its own",
+        '<script\n  generics="T extends A<B>"\n  lang="ts"\n></script>\n',
+        '<script generics="T extends A<B>" lang="ts"></script>\n\n',
+      ],
+      [
+        "on the module",
+        '<script module lang="ts"></script>\n<script></script>\n',
+        '<script module lang="ts"></script>\n\n<script></script>\n\n',
+      ],
+      [
+        "on the instance",
+        '<script module></script>\n<script lang="ts"></script>\n',
+        '<script module></script>\n\n<script lang="ts"></script>\n\n',
+      ],
+      // The first `lang` counts.
+      [
+        "on the first of two scripts that say something else",
+        '<script lang="ts"></script>\n<script module lang="js"></script>\n',
+        '<script module lang="js"></script>\n\n<script lang="ts"></script>\n\n',
+      ],
+      // Up to the first `>` Svelte looks for the letters, whatever they are in.
+      [
+        "in the value of another attribute",
+        `<script data-b='lang="ts"'></script>\n`,
+        `<script data-b='lang="ts"'></script>\n\n`,
+      ],
+      ["at the end of another name", '<script data-lang="ts"></script>\n', '<script data-lang="ts"></script>\n\n'],
+    ])("%s", async (_, scripts, formatted) => {
+      expect(await format({ "a.svelte": scripts + before }, ["a.svelte"])).toMatchObject({
+        stderr: "",
+        files: [formatted + after],
+        exitCode: 0,
+      });
+    });
+
+    test("a script behind the markup", async () => {
+      const script = '<script generics="T extends A<B>" lang="ts"></script>\n';
+      expect(await format({ "a.svelte": before + script }, ["a.svelte"])).toMatchObject({
+        stderr: "",
+        files: [`${script}\n${after}`],
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      ["no lang", "<script></script>\n"],
+      ["another language", '<script lang="typescript"></script>\n'],
+      ["a blank behind the =", '<script lang= "ts"></script>\n'],
+      ["a comment", '<!-- <script lang="ts"> -->\n'],
+      [
+        "the second of two scripts that say something else",
+        '<script module lang="js"></script><script lang="ts"></script>\n',
+      ],
+      ["a lang behind a > that is in no quotes", '<script b={c>d} lang="ts"></script>\n'],
+    ])("not %s", async (_, scripts) => {
+      const result = await format({ "a.svelte": scripts + before }, ["a.svelte"]);
+      expect(result).toMatchObject({
+        stderr: `2 | {(e  as number)}\n         ^\nerror: This is TypeScript, which needs <script lang="ts">\n    at a.svelte:2:6\n\n`,
+        files: [scripts + before],
+        exitCode: 2,
+      });
+    });
+
+    test("what is in a script is what its own lang says", async () => {
+      const text = '<script lang= "ts">let b:  number</script>\n{b}\n';
+      expect(await format({ "a.svelte": text }, ["a.svelte"])).toMatchObject({
+        stderr: "",
+        files: ['<script lang="ts">\n  let b: number;\n</script>\n\n{b}\n'],
+        exitCode: 0,
+      });
+    });
+
+    test("types in the markup of a component with generics", async () => {
+      const text =
+        '<script generics="T extends Map<string, unknown>" lang="ts">\n  let { b }: { b: T } = $props()\n</script>\n' +
+        "{#snippet c(d:  T)}{d}{/snippet}\n<p on:click={(e:  Event) => e}>f</p>\n";
+      expect(await format({ "a.svelte": text }, ["a.svelte"])).toMatchObject({
+        stderr: "",
+        files: [
+          '<script generics="T extends Map<string, unknown>" lang="ts">\n  let { b }: { b: T } = $props();\n</script>\n\n' +
+            "{#snippet c(d: T)}{d}{/snippet}\n<p on:click={(e: Event) => e}>f</p>\n",
+        ],
+        exitCode: 0,
+      });
+    });
+  });
+
   describe("what only TypeScript has", () => {
     // The text, the column of what is refused in a component without `lang="ts"`, and what the text is formatted to in one with it.
     const rows: [string, number, string][] = [
@@ -1133,6 +1259,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "starts-of-scripts": repeated("<script ", 8 * n),
       "starts-of-scripts-with-an-attribute": repeated("<script a=", 8 * n),
       "starts-of-scripts-with-a-quote": repeated('<script a="', 8 * n),
+      "scripts-with-a-value-that-ends-a-tag": repeated('<script a=">" ', 8 * n),
+      "languages-behind-the-last-tag": `<script a=">" ${repeated("lang=b ", 8 * n)}`,
       "styles-with-a-quote-not-closed": repeated('<style a="', n),
       "attributes-of-a-script": `<script ${repeated('a="b" ', n)}x`,
       "attributes-of-a-script-next-to-quotes": `<script ${repeated('a="b"c ', n)}>`,
@@ -1201,10 +1329,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "elements-in-each-other",
       "end-tags",
       "ends-of-scripts",
+      "languages-behind-the-last-tag",
       "less-than",
       "paragraphs-not-closed",
       "parentheses-in-a-tag",
       "scripts-not-closed",
+      "scripts-with-a-value-that-ends-a-tag",
       "starts-of-blocks",
       "starts-of-scripts",
       "starts-of-scripts-with-a-quote",

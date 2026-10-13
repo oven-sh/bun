@@ -531,10 +531,13 @@ describe.concurrent("suffixes of an import path", () => {
       "a.bin": "application/octet-stream",
       "a.unknown": "application/octet-stream",
     };
-    const content = (name: string) => Buffer.concat([Buffer.from([0, 0xff, 0x80, 0x22, 0x5c, 0x0a]), Buffer.from(name)]);
+    const content = (name: string) =>
+      Buffer.concat([Buffer.from([0, 0xff, 0x80, 0x22, 0x5c, 0x0a]), Buffer.from(name)]);
     const png = base64("image/png", content("a.png"));
     const expected = {
-      ...Object.fromEntries(Object.entries(types).map(([name, type]) => [`./${name}?inline`, base64(type, content(name))])),
+      ...Object.fromEntries(
+        Object.entries(types).map(([name, type]) => [`./${name}?inline`, base64(type, content(name))]),
+      ),
       "./empty.png?inline": "data:image/png;base64,",
       "./a.png?inline&url": png,
       "./a.png?url&inline": png,

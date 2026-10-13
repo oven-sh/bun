@@ -1344,16 +1344,16 @@ impl<'a> Parser<'a, '_> {
     }
 
     /// `read_value`: where the `;`, `{` or `}` is that ends what starts at `start`. `is_prelude`: of an at-rule. If not, what a
-    /// `{` ends is read by `read_selector_list`, which throws at a `<`.
+    /// `{` ends is read by `read_selector_list`, which throws at a `<` and at the end of `--a:`.
     ///
     /// `None` also where Svelte reads on and the formatter for style sheets does not leave a `</style` as it is, or does not
-    /// read on: one that is not in a string, a comment or `url(..)`, a string or a `url(..)` that goes on in the next line, and
-    /// a parenthesis or a bracket that is not closed, which is nothing to Svelte.
+    /// read on: one that is not in a string, a comment or `url(..)`, a string or a `url(..)` that goes on in the next line, a
+    /// `url(a"b")`, which is written anew, and a parenthesis or a bracket that is not closed, which is nothing to Svelte.
     fn end_of_css_value(&self, start: usize, is_prelude: bool) -> Option<usize> {
         let text = &self.text[..self.len];
         let (mut at, mut is_in_url, mut quote, mut has_angle) = (start, false, None, false);
-        // How many parentheses and brackets are open.
-        let mut open = 0usize;
+        // How many parentheses and brackets are open, and where the last `url(` ends.
+        let (mut open, mut url) = (0usize, start);
         loop {
             at += strings::index_of_any(text.get(at..)?, b"\\\"'()[]/;{}<\n")?;
             match text[at] {
@@ -1372,17 +1372,32 @@ impl<'a> Parser<'a, '_> {
                     }
                     is_in_url &= byte != b')';
                 }
-                byte @ (b'"' | b'\'') if quote.is_none() => quote = Some(byte),
+                byte @ (b'"' | b'\'') if quote.is_none() => {
+                    if is_in_url && !text[url..at].trim_ascii().is_empty() {
+                        return None;
+                    }
+                    quote = Some(byte);
+                }
                 byte @ (b'(' | b'[') => {
-                    // To Svelte `aurl(` is one too.
+                    // To Svelte `aurl(` is one too, and so is one in a string.
                     let is_url = byte == b'('
+                        && quote.is_none()
                         && matches!(&text[start..at], [before @ .., b'u', b'r', b'l']
                             if !before.last().is_some_and(|&it| !it.is_ascii() || is_in_css_name(it)));
                     open += usize::from(!is_url && quote.is_none() && !is_in_url);
                     is_in_url |= is_url;
+                    if is_url {
+                        url = at + 1;
+                    }
                 }
                 b';' | b'{' | b'}' if !is_in_url && quote.is_none() && open > 0 => return None,
-                b'{' if !is_in_url && quote.is_none() && has_angle && !is_prelude => return None,
+                b'{' if !is_in_url
+                    && quote.is_none()
+                    && !is_prelude
+                    && (has_angle || text[start..at].trim_ascii_end().ends_with(b":")) =>
+                {
+                    return None;
+                }
                 b';' | b'{' | b'}' if !is_in_url && quote.is_none() => return Some(at),
                 b'/' if !is_in_url && quote.is_none() && text.get(at + 1) == Some(&b'*') => {
                     at += len_of_css_comment(&text[at..])? - 1;

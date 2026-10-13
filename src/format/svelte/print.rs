@@ -2021,13 +2021,22 @@ impl<'a, 'o> Printer<'a, 'o> {
                             .any(|&it| printer.pre_depth > 0 || !printer.is_empty_text(it))
                     })
                 };
-                // The plugin leaves out a `{:catch}` with nothing in it too. Without one, Svelte throws the error again.
-                let (pending, then) = (full(self, pending), full(self, then));
+                // The plugin leaves out a `{:catch}` with nothing in it too. Without one, Svelte throws the error again. And with
+                // a `{:then a /* b */}` the comment goes.
+                let has_comment = value.map(Pattern::with_annotation);
+                let has_comment =
+                    has_comment.is_some_and(|it| self.has_comment_between(it.start, it.end));
+                let has_full_then = full(self, then).is_some();
+                let (pending, then) = (
+                    full(self, pending),
+                    then.filter(|_| has_full_then || has_comment),
+                );
                 let has_full_catch = full(self, catch).is_some();
-                let print_catch = |printer: &mut Self, catch: FragmentId| match has_full_catch {
-                    true => printer.print_block_fragment(catch),
-                    false => EMPTY,
-                };
+                let print_if =
+                    |printer: &mut Self, fragment: FragmentId, is_full: bool| match is_full {
+                        true => printer.print_block_fragment(fragment),
+                        false => EMPTY,
+                    };
                 let mut block = Vec::new();
                 let head = vec![Doc::Token("{#await "), self.print_block_js(expression)];
                 let clause = |mut head: Vec<Doc<'a>>, word: &'static str, pattern: Doc<'a>| {
@@ -2038,12 +2047,12 @@ impl<'a, 'o> Printer<'a, 'o> {
                     (None, Some(then), _) => {
                         let pattern = self.expand_node(value);
                         block.push(clause(head, " then", pattern));
-                        block.push(self.print_block_fragment(then));
+                        block.push(print_if(self, then, has_full_then));
                     }
                     (None, None, Some(catch)) => {
                         let pattern = self.expand_node(error);
                         block.push(clause(head, " catch", pattern));
-                        block.push(print_catch(self, catch));
+                        block.push(print_if(self, catch, has_full_catch));
                     }
                     _ => {
                         block.push(clause(head, "", EMPTY));
@@ -2053,14 +2062,14 @@ impl<'a, 'o> Printer<'a, 'o> {
                         if let Some(then) = then {
                             let pattern = self.expand_node(value);
                             block.push(clause(Vec::new(), "{:then", pattern));
-                            block.push(self.print_block_fragment(then));
+                            block.push(print_if(self, then, has_full_then));
                         }
                     }
                 }
                 if let Some(catch) = catch.filter(|_| pending.is_some() || then.is_some()) {
                     let pattern = self.expand_node(error);
                     block.push(clause(Vec::new(), "{:catch", pattern));
-                    block.push(print_catch(self, catch));
+                    block.push(print_if(self, catch, has_full_catch));
                 }
                 block.push(Doc::Token("{/await}"));
                 group(block)

@@ -1703,6 +1703,11 @@ impl<'c> Configs<'c> {
         self.svelte_of_flags(None) == Some(false)
     }
 
+    /// Whether a flag or `[fmt]` turns it off for the file at `path`.
+    pub(crate) fn turns_svelte_off_for(&self, path: &[u8]) -> bool {
+        self.svelte_of_flags(Some(path)) == Some(false)
+    }
+
     /// Whether an override of `[fmt]` has `svelte = false`.
     pub(crate) fn turns_svelte_off_for_some(&self) -> bool {
         (self.overrides.iter()).any(|it| svelte_in(&it.settings) == Some(false))

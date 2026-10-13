@@ -860,6 +860,58 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ],
       ["{#snippet  row(b   /* c */)}y{/snippet}\n", "{#snippet row(b /* c */)}y{/snippet}\n", null],
     ],
+    "no comment is behind the parameters of a snippet": [
+      // The only parameter is a pattern, so no line ends before the `)`.
+      [
+        "{#snippet row({ b } // c\n = {})}y{/snippet}\n",
+        "{#snippet row({ b } // c\n = {})}y{/snippet}\n",
+        "{#snippet row({\n  b,\n} = {}) // c\n}y{/snippet}\n",
+      ],
+      [
+        "{#snippet row([b] = // c\n [])}y{/snippet}\n",
+        "{#snippet row([b] = // c\n [])}y{/snippet}\n",
+        "{#snippet row([\n  b,\n] = []) // c\n}y{/snippet}\n",
+      ],
+      [
+        `${typescript}{#snippet row({ b } // c\n : D)}y{/snippet}\n`,
+        `${typescript}{#snippet row({ b } // c\n : D)}y{/snippet}\n`,
+        `${typescript}{#snippet row({\n  b,\n}: D) // c\n}y{/snippet}\n`,
+      ],
+      // With a second one there is a line for it.
+      [
+        "{#snippet row({ b } // c\n = {}, d)}y{/snippet}\n",
+        "{#snippet row(\n  { b } = {}, // c\n  d,\n)}y{/snippet}\n",
+        null,
+      ],
+    ],
+    "a comment that Prettier moves each time stays where it is in the head of a snippet": [
+      [
+        `${typescript}{#snippet row(b = // c\n(d as E).f)}y{/snippet}\n`,
+        `${typescript}{#snippet row(b = // c\n(d as E).f)}y{/snippet}\n`,
+        null,
+      ],
+    ],
+    "a `{:then}` with nothing in it stays if there is a comment in its head": [
+      // What the plugin prints is the third.
+      [
+        "{#await b}wait{:then { c /* d */ }}{/await}\n",
+        "{#await b}wait{:then { c /* d */ }}{/await}\n",
+        "{#await b}wait{/await}\n",
+      ],
+      ["{#await b then { c /* d */ }}{/await}\n", "{#await b then { c /* d */ }}{/await}\n", "{#await b}{/await}\n"],
+      [
+        "{#await b then { c /* d */ }}  {:catch e}y{/await}\n",
+        "{#await b then { c /* d */ }}{:catch e}y{/await}\n",
+        "{#await b catch e}y{/await}\n",
+      ],
+      [
+        `${typescript}{#await b}wait{:then c: /* d */ E}{/await}\n`,
+        `${typescript}{#await b}wait{:then c: /* d */ E}{/await}\n`,
+        `${typescript}{#await b}wait{/await}\n`,
+      ],
+      // Without one it goes as before.
+      ["{#await b}wait{:then c}{/await}\n", "{#await b}wait{/await}\n", null],
+    ],
     "the parameters of a snippet end where their parentheses do": [
       [
         "{#snippet row(b /* () */)}y{/snippet}\n",
@@ -1189,14 +1241,28 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<style>b{c:</style>}</style>\n",
         "1 | <style>b{c:</style>}</style>\n                        ^\nerror: This end tag has no start tag\n    at 3.svelte:1:21\n\n",
       ],
+      // To Svelte `--c:` is a selector that is not finished.
+      [
+        '<style>b{--c:{d:"</style>"}}</style>\n',
+        '1 | <style>b{--c:{d:"</style>"}}</style>\n                                ^\nerror: This end tag has no start tag\n    at 4.svelte:1:29\n\n',
+      ],
+      // In a string `url(` starts nothing, and with a quote in it `url(..)` is written anew.
+      [
+        '<style>b{content:"url("}c{:</style>)}</style>\n',
+        '1 | <style>b{content:"url("}c{:</style>)}</style>\n                                         ^\nerror: This end tag has no start tag\n    at 5.svelte:1:38\n\n',
+      ],
+      [
+        '<style>b{c:url(d"e"</style>)}</style>\n',
+        '1 | <style>b{c:url(d"e"</style>)}</style>\n                                 ^\nerror: This end tag has no start tag\n    at 6.svelte:1:30\n\n',
+      ],
       // Neither is `url(..)`.
       [
         "<style>b{@url(</style>)}</style>\n",
-        "1 | <style>b{@url(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 4.svelte:1:25\n\n",
+        "1 | <style>b{@url(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 7.svelte:1:25\n\n",
       ],
       [
         "<style>b{curl(</style>)}</style>\n",
-        "1 | <style>b{curl(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 5.svelte:1:25\n\n",
+        "1 | <style>b{curl(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 8.svelte:1:25\n\n",
       ],
     ];
     const names = refused.map((_, index) => `${index}.svelte`);
@@ -1245,6 +1311,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "<style>\n  /* b\n</style>\n<p>y</p>\n<svg><style>c */d{e:f}</style></svg>\n",
         "<p>y</p>\n<svg\n  ><style>\n    c */d {\n      e: f;\n    }\n  </style></svg\n>\n\n<style>\n  /* b\n</style>\n",
       ],
+      ["<style>b{c:url( '</style>' )}</style>\n", '<style>\n  b {\n    c: url("</style>");\n  }\n</style>\n'],
       // A string goes on in the next line behind a backslash.
       [
         '<style>b{content:"c\\\nd </style>"}</style>\n',
@@ -1387,6 +1454,42 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ).toMatchObject(printed(it => it[1]));
     });
 
+    // What a word or a string is does not depend on the `,`, the `;` or the line break next to it, which change.
+    const words = [
+      "{x as { b: T, readonly [k: string]: U }}",
+      "{x as { b: T\n readonly [k: string]: U }}",
+      "{() => { interface A { b: T, readonly [k: string]: U } }}",
+      "{class { b\nstatic [c] = 1 }}",
+      "{class { b\nreadonly [c] = 1 }}",
+      "{class { b\npublic [c] = 1 }}",
+      "{class { b\naccessor [c] = 1 }}",
+      "{class { b; static [c] = 1 }}",
+      "{class { public\nb }}",
+      "{class { readonly; b }}",
+      "{() => { b\nstatic[0] }}",
+      "{() => { enum A { 'b', c } }}",
+      "{() => { enum A { 'b' } }}",
+      "{() => { enum A { 'b-c', d } }}",
+      '{x as { "b"; c }}',
+      '{x as { "b" }}',
+      '{x as { readonly "b" }}',
+      '{() => { interface A { "b" } }}',
+      '{class { accessor "b" }}',
+      '{class { "b-c"; d }}',
+      '{class { 1; "2" }}',
+    ].map(code => `${typescript}${code}\n`);
+    test.each([{}, { semi: false }, { quoteProps: "consistent" }])(
+      "says nothing about words and keys: %j",
+      async options => {
+        const names = words.map((_, index) => `${index}.svelte`);
+        const files = {
+          ".prettierrc": JSON.stringify({ plugins, ...options }),
+          ...Object.fromEntries(words.map((text, index) => [names[index], text])),
+        };
+        expect(await format(files, names, ["--debug-check"])).toMatchObject({ stderr: "", files: words, exitCode: 0 });
+      },
+    );
+
     const different: [string, string][] = [
       // Code that has become a comment.
       ["{@html raw + more}\n", "{@html raw // + more\n}\n"],
@@ -1396,6 +1499,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{f(b /* c */)}\n", "{f(b)}\n"],
       ["<Row item={/* c */ item} />\n", "<Row {item} />\n"],
       ["<input bind:value={/* c */ value} />\n", "<input bind:value />\n"],
+      ["{#await b}wait{:then { c /* d */ }}{/await}\n", "{#await b}wait{/await}\n"],
       // A string is no name.
       ['{"name"}\n', "{name}\n"],
       ['{f("x")}\n', "{f(x)}\n"],
@@ -1404,7 +1508,6 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ['{"1"}\n', "{1}\n"],
       ['{b ? "c" : d}\n', "{b ? c : d}\n"],
       ['<p b={"c"}>y</p>\n', "<p b={c}>y</p>\n"],
-      [`${typescript}{b as "c"}\n`, `${typescript}{b as c}\n`],
       ['<svelte:element this={"b"}>y</svelte:element>\n', "<svelte:element this={b}>y</svelte:element>\n"],
       ['<svelte:element this={ "b\\\\c" }>y</svelte:element>\n', '<svelte:element this="b\\\\c">y</svelte:element>\n'],
       // A template that is in no other language, whatever is before it.
@@ -1471,7 +1574,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#snippet f(b: C | D)}y{/snippet}\n`,
         `${typescript}{#snippet f(\n  b:\n    | C\n    | D,\n)}y{/snippet}\n`,
       ],
-      // It does not tell these apart: it looks at tokens, not at the tree, and at neither parentheses nor commas.
+      // It does not tell these apart: a string that is no value could be a key, which can lose its quotes.
+      [`${typescript}{b as "c"}\n`, `${typescript}{b as c}\n`],
+      // Nor these: it looks at tokens, not at the tree, and at neither parentheses nor commas.
       ["{(b + c) * d}\n", "{b + c * d}\n"],
       ["{[b, , c]}\n", "{[b, c]}\n"],
     ];

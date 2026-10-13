@@ -153,11 +153,7 @@ impl Check<'_, '_> {
                 false => Vec::new(),
             };
             crate::sort::sort_by_key(&mut keys, |it| it.0);
-            // The span of a name does not have the annotation.
-            let end =
-                (pattern.annotation).map_or(pattern.span.end, |it| it.end.max(pattern.span.end));
-            let start = pattern.span.start;
-            self.code(PARAMETER, Span { start, end }, &keys);
+            self.code(PARAMETER, pattern.with_annotation(), &keys);
         }
     }
 
@@ -512,8 +508,12 @@ impl Check<'_, '_> {
                 self.reader.mark(46);
                 self.expression(*expression);
                 // `{#await a}{:then b}` is `{#await a then b}`, and `{#await a then b}{/await}` is `{#await a}{/await}`. A
-                // `{:catch}` with nothing in it is not nothing.
-                let [pending, then] = [pending, then].map(|it| it.filter(|&it| !self.is_blank(it)));
+                // `{:catch}` with nothing in it is not nothing, nor is a `{:then b /* c */}`.
+                let has_comment = value.is_some_and(|it| {
+                    strings::contains_char(it.with_annotation().of(self.text), b'/')
+                });
+                let pending = pending.filter(|&it| !self.is_blank(it));
+                let then = then.filter(|&it| has_comment || !self.is_blank(it));
                 self.pattern(value.filter(|_| then.is_some()));
                 self.pattern(error.filter(|_| catch.is_some()));
                 fragments = [Some(pending), Some(then), Some(*catch)];
@@ -590,38 +590,19 @@ fn ends_operand(token: Token<'_>) -> bool {
 }
 
 #[optimize(size)]
-fn is_spelled_like_modifier(token: Token<'_>) -> bool {
-    matches!(token.kind(), TokenKind::Identifier | TokenKind::Keyword)
-        && matches!(
-            token.text(),
-            b"abstract"
-                | b"accessor"
-                | b"declare"
-                | b"override"
-                | b"private"
-                | b"protected"
-                | b"public"
-                | b"readonly"
-                | b"static"
-        )
-}
-
-/// Whether `token`, which is spelled like one, is a modifier: the name of what it is a modifier of follows, or another
-/// modifier. In `f(public, a)` and `{ static: 1 }` it is a name.
-#[optimize(size)]
-fn is_modifier(previous: Option<Token<'_>>, next: Option<Token<'_>>) -> bool {
-    next.is_some_and(|next| match next.kind() {
-        TokenKind::Punctuator => match next.text() {
-            b"*" => true,
-            // `a[0]` has one too.
-            b"[" => previous.is_none_or(|it| {
-                is_spelled_like_modifier(it) || matches!(it.text(), b"{" | b";" | b"}")
-            }),
-            _ => false,
-        },
-        TokenKind::Template | TokenKind::RegularExpression => false,
-        _ => true,
-    })
+fn is_spelled_like_modifier(word: &[u8]) -> bool {
+    matches!(
+        word,
+        b"abstract"
+            | b"accessor"
+            | b"declare"
+            | b"override"
+            | b"private"
+            | b"protected"
+            | b"public"
+            | b"readonly"
+            | b"static"
+    )
 }
 
 /// Where the expressions of the kinds `tags` start that `is_one` holds for, in order.
@@ -668,8 +649,13 @@ fn read_tokens<'a>(
     reader: &mut Reader,
 ) {
     let mut left_out = left_out.iter().peekable();
-    // A string that is none of these is a key, a type or the name of a module.
+    // What a token is does not depend on the tokens next to it, which are free to change. A string that is none of these is a
+    // key, a type or the name of a module.
     let values = starts_of(file, &[ExprTag::String], |_| true);
+    // A word like `static` that is none of these is a modifier or a key.
+    let names = starts_of(file, &[ExprTag::Ident], |it| {
+        is_spelled_like_modifier(it.text())
+    });
     // `` css`a {}` ``, `` /* HTML */ `<a></a>` ``, `` test.each`a | b` ``
     let free_templates = starts_of(file, &[ExprTag::Template, ExprTag::String], |it| {
         it.text().starts_with(b"`") && (is_in_another_language(it) || is_table(it))
@@ -677,9 +663,7 @@ fn read_tokens<'a>(
     // For each template that is open: whether it is one of those.
     let mut templates = Vec::new();
     let (mut previous, mut is_behind_key) = (None, false);
-    let mut tokens = file.tokens().peekable();
-    while let Some(token) = tokens.next() {
-        let next = tokens.peek().copied();
+    for token in file.tokens() {
         let (text, at) = (
             token.text(),
             (token.start() as usize).saturating_sub(before),
@@ -698,13 +682,8 @@ fn read_tokens<'a>(
                 _ => reader.exact(text),
             },
             TokenKind::String => {
-                // A key can get and lose its quotes, nothing else can: `"a"` is not `a`.
-                let is_key = values.binary_search(&token.start()).is_err()
-                    && !previous.is_some_and(|it| it.is_punctuator("?"))
-                    && next.is_some_and(|it| {
-                        matches!(it.text(), b":" | b"?" | b"(" | b"<" | b"=" | b"!")
-                    });
-                if !is_key {
+                // A key can get and lose its quotes. A value cannot: `"a"` is not `a`.
+                if values.binary_search(&token.start()).is_ok() {
                     reader.mark(60);
                 }
                 reader.exact(&without_quotes(text));
@@ -728,7 +707,10 @@ fn read_tokens<'a>(
                 }
             }
             // `static private` is `private static`.
-            _ if is_spelled_like_modifier(token) && is_modifier(previous, next) => {
+            TokenKind::Identifier | TokenKind::Keyword
+                if is_spelled_like_modifier(text)
+                    && names.binary_search(&token.start()).is_err() =>
+            {
                 reader.count(text)
             }
             _ if strings::contains_char(text, b'\\') => {

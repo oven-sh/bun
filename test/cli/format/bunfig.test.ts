@@ -500,6 +500,18 @@ let a = 1;
       expect(result).toMatchObject({ stderr: message, stdout: "", files: { "a.svelte": input }, exitCode: 2 });
     }
     expect(on).toMatchObject({ stderr: "", files: { "a.svelte": formatted }, exitCode: 0 });
+    // For the files of an override it is said of each.
+    const config = '[[fmt.overrides]]\nfiles = "old/**"\noptions = { svelte = false }\n';
+    const some = await format({ "bunfig.toml": config, "a.svelte": input, "old/b.svelte": input }, [
+      "--parser=svelte",
+      "a.svelte",
+      "old/b.svelte",
+    ]);
+    expect(some).toMatchObject({
+      stderr: `error: Cannot use --parser svelte, because Svelte is off for "${join(some.cwd, "old", "b.svelte")}".\n`,
+      files: { "a.svelte": formatted, "old/b.svelte": input },
+      exitCode: 2,
+    });
   });
 
   test("allowShorthand = false writes out a name only if it can be a variable", async () => {

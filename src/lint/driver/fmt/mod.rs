@@ -1012,8 +1012,11 @@ pub fn is_same_svelte_for_tests(before: &[u8], after: &[u8]) -> bool {
 
 /// Why the file at `path`, which has `scope`, is in no language that is known.
 fn has_no_parser(configs: &Configs, scope: &config::Scope, path: Vec<u8>) -> Vec<u8> {
+    let has_parser = || configs.parser_for(scope, &path).is_some();
     let reason: &[u8] = match configs.leaves_svelte_for_part(scope, &path) {
         true => b"A range or a cursor offset cannot be used with a Svelte file: \"",
+        // See `language_of`.
+        false if has_parser() => b"Cannot use --parser svelte, because Svelte is off for \"",
         false => b"No parser could be inferred for file \"",
     };
     [reason, &paths::to_native(path)[..], b"\"."].concat()
@@ -1052,7 +1055,10 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
     // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
     match configs.parser_for(scope, path) {
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
-            Language::Other
+            match configs.turns_svelte_off_for(path) {
+                true => Language::Unknown,
+                false => Language::Other,
+            }
         }
         Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
         Some(_) => Language::Supported,

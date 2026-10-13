@@ -74,6 +74,16 @@ pub(crate) struct Pattern {
     pub(crate) annotation: Option<Span>,
 }
 
+impl Pattern {
+    /// With the annotation, which the span of a name does not have.
+    pub(crate) fn with_annotation(self) -> Span {
+        Span {
+            start: self.span.start,
+            end: (self.annotation).map_or(self.span.end, |it| it.end.max(self.span.end)),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ElementKind {
     RegularElement,

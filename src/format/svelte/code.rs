@@ -225,7 +225,28 @@ fn write_js_function(
                         && it.followed_by_newline()
                         && first.is_some_and(|first| it.span.start < first.span().start))
             };
-            if f.comments().unprinted_comments().iter().any(is_behind_name) {
+            // The only parameter is hugged if it is a pattern, so no line ends before the `)`, and a comment that waits for the
+            // end of one is printed behind that, where Svelte wants the `}`: `{#snippet a({ b } = {}) // c\n}`.
+            let is_hugged = function.params_with_this().count() == 1
+                && first.is_some_and(|it| {
+                    matches!(it.pat().kind(), PatKind::Object(_) | PatKind::Array(_))
+                });
+            let waits_for_end_of_line =
+                |it: &Comment| it.is_line() || it.preceded_by_newline() || it.followed_by_newline();
+            // Prettier puts such a comment into the parentheses, and takes it out of them the next time, and so on:
+            // `a = // b\n(c as D).e`.
+            let is_before_parenthesis = |it: &Comment| {
+                let (before, behind) = file.text().split_at(it.span.start as usize);
+                let behind = behind.get((it.span.end - it.span.start) as usize..);
+                strings::trim_js_whitespace_end(before).ends_with(b"=")
+                    && behind
+                        .is_some_and(|it| strings::trim_js_whitespace_start(it).starts_with(b"("))
+            };
+            let comments = f.comments().unprinted_comments();
+            if comments.iter().any(is_behind_name)
+                || (comments.iter().filter(|it| waits_for_end_of_line(it)))
+                    .any(|it| is_hugged || is_before_parenthesis(it))
+            {
                 return false;
             }
             write_function(function, FormatFunctionOptions::default(), f);

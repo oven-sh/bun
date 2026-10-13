@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync } from "node:fs";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {

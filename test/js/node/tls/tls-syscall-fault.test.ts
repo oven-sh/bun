@@ -207,6 +207,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     }
     peer.end("d");
     await closed.promise;
+    peer.destroy();
     expect(received).toBe("a,b,c,d");
   });
 
@@ -238,8 +239,9 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd: (socket as any).fd });
     socket.write("x");
     socket.resume();
-    expect({ error: (await closed.promise)?.code, received }).toEqual({ error: "ECONNRESET", received: "late" });
+    const error = await closed.promise;
     peer.destroy();
+    expect({ error: error?.code, received }).toEqual({ error: "ECONNRESET", received: "late" });
   });
 
   // The write was reported as done with its tail still in userspace, so only the close can carry the error.
@@ -306,6 +308,29 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     });
   });
 
+  // The write was reported as done, so no pending write carries the error past the peer's close_notify.
+  test("send → EPIPE for ciphertext of a half-open socket is an error behind the peer's end", async () => {
+    await using ending = tls.createServer({ key: certs.key, cert: certs.cert, allowHalfOpen: true });
+    await once(ending.listen(0, "127.0.0.1"), "listening");
+    const accepted = once(ending, "secureConnection") as Promise<[tls.TLSSocket]>;
+    const writer = connect({ port: (ending.address() as AddressInfo).port, allowHalfOpen: true });
+    const seen = observe(writer);
+    const [[peer]] = await Promise.all([accepted, once(writer, "secureConnect")]);
+    peer.on("error", () => {});
+    writer.pause();
+    await new Promise<void>(resolve => peer.end(resolve));
+    fault.set({ syscall: "send", action: "short", bytes: 10, fd: fdOf(writer) });
+    writer.write("hello");
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd: fdOf(writer) });
+    writer.resume();
+    await seen.closed;
+    peer.destroy();
+    expect({ events: seen.events, codes: seen.errors.map(error => error.code) }).toEqual({
+      events: ["end", "error", "close(hadError=true)"],
+      codes: ["ECONNRESET"],
+    });
+  });
+
   // Both directions are over then, and allowHalfOpen has nothing left to keep open.
   test("send → ECONNRESET for the rest of a half-open write closes at a close_notify that no FIN follows", async () => {
     // TLS over a stream whose end does not reach the connection, which does not answer the FIN either.
@@ -332,6 +357,8 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", after: 1, repeat: -1, fd: fdOf(writer) });
     writer.resume();
     await seen.closed;
+    peer.destroy();
+    for (const raw of connections) raw.destroy();
     expect({ received: received().toString(), written: (await written.promise)?.message, events: seen.events }).toEqual(
       {
         received: "late",
@@ -339,8 +366,6 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
         events: ["end", "error", "close(hadError=true)"],
       },
     );
-    peer.destroy();
-    for (const raw of connections) raw.destroy();
   });
 
   // The write fails with the close of the engine, which reads first. A reader that stopped may be waiting for the write.

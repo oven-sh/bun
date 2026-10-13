@@ -2669,12 +2669,14 @@ restart:
           if (ssl_wants_eof_dispatch(s)) {
             s = ssl_deliver_eof(s);
             if (!s || ssl_gone(s)) return NULL;
-            if (s->flags.allow_half_open && !s->ssl_send_rejected &&
+            if (s->flags.allow_half_open &&
                 !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN)) {
+              /* Our side is over as well, and what it lost is an error: the one that the peer's FIN would close with, if it comes. */
+              if (s->ssl_send_rejected) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
               /* close_notify only ended the peer's write side; ours may
                * still flush queued bytes, and the app's own end() completes
                * the shutdown (ssl_handle_shutdown sees RECEIVED_SHUTDOWN and
-               * finishes immediately). With SENT_SHUTDOWN, or past a rejected send, both directions are
+               * finishes immediately). With SENT_SHUTDOWN both directions are
                * closed and nothing is left to hold open: fall through so the
                * deferred graceful close (code 0, no FIN sent) completes here
                * instead of waiting for a FIN that may never come. */

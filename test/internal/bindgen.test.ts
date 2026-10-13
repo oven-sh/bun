@@ -1,4 +1,10 @@
-import { bindgen } from "bun:internal-for-testing";
+import { bindgen as bindings } from "bun:internal-for-testing";
+import { describe as describeAlways, expect, it as itAlways } from "bun:test";
+
+// bindgen_test.bind.ts is only in a build with assertions: a debug build, CI's ASAN lane.
+const bindgen = bindings ?? ({} as NonNullable<typeof bindings>);
+const describe = describeAlways.skipIf(!bindings);
+const it = itAlways.skipIf(!bindings);
 
 it("bindgen add example", () => {
   // Simple cases

@@ -458,6 +458,7 @@ pub mod zig_stack_trace;
 pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
+#[cfg(debug_assertions)]
 #[path = "bindgen_test.rs"]
 pub mod bindgen_test;
 #[path = "BunCPUProfiler.rs"]

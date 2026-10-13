@@ -821,7 +821,14 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir]),
+      args: shJoin(cfg, [
+        "run",
+        script,
+        debugFlag(cfg),
+        cfg.buildDir,
+        cfg.typesDir,
+        `--without-bindings=${sources.bindgen.filter(src => !hasSchema(cfg, src)).map(src => basename(src))}`,
+      ]),
     },
   });
 
@@ -872,9 +879,15 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(...outputs);
 }
 
+/** A `*_test.bind.ts` binds what exists for tests. Only a build with assertions has it, and none of those ships. */
+function hasSchema(cfg: CodegenFields, src: string): boolean {
+  return cfg.assertions || !src.endsWith("_test.bind.ts");
+}
+
 /** Exported for test/internal/build-codegen-declared-outputs.test.ts. */
-export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitBindgen({ n, cfg, sources: allSources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
+  const sources = { ...allSources, bindgen: allSources.bindgen.filter(src => hasSchema(cfg, src)) };
 
   // What bindgen.ts writes follows from the names and places of its inputs alone.
   const stems = sources.bindgen.map(src => `Generated${pascalCase(basename(src, ".bind.ts"))}`);

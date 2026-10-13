@@ -129,6 +129,10 @@ export const enums = {
 
 // These are passed to --define to the bundler
 const debug = process.argv[2] === "--debug=ON";
+/** Schemas this build leaves out (`hasSchema` in scripts/build/codegen.ts). `$bindgenFn` of one is `void 0`, which the minifier folds. */
+const withoutBindings = (process.argv.find(arg => arg.startsWith("--without-bindings=")) ?? "=")
+  .split("=")[1]
+  .split(",");
 export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
@@ -285,6 +289,8 @@ export function applyReplacements(src: string, length: number) {
       if (args.length != 2 || typeof args[0] !== "string" || typeof args[1] !== "string") {
         throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
       }
+
+      if (withoutBindings.includes(args[0])) return [slice.slice(0, match.index) + "void 0", inner.rest, true];
 
       const id = registerNativeCall("bind", args[0], args[1], null);
 

@@ -700,6 +700,14 @@ test.concurrent.skipIf(!isLinux)(
       }
       return want(procState(pid));
     };
+    const statOnceItMatches = async (pid: number, want: RegExp, ms: number) => {
+      const deadline = Date.now() + ms;
+      for (;;) {
+        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+        if (want.test(stat) || Date.now() >= deadline) return stat;
+        await sleep(10);
+      }
+    };
 
     // Wait for the script to write its ids (proves bun run + spawn finished).
     let scriptPid = 0,
@@ -723,11 +731,11 @@ test.concurrent.skipIf(!isLinux)(
       expect(runPid).toBeGreaterThan(0);
       // Preconditions: script is in its own pgroup (`\) . ppid pgrp `), and is
       // the PTY's foreground pgroup (bun's stat field 8 = tpgid = scriptPid),
-      // proving `JobControl.give()` ran with `isatty(0) && tcgetpgrp(0)>0`.
+      // proving `JobControl.give()` ran with `isatty(0) && tcgetpgrp(0)>0`. It runs after the spawn returns, so
+      // the script can have written its ids first.
+      const scriptIsForeground = new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `);
       expect(readFileSync(`/proc/${scriptPid}/stat`, "utf8")).toMatch(new RegExp(`\\) . ${runPid} ${scriptPid} `));
-      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-      );
+      expect(await statOnceItMatches(runPid, scriptIsForeground, 4000)).toMatch(scriptIsForeground);
 
       // Ctrl-Z: SIGTSTP to the script's pgroup (what the line discipline would
       // send to the foreground pgroup on ^Z). bun's WUNTRACED wait observes the
@@ -757,14 +765,13 @@ test.concurrent.skipIf(!isLinux)(
           round: i,
           resumed: true,
           scriptState: expect.stringMatching(/[SR]/),
-          runState: "S",
+          // Not stopped. It can still be on its way back to poll().
+          runState: expect.stringMatching(/[SR]/),
         });
       }
 
       // Foreground pgroup is back on the script after each dance round.
-      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-      );
+      expect(await statOnceItMatches(runPid, scriptIsForeground, 4000)).toMatch(scriptIsForeground);
     } finally {
       if (runPid > 0) reap(runPid);
       if (scriptPid > 0) reap(-scriptPid, scriptPid);
@@ -798,10 +805,13 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
   async () => {
     // perl in the dev script so `getpgrp()` is trivially available; `$SIG{CONT}`
     // proves `onChildStopped` delivered SIGCONT to the script pgroup on resume.
+    // `bun run` hands the terminal over after the spawn returns. A ^Z before that stops `bun run` and not the
+    // script, which then has nothing to resume from, so READY waits for the terminal.
     const devScript =
       `perl -MPOSIX -e '` +
       `$|=1; ` +
       `$SIG{CONT}=sub{ print "RESUMED\\n" }; ` +
+      `select(undef, undef, undef, 0.01) until tcgetpgrp(0) == getpgrp(); ` +
       `printf "READY %d\\n", getpgrp(); ` +
       `sleep 1 while 1'`;
 

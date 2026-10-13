@@ -885,7 +885,7 @@ impl InitCommand {
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above
-                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");");
+                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");\n");
                     // suppress
                 }
 
@@ -1556,7 +1556,7 @@ impl Template {
             let _ = Assets::create_new(
                 ZStr::from_static(b"CLAUDE.md\0"),
                 // SAFETY: literal is NUL-terminated
-                &Self::AGENT_RULE[end_of_frontmatter..],
+                Self::AGENT_RULE[end_of_frontmatter..].trim_ascii_start(),
             );
         }
     }

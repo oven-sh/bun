@@ -1,6 +1,6 @@
 // The command lines of Prettier's own integration tests (`runCli("cli/..", [..])` in `tests/integration/__tests__/*.js` of
 // prettier/prettier, MIT: see LICENSE), with what Prettier 3.9 does in each: the exit code, the files afterwards, the files that
-// `--check` and `--list-different` name, and what is printed for standard input. `bun format` writes unless told otherwise, so
+// `--check` and `--list-different` name, and what is printed for standard input. `bun fmt` writes unless told otherwise, so
 // Prettier was given `--write` where the command line only prints.
 // `cases.json` is written by `test/cli/lint/oracle/driver/prettier-fixtures.mjs --record`.
 import { afterAll, describe, expect, test } from "bun:test";
@@ -13,12 +13,12 @@ import { cases, fixtures } from "./cases.json";
 afterAll(endChildren);
 
 type Files = Record<string, string | { link: string }>;
-const command = [bunExe(), "format"];
-// The languages that `bun format` leaves alone.
+const command = [bunExe(), "fmt"];
+// The languages that `bun fmt` leaves alone.
 const notCompared = /\.mdx$/;
 const env = { ...bunEnv, NO_COLOR: "1", AGENT: "0", CLAUDECODE: undefined };
 
-describe.concurrent("bun format does what Prettier does", () => {
+describe.concurrent("bun fmt does what Prettier does", () => {
   for (const it of cases) {
     const top = it.directory.split("/").slice(0, 2).join("/");
     const files = (fixtures as Record<string, Files>)[top];

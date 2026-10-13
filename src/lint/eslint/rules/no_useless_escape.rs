@@ -64,7 +64,15 @@ fn report<'a>(
         cx.report(place, UNNECESSARY_ESCAPE).data("character", written).fix(|fixer| fixer.replace(place, character));
         return;
     }
-    let report = cx.report(range, UNNECESSARY_ESCAPE).data("character", character);
+    let report = cx.report(range, UNNECESSARY_ESCAPE).data("character", character).hint_with(|| {
+        let character = bstr::BStr::new(character);
+        Some(match suggests_escaping_backslash {
+            true => format!(
+                "\"\\{character}\" is the same as \"{character}\". Remove the backslash, or write \\\\ for a real one."
+            ),
+            false => format!("\"\\{character}\" is the same as \"{character}\" here. Remove the backslash."),
+        })
+    });
     let report = report.suggest(remove, |fixer| fixer.remove(range));
     if suggests_escaping_backslash {
         report.suggest(ESCAPE_BACKSLASH, |fixer| fixer.insert_before(range, "\\"));
@@ -283,7 +291,8 @@ impl NoUselessEscape {
 impl Rule for NoUselessEscape {
     const META: Meta = Meta::eslint("no-useless-escape", Kind::Suggestion)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On = On::new()
         .string_literals()
         .exprs(&[ExprTag::Template])

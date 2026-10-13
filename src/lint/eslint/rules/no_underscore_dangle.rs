@@ -31,7 +31,10 @@ fn has_dangling_underscore(identifier: &[u8]) -> bool {
 #[inline]
 fn may_dangle(text: &[u8], written: Span) -> bool {
     matches!(text.get(written.start as usize), Some(b'_' | b'#' | b'\\'))
-        || matches!(text.get(written.end.wrapping_sub(1) as usize), Some(b'_' | b'f' | b'F' | b'}'))
+        || matches!(
+            text.get(written.end.wrapping_sub(1) as usize),
+            Some(b'_' | b'f' | b'F' | b'}')
+        )
 }
 
 /// ESTree's `object` and `property.name` of a `MemberExpression`. In `a[b]` the name is `b`.
@@ -69,8 +72,14 @@ impl NoUnderscoreDangle {
             && (func.has_body() || cx.language().is_oxlint)
         {
             // Here and below, oxlint points at the name.
-            let place = if cx.language().is_oxlint { name.span() } else { statement.span_without_export() };
-            cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
+            let place = if cx.language().is_oxlint {
+                name.span()
+            } else {
+                statement.span_without_export()
+            };
+            cx.report(place, UNEXPECTED_UNDERSCORE)
+                .called_with(func)
+                .data("identifier", name);
         }
     }
 
@@ -80,15 +89,20 @@ impl NoUnderscoreDangle {
             && !param.is_parameter_property()
             && param.func().is_some_and(ast_utils::is_function_with_body)
         {
-            let place = if cx.language().is_oxlint { param.pat().span() } else { param.span_without_modifiers() };
-            cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
+            let place = if cx.language().is_oxlint {
+                param.pat().span()
+            } else {
+                param.span_without_modifiers()
+            };
+            cx.report(place, UNEXPECTED_UNDERSCORE)
+                .called_with(param.pat())
+                .data("identifier", name);
         }
     }
 
     #[inline(never)]
     fn check_variable<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
-        let is_declarator =
-            || matches!(declaration.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Var);
+        let is_declarator = || matches!(declaration.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Var);
         let pat = declaration.pat();
         if let PatKind::Ident(name) = pat.kind() {
             let is_using = matches!(declaration.var_kind(), VarKind::Using | VarKind::AwaitUsing);
@@ -96,12 +110,20 @@ impl NoUnderscoreDangle {
                 && is_declarator()
                 && !(is_using && self.allow_in_using_declarations)
             {
-                let place = if cx.language().is_oxlint { pat.span() } else { declaration.span() };
-                cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
+                let place = if cx.language().is_oxlint {
+                    pat.span()
+                } else {
+                    declaration.span()
+                };
+                cx.report(place, UNEXPECTED_UNDERSCORE)
+                    .called_with(pat)
+                    .data("identifier", name);
             }
             return;
         }
-        if self.allow_in_array_destructuring && self.allow_in_object_destructuring || !is_declarator() {
+        if self.allow_in_array_destructuring && self.allow_in_object_destructuring
+            || !is_declarator()
+        {
             return;
         }
         // A name that is bound twice is one variable, which goes by its first binding.
@@ -119,8 +141,14 @@ impl NoUnderscoreDangle {
                 _ => false,
             };
             if !is_allowed_here && !self.is_allowed(name.bytes()) {
-                let place = if cx.language().is_oxlint { binding.span() } else { declaration.span() };
-                cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
+                let place = if cx.language().is_oxlint {
+                    binding.span()
+                } else {
+                    declaration.span()
+                };
+                cx.report(place, UNEXPECTED_UNDERSCORE)
+                    .called_with(binding)
+                    .data("identifier", name);
             }
         });
     }
@@ -146,7 +174,9 @@ impl NoUnderscoreDangle {
             None if cx.language().is_oxlint => return,
             _ => e.span(),
         };
-        cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", identifier);
+        cx.report(place, UNEXPECTED_UNDERSCORE)
+            .called_with(e)
+            .data("identifier", identifier);
     }
 
     /// `A.b` after `implements`, or after the `extends` of an interface, is a `MemberExpression`
@@ -155,7 +185,8 @@ impl NoUnderscoreDangle {
         let Some((name, _)) = ty.as_ref() else {
             return;
         };
-        let is_unexpected = |part: &Ident<'a>| self.is_unexpected(part.bytes()) && part.bytes() != b"__proto__";
+        let is_unexpected =
+            |part: &Ident<'a>| self.is_unexpected(part.bytes()) && part.bytes() != b"__proto__";
         if name.len() < 2 || !name.parts().skip(1).any(|part| is_unexpected(&part)) {
             return;
         }
@@ -168,7 +199,8 @@ impl NoUnderscoreDangle {
             return;
         };
         for part in name.parts().skip(1).filter(is_unexpected) {
-            cx.report(first.span().to(part.span()), UNEXPECTED_UNDERSCORE).data("identifier", part);
+            cx.report(first.span().to(part.span()), UNEXPECTED_UNDERSCORE)
+                .data("identifier", part);
         }
     }
 
@@ -189,14 +221,18 @@ impl NoUnderscoreDangle {
                 true => cx
                     .report(key.inner_span(cx.file()), UNEXPECTED_UNDERSCORE)
                     .data("identifier", strings::without_prefix(name.bytes(), b"#")),
-                false => cx.report(at, UNEXPECTED_UNDERSCORE).data("identifier", name),
+                false => cx
+                    .report(at, UNEXPECTED_UNDERSCORE)
+                    .data("identifier", name),
             };
         }
     }
 
     fn check_class_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         let is_enforced = match member.kind() {
-            MemberKind::Method | MemberKind::Getter | MemberKind::Setter => self.enforce_in_method_names,
+            MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
+                self.enforce_in_method_names
+            }
             MemberKind::Property => {
                 self.enforce_in_class_fields && !member.flags().contains(Flags::ACCESSOR)
             }
@@ -235,7 +271,11 @@ impl Rule for NoUnderscoreDangle {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         NoUnderscoreDangle {
-            allow: options.strings("allow").into_iter().map(|it| it.as_bytes().into()).collect(),
+            allow: options
+                .strings("allow")
+                .into_iter()
+                .map(|it| it.as_bytes().into())
+                .collect(),
             allow_after_super: options.bool_or("allowAfterSuper", false),
             allow_after_this: options.bool_or("allowAfterThis", false),
             allow_after_this_constructor: options.bool_or("allowAfterThisConstructor", false),
@@ -249,7 +289,10 @@ impl Rule for NoUnderscoreDangle {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let mut on = On::new().stmts(&[StmtTag::Fn]).var_decls().exprs(&[ExprTag::Dot]);
+        let mut on = On::new()
+            .stmts(&[StmtTag::Fn])
+            .var_decls()
+            .exprs(&[ExprTag::Dot]);
         if !file.language().is_oxlint {
             on = on.exprs(&[ExprTag::Index]);
         }

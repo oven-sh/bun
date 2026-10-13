@@ -388,6 +388,10 @@ impl<'t> Parser<'t> {
         while let Some(token) = self.token(self.position)
             && matches!(token.kind, TokenKind::Space | TokenKind::Combinator)
         {
+            // `a |b`: the parser takes the `|` for the combinator, and Prettier prints `a|b`. It stays as it is written.
+            if self.text_of(token) == b"|" {
+                return Err(ParseError);
+            }
             let is_combinator =
                 |token: Option<Token>| token.is_some_and(|it| it.kind == TokenKind::Combinator);
             if !is_combinator(self.next_token()) && !is_combinator(self.prev_token()) {
@@ -406,8 +410,12 @@ impl<'t> Parser<'t> {
     /// At a `|`. In `a|b|c`, `b` is the namespace of `c`, and `a` is lost.
     fn namespace(&mut self) -> Result<(), ParseError> {
         loop {
+            // The parser takes whatever is before the `|` for the namespace: of `a,|b` Prettier prints `a, ,|b`.
             let before = match self.prev_token() {
-                Some(prev) if prev.end > prev.start => {
+                Some(prev)
+                    if prev.end > prev.start
+                        && matches!(prev.kind, TokenKind::Word | TokenKind::Control(b'*')) =>
+                {
                     Namespace::Name((self.base + prev.start, self.base + prev.end))
                 }
                 _ => Namespace::Empty,

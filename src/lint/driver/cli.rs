@@ -1,8 +1,8 @@
 //! The command line of `bun lint`: that of ESLint, what `bun check` has (`--threads`, `--timing`,
 //! `--cwd`), and the flags of oxlint that its users have in their scripts.
 
-pub use crate::args::UsageError;
-use crate::args::{Argument, Param, error};
+use crate::args::{Argument, Group, Param, error};
+pub use crate::args::{Help, UsageError};
 use crate::configs::{Flavor, is_category};
 use bun_clap as clap;
 use bun_core::strings;
@@ -10,180 +10,268 @@ use bun_lint::context::Severity;
 use bun_lint::linter::NativePlugins;
 use bun_lint::options::Json;
 
-/// A flag without a description is understood, and not listed in the help.
-pub const PARAMS: &[Param] = &[
+const RULES: &[Param] = &[
+    clap::param!("-c, --config <path>             Use this config file instead of looking for one"),
+    clap::param!("--no-config-lookup              Do not look for a config file"),
     clap::param!(
-        "-c, --config <path>             Use this configuration file instead of looking for one"
+        "--rule <rule>...                Set a rule: <b>--rule 'eqeqeq: [error, smart]'<r>"
     ),
-    clap::param!("--no-config-lookup              Do not look for a configuration file"),
-    clap::param!(
-        "--flavor <tool>                 Whose configuration files count where there are both: <b>eslint<r> or <b>oxlint<r>"
-    ),
-    clap::param!(
-        "--rule <rule>...                Configure a rule: <b>--rule 'eqeqeq: [error, smart]'<r>"
-    ),
+    clap::param!("--rules                         List the built-in rules"),
+    clap::param!("--explain <rule>                Print the documentation of a rule"),
+    clap::param!("--init                          Add a <b>[lint]<r> section to <b>bunfig.toml<r>"),
     clap::param!(
         "--global <name>...              Define global variables: <b>--global a,b:true<r>"
     ),
     clap::param!(
-        "--parser-options <options>...   Set parser options: <b>--parser-options projectService:true<r>"
-    ),
-    clap::param!("--ext <ext>...                  Lint files with these extensions too"),
-    clap::param!("--fix                           Fix what can be fixed, and write the files"),
-    clap::param!(
-        "--fix-dry-run                   Fix without writing. The <b>json<r> format has the fixed code"
+        "--no-inline-config              Ignore <b>eslint-disable<r> and other config comments"
     ),
     clap::param!(
-        "--fix-type <type>...            Only apply fixes of rules of these types: <b>directive<r>, <b>problem<r>, <b>suggestion<r>, <b>layout<r>"
+        "--report-unused-disable-directives  Report <b>eslint-disable<r> comments that disable nothing"
     ),
-    clap::param!("--ignore-pattern <pattern>...   Ignore the files that match"),
+    clap::param!("--print-config <path>           Print the config for a file and exit"),
+    clap::param!(
+        "--doctor                        Show which rules run natively and which packages you can remove"
+    ),
+    clap::param!(
+        "--allow-unsupported             Warn instead of failing when the config has a rule or file that is not supported"
+    ),
+];
+
+const FILES: &[Param] = &[
+    clap::param!("--staged                        Only lint files that are staged in git"),
+    clap::param!(
+        "--changed <ref>?                Only lint files that differ from a branch or commit <d>(default: the default branch)<r>"
+    ),
+    clap::param!("--ignore-pattern <pattern>...   Skip files that match this pattern"),
+    clap::param!(
+        "--ignore-path <path>            Read ignore patterns from this file instead of <b>.eslintignore<r>"
+    ),
     clap::param!("--no-ignore                     Lint ignored files too"),
+    clap::param!("--ext <ext>...                  Also lint files with these extensions"),
+    clap::param!("--stdin                         Lint code from standard input"),
     clap::param!(
-        "--no-warn-ignored               Do not warn about an ignored file that is named as an argument"
+        "--stdin-filename <path>         The file name to use for code from standard input"
     ),
-    clap::param!("--stdin                         Lint the code on standard input"),
+    clap::param!("--list-files                    Print the files that would be linted and exit"),
+    clap::param!("--no-error-on-unmatched-pattern  Do not fail when an argument matches no file"),
+    clap::param!("--cwd <path>                    Set the working directory"),
+];
+
+const OUTPUT: &[Param] = &[
     clap::param!(
-        "--stdin-filename <path>         The file name that the code on standard input is linted as"
-    ),
-    clap::param!("--quiet                         Report errors only"),
-    clap::param!(
-        "--max-warnings <n>              Exit with 1 if there are more warnings than this"
-    ),
-    clap::param!(
-        "-f, --format <name>             <b>stylish<r> <d>(default)<r>, <b>pretty<r>, <b>json<r>, <b>json-with-metadata<r>, <b>unix<r>, <b>github<r>, <b>agent<r>, <b>checkstyle<r>, <b>junit<r>, <b>gitlab<r>, <b>sarif<r>"
+        "-f, --format <name>             <b>pretty<r> <d>(default)<r>, <b>stylish<r>, <b>json<r>, <b>json-with-metadata<r>, <b>unix<r>, <b>github<r>, <b>agent<r>, <b>checkstyle<r>, <b>junit<r>, <b>gitlab<r>, <b>sarif<r>"
     ),
     clap::param!(
         "--all                           Show every problem <d>(<b>pretty<r><d> and <b>agent<r><d> group identical problems above 50)<r>"
     ),
     clap::param!("-o, --output-file <path>        Write the report to a file"),
+    clap::param!("--quiet                         Report errors only"),
+    clap::param!(
+        "--max-warnings <n>              Exit with 1 if there are more warnings than this"
+    ),
     clap::param!("--color                         Always use colors"),
     clap::param!("--no-color                      Never use colors"),
+    clap::param!("--timing                        Print how long each phase took"),
+];
+
+const FIXING: &[Param] = &[
+    clap::param!("--fix                           Fix problems and write the files"),
     clap::param!(
-        "--no-inline-config              Ignore <b>eslint-disable<r> and other configuration comments"
+        "--fix-dry-run                   Fix without writing. The <b>json<r> format has the fixed code"
     ),
     clap::param!(
-        "--report-unused-disable-directives  Report <b>eslint-disable<r> comments that disable nothing, as errors"
+        "--fix-type <type>...            Only apply fixes from rules of these types: <b>directive<r>, <b>problem<r>, <b>suggestion<r>, <b>layout<r>"
     ),
+    clap::param!("--fix-suggestions               Apply suggestions"),
     clap::param!(
-        "--report-unused-disable-directives-severity <severity>  The same, as <b>off<r>, <b>warn<r> or <b>error<r>"
+        "--fix-dangerously               Apply every fix and suggestion, even those that can change behavior"
     ),
-    clap::param!(
-        "--report-unused-inline-configs <severity>  Report configuration comments that change nothing"
-    ),
-    clap::param!(
-        "--suppress-all                  Tolerate the errors that there are now: write them to <b>eslint-suppressions.json<r>"
-    ),
-    clap::param!("--suppress-rule <rule>...       The same for the errors of a rule"),
-    clap::param!(
-        "--suppressions-location <path>  Another file than <b>eslint-suppressions.json<r>"
-    ),
-    clap::param!("--prune-suppressions            Remove from that file what no longer occurs"),
-    clap::param!(
-        "--pass-on-unpruned-suppressions  Do not fail if that file has what no longer occurs"
-    ),
-    clap::param!("--no-error-on-unmatched-pattern  Do not fail if an argument matches no file"),
-    clap::param!(
-        "--pass-on-no-patterns           Exit with 0 if there are no arguments, instead of linting <b>.<r>"
-    ),
-    clap::param!("--exit-on-fatal-error           Exit with 2 if a file cannot be parsed"),
-    clap::param!(
-        "--allow-unsupported             Only warn about rules and files of the configuration that cannot be linted yet"
-    ),
-    clap::param!(
-        "--native-plugin-rules <plugins>  The plugins whose built-in rules run in place of the installed package: <b>import,react-hooks<r> <d>(default: all)<r>"
-    ),
-    clap::param!(
-        "--no-native-plugin-rules        Run the rules of the installed plugins, in JavaScript, not the built-in ones"
-    ),
-    clap::param!(
-        "--print-config <path>           Print the configuration of a file, and lint nothing"
-    ),
-    clap::param!(
-        "--type-aware                    Run the rules that need types, whatever the configuration says"
-    ),
+];
+
+const TYPES: &[Param] = &[
+    clap::param!("--type-aware                    Also run the rules that need types"),
     clap::param!("--no-type-aware                 Skip the rules that need types"),
     clap::param!(
-        "--infer-globals                 The globals of a file are what the types of its project declare, too"
+        "--tsconfig <path>               Use this tsconfig.json for the rules that need types"
     ),
+    clap::param!("--type-check                    With <b>--type-aware<r>, report type errors too"),
     clap::param!(
-        "--no-infer-globals              Without a configuration file: those of browsers and of Node.js"
+        "--infer-globals                 Also treat what the project's types declare as globals"
     ),
-    clap::param!(
-        "-p, --project/--tsconfig <path>  The tsconfig.json for the rules that need types"
-    ),
-    clap::param!("--type-check                    With <b>--type-aware<r>: report type errors too"),
-    clap::param!(
-        "-A, --allow <rule>...           Turn a rule off, or with an <b>.oxlintrc.json<r> a category"
-    ),
-    clap::param!("-W, --warn <rule>...            The same: make it a warning"),
-    clap::param!("-D, --deny <rule>...            The same: make it an error"),
-    clap::param!("--deny-warnings                 Exit with 1 if there are warnings"),
-    clap::param!("--silent                        Print no problems"),
-    clap::param!(
-        "--ignore-path <path>            A file with patterns to ignore, in place of <b>.eslintignore<r>"
-    ),
-    clap::param!(
-        "--disable-nested-config         Use the configuration file of the working directory for every file"
-    ),
-    clap::param!("--fix-suggestions               Apply suggestions, as oxlint does"),
-    clap::param!("--fix-dangerously               Apply every fix and suggestion, as oxlint does"),
-    clap::param!(
-        "--init                          Write an <b>.oxlintrc.json<r> with the defaults of oxlint"
-    ),
-    clap::param!("--rules                         List the rules that are built in"),
+    clap::param!("--no-infer-globals              Do not take globals from the project's types"),
+];
+
+const OTHER: &[Param] = &[
     clap::param!(
         "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
     ),
-    clap::param!("--timing                        Print how long each phase took"),
-    clap::param!("--cwd <path>                    Set the working directory"),
-    clap::param!("-h, --help                      Print this help menu"),
-    // The opposites of the above, which ESLint takes too.
+    clap::param!("-v, --version                   Print the version of Bun"),
+    clap::param!(
+        "-h, --help                      Print the common flags. With <b>--all<r>, every flag"
+    ),
+    clap::param!("--help-all                      The same as <b>--help --all<r>"),
+];
+
+const OF_ESLINT: &[Param] = &[
+    clap::param!(
+        "--flavor <tool>                 Use the <b>eslint<r> or the <b>oxlint<r> config in a project that has both"
+    ),
+    clap::param!("-p, --project <path>            The same as <b>--tsconfig<r>"),
+    clap::param!(
+        "--parser-options <options>...   Set parser options: <b>--parser-options projectService:true<r>"
+    ),
+    clap::param!("--parser <name>                 Parse files with this package"),
+    clap::param!("--plugin <name>...              Load ESLint plugins: paths or package names"),
+    clap::param!(
+        "--native-plugin-rules <plugins>  Use the built-in rules for these plugins only: <b>import,react-hooks<r> <d>(default: all)<r>"
+    ),
+    clap::param!(
+        "--no-native-plugin-rules        Run plugin rules from the installed packages, in JavaScript"
+    ),
+    clap::param!(
+        "--report-unused-disable-directives-severity <severity>  Report unused <b>eslint-disable<r> comments as <b>off<r>, <b>warn<r> or <b>error<r>"
+    ),
+    clap::param!(
+        "--report-unused-inline-configs <severity>  Report config comments that change nothing"
+    ),
+    clap::param!(
+        "--no-warn-ignored               Do not warn when an argument names an ignored file"
+    ),
+    clap::param!(
+        "--suppress-all                  Record the current errors in <b>eslint-suppressions.json<r> and stop reporting them"
+    ),
+    clap::param!("--suppress-rule <rule>...       The same, for the errors of one rule"),
+    clap::param!(
+        "--suppressions-location <path>  Use this file instead of <b>eslint-suppressions.json<r>"
+    ),
+    clap::param!(
+        "--prune-suppressions            Remove recorded errors that no longer occur from that file"
+    ),
+    clap::param!(
+        "--pass-on-unpruned-suppressions  Do not fail when that file has errors that no longer occur"
+    ),
+    clap::param!(
+        "--pass-on-no-patterns           Exit with 0 when there are no arguments, instead of linting <b>.<r>"
+    ),
+    clap::param!("--exit-on-fatal-error           Exit with 2 if a file cannot be parsed"),
+    clap::param!("--concurrency <n>               The same as <b>--threads<r>"),
+    clap::param!(
+        "--env-info                      Print the versions of Bun, ESLint and TypeScript"
+    ),
+    clap::param!("--stats                         No effect"),
+    clap::param!("--debug                         No effect"),
+    clap::param!("--flag <flag>...                No effect"),
+    clap::param!("--cache                         No effect. Every run lints every file"),
+    clap::param!("--cache-file <path>             No effect"),
+    clap::param!("--cache-location <path>         No effect"),
+    clap::param!("--cache-strategy <strategy>     No effect"),
+    clap::param!("--inspect-config                Not supported"),
+    clap::param!("--mcp                           Not supported"),
+    clap::param!("--no-eslintrc                   ESLint 8: do not look for <b>.eslintrc<r> files"),
+    clap::param!("--env <name>...                 ESLint 8: turn on these environments"),
+    clap::param!("--rulesdir <path>...            ESLint 8: load rules from these directories"),
+    clap::param!(
+        "--resolve-plugins-relative-to <path>  ESLint 8: look for plugins from this directory"
+    ),
+];
+
+const OF_OXLINT: &[Param] = &[
+    clap::param!("-A, --allow <rule>...           Turn off a rule or a category"),
+    clap::param!("-W, --warn <rule>...            Make a rule or a category a warning"),
+    clap::param!("-D, --deny <rule>...            Make a rule or a category an error"),
+    clap::param!("--deny-warnings                 Exit with 1 if there are warnings"),
+    clap::param!("--silent                        Print no problems"),
+    clap::param!(
+        "--disable-nested-config         Use the config file in the working directory for every file"
+    ),
+    clap::param!("--lsp                           Not supported"),
+    clap::param!("--import-plugin                 Turn on the <b>import<r> plugin"),
+    clap::param!("--react-plugin                  Turn on the <b>react<r> plugin"),
+    clap::param!("--jsdoc-plugin                  Turn on the <b>jsdoc<r> plugin"),
+    clap::param!("--jest-plugin                   Turn on the <b>jest<r> plugin"),
+    clap::param!("--vitest-plugin                 Turn on the <b>vitest<r> plugin"),
+    clap::param!("--jsx-a11y-plugin               Turn on the <b>jsx-a11y<r> plugin"),
+    clap::param!("--nextjs-plugin                 Turn on the <b>nextjs<r> plugin"),
+    clap::param!("--react-perf-plugin             Turn on the <b>react-perf<r> plugin"),
+    clap::param!("--promise-plugin                Turn on the <b>promise<r> plugin"),
+    clap::param!("--node-plugin                   Turn on the <b>node<r> plugin"),
+    clap::param!("--vue-plugin                    Turn on the <b>vue<r> plugin"),
+    clap::param!("--disable-unicorn-plugin        Turn off the <b>unicorn<r> plugin"),
+    clap::param!("--disable-oxc-plugin            Turn off the <b>oxc<r> plugin"),
+    clap::param!("--disable-typescript-plugin     Turn off the <b>typescript<r> plugin"),
+];
+
+/// Flags that `--help` lists in their `--no-..` form.
+const OPPOSITES: &[Param] = &[
     clap::param!("--config-lookup"),
     clap::param!("--ignore"),
     clap::param!("--warn-ignored"),
     clap::param!("--inline-config"),
     clap::param!("--error-on-unmatched-pattern"),
-    // ESLint's, with little or nothing to do here.
-    clap::param!("--list-files"),
-    clap::param!("--stats"),
-    clap::param!("--env-info"),
-    clap::param!("-v, --version"),
-    clap::param!("--debug"),
-    clap::param!("--cache"),
-    clap::param!("--cache-file <path>"),
-    clap::param!("--cache-location <path>"),
-    clap::param!("--cache-strategy <strategy>"),
-    clap::param!("--concurrency <n>"),
-    clap::param!("--flag <flag>..."),
-    clap::param!("--parser <name>"),
-    clap::param!("--plugin <name>..."),
-    clap::param!("--inspect-config"),
-    // ESLint 8's.
     clap::param!("--eslintrc"),
-    clap::param!("--env <name>..."),
-    clap::param!("--rulesdir <path>..."),
-    clap::param!("--resolve-plugins-relative-to <path>"),
-    clap::param!("--mcp"),
-    // oxlint's.
-    clap::param!("--lsp"),
-    clap::param!("--disable-unicorn-plugin"),
-    clap::param!("--disable-oxc-plugin"),
-    clap::param!("--disable-typescript-plugin"),
-    clap::param!("--import-plugin"),
-    clap::param!("--react-plugin"),
-    clap::param!("--jsdoc-plugin"),
-    clap::param!("--jest-plugin"),
-    clap::param!("--vitest-plugin"),
-    clap::param!("--jsx-a11y-plugin"),
-    clap::param!("--nextjs-plugin"),
-    clap::param!("--react-perf-plugin"),
-    clap::param!("--promise-plugin"),
-    clap::param!("--node-plugin"),
-    clap::param!("--vue-plugin"),
 ];
 
-/// The flags that ESLint has and oxlint has not, which tell whom a run stands in for.
-const ONLY_OF_ESLINT: [&[u8]; 36] = [
+pub const HELP: Help = Help {
+    groups: &[
+        Group {
+            title: "Rules",
+            params: RULES,
+        },
+        Group {
+            title: "Files",
+            params: FILES,
+        },
+        Group {
+            title: "Output",
+            params: OUTPUT,
+        },
+        Group {
+            title: "Fixing",
+            params: FIXING,
+        },
+        Group {
+            title: "Types",
+            params: TYPES,
+        },
+        Group {
+            title: "Other",
+            params: OTHER,
+        },
+        Group {
+            title: "Compatibility with ESLint",
+            params: OF_ESLINT,
+        },
+        Group {
+            title: "Compatibility with oxlint",
+            params: OF_OXLINT,
+        },
+    ],
+    common: &[
+        b"fix",
+        b"staged",
+        b"changed",
+        b"rule",
+        b"rules",
+        b"explain",
+        b"type-aware",
+        b"quiet",
+        b"max-warnings",
+        b"init",
+        b"doctor",
+    ],
+};
+
+const _: () = assert!(
+    HELP.describes_every_flag(),
+    "A flag of `bun lint` has no description, so `--help --all` leaves it out."
+);
+
+pub(crate) const PARAMS: &[Param] = clap::concat_params!(
+    RULES, FILES, OUTPUT, FIXING, TYPES, OTHER, OF_ESLINT, OF_OXLINT, OPPOSITES
+);
+
+/// Flags only ESLint has. A flag never picks the tool. These lists only let a run reject flags that can't work with its config.
+const ONLY_OF_ESLINT: [&[u8]; 35] = [
     b"config-lookup",
     b"rule",
     b"global",
@@ -207,7 +295,6 @@ const ONLY_OF_ESLINT: [&[u8]; 36] = [
     b"stats",
     b"env-info",
     b"parser",
-    b"plugin",
     b"cache",
     b"cache-file",
     b"cache-location",
@@ -222,28 +309,20 @@ const ONLY_OF_ESLINT: [&[u8]; 36] = [
     b"resolve-plugins-relative-to",
 ];
 
-/// The other way round, beside `--import-plugin` and the like.
-const ONLY_OF_OXLINT: [&[u8]; 11] = [
+/// Flags only oxlint has, besides `--import-plugin` and friends. Flags that `--help` lists as Bun's own don't belong here.
+const ONLY_OF_OXLINT: [&[u8]; 8] = [
     b"allow",
     b"warn",
     b"deny",
     b"deny-warnings",
     b"silent",
     b"disable-nested-config",
-    b"fix-suggestions",
-    b"fix-dangerously",
-    b"type-check",
     b"rules",
     b"lsp",
 ];
 
 /// Those of [`ONLY_OF_ESLINT`] that nothing can be done about with a configuration of oxlint.
-const NOTHING_TO_OXLINT: [&[u8]; 4] = [
-    b"ext",
-    b"parser",
-    b"plugin",
-    b"report-unused-inline-configs",
-];
+const NOTHING_TO_OXLINT: [&[u8]; 3] = [b"ext", b"parser", b"report-unused-inline-configs"];
 
 /// Those that ESLint 8 has and ESLint 9 has not.
 const ONLY_OF_ESLINT_8: [&[u8]; 4] = [
@@ -263,7 +342,7 @@ pub struct OfOneTool {
 }
 
 impl OfOneTool {
-    /// Whether nothing can be done about it in a run that has a configuration of `flavor`.
+    /// Whether the flag can't work in a run that uses a `flavor` config.
     fn means_nothing_to(&self, flavor: Flavor) -> bool {
         let is_of_eslint_8 = ONLY_OF_ESLINT_8.contains(&self.name);
         match (self.tool, flavor) {
@@ -276,6 +355,8 @@ impl OfOneTool {
             (Tool::Eslint, Flavor::EslintRc | Flavor::BuiltIn) | (Tool::Oxlint, Flavor::Oxlint) => {
                 false
             }
+            // Without a config file every built-in rule is available, so there are no plugins to turn on or off.
+            (Tool::Oxlint, Flavor::BuiltIn) => self.name.ends_with(b"-plugin"),
             (Tool::Oxlint, _) => match self.name {
                 b"allow" | b"warn" | b"deny" => is_category(&self.value),
                 name => name.ends_with(b"-plugin"),
@@ -309,6 +390,8 @@ pub enum Tool {
     Oxlint,
 }
 
+pub(crate) const INVALID_FIX_TYPE: &[u8] = b"Invalid Options:\n- 'fixTypes' must be an array of any of \"directive\", \"problem\", \"suggestion\", and \"layout\".";
+
 /// ESLint's `fixTypes`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FixType {
@@ -316,6 +399,19 @@ pub enum FixType {
     Problem,
     Suggestion,
     Layout,
+}
+
+/// One entry of `[[lint.overrides]]`.
+#[derive(Clone, Debug, Default)]
+pub struct Override {
+    /// Globs matched against the path relative to the working directory. A glob without a slash matches the file name.
+    pub files: Vec<Vec<u8>>,
+    pub excluded: Vec<Vec<u8>>,
+    pub rules: Vec<(Vec<u8>, Json)>,
+    /// bunfig.toml location of each entry in `rules`.
+    pub places: Vec<crate::bunfig::RuleOfBunfig>,
+    pub globals: Vec<(Vec<u8>, Json)>,
+    pub settings: Vec<(Vec<u8>, Json)>,
 }
 
 /// What the command line says. The fields are ESLint's `ParsedCLIOptions`, by their names.
@@ -330,15 +426,32 @@ pub struct Options {
     pub of_one_tool: Vec<OfOneTool>,
     pub ext: Option<Vec<Vec<u8>>>,
     pub global: Vec<Vec<u8>>,
+    /// `[lint.globals]` from bunfig.toml. `--global` is applied after it.
+    pub globals: Vec<(Vec<u8>, Json)>,
     pub parser: Option<Vec<u8>>,
     pub parser_options: Vec<(Vec<u8>, Json)>,
+    /// `[lint.settings]` from bunfig.toml. Same as `settings` in an ESLint or oxlint config. There's no flag for it.
+    pub settings: Vec<(Vec<u8>, Json)>,
     pub plugin: Vec<Vec<u8>>,
+    /// About the first entries of `plugin`, which came from `plugins` in `[lint]`.
+    pub plugins_of_bunfig: Vec<crate::bunfig::PluginOfBunfig>,
     pub rule: Vec<(Vec<u8>, Json)>,
+    /// bunfig.toml locations for the first entries of `rule`, which came from `[lint.rules]`.
+    pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
+    /// The bunfig that was read, as written: `bunfig.toml`, or the path from `bun --config=<path> lint`.
+    pub bunfig: Vec<u8>,
+    /// `[[lint.overrides]]` from bunfig.toml. There's no flag for it.
+    pub overrides: Vec<Override>,
+    /// Only set if there are `overrides`. The command line's options on their own, because its rules and globals apply
+    /// after the overrides.
+    pub of_command_line: Option<Box<Options>>,
     pub fix: bool,
     pub fix_dry_run: bool,
     pub fix_type: Option<Vec<FixType>>,
     pub ignore: bool,
     pub ignore_pattern: Vec<Vec<u8>>,
+    /// `--staged`, `--changed`
+    pub only: Option<crate::git::Only>,
     pub stdin: bool,
     pub stdin_filename: Option<Vec<u8>>,
     pub quiet: bool,
@@ -357,6 +470,8 @@ pub struct Options {
     pub pass_on_no_patterns: bool,
     /// Empty: no file is named, as for oxlint.
     pub print_config: Option<Vec<u8>>,
+    /// Report what a run would do with this config, without linting.
+    pub doctor: bool,
     pub suppress_all: bool,
     pub suppress_rule: Option<Vec<Vec<u8>>>,
     pub suppressions_location: Option<Vec<u8>>,
@@ -376,19 +491,19 @@ pub struct Options {
     pub fix_safely: bool,
     /// oxlint's `--rules`: lists the rules, and lints nothing.
     pub rules: bool,
+    /// Print this rule's docs page, without linting.
+    pub explain: Option<Vec<u8>>,
     /// oxlint's `--import-plugin` and `--disable-oxc-plugin`, ..: a plugin by the name that it has
     /// in `plugins`, and whether it is on.
     pub plugins: Vec<(&'static [u8], bool)>,
     /// `--type-aware`, `--no-type-aware`. `None`: as the configuration says.
     pub type_aware: Option<bool>,
-    /// The command line has `--type-aware`.
-    pub has_type_aware_flag: bool,
     /// `--infer-globals`, `--no-infer-globals`. `None`: only without a configuration file.
     pub infer_globals: Option<bool>,
     /// `--infer-globals=fast`: `InferGlobals::ByOptions` without a configuration file. It is to become what is done there
     /// without a flag, once it costs a project that reports no name next to nothing.
     pub infers_globals_by_options: bool,
-    pub project: Option<Vec<u8>>,
+    pub tsconfig: Option<Vec<u8>>,
     /// `0`: the number of cores.
     pub threads: usize,
     pub timing: bool,
@@ -396,7 +511,7 @@ pub struct Options {
     pub all: bool,
     /// Print the files that would be linted, and lint nothing.
     pub list_files: bool,
-    /// oxlint's `--init`: write an `.oxlintrc.json` with its defaults.
+    /// Add `[lint]` to bunfig.toml.
     pub init: bool,
     /// oxlint's `--type-check`: report what the type checker reports too.
     pub type_check: bool,
@@ -410,7 +525,7 @@ pub struct Options {
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
     pub allow_unsupported: bool,
     pub native_plugin_rules: NativePlugins,
-    /// The defaults of the flags of `bun format`, for the rule `bun/format`. No flag sets them.
+    /// The defaults of the flags of `bun fmt`, for the rule `bun/format`. No flag sets them.
     pub of_bun_format: Option<Box<crate::fmt::cli::Options>>,
     /// Not ESLint 8's `--no-eslintrc`: its configuration files are looked for.
     pub eslintrc: bool,
@@ -432,15 +547,23 @@ impl Default for Options {
             of_one_tool: Vec::new(),
             ext: None,
             global: Vec::new(),
+            globals: Vec::new(),
             parser: None,
             parser_options: Vec::new(),
+            settings: Vec::new(),
             plugin: Vec::new(),
+            plugins_of_bunfig: Vec::new(),
             rule: Vec::new(),
+            rules_of_bunfig: Vec::new(),
+            bunfig: b"bunfig.toml".to_vec(),
+            overrides: Vec::new(),
+            of_command_line: None,
             fix: false,
             fix_dry_run: false,
             fix_type: None,
             ignore: true,
             ignore_pattern: Vec::new(),
+            only: None,
             stdin: false,
             stdin_filename: None,
             quiet: false,
@@ -457,6 +580,7 @@ impl Default for Options {
             warn_ignored: true,
             pass_on_no_patterns: false,
             print_config: None,
+            doctor: false,
             suppress_all: false,
             suppress_rule: None,
             suppressions_location: None,
@@ -471,12 +595,12 @@ impl Default for Options {
             fix_dangerously: false,
             fix_safely: false,
             rules: false,
+            explain: None,
             plugins: Vec::new(),
             type_aware: None,
             infer_globals: None,
             infers_globals_by_options: false,
-            has_type_aware_flag: false,
-            project: None,
+            tsconfig: None,
             threads: 0,
             timing: false,
             all: false,
@@ -582,11 +706,7 @@ impl Options {
                     b"eslint" => Tool::Eslint,
                     b"oxlint" => Tool::Oxlint,
                     _ => {
-                        return error(&[
-                            b"Option flavor: '",
-                            text,
-                            b"' not one of eslint or oxlint.",
-                        ]);
+                        return error(&[b"--flavor must be eslint or oxlint, not \"", text, b"\""]);
                     }
                 })
             }
@@ -604,14 +724,13 @@ impl Options {
                         b"suggestion" => FixType::Suggestion,
                         b"layout" => FixType::Layout,
                         _ => {
-                            return error(&[
-                                b"Invalid Options:\n- 'fixTypes' must be an array of any of \"directive\", \"problem\", \"suggestion\", and \"layout\".",
-                            ]);
+                            return error(&[INVALID_FIX_TYPE]);
                         }
                     });
                 }
             }
             b"ignore-pattern" => self.ignore_pattern.push(text.to_vec()),
+            b"staged" | b"changed" => crate::git::Only::set(&mut self.only, name, value, is_on)?,
             b"ignore" => self.ignore = is_on,
             b"warn-ignored" => self.warn_ignored = is_on,
             b"stdin" => self.stdin = is_on,
@@ -645,9 +764,10 @@ impl Options {
             b"pass-on-no-patterns" => self.pass_on_no_patterns = is_on,
             b"exit-on-fatal-error" => self.exit_on_fatal_error = is_on,
             b"print-config" => self.print_config = owned(),
-            b"type-aware" => (self.type_aware, self.has_type_aware_flag) = (Some(is_on), is_on),
+            b"doctor" => self.doctor = is_on,
+            b"type-aware" => self.type_aware = Some(is_on),
             b"infer-globals" => self.infer_globals = Some(is_on),
-            b"project" => self.project = owned(),
+            b"tsconfig" | b"project" => self.tsconfig = owned(),
             b"threads" | b"concurrency" => match (name, text) {
                 (b"concurrency", b"auto" | b"off") => {}
                 _ => match bun_core::fmt::parse_decimal::<usize>(text) {
@@ -661,7 +781,7 @@ impl Options {
                         ]);
                     }
                     _ => {
-                        return error(&[b"--threads takes a number, not \"", text, b"\"."]);
+                        return error(&[b"--threads takes a number, not \"", text, b"\""]);
                     }
                 },
             },
@@ -671,6 +791,7 @@ impl Options {
             b"init" => self.init = is_on,
             b"cwd" => self.cwd = owned(),
             b"help" => self.help = is_on,
+            b"help-all" => (self.help, self.all) = (is_on, is_on),
             b"version" => self.version = is_on,
             b"suppress-all" => self.suppress_all = is_on,
             b"suppress-rule" => self
@@ -696,14 +817,13 @@ impl Options {
                 Ok(which) => self.native_plugin_rules = which,
                 Err(name) => {
                     return error(&[
-                        b"Option native-plugin-rules: '",
+                        b"Unknown plugin \"",
                         name,
-                        b"' not one of ",
+                        b"\" in --native-plugin-rules\n  Available plugins: ",
                         NativePlugins::names()
                             .collect::<Vec<_>>()
                             .join(", ")
                             .as_bytes(),
-                        b".",
                     ]);
                 }
             },
@@ -716,6 +836,7 @@ impl Options {
             // Type errors are what `bun check` reports.
             b"type-check" => self.type_check = is_on,
             b"rules" => self.rules = is_on,
+            b"explain" => self.explain = owned(),
             _ if is_on && name.ends_with(b"-plugin") => {
                 let plugin = &name[..name.len() - b"-plugin".len()];
                 self.plugins.push(match plugin.strip_prefix(b"disable-") {
@@ -740,29 +861,17 @@ impl Options {
         Ok(())
     }
 
-    /// As `--rule` with what `rules` is.
-    pub(crate) fn add_rules(&mut self, rules: Vec<(Vec<u8>, Json)>) {
-        merge(&mut self.rule, rules);
-    }
-
     /// As `--parser-options` with what `options` is.
     pub(crate) fn add_parser_options(&mut self, options: Vec<(Vec<u8>, Json)>) {
         merge(&mut self.parser_options, options);
     }
 
-    /// What is set so far was not written for ESLint or for oxlint.
+    /// Call after reading bunfig.toml. A key is never rejected as another tool's flag.
     pub(crate) fn forget_whose_flags_it_has(&mut self) {
         self.of_one_tool.clear();
-        self.has_type_aware_flag = false;
     }
 
-    /// Whether the command line has a flag that `tool` has and the other tool has not.
-    pub(crate) fn has_flag_of(&self, tool: Tool) -> bool {
-        self.of_one_tool.iter().any(|it| it.tool == tool)
-    }
-
-    /// The first flag of the command line that nothing can be done about in a run that has a configuration of `flavor`: as it is
-    /// written, and whose it is.
+    /// Returns the first flag that can't work with a `flavor` config, as written, and the tool it belongs to.
     pub(crate) fn flag_that_means_nothing_to(
         &self,
         flavor: Flavor,
@@ -793,6 +902,9 @@ impl Options {
         // ESLint refuses `--fix-type` in a run that fixes nothing. As a default it waits for one that does.
         if !alone.fix && !alone.fix_dry_run {
             defaults.fix_type = None;
+        }
+        if !defaults.overrides.is_empty() {
+            defaults.of_command_line = Some(Box::new(alone));
         }
         defaults.with(args)
     }

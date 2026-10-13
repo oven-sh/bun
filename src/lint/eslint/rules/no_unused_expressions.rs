@@ -147,12 +147,18 @@ pub fn check<'a, R: Rule>(config: Config, statement: Stmt<'a>, prologue: &mut Pr
         && !ast_utils::is_directive(statement)
         && !(config.ignore_directives && is_in_directive_prologue(statement, prologue))
     {
-        cx.report(statement, UNUSED_EXPRESSION);
+        cx.report(statement, UNUSED_EXPRESSION).hint(match e.kind() {
+            ExprKind::Ident(_) | ExprKind::Dot { .. } => "Nothing uses the value. Did you mean to call it, with ()?",
+            ExprKind::Binary { op: BinOp::EqEq | BinOp::EqEqEq, .. } => {
+                "Nothing uses the result of the comparison. Did you mean to assign, with =?"
+            }
+            _ => "Nothing uses the value, so the statement does nothing.",
+        });
     }
 }
 
 impl Rule for NoUnusedExpressions {
-    const META: Meta = Meta::eslint("no-unused-expressions", Kind::Suggestion);
+    const META: Meta = Meta::eslint("no-unused-expressions", Kind::Suggestion).hints();
     const ON: On = On::new().stmts(&[StmtTag::Expr]);
     type State<'a> = Prologue<'a>;
 

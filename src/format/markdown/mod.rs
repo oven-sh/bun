@@ -164,6 +164,8 @@ fn format_embedded(
     let mut file_of_oxfmt: &[u8] = b"";
     let parser: &[u8] = match language {
         _ if is_mdx_jsx || language == MDX_ES_SYNTAX => b"babel",
+        // The language of a plugin, which oxfmt has too.
+        b"svelte" if options.svelte.is_on => b"svelte",
         _ if options.flavor.is_oxfmt() => {
             let parser;
             (parser, file_of_oxfmt) = parser_of_oxfmt(language)?;
@@ -220,20 +222,20 @@ fn format_embedded(
                 &mut out,
             )
             .is_ok()
-            // A block of which something would be lost stays as it is.
-            && crate::html::has_same_content(code, &out, parser, &options)
     } else {
         match parser {
             b"graphql" => {
                 crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok()
             }
             b"glimmer" => {
-                let mut scratch = crate::handlebars::Scratch::default();
-                crate::handlebars::format(code, &options, &mut scratch, &mut out).is_ok()
-                    && !scratch.is_damaged()
+                crate::handlebars::format(code, &options, &mut Default::default(), &mut out).is_ok()
             }
             b"yaml" => {
                 crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok()
+            }
+            b"svelte" => {
+                let scratch = &mut Default::default();
+                crate::svelte::format(b"", code, &options, None, scratch, &mut out).is_ok()
             }
             b"markdown" | b"mdx" => {
                 let mode = Mode {
@@ -413,7 +415,8 @@ fn format_in(
         with_pragma.extend_from_slice(&text[front_matter_end..]);
         text = &with_pragma;
     }
-    if bun_core::strings::trim_js_whitespace_start(text).is_empty() {
+    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    if text.trim_ascii_start().is_empty() {
         return Ok(());
     }
 

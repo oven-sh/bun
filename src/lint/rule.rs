@@ -258,12 +258,34 @@ impl Plugin {
         })
     }
 
+    /// Whether, with a configuration of ESLint, the rules here answer for the plugin that is usually called `prefix`.
+    pub fn is_native_under_eslint(prefix: &[u8]) -> bool {
+        Plugin::answers_in_place_of(prefix, None)
+    }
+
     /// The version of the package that the rules here do the same as, if they answer in place of one.
     pub fn follows(self) -> Option<&'static str> {
         match self.names().under_eslint {
             UnderEslint::InPlaceOf(_, version) => Some(version),
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
         }
+    }
+
+    /// Prefixes accepted for this plugin's rules when there's no ESLint or oxlint config. Includes every name that either
+    /// tool uses. The first one is [`Plugin::prefix`].
+    pub const fn spellings(self) -> &'static [&'static str] {
+        match self {
+            // oxlint accepts both prefixes for both plugins. Here `react-hooks/` only works for the hooks rules.
+            Plugin::ReactHooks => &["react-hooks", "react_hooks", "react"],
+            Plugin::React => &["react"],
+            plugin => plugin.names().prefixes,
+        }
+    }
+
+    /// Plugins that accept `prefix` as one of their [spellings](Plugin::spellings).
+    pub fn spelled(prefix: &[u8]) -> impl Iterator<Item = Plugin> {
+        let has = move |it: &Plugin| it.spellings().iter().any(|it| it.as_bytes() == prefix);
+        Plugin::ALL.iter().copied().filter(has)
     }
 
     /// The plugin of oxlint that has the rules of this one: those of `react-hooks` are in its `react`.
@@ -354,17 +376,25 @@ pub struct Meta {
     /// It runs only on a file of a program that has been type checked, and
     /// [`File::types`](crate::ast::File::types) never fails in it.
     pub requires_types: bool,
+    /// The rule also runs without types, and uses them in files that have them.
+    pub uses_types: bool,
     pub is_deprecated: bool,
     /// The rule of ESLint that this rule of typescript-eslint replaces.
     pub extends_base_rule: Option<&'static str>,
     /// It is about several files: see [`modules`](crate::modules).
     pub needs_modules: bool,
-    /// It is a port of the rule that oxlint has, not of the rule of the plugin for ESLint: the messages, the places, the fixes and
-    /// the options are oxlint's. It exists only with a configuration of oxlint.
+    /// The rule is a port of oxlint's version, not of the ESLint plugin's, so the messages, locations, fixes and options are
+    /// oxlint's. It doesn't exist with an ESLint config. The project's installed package runs there instead.
     pub follows_oxlint: bool,
     /// The rule stands in for that of a package only for some files: for the others it calls `File::hand_back`, and the
     /// rule of the package is asked.
     pub hands_back: bool,
+    /// Upstream sets `fixable`, but the rule never attaches a fix. `--rules` and the docs don't list it as fixable.
+    pub never_fixes: bool,
+    /// Upstream sets `hasSuggestions`, but the rule never attaches a suggestion.
+    pub never_suggests: bool,
+    /// [`Meta::hints`]
+    pub has_hints: bool,
     pub reports: When,
     /// A hash of `name`.
     pub(crate) key: u32,
@@ -380,11 +410,15 @@ impl Meta {
             has_suggestions: false,
             presets: Presets::empty(),
             requires_types: false,
+            uses_types: false,
             is_deprecated: false,
             extends_base_rule: None,
             needs_modules: false,
             follows_oxlint: false,
             hands_back: false,
+            never_fixes: false,
+            never_suggests: false,
+            has_hints: false,
             reports: When::Entering,
             key: hash_const(0, name.as_bytes()) as u32,
         }
@@ -420,6 +454,16 @@ impl Meta {
         self
     }
 
+    pub const fn never_fixes(mut self) -> Meta {
+        self.never_fixes = true;
+        self
+    }
+
+    pub const fn never_suggests(mut self) -> Meta {
+        self.never_suggests = true;
+        self
+    }
+
     pub const fn recommended(mut self) -> Meta {
         self.presets = self.presets.union(Presets::RECOMMENDED);
         self
@@ -435,6 +479,16 @@ impl Meta {
         self
     }
 
+    pub const fn uses_types(mut self) -> Meta {
+        self.uses_types = true;
+        self
+    }
+
+    /// Whether enabling this rule gets a file type checked, if the file's config asks for types.
+    pub const fn asks_types(&self) -> bool {
+        self.requires_types || self.uses_types
+    }
+
     pub const fn needs_modules(mut self) -> Meta {
         self.needs_modules = true;
         self
@@ -442,6 +496,12 @@ impl Meta {
 
     pub const fn hands_back(mut self) -> Meta {
         self.hands_back = true;
+        self
+    }
+
+    /// Some of the rule's reports have a [`Report::hint`](crate::context::Report::hint). Hints aren't shown without this.
+    pub const fn hints(mut self) -> Meta {
+        self.has_hints = true;
         self
     }
 

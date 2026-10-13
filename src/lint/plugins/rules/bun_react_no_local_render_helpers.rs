@@ -10,7 +10,7 @@ pub struct ReactNoLocalRenderHelpers {
 
 const LOCAL_HELPER: Message = Message::new(
     "localHelper",
-    "`{{name}}` is made anew whenever the function around it runs, and React does not know it. Make it a component outside.",
+    "`{{name}}` is created again on every render, and React does not see it as a component. Move it out and make it a component.",
 );
 
 impl ReactNoLocalRenderHelpers {

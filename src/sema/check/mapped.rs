@@ -1576,7 +1576,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.is_generic(extends_ty)
                 || check_tuples && self.has_generic_element(extends_ty)
             {
-                break self.deferred_conditional_type(
+                let deferred = self.deferred_conditional_type(
                     file,
                     node,
                     mapper,
@@ -1584,6 +1584,8 @@ impl<'p, 's> Checker<'p, 's> {
                     for_constraint,
                     alias,
                 );
+                self.instantiate_narrowed_check_type(file, node, mapper);
+                break deferred;
             }
             let extends_is_top = self.has_any_flag(extends_ty) || extends_ty == TypeId::UNKNOWN;
             let (branch, branch_mapper, is_false_branch) = if !extends_is_top
@@ -1609,7 +1611,7 @@ impl<'p, 's> Checker<'p, 's> {
                 (no, mapper, true)
             } else {
                 if !extends_is_top && !self.is_assignable_restrictive(check_ty, extends_ty) {
-                    break self.deferred_conditional_type(
+                    let deferred = self.deferred_conditional_type(
                         file,
                         node,
                         mapper,
@@ -1617,6 +1619,8 @@ impl<'p, 's> Checker<'p, 's> {
                         for_constraint,
                         alias,
                     );
+                    self.instantiate_narrowed_check_type(file, node, mapper);
+                    break deferred;
                 }
                 (yes, combined, false)
             };
@@ -1673,6 +1677,25 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `newConditionalType`, with `alias`. Without one it has `instantiateTypeAlias(root.alias,
     /// mapper)`, which the node determines.
+    /// `result.checkType = c.instantiateType(root.checkType, mapper)` of a deferred conditional
+    /// type. The pieces are instantiated when they are read, except a check type that the true
+    /// branch of an enclosing conditional type narrows, or an indexed access of one:
+    /// instantiating that substitution type compares the base type with the constraint, and when
+    /// it does so shows.
+    fn instantiate_narrowed_check_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+    ) {
+        if let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind {
+            let declared = self.type_from_node(file, check);
+            if self.actual_type_variable(declared) != declared {
+                self.instantiate(declared, mapper);
+            }
+        }
+    }
+
     fn deferred_conditional_type(
         &self,
         file: FileId,
@@ -2609,7 +2632,7 @@ impl<'p, 's> Checker<'p, 's> {
                     true => self.union_as_object(ty),
                     false => ty,
                 };
-                (self.members(owner)).map(|members| Modifiers::Object(owner, members))
+                (self.listed_members(owner)).map(|members| Modifiers::Object(owner, members))
             }
             None => None,
         };
@@ -2887,8 +2910,14 @@ impl<'p, 's> Checker<'p, 's> {
             let key_name = self.property_name_of_type(key);
             // `modifiersProp`: `getPropertyOfType(modifiersType, ..)`
             let source_prop = match (&modifiers, key_name) {
+                // By name, a property is found in the constituents of an intersection also when
+                // the list that the intersection keeps lacks it (`listed_members`).
                 (Some(Modifiers::Object(modifiers_type, m)), Some(name)) => self
                     .property_in_type(*modifiers_type, m, name)
+                    .or_else(|| match self.has_partial_list(*modifiers_type) {
+                        true => self.get_property_of_type(*modifiers_type, name),
+                        false => None,
+                    })
                     .map(|(prop, _)| prop),
                 (Some(Modifiers::Union(union)), Some(name)) => self
                     .get_property_of_type(*union, name)

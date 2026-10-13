@@ -14,7 +14,7 @@ pub struct NoCwdDependentPath {
 
 const WORKING_DIRECTORY: Message = Message::new(
     "workingDirectory",
-    "{{path}} is relative to the directory that the process was started in. Start from `import.meta.dirname`.",
+    "{{path}} is relative to the working directory of the process. Resolve it from `import.meta.dirname`.",
 );
 
 /// The functions of `node:fs` whose second parameter is a path too.

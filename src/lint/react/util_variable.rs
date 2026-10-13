@@ -7,23 +7,21 @@ use bun_lint::prelude::*;
 
 /// `getVariableFromContext`: it also looks into the first scope in each scope, and into the first
 /// in that.
-pub(crate) fn get_variable_from_context<'a>(node: Node<'a>, name: Name<'a>) -> Option<Symbol<'a>> {
-    node.scope().chain().find_map(|scope| {
-        scope.get_name(name).or_else(|| {
-            // For ESLint a class declaration declares its name in its own scope as well.
-            if let Node::Class(class) = scope.node()
-                && class.name().is_some_and(|it| it.name() == name)
-            {
-                return class.symbol();
-            }
-            // For ESLint what the configuration defines is a variable of the global scope.
-            if scope.parent().is_none() && node.file().global_named(name).is_some() {
-                return None;
-            }
+pub(crate) fn variable_from_context<'a>(node: Node<'a>, name: Name<'a>) -> Option<Variable<'a>> {
+    let from = node.scope();
+    from.chain().find_map(|scope| {
+        scope.variable(name).or_else(|| {
             let child = scope.children().next()?;
-            (child.get_name(name)).or_else(|| child.children().next()?.get_name(name))
+            let symbol =
+                (child.get_name(name)).or_else(|| child.children().next()?.get_name(name))?;
+            Some(symbol.variable_in(from))
         })
     })
+}
+
+/// The same, if the file declares it.
+pub(crate) fn get_variable_from_context<'a>(node: Node<'a>, name: Name<'a>) -> Option<Symbol<'a>> {
+    variable_from_context(node, name)?.symbol()
 }
 
 /// What `findVariableByName` returns.

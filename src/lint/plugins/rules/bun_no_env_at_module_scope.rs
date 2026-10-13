@@ -10,11 +10,11 @@ pub struct NoEnvAtModuleScope {
 
 const VARIABLE: Message = Message::new(
     "variable",
-    "`{{text}}` is read as soon as the module is evaluated. Read it in the function that needs it.",
+    "`{{text}}` is read as soon as the module is imported. Read it inside the function that needs it.",
 );
 const ENVIRONMENT: Message = Message::new(
     "environment",
-    "The environment is read as soon as the module is evaluated. Read it in the function that needs it.",
+    "The environment is read as soon as the module is imported. Read it inside the function that needs it.",
 );
 
 const PROCESS_MODULES: [&str; 2] = ["node:process", "process"];

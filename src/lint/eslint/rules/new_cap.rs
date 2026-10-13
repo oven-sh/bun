@@ -22,16 +22,26 @@ const UPPER: Message = Message::new(
     "upper",
     "A function with a name starting with an uppercase letter should only be used as a constructor.",
 );
-const LOWER: Message = Message::new("lower", "A constructor name should not start with a lowercase letter.");
+const LOWER: Message = Message::new(
+    "lower",
+    "A constructor name should not start with a lowercase letter.",
+);
 
 const CAPS_ALLOWED: [&str; 11] = [
-    "Array", "Boolean", "Date", "Error", "Function", "Number", "Object", "RegExp", "String", "Symbol", "BigInt",
+    "Array", "Boolean", "Date", "Error", "Function", "Number", "Object", "RegExp", "String",
+    "Symbol", "BigInt",
 ];
 const GLOBAL_OBJECT_NAMES: [&str; 4] = ["global", "globalThis", "self", "window"];
 /// Before ESLint 10 the exceptions are the keys of an object, which has these too: `new constructor()`. The others do
 /// not start with a letter.
 const KEYS_OF_EVERY_OBJECT: [&str; 7] = [
-    "constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString", "toString", "valueOf",
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "toString",
+    "valueOf",
 ];
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -49,7 +59,9 @@ fn get_cap(name: &[u8]) -> Cap {
         Some(0x80..) => {}
         _ => return Cap::NonAlpha,
     }
-    let end = strings::wtf8_codepoints(name).nth(1).map_or(name.len(), |next| next.0);
+    let end = strings::wtf8_codepoints(name)
+        .nth(1)
+        .map_or(name.len(), |next| next.0);
     let first = name.get(..end).unwrap_or_default();
     let lower = text::to_lower_case(first);
     if lower == text::to_upper_case(first) {
@@ -76,7 +88,9 @@ fn is_global_built_in(e: Expr, name: &[u8]) -> bool {
         ExprKind::Ident(it) => it.bytes() == name && ast_utils::is_global_reference(e),
         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
             ast_utils::get_static_property_name(e).is_some_and(|it| *it == *name)
-                && obj.as_ident().is_some_and(|it| it.is_any(&GLOBAL_OBJECT_NAMES))
+                && obj
+                    .as_ident()
+                    .is_some_and(|it| it.is_any(&GLOBAL_OBJECT_NAMES))
                 && ast_utils::is_global_reference(obj)
         }
         _ => false,
@@ -86,8 +100,15 @@ fn is_global_built_in(e: Expr, name: &[u8]) -> bool {
 impl Exceptions {
     fn new(options: Object, names: &str, pattern: &str) -> Exceptions {
         Exceptions {
-            names: options.strings(names).into_iter().map(|it| it.as_bytes().to_vec()).collect(),
-            pattern: options.str(pattern).filter(|it| !it.is_empty()).and_then(|it| Regex::new(it, "u").ok()),
+            names: options
+                .strings(names)
+                .into_iter()
+                .map(|it| it.as_bytes().to_vec())
+                .collect(),
+            pattern: options
+                .str(pattern)
+                .filter(|it| !it.is_empty())
+                .and_then(|it| Regex::new(it, "u").ok()),
         }
     }
 
@@ -103,8 +124,14 @@ impl NewCap {
         let is_before_10 = callee.file().language().eslint_major < 10;
         if exceptions.has(name)
             || exceptions.has(source)
-            || exceptions.pattern.as_ref().is_some_and(|it| it.test(source))
-            || (is_before_10 && KEYS_OF_EVERY_OBJECT.iter().any(|it| it.as_bytes() == name || it.as_bytes() == source))
+            || exceptions
+                .pattern
+                .as_ref()
+                .is_some_and(|it| it.test(source))
+            || (is_before_10
+                && KEYS_OF_EVERY_OBJECT
+                    .iter()
+                    .any(|it| it.as_bytes() == name || it.as_bytes() == source))
         {
             return true;
         }
@@ -132,7 +159,7 @@ impl NewCap {
             && get_cap(&name) == Cap::Lower
             && !self.is_cap_allowed(&self.new_is_cap_exceptions, callee, &name)
         {
-            report(callee, LOWER, cx);
+            report(e, callee, LOWER, cx);
         }
     }
 
@@ -146,7 +173,7 @@ impl NewCap {
             && !(CAPS_ALLOWED.iter().any(|it| it.as_bytes() == &*name)
                 && (goes_by_the_name(cx.language()) || is_global_built_in(callee, &name)))
         {
-            report(callee, UPPER, cx);
+            report(e, callee, UPPER, cx);
         }
     }
 }
@@ -155,19 +182,21 @@ impl NewCap {
 fn callee_of(call: Call<'_>) -> Expr<'_> {
     let callee = call.callee();
     match callee.file().language().is_oxlint {
-        true => Some(get_inner_expression(callee)).filter(|it| it.tag() == ExprTag::Ident).unwrap_or(callee),
+        true => Some(get_inner_expression(callee))
+            .filter(|it| it.tag() == ExprTag::Ident)
+            .unwrap_or(callee),
         false => callee,
     }
 }
 
-/// At the property, or at the callee.
-fn report<'a>(callee: Expr<'a>, message: Message, cx: &Cx<'a, NewCap>) {
+/// At the property, or at the callee, of the call `e`.
+fn report<'a>(e: Expr<'a>, callee: Expr<'a>, message: Message, cx: &Cx<'a, NewCap>) {
     let at = match callee.kind() {
         ExprKind::Dot { name, .. } => name.span(),
         ExprKind::Index { index, .. } => index.span(),
         _ => callee.span(),
     };
-    cx.report(at, message);
+    cx.report(at, message).called_with(e);
 }
 
 impl Rule for NewCap {
@@ -180,8 +209,16 @@ impl Rule for NewCap {
         NewCap {
             new_is_cap: options.bool_or("newIsCap", true),
             cap_is_new: options.bool_or("capIsNew", true),
-            new_is_cap_exceptions: Exceptions::new(options, "newIsCapExceptions", "newIsCapExceptionPattern"),
-            cap_is_new_exceptions: Exceptions::new(options, "capIsNewExceptions", "capIsNewExceptionPattern"),
+            new_is_cap_exceptions: Exceptions::new(
+                options,
+                "newIsCapExceptions",
+                "newIsCapExceptionPattern",
+            ),
+            cap_is_new_exceptions: Exceptions::new(
+                options,
+                "capIsNewExceptions",
+                "capIsNewExceptionPattern",
+            ),
             skips_properties: !options.bool_or("properties", true),
         }
     }
@@ -201,11 +238,17 @@ impl Rule for NewCap {
         let tag = e.tag();
         // The first byte of a name as it is written is nearly always that of the name.
         if let Some(callee) = e.callee()
-            && let Some(start) = callee.member_name_start().or_else(|| callee.as_ident().map(|_| callee.span().start))
+            && let Some(start) = callee
+                .member_name_start()
+                .or_else(|| callee.as_ident().map(|_| callee.span().start))
             && let Some(first) = cx.text().get(start as usize)
             && first.is_ascii()
             && *first != b'\\'
-            && !(if tag == ExprTag::New { first.is_ascii_lowercase() } else { first.is_ascii_uppercase() })
+            && !(if tag == ExprTag::New {
+                first.is_ascii_lowercase()
+            } else {
+                first.is_ascii_uppercase()
+            })
         {
             return;
         }

@@ -1,0 +1,912 @@
+Define a getter for this property
+Define a setter for this property
+Move all "{{name}}" overload signatures together, placing them consecutively before any other members.
+
+Function overload signatures represent multiple ways a function can be called. Keeping them adjacent makes it easier for developers to understand all available call signatures at a glance.
+Give `aria-labelledby` an ID to a label element. Prefer the `alt` attribute over `aria-labelledby` for images.
+Must have `alt` prop, either with meaningful text, or an empty string for decorative images.
+Give `aria-label` a meaningful value. Prever the `alt` attribute over `aria-label` for images.
+Must have meaningful value for `alt` prop. Use alt="" for presentational images.
+Prefer alt="" over presentational role. Native HTML attributes should be preferred for accessibility before resorting to ARIA attributes.
+Avoid using ambiguous text like "{{text}}", replace it with more descriptive text that provides context.
+Provide screen reader accessible content when using `a` elements.
+Use a `button` element instead of an `a` element.
+Provide a correct `href` for the `a` element.
+Use `Math.{{method_name}}` instead.
+Add a `tabindex` attribute to this {{el_name}}.
+Try removing the prop `{{attr_name}}`.
+"{{arrayMethodName}}" uses the callback's return value. Add a `return` on every possible code path.{{value_requirement}}
+"{{arrayMethodName}}" ignores the callback's return value. Remove the returned value (use `return;` or no `return`), or use `map`/`flatMap` if you meant to produce a new array.
+This `switch` has no `default` case, so the callback may reach the end without a `return`. Add a `default` that returns/throws, or add a final `return` after the `switch`.{{value_requirement}}
+This `if` has no `else` branch, so the callback may reach the end without a `return`. Add an `else`, or add a final `return`/`throw` after the `if`.{{value_requirement}}
+Surround the arrow body with braces and use a return statement.
+Put a value of `undefined` immediately after the `=>`.
+Move the returned value to be immediately after the `=>`.
+Change `{{autocomplete}}` to a valid value for `autocomplete`.
+Use `async`/`await` instead, or return an existing promise from a library function.
+Remove `await` if the value is synchronous, or change the expression to return a Promise or Thenable before awaiting it.
+Use plain `using` for synchronous disposables, or change the value to implement `Symbol.asyncDispose`.
+Use `for...of` for synchronous iterables, or change the iterable to implement `Symbol.asyncIterator`.
+Pass an iterable of Promise-like values, or wrap each synchronous value in `Promise.resolve(...)` before calling the aggregator.
+The `arguments` object does not have a `{{method_name}}()` method. If you intended to use an array method, consider using rest parameters instead or converting the `arguments` object to an array.
+Bitwise operator '{{bad_operator}}' seems unintended. Did you mean logical operator '{{suggestion}}'?
+Character access returns a string of length at most 1. If the return value is compared with a string of length greater than 1, the comparison will always be false.
+Comparison result should not be used directly as an operand of another comparison. If you need to compare three or more operands, you should connect each comparison operation with logical AND operator (`&&`)
+Add the global flag (g) to the regular expression.
+
+`matchAll` throws a `TypeError` when passed a non-global regular expression.
+This comparison will always return {{const_result}} as object literals are never equal to each other. Consider using `Object.entries()` of `Object.keys()` and comparing their lengths.
+This comparison will always return {{const_result}} as array literals are never equal to each other. Consider using `Array.length` if empty checking was intended.
+To replace all occurrences of a string, use the `replaceAll` method with the global flag (g) in the regular expression.
+
+Unlike `replace`, `replaceAll` throws a `TypeError` when passed a non-global regular expression instead of replacing only the first match.
+Remove the @ts-{{directive}} directive and fix the underlying TypeScript error instead. If you must suppress an error, consider using @ts-expect-error with a descriptive comment explaining why it's necessary.
+Update the description after @ts-{{directive}} to match the required pattern: {{format}}.
+Add a description after @ts-{{directive}} that is at least {{minimumDescriptionLength}} characters long, explaining why the directive is necessary. For example: `// @ts-{{directive}}: TS2345 - This is a known limitation with third-party types`
+
+Requiring descriptions ensures that developers document why they're suppressing TypeScript errors, making it easier for future maintainers to understand the context and decide if the suppression is still necessary.
+Replace "@ts-ignore" with "@ts-expect-error".
+The `Function` type accepts any function-like value
+This type means "any non-nullish value", which is slightly better than 'unknown', but it's still a broad type
+Replace `Object` with a more specific type. If you need a generic object, use `Record<string, unknown>` or define an interface/type with explicit properties. If you need any value, use `unknown` instead.
+
+The `Object` type is confusing because it doesn't mean 'any object' - it means 'any non-nullish value', which includes primitives. This makes code harder to understand and can lead to unexpected behavior.
+Replace "{{banned_type}}" with the lowercase primitive type "{{suggested_type}}".
+
+{{banned_type}} is a wrapper object type, while {{suggested_type}} is the primitive type. Using the primitive type is more idiomatic and avoids confusion between the object wrapper and the primitive value.
+Variable '{{name}}' is used outside its declaration block. Declare it outside the block or use 'let'/'const'.
+Move the shared code outside the `if` statement to reduce code duplication
+Change the `type` attribute to one of the allowed values: {{allowed_types}}.
+Add a `type` attribute to the `button` element.
+Return the callback call or add an explicit return immediately after it.
+Change the first letter of the comment to uppercase
+Change the first letter of the comment to lowercase
+Remove either `checked` or `defaultChecked`.
+Add either `onChange` or `readOnly`.
+Replace this getter with a readonly field initialized to the returned literal.
+Replace this readonly literal field with a getter.
+Consider converting method{{name}} to a static method.
+Visible, non-interactive elements with click handlers must have one of `keyup`, `keydown`, or `keypress` listener.
+Prefer `{{assert_identifier}}.ok(...)` over `{{assert_identifier}}(...)`.
+Prefer passing `Date` directly to the constructor when cloning
+To create parameterized test with `{{fn_kind}}` function you should use `.{{method}}`
+Replace index check with strict equality check
+Move `{{name}}` to the outer scope to avoid recreating it on every call.
+Move the type annotation to the constructor
+Move the generic type to the type annotation
+Use an index signature such as `{ [key: string]: unknown }` instead of a record type.
+Use a record type such as `Record<string, unknown>` instead of an index signature.
+Use '\\${' to escape '${' in template literals.
+Rename the file that match the pattern {{pattern}}
+Prefer using "{{preferred_method}}" instead of "{{other_method}}"{{within}}
+Replace `as {{cast}}` with `<{{cast}}>`. For example, change `value as {{cast}}` to `<{{cast}}>value`.
+Remove the type assertion and use a type annotation instead. For example, change `const x = value as Type` to `const x: Type = value`. Alternatively, use the `satisfies` operator: `const x = value satisfies Type`.
+
+Type assertions bypass TypeScript's type checking and can hide type errors. Using type annotations or the `satisfies` operator provides better type safety while still allowing TypeScript to infer types where appropriate.
+Replace the array literal type assertion with a type annotation. For example, change `const x = [1, 2] as Type[]` to `const x: Type[] = [1, 2]`. Alternatively, use `const x = [1, 2] satisfies Type[]` if you want TypeScript to infer the exact array type.
+
+Type assertions on array literals can hide errors where the array doesn't actually match the asserted type. Using type annotations or `satisfies` ensures TypeScript verifies that the array matches the expected type.
+Replace the object literal type assertion with a type annotation. For example, change `const x = { a: 1 } as Type` to `const x: Type = { a: 1 }`. Alternatively, use `const x = { a: 1 } satisfies Type` if you want TypeScript to infer the exact shape.
+
+Type assertions on object literals can hide errors where the object doesn't actually match the asserted type. Using type annotations or `satisfies` ensures TypeScript verifies that the object matches the expected type.
+Try adding the `type` keyword: `type {{exportNames}}`
+Use `export type`.
+Replace the `import type` declaration with a regular `import` declaration. For example, `import type { Type } from 'module'` would become `import { Type } from 'module'`.
+Replace `import()` type annotations with a regular type import. For example, change `type T = import('module').Type` to `import type { Type } from 'module'; type T = Type`.
+Replace the `import` declaration with `import type`. For example, change `import { Type } from 'module'` would become `import type { Type } from 'module'`.
+
+Using `import type` for type-only imports helps with tree-shaking, makes it clear that these imports don't affect runtime code, and can improve build performance by allowing bundlers to eliminate unused type imports.
+Replace inline type specifiers with a top‐level import type statement.
+Replace top‐level import type with an inline type specifier.
+Replace inline type specifiers with a top-level import type statement.
+Prefer using `{{function}}` instead of `{{opposite}}`.
+if `{{rhs_str}}` evaluates to true, `{{lhs_str}}` will always evaluate to true as well
+Because `{{left}}` will {{how_often}} be {{relation}} itself
+This logical expression will always evaluate to the same value as the expression itself.
+This logical expression will always evaluate to the same value as either side.
+if `{{lhs_str}}` evaluates to true, `{{rhs_str}}` will always evaluate to true as well
+Remove the `super()` call or change the `extends` clause to a constructable superclass.
+This `super()` call is invalid here.
+`super()` calls the constructor of the superclass, but this class does not extend a constructable value.
+Remove the duplicate `super()` call
+This path may call `super()` after it was already called.
+
+Add a `super()` call to the constructor
+Ensure `super()` is called in all code paths
+Add a text label to the control element. This can be done by adding text content, an `aria-label` attribute, or an `aria-labelledby` attribute.
+Does {{imported_name}} have the default export?
+Add a `default` case.
+
+Default clause should be the last clause.
+
+Enforce default parameters to be last.
+Add a `displayName` property to the component.
+Add a `displayName` property to the context.
+This logical expression can be simplified. Try using the `{{operator}}` operator instead.
+There should be no spaces or new lines inside a pair of empty braces as it affects the overall readability of the code.
+Prefer {{expectedOperator}} operator
+This is most likely not the intended outcome. Consider removing the operation, or directly assigning zero to the variable
+The first argument to an error constructor should be a string describing the error.
+A descriptive message makes the error easier to debug when it is caught or logged.
+Provide a non-empty string that describes what went wrong.
+Remove the duplicate dependency from the array.
+Remove the literal from the array.
+Did you forget to pass a callback to the hook?
+Try memoizing this variable with `useRef` or `useCallback`.
+Consider removing it from the dependency array. Outer scope values aren't valid dependencies because mutating them doesn't re-render the component.
+Either include it or remove the dependency array.
+Use an array literal as the second argument.
+The ref value will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by react, copy it to a variable inside the effect and use that variable in the cleanup function.
+Extract the expression to a separate variable so it can be statically checked.
+Pass an inline function instead.
+Did you forget to pass an array of dependencies?
+Consider adding an empty list of dependencies to make it clear which values are intended to be stable.
+Remove the dependency from the dependency array.
+Consider putting the asynchronous code inside a function and calling it from the effect.
+Add assertion(s) in this Test
+Require explicit return types on functions and class methods.
+Add an explicit 'public', 'private', or 'protected' modifier. Members without a modifier are implicitly public, which may not be intentional.
+Remove the 'public' modifier. Members are public by default, so the modifier is redundant.
+Avoid explicit `any` at module boundaries; prefer `unknown` and narrow before use.
+Define an explicit argument type for each argument.
+Define an explicit return type for the function.
+Add an explicit delay argument.
+Remove the explicit `0` delay argument.
+Remove the `export *` re-export, or add named exports to the target module.
+Rename or remove the duplicate export so each name is exported only once.
+Move this export to the end of the file, after all other statements.
+Use `module.exports` instead.
+Use `exports` instead.
+Do not modify `exports` itself.
+Add a file extension to this {{import_or_export}}.
+Remove the file extension from this {{import_or_export}}.
+Move absolute import above relative import
+Move import statement to the top of the file
+Use `while` loop for intended infinite loop
+Add a `ref` parameter, or remove `forwardRef`
+Rename the function or the variable/property so the names satisfy this rule.
+Remove the name on this function expression.
+Consider giving this function expression a name.
+Enforce the consistent use of either `function` declarations or expressions assigned to variables
+Return a value from all code paths in getter.
+Move require() to top-level module scope
+See https://nextjs.org/docs/messages/google-font-display
+See: https://nextjs.org/docs/messages/google-font-preconnect
+Combine multiple assignments into a single `module.exports = { ... }` statement
+Use a single export declaration with multiple specifiers: `export { spec1, spec2 }`
+Require grouped accessor pairs in object literals and classes
+The body of a for-in should be wrapped in an if statement to filter unwanted properties from the prototype.
+Handle the error or rename the parameter if it's not an error.
+Provide screen reader accessible content when using heading elements.
+Move this hoisted API to the top of the file to better reflect its behavior.\nYou may alternatively replace `vi.mock()` with `vi.doMock`, which is not hoisted.
+Destructure useState call into value + setter pair follow the [thing, setThing] naming convention
+Follow the [thing, setThing] naming convention
+Must have meaningful value for `lang` prop.
+Add a `lang` attribute to the `html` element whose value represents the primary language of document.
+Provide `title` property for `iframe` element.
+Check this link for the valid values of `sandbox` attribute: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/iframe#sandbox.
+Add a `sandbox` attribute to the `iframe` element.
+Remove `allow-scripts` or `allow-same-origin`.
+Provide no redundant alt text for image. Screen-readers already announce `img` tags as an image. You don't need to use the words `image`, `photo`, or `picture` (or any specified custom words) in the `alt` prop.
+Require or disallow initialization in variable declarations
+See https://nextjs.org/docs/messages/inline-script-id
+Add `tabIndex={0}` or `tabIndex={-1}` to make the element focusable.
+Add `tabIndex={0}` to make the element reachable via sequential keyboard navigation.
+Wrap this value in curly braces
+Wrap this value in curly braces
+
+Rename the file with a good extension.
+Use `<></>` instead of `<React.Fragment></React.Fragment>`.
+Use `<React.Fragment></React.Fragment>` instead of `<></>`.
+Each child in a list should have a unique 'key' prop
+Add a "key" prop to the element in the iterator (https://react.dev/learn/rendering-lists#keeping-list-items-in-order-with-key).
+To avoid conflicting with React's new JSX transform: https://reactjs.org/blog/2020/09/22/introducing-the-new-jsx-transform.html
+Wrap the `value` prop in useMemo() or useCallback(), or use a constant value to prevent unnecessary re-renders.\nAlternatively, move the value outside the render function if it doesn't depend on props or state.
+Remove one of the props, or rename them so each prop is distinct.
+simplify props or memoize props in the parent component (https://react.dev/reference/react/memo#my-component-rerenders-when-a-prop-is-an-object-or-array).
+Replace this string literal with a non-literal expression, such as a call to a translation function.
+This attribute is listed in `restrictedAttributes`; replace its string literal value with a non-literal expression.
+Wrap this text in a JSX expression container, such as a call to a translation function.
+Use event handlers instead if you can.
+add rel=`noreferrer` or rel=`noopener` to the element
+add rel=`noreferrer` to the element
+Remove all but one spread.
+Ensure the label either has text inside it or is accessibly labelled using an attribute such as `aria-label`, or `aria-labelledby`. You can mark more attributes as accessible labels by configuring the `labelAttributes` option.
+Either give the label a `htmlFor` attribute with the id of the associated control, or wrap the label around the control.
+Set a valid value for `lang` attribute.
+Reduce the number of classes in this file
+Reduce the number of dependencies in this file
+Consider refactoring your code.
+Too many assertion calls ({{count}}) - maximum allowed is {{max}}
+Maximum allowed is {{max}}.
+Consider splitting it into smaller functions.
+Reduce nesting with promises or refactoring your code.
+Extract intermediate results into named variables to reduce nesting.
+Too many nested describe calls ({{current}}) - maximum allowed is {{max}}
+This rule enforces a maximum number of parameters allowed in function definitions.
+Media elements such as `<audio>` and `<video>` must have a `<track>` for captions.
+Replace the method signature with a property whose type is a function type.
+Replace the property signature with method shorthand syntax.
+Did you mean `{{suggestion}}`?
+The `throw` keyword seems to be missing in front of this 'new' expression
+Try to add `onFocus`.
+Try to add `onBlur`.
+Does {{module_name}} have the export {{imported_name}}?
+Use a static property access (e.g. `namespace.name`) instead of a computed one.
+Imported namespace members are read-only. Assign to a local variable instead.
+Capitalize the first letter of the constructor name, or add it to the exceptions list if it should not be capitalized.
+This should be uppercase
+
+Use the new operator when calling this function, or add it to the exceptions list if it should not be called with new.
+This should be called with `new`
+
+See https://nextjs.org/docs/messages/next-script-for-ga
+Replace the absolute path with a relative path or a module alias.
+Specify the rules you want to disable.
+Remove the `accessKey` attribute. Inconsistencies between keyboard shortcuts and keyboard commands used by screen readers and keyboard-only users create accessibility complications.
+Remove this property access, or remove `{{method_kind}}` from the method
+
+
+Using spreads within accumulators leads to `O(n^2)` time complexity.
+Use a custom UI instead
+Replace "{{name}}" with its canonical name of "{{canonical_name}}"
+Expected imports instead of AMD {{name}}()
+
+
+Named default exports improve grepability and enable consistent auto-imports across the codebase.
+Remove `aria-hidden="true"` from focusable elements or modify the element to be not focusable.
+Wrap the function in an arrow function to explicitly pass only the element argument
+Use array literal notation [] instead.
+Use `Array.from({ length: n }, () => /* new value */)` or `.map(() => /* new value */)` to create a distinct value for each element.
+Use a unique data-dependent key to avoid unnecessary rerenders
+Use arrow functions or lexical scoping instead of passing 'thisArg' as a second argument to array methods like map, filter, etc.
+Refactor your code to use `for` loops instead.
+`Array#reverse()` mutates the original array. Use `Array#toReversed()` to return a new reversed array without modifying the original.
+`Array#sort()` mutates the original array. Use `Array#toSorted()` to return a new sorted array without modifying the original.
+See https://nextjs.org/docs/messages/no-assign-module-variable
+Remove the `async` keyword
+See: https://nextjs.org/docs/messages/no-async-client-component
+Wrap the async handler and forward errors to `next()` (e.g. `(req, res, next) => Promise.resolve(handler(req, res, next)).catch(next)`).\nExpress does not automatically handle rejected promises from async handlers, which results in unhandled promise rejections and server crashes.
+
+If you're on Express 5, disable this rule. To allow specific functions, add their names to `allowedNames`.
+Remove the `async` keyword from the Promise executor function.
+Remove the `autoFocus` attribute.
+Assign the result of the await expression to a variable, then access the member from that variable.
+Collect all promises into an array and use `Promise.all()` to run them in parallel, rather than awaiting each one sequentially inside the loop.
+Remove the `await`
+Consider importing directly from the specific modules instead of using `export *` or `import *`.\nLoading {{total}} modules may be slow for runtimes and bundlers.
+
+See: https://marvinh.dev/blog/speeding-up-javascript-ecosystem-part-7
+Consider mapping the values to a meaningful string (e.g. pick a property or call a formatter) before calling `join()`, or implementing a custom `toString()`/`toLocaleString()` on the element type.
+Consider picking a property (e.g. `user.name`), using a formatter (or `JSON.stringify`), or implementing a custom `toString()`/`toLocaleString()` on the type.
+See https://nextjs.org/docs/messages/no-before-interactive-script-outside-document
+bitwise operators are not allowed, maybe you mistyped `&&` or `||`?
+Use `then` and `catch` directly
+`caller`, `callee`, and `arguments` properties may not be accessed on strict mode functions or the arguments objects for calls to them.
+Wrap the case body in braces `{}` to create an explicit block scope for the lexical declaration.
+The canonical way to pass children in React is to use JSX elements
+Use a different variable name instead of re-assigning the class declaration.
+{{name}} is declared as class here
+
+`React.cloneElement` is uncommon and leads to fragile React components.
+
+https://react.dev/reference/react/cloneElement#alternatives
+Remove or uncomment this test.
+Do not use CommonJS `require` calls and `module.exports` or `exports.*`
+Use Object.is(x, -0) to test equality with -0 and use 0 for other cases
+Consider wrapping the assignment in additional parentheses
+Avoid calling `expect` conditionally
+Replace conditionals with separate test cases for each branch to keep tests deterministic and easy to understand.
+Remove the surrounding if statement.
+Use `.length - 1` to replace the last element.
+
+An array's `.length` is one past its last valid index.
+Use a non-negative index to make the intended position explicit.
+
+`Array#with()` interprets a negative index as an offset from the end.
+Remove the `!`, or wrap the left-hand side in parentheses.
+Remove the `!`, or prefix the `=` with it.
+Only the last call to `jest.setTimeout` will have an effect.
+Move it to its own statement instead.
+Add braces to the arrow function.
+Move it before the `return` statement.
+Remove the `return` statement.
+Supported methods are: {{allowed}}.
+Delete this console statement.
+The `console.log()` method and similar methods join the parameters with a space so adding a leading/trailing space to a parameter, results in two spaces being added.
+Use `let` instead of `const` if you need to reassign this variable.
+{{name}} is declared here as `const`.
+
+Const enums are not supported by bundlers and are incompatible with the isolatedModules mode. Their use can lead to import nonexistent values (because const enums are erased).
+These two values can never be equal
+This compares constantly with the {{otherSide}}-hand side of the {{operator}}
+Both sides of the {{operator}} are literal values
+This expression always evaluates to the constant on the left-hand side
+Update the condition to not be constant, or remove the condition entirely
+this expression will always evaluate to the same value
+
+Remove the return statement from the constructor. If you need early exit, use a bare `return;` with no value.
+Do not use the `continue` statement.
+Avoid matching control characters in regular expressions. If intentional, disable this rule for the expression.
+See https://nextjs.org/docs/messages/no-css-tags
+`dangerouslySetInnerHTML` is a way to inject HTML into your React component. This is dangerous because it can easily lead to XSS vulnerabilities.
+`dangerouslySetInnerHTML` is not compatible with also passing children and React will throw a warning at runtime.
+Remove the debugger statement
+Replace this default export with a named export.
+Assign `undefined` to the variable instead of using `delete`. The `delete` operator is intended for removing properties from objects, not for variables.
+Updating state after a component mount triggers a second render() call and can lead to property/layout thrashing.
+Updating state after a component update triggers a second render() call and can lead to property/layout thrashing.
+Calling `setState()` afterwards will replace the mutations you made via `this.state`.
+Add function argument
+Remove pending() call
+Replace the `<{{element}}>` element with alternative, more accessible ways to achieve your desired visual effects.
+Rewrite `/=` into `/[=]`
+Use the Cookie Store API or a cookie library instead.
+
+https://developer.mozilla.org/en-US/docs/Web/API/Cookie_Store_API
+Prevent importing `next/document` outside of `pages/_document.js`.
+The last declaration overwrites previous ones, remove one of them or rename if both should be retained
+"{{name}}" is previously declared here
+
+Remove or modify the duplicate condition, as its branch will never be executed.
+condition first checked here
+
+Consider removing the duplicated key
+Key is first defined here
+
+Remove the duplicated case
+This label here
+
+Give {{second_name}} a unique value
+{{value}} is first used as an initializer here
+
+Only use a single `<Head />` component in your custom document in `pages/_document.js`. See: https://nextjs.org/docs/messages/no-duplicate-head
+Describe blocks can only have one of each hook. Consider consolidating the duplicate hooks into a single call.
+Merge the duplicated exports into a single export statement
+This export is duplicated
+
+Merge the duplicated import into a single import statement
+This import is duplicated
+
+
+This export is duplicated
+
+Merge these imports into a single import statement
+Use a static property key, or use a Map/Set for dynamic keys.
+
+Frequent property deletions can move objects to slower dictionary-mode properties and hurt inline-cache optimizations. See: https://v8.dev/blog/fast-properties.
+Replace the argument with a literal string or immutable template literal
+Remove the `else` block, moving its contents outside of the `if` statement.
+Remove this {{type}} or add a comment inside it
+Remove the empty character class: `[]`
+Delete this file or add some code to it.
+Consider removing this {{fn_kind}} or adding logic to it.
+Add members to this interface, or use a type alias if it is intentionally empty.
+Remove this interface and use the extended type directly or add members to this interface.
+To avoid confusion around the {} type allowing any non-nullish value, this rule bans usage of the {} type.
+Remove this empty block or add content to it.
+Use '{{suggested_operator}}' to compare with null
+Avoid eval(). For JSON parsing use JSON.parse(); for dynamic property access use bracket notation (obj[key]); for other cases refactor to avoid evaluating strings as code.
+Remove the assignment to the exception parameter, or refactor the code to use a different variable.
+this assignment destroys access to the caught exception
+If code in a catch block assigns a value to the exception parameter, it becomes impossible to refer to the error. Since there is no alternative way to access to this data, assignment of the parameter is absolutely destructive.
+Use `unknown` instead, this will force you to explicitly, and safely, assert the type is correct.
+If you want to share code between tests, move it into a separate file and import it from there.
+Use 'module.exports' instead.
+Consider using a utility function or a class that extends the built-in object instead of defining properties on the prototype.
+Remove the `.bind` call.
+Remove the Boolean call as it will already be coerced to a boolean
+Remove the double negation as it will already be coerced to a boolean
+Remove this label. It will have the same result because the labeled statement '{{name}}' has no nested loops or switches
+Remove the redundant non-null assertion operator (`!`).
+
+The non-null assertion operator in TypeScript, written as `!`, tells the compiler that an expression is definitely not `null` or `undefined` at that point. Chaining multiple non-null assertions on the same expression does not provide any additional safety and is redundant.
+Delete this class
+Try replacing this class with a standalone function or deleting it entirely
+Try using standalone functions instead of static methods
+Use a `break` statement to prevent fallthrough, or add a comment to indicate intentional fallthrough.
+Remove the fallthrough comment or add code that allows fallthrough (e.g. remove `break`).
+Replace `findDOMNode` with one of the alternatives documented at https://react.dev/reference/react-dom/findDOMNode#alternatives.
+The promise must end with a call to .catch, or end with a call to .then with a rejection handler.
+Consider handling the promises' fulfillment or rejection with Promise.all or similar.
+Consider handling the promises' fulfillment or rejection with Promise.all or similar, or explicitly marking the expression as ignored with the `void` operator.
+The promise must end with a call to .catch, or end with a call to .then with a rejection handler. A rejection handler that is not a function will be ignored.
+The promise must end with a call to .catch, or end with a call to .then with a rejection handler, or be explicitly marked as ignored with the `void` operator. A rejection handler that is not a function will be ignored.
+The promise must end with a call to .catch, or end with a call to .then with a rejection handler, or be explicitly marked as ignored with the `void` operator.
+Remove focus from test.
+Use a more robust iteration method such as for-of or array.forEach instead.
+Do not re-assign a function declared as a FunctionDeclaration.
+{{name}} is re-assigned here
+
+Use a local variable instead of modifying the global '{{name}}'.
+Read-only global '{{name}}' should not be modified.
+
+See https://nextjs.org/docs/messages/no-head-element
+See https://nextjs.org/docs/messages/no-head-import-in-document
+Inline the setup or teardown logic directly in each test for better readability and isolation.
+Use `<Link />` from `next/link` instead for internal navigation. See https://nextjs.org/docs/messages/no-html-link-for-pages
+Change the title of test.
+Change the title of describe block.
+Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images.
+
+See https://nextjs.org/docs/messages/no-img-element
+Move the property into the object initializer.
+Move the elements from `{{method}}()` into the array initializer.
+Add the entry to the Map initializer array.
+Move the properties from `Object.assign()` into the object initializer.
+Add the element to the Set initializer array.
+Wrap it in a block or in an IIFE.
+Wrap it in an IIFE for a local variable, or assign it as a global property for a global variable.
+Declare the variable if it is intended to be local.
+Avoid executing source text at runtime.
+Pass a function callback instead of source text.
+Consider passing a function.
+Imported bindings are readonly
+Import from `vitest` instead.
+Convert this to a top-level type qualifier to properly remove the entire import.
+You can import anything except `suite, test, chai, describe, it, expectTypeOf, assertType, expect, assert, vitest, vi, beforeAll, afterAll, beforeEach, afterEach, onTestFailed, onTestFinished`.
+Remove the type annotation
+Move the comment to a separate line
+Move {{type}} declaration to {{body}} root
+The instanceof Array check doesn't work across realms/contexts, for example, frames/windows in browsers or the vm module in Node.js.
+Use `Array.isArray(…)`, `typeof … === 'string'`, or another realm-safe alternative instead
+WAI-ARIA roles should not be used to convert an interactive element to a non-interactive element. Wrap the element or use a different structure.
+Remove string interpolation from snapshots
+The listener argument should be a function reference.
+Replace this `void` type with an allowed type, or keep `void` only in a valid return position.
+Try to remove the irregular whitespace
+`isMounted` is not supported in modern React, and does not work in class or function components.
+Consider using [Symbol.iterator] instead
+"prefer use Jest own API `{{api}}`"
+Rename either the variable or the label to avoid confusion.
+Identifier '{{name}}' found here.
+
+Consider refactoring the code to eliminate the need for labels.
+Remove the second argument.
+Remove the unnecessary block statement. If you need to limit variable scope, consider using a function or module instead.
+Remove the redundant nested block statement.
+Move the inner `if` test to the outer `if` test.
+Consider using `else if` instead.
+Variables declared with 'var' are function-scoped, not block-scoped. Consider using 'let' or 'const' for block-scoped variables, or move the function outside the loop.
+Use a number literal representable by a 64-bit floating-point number, or use a `BigInt` literal (for example, `9007199254740993n`) for exact large integers.
+
+In JavaScript, `Number` values exactly represent integers only in the range -9007199254740991 to 9007199254740991 (`Number.MIN_SAFE_INTEGER` to `Number.MAX_SAFE_INTEGER`). `BigInt` supports arbitrarily large integers.
+Add a comment explaining the depth.
+Use a named constant instead of a magic number to make the code more readable and maintainable.
+Use 'const' instead of 'let' or 'var' to declare number constants to make their immutability explicit.
+If in-place mutation is acceptable, use `push` (or `concat` when semantics match) instead of spreading
+
+`push` mutates the array. `concat` returns a new array and is not equivalent for every iterable.
+If in-place mutation is acceptable, use `Object.assign` or direct property assignment instead of spreading
+
+`Object.assign` mutates the first argument. Disable this rule if copy-on-write behavior is required.
+Replace the character with its normalized form (NFC) or use Unicode code point escapes instead of combining sequences.
+Use Unicode code point escapes (e.g., \\u{1F3FB} for the light skin tone modifier) instead of emoji modifier sequences in character classes.
+Use Unicode code point escapes (e.g., \\u{1F1EF} for the regional indicator symbol for 'J') instead of regional indicator symbol pairs in character classes.
+Use Unicode code point escapes (e.g., \\u{1F44D}) instead of surrogate pairs.
+Add the Unicode flag 'u'.
+Use Unicode code point escapes (e.g., \\u{1F468}\\u200D\\u{1F469} for '👨‍👩') instead of zero-width joiner sequences in character classes.
+This method name is confusing, consider renaming the method to `constructor`
+Consider removing this method from your interface.
+Did you forget to call the function?
+Did you mean to use `Object.fromEntries(map)` instead?
+Did you forget to await the promise before spreading it?
+Consider using `Intl.Segmenter` for locale-aware string decomposition. Otherwise, if you don't need to preserve emojis or other non-ASCII characters, disable this lint rule on this line or configure the 'allow' rule option.
+Instead use `jest.mock` or `vi.mock` and import from the original module path.
+Separate each assignment into its own statement
+Move this component to a separate file.
+Multiline strings are not allowed. Use template literals or string concatenation instead.
+Replace '{{kind}}' with 'const' to export an immutable binding.
+Using default import as {{module_name}} can be confusing. Use another name for default import to avoid confusion.
+Check if you meant to write `import { {{export}} } from {{suggested_module_name}}`
+Forbid named default exports.
+Replace named exports with a single export default to ensure a consistent module entry point.
+Use named or default imports
+Replace the namespace with an ES2015 module or use `declare module`
+Remove the negation operator and switch the consequent and alternate branches.
+Remove the negation operator and use '{{suggested_operator}}' instead of '{{current_operator}}'.
+Add parentheses around the nested ternary expression.
+Avoid nesting ternary expressions for more than one level.
+Refactor nested ternary expressions into if-else statements for better readability.
+Refactor so that promises are chained in a flat manner.
+Assign the result of 'new' to a variable or compare it to a reference.
+It's not clear whether the argument is meant to be the length of the array or the only element. If the argument is the array's length, consider using `Array.from({ length: n })`. If the argument is the only element, use `[element]`.
+`new Buffer()` is deprecated, use `Buffer.alloc()` or `Buffer.from()` instead.
+Avoid the `Function` constructor. Define the function directly with a function declaration/expression or an arrow function.
+Dynamic function construction is used here.
+The `Function` constructor compiles code from strings at runtime, which can introduce injection risks, hurts performance, and makes code harder to analyze and maintain.
+Remove the `new` operator to call `{{name}}` as a function.
+Separate `require()` from `new` operator
+`Promise.{{static_name}}` is not a constructor. Call it as a function instead.
+Remove the `new` operator.
+Use a browser-compatible alternative or add this module to the `allow` list if Node.js usage is intentional.
+The nullish coalescing operator is designed to handle undefined and null - using a non-null assertion is not needed.
+Remove the non-null assertion.
+non-null assertion made after optional chain
+
+
+
+The non-null assertion operator (`!`) removes `null` and `undefined` from the type. For example, it changes `number | undefined` to `number`.
+Move the handler to an interactive element, or use an appropriate interactive role.
+Remove the interactive role or use an appropriate interactive element instead.
+The `tabIndex` attribute should be removed.
+Use the actual character or a valid escape sequence instead.
+This call will throw a TypeError at runtime.
+Use object literal notation {} instead
+Default values are re-created on every render and break referential equality, causing unnecessary re-renders. Move the value out of the component or memoize it.
+See: 'https://nextjs.org/docs/messages/no-page-custom-font
+See: https://nextjs.org/docs/messages/no-page-custom-font
+Consider using a different variable to avoid unintended side effects on the parameter.
+Consider using a different variable to avoid unintended side effects on the parameter's properties.
+Replace string concatenation of `__dirname` or `__filename` with `path.join()` or `path.resolve()`.
+Use the assignment operator `{{sign}}=` instead.
+Remove usage of `process.env`.
+Throw an error instead.
+Use `resolve()` or `reject()` instead of returning a value.
+Use either promises or callbacks exclusively for handling asynchronous code.
+use `Object.getPrototypeOf` and `Object.setPrototypeOf` instead.
+to avoid prototype pollution, use `Object.prototype.{{prop}}.call` instead
+`React.Children` is uncommon and leads to fragile React components.
+
+https://react.dev/reference/react/Children#alternatives
+Use a different variable name or remove the duplicate declaration.
+Use a different variable name to avoid shadowing the built-in global.
+Remove the redundant role `{{role}}` from the element `{{element}}`.
+Use a quantifier: ` {{{length}}}`
+Move the file to the same directory, use dependency injection, or convert to a package.
+Using the return value is a legacy feature.
+Do not use CommonJS `require` calls
+Use named export instead.
+Rename this export.
+Use a local variable or function parameter instead of the restricted global.
+{{customMessage}}
+{{message}}
+{{help}}
+Compute the value before returning it, or wrap the assignment in parentheses to make the intent explicit.
+Remove the return statement as nothing can consume the return value
+Throw the value being passed into Promise.reject instead
+Return the value being passed into Promise.resolve instead
+See https://nextjs.org/docs/messages/no-script-component-in-head
+Execute the code directly instead.
+Remove the self-assignment or assign to a different variable.
+If you are testing for NaN, you can use the `Number.isNaN()` function.
+Remove this import. A module should not import itself.
+Do not use the comma operator. If you intended to write a sequence, wrap it in parentheses.
+Remove the return statement or ensure it does not return a value.
+Consider renaming '{{name}}' to avoid shadowing the variable from the outer scope.
+'{{name}}' is declared here
+Enum members are added to the enum scope, so references to '{{name}}' in enum member initializers resolve to this member instead of the declaration in the upper scope.
+Consider renaming '{{name}}' to avoid shadowing the variable from the outer scope.
+'{{name}}' is declared here
+
+Consider renaming '{{name}}' to avoid shadowing the global variable.
+Rename '{{name}}' to avoid shadowing the global property.
+Either use the value directly, or switch to `Promise.resolve(…)`.
+remove the comma or insert `undefined`
+Did you forget to wrap `expect` in a `test` or `it` block?
+Add a role attribute to this element, or use a semantic HTML element instead.
+Convert to an object instead of a class with only static members.
+Using this.xxx instead of this.refs.xxx
+Using reference callback instead
+Possible to fix it please see: https://nextjs.org/docs/messages/no-styled-jsx-in-document#possible-ways-to-fix-it
+See https://nextjs.org/docs/messages/no-sync-scripts
+Did you mean to use a template string literal?
+Do not use the ternary expression.
+Use `await` for async assertions or remove the return statement.
+
+Jest ignores returned values from tests.
+If an object is defined as 'thenable', once it's accidentally used in an await expression, it may cause problems
+Assigning a variable to this instead of properly using arrow lambdas may be a symptom of pre-ES2015 practices or not managing scope well.
+Disabling destructuring of this is not a default, consider allowing destructuring
+Reference `this` directly instead of assigning it to a variable.
+Call `super()` before `this`/`super` property access.
+Remove `this` or convert to a non-exported function. In bundlers, `this` becomes `undefined` in exported functions.
+Use props and context directly as function parameters instead of accessing them through `this`
+Throwing literals or non-Error objects is not recommended. Use an Error object instead.
+See https://nextjs.org/docs/messages/no-title-in-document-head
+Move the `await` inside an `async` function, as ES modules with top-level `await` cannot be loaded with `require(esm)`.
+
+This rule is intended for published packages. Consider disabling it if this package is private.
+Change `{{typo}}` to `{{suggestion}}`
+Consider assigning the import to a variable or removing it if it's unused.
+Variable declared without assignment. Either assign a value or remove the declaration.
+Either define '{{name}}' or remove the reference to it. If '{{name}}' is a global variable, add it to the 'globals' configuration.
+Remove the dangling '_' or add `{{identifier}}` to the 'allow' configuration.
+If you did not intend to divide, insert ';' before the slash
+this is parsed as division, which may be unintentional
+
+If you did not intend to make a function call, insert ';' before the parenthesis
+this is parsed as a function call, which may be unintentional
+
+If you did not intend to access a property, insert ';' before the bracket
+this is parsed as a property access, which may be unintentional
+
+If you did not intend for this to be a tagged template, insert ';' before the backtick
+this is parsed as a tagged template, which may be unintentional
+
+Remove the argument
+Omit the argument to delete all elements after the start index.
+Consider removing the `await`
+Remove the unnecessary assignment
+Consider omitting the unnecessary end argument.
+Remove the unnecessary "{{constraint}}" constraint
+Remove the async wrapper and pass the promise directly to expect
+Remove this ternary operator and use the variable directly
+Remove this ternary operator
+Remove the unreachable code or fix the control flow to make it reachable.
+Remove the loop or make at least one path continue to the next iteration.
+Rewrite the IIFE to avoid having a parenthesized arrow function body.
+Use `{{replacement}}` instead. See https://legacy.reactjs.org/blog/2018/03/27/update-on-async-rendering.html
+You can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.
+The TypeScript compiler doesn't check whether properties are initialized, which can lead to TypeScript not detecting code that will cause runtime errors.
+Compare against a member of the same enum as the switch value, or normalize both sides to the same primitive representation first.
+Compare enum values to members of the same enum, or convert both sides to the same primitive type before comparing them.
+Control flow inside `try` or `catch` blocks will be overwritten by this statement.
+Prefer explicitly defining any function parameters and return type.
+Use `()` to negate the whole expression, as '!' binds more closely than '{{operator}}'
+This can result in NaN.
+If this short-circuits with 'undefined' the evaluation will throw TypeError
+Consider using type guards or a safer assertion.
+Consider using a more specific type to ensure safety.
+Add a type parameter to the mock factory such as `typeof import({{module_name}})`
+Consider using this expression or removing it
+Remove the declaration or use it in the code.
+Replace with a safe alternative like https://cdnjs.cloudflare.com/polyfill/ or use modern browser features directly. See: https://blog.cloudflare.com/polyfill-io-now-available-on-cdnjs-reduce-your-supply-chain-risk
+See https://nextjs.org/docs/messages/no-unwanted-polyfillio
+Move the declaration before any references to it, or remove the reference if it is not needed.
+used here
+
+Consider removing or reusing the assigned value.
+Consider revising the pattern to remove or relocate the backreference so it points to a group that can be matched at the time of evaluation.
+Replace with a normal function invocation
+Remove the try/catch wrapper, since it does not provide any additional error handling or functionality.
+Remove the catch clause, since it does not provide any additional error handling or functionality beyond what the finalizer already provides.
+Replace the computed property with a plain identifier or string literal
+Rewrite into one string literal.
+Remove the constructor or add code to it.
+Remove this constructor or add code to it.
+
+Subclasses automatically use the constructor of their superclass, making this redundant.
+Remove the default assignment
+Remove this empty export.
+The Error constructor already calls `captureStackTrace` internally, so calling it again is unnecessary.
+Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.
+Remove `.toArray()`.
+Wrapping the error in `Promise.reject` is needlessly verbose. All errors thrown in async functions are already wrapped in a `Promise`.
+Wrapping the return value in `Promise.resolve` is needlessly verbose. All return values in async functions are already wrapped in a `Promise`.
+Use the variable's original name or rename it to a different name
+Remove this redundant `return` statement.
+Consider removing the spread operator.
+Consider removing this case or removing the `default` case.
+Consider removing `undefined` or using `null` instead.
+Replace var with let or const
+Use ES module imports or `import = require` instead.
+Use `undefined` instead
+Remove or rephrase this comment
+Do not use import syntax to configure webpack loaders
+Updating state during the update step can lead to indeterminate component state and is not allowed.
+Do not use the `with` statement.
+`{{typeName}}` is a boxed object type, not a primitive. Boxed types have object semantics (identity/truthiness) that can be surprising. Use `{{preferred}}` for values, and in `extends`/`implements` use an interface/object shape instead.
+Replace the number literal with `{{lit}}`
+The first argument of 'Number.prototype.{{method_name}}' should be a number between {{min}} and {{max}}
+Use lowercase for the number literal prefix `0x` and uppercase for hexadecimal digits.
+Use lowercase for `e` in exponential notations.
+Use uppercase for hexadecimal digits.
+Use lowercase for the number literal prefix `{{prefix}}`.
+Group digits with numeric separators (_) so longer numbers are easier to read.
+Remove the argument and its usage. Alternatively, use the argument in the function body.
+Make sure there is an empty new line before the afterAll block
+Make sure there is an empty new line before the {{name}} block
+Remove the parameter modifier and declare this member on the class instead.
+Declare this member as a constructor parameter property and remove the class field plus assignment.
+`addEventListener()` can register multiple handlers and accepts options such as `{ once: true }`; assigning to `on<event>` replaces any previously registered handler.
+Use `find(predicate)` instead of `filter(predicate)[0]` or similar patterns.
+Call `.flat()` on the array instead.
+Prefer `.flatMap(…)` over `.map(…).flat()`.
+Replace `.filter(…).flatMap(…)` with a single `.flatMap(…)`.
+Use `indexOf(value)` instead of `findIndex(x => x === value)` for better clarity and performance
+Replace `.filter(…).length` with `.some(…)`
+Use an arrow function instead.
+You should use `as const` instead of type annotation.
+Use `.at()` for index access.
+
+https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/at
+Use `.at()` for index access.
+Refactor to use an `async` function with `await` instead of passing callbacks for cleaner error handling and control flow.
+Use `await` with `try`/`catch` instead of promise chaining for more readable and maintainable async code.
+Use a bigint literal (e.g. `123n`) instead of calling `BigInt` with a literal argument.
+Replace with `toHaveBeenCalledExactlyOnceWith` and remove redundant expect
+Prefer `{{without_suffix}}Once()`.
+Replace with `toBeCalledTimes(1)` or `toHaveBeenCalledTimes(1)` for clarity and consistency
+Prefer {{replacement}}(/* expected args */)
+Handle promise errors in a `catch` instead of using the second argument of `then`.
+Replace the class field declaration with the value from `this` assignment.
+Declare static values as class fields instead of assigning them to `this` in the constructor.
+Use `classList.toggle()` instead
+Unicode is better supported in `{{good_method}}` than `{{bad_method}}`
+Prefer using `"{{preferred_method}}"` instead
+Use `const` instead.
+Change to `Date.now()`.
+Prefer a default export
+Replace the reassignment with a default parameter.
+Pass the function as a description title argument or modify the description title to not match any imported function name.
+Use {{kind}} destructuring rather than direct member access.
+Replace `Node#appendChild()` with `Node#append()`.
+Replace `parentNode.removeChild(childNode)` with `childNode.remove()`.
+
+https://developer.mozilla.org/en-US/docs/Web/API/Element/remove
+Replace `.innerText` with `.textContent`.
+Prefer using `{{fn_name}}.each` rather than a manual loop.
+Add an `expect` or assertion call as the last statement in the test block.
+Using default numerical values for enum members can cause bugs later on if the enum is modified. Instead give "{{name}}" an explicit initializer (for example `= 0` or `= '{{name}}'`).
+
+TypeScript computes uninitialized enum members as numbers: the first one defaults to `0`, and each following uninitialized member is the previous numeric value plus `1`.
+Prefer using one of the equality matchers instead
+Change `EventEmitter` to `EventTarget`. EventEmitters are only available in Node.js, while EventTargets are also available in browsers.
+
+https://developer.mozilla.org/en-US/docs/Web/API/EventTarget
+Rename the parameter to avoid shadowing the global `expect`.
+Replace this argument with a numeric literal.
+Pass a single numeric argument to `{{prefix}}.assertions()`.
+Add `{{prefix}}.hasAssertions()` or `{{prefix}}.assertions(<number>)` as the first statement in the test.
+Remove the arguments from `{{prefix}}.hasAssertions()`.
+Add `{{prefix}}.hasAssertions()` or `{{prefix}}.assertions(<number>)` as the first statement in this test.
+Use `await expect(...).resolves` instead
+Substitute the assertion with `{{code}}`.
+
+https://vitest.dev/api/expect#tobetypeof
+Replace `Math.pow(a, b)` with `a ** b`.
+use `export ... from ...;`
+Consider using a `for...of` loop for this simple iteration.
+Convert the class component to a function component.
+
+See https://react.dev/reference/react/Component#migrating-a-simple-component-from-a-class-to-a-function
+The function type form `{{suggestion}}` is generally preferred when possible for being more succinct.
+Replace the alias with `globalThis`.
+
+https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/globalThis
+"{{hook}}" hooks should be before any "{{previous_hook}}" hooks
+Hooks should come before test cases
+Dynamic import improves the type information and IntelliSense. Substitute `{{path}}` with `import('{{path}}')`
+Replace this expression with `import.meta.dirname`.
+Replace this expression with `import.meta.filename`.
+Prefer `jest.mocked()`
+The `{{deprecated_prop}}` property is deprecated.
+
+https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key
+Require all enum members to be literal values.
+Switch to "||" or "??" operator
+`{{title}}`s should begin with lowercase
+Prefer "{{preferred_name}}"
+Replace `{{current_property}}` with `{{replacement}}`.
+ES modules are always strict mode, so this directive is redundant.
+Prefer ES modules over CommonJS globals.
+Use a named capture group like "(?<name>...)" — this regex has {{unnamed_count}} unnamed group{{s}}.
+Replace `module` with `namespace` for internal declarations.
+
+`module` for internal declarations is no longer supported: treat it as a hard error. Expect it to become a parse error in a future version of TypeScript and Oxlint. See: https://github.com/microsoft/TypeScript/issues/54500, https://github.com/microsoft/TypeScript/issues/62211, https://github.com/microsoft/TypeScript/pull/62876.
+Replace length expression with negative index
+Prefer `node:{{module_name}}` over `{{module_name}}`.
+Replace this call with `{{replacement}}`.
+Replace it with `Number.{{method_name}}`
+Use `Object.fromEntries(pairs)` instead of manually building objects with `reduce` or `forEach`.
+Use an object literal instead of `Object.assign`. eg: `{ foo: bar }`.
+Use an object spread instead of `Object.assign` eg: `{ ...foo }`.
+Only pass an Error object to the reject() function for user-defined errors in Promises.
+It's better to use the same method to query DOM elements. This helps keep consistency and it lends itself to future improvements (e.g. more specific selectors).
+Mark it as `readonly`.
+`Reflect.apply()` is less verbose and easier to understand.
+`RegExp#test()` exclusively returns a boolean and therefore is more efficient.
+Replace `new Response(JSON.stringify(...))` with `Response.json(...)`
+Replace `arguments` with rest parameters (`...args`).
+Switch to `Set`
+Merge with the previous call.
+Provide a string literal as the hint, or pass a property matcher object as the first argument and the hint string as the second.
+Include a hint string to identify this snapshot in the snapshot file.
+The spread operator (`...`) is more concise and readable.
+Replace `.apply()` with spread syntax (`...args`).
+Use strict boolean comparison instead of truthy/falsy coercion.
+Use `toStrictEqual()` instead
+Replace with `{{good_trim}}`
+Switch to `structuredClone(…)`.
+Replace HTML elements with `role` attribute `{{role}}` to corresponding semantic HTML tag `{{tag}}`.
+Use template literals instead of string concatenation.
+Rewrite this `if`/`else` as a ternary expression.
+Consider using `toBeObject()` to test if a value is an object.
+Use `toHaveBeenCalled()` to check if function was called, or `not.toHaveBeenCalled()` to check if it wasn't called
+Use `toHaveBeenCalledTimes()` to assert the number of times a mock function was called
+Add `await` before the function call.
+Use "@ts-expect-error" to ensure an error is actually being suppressed.
+Change to `throw new TypeError(...)`
+Preserve the original error by using the `cause` property when re-throwing errors.
+Add an error parameter to the catch clause to access the caught error.
+Consider adding an explicit return type annotation if the function is intended to return a union of promise and non-promise types.
+The radix parameter should be an integer between 2 and 36, or a variable that is not `undefined`.
+Add parameters for parsing numbers, e.g., `parseInt('10', 10)`.
+Add radix parameter `10` for parsing decimal numbers, or specify the appropriate radix for other number formats.
+When using JSX, `<a />` expands to `React.createElement("a")`. Therefore the `React` variable must be in scope.
+Add `./` prefix
+Remove leading `./`
+Missing the separator argument.
+Consider removing the `async` keyword.
+Add `await` to the `expect.{{member_name}}` call.
+This should be done within a hook
+Use local Test Context instead
+Add a type parameter to the mock function, e.g. `vi.{{method_name}}<() => void>()`.
+Remove the unused import attribute.
+Remove empty braces
+It's better to make it clear what the value of the digits argument is when calling Number#toFixed(), instead of relying on the default value of 0.
+https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage
+When writing the `render` method in a component it is easy to forget to return the JSX content. This rule will warn if the `return` statement is missing.
+Add a `timeout` property to the options object.
+Use a non-negative numeric literal for the timeout value.
+Pass an object with a `testTimeout` property to `vi.setConfig()`.
+Add a numeric third argument, a `{ timeout }` option object second argument, or call `vi.setConfig({ testTimeout: ... })` before this test.
+Add an error message to "{{matcher_name}}"
+Add the 'u' flag.
+
+The 'u' and 'v' flags enable Unicode-aware regular expression behavior and stricter pattern parsing.
+Add the 'v' flag.
+
+The 'u' and 'v' flags enable Unicode-aware regular expression behavior and stricter pattern parsing.
+Add a `yield` expression inside the generator body, or convert it to a regular function if iteration behavior is not needed.
+Operands must each be a number or {{stringLike}}.
+Operands must both be a number or both be {{stringLike}}.
+Add missing aria props {{props}} to the element with `{{role}}` role.
+Try to remove invalid attribute `{{attr_name}}`.
+Move the Hook call before the condition, or call it unconditionally and branch inside the Hook/effect instead.
+Remove the `scope` prop on elements other than `<th>`.
+Make the component self closing
+Sort variable declarations in ascending order (case-sensitive by default).
+Use a more specific type to ensure type safety.
+Handle the nullish case explicitly.
+Handle the nullish and falsy enum cases explicitly.
+Handle the nullish and zero cases explicitly.
+Handle the nullish and empty string cases explicitly.
+Remove Braces for case clause.
+Add Braces for case clause.
+Remove braces in empty case clause.
+Pass a description argument to the Symbol()
+Change the `tabIndex` prop to a non-positive value.
+Using `new` ensures the error is correctly initialized.
+Use of triple-slash reference type directives is generally discouraged in favor of ECMAScript Module imports.
+Add at least one import or export statement to unambiguously mark this file as a module
+If your function does not access `this`, you can annotate it with `this: void`, or consider using an arrow function instead.
+File must begin with the Unicode BOM
+File must not begin with the Unicode BOM
+
+this signature can be unified
+
+
+this parameter only appears in one overload
+
+
+this parameter can be unified
+
+consider filling the array with `undefined` values using `Array.prototype.fill()`
+Use the `isNaN` function instead of the switch.
+Use the `isNaN` function to compare with NaN.
+Use the `isNaN` function to check for NaN values.
+Replace second argument with a function
+Remove return statement in your describe callback
+Remove argument(s) of describe callback
+Remove `async` keyword
+Add name as first argument and callback as second argument
+Add `await` to your assertion.
+You need to call your matcher, e.g. `expect(true).toBe(true)`.
+Remove the extra arguments.
+Is it a spelling mistake?
+Did you forget to add a matcher, e.g. `toBe`, `toBeDefined`
+Add the missing arguments.
+Either `await` the promise, `return` it, or use `expect().resolves`/`expect().rejects`.
+Write a meaningful title for your test
+Make sure the title matches the `mustMatch` of your config file
+It is included in the `disallowedWords` of your config file, try to remove it from your title
+Make sure the title does not match the `mustNotMatch` of your config file
+Remove the leading or trailing spaces
+The function name already has the prefix, try to remove the duplicate prefix
+Replace your title with a string
+Consider moving this to the top of the functions scope or using let or const to declare this variable.
+Remove this element's children or use a non-void element.
+Write an actual test and remove the `.todo` modifier before pushing/merging your changes.
+Expected literal to be on the {{expectedSide}} side of {{operator}}.

@@ -148,11 +148,22 @@ pub fn in_hash_order<'a, T>(requested: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)>
     of_parser
         .iter()
         .for_each(|(hash, at)| collected.insert(hash, at));
-    let mut requested: Vec<Option<(Name<'a>, T)>> = requested.into_iter().map(Some).collect();
-    collected
-        .iter()
-        .filter_map(|at| requested.get_mut(at)?.take())
-        .collect()
+    picked(requested, collected.iter())
+}
+
+/// `entries`, which are in the order in which their names get into an `FxHashMap` of oxlint, in the order of that map.
+pub fn in_order_of_map<'a, T>(entries: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)> {
+    let mut map = HashOrder::new();
+    for (at, (name, _)) in entries.iter().enumerate() {
+        map.insert(hash_of_str(name.bytes()), at);
+    }
+    picked(entries, map.iter())
+}
+
+/// Those of `all` at `places`, each of which comes once.
+fn picked<T>(all: Vec<T>, places: impl Iterator<Item = usize>) -> Vec<T> {
+    let mut all: Vec<Option<T>> = all.into_iter().map(Some).collect();
+    places.filter_map(|at| all.get_mut(at)?.take()).collect()
 }
 
 impl<'a> ModuleRecord<'a> {

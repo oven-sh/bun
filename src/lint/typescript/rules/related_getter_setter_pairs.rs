@@ -7,8 +7,10 @@ use std::borrow::Cow;
 /// Enforce that `get()` types should be assignable to their equivalent `set()` type.
 pub struct RelatedGetterSetterPairs;
 
-const MISMATCH: Message =
-    Message::new("mismatch", "`get()` type should be assignable to its equivalent `set()` type.");
+const MISMATCH: Message = Message::new(
+    "mismatch",
+    "`get()` type should be assignable to its equivalent `set()` type.",
+);
 
 /// The function of a `MethodDefinition` or a `TSMethodSignature` of this `kind`. An abstract
 /// accessor is a `TSAbstractMethodDefinition`, which upstream does not look at.
@@ -44,15 +46,28 @@ impl RelatedGetterSetterPairs {
             return;
         }
         // The last getter and the last setter of a name are the pair.
-        let mut pairs = FxHashMap::<Cow<'a, [u8]>, (Option<Member<'a>>, Option<Param<'a>>)>::default();
+        let mut pairs =
+            FxHashMap::<Cow<'a, [u8]>, (Option<Member<'a>>, Option<Param<'a>>)>::default();
         for member in members {
             if getter_type(member).is_some() {
-                pairs.entry(get_name_from_member(member).name).or_default().0 = Some(member);
+                pairs
+                    .entry(get_name_from_member(member).name)
+                    .or_default()
+                    .0 = Some(member);
             } else if let Some(param) = setter_param(member) {
-                pairs.entry(get_name_from_member(member).name).or_default().1 = Some(param);
+                pairs
+                    .entry(get_name_from_member(member).name)
+                    .or_default()
+                    .1 = Some(param);
             }
         }
-        for pair in pairs.into_values() {
+        let place = |it: &(Option<Member<'a>>, Option<Param<'a>>)| {
+            (
+                it.0.map(|it| it.span().start),
+                it.1.map(|it| it.span().start),
+            )
+        };
+        for pair in utils::sort::in_order_of(pairs.into_values(), place) {
             let (Some(getter), Some(param)) = pair else {
                 continue;
             };

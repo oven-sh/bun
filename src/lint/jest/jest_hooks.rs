@@ -212,7 +212,7 @@ pub(crate) mod require_hook {
 
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
             let file = ctx.file;
-            self.check_block_body(file.body(), ctx);
+            self.check_block_body(file.body(), Node::File(file), ctx);
             for_each_call_named_like(file, &[JestGeneralFnKind::Describe], &mut |node| {
                 if let Some(callback) =
                     (node.as_call()).and_then(|it| Arguments::of(it.args(), ctx.runner).callback)
@@ -224,12 +224,19 @@ pub(crate) mod require_hook {
                         &[JestFnKind::General(JestGeneralFnKind::Describe)],
                     )
                 {
-                    self.check_block_body(statements, ctx);
+                    self.check_block_body(statements, Node::Expr(node), ctx);
                 }
             });
         }
 
-        fn check_block_body<'a>(&self, statements: List<'a, Stmt<'a>>, ctx: &Ctx<'a, '_>) {
+        /// `around`: the program, or the call of `describe`, which oxlint's rule is called with.
+        fn check_block_body<'a>(
+            &self,
+            statements: List<'a, Stmt<'a>>,
+            around: Node<'a>,
+            ctx: &Ctx<'a, '_>,
+        ) {
+            let report = |at: Span| drop(ctx.report(at, USE_HOOK).called_with(around));
             for stmt in statements {
                 if let Some(expr) = stmt.as_expr() {
                     if let Some(call_expr) = expr.as_call()
@@ -237,7 +244,7 @@ pub(crate) mod require_hook {
                         && !expr.is_chain_root()
                         && !self.is_allowed(&get_node_name_vec(call_expr.callee()), ctx.runner)
                     {
-                        ctx.report(expr, USE_HOOK);
+                        report(expr.span());
                     }
                 } else if let Some(declarations) = stmt.as_var()
                     && !stmt.is_exported()
@@ -249,7 +256,7 @@ pub(crate) mod require_hook {
                         .filter_map(VarDecl::init)
                         .any(|it| !is_null_or_undefined(it))
                 {
-                    ctx.report(stmt, USE_HOOK);
+                    report(stmt.span());
                 }
             }
         }

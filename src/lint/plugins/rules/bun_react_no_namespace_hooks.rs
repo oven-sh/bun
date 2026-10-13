@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 /// Require the hooks of React to be imported by name: `useState()`, not `React.useState()`.
 pub struct ReactNoNamespaceHooks;
 
-const NAMESPACE_HOOK: Message = Message::new("namespaceHook", "Import `{{name}}` from \"react\" by its name.");
+const NAMESPACE_HOOK: Message = Message::new("namespaceHook", "Import `{{name}}` by name from \"react\".");
 
 /// The imports from `"react"` that are not only of types.
 fn imports_of_react<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Stmt<'a>, Import<'a>)> {

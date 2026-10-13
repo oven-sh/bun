@@ -282,7 +282,7 @@ fn format_all_elements_broken_out<'a>(
 }
 
 /// Prettier's `allArgsBrokenOut` has `line`, not `softline`, behind the `(` and before the `)`. They are line breaks
-/// either way, until `removeLines` makes blanks of them.
+/// either way, until `removeLines` makes blanks of them: `prettier-plugin-svelte` does, in the head of a block.
 fn has_lines_in_parentheses(expand: bool, f: &Formatter<'_>) -> bool {
     expand && !f.options().flavor.is_oxfmt()
 }

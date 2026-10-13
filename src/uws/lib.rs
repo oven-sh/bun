@@ -864,7 +864,8 @@ pub mod ssl_wrapper {
 
         /// Receive data from the network (encrypted data)
         pub fn receive_data(&self, data: &[u8]) {
-            if self.ssl.get().is_none() {
+            // After the close callback nothing reads the queue.
+            if self.ssl.get().is_none() || self.flags.closed_notified() {
                 return;
             }
             {

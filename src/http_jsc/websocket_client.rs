@@ -1196,16 +1196,24 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Marks the socket shut-down so loop.c takes the CLEAN_SHUTDOWN branch on
     /// the subsequent EOF instead of dispatching `on_end → terminate → fail →
     /// cancel → close(Failure)`, which would RST and discard the queued close
-    /// frame. SSL is excluded because the SSL handshake can happen during
+    /// frame. The closing handshake excludes SSL because the SSL handshake can happen during
     /// writes; tunnel mode operates on a detached socket.
     fn shutdown_after_close_frame(&self) {
-        if !SSL && self.tunnel().is_none() {
+        // `terminate` reports the close before its Close frame. A server that ignores that frame still gets the end of the TLS stream, as from `socket.end()` in the `ws` package.
+        let failed = self.cpp_websocket().is_none();
+        if (failed || !SSL) && self.tunnel().is_none() {
             // No SHUT_RD: recv() would return 0 at once, and a close over bytes still in flight resets the server before it reads the close frame.
             self.tcp.get().shutdown();
         }
         // RFC 6455 7.1.1: the server closes the TCP connection first, within reason.
         match self.tunnel() {
-            Some(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
+            Some(tunnel) => {
+                tunnel.set_timeout(close_timeout_seconds());
+                if failed {
+                    // Last: a TLS error in it closes the proxy connection, which frees the tunnel.
+                    WebSocketProxyTunnel::shutdown_write(tunnel);
+                }
+            }
             None => self.tcp.get().set_timeout(close_timeout_seconds()),
         }
     }

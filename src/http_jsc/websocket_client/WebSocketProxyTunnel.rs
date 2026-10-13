@@ -539,6 +539,14 @@ impl WebSocketProxyTunnel {
         }
     }
 
+    /// close_notify behind what is written. The proxy connection stays open for the server to close.
+    pub(crate) fn shutdown_write(this: ThisPtr<Self>) {
+        let _guard = RefPtr::from_this(this);
+        if let Some(w) = this.wrapper.get() {
+            let _ = w.shutdown(false);
+        }
+    }
+
     /// Check if the tunnel has backpressure
     pub(crate) fn has_backpressure(&self) -> bool {
         self.write_buffer.get().is_not_empty()

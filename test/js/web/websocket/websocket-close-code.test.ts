@@ -295,6 +295,15 @@ describe.concurrent("a connection the client fails", () => {
     expect(result).toEqual(told(result.url, "Server sent invalid UTF8", 1007));
   });
 
+  // As `socket.end()` in the `ws` package: the server needs no Close frame of its own to see that the client is done.
+  it.each([
+    ["ws://", false],
+    ["wss://", true],
+  ] as const)("%s: a server that ignores the Close frame reads the end of the stream behind it", async (_, tls) => {
+    const result = await receive([notUtf8], { tls, keepOpen: true });
+    expect(result).toEqual(told(result.url, "Server sent invalid UTF8", 1007));
+  });
+
   it("a connection the server drops fires close alone", async () => {
     using server = await startRawWsServer(peer => peer.socket.destroy());
     const events = await clientEvents(new WebSocket(server.url));

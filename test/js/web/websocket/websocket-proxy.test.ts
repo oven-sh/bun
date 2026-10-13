@@ -10,6 +10,7 @@ import tls from "node:tls";
 import { decodeErrorAlert, startMalformedServerHelloServer } from "../../node/tls/tls-handshake-alert-utils";
 import {
   type ClientEvent,
+  type RawWsPeer,
   clientEvents,
   connectRequest,
   createConnectProxy,
@@ -17,8 +18,10 @@ import {
   echoed,
   failed,
   failingSession,
+  serverFrame,
   startEchoServer,
   startProxy,
+  startRawWsServer,
   startRawWssServer,
   startRecordingProxy,
   startRenegotiatingWssServer,
@@ -819,6 +822,133 @@ describe.concurrent("wss:// through a proxy: the end of the proxy connection", (
     const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
     expect(stdout).toBe(output);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("wss:// through a proxy: a connection the client fails", () => {
+  test.each(["http", "https"] as const)(
+    "%s proxy: the origin reads the Close frame, then the end of the TLS stream",
+    async scheme => {
+      const upgraded = Promise.withResolvers<RawWsPeer>();
+      using origin = await startRawWsServer(
+        peer => {
+          upgraded.resolve(peer);
+          peer.socket.write(serverFrame(0x3));
+        },
+        { tls: true, keepOpen: true },
+      );
+      using recorded = await startRecordingProxy({ tls: scheme === "https" });
+      const ws = new WebSocket(origin.url, {
+        proxy: `${scheme}://127.0.0.1:${recorded.port}`,
+        tls: { rejectUnauthorized: false },
+      });
+      const events = await clientEvents(ws);
+      const peer = await upgraded.promise;
+      expect({ events, closeFrame: await peer.closeCode, departed: await peer.departed }).toEqual({
+        events: failed(origin.url, "Protocol error - unsupported control frame", 1002),
+        closeFrame: 1002,
+        departed: { fin: true },
+      });
+    },
+  );
+});
+
+// After its close event the client waits for the server to close the connection. Nothing reads what
+// the server still sends in that time.
+describe.concurrent("wss:// through a proxy: what the server sends after the close event is dropped", () => {
+  const streamed = 48 * 1024 * 1024;
+
+  test.each([
+    ["close()", "ws.close()", 1000],
+    ["a frame the client rejects", "ws.send('next')", 1002],
+  ] as const)("after %s", async (_label, act, code) => {
+    const written = Promise.withResolvers<void>();
+    // `allowHalfOpen`: the close_notify of a client that failed the connection does not stop the stream.
+    const origin = tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert, allowHalfOpen: true }, socket => {
+      let request = "";
+      let upgraded = false;
+      let sent = 0;
+      const block = Buffer.alloc(1024 * 1024);
+      const stream = () => {
+        while (sent < streamed) {
+          sent += block.length;
+          if (sent === streamed) return void socket.write(block, () => written.resolve());
+          if (!socket.write(block)) return void socket.once("drain", stream);
+        }
+      };
+      socket.on("error", written.reject);
+      socket.on("close", () => written.reject(new Error(`the client left after ${sent} of ${streamed} bytes`)));
+      socket.on("data", (chunk: Buffer) => {
+        if (upgraded) {
+          if (sent > 0) return;
+          // The first frame of the client starts it: a frame with a reserved opcode, then the stream.
+          socket.write(Buffer.from([0x83, 0x00]));
+          return stream();
+        }
+        request += chunk.toString("latin1");
+        if (!request.includes("\r\n\r\n")) return;
+        upgraded = true;
+        const key = /^sec-websocket-key: (.*)\r$/im.exec(request)![1];
+        const accept = createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+      });
+    });
+    // The proxy and the origin share one TCP connection: what the origin has written is on its way to the client and nowhere else.
+    const proxy = net.createServer(client => {
+      client.once("data", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        origin.emit("connection", client);
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    try {
+      await using client = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const ws = new WebSocket("wss://127.0.0.1:1", { proxy: process.env.WS_PROXY, tls: { rejectUnauthorized: false } });
+            let before;
+            ws.onopen = () =>
+              setImmediate(() => {
+                before = process.memoryUsage.rss();
+                ${act};
+              });
+            ws.onclose = event => console.log(event.code);
+            // The test writes here once the server has sent everything.
+            process.stdin.once("data", () => {
+              console.log(process.memoryUsage.rss() - before);
+              process.exit(0);
+            });
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          NO_PROXY: "",
+          no_proxy: "",
+          WS_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`,
+        },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      await written.promise;
+      client.stdin.write("report\n");
+      client.stdin.end();
+      const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
+      const [closeCode, growth] = stdout.trim().split("\n").map(Number);
+      expect({ closeCode, exitCode }).toEqual({ closeCode: code, exitCode: 0 });
+      // A tunnel that keeps those bytes grows by about `streamed`.
+      expect(growth).toBeLessThan(streamed / 2);
+    } finally {
+      proxy.close();
+    }
   });
 });
 

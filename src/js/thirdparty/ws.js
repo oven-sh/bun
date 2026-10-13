@@ -170,8 +170,8 @@ class BunWebSocket extends EventEmitter {
     // any `perMessageDeflate` that's present and falsy suppresses the extension
     // offer; omitted or truthy keeps the default.
     let disableDeflate = false;
-    let maxPayload = 0;
-    let handshakeTimeout = 0;
+    // [maxPayload, handshakeTimeout] for the native client, when the caller set one.
+    let limits;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
@@ -182,15 +182,6 @@ class BunWebSocket extends EventEmitter {
 
       // Extract from agent if provided (like HttpsProxyAgent)
       const ownOptions = { __proto__: null, ...options };
-      // As in npm ws, `maxPayload | 0` that is not above 0 means no limit: the largest one the native client takes.
-      if ("maxPayload" in ownOptions) {
-        maxPayload = ownOptions.maxPayload | 0;
-        if (maxPayload <= 0) maxPayload = 0x7fffffff;
-      }
-      const timeout = ownOptions.handshakeTimeout;
-      if (timeout !== undefined) {
-        handshakeTimeout = Math.ceil(require("internal/timers").getTimerDuration(timeout, "timeout"));
-      }
       agent = ownOptions.agent;
       let connectOpts;
       if ($isObject(agent)) {
@@ -209,6 +200,19 @@ class BunWebSocket extends EventEmitter {
         // The agent wins: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L305
         tlsOptions = require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...ownOptions, ...connectOpts });
       }
+
+      let maxPayload = 0;
+      // As in npm ws, `maxPayload | 0` that is not above 0 means no limit: the largest one the native client takes.
+      if ("maxPayload" in ownOptions) {
+        maxPayload = ownOptions.maxPayload | 0;
+        if (maxPayload <= 0) maxPayload = 0x7fffffff;
+      }
+      let handshakeTimeout = 0;
+      const timeout = ownOptions.handshakeTimeout;
+      if (timeout !== undefined) {
+        handshakeTimeout = Math.ceil(require("internal/timers").getTimerDuration(timeout, "timeout"));
+      }
+      if (maxPayload !== 0 || handshakeTimeout !== 0) limits = [maxPayload, handshakeTimeout];
     }
 
     const finishRequest = options?.finishRequest;
@@ -248,17 +252,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(
-              url,
-              protocols,
-              headers,
-              method,
-              proxy,
-              tlsOptions,
-              disableDeflate,
-              maxPayload,
-              handshakeTimeout,
-            );
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate, limits);
           }
         },
         write() {},
@@ -287,35 +281,15 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(
-          url,
-          protocols,
-          headers,
-          method,
-          proxy,
-          tlsOptions,
-          disableDeflate,
-          maxPayload,
-          handshakeTimeout,
-        );
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate, limits);
       }
       return;
     }
 
-    this.#createWebSocket(
-      url,
-      protocols,
-      headers,
-      method,
-      proxy,
-      tlsOptions,
-      disableDeflate,
-      maxPayload,
-      handshakeTimeout,
-    );
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate, limits);
   }
 
-  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate, maxPayload, handshakeTimeout) {
+  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate, limits) {
     // The native WebSocket keeps permessage-deflate enabled by default;
     // forward `perMessageDeflate: false` only when the caller asked to disable.
     let wsOptions;
@@ -331,9 +305,9 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
-    if (maxPayload !== 0 || handshakeTimeout !== 0) {
+    if (limits !== undefined) {
       setClientLimits ??= $cpp("JSWebSocket.cpp", "createWebSocketClientLimitsSetter");
-      setClientLimits(ws, maxPayload, handshakeTimeout);
+      setClientLimits(ws, limits[0], limits[1]);
     }
 
     return ws;

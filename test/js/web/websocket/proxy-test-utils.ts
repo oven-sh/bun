@@ -307,7 +307,8 @@ export interface RawWsPeer {
   /**
    * The status code of the Close frame of the client (1005 for one without a
    * code), or `null` when its connection goes away without one. The server
-   * answers that Close frame with the same one and ends the connection.
+   * answers that Close frame with the same one and ends the connection,
+   * unless `keepOpen` is set.
    */
   closeCode: Promise<number | null>;
   /** How the connection of the client went away. */
@@ -318,6 +319,8 @@ export interface RawWsServerOptions {
   tls?: boolean;
   /** Accept a permessage-deflate offer, with no context takeover on either side. */
   deflate?: boolean;
+  /** Like a server that ignores a Close frame: it reads the frame and leaves the end of the connection to the client. */
+  keepOpen?: boolean;
   /**
    * Writes the 101 response. The default is one write. A test passes this to
    * choose how the bytes of the response, and what follows them, reach the client.
@@ -372,7 +375,7 @@ export async function startRawWsServer(onUpgraded: (peer: RawWsPeer) => void, op
         frames.push(frame);
         if (frame.opcode === 0x8) {
           closeCode.resolve(payload.length >= 2 ? payload.readUInt16BE(0) : 1005);
-          socket.end(serverFrame(0x8, payload));
+          if (!options.keepOpen) socket.end(serverFrame(0x8, payload));
         }
       }
     };

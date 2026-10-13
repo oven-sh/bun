@@ -26,7 +26,6 @@
 #include "HTTPParsers.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/ArrayConstructor.h>
-#include <JavaScriptCore/JSGlobalObjectFunctions.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/PropertyNameArray.h>
@@ -896,8 +895,8 @@ static ALWAYS_INLINE JSValue rawHeadListEntry(JSGlobalObject* globalObject, JSOb
     return list->get(globalObject, index);
 }
 
-// The line and matchHeader() of Node's storeHeader(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L608-L650
-static void appendRawHeadLine(RawHeadWalk& walk, JSString* name, StringView nameView, JSString* value, StringView text, JSValue number)
+// The line and matchHeader() of Node's storeHeader(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L608-L650. `given` is the value before it was made a string.
+static void appendRawHeadLine(RawHeadWalk& walk, JSString* name, StringView nameView, JSString* value, StringView text, JSValue given)
 {
     auto* globalObject = walk.globalObject;
     auto& vm = JSC::getVM(globalObject);
@@ -920,7 +919,7 @@ static void appendRawHeadLine(RawHeadWalk& walk, JSString* name, StringView name
         break;
     case 14:
         if (equalLettersIgnoringASCIICase(nameView, "content-length"_s)) {
-            double contentLength = number.toNumber(globalObject);
+            double contentLength = given.toNumber(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
             walk.contentLength = contentLength;
             walk.facts |= kRawHeadContentLength;

@@ -15,6 +15,9 @@ export const escapePowershell = (code: string) => fmtBinding(code, "escape-power
 
 export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
+// The hash a Map or Set files `key` under. A string's is also its property-table and atom-table hash.
+export const mapKeyHash: (key: unknown) => number = $newCppFunction("BunString.cpp", "jsMapKeyHashForTesting", 1);
+
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(

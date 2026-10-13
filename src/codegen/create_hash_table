@@ -34,25 +34,18 @@ open(IN, $file) or die "No such file $file";
 my @keys = ();
 my @attrs = ();
 my @values = ();
-my @table = ();
-my @links = ();
 
 my $hasSetter = "false";
 
 my $includeBuiltin = 0;
 my $inside = 0;
 my $name;
-my $perfectHashSize;
 my $compactSize;
 my $compactHashSizeMask;
 my $banner = 0;
-my $mask64 = 2**64 - 1;
-my $mask32 = 2**32 - 1;
-sub calcPerfectHashSize();
 sub calcCompactHashSize();
 sub output();
 sub jsc_ucfirst($);
-sub hashValue($);
 
 while (<IN>) {
     chomp;
@@ -146,201 +139,12 @@ sub ceilingToPowerOf2
     return $powerOf2;
 }
 
-sub calcPerfectHashSize()
-{
-tableSizeLoop:
-    for ($perfectHashSize = ceilingToPowerOf2(scalar @keys); ; $perfectHashSize += $perfectHashSize) {
-        if ($perfectHashSize > 2**15) {
-            die "The hash size is far too big. This should not be reached.";
-        }
-        my @table = ();
-        foreach my $key (@keys) {
-            my $h = hashValue($key) % $perfectHashSize;
-            next tableSizeLoop if $table[$h];
-            $table[$h] = 1;
-        }
-        last;
-    }
-}
-
 sub calcCompactHashSize()
 {
     my $compactHashSize = ceilingToPowerOf2(2 * @keys);
     $compactHashSizeMask = $compactHashSize - 1;
-    $compactSize = $compactHashSize;
-    my $collisions = 0;
-    my $maxdepth = 0;
-    my $i = 0;
-    foreach my $key (@keys) {
-        my $depth = 0;
-        my $h = hashValue($key) % $compactHashSize;
-        while (defined($table[$h])) {
-            if ($compactSize > 1000) {
-                die "The hash size is far too big. This should not be reached.";
-            }
-            if ($depth > 100) {
-                die "The depth is far too big. This should not be reached.";
-            }
-            if (defined($links[$h])) {
-                $h = $links[$h];
-                $depth++;
-            } else {
-                $collisions++;
-                $links[$h] = $compactSize;
-                $h = $compactSize;
-                $compactSize++;
-            }
-        }
-        $table[$h] = $i;
-        $i++;
-        $maxdepth = $depth if ($depth > $maxdepth);
-    }
-}
-
-sub maskTop8BitsAndAvoidZero($) {
-    my ($value) = @_;
-
-    $value &= $mask32;
-
-    # Save 8 bits for StringImpl to use as flags.
-    $value &= 0xffffff;
-
-    # This avoids ever returning a hash code of 0, since that is used to
-    # signal "hash not computed yet". Setting the high bit maintains
-    # reasonable fidelity to a hash code of 0 because it is likely to yield
-    # exactly 0 when hash lookup masks out the high bits.
-    $value = (0x80000000 >> 8) if ($value == 0);
-
-    return $value;
-}
-
-sub uint64_add($$) {
-    my ($a, $b) = @_;
-    my $sum = $a + $b;
-    return $sum & $mask64;
-}
-
-sub uint64_multi($$) {
-    my ($a, $b) = @_;
-    my $product = $a * $b;
-    return $product & $mask64;
-}
-
-sub rapid_mul128($$) {
-    my ($A, $B) = @_;
-
-    my $ha = $A >> 32;
-    my $hb = $B >> 32;
-    my $la = $A & $mask32;
-    my $lb = $B & $mask32;
-    my $hi;
-    my $lo;
-    my $rh = uint64_multi($ha, $hb);
-    my $rm0 = uint64_multi($ha, $lb);
-    my $rm1 = uint64_multi($hb, $la);
-    my $rl = uint64_multi($la, $lb);
-    my $t = uint64_add($rl, ($rm0 << 32));
-    my $c = int($t < $rl);
-
-    $lo = uint64_add($t, ($rm1 << 32));
-    $c += int($lo < $t);
-    $hi = uint64_add($rh, uint64_add(($rm0 >> 32), uint64_add(($rm1 >> 32), $c)));
-
-    return ($lo, $hi);
-};
-
-sub rapid_mix($$) {
-    my ($A, $B) = @_;
-    ($A, $B) = rapid_mul128($A, $B);
-    return $A ^ $B;
-}
-
-sub rapidhash {
-    # https://github.com/Nicoshev/rapidhash
-    # Hashes raw ASCII bytes (1 byte per character).
-    my @chars = @_;
-    my $len = scalar @chars;
-    my @secret = ( 3257665815644502181, 10067880064238660809, 5418857496715711651 );
-
-    my $seed = rapid_mix(0 ^ $secret[0], $secret[1]) ^ $len;
-    my $a = 0;
-    my $b = 0;
-
-    local *read64 = sub {
-        my ($i) = @_;
-        return ord($chars[$i])
-            | (ord($chars[$i + 1]) << 8)
-            | (ord($chars[$i + 2]) << 16)
-            | (ord($chars[$i + 3]) << 24)
-            | (ord($chars[$i + 4]) << 32)
-            | (ord($chars[$i + 5]) << 40)
-            | (ord($chars[$i + 6]) << 48)
-            | (ord($chars[$i + 7]) << 56);
-    };
-
-    local *read32 = sub {
-        my ($i) = @_;
-        return ord($chars[$i])
-            | (ord($chars[$i + 1]) << 8)
-            | (ord($chars[$i + 2]) << 16)
-            | (ord($chars[$i + 3]) << 24);
-    };
-
-    local *readSmall = sub {
-        my ($i, $k) = @_;
-        return (ord($chars[$i]) << 56)
-            | (ord($chars[$i + ($k >> 1)]) << 32)
-            | ord($chars[$i + $k - 1]);
-    };
-
-    if ($len <= 16) {
-        if ($len >= 4) {
-            my $delta = ($len >= 8) ? 4 : 0;
-            $a = (read32(0) << 32) | read32($len - 4);
-            $b = (read32($delta) << 32) | read32($len - 4 - $delta);
-        } elsif ($len > 0) {
-            $a = readSmall(0, $len);
-            $b = 0;
-        } else {
-            $a = $b = 0;
-        }
-    } else {
-        my $i = $len;
-        my $off = 0;
-        if ($i > 48) {
-            my $see1 = $seed;
-            my $see2 = $seed;
-            do {
-                $seed = rapid_mix(read64($off) ^ $secret[0], read64($off + 8) ^ $seed);
-                $see1 = rapid_mix(read64($off + 16) ^ $secret[1], read64($off + 24) ^ $see1);
-                $see2 = rapid_mix(read64($off + 32) ^ $secret[2], read64($off + 40) ^ $see2);
-                $off += 48;
-                $i -= 48;
-            } while ($i >= 48);
-            $seed ^= $see1 ^ $see2;
-        }
-        if ($i > 16) {
-            $seed = rapid_mix(read64($off) ^ $secret[2], read64($off + 8) ^ $seed ^ $secret[1]);
-            if ($i > 32) {
-                $seed = rapid_mix(read64($off + 16) ^ $secret[2], read64($off + 24) ^ $seed);
-            }
-        }
-        $a = read64($off + $i - 16);
-        $b = read64($off + $i - 8);
-    }
-    $a ^= $secret[1];
-    $b ^= $seed;
-
-    ($a, $b) = rapid_mul128($a, $b);
-    my $hash = rapid_mix($a ^ $secret[0] ^ $len, $b ^ $secret[1]) & $mask32;
-
-    return maskTop8BitsAndAvoidZero($hash);
-}
-
-sub hashValue($) {
-    my ($string) = @_;
-    my @chars = split(/ */, $string);
-    return rapidhash(@chars);
+    # HashTable::buildIndex() fills the index: every key after the first could collide.
+    $compactSize = $compactHashSize + @keys;
 }
 
 sub output() {
@@ -368,16 +172,7 @@ sub output() {
 
         my $hashTableString = "";
 
-        $hashTableString .= "static constinit const struct CompactHashIndex ${nameIndex}\[$compactSize\] = {\n";
-        for (my $i = 0; $i < $compactSize; $i++) {
-            my $T = -1;
-            if (defined($table[$i])) { $T = $table[$i]; }
-            my $L = -1;
-            if (defined($links[$i])) { $L = $links[$i]; }
-            $hashTableString .= "    { $T, $L },\n";
-        }
-
-        $hashTableString .= "};\n";
+        $hashTableString .= "static constinit struct CompactHashIndex ${nameIndex}\[$compactSize\] = { };\n";
         $hashTableString .= "\n";
 
         my $packedSize = scalar @keys;
@@ -439,8 +234,6 @@ sub output() {
         $hashTableString .= "    \{ $packedSize, $compactHashSizeMask, $hasSetter, nullptr, $nameEntries, $nameIndex \};\n";
         $hashTableString .= "\n";
 
-        @table = ();
-        @links = ();
         return $hashTableString;
     };
 

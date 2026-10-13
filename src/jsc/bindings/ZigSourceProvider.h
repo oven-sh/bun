@@ -70,7 +70,7 @@ private:
     void* m_bunVM;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
-    unsigned m_hash = 0;
+    mutable unsigned m_hash = 0;
 };
 
 } // namespace Zig

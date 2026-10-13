@@ -396,11 +396,9 @@ extern "C" bool Bun__BytecodeOrder__digestModule(JSC::VM* vm, const BunString* s
 
 unsigned SourceProvider::hash() const
 {
-    if (m_hash) {
-        return m_hash;
-    }
-
-    return m_source->hash();
+    if (!m_hash)
+        m_hash = m_source->stableHash();
+    return m_hash;
 }
 
 extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
@@ -424,13 +422,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSourceHasLineStarts, (JSC::JSGlobalObject*, JSC::Call
 
 } // namespace Bun
 
-// What StringImpl::hash() returns for an 8-bit string with these bytes; `bun build --compile` records it per module.
-extern "C" uint32_t Bun__WTFStringHashLatin1(const Latin1Character* characters, size_t length)
+// What StringImpl::stableHash() returns for an 8-bit string with these bytes; `bun build --compile` records it per module.
+extern "C" uint32_t Bun__WTFStringStableHashLatin1(const Latin1Character* characters, size_t length)
 {
-    return StringHasher::computeHashAndMaskTop8Bits(std::span { characters, length });
+    return StringHasher::computeStableHashAndMaskTop8Bits(std::span { characters, length });
 }
 
-extern "C" uint32_t Bun__WTFStringHashUTF16(const char16_t* characters, size_t length)
+extern "C" uint32_t Bun__WTFStringStableHashUTF16(const char16_t* characters, size_t length)
 {
-    return StringHasher::computeHashAndMaskTop8Bits(std::span { characters, length });
+    return StringHasher::computeStableHashAndMaskTop8Bits(std::span { characters, length });
 }

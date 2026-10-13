@@ -114,15 +114,10 @@ unsafe extern "C" {
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
-    fn BunString__createStaticExternalLatin1WithHash(
+    fn BunString__createStaticExternalShareable(
         bytes: *const u8,
         len: usize,
-        hash: u32,
-    ) -> String;
-    fn BunString__createStaticExternalUTF16WithHash(
-        units: *const u16,
-        len: usize,
-        hash: u32,
+        isLatin1: bool,
     ) -> String;
     fn BunString__createExternal(
         bytes: *const u8,
@@ -379,26 +374,25 @@ impl String {
         // without copying and never frees it.
         unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
     }
-    /// [`Self::create_static_external`] for Latin-1 bytes whose `WTF::StringImpl::hash()` is already known, so the
-    /// result is thread-shareable without reading the bytes.
-    pub fn create_static_external_latin1_with_hash(bytes: &[u8], hash: u32) -> Self {
+    /// [`Self::create_static_external`] for Latin-1 bytes, thread-shareable without reading them.
+    pub fn create_static_external_shareable_latin1(bytes: &[u8]) -> Self {
         debug_assert!(!bytes.is_empty());
-        // SAFETY: as above; `hash` is StringImpl::hash() of `bytes`.
-        unsafe { BunString__createStaticExternalLatin1WithHash(bytes.as_ptr(), bytes.len(), hash) }
+        // SAFETY: as above.
+        unsafe { BunString__createStaticExternalShareable(bytes.as_ptr(), bytes.len(), true) }
     }
-    /// UTF-16 form of [`Self::create_static_external`]: `units` must be
-    /// 2-byte aligned and live for the rest of the process.
-    pub fn create_static_external_utf16(units: &[u16]) -> Self {
+    /// UTF-16 form of [`Self::create_static_external_shareable_latin1`]: `units`
+    /// must live for the rest of the process.
+    pub fn create_static_external_shareable_utf16(units: &[u16]) -> Self {
         debug_assert!(!units.is_empty());
         // SAFETY: the C++ side takes the length in code units and stores
         // ptr/len without copying or freeing.
-        unsafe { BunString__createStaticExternal(units.as_ptr().cast::<u8>(), units.len(), false) }
-    }
-    /// [`Self::create_static_external_utf16`] for units whose `WTF::StringImpl::hash()` is already known.
-    pub fn create_static_external_utf16_with_hash(units: &[u16], hash: u32) -> Self {
-        debug_assert!(!units.is_empty());
-        // SAFETY: as above; `hash` is StringImpl::hash() of `units`.
-        unsafe { BunString__createStaticExternalUTF16WithHash(units.as_ptr(), units.len(), hash) }
+        unsafe {
+            BunString__createStaticExternalShareable(
+                units.as_ptr().cast::<u8>(),
+                units.len(),
+                false,
+            )
+        }
     }
     /// Formats `args` into a WTF-backed string; an argument-free ASCII
     /// literal is returned as `static_` without copying.

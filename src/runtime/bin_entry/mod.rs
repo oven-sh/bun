@@ -190,6 +190,16 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         bun_core::handle_oom(bun_sys::windows::env::convert_env_to_wtf8());
     }
 
+    // Before the first WTF string or table: a hash made earlier would not match the ones made later.
+    unsafe extern "C" {
+        safe fn Bun__initializeHashSecrets(per_process: bool);
+    }
+    Bun__initializeHashSecrets(
+        bun_core::env_var::BUN_CONFIG_RANDOMIZE_HASHES
+            .get()
+            .unwrap_or(false),
+    );
+
     // 2/3. Allocator is static above; argv was captured at step 0; start_time
     //      is lazy in `bun_core::start_time()`.
 

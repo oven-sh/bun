@@ -1,7 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include <wtf/HashMap.h>
+#include <wtf/OrderedHashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/text/StringHash.h>
@@ -89,7 +89,7 @@ private:
     };
 
     Lock m_lock;
-    HashMap<String, Entry> m_map WTF_GUARDED_BY_LOCK(m_lock);
+    OrderedHashMap<String, Entry> m_map WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace Bun

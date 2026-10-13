@@ -34,7 +34,7 @@ struct WorkerOptions {
     // Objects transferred for either data or environmentData in the transferList
     Vector<TransferredMessagePort> dataMessagePorts;
     Vector<String> preloadModules;
-    std::optional<HashMap<String, String>> env;
+    std::optional<OrderedHashMap<String, String>> env;
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;

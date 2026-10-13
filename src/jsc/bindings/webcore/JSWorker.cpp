@@ -290,7 +290,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
                 envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                HashMap<String, String> env;
+                OrderedHashMap<String, String> env;
 
                 for (const auto& key : keys) {
                     JSValue value = envObject->get(lexicalGlobalObject, key);

@@ -28,7 +28,7 @@
 #include "ExceptionOr.h"
 #include "PerformanceMark.h"
 #include "PerformanceMeasure.h"
-#include <wtf/HashMap.h>
+#include <wtf/OrderedHashMap.h>
 #include <wtf/text/StringHash.h>
 
 namespace JSC {
@@ -39,7 +39,7 @@ namespace WebCore {
 
 class Performance;
 
-using PerformanceEntryMap = HashMap<String, Vector<RefPtr<PerformanceEntry>>>;
+using PerformanceEntryMap = OrderedHashMap<String, Vector<RefPtr<PerformanceEntry>>>;
 
 class PerformanceUserTiming {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PerformanceUserTiming);

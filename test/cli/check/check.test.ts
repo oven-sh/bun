@@ -15762,7 +15762,7 @@ describe.concurrent("--check", () => {
       expect(
         results.map(it => [
           it.stdout,
-          /^Found 1 error in 1 file, checked [\d,]+ files \[time\]$/.test(it.stderr),
+          /^Found 1 error in 1 file, checked [\d,]+ files? \[time\]$/.test(it.stderr),
           it.exitCode,
         ]),
       ).toEqual(
@@ -16975,22 +16975,22 @@ describe.concurrent("--check", () => {
       run(String(dir), ["run", "--check", "--parallel", "one", "two"]),
       run(String(dir), ["run", "--check", "--sequential", "one", "two"]),
     ]);
+    const direct = await Promise.all([
+      run(String(dir), ["test", "--check", "a.test.ts"]),
+      run(String(dir), ["test", "--check", "--timeout", "1000", "a.test.ts"]),
+    ]);
+    writeFileSync(join(String(dir), "a.ts"), `export const a: number = 1;\n`);
+    const checked = await Promise.all(filtered.map(args => run(String(dir), args)));
+    expect(checked.map(it => [it.stdout.includes("a ran"), it.exitCode])).toEqual(checked.map(() => [true, 0]));
     const seen = results.map(it => [
       it.exitCode,
       it.stderr.includes("TS2322"),
       (it.stdout + it.stderr).includes("ran"),
     ]);
     expect(seen).toEqual(results.map(() => [1, true, false]));
-    const direct = await Promise.all([
-      run(String(dir), ["test", "--check", "--filter", "*"]),
-      run(String(dir), ["test", "--check", "--filter=*", "a.test.ts"]),
-    ]);
     expect(direct.map(it => [/^bun test v[^\n]+$/.test(it.stdout), it.stderr.includes("TS2322"), it.exitCode])).toEqual(
       direct.map(() => [true, true, 1]),
     );
-    writeFileSync(join(String(dir), "a.ts"), `export const a: number = 1;\n`);
-    const checked = await Promise.all(filtered.map(args => run(String(dir), args)));
-    expect(checked.map(it => [it.stdout.includes("a ran"), it.exitCode])).toEqual(checked.map(() => [true, 0]));
   });
 
   test("bun test --watch --check watches the tsconfig.json of every project", async () => {

@@ -33,45 +33,12 @@ use bun_resolver::fs::FileSystem;
 // with `MapEntry.root`.
 use bun_ast::Loc;
 use bun_ast::{self, E, Expr, expr as js_expr};
+use bun_core::fmt::TerminalHyperlink;
 use bun_core::strings;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
-
-pub(crate) struct TerminalHyperlink<'a> {
-    link: &'a [u8],
-    text: &'a [u8],
-    enabled: bool,
-}
-
-impl<'a> TerminalHyperlink<'a> {
-    fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
-        TerminalHyperlink {
-            link,
-            text,
-            enabled,
-        }
-    }
-}
-
-impl fmt::Display for TerminalHyperlink<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.enabled {
-            const ESC: &str = "\x1b";
-            // OSC8 = ESC ]8;; ; ST = ESC \
-            write!(
-                f,
-                "{esc}]8;;{link}{esc}\\{text}{esc}]8;;{esc}\\",
-                esc = ESC,
-                link = BStr::new(self.link),
-                text = BStr::new(self.text),
-            )
-        } else {
-            write!(f, "{}", BStr::new(self.text))
-        }
-    }
-}
 
 pub(crate) struct UpdateInteractiveCommand;
 

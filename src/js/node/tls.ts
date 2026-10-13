@@ -12,8 +12,11 @@ const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
+  normalizePemKeyOption,
   processPfxOptions,
-  validateSecureProtocol,
+  stripTls13CipherNames,
+  validateSecureContextOptions,
+  SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");
 const {
   validateString,
@@ -36,12 +39,15 @@ const {
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
+// Node warns at the first secure context; the once-per-process native load is what prints it.
+const maybeWarnAboutExtraCACerts = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates", 1);
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
 const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+const selectServerName = $newCppFunction("NodeTLS.cpp", "selectServerName", 2);
 let _VALID_CIPHERS_SET: Set<string> | undefined;
 function getValidCiphersSet() {
   if (!_VALID_CIPHERS_SET) {
@@ -195,104 +201,6 @@ function validateCiphers(ciphers: string, name: string = "options") {
   }
 }
 
-const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
-
-const SUPPORTED_ECDH_GROUPS = new Set([
-  "P-256",
-  "prime256v1",
-  "P-384",
-  "secp384r1",
-  "P-521",
-  "secp521r1",
-  "X25519",
-  "x25519",
-  "X25519MLKEM768",
-  "MLKEM1024",
-]);
-
-// Subset of Node's configSecureContext() validations:
-// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L318
-function validateSecureContextOptions(options) {
-  const {
-    ciphers,
-    passphrase,
-    ecdhCurve,
-    minVersion,
-    maxVersion,
-    sessionTimeout,
-    sigalgs,
-    ticketKeys,
-    clientCertEngine,
-    dhparam,
-    secureProtocol,
-  } = options;
-  validateSecureProtocol(secureProtocol);
-  if (ciphers !== undefined && ciphers !== null) validateString(ciphers, "options.ciphers");
-  if (passphrase !== undefined && passphrase !== null) validateString(passphrase, "options.passphrase");
-  if (sigalgs !== undefined && sigalgs !== null) {
-    validateString(sigalgs, "options.sigalgs");
-    if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
-  }
-  if (ecdhCurve !== undefined) {
-    validateString(ecdhCurve, "options.ecdhCurve");
-    if (ecdhCurve !== "auto") {
-      for (const curve of StringPrototypeSplit.$call(ecdhCurve, ":")) {
-        if (!SUPPORTED_ECDH_GROUPS.has(curve)) {
-          // Not $ERR_*: Node's THROW_ERR_CRYPTO_OPERATION_FAILED has no bracketed
-          // toString; test-tls-ecdh-multiple.js pins /Error: Failed to set ECDH curve/.
-          const err = new Error("Failed to set ECDH curve") as Error & { code: string };
-          err.code = "ERR_CRYPTO_OPERATION_FAILED";
-          throw err;
-        }
-      }
-    }
-  }
-  // clientCertEngine must be a string (engine name); a provided engine then
-  // fails because BoringSSL (which Bun always uses) has no OpenSSL ENGINE
-  // support, matching Node's setClientCertEngine. Node:
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L296
-  if (clientCertEngine !== undefined && clientCertEngine !== null) {
-    if (typeof clientCertEngine !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.clientCertEngine", ["string", "null", "undefined"], clientCertEngine);
-    }
-    throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
-  }
-  // BoringSSL (always used by Bun) has no automatic DH parameter selection.
-  // Matches Node's setDHParam('auto') throwing ERR_CRYPTO_UNSUPPORTED_OPERATION.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L254
-  if (dhparam === "auto") {
-    throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
-  }
-  if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(minVersion), "minimum");
-  if (maxVersion != null && !VALID_TLS_VERSIONS.has(maxVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(maxVersion), "maximum");
-  if (ticketKeys !== undefined && ticketKeys !== null) {
-    validateBuffer(ticketKeys, "options.ticketKeys");
-    const ticketKeysByteLength = ticketKeys.byteLength;
-    if (ticketKeysByteLength !== 48) {
-      throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeysByteLength, "must be exactly 48 bytes");
-    }
-  }
-  // Negative session timeouts are rejected (min 0), matching Node — newer
-  // OpenSSL/BoringSSL do not handle negative values as users expect.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L319
-  if (sessionTimeout !== undefined && sessionTimeout !== null) {
-    // Node validates this with validateInt32(..., 0), whose range message
-    // reads ">= 0 && <= 2147483647"; the shared validator here words it
-    // differently, so spell the check out to match.
-    if (typeof sessionTimeout !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("options.sessionTimeout", "number", sessionTimeout);
-    }
-    if (!Number.isInteger(sessionTimeout)) {
-      throw $ERR_OUT_OF_RANGE("options.sessionTimeout", "an integer", sessionTimeout);
-    }
-    if (sessionTimeout < 0 || sessionTimeout > 2147483647) {
-      throw $ERR_OUT_OF_RANGE("options.sessionTimeout", ">= 0 && <= 2147483647", sessionTimeout);
-    }
-  }
-}
-
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const RegExpPrototypeExec = RegExp.prototype.exec;
@@ -308,6 +216,7 @@ const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringFromCharCode = String.fromCharCode;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -315,8 +224,7 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
-const ArrayPrototypeFilter = Array.prototype.filter;
-const ArrayPrototypeMap = Array.prototype.map;
+const ArrayPrototypeSort = Array.prototype.sort;
 
 const ObjectFreeze = Object.freeze;
 
@@ -489,7 +397,7 @@ function checkServerIdentity(hostname, cert) {
 
   // As in Node.js (https://github.com/nodejs/node/commit/1d87a24050), a host is an IP address only as typed.
   if (net.isIP(hostname)) {
-    // canonicalizeIP() is undefined for "::1%lo" and for a malformed IP SAN, and undefined must not match undefined.
+    // canonicalizeIP() drops the zone id of "fe80::1%eth0". It is undefined for a malformed IP SAN, and undefined must not match undefined.
     const ip = canonicalizeIP(hostname);
     valid = ip !== undefined && ArrayPrototypeIncludes.$call(ips, ip);
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
@@ -534,33 +442,6 @@ const NativeSecureContext = $rust("SecureContext.rs", "js.getConstructor");
 // accepts null|string|ArrayBuffer|Blob|array, so coerce falsy → null before
 // crossing into native so `{ key: false }` etc. doesn't throw
 // ERR_INVALID_ARG_TYPE from the bindgen layer.
-
-function hasPemObject(key) {
-  if (!key) return false;
-  if ($isArray(key)) return ArrayPrototypeSome.$call(key, isPemKeyEntry);
-  return isPemKeyEntry(key);
-}
-
-function isPemKeyEntry(k) {
-  return k && typeof k === "object" && !isArrayBufferView(k) && "pem" in k;
-}
-
-function normalizePemKeyOption(key, ctxPassphrase) {
-  if (!key || !hasPemObject(key)) return key;
-  const entries = $isArray(key) ? key : [key];
-  return ArrayPrototypeMap.$call(entries, k => {
-    if (!isPemKeyEntry(k)) return k;
-    // Node: val?.passphrase !== undefined ? val.passphrase : passphrase - an
-    // explicit per-key null means "no passphrase for this key" and does NOT
-    // fall back to the context-level one.
-    const passphrase = k.passphrase !== undefined ? k.passphrase : ctxPassphrase;
-    if (passphrase == null) return k.pem;
-    const { createPrivateKey } = require("node:crypto");
-    return createPrivateKey({ key: k.pem, passphrase }).export({ type: "pkcs8", format: "pem" });
-  });
-}
-
-const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
 // SNI is a C string, so as in Node.js it ends at a NUL. checkServerIdentity() still gets the whole servername.
 function sniName(servername) {
@@ -676,20 +557,6 @@ var InternalSecureContext = class SecureContext {
         throw new TypeError("servername argument must be an string");
       if (options.secureOptions != null && typeof options.secureOptions !== "number")
         throw new TypeError("secureOptions argument must be an number");
-      const privateKeyIdentifier = options.privateKeyIdentifier;
-      if (!$isUndefinedOrNull(privateKeyIdentifier)) {
-        const privateKeyEngine = options.privateKeyEngine;
-        if ($isUndefinedOrNull(privateKeyEngine))
-          throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", privateKeyEngine);
-        if (typeof privateKeyEngine !== "string")
-          throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], privateKeyEngine);
-        if (typeof privateKeyIdentifier !== "string")
-          throw $ERR_INVALID_ARG_TYPE(
-            "options.privateKeyIdentifier",
-            ["string", "null", "undefined"],
-            privateKeyIdentifier,
-          );
-      }
     }
     const requestedCiphers = options?.ciphers;
     if (requestedCiphers && StringPrototypeIncludes.$call(requestedCiphers, "TLS_")) {
@@ -708,6 +575,8 @@ var InternalSecureContext = class SecureContext {
 function SecureContext(options): void {
   return createSecureContext(options) as never;
 }
+SecureContext.prototype = InternalSecureContext.prototype;
+InternalSecureContext.prototype.constructor = SecureContext;
 
 function createSecureContext(options) {
   if (options instanceof InternalSecureContext) return options;
@@ -717,7 +586,7 @@ function createSecureContext(options) {
   // by the per-VM `SSLContextCache`, so no JS-side hashing here. The JS wrapper
   // is built fresh because it carries the per-call `servername`.
   // The user-facing constructor owns its SSL_CTX exclusively so addCACert
-  // cannot leak across contexts; internal connect/listen paths stay cached.
+  // cannot leak across contexts; a TLSSocket's own and addContext()'s stay cached.
   return new InternalSecureContext(options);
 }
 
@@ -729,13 +598,13 @@ function translatePeerCertificate(c) {
 }
 
 const ksecureContext = Symbol("ksecureContext");
-const ksharedCredsOptions = Symbol("ksharedCredsOptions");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
 const ksession = Symbol("ksession");
+const kservername = Symbol("kservername");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
+const kcontexts = Symbol("kcontexts");
 
 const buntls = Symbol.for("::buntls::");
-const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
 // (Node's `context.context || context` unwrap accepts both the wrapper and
 // the unwrapped native context).
@@ -746,6 +615,7 @@ function TLSSocket(socket?, options?) {
   this.ALPNProtocols = undefined;
   this[kcheckServerIdentity] = undefined;
   this[ksession] = undefined;
+  this[kservername] = undefined;
   this.alpnProtocol = null;
   this._secureEstablished = false;
   this._rejectUnauthorized = false;
@@ -773,14 +643,14 @@ function TLSSocket(socket?, options?) {
     throw $ERR_INVALID_ARG_TYPE("socket", "Duplex", socket);
   }
 
-  // The wrapped socket's allowHalfOpen wins: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592
+  // A wrapped socket keeps its allowHalfOpen and drops onread: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592-L596
   if (isNetSocketOrDuplex) {
-    options = { ...options, allowHalfOpen: socket.allowHalfOpen };
+    options = { ...options, allowHalfOpen: socket.allowHalfOpen, onread: null };
   } else {
     options = options || socket || {};
     const wrapped = options.socket;
     if (wrapped instanceof Duplex) {
-      options = { ...options, allowHalfOpen: wrapped.allowHalfOpen };
+      options = { ...options, allowHalfOpen: wrapped.allowHalfOpen, onread: null };
     }
   }
 
@@ -840,7 +710,11 @@ function TLSSocket(socket?, options?) {
   }
   // Internal path: keep the per-digest cache (the user-facing constructors,
   // createSecureContext() and new tls.SecureContext(), own theirs exclusively).
-  this[ksecureContext] = options.secureContext || new InternalSecureContext(options, true);
+  const secureContext = options.secureContext;
+  if (secureContext && !(secureContext.context instanceof NativeSecureContext)) {
+    throw $ERR_TLS_INVALID_CONTEXT("context must be a SecureContext");
+  }
+  this[ksecureContext] = secureContext || new InternalSecureContext(options, true);
   this.authorized = false;
   this.secureConnecting = true;
   this._secureEstablished = false;
@@ -929,7 +803,6 @@ TLSSocket.prototype._start = function _start() {
 };
 
 TLSSocket.prototype._final = function _final(callback) {
-  if (!this._handle) return callback();
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
     return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
@@ -1075,14 +948,12 @@ TLSSocket.prototype.setServername = function setServername(name) {
   if (this.isServer) {
     throw $ERR_TLS_SNI_FROM_SERVER();
   }
-  // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
+  this[kservername] = name;
   this.servername = name;
   this._handle?.setServername?.(name);
 };
 
 TLSSocket.prototype.setSession = function setSession(session) {
-  // A wrap sent its ClientHello in the constructor, and BoringSSL aborts the process on a session set after that.
-  if (this[kStandaloneWrap]) return;
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
   return this._handle?.setSession?.(session);
@@ -1156,13 +1027,14 @@ TLSSocket.prototype[buntls] = function (port, host) {
   // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
   // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
   // falling back to the connection host.
-  let servername = this.servername || ctx?.servername;
+  let servername = this.servername || this[kservername] || ctx?.servername;
   if (servername === undefined) {
     servername = host && !net.isIP(host) ? host : "";
   }
   return {
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],
+    builtinCheckServerIdentity: checkServerIdentity,
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
@@ -1178,29 +1050,35 @@ TLSSocket.prototype[buntls] = function (port, host) {
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
-function buildSharedCreds(server) {
-  return (server._sharedCreds = new InternalSecureContext(
-    {
-      ...server[ksharedCredsOptions],
-      pfx: undefined,
-      _pfxExtraCACerts: undefined,
-      key: server.key,
-      cert: server.cert,
-      ca: server.ca,
-      crl: server.crl,
-      ciphers: server.ciphers,
-      secureOptions: server.secureOptions,
-      allowPartialTrustChain: server.allowPartialTrustChain,
-      sessionTimeout: server.sessionTimeout,
-      sigalgs: server.sigalgs,
-      ecdhCurve: server.ecdhCurve ?? DEFAULT_ECDH_CURVE,
-      passphrase: server.passphrase,
-      secureProtocol: server.secureProtocol,
-      minVersion: server.minVersion,
-      maxVersion: server.maxVersion,
-    },
-    true,
-  ));
+// Not interned: one SSL_CTX is one session cache and one set of ticket keys, and no other server or client may share them.
+function buildSharedCreds(server, options) {
+  return new InternalSecureContext({
+    ...options,
+    pfx: undefined,
+    _pfxExtraCACerts: undefined,
+    key: server.key,
+    cert: server.cert,
+    ca: server.ca,
+    crl: server.crl,
+    ciphers: server.ciphers,
+    secureOptions: server.secureOptions,
+    allowPartialTrustChain: server.allowPartialTrustChain,
+    sessionTimeout: server.sessionTimeout,
+    sigalgs: server.sigalgs,
+    ecdhCurve: server.ecdhCurve ?? DEFAULT_ECDH_CURVE,
+    passphrase: server.passphrase,
+    secureProtocol: server.secureProtocol,
+    minVersion: server.minVersion,
+    maxVersion: server.maxVersion,
+    // The verify mode accepted sockets inherit. setSecureContext() does not name them.
+    requestCert: server._requestCert === true,
+    rejectUnauthorized: server._rejectUnauthorized,
+  });
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1599-L1611
+function SNICallback(servername, callback) {
+  callback(null, selectServerName(this.server[kcontexts], servername));
 }
 
 function Server(options, secureConnectionListener): void {
@@ -1264,9 +1142,13 @@ function Server(options, secureConnectionListener): void {
   if (serverOptions?.ALPNProtocols) convertALPNProtocols(serverOptions.ALPNProtocols, this);
   this._sharedCreds = undefined;
 
-  let contexts: Map<string, typeof InternalSecureContext> | null = null;
+  const contexts = (this[kcontexts] = new Map<string, InstanceType<typeof InternalSecureContext>>());
 
   this.addContext = function (hostname, context) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
+    if (!hostname) {
+      throw $ERR_TLS_REQUIRED_SERVER_NAME();
+    }
     if (typeof hostname !== "string") {
       throw new TypeError("hostname must be a string");
     }
@@ -1278,11 +1160,13 @@ function Server(options, secureConnectionListener): void {
       // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
       // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(handle, hostname, context.context);
-    } else {
-      if (!contexts) contexts = new Map();
-      contexts.set(hostname, context);
     }
+    // listen() replays the map in order: a re-added name moves to the end.
+    contexts.$delete(hostname);
+    contexts.$set(hostname, context);
   };
+
+  let listenerContext;
 
   this.setSecureContext = function (options) {
     const serverTLSOptions = options;
@@ -1291,10 +1175,25 @@ function Server(options, secureConnectionListener): void {
       options = options.context;
     }
     if (options) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1456: falsy counts as absent
+      const { minVersion, maxVersion, secureProtocol } = options;
+      if (
+        (minVersion != null && !minVersion) ||
+        (maxVersion != null && !maxVersion) ||
+        (secureProtocol != null && !secureProtocol)
+      ) {
+        options = {
+          ...options,
+          minVersion: minVersion || undefined,
+          maxVersion: maxVersion || undefined,
+          secureProtocol: secureProtocol || undefined,
+        };
+      }
       validateSecureContextOptions(options);
       options = processPfxOptions(options);
 
-      let cert = options.cert;
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1431-L1474: a falsy key, cert, ca or crl counts as absent
+      let cert = options.cert || undefined;
       // Assign unconditionally so a later setSecureContext() that omits an
       // option clears the previous call's value (Node resets each omitted
       // field) instead of silently keeping stale key material.
@@ -1303,61 +1202,18 @@ function Server(options, secureConnectionListener): void {
       }
       next.cert = cert;
 
-      let key = options.key;
+      let key = options.key || undefined;
       if (key) {
         throwOnInvalidTLSArray("options.key", key);
       }
       next.key = key;
 
-      // BoringSSL rejects a mixed EC/RSA multi-identity configuration while
-      // loading the chain. The native context is built lazily at listen time,
-      // so surface the most common mismatch synchronously here: a key whose
-      // type differs from its own index-paired certificate. This is a
-      // best-effort check - the native loader at listen time remains the
-      // authority and still rejects configurations that pass it.
-      const keyLength = Array.isArray(key) ? key.length : 0;
-      if (keyLength > 1 && cert) {
-        const certs = Array.isArray(cert) ? cert : [cert];
-        try {
-          const { createPrivateKey, X509Certificate } = require("node:crypto");
-          for (let i = 0; i < keyLength; i++) {
-            const k = key[i];
-            if (typeof k !== "string" && !$isTypedArrayView(k)) continue;
-            const pairedCert = certs[i < certs.length ? i : certs.length - 1];
-            const certType = new X509Certificate(pairedCert).publicKey.asymmetricKeyType;
-            if (createPrivateKey(k).asymmetricKeyType !== certType) {
-              const err = new Error(
-                "error:0b000074:X.509 certificate routines:OPENSSL_internal:KEY_TYPE_MISMATCH",
-              ) as Error & { code: string; library: string; function: string; reason: string };
-              err.code = "ERR_OSSL_X509_KEY_TYPE_MISMATCH";
-              err.library = "X.509 certificate routines";
-              err.function = "OPENSSL_internal";
-              err.reason = "KEY_TYPE_MISMATCH";
-              throw err;
-            }
-          }
-        } catch (e: any) {
-          if (e?.code === "ERR_OSSL_X509_KEY_TYPE_MISMATCH") throw e;
-          // An unparseable key or certificate falls through to the native
-          // load, which produces its own error.
-        }
-      }
-
-      let ca = options.ca;
-      // The process-wide default-CA override (tls.setDefaultCACertificates)
-      // applies here too when no explicit `ca` was given: this path hands raw
-      // {key, cert, ca} to the native listener and never goes through
-      // InternalSecureContext, so without this an mTLS server would verify
-      // client certificates against the bundled roots instead of the
-      // overridden defaults.
+      let ca = options.ca || undefined;
+      // InternalSecureContext applies tls.setDefaultCACertificates() itself; a named pipe listener builds from this field.
       if (_defaultCACertificatesOverride !== undefined && ca == null) {
         ca = _defaultCACertificatesOverride;
       }
-      // PKCS#12-embedded CAs are stashed separately so createSecureContext can
-      // extend (not replace) the default trust set via addCACert. The server
-      // path hands raw {key, cert, ca} to the native listener and has no
-      // addCACert hook, so fold them into `ca` here - an mTLS server should
-      // verify client certificates against the bundle's own CA chain.
+      // buildSharedCreds() drops them, so they go into `ca`: an mTLS server verifies clients against the bundle's own CA chain.
       const pfxExtraCAs = options._pfxExtraCACerts;
       if (pfxExtraCAs?.length) {
         ca = ca == null ? pfxExtraCAs : Array.isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
@@ -1367,7 +1223,7 @@ function Server(options, secureConnectionListener): void {
       }
       next.ca = ca;
 
-      const crl = options.crl;
+      const crl = options.crl || undefined;
       if (crl) {
         throwOnInvalidTLSArray("options.crl", crl);
       }
@@ -1427,14 +1283,16 @@ function Server(options, secureConnectionListener): void {
       next.minVersion = options.minVersion;
       next.maxVersion = options.maxVersion;
     }
+    const isContext = serverTLSOptions instanceof InternalSecureContext;
+    // Reads the staged fields over the server's own. Throws on material BoringSSL rejects, so it runs before the fields change.
+    const own = buildSharedCreds({ __proto__: this, ...next }, isContext ? undefined : serverTLSOptions);
+    // Accepted sockets take their verify mode from the context, so the listener's is always this server's own. An instance names no key, as in Node.
+    listenerContext = own.context;
+    const handle = this._handle;
+    if (handle && options) {
+      setListenerSecureContext(handle, listenerContext);
+    }
     if (options) {
-      // Throws on material BoringSSL rejects, so it runs before the fields change.
-      const handle = this._handle;
-      if (handle && !(serverTLSOptions instanceof InternalSecureContext)) {
-        // [buntls] reads its receiver: the staged fields over the server's own.
-        const staged = { __proto__: this, ...next };
-        setListenerSecureContext(handle, staged[buntls](0, undefined, false)[0]);
-      }
       this.cert = next.cert;
       this.key = next.key;
       this.ca = next.ca;
@@ -1451,30 +1309,7 @@ function Server(options, secureConnectionListener): void {
       this.minVersion = next.minVersion;
       this.maxVersion = next.maxVersion;
     }
-    this._sharedCreds = serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : null;
-    this[ksharedCredsOptions] =
-      serverTLSOptions == null || serverTLSOptions instanceof InternalSecureContext
-        ? serverTLSOptions
-        : { ...serverTLSOptions };
-  };
-
-  // Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
-  // an SNICallback (the `context.context || context` unwrap accepts both the
-  // wrapper and the unwrapped native context).
-  Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
-
-  Server.prototype.getTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
-
-  Server.prototype.setTicketKeys = function (keys) {
-    if (!ArrayBuffer.isView(keys)) {
-      throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
-    }
-    if (keys.byteLength !== 48) {
-      throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
-    }
-    throw Error("Not implented in Bun yet");
+    this._sharedCreds = isContext ? serverTLSOptions : own;
   };
 
   this[buntls] = function (port, host, isClient) {
@@ -1482,6 +1317,8 @@ function Server(options, secureConnectionListener): void {
     return [
       {
         serverName: sniName(this.servername || host || "localhost"),
+        // What a socket listener serves. Only a named pipe's still builds its own from the fields below.
+        secureContext: listenerContext,
         key: normalizePemKeyOption(this.key, this.passphrase),
         cert: this.cert,
         ca: this.ca,
@@ -1492,8 +1329,7 @@ function Server(options, secureConnectionListener): void {
         ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
-        // A server that requests no client certificate has none to reject.
-        rejectUnauthorized: requestCert ? this._rejectUnauthorized : false,
+        rejectUnauthorized: this._rejectUnauthorized,
         requestCert,
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
@@ -1537,20 +1373,12 @@ function Server(options, secureConnectionListener): void {
     // TLS layer, like Node's tls.Server wraps any injected duplex
     // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
     if (!socket || (socket.encrypted && socket.server === this)) return;
-    let secureContext;
-    try {
-      secureContext = this[kSharedCreds]();
-    } catch (err) {
-      socket.destroy();
-      this.emit("error", err);
-      return;
-    }
     const wrapped = new TLSSocket(socket, {
-      secureContext,
+      secureContext: this._sharedCreds,
       isServer: true,
       requestCert: this._requestCert,
       rejectUnauthorized: this._rejectUnauthorized,
-      SNICallback: this._SNICallback,
+      SNICallback: this._SNICallback ?? (contexts.size ? SNICallback : undefined),
       ALPNProtocols: this.ALPNProtocols,
       ALPNCallback: this._ALPNCallback,
     });
@@ -1568,8 +1396,24 @@ function Server(options, secureConnectionListener): void {
   }
 }
 $toClass(Server, "Server", NetServer);
-Server.prototype[kSharedCreds] = function () {
-  return this._sharedCreds || buildSharedCreds(this);
+
+// Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
+// an SNICallback (the `context.context || context` unwrap accepts both the
+// wrapper and the unwrapped native context).
+Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
+
+Server.prototype.getTicketKeys = function () {
+  throw Error("Not implented in Bun yet");
+};
+
+Server.prototype.setTicketKeys = function (keys) {
+  if (!ArrayBuffer.isView(keys)) {
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
+  }
+  if (keys.byteLength !== 48) {
+    throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
+  }
+  throw Error("Not implented in Bun yet");
 };
 
 function createServer(options, connectionListener) {
@@ -1682,7 +1526,9 @@ function onConnectStart() {
 }
 
 function getCiphers() {
-  return getDefaultCiphers().split(":");
+  const ciphers = ["tls_aes_128_gcm_sha256", "tls_aes_256_gcm_sha384", "tls_chacha20_poly1305_sha256"];
+  for (const name of getValidCiphersSet()) ArrayPrototypePush.$call(ciphers, StringPrototypeToLowerCase.$call(name));
+  return ArrayPrototypeSort.$call(ciphers);
 }
 
 // Convert protocols array into valid OpenSSL protocols list
@@ -1780,32 +1626,6 @@ function cacheExtraCACertificates(): string[] {
   return extraCACertificates;
 }
 
-let warnedAboutExtraCACerts = false;
-/**
- * Match Node's crypto_context.cc: a NODE_EXTRA_CA_CERTS file that cannot be
- * loaded is ignored with a one-time warning on stderr - emitted when the
- * first secure context is created, not at startup - rather than failing the
- * process. The reason text mirrors the strerror()-derived string Node prints.
- */
-function maybeWarnAboutExtraCACerts() {
-  if (warnedAboutExtraCACerts) return;
-  warnedAboutExtraCACerts = true;
-  const extraPath = process.env.NODE_EXTRA_CA_CERTS;
-  if (!extraPath) return;
-  try {
-    require("node:fs").accessSync(extraPath);
-  } catch (err: any) {
-    // Node prints this with a raw fprintf(stderr, ...) from
-    // crypto_context.cc, not through process.emitWarning - no pid prefix and
-    // no colorization.
-    process.stderr.write(
-      `Warning: Ignoring extra certs from \`${extraPath}\`, load failed: ${
-        err?.code === "ENOENT" ? "No such file or directory" : err?.message
-      }\n`,
-    );
-  }
-}
-
 // Runtime override for the "default" CA certificate set, installed by
 // tls.setDefaultCACertificates(). undefined = no override (use the real
 // bundled/system default). Only affects type "default"/implicit — "bundled",
@@ -1870,29 +1690,13 @@ function getCACertificates(type = "default") {
   }
 }
 
-function tlsCipherFilter(a: string) {
-  return !StringPrototypeStartsWith.$call(a, "TLS_");
-}
-
-// Node's processCiphers splits into cipherList (<=1.2) and cipherSuites (1.3);
-// when only 1.3 suites were given it forces minVersion = TLSv1.3 so the empty
-// 1.2 list does not leave the handshake with nothing to offer:
-// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L117
-function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only: boolean } {
-  if (!StringPrototypeIncludes.$call(ciphers, "TLS_")) return { cipherList: ciphers, tls13Only: false };
-  const parts = StringPrototypeSplit.$call(ciphers, ":");
-  const kept = ArrayPrototypeFilter.$call(parts, tlsCipherFilter);
-  const cipherList = ArrayPrototypeJoin.$call(kept, ":");
-  return { cipherList, tls13Only: cipherList === "" && kept.length !== parts.length };
-}
-
 function getDefaultCiphers() {
   // TLS_ will always be present until SSL_CTX_set_cipher_list is supported see default_ciphers.h
   const ciphers = getTLSDefaultCiphers();
   return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
 }
 
-export default {
+const tlsExports = {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
   connect,
@@ -1907,6 +1711,8 @@ export default {
       validateCiphers(value, "value");
       // filter out TLS_ ciphers
       value = stripTls13CipherNames(value).cipherList;
+      // Throws ERR_SSL_NO_CIPHER_MATCH for a list such as "!aNULL": every default context is built from what is stored.
+      newNativeSecureContext({ ciphers: value });
     }
     setTLSDefaultCiphers(value);
   },
@@ -1942,7 +1748,10 @@ export default {
     return cacheBundledRootCertificates();
   },
   getCACertificates,
-} as any as typeof import("node:tls") & {
+};
+Object.defineProperty(tlsExports, "rootCertificates", { configurable: false });
+
+export default tlsExports as any as typeof import("node:tls") & {
   SecureContext: typeof SecureContext;
   convertALPNProtocols: typeof convertALPNProtocols;
 };

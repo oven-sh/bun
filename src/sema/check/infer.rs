@@ -78,8 +78,6 @@ pub(super) struct Inference {
     calls: u32,
     /// The parameter type an inference started from.
     original_target: TypeId,
-    /// The source is the type implied by a binding pattern (`patternForType`).
-    pub(super) from_pattern: bool,
     /// `InferenceFlagsAnyDefault`: the call is in a JavaScript file, where a parameter without
     /// inferences is `any`.
     pub(super) any_default: bool,
@@ -133,7 +131,6 @@ impl Inference {
             depth: 0,
             calls: 0,
             original_target: TypeId::NEVER,
-            from_pattern: false,
             any_default: false,
             around_source: MapperId::IDENTITY,
             around: MapperId::IDENTITY,
@@ -574,9 +571,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The members of a union in the order TypeScript iterates over them, as `parts_in_order`
     /// returns them.
     pub(super) fn sorted_parts(&self, ty: TypeId) -> Parts {
-        let parts = Parts::from_slice(self.parts(ty));
-        debug_assert!(parts.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le()));
-        parts
+        Parts::from_slice(self.parts(ty))
     }
 
     /// `inferFromTypeArguments`, between two instantiations of `of`. Cached variances are read in
@@ -1146,6 +1141,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags: PropFlags::empty(),
                         source: PropSource::Symbol(member),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     };
                     let source = Self::copy_of(TypeId::ANY, &[&declared], true, self.arena);
                     (PropFlags::empty(), source)
@@ -1157,6 +1153,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags,
                 source,
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             };
             if let Some(&earlier) = index_of_name.get(&value) {
                 shape.props[earlier] = literal_prop;
@@ -1638,14 +1635,9 @@ impl<'p, 's> Checker<'p, 's> {
         // FOR SPEED: few object types have signatures, and `signatures` stores a list for every
         // type it is asked for.
         if self.is_object_type(source)
-            && self.members(source).is_some_and(|members| {
-                let shape = members.shape();
-                if construct {
-                    shape.construct.is_empty()
-                } else {
-                    shape.call.is_empty()
-                }
-            })
+            && self
+                .members(source)
+                .is_some_and(|members| !members.has_signatures_of_kind(construct))
         {
             return;
         }
@@ -1785,6 +1777,11 @@ impl<'p, 's> Checker<'p, 's> {
             Some(last) if last.rest => usize::MAX,
             _ => tp.len(),
         };
+        // `getParameterCount(source)`, then `getThisTypeOfSignature`, then `getTypeAtPosition`.
+        self.request_type_of_rest_parameter(source);
+        let this_types = self
+            .sig_this_type(source)
+            .and_then(|s| self.sig_this_type(target).map(|t| (s, t)));
         let sp = self.sig_params_up_to(source, requested);
         let (source_count, target_count) = (self.parameter_count(&sp), self.parameter_count(&tp));
         let (source_rest, target_rest) =
@@ -1799,12 +1796,10 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             source_count.min(target_non_rest_count)
         };
+        // `getTypeAtPosition(target, i)`
+        self.note_parameter_types_resolved(target, &tp, param_count);
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::with_capacity(param_count + 2);
-        if let Some(s) = self.sig_this_type(source)
-            && let Some(t) = self.sig_this_type(target)
-        {
-            pairs.push((s, t));
-        }
+        pairs.extend(this_types);
         for i in 0..param_count {
             let (s, t) = (
                 self.param_type_at(&sp, i).unwrap_or(TypeId::ANY),
@@ -1862,13 +1857,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `inferFromIndexTypes`
     fn infer_from_index_types(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
-        let (Some(sm), Some(tm)) = (
-            self.members(source),
-            self.members_of_reduced_apparent_type(target),
-        ) else {
+        let apparent = self.reduced_apparent_type_as_object(target);
+        let (Some(sm), Some(tm)) = (self.members(source), self.structured_members(apparent)) else {
             return;
         };
-        if tm.shape().index.is_empty() {
+        if tm.index_infos().is_empty() {
             return;
         }
         let is_mapped = |c: &Self, t: TypeId| {
@@ -1894,7 +1887,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.apparent_type_of_intersection(source)
         };
         if self.is_object_type_with_inferable_index(looks) {
-            for info in &tm.shape().index {
+            for info in tm.index_infos() {
                 let expected = self.instantiate(info.value, tm.mapper);
                 let mut types = Parts::new();
                 for prop in &sm.shape().props {
@@ -1908,7 +1901,7 @@ impl<'p, 's> Checker<'p, 's> {
                         });
                     }
                 }
-                for other in &sm.shape().index {
+                for other in self.structured(sm).index_infos() {
                     if other.key == info.key || self.is_applicable_index_type(other.key, info.key) {
                         types.push(self.instantiate(other.value, sm.mapper));
                     }
@@ -1919,8 +1912,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        for info in &tm.shape().index {
-            if let Some(source_info) = self.applicable_index_info(&sm, info.key) {
+        for info in tm.index_infos() {
+            let indexed = self.structured(sm);
+            if let Some(source_info) = self.applicable_index_info(&indexed, info.key) {
                 let expected = self.instantiate(info.value, tm.mapper);
                 self.infer_with_priority(n, source_info.value, expected, priority);
             }
@@ -1971,13 +1965,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let keys = match self.data(source) {
                     // `patternForType`, `IndexFlagsNoIndexSignatures`: the `...rest` of a pattern
                     // is not a key.
-                    TypeData::Synth(shape)
-                        if n.from_pattern
-                            || matches!(
-                                shape.literal,
-                                Literalness::Pattern | Literalness::PatternWithComputedNames
-                            ) =>
-                    {
+                    TypeData::Synth(shape) if shape.literal.is_of_pattern() => {
                         let mut keys = Vec::with_capacity(shape.props.len());
                         for prop in &shape.props {
                             keys.extend(self.key_type_of_name(prop.name));
@@ -2010,21 +1998,10 @@ impl<'p, 's> Checker<'p, 's> {
                     .iter()
                     .map(|p| self.type_of_prop_with_missing(p, sm.mapper))
                     .collect();
-                // `enumNumberIndexInfo`, the only index signature of an enum object, contributes nothing.
-                if !matches!(
-                    self.data(source),
-                    TypeData::Anon {
-                        origin: Origin::EnumObject(_),
-                        ..
-                    }
-                ) {
-                    types.extend(
-                        sm.shape()
-                            .index
-                            .iter()
-                            .map(|i| self.instantiate(i.value, sm.mapper)),
-                    );
-                }
+                let indexed = self.structured(sm);
+                let infos = indexed.index_infos().iter();
+                let infos = infos.filter(|info| !info.is_enum_number_index_info);
+                types.extend(infos.map(|i| self.instantiate(i.value, sm.mapper)));
                 let all = self.union(&types);
                 let template = self.mapped_template(target);
                 self.infer_types(n, all, template);
@@ -2043,9 +2020,9 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         let members = self.members_of_reduced_apparent_type(source)?;
         // It requires a string index signature, or properties that are not all omitted.
-        if !(members
-            .shape()
-            .index
+        if !(self
+            .structured(members)
+            .index_infos()
             .iter()
             .any(|i| i.key == TypeId::STRING)
             || !members.shape().props.is_empty() && self.is_partially_inferable(source))
@@ -2170,9 +2147,9 @@ impl<'p, 's> Checker<'p, 's> {
         let adds_readonly = self.mapped_origin(target).is_some_and(|(file, node, _)| {
             self.mapped_decl(file, node).readonly == MappedModifier::Add
         });
-        if let Some(info) = members
-            .shape()
-            .index
+        if let Some(info) = self
+            .structured(members)
+            .index_infos()
             .iter()
             .find(|i| i.key == TypeId::STRING)
         {
@@ -2191,14 +2168,15 @@ impl<'p, 's> Checker<'p, 's> {
             // Properties that the rest of the constraint filters out would not have passed through
             // the mapping.
             if let Some(limited) = limited
-                && let Some(key) = self.key_type_of_name(prop.name)
+                && let Some(key) = self.key_type_of_prop(source, prop)
                 && !self.is_assignable(key, limited)
             {
                 continue;
             }
             // `links.propertyType = c.getTypeOfSymbol(prop)`
             self.type_of_prop_with_missing(prop, members.mapper);
-            let mut flags = PropFlags::empty();
+            // It has the `nameType` and the `Declarations` of `prop`, and no `ValueDeclaration`.
+            let mut flags = self.name_flag_of_copy(source, prop, true);
             if !adds_optional && prop.flags.contains(PropFlags::OPTIONAL) {
                 flags |= PropFlags::OPTIONAL;
             }
@@ -2213,6 +2191,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.list_of(Self::declared_properties(&[prop], self.arena)),
                 ),
                 mapper: MapperId::IDENTITY,
+                name_type: self.name_type_of_copy(source, prop),
             });
         }
         shape
@@ -2296,8 +2275,10 @@ impl<'p, 's> Checker<'p, 's> {
             self.reverse_mapped_source_stack,
             self.reverse_mapped_target_stack,
         ) = (sources, targets);
-        let result = if self.reverse_expanding != 3 && self.reverse_mapped_source_stack.len() < 24 {
+        let before = (self.unmarked_refusals, self.limits, self.refused_at);
+        let result = if self.reverse_expanding != 3 {
             // `inferReverseMappedTypeWorker`: `T[P]` is what is inferred.
+            self.reverse_mapped_inferences_from.push(self.stack.len());
             let param = self.mapped_type_param(target);
             let element = self.indexed_access(of, param);
             let template = self.mapped_template(target);
@@ -2306,17 +2287,26 @@ impl<'p, 's> Checker<'p, 's> {
             let inferred = self
                 .type_from_inference(&inner.candidates[0])
                 .unwrap_or(TypeId::UNKNOWN);
-            Some(self.get_widened_type(inferred))
+            let widened = self.get_widened_type(inferred);
+            self.reverse_mapped_inferences_from.pop();
+            Some(widened)
         } else {
             None
         };
         self.reverse_mapped_source_stack.pop();
         self.reverse_mapped_target_stack.pop();
         self.reverse_expanding = saved;
-        match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.reverse_mapped_cache).insert(&self.task, key, result, stored),
-            Err(_) => result,
+        // `c.reverseMappedCache[key] = t` at every return, whatever is in progress: the outermost call
+        // for a key assigns last. Not a result cut short by a request or a limit that tsgo has not.
+        let is_cut_short = before != (self.unmarked_refusals, self.limits, self.refused_at);
+        let stored = match self.end_scope_by_counters(scope) {
+            Ok(stored) => Some(stored),
+            Err(_) => (!is_cut_short).then(Stored::new),
+        };
+        if let Some(stored) = stored {
+            (self.p.reverse_mapped_cache).rewrite(&self.task, key, result, stored);
         }
+        result
     }
 
     /// `getRestTypeAtPosition`
@@ -2367,9 +2357,18 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(last) = params.last() else {
             return LabeledDeclaration::NONE;
         };
+        // `isValidDeclarationForTupleLabel`: `name` is `NONE` for a pattern.
+        let label = |parameter: &SigParam| match parameter.declaration {
+            Some((file, p)) if parameter.name.is_some() => LabeledDeclaration {
+                name: parameter.name,
+                file,
+                pos: self.hir(file)[p].pos,
+            },
+            _ => LabeledDeclaration::NONE,
+        };
         let param_count = params.len() - usize::from(last.rest);
         if pos < param_count {
-            return params[pos].label();
+            return label(&params[pos]);
         }
         if !last.rest {
             return LabeledDeclaration::NONE;
@@ -2378,7 +2377,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Tuple { flags, .. } => flags
                 .get(pos - param_count)
                 .map_or(LabeledDeclaration::NONE, |info| info.labeled_declaration()),
-            _ => last.label(),
+            _ => label(last),
         }
     }
 
@@ -2859,7 +2858,7 @@ impl<'p, 's> Checker<'p, 's> {
         compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> MapperId {
         if !self.has_type_variables(ty) {
-            return MapperId::IDENTITY;
+            return self.mapper_of_context_not_mentioned_in(ty);
         }
         let mut pairs = Vec::new();
         let mentioned = self.params_mentioned_in(ty, &n.params);
@@ -2870,15 +2869,28 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if pairs.is_empty() {
-            return MapperId::IDENTITY;
+            return self.mapper_of_context_not_mentioned_in(ty);
         }
         self.types().mapper(pairs)
+    }
+
+    /// The mapper of an inference context, for a `ty` that mentions none of its type parameters.
+    /// It is not nil, so `instantiateType` replaces what has
+    /// `ObjectFlags::HAS_OTHER_INSTANTIATION`. Only a type parameter is looked up in a mapper: the
+    /// pair maps nothing.
+    fn mapper_of_context_not_mentioned_in(&self, ty: TypeId) -> MapperId {
+        let flags = self.types().object_flags(ty);
+        if flags.contains(ObjectFlags::HAS_OTHER_INSTANTIATION) {
+            self.types().mapper_of(&[(TypeId::NEVER, TypeId::UNKNOWN)])
+        } else {
+            MapperId::IDENTITY
+        }
     }
 
     /// `context.mapper`, for what `ty` mentions (`InferenceTypeMapper.Map`).
     pub(super) fn fixing_mapper(&mut self, n: &mut Inference, ty: TypeId) -> MapperId {
         if !self.may_mention_type_parameter(ty) {
-            return MapperId::IDENTITY;
+            return self.mapper_of_context_not_mentioned_in(ty);
         }
         let mentioned = self.params_mentioned_in(ty, &n.params);
         let mut pairs = Vec::new();
@@ -2894,7 +2906,7 @@ impl<'p, 's> Checker<'p, 's> {
             pairs.push((n.params[i], self.get_inferred_type(n, i, true)));
         }
         if pairs.is_empty() {
-            return MapperId::IDENTITY;
+            return self.mapper_of_context_not_mentioned_in(ty);
         }
         self.types().mapper(pairs)
     }
@@ -2982,10 +2994,10 @@ impl<'p, 's> Checker<'p, 's> {
                 MapperId::IDENTITY,
                 self.flags(ty) & tf::ENUM_LITERAL == 0 && some(types),
             ),
-            // Not exact: a `Synth` does not say that it is a rest type (`ObjectFlagsObjectRestType`).
             TypeData::Synth(shape) => (
                 shape.mapper,
-                shape.instantiation_expression.is_some()
+                shape.is_object_rest_type
+                    || shape.instantiation_expression.is_some()
                     || shape.symbol_declared_at.is_some_and(|it| it.2.is_some()),
             ),
             _ => return false,
@@ -3001,9 +3013,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isNonGenericTopLevelType`
     fn is_non_generic_top_level_type(&self, ty: TypeId) -> bool {
-        let Some(alias) = self.alias_symbol_of_type(ty) else {
-            return false;
-        };
+        self.alias_symbol_of_type(ty)
+            .is_some_and(|alias| self.is_non_generic_top_level_alias(alias))
+    }
+
+    /// The same for a type whose `alias.symbol` is `alias`.
+    pub(super) fn is_non_generic_top_level_alias(&self, alias: Sym) -> bool {
         let declarations = self.files().decls_of(alias);
         let Some((file, declaration)) = declarations.iter().find_map(|&(file, decl)| match decl {
             Decl::Alias(declaration) => Some((file, declaration)),

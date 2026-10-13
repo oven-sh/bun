@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+// @ts-expect-error built into Bun
 import { Request } from "node-fetch";
 
 test("node fetch Request URL field is set even with a valid URL", () => {

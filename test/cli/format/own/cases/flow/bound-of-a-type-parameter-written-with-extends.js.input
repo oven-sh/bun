@@ -1,0 +1,7 @@
+/**
+ * @flow strict
+ */
+export default function flip<TValue extends string>(obj: { +[key: TKey]: TValue, ... }): {} {}
+type ExposedProps<Props extends { ... }> = { a: Props };
+class A<Props extends { ... }, Component extends React.ComponentType<Props> = B> {}
+function f<T: string>(a: T) {}

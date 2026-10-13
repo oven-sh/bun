@@ -1,0 +1,193 @@
+---
+title: "ESLint plugins"
+description: "Run ESLint plugins in bun lint, and write your own rules"
+---
+
+`bun lint` runs ESLint plugins, both from npm and your own. Rules get the same `context`, `sourceCode`, scopes, and fixers as in ESLint.
+
+This plugin has one rule, which reports `TODO` comments:
+
+```js lint/plugin.js icon="/icons/javascript.svg"
+const noTodo = {
+  meta: {
+    type: "suggestion",
+    messages: { todo: "Open an issue instead of leaving a TODO." },
+    schema: [],
+  },
+  create(context) {
+    const { sourceCode } = context;
+    return {
+      Program() {
+        for (const comment of sourceCode.getAllComments()) {
+          if (comment.value.includes("TODO")) {
+            context.report({ loc: comment.loc, messageId: "todo" });
+          }
+        }
+      },
+    };
+  },
+};
+
+export default {
+  meta: { name: "local" },
+  rules: { "no-todo": noTodo },
+};
+```
+
+Load it in `bunfig.toml`. Bun's default rules stay on, and the plugin's rules are added to them.
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["./lint/plugin.js"]
+
+[lint.rules]
+"local/no-todo" = "warn"
+```
+
+```bash terminal icon="terminal"
+bun lint
+```
+
+```txt
+1 | // TODO: handle errors
+    ^
+warn: Open an issue instead of leaving a TODO.  local/no-todo
+   at src/index.js:1:1
+
+1 problem (0 errors, 1 warning)
+Linted 3 files [15.40ms]
+```
+
+You don't need the `eslint` package. To learn the API, read ESLint's guide to [plugins](https://eslint.org/docs/latest/extend/plugins).
+
+If you have an ESLint config or an oxlint config, load it there as usual:
+
+<CodeGroup>
+
+```js eslint.config.js icon="/icons/javascript.svg"
+import local from "./lint/plugin.js";
+
+export default [
+  {
+    plugins: { local },
+    rules: { "local/no-todo": "warn" },
+  },
+];
+```
+
+```json .oxlintrc.json icon="file-json"
+{
+  "jsPlugins": ["./lint/plugin.js"],
+  "rules": { "local/no-todo": "warn" }
+}
+```
+
+</CodeGroup>
+
+`plugins` in `bunfig.toml` works next to those files too, and next to an `.eslintrc.*`. A plugin can only be loaded once under a name, so load it in one place.
+
+## Plugins from npm
+
+Install the package and name it. ESLint's short names work, so `"perfectionist"` is `eslint-plugin-perfectionist`.
+
+```bash terminal icon="terminal"
+bun add -d eslint-plugin-perfectionist
+```
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["perfectionist"]
+
+[lint.rules]
+"perfectionist/sort-imports" = "error"
+```
+
+A path is relative to `bunfig.toml`. A rule's prefix is the plugin's own name, `meta.name`, without `eslint-plugin-`. To use another prefix:
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = [{ name = "sort", specifier = "eslint-plugin-perfectionist" }]
+
+[lint.rules]
+"sort/sort-imports" = "error"
+```
+
+You don't load the plugins that are built in, such as `react`, `import`, or `unicorn`. Their [rules](/lint/rules) work without it. Next to an ESLint or oxlint config, naming one turns it on, as `plugins` in that file does.
+
+A config file can't use the processors or languages of a plugin that is loaded this way. For those, import the plugin in the config file.
+
+For one run, use `--plugin`. Next to an ESLint config its prefix is the name you give the flag, as in ESLint:
+
+```bash terminal icon="terminal"
+bun lint --plugin perfectionist --rule 'perfectionist/sort-imports: error'
+```
+
+With an ESLint config, six plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, and `prettier`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
+
+`bun lint --doctor` shows which of your rules run natively and which run in JavaScript.
+
+## Performance
+
+JavaScript rules are slower than native ones. `bun lint --timing` shows how much time they take.
+
+- Only turn on a plugin's rules for the files that need them. Files without JavaScript rules pay nothing.
+- Put a plugin in its own module. If you define it inside `eslint.config.js`, every thread has to run the whole config file.
+
+## Run the installed package instead
+
+To run a built-in plugin from `node_modules`, for example because you pin an older version:
+
+```bash terminal icon="terminal"
+bun lint --no-native-plugin-rules
+bun lint --native-plugin-rules=@typescript-eslint,import # only these two stay native
+```
+
+```toml bunfig.toml icon="settings"
+[lint]
+nativePluginRules = ["@typescript-eslint", "import"]
+```
+
+ESLint's core rules are always native. Keep `@typescript-eslint` native if you use type-aware rules, because JavaScript rules don't get types.
+
+## `prettier/prettier`
+
+`prettier/prettier` from [eslint-plugin-prettier](https://github.com/prettier/eslint-plugin-prettier) is native. It compares each file with the output of [`bun fmt`](/format) and never starts Prettier.
+
+Bun falls back to the installed package, and says why, when it can't guarantee the same output as your Prettier:
+
+- You have a version other than Prettier 3.9.
+- You use a Prettier plugin that `bun fmt` doesn't have.
+- The file isn't JavaScript or TypeScript.
+
+Without Prettier, use [`bun/format`](/lint/rules/bun/format). It checks files against `bun fmt`.
+
+## Other languages
+
+Bun parses JavaScript and TypeScript. It hands other files to the `eslint` package in your project, so keep `eslint` 8.57 or later installed if you use:
+
+- A plugin language, such as `json/json` from `@eslint/json`, `markdown/gfm`, or `css/css`.
+- A parser for another file type, such as `vue-eslint-parser`, `svelte-eslint-parser`, or `yaml-eslint-parser`.
+- `eslint-plugin-html`.
+
+You still run `bun lint`, and these files show up in the same report.
+
+## Processors
+
+Processors work. This config lints the code blocks in Markdown files:
+
+```js eslint.config.js icon="/icons/javascript.svg"
+import markdown from "@eslint/markdown";
+
+export default [
+  { files: ["**/*.md"], plugins: { markdown }, processor: "markdown/markdown" },
+  { files: ["**/*.md/*.js"], rules: { "no-var": "error" } },
+];
+```
+
+## Notes
+
+- **JavaScript rules don't get types.** `parserServices.program` is `null`, even with `--type-aware`. A rule that calls typescript-eslint's `getParserServices()` doesn't run, and `bun lint` exits with code `2`.
+- **Plugins run on several threads.** Each thread imports the plugin, so module-level state is per thread, not per run.
+- **A renamed built-in plugin runs in JavaScript.** For example, `@antfu/eslint-config` registers `@typescript-eslint` as `ts`.
+- **A rule that throws ends the run** with exit code `2`. With an oxlint config, Bun reports the error for that file and continues.
+- **Type-aware rules skip files that have a processor.**

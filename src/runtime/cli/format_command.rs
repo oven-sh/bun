@@ -38,8 +38,8 @@ impl FormatCommand {
             && flag.as_bytes() == b"--debug-check-svelte"
         {
             let read = |path: &ZStr| bun_format_conformance::read_file(path.as_bytes());
-            for pair in pairs.chunks_exact(2) {
-                let is_same = matches!((read(pair[0]), read(pair[1])), (Some(before), Some(after))
+            for [before, after] in pairs.as_chunks::<2>().0 {
+                let is_same = matches!((read(before), read(after)), (Some(before), Some(after))
                     if bun_lint_driver::fmt::is_same_svelte_for_tests(&before, &after));
                 bun_format_conformance::output_line!(
                     "{}",

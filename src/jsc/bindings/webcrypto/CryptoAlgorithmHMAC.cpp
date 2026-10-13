@@ -58,9 +58,18 @@ CryptoAlgorithmIdentifier CryptoAlgorithmHMAC::identifier() const
     return s_identifier;
 }
 
+// HMAC hashes three blocks on top of the message: the two pads and the inner digest.
+static size_t hashedSize(CryptoAlgorithmIdentifier hash, size_t messageSize)
+{
+    size_t blockSize = hash == CryptoAlgorithmIdentifier::SHA_384 || hash == CryptoAlgorithmIdentifier::SHA_512 ? 128 : 64;
+    return messageSize + 3 * blockSize;
+}
+
 void CryptoAlgorithmHMAC::sign(const CryptoAlgorithmParameters&, Ref<CryptoKey>&& key, Vector<uint8_t>&& data, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+    auto hash = downcast<CryptoKeyHMAC>(key.get()).hashAlgorithmIdentifier();
+    auto inputSize = hashedSize(hash, data.size());
+    dispatchOperation(hash, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [key = WTF::move(key), data = WTF::move(data)] {
             return platformSign(downcast<CryptoKeyHMAC>(key.get()), data);
         });
@@ -68,7 +77,9 @@ void CryptoAlgorithmHMAC::sign(const CryptoAlgorithmParameters&, Ref<CryptoKey>&
 
 void CryptoAlgorithmHMAC::verify(const CryptoAlgorithmParameters&, Ref<CryptoKey>&& key, Vector<uint8_t>&& signature, Vector<uint8_t>&& data, BoolCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+    auto hash = downcast<CryptoKeyHMAC>(key.get()).hashAlgorithmIdentifier();
+    auto inputSize = hashedSize(hash, data.size());
+    dispatchOperation(hash, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [key = WTF::move(key), signature = WTF::move(signature), data = WTF::move(data)] {
             return platformVerify(downcast<CryptoKeyHMAC>(key.get()), signature, data);
         });

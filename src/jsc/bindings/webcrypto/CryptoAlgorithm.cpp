@@ -141,6 +141,55 @@ void CryptoAlgorithm::dispatchOperationInWorkQueue(WorkQueue& workQueue, ScriptE
     dispatchAlgorithmOperation(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
 }
 
+size_t CryptoAlgorithm::maxInputSizeForInlineOperation(CryptoAlgorithmIdentifier hashOrCipher)
+{
+    switch (hashOrCipher) {
+    case CryptoAlgorithmIdentifier::SHA_1:
+    case CryptoAlgorithmIdentifier::SHA_224:
+    case CryptoAlgorithmIdentifier::SHA_256:
+    case CryptoAlgorithmIdentifier::AES_CTR:
+    case CryptoAlgorithmIdentifier::AES_CBC:
+    case CryptoAlgorithmIdentifier::AES_GCM:
+    case CryptoAlgorithmIdentifier::AES_CFB:
+    case CryptoAlgorithmIdentifier::ChaCha20_Poly1305:
+        return 1024;
+    case CryptoAlgorithmIdentifier::SHA_384:
+    case CryptoAlgorithmIdentifier::SHA_512:
+        return 256;
+    case CryptoAlgorithmIdentifier::SHA3_256:
+    case CryptoAlgorithmIdentifier::SHA3_384:
+    case CryptoAlgorithmIdentifier::SHA3_512:
+        return 64;
+    default:
+        return 0;
+    }
+}
+
+template<typename ResultCallbackType, typename OperationType>
+static void runOrDispatchAlgorithmOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, ResultCallbackType&& callback, CryptoAlgorithm::ExceptionCallback&& exceptionCallback, OperationType&& operation)
+{
+    if (inputSize > CryptoAlgorithm::maxInputSizeForInlineOperation(hashOrCipher)) {
+        dispatchAlgorithmOperation(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
+        return;
+    }
+    auto result = operation();
+    if (result.hasException()) {
+        exceptionCallback(result.releaseException().code(), ""_s);
+        return;
+    }
+    callback(result.releaseReturnValue());
+}
+
+void CryptoAlgorithm::dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, Function<ExceptionOr<Vector<uint8_t>>()>&& operation)
+{
+    runOrDispatchAlgorithmOperation(hashOrCipher, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
+}
+
+void CryptoAlgorithm::dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, BoolCallback&& callback, ExceptionCallback&& exceptionCallback, Function<ExceptionOr<bool>()>&& operation)
+{
+    runOrDispatchAlgorithmOperation(hashOrCipher, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
+}
+
 }
 
 #endif

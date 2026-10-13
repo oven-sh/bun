@@ -1,7 +1,7 @@
-import { spawnSync } from "bun";
+import { peek, spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, type webcrypto } from "node:crypto";
+import { createCipheriv, createHash, createHmac, createSecretKey, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1461,5 +1461,166 @@ describe("exception scope discipline", () => {
       uncheckedScopes: [],
       exitCode: 0,
     });
+  });
+});
+
+// A hash or a symmetric cipher over a small input is computed by the call itself: the promise it
+// returns is already settled. Past the limit of the algorithm, the thread pool computes as before.
+describe("operations on small inputs", async () => {
+  const raw = new Uint8Array(32).fill(1);
+  const iv12 = new Uint8Array(12).fill(2);
+  const iv16 = new Uint8Array(16).fill(3);
+  const aad = new Uint8Array(20).fill(4);
+  const bytes = (size: number) => Uint8Array.from({ length: size }, (_, i) => i % 251);
+
+  const hmacKey = (hash: string) =>
+    crypto.subtle.importKey("raw", raw, { name: "HMAC", hash }, false, ["sign", "verify"]);
+  const hmac = {
+    "SHA-1": await hmacKey("SHA-1"),
+    "SHA-256": await hmacKey("SHA-256"),
+    "SHA-512": await hmacKey("SHA-512"),
+  };
+  const cipherKey = (name: string, format = "raw") =>
+    crypto.subtle.importKey(format as "raw", raw, name, false, ["encrypt", "decrypt"]);
+  const gcm = await cipherKey("AES-GCM");
+  const cbc = await cipherKey("AES-CBC");
+  const ctr = await cipherKey("AES-CTR");
+  const chacha = await cipherKey("ChaCha20-Poly1305", "raw-secret");
+
+  // What node:crypto gives: the ciphertext, followed by the tag of an AEAD.
+  const seal = (name: string, iv: Uint8Array, aead: boolean) => (data: Uint8Array) => {
+    const cipher: any = createCipheriv(name as "aes-256-gcm", raw, iv, aead ? { authTagLength: 16 } : undefined);
+    if (aead) cipher.setAAD(aad);
+    const body = Buffer.concat([cipher.update(data), cipher.final()]);
+    return aead ? Buffer.concat([body, cipher.getAuthTag()]) : body;
+  };
+  const sealGcm = seal("aes-256-gcm", iv12, true);
+
+  // [name, largest input computed by the call (-1: none), the operation, what node:crypto gives for the same input]
+  type Case = [string, number, (data: Uint8Array) => Promise<unknown>, (data: Uint8Array) => unknown];
+  const digest = (name: string, node: string, limit: number): Case => [
+    `digest ${name}`,
+    limit,
+    data => crypto.subtle.digest(name, data),
+    data => createHash(node).update(data).digest(),
+  ];
+  const sign = (hash: keyof typeof hmac, node: string, limit: number): Case => [
+    `HMAC ${hash} sign`,
+    limit,
+    data => crypto.subtle.sign("HMAC", hmac[hash], data),
+    data => createHmac(node, raw).update(data).digest(),
+  ];
+  const cases: Case[] = [
+    digest("SHA-1", "sha1", 1024),
+    digest("SHA-256", "sha256", 1024),
+    digest("SHA-384", "sha384", 256),
+    digest("SHA-512", "sha512", 256),
+    digest("SHA3-256", "sha3-256", 64),
+    // HMAC hashes three blocks on top of the message, which is more than SHA-512 does in time.
+    sign("SHA-1", "sha1", 1024 - 3 * 64),
+    sign("SHA-256", "sha256", 1024 - 3 * 64),
+    sign("SHA-512", "sha512", -1),
+    [
+      "HMAC SHA-256 verify",
+      1024 - 3 * 64,
+      data => crypto.subtle.verify("HMAC", hmac["SHA-256"], createHmac("sha256", raw).update(data).digest(), data),
+      () => true,
+    ],
+    // The IV and the additional data are input as well.
+    [
+      "AES-GCM encrypt",
+      1024 - iv12.length - aad.length,
+      data => crypto.subtle.encrypt({ name: "AES-GCM", iv: iv12, additionalData: aad }, gcm, data),
+      sealGcm,
+    ],
+    [
+      "AES-GCM decrypt",
+      1024 - iv12.length - aad.length - 16,
+      data => crypto.subtle.decrypt({ name: "AES-GCM", iv: iv12, additionalData: aad }, gcm, sealGcm(data)),
+      data => Buffer.from(data),
+    ],
+    [
+      "AES-CBC encrypt",
+      1024,
+      data => crypto.subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbc, data),
+      seal("aes-256-cbc", iv16, false),
+    ],
+    // What is decrypted is the padded text: 1023 bytes pad to 1024, and 1024 to 1040.
+    [
+      "AES-CBC decrypt",
+      1023,
+      data => crypto.subtle.decrypt({ name: "AES-CBC", iv: iv16 }, cbc, seal("aes-256-cbc", iv16, false)(data)),
+      data => Buffer.from(data),
+    ],
+    [
+      "AES-CTR encrypt",
+      1024,
+      data => crypto.subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctr, data),
+      seal("aes-256-ctr", iv16, false),
+    ],
+  ];
+
+  it.each(cases)("%s is computed by the call up to %d bytes", async (_, limit, run, expected) => {
+    const hex = (value: unknown) =>
+      value instanceof ArrayBuffer || Buffer.isBuffer(value) ? Buffer.from(value).toString("hex") : value;
+    const sizes: [number, string][] =
+      limit < 0
+        ? [[1, "pending"]]
+        : [
+            [1, "fulfilled"],
+            [limit, "fulfilled"],
+            [limit + 1, "pending"],
+          ];
+    const observed = [];
+    for (const [size] of sizes) {
+      const promise = run(bytes(size));
+      observed.push([size, peek.status(promise), hex(await promise)]);
+    }
+    expect(observed).toEqual(sizes.map(([size, status]) => [size, status, hex(expected(bytes(size)))]));
+  });
+
+  // node:crypto has no ChaCha20-Poly1305 to compare with: what was encrypted has to decrypt to itself.
+  it("ChaCha20-Poly1305 is computed by the call up to 1024 bytes of text and additional data", async () => {
+    const algorithm = { name: "ChaCha20-Poly1305", iv: iv12, additionalData: aad };
+    const limit = 1024 - aad.length;
+    const observed = [];
+    for (const size of [1, limit - 16, limit - 15, limit, limit + 1]) {
+      const encrypted = crypto.subtle.encrypt(algorithm, chacha, bytes(size));
+      const encrypting = peek.status(encrypted);
+      const sealed = await encrypted;
+      const decrypted = crypto.subtle.decrypt(algorithm, chacha, sealed);
+      const decrypting = peek.status(decrypted);
+      observed.push([
+        size,
+        encrypting,
+        decrypting,
+        sealed.byteLength,
+        Buffer.from(await decrypted).equals(bytes(size)),
+      ]);
+    }
+    expect(observed).toEqual([
+      [1, "fulfilled", "fulfilled", 17, true],
+      [limit - 16, "fulfilled", "fulfilled", limit, true],
+      [limit - 15, "fulfilled", "pending", limit + 1, true],
+      [limit, "fulfilled", "pending", limit + 16, true],
+      [limit + 1, "pending", "pending", limit + 17, true],
+    ]);
+  });
+
+  it("a failure rejects the promise the call returns", async () => {
+    const sealed = sealGcm(bytes(64));
+    sealed[0] ^= 1;
+    const promise = crypto.subtle.decrypt({ name: "AES-GCM", iv: iv12, additionalData: aad }, gcm, sealed);
+    const status = peek.status(promise);
+    const error = await promise.then(
+      () => undefined,
+      error => error,
+    );
+    expect({ status, name: error?.name, isDOMException: error instanceof DOMException }).toEqual({
+      status: "rejected",
+      name: "OperationError",
+      isDOMException: true,
+    });
+    expect(await crypto.subtle.verify("HMAC", hmac["SHA-256"], new Uint8Array(32), bytes(64))).toBe(false);
   });
 });

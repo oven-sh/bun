@@ -84,6 +84,15 @@ public:
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
 
+    // The most bytes a hash or a symmetric cipher takes in about a microsecond, which is what the calling thread
+    // spends on sending an operation to the work queue and taking its result. 0 for every other algorithm.
+    static size_t maxInputSizeForInlineOperation(CryptoAlgorithmIdentifier hashOrCipher);
+
+    // Up to maxInputSizeForInlineOperation(hashOrCipher) bytes, the operation runs here and now, and its
+    // callback is called before this returns. Over that, it goes to the work queue.
+    static void dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
+    static void dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
+
     // Truncates `secret` to the first `length` bits, zeroing the unused trailing bits of the
     // final byte, per https://w3c.github.io/webcrypto/#SubtleCrypto-method-deriveBits. A null
     // `length` returns `secret` unchanged; a `length` larger than `secret` yields nullopt.

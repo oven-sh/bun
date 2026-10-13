@@ -51,13 +51,9 @@ void CryptoAlgorithmSHA256::digest(Vector<uint8_t>&& message, VectorCallback&& c
         return;
     }
 
-    if (message.size() < 64) {
-        auto moved = WTF::move(message);
-        digest->addBytes(moved.begin(), moved.size());
-        auto result = digest->computeHash();
-        ScriptExecutionContext::postTaskTo(context.identifier(), context.currentLoopKind(), [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
-            callback(result);
-        });
+    if (message.size() <= maxInputSizeForInlineOperation(s_identifier)) {
+        digest->addBytes(message.begin(), message.size());
+        callback(digest->computeHash());
         return;
     }
 

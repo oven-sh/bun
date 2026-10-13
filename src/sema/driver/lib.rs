@@ -1829,8 +1829,12 @@ impl Projects {
             );
             let included =
                 config::matched_include_spec(&options.include_specs, base, file, is_case_sensitive);
-            let named = config::matched_file_spec(&options.file_specs, file, is_case_sensitive);
-            included.or(named).is_some()
+            let named = options
+                .file_specs
+                .iter()
+                .find(|(_, path)| is_same_path(path, file, is_case_sensitive))
+                .is_some_and(|(text, _)| !text.is_empty());
+            included.is_some() || named
         };
         let referenced = build.projects[..build.root].iter().filter(may_list);
         let referenced: Vec<Vec<u8>> = referenced

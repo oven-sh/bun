@@ -18210,6 +18210,26 @@ describe("project ownership", () => {
       expect(await outcome(files, ["--check", "conf.js"])).toEqual(stopped("TS2322"));
     });
 
+    test.each(["scripts/[seed].js", "scripts/s.js"])(
+      "a JavaScript fallback matches explicit files literally: %s",
+      async entry => {
+        const source = `import { f } from "../dep";\nf(1);\n${ran}`;
+        const files = {
+          "tsconfig.json": config({ ...loose, noEmit: true }, references("./tsconfig.node.json")),
+          "tsconfig.node.json": config(
+            { ...strict, ...emitted, outDir: "out" },
+            { files: ["scripts/[seed].js", "dep.ts", "globals.d.ts"], include: [], exclude: ["scripts"] },
+          ),
+          "globals.d.ts": withConsole,
+          "dep.ts": implicit,
+          "scripts/[seed].js": source,
+          "scripts/s.js": source,
+        };
+        const expected = entry === "scripts/[seed].js" ? stopped("TS7006") : { codes: [], ran: true, exitCode: 0 };
+        expect(await outcome(files, ["--check", entry])).toEqual(expected);
+      },
+    );
+
     test("a JavaScript entry point is of the project that lists it, before one that would", async () => {
       // The first would list it under `allowJs`, and the second does.
       const files = {

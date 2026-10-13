@@ -1168,35 +1168,41 @@ describe("writeHead(status, headers) with no header set before reads the argumen
     );
   });
 
-  test("a value whose toString() calls writeHead(), and then the outer call throws: the head of the inner call stays", async () => {
-    const { status, headers, body, result } = await respond(res => {
-      res.strictContentLength = true;
-      let nested = false;
-      const value = {
-        toString() {
-          if (!nested) {
-            nested = true;
-            res.writeHead(201, "Inner", { "Content-Length": 3, "Connection": "close" });
-          }
-          return "a";
+  for (const [when, outer, thrown] of [
+    ["in the walk", ["X-A", undefined, "bad name", "1"], "ERR_INVALID_HTTP_TOKEN"],
+    ["after the walk", ["X-A", undefined, "Trailer", "X-T", "Content-Length", "3"], "ERR_HTTP_TRAILER_INVALID"],
+  ] as const) {
+    test(`a value whose toString() calls writeHead(), and then the outer call throws ${when}: the head of the inner call stays`, async () => {
+      const { status, headers, body, result } = await respond(res => {
+        res.strictContentLength = true;
+        let nested = false;
+        const value = {
+          toString() {
+            if (!nested) {
+              nested = true;
+              res.writeHead(201, "Inner", { "Content-Length": 3, "Connection": "close" });
+            }
+            return "a";
+          },
+        };
+        const list = outer.map(entry => entry ?? value);
+        const first = code(() => res.writeHead(200, list as any));
+        const contentLength = (res as any)._contentLength;
+        const tooLong = code(() => res.end("too long"));
+        res.end("abc");
+        return { first, contentLength, tooLong };
+      });
+      assert.deepStrictEqual(
+        { status, headers, body, result },
+        {
+          status: "HTTP/1.1 201 Inner",
+          headers: ["Content-Length: 3"],
+          body: "abc",
+          result: { first: thrown, contentLength: 3, tooLong: "ERR_HTTP_CONTENT_LENGTH_MISMATCH" },
         },
-      };
-      const outer = code(() => res.writeHead(200, ["X-A", value, "bad name", "1"] as any));
-      const contentLength = (res as any)._contentLength;
-      const tooLong = code(() => res.end("too long"));
-      res.end("abc");
-      return { outer, contentLength, tooLong };
+      );
     });
-    assert.deepStrictEqual(
-      { status, headers, body, result },
-      {
-        status: "HTTP/1.1 201 Inner",
-        headers: ["Content-Length: 3"],
-        body: "abc",
-        result: { outer: "ERR_INVALID_HTTP_TOKEN", contentLength: 3, tooLong: "ERR_HTTP_CONTENT_LENGTH_MISMATCH" },
-      },
-    );
-  });
+  }
 
   test("a value whose toString() calls writeHead() on another response: each one keeps what its own headers name", async () => {
     const { headers, body, result } = await respond(res => {
@@ -2171,29 +2177,33 @@ if (typeof Bun !== "undefined") {
     });
 
     // Node.js keeps what the lines before the failure set. Its next head has `Content-Length: 100` and no Keep-Alive line.
-    test("after a writeHead() that throws, the next head has nothing of the failed call", async () => {
-      const { all, body, result } = await respond(
-        res => {
-          const thrown = code(() =>
-            res.writeHead(200, ["Content-Length", "100", "Keep-Alive", "timeout=9", "X-Bad", "a\nb"]),
-          );
-          const contentLength = (res as any)._contentLength;
-          res.write("a");
-          res.end("b");
-          return { thrown, contentLength };
-        },
-        { request: KEEP_ALIVE, then: GET },
-      );
-      assert.deepStrictEqual(
-        // The reply to the second request comes behind the body.
-        { headers: all.filter(line => !/^date:/i.test(line)), body: body.split("HTTP/1.1")[0], result },
-        {
-          headers: ["Connection: keep-alive", "Keep-Alive: timeout=5", "Transfer-Encoding: chunked"],
-          body: "1\r\na\r\n1\r\nb\r\n0\r\n\r\n",
-          result: { thrown: "ERR_INVALID_CHAR", contentLength: null },
-        },
-      );
-    });
+    for (const [when, bad, thrown] of [
+      ["in the walk", ["X-Bad", "a\nb"], "ERR_INVALID_CHAR"],
+      ["after the walk", ["Trailer", "X-T"], "ERR_HTTP_TRAILER_INVALID"],
+    ] as const) {
+      test(`after a writeHead() that throws ${when}, the next head has nothing of the failed call`, async () => {
+        const { all, body, result } = await respond(
+          res => {
+            res.strictContentLength = true;
+            const first = code(() => res.writeHead(200, ["Content-Length", "100", "Keep-Alive", "timeout=9", ...bad]));
+            const contentLength = (res as any)._contentLength;
+            res.write("a");
+            res.end("b");
+            return { first, contentLength };
+          },
+          { request: KEEP_ALIVE, then: GET },
+        );
+        assert.deepStrictEqual(
+          // The reply to the second request comes behind the body.
+          { headers: all.filter(line => !/^date:/i.test(line)), body: body.split("HTTP/1.1")[0], result },
+          {
+            headers: ["Connection: keep-alive", "Keep-Alive: timeout=5", "Transfer-Encoding: chunked"],
+            body: "1\r\na\r\n1\r\nb\r\n0\r\n\r\n",
+            result: { first: thrown, contentLength: null },
+          },
+        );
+      });
+    }
 
     // V8 says: Cannot read properties of undefined (reading '0').
     test("an entry of a list of pairs that is undefined or null: the TypeError names the entry", async () => {

@@ -269,10 +269,12 @@ unsafe extern "C" {
     ) -> JSValue;
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
     // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
+    // `headers` is req.headers if that was built first, for its value strings.
     safe fn Bun__NodeHTTP__buildRawHeadersArray(
         global_object: &JSGlobalObject,
         data: *const u8,
         length: usize,
+        headers: JSValue,
     ) -> JSValue;
     // req.headers from the same bytes, or jsUndefined(): see its definition.
     safe fn Bun__NodeHTTP__buildHeadersObject(
@@ -2499,21 +2501,32 @@ impl NodeHTTPResponse {
         self.write_or_end::<true>(global_object, arguments, callframe.this())
     }
 
-    /// `handle.takeRawHeaders()` — this request's captured header section
-    /// materialized into the rawHeaders flat [name, value, ...] array, or
-    /// undefined when there were no headers (or they were already taken).
-    /// Consumes the captured bytes.
+    /// `handle.takeRawHeaders(headers)` — this request's captured header
+    /// section materialized into the rawHeaders flat [name, value, ...] array,
+    /// or undefined when there were no headers (or they were already taken).
+    /// Consumes the captured bytes. `headers` is req.headers when that was
+    /// built first.
     pub(crate) fn take_raw_headers(
         &self,
         global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
+        callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let section = self.raw_request_headers.replace(Vec::new());
         if section.is_empty() {
             return Ok(JSValue::UNDEFINED);
         }
+        let headers = callframe
+            .arguments()
+            .first()
+            .copied()
+            .unwrap_or(JSValue::UNDEFINED);
         bun_jsc::call_zero_is_throw(global_object, || {
-            Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+            Bun__NodeHTTP__buildRawHeadersArray(
+                global_object,
+                section.as_ptr(),
+                section.len(),
+                headers,
+            )
         })
     }
 

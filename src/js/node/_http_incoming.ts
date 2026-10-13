@@ -21,6 +21,7 @@ const {
 } = require("internal/http");
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectPrototypeLookupGetter = Object.prototype.__lookupGetter__;
 
 const kHeaders = Symbol("kHeaders");
 // Cache slot for the server dispatcher's keep-alive decision (stamped once
@@ -164,22 +165,24 @@ ObjectDefineProperty(IncomingMessage.prototype, "aborted", {
 // Materializes on first read from the bytes captured on the native handle
 // (takeRawHeaders). Assignment (the llhttp client path, or user code)
 // short-circuits materialization through the setter.
+function getRawHeaders(this: any) {
+  let raw = this[kRawHeaders];
+  if (raw === null) {
+    const source = this[kHeaderSource];
+    // The headers the native handle built, if it did, hold the value strings already.
+    let built = source != null ? source.takeRawHeaders(this[kHeaders]) : undefined;
+    if (built === undefined) built = [];
+    raw = this[kRawHeaders] = built;
+    this[kHeadersCount] = built.length;
+  }
+  return raw;
+}
 ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
   __proto__: null,
   // Node exposes rawHeaders as an enumerable own data property; a prototype
   // accessor can at least stay visible to for-in.
   enumerable: true,
-  get: function () {
-    let raw = this[kRawHeaders];
-    if (raw === null) {
-      const source = this[kHeaderSource];
-      let built = source != null ? source.takeRawHeaders() : undefined;
-      if (built === undefined) built = [];
-      raw = this[kRawHeaders] = built;
-      this[kHeadersCount] = built.length;
-    }
-    return raw;
-  },
+  get: getRawHeaders,
   set: function (value) {
     this[kRawHeaders] = value;
     this[kHeadersCount] = value ? value.length : 0;
@@ -192,9 +195,14 @@ ObjectDefineProperty(IncomingMessage.prototype, "headers", {
     let dst = this[kHeaders];
     if (!dst) {
       const addHeaderLine = this._addHeaderLine;
-      // The native handle builds what the fold below makes of its captured bytes, when that is the fold in use
-      // and rawHeaders has not been read (which takes the bytes) or assigned.
-      if (this[kRawHeaders] === null && addHeaderLine === _addHeaderLine) {
+      // The native handle builds what the fold below makes of its captured bytes, when that is the fold in use,
+      // rawHeaders has not been read (which takes the bytes) or assigned, and reading it would reach the accessor
+      // above: a subclass, a swapped prototype or the instance can define its own, which the fold then reads.
+      if (
+        this[kRawHeaders] === null &&
+        addHeaderLine === _addHeaderLine &&
+        ObjectPrototypeLookupGetter.$call(this, "rawHeaders") === getRawHeaders
+      ) {
         const built = this[kHeaderSource]?.headersObject();
         if (built !== undefined) return (this[kHeaders] = built);
       }
@@ -644,6 +652,10 @@ function matchKnownFields(field, lowercased?) {
 // cannot be joined in either of these ways, we declare the first instance the
 // winner and drop the second. Extended header fields (those beginning with
 // 'x-') are always joined.
+//
+// Bun__NodeHTTP__buildHeadersObject (NodeHTTP.cpp) builds what this makes of a
+// request that names no header twice. A change to what one occurrence of a
+// field becomes has to be made there as well.
 IncomingMessage.prototype._addHeaderLine = _addHeaderLine;
 function _addHeaderLine(this: any, field, value, dest) {
   field = matchKnownFields(field);

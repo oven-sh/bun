@@ -7184,7 +7184,11 @@ describe("req.headers and req.rawHeaders", () => {
         const socket = connect(port, "127.0.0.1");
         try {
           socket.write(Buffer.from(`GET / HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`, "latin1"));
-          await once(socket, "data");
+          await new Promise<void>((resolve, reject) => {
+            socket.once("data", () => resolve());
+            socket.once("error", reject);
+            socket.once("close", () => reject(new Error("the connection closed before the server answered")));
+          });
         } finally {
           socket.destroy();
         }
@@ -7260,14 +7264,30 @@ describe("req.headers and req.rawHeaders", () => {
             ["set-cookie", ["a=1", "b=2"]],
           ],
         },
-        // Names that Object.prototype has, and one that is an index.
+        // Names that Object.prototype has, one that it has in another case, and one that is an index.
         {
-          lines: ["Host: a", "__proto__: x", "Constructor: y", "123: z", "toString: t"],
+          lines: ["Host: a", "__proto__: x"],
+          headers: [["host", "a"]],
+        },
+        {
+          lines: ["Host: a", "Constructor: y"],
+          headers: [
+            ["host", "a"],
+            ["constructor", "y"],
+          ],
+        },
+        {
+          lines: ["Host: a", "toString: t"],
+          headers: [
+            ["host", "a"],
+            ["tostring", "t"],
+          ],
+        },
+        {
+          lines: ["Host: a", "123: z"],
           headers: [
             ["123", "z"],
             ["host", "a"],
-            ["constructor", "y"],
-            ["tostring", "t"],
           ],
         },
         // A custom name twice, after many other custom names.
@@ -7379,6 +7399,83 @@ describe("req.headers and req.rawHeaders", () => {
         ["x-one", "B"],
       ],
     ]);
+  });
+
+  it("headers is the same whichever is read first when the IncomingMessage class has its own rawHeaders", async () => {
+    // Where the class's accessor is in effect, headers folds what it returns.
+    class RedactingMessage extends IncomingMessage {}
+    Object.defineProperty(RedactingMessage.prototype, "rawHeaders", {
+      configurable: true,
+      get(this: IncomingMessage) {
+        const raw: string[] = Reflect.get(IncomingMessage.prototype, "rawHeaders", this) ?? [];
+        return raw.map((entry, i) => (i % 2 === 1 && raw[i - 1] === "X-Secret" ? "redacted" : entry));
+      },
+      set(this: IncomingMessage, value: string[]) {
+        Reflect.set(IncomingMessage.prototype, "rawHeaders", value, this);
+      },
+    });
+    // One that keeps what it is assigned, as the own property of Node's IncomingMessage does.
+    class StoringMessage extends IncomingMessage {}
+    const stored = new WeakMap<object, string[]>();
+    Object.defineProperty(StoringMessage.prototype, "rawHeaders", {
+      configurable: true,
+      get(this: IncomingMessage) {
+        return stored.get(this) ?? [];
+      },
+      set(this: IncomingMessage, value: string[]) {
+        stored.set(this, value);
+      },
+    });
+    const requests = [["Host: a", "X-Secret: s3cret", "Accept: */*"]];
+    for (const IncomingMessageClass of [RedactingMessage, StoringMessage]) {
+      const options = { IncomingMessage: IncomingMessageClass };
+      const headersFirst = await seenByServer(requests, req => bothOf(req, false), options);
+      const rawHeadersFirst = await seenByServer(requests, req => bothOf(req, true), options);
+      expect(headersFirst).toEqual(rawHeadersFirst);
+    }
+  });
+
+  it("headers is what _addHeaderLine makes of rawHeaders, for any mix of names", async () => {
+    const names = [
+      ["Host", "host", "HOST"],
+      ["Accept", "accept"],
+      ["User-Agent", "user-agent"],
+      ["Content-Type", "content-type"],
+      ["Cookie", "cookie"],
+      ["Set-Cookie", "set-cookie"],
+      ["Authorization"],
+      ["Referer"],
+      ["X-Forwarded-For", "x-forwarded-for"],
+      ["X-Custom", "x-custom", "X-CUSTOM"],
+      ["X-Other"],
+      ["Constructor"],
+      ["42"],
+    ];
+    let seed = 0x2f6e2b1;
+    const random = (below: number) => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed % below;
+    };
+    const requests = Array.from({ length: 48 }, () => {
+      const lines = ["Host: a"];
+      // Few names per request, so that most requests repeat none and some repeat one.
+      for (let count = random(7), i = 0; i < count; i++) {
+        const spellings = names[random(names.length)];
+        lines.push(`${spellings[random(spellings.length)]}: v${random(4)}`);
+      }
+      return lines;
+    });
+    const seen = await seenByServer(requests, req => {
+      const headers = Object.entries(req.headers);
+      const folded = {};
+      const raw = req.rawHeaders;
+      for (let i = 0; i < raw.length; i += 2) (req as any)._addHeaderLine(raw[i], raw[i + 1], folded);
+      return { raw, headers, folded: Object.entries(folded) };
+    });
+    expect(seen.map(({ raw, headers }) => ({ raw, headers }))).toEqual(
+      seen.map(({ raw, folded }) => ({ raw, headers: folded })),
+    );
+    expect(seen.map(({ raw }) => raw.length / 2)).toEqual(requests.map(lines => lines.length));
   });
 
   it("headers joins a value to the one its name inherits from Object.prototype", async () => {

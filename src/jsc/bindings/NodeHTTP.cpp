@@ -197,15 +197,14 @@ static bool nextCapturedHeader(const uint8_t* data, size_t length, size_t& offse
 // _addHeaderLine makes of such a request's rawHeaders is one property per header, named in lowercase, in the
 // order of the request. Answers undefined for the requests where it makes something else, which the caller
 // (NodeHTTPResponse.headersObject, for the `headers` getter) then builds from rawHeaders: a repeated name, a
-// Set-Cookie (an array), a name that Object.prototype has too (it reads through), a name that is an index or
-// has a byte above ASCII.
+// Set-Cookie (an array), a name that Object.prototype has too (it reads through), a name that is an index.
 extern "C" EncodedJSValue Bun__NodeHTTP__buildHeadersObject(JSC::JSGlobalObject* globalObject, const uint8_t* data, size_t length)
 {
     auto& vm = JSC::getVM(globalObject);
     std::span<const Latin1Character> nameBytes, valueBytes;
 
-    // Which known header each one is, and whether a name comes twice, before anything is allocated: a client
-    // or a proxy that repeats a header does so on every request.
+    // Which known header each one is, and whether a name comes twice, found before anything is allocated: a
+    // client or a proxy that repeats a header does so on every request.
     static constexpr uint8_t otherName = 0xff;
     static_assert(numHTTPHeaderNames <= otherName);
     Vector<uint8_t, 32> names;
@@ -216,8 +215,9 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildHeadersObject(JSC::JSGlobalObject*
     for (size_t offset = 0; nextCapturedHeader(data, length, offset, nameBytes, valueBytes);) {
         HTTPHeaderName name;
         if (!WebCore::findHTTPHeaderName(StringView(nameBytes), name)) {
-            if (nameBytes.empty() || !charactersAreAllASCII(nameBytes))
-                return JSValue::encode(jsUndefined());
+            // The parser lets nothing but a token through as a field name (HttpParser.h), so lowercasing
+            // it as ASCII below is what String.prototype.toLowerCase does to it.
+            ASSERT(!nameBytes.empty() && charactersAreAllASCII(nameBytes));
             for (size_t i = 0; i < otherNameCount; i++) {
                 if (equalIgnoringASCIICase(otherNames[i], nameBytes))
                     return JSValue::encode(jsUndefined());
@@ -262,11 +262,25 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildHeadersObject(JSC::JSGlobalObject*
     return JSValue::encode(headers);
 }
 
+// The string `headers` has under `name`, when it holds exactly `bytes`.
+static JSString* sameHeaderValue(VM& vm, JSObject* headers, const Identifier& name, std::span<const Latin1Character> bytes)
+{
+    if (parseIndex(name))
+        return nullptr;
+    JSValue value = headers->getDirect(vm, name);
+    if (!value || !value.isString())
+        return nullptr;
+    JSString* string = asString(value);
+    StringImpl* impl = string->tryGetValueImpl();
+    return impl && WTF::equal(impl, bytes) ? string : nullptr;
+}
+
 // Builds the rawHeaders flat array [name, value, ...] from the bytes captured
 // by assignHeadersFromUWebSocketsForCall. Runs only when user code first
 // touches req.rawHeaders, or req.headers of a request that Bun__NodeHTTP__buildHeadersObject
-// leaves to JS (via NodeHTTPResponse.takeRawHeaders).
-extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObject* globalObject, const uint8_t* data, size_t length)
+// leaves to JS (via NodeHTTPResponse.takeRawHeaders). `encodedHeaders` is req.headers when
+// that was read first: built from these bytes, it has the value strings already.
+extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObject* globalObject, const uint8_t* data, size_t length, EncodedJSValue encodedHeaders)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -275,6 +289,10 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
     auto* clientData = WebCore::clientData(vm);
     HTTPHeaderIdentifiers& identifiers = clientData->httpHeaderIdentifiers();
     NodeHTTPRequestHeaderValues& remembered = clientData->nodeHTTPRequestHeaderValues();
+    JSObject* headers = JSValue::decode(encodedHeaders).getObject();
+    // The JS fold asks for rawHeaders with the object it is about to fill.
+    if (headers && headers->structure()->maxOffset() == invalidOffset)
+        headers = nullptr;
 
     std::span<const Latin1Character> nameBytes, valueBytes;
     for (size_t offset = 0; nextCapturedHeader(data, length, offset, nameBytes, valueBytes);) {
@@ -283,13 +301,19 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
         JSString* nameString = nullptr;
 
         if (WebCore::findHTTPHeaderName(StringView(nameBytes), name)) {
-            jsValue = jsString(vm, headerValueString(remembered, name, valueBytes));
+            if (headers)
+                jsValue = sameHeaderValue(vm, headers, identifiers.identifierFor(vm, name), valueBytes);
+            if (!jsValue)
+                jsValue = jsString(vm, headerValueString(remembered, name, valueBytes));
             // rawHeaders keeps the wire casing; reuse the cached (lowercase)
             // string only when the client already sent it lowercased.
             if (WTF::equal(WTF::httpHeaderNameStringImpl(name).impl(), nameBytes))
                 nameString = identifiers.stringFor(globalObject, name);
         } else {
-            jsValue = jsString(vm, String(valueBytes));
+            if (headers)
+                jsValue = sameHeaderValue(vm, headers, Identifier::fromString(vm, StringView(nameBytes).convertToASCIILowercaseAtom()), valueBytes);
+            if (!jsValue)
+                jsValue = jsString(vm, String(valueBytes));
         }
         if (!nameString)
             nameString = jsString(vm, String(nameBytes));

@@ -197,10 +197,8 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
       const [writer, peer] = side === "client" ? [p.client, p.serverSock] : [p.serverSock, p.client];
       const seen = observe(writer);
       const received = collect(writer);
+      // Only the sends fail here, and the peer does not read up to the FIN: nothing but the writer itself ends its reads.
       if (peerWroteFirst) {
-        // Only the sends fail here, so the reads of the writer end once the peer has read up to its FIN and answers.
-        // Without this the peer stays silent, and with nothing to read first the writer closes on its own.
-        peer.resume();
         writer.pause();
         await new Promise<void>(resolve => peer.write("late", () => resolve()));
       }

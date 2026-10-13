@@ -2779,6 +2779,9 @@ restart:
   ssl_flush_pending_events(s);
   if (ssl_gone(s)) return NULL;
 
+  /* The kernel need not report an end behind what the peer sent: the writable event looks again, once the owner has had this read. */
+  if (s->ssl_send_rejected) us_internal_rearm_writable(s);
+
   return s;
 }
 

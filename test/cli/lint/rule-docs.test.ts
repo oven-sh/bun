@@ -175,16 +175,20 @@ describe("docs/lint/rules", () => {
     expect(wrong).toEqual([]);
   });
 
-  test("reports.json is the same on Windows, where a path in a message has backslashes", async () => {
-    const names = ["import/no-relative-packages", "eslint/no-useless-escape"];
+  test.concurrent("reports.json is the same on Windows, where a path in a message has backslashes", async () => {
+    const names = ["import/no-relative-packages", "import/named", "eslint/no-useless-escape"];
     const examples = names.flatMap(name => examplesIn(name, text(name))!.examples);
     using dir = tempDir("bun-lint-rule-docs", {});
     const asOnWindows = async (cwd: string, args: string[]) => {
       const { stdout, ...rest } = await lint(cwd, args);
-      return { ...rest, stdout: stdout.replaceAll("@acme/ui/button.js", String.raw`@acme\\ui\\button.js`) };
+      const native = stdout
+        .replaceAll("@acme/ui/button.js", String.raw`@acme\\ui\\button.js`)
+        .replaceAll("'./dates.js'", String.raw`'.\\dates.js'`);
+      return { ...rest, stdout: native };
     };
     const now = reportsOf(examples, await lintExamples(String(dir), examples, byPage, asOnWindows));
     expect(JSON.stringify(recorded["import/no-relative-packages"])).toContain("@acme/ui/button.js");
+    expect(JSON.stringify(recorded["import/named"])).toContain("'./dates.js'");
     // In the other rule's messages a backslash is part of what they say.
     expect(JSON.stringify(recorded["eslint/no-useless-escape"])).toContain(String.raw`character: \\d.`);
     for (const name of names) expect(now[name]).toEqual(recorded[name]);

@@ -762,7 +762,7 @@ fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
     source_type | (u32::from(has_no_jsx) << 2)
 }
 
-/// `{ name, isAlias, file, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
+/// `{ name, isAlias, file, export, hasNothing, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
 /// numbered from `first`, in that order. `position`: that of the plugin. `needs_the_configuration`: no module exports it.
 fn plugin_of(
     described: &Json,
@@ -829,10 +829,17 @@ fn plugin_of(
     crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
     Plugin {
         name: name.into(),
-        file: described
-            .get(b"file")
-            .and_then(Json::as_str)
-            .map(Into::into),
+        location: described.get(b"file").map(|file| {
+            let exported = described.get(b"export").cloned();
+            Json::Object(vec![
+                (b"module".to_vec(), file.clone()),
+                (
+                    b"export".to_vec(),
+                    exported.unwrap_or(Json::Array(Vec::new())),
+                ),
+            ])
+        }),
+        has_nothing: described.get(b"hasNothing").and_then(Json::as_bool) == Some(true),
         rules,
     }
 }

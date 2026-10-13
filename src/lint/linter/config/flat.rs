@@ -669,25 +669,19 @@ impl Reader<'_> {
                 });
             }
         }
+        // One without rules is not among `$jsPlugins`.
+        let located = json.get(b"$jsPlugins");
+        for (prefix, _) in (json.get(b"plugins").and_then(Json::as_object)).unwrap_or_default() {
+            if located.is_none_or(|it| it.get(prefix).is_none()) {
+                self.refuse_second(prefix, None)?;
+            }
+        }
         for (prefix, location) in json
             .get(b"$jsPlugins")
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            // ESLint's `Cannot redefine plugin`, for one of the file and a `NamedPlugin`. Those come first.
-            let mut named = self.js_locations.iter().take(self.named);
-            // The file can have imported the same package. Then it is one plugin, for ESLint too.
-            let is_default = |it: &Json| it.as_str() == Some(b"default");
-            let exported = location.get(b"export").and_then(Json::as_array);
-            let is_whole = exported.is_some_and(|it| it.len() <= 1 && it.iter().all(is_default));
-            let is_same = |it: &Json| is_whole && it.get(b"module") == location.get(b"module");
-            if named.any(|it| *it.0 == prefix[..] && !is_same(&it.1)) {
-                return Err(ConfigError::new(&[
-                    b"The plugin \"",
-                    prefix,
-                    b"\" is loaded twice: here, and by plugins in bunfig.toml or --plugin",
-                ]));
-            }
+            self.refuse_second(prefix, Some(location))?;
             // `twin`: which of the plugins that objects have under that name.
             let is_it = |it: &(Box<[u8]>, Json)| {
                 *it.0 == prefix[..] && it.1.get(b"twin") == location.get(b"twin")
@@ -957,6 +951,35 @@ impl Config {
 }
 
 impl Reader<'_> {
+    /// ESLint's `Cannot redefine plugin`, for a plugin that the configuration has as `prefix` and a [`NamedPlugin`]. `location`:
+    /// where the former is, if that is known. The configuration can have imported the same package: then it is one plugin, for
+    /// ESLint too.
+    pub(super) fn refuse_second(
+        &self,
+        prefix: &[u8],
+        location: Option<&Json>,
+    ) -> Result<(), ConfigError> {
+        let same =
+            |key: &[u8], it: &Json| location.is_some_and(|other| other.get(key) == it.get(key));
+        // `[]` and `["default"]` are the same for what has no `default`.
+        let is_whole = |it: Option<&Json>| {
+            let path = it.and_then(|it| it.get(b"export")?.as_array());
+            path.is_some_and(|it| {
+                it.len() <= 1 && it.iter().all(|it| it.as_str() == Some(b"default"))
+            })
+        };
+        let is_same = |it: &Json| same(b"module", it) && is_whole(location) && is_whole(Some(it));
+        let mut named = self.js_locations.iter().take(self.named);
+        match named.any(|it| *it.0 == *prefix && !is_same(&it.1)) {
+            true => Err(ConfigError::new(&[
+                b"The plugin \"",
+                prefix,
+                b"\" is loaded twice: here, and by plugins in bunfig.toml or --plugin",
+            ])),
+            false => Ok(()),
+        }
+    }
+
     /// Before anything is read.
     pub(super) fn add_named(&mut self, named: Vec<NamedPlugin>) {
         self.named = named.len();

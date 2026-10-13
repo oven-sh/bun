@@ -41,7 +41,7 @@ impl Mistake {
             Some(bun_ast::Location {
                 file: bunfig.to_vec().into(),
                 line: strings::count_char(before, b'\n') as i32 + 1,
-                column: (at - start) as i32 + 1,
+                column: strings::utf8_decoded_len_utf16(before.get(start..)?) as i32 + 1,
                 line_text: Some(line.get(..end)?.to_vec().into()),
                 ..Default::default()
             })
@@ -95,6 +95,9 @@ fn unknown_rule_of(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
 }
 
 /// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
+pub(crate) const ADD_THE_PLUGIN: &[u8] =
+    b"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]";
+
 pub(crate) fn unknown_rule(registry: &Registry, id: &[u8]) -> Vec<u8> {
     match registry.why_missing(id) {
         Missing::Formatting => {
@@ -111,12 +114,9 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8]) -> Vec<u8> {
         ]
         .concat(),
         // It has the prefix of a plugin that isn't built in.
-        Missing::Unknown(None) if !parse_rule_id(id).0.is_empty() => [
-            b"Unknown rule \"",
-            id,
-            b"\"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]",
-        ]
-        .concat(),
+        Missing::Unknown(None) if !parse_rule_id(id).0.is_empty() => {
+            [b"Unknown rule \"", id, b"\"", ADD_THE_PLUGIN].concat()
+        }
         Missing::Unknown(None) => [b"Unknown rule \"", id, b"\""].concat(),
         Missing::Unknown(Some(close)) => [
             b"Unknown rule \"",
@@ -142,13 +142,16 @@ pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
 /// Returns the first mistake in `[lint.rules]`, `--rule`, `-A` / `-W` / `-D` or the `rules` of `[[lint.overrides]]`: an unknown
 /// rule, an invalid severity, or options the rule doesn't take. Turning off a rule that Bun left out on purpose is fine.
 /// `plugins`: the JavaScript plugins that are loaded.
+/// `only_of_plugins`: there is a configuration file, whose tool has its own words about the other rules.
 pub(crate) fn check_rules(
     linter: &Linter,
     options: &Options,
     plugins: &[NamedPlugin],
+    only_of_plugins: bool,
 ) -> Result<(), Mistake> {
-    let check =
-        |rules: &[(Vec<u8>, Json)], places: &[RuleOfBunfig]| check(linter, plugins, rules, places);
+    let check = |rules: &[(Vec<u8>, Json)], places: &[RuleOfBunfig]| {
+        check(linter, plugins, rules, places, only_of_plugins)
+    };
     let filters = options.filters.iter().filter(|it| !is_category(&it.1));
     let filters: Vec<(Vec<u8>, Json)> = filters
         .map(|(severity, rule)| (rule.clone(), severity_name(*severity)))
@@ -165,6 +168,7 @@ fn check(
     plugins: &[NamedPlugin],
     rules: &[(Vec<u8>, Json)],
     places: &[RuleOfBunfig],
+    only_of_plugins: bool,
 ) -> Result<(), Mistake> {
     let registry = linter.registry();
     for (at, (id, setting)) in rules.iter().enumerate() {
@@ -215,6 +219,9 @@ fn check(
                     }
                 },
             }
+        }
+        if only_of_plugins {
+            continue;
         }
         let found = registry.find_by_any_name(id);
         if found.or_else(|| registry.base_of(id)).is_none() {

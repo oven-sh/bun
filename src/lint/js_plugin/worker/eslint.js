@@ -131,7 +131,15 @@ async function reviveOverride(object, arrayBase) {
         revived.plugins[prefix] = await locatedPlugin(located[prefix], prefix);
         continue;
       }
-      const module = await importFrom(longPluginName(name));
+      let module;
+      try {
+        module = await importFrom(longPluginName(name));
+      } catch (error) {
+        if (error?.code !== "MODULE_NOT_FOUND") throw error;
+        throw new Error(
+          `${longPluginName(name)} is not installed\n  bun lint has the rules of "${prefix}" built in, but some of your files go to the installed ESLint, which needs the package`,
+        );
+      }
       if (!("default" in module)) {
         throw new Error(
           `"${longPluginName(name)}" cannot be used with the \`--plugin\` option because its default module does not provide a \`default\` export`,

@@ -35,6 +35,7 @@ const { pathToFileURL } = Bun;
 const nodeModule = require("node:module");
 const { createRequire } = nodeModule;
 const nodePath = require("node:path");
+const { realpathSync } = require("node:fs");
 
 // Rules ask which modules are built in, to tell them from packages. They mean Node.js, where `undici` and `ws` are packages. The
 // same is in `evaluate-start.js`.
@@ -197,13 +198,24 @@ async function locatedPlugin(location, prefix) {
 async function findPlugin([directory, specifier, alias]) {
   const isLocated = typeof directory === "object";
   const isPath = isLocated || /^\.{0,2}[\\/]/u.test(specifier) || nodePath.isAbsolute(specifier);
-  let plugin, file;
+  let plugin, file, path;
   if (isLocated) plugin = await locatedPlugin(directory, alias);
   else {
-    file = isPath
-      ? nodePath.resolve(directory, specifier)
-      : createRequire(nodePath.join(directory, "noop.js")).resolve(specifier);
+    const wanted = isPath ? nodePath.resolve(directory, specifier) : specifier;
+    try {
+      file = createRequire(nodePath.join(directory, "noop.js")).resolve(wanted);
+    } catch (error) {
+      // A package that can only be imported.
+      try {
+        file = Bun.resolveSync(wanted, directory);
+      } catch {
+        throw error;
+      }
+    }
+    // One file is one plugin, however it is written.
+    file = realpathSync(file);
     const module = await load(pathToFileURL(file).href);
+    path = module.default == null ? [] : ["default"];
     plugin = module.default ?? module;
   }
   if (plugin === null || typeof plugin !== "object") {
@@ -221,7 +233,9 @@ async function findPlugin([directory, specifier, alias]) {
       "Plugin must either define `meta.name`, be loaded from an NPM package with a `name` field in `package.json`, or be given an alias in config",
     );
   }
-  return { name, isAlias: alias !== null, plugin, file };
+  // `vue` is a package too, and no plugin.
+  const hasNothing = !["meta", "rules", "configs", "processors", "languages"].some(key => key in plugin);
+  return { name, isAlias: alias !== null, plugin, file, path, hasNothing };
 }
 
 // Where the objects are that the modules which are loaded export: `{ module, export }`, as `locate` in `evaluate-eslint.js` has it.
@@ -283,7 +297,7 @@ async function loadPlugin([location, position, firstRule]) {
     pluginsByLocation.set(key, (found = await findPlugin(location)));
     loadingTime += performance.now() - started;
   }
-  const { name, isAlias, plugin, file } = found;
+  const { name, isAlias, plugin, file, path, hasNothing } = found;
   const described = [];
   const exported = position === null ? exportedObjects() : null;
   // Sorted: a plugin that imports its rules all at once has them in another order each time.
@@ -307,7 +321,7 @@ async function loadPlugin([location, position, firstRule]) {
     }
   });
   if (position !== null) loadedPlugins.add(position);
-  return { name, isAlias, file, rules: described };
+  return { name, isAlias, file, export: path, hasNothing, rules: described };
 }
 
 // ------------- ESLint's `context` -------------

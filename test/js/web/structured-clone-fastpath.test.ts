@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, rss } from "harness";
+import { bunEnv, bunExe, isASAN, rss } from "harness";
 import { runInNewContext } from "node:vm";
 
 describe("Structured Clone Fast Path", () => {
@@ -1146,5 +1146,36 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
       o: { a: { b: "changed" }, added: true },
       items: [{ id: 2 }],
     } as any);
+  });
+
+  // Serialization allocates its buffer and the value that owns it; the copy allocates only the clones, which
+  // are not the allocator's. An ASAN build does not allocate through mimalloc.
+  test.skipIf(isASAN)("a plain tree is cloned without what serialization allocates", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { heapStats } = require("bun:jsc");
+         const plain = { title: { absolute: "Blog", template: null }, list: [1, 2, { a: "b" }], other: {} };
+         const perClone = value => {
+           structuredClone(value);
+           const before = heapStats().mimalloc.malloc_requested;
+           for (let i = 0; i < 1000; i++) structuredClone(value);
+           return (heapStats().mimalloc.malloc_requested - before) / 1000;
+         };
+         const copied = perClone(plain);
+         const serialized = perClone({ ...plain, when: new Date(0) });
+         console.log(JSON.stringify({ serializationAllocates: serialized > 1000, copyAllocatesLess: copied < serialized / 4 }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ serializationAllocates: true, copyAllocatesLess: true }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

@@ -68,7 +68,7 @@ impl Expression {
 pub(crate) struct Pattern {
     /// Up to the end of the annotation, unless it is a name.
     pub(crate) span: Span,
-    /// `typeAnnotation.typeAnnotation`
+    /// `typeAnnotation.typeAnnotation`, from the first comment behind the `:` on.
     pub(crate) annotation: Option<Span>,
 }
 

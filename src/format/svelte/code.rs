@@ -4,6 +4,7 @@ use super::doc::{self, Brace, Code, Js, JsKind, Parser};
 use super::print::preformatted_body;
 use crate::html::js::{self, Hug, Parse, Piece, SourceType, Syntax};
 use crate::html::writer::Writer;
+use crate::js::comments::Comment;
 use crate::js::format::{ExprOptions, write_expression};
 use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::print::function::{FormatFunctionOptions, write_function};
@@ -67,6 +68,24 @@ fn starts_like_a_tag<'a>(mut e: Expr<'a>, brace: Brace, f: &Formatter<'a>) -> bo
     }
 }
 
+/// Whether one of the `comments` in `text` can be the last of it that is printed. One that goes up to the end of its line
+/// waits for the end of a line. Any other stays before what follows it, unless all of that goes: parentheses, and the `;` of
+/// a statement.
+fn can_end_with_comment(text: &[u8], comments: &[Comment]) -> bool {
+    let Some(last) = comments.last() else {
+        return false;
+    };
+    let mut behind = text.get(last.span.end as usize..).unwrap_or_default();
+    loop {
+        behind = strings::trim_js_whitespace_end(behind);
+        match behind {
+            [before @ .., b')' | b';'] => behind = before,
+            _ => break,
+        }
+    }
+    behind.is_empty() || comments.iter().any(|it| it.is_line())
+}
+
 /// `textToDoc(forceIntoExpression(text), ..)`, and what is done to the document. Returns whether the last thing that is
 /// written is a comment at the end of a line. `None`: nothing is written.
 fn write_js_expression(
@@ -97,6 +116,10 @@ fn write_js_expression(
                 return false;
             };
             let comments = f.comments().unprinted_comments();
+            // As it is written, there is none: `{#each a[0 // b\n]}`.
+            if js.is_without_comment_behind && can_end_with_comment(&wrapped, comments) {
+                return false;
+            }
             // One on a line of its own is printed at the end of a line too, and so is all that follows one that is.
             ends_with_line_comment = (comments.iter())
                 .filter(|it| it.span.start >= e.span().end)
@@ -153,6 +176,19 @@ fn write_js_function(
             let Some(StmtKind::Fn(function)) = file.body().iter().next().map(|it| it.kind()) else {
                 return false;
             };
+            // Such a comment is printed behind the name, where Svelte wants the `(`: `{#snippet a /* b */(c)}`.
+            let first = function.params_with_this().next();
+            let is_behind_name = |it: &Comment| {
+                function
+                    .open_paren()
+                    .is_some_and(|open| it.span.start < open)
+                    || (!it.is_line()
+                        && it.followed_by_newline()
+                        && first.is_some_and(|first| it.span.start < first.span().start))
+            };
+            if f.comments().unprinted_comments().iter().any(is_behind_name) {
+                return false;
+            }
             write_function(function, FormatFunctionOptions::default(), f);
             true
         },
@@ -179,6 +215,11 @@ fn write_js_statement(
             let Some(statement) = file.body().iter().next() else {
                 return false;
             };
+            // As it is written, there is none: `{const a = (b /* c */)}`.
+            let comments = f.comments().unprinted_comments();
+            if js.is_without_comment_behind && can_end_with_comment(&js.text, comments) {
+                return false;
+            }
             write!(f, statement);
             true
         },

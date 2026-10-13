@@ -664,7 +664,10 @@ impl<'a> Parser<'a, '_> {
         match self.js.type_at(template, index) {
             Ok(span) => {
                 self.index = span.end as usize;
-                Ok(Some(span))
+                // The plugin loses the comment in `a: /* b */ C`.
+                let before = template.get(index..span.start as usize).unwrap_or_default();
+                let comments = strings::trim_js_whitespace_start(before).len();
+                Ok(Some(Span::new(span.start as usize - comments, self.index)))
             }
             Err(at) => fail(Message::UnexpectedToken, at),
         }
@@ -1276,9 +1279,15 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// Goes on behind `/<\/script\s*>/`, or the same for `</style`. Returns what is before it. `start`: of the element.
-    fn read_raw_content(&mut self, end_tag: &[u8], start: usize) -> Result<Span> {
-        let (from, mut search) = (self.index, self.index);
+    /// Goes on behind the first `/<\/script\s*>/` from `search` on, or the same for `</style`. Returns what is before it.
+    /// `start`: of the element.
+    fn read_raw_content(
+        &mut self,
+        end_tag: &[u8],
+        start: usize,
+        mut search: usize,
+    ) -> Result<Span> {
+        let from = self.index;
         loop {
             let Some(found) = strings::index_of(&self.text[search..self.len], end_tag) else {
                 return fail(Message::UnclosedElement, start);
@@ -1295,7 +1304,7 @@ impl<'a> Parser<'a, '_> {
 
     /// `read_script`. What is in it is not parsed.
     fn read_script(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
-        let content = self.read_raw_content(b"</script", start)?;
+        let content = self.read_raw_content(b"</script", start, self.index)?;
         let mut is_module = false;
         for &attribute in &attributes {
             let at = self.tree[attribute].start as usize;
@@ -1337,9 +1346,73 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
-    /// `read_style`. What is in it is not parsed: it ends where it ends in HTML.
+    /// `read_value`: where the `;`, `{` or `}` is that ends what starts at `start`.
+    fn end_of_css_value(&self, start: usize) -> Option<usize> {
+        let text = &self.text[..self.len];
+        let (mut at, mut is_in_url, mut quote) = (start, false, None);
+        loop {
+            at += strings::index_of_any(text.get(at..)?, b"\\\"'()/;{}")?;
+            match text[at] {
+                b'\\' => at += 1,
+                byte if quote == Some(byte) => quote = None,
+                b')' => is_in_url = false,
+                byte @ (b'"' | b'\'') if quote.is_none() => quote = Some(byte),
+                b'(' if text[start..at].ends_with(b"url") => is_in_url = true,
+                b';' | b'{' | b'}' if !is_in_url && quote.is_none() => return Some(at),
+                b'/' if !is_in_url && quote.is_none() && text.get(at + 1) == Some(&b'*') => {
+                    at += 1 + strings::index_of(&text[at + 2..], b"*/")? + 2;
+                }
+                _ => {}
+            }
+            at += 1;
+        }
+    }
+
+    /// Where `read_style` finds the `</style` that ends the style sheet that starts here. It looks for it between two rules:
+    /// `a { b: "</style>" }`. `None`: it throws.
+    fn end_of_css(&self) -> Option<usize> {
+        let text = &self.text[..self.len];
+        let (mut at, mut depth) = (self.index, 0usize);
+        loop {
+            // `allow_comment_or_whitespace`
+            let rest = strings::trim_js_whitespace_start(text.get(at..)?);
+            at = text.len() - rest.len();
+            let comment: Option<(&[u8], &[u8])> = match rest {
+                [b'/', b'*', ..] => Some((b"/*", b"*/")),
+                [b'<', b'!', b'-', b'-', ..] => Some((b"<!--", b"-->")),
+                _ => None,
+            };
+            if let Some((open, end)) = comment {
+                at += open.len() + strings::index_of(&rest[open.len()..], end)? + end.len();
+                continue;
+            }
+            match rest.first()? {
+                b'<' if depth == 0 && rest.starts_with(b"</style") => return Some(at),
+                b'}' => depth = depth.checked_sub(1)?,
+                _ => {
+                    at = self.end_of_css_value(at)?;
+                    match text[at] {
+                        b'{' => depth += 1,
+                        b';' => {}
+                        _ => continue,
+                    }
+                }
+            }
+            at += 1;
+        }
+    }
+
+    /// `read_style`. What is in it is not parsed. With a `lang`, a preprocessor has it first, for which it ends at the first
+    /// end tag. So it does if Svelte cannot read it.
     fn read_style(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
-        let content = self.read_raw_content(b"</style", start)?;
+        let is_css = attributes.iter().all(|&it| match &self.tree[it].kind {
+            Kind::Attribute { name, value } if matches!(*name, b"lang" | b"type") => {
+                matches!(self.text_of_attribute(value), Some(b"css" | b"text/css"))
+            }
+            _ => true,
+        });
+        let search = (is_css.then(|| self.end_of_css()).flatten()).unwrap_or(self.index);
+        let content = self.read_raw_content(b"</style", start, search)?;
         let kind = Kind::StyleSheet {
             attributes,
             content,

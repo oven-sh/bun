@@ -10,6 +10,7 @@ use super::doc::{
     trim_right,
 };
 use super::parser::closing_tag_omitted;
+use crate::html::embed::infer_parser_by_type_attribute;
 use crate::html::preprocess::slice;
 use crate::options::{
     AttributePosition, FormatOptions, HtmlWhitespaceSensitivity, SvelteOptions, SveltePart as Part,
@@ -494,6 +495,19 @@ impl<'a, 'o> Printer<'a, 'o> {
         Some(value.strip_prefix(b"text/").unwrap_or(&value[..]))
     }
 
+    /// Whether a script with these attributes has a `type` that does not stand for code, and no `lang`.
+    fn is_data_block(&self, attributes: &[Id]) -> bool {
+        let text_of = |name: &[u8]| self.attribute_text_value(attributes, name);
+        text_of(b"lang").is_none_or(|it| it.is_empty())
+            && text_of(b"type").is_some_and(|kind| {
+                !kind.is_empty()
+                    && !matches!(
+                        infer_parser_by_type_attribute(kind),
+                        Some(b"babel" | b"typescript")
+                    )
+            })
+    }
+
     /// `isNodeSupportedLanguage`
     fn is_supported_language(&self, attributes: &[Id]) -> bool {
         !matches!(
@@ -699,6 +713,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             has_single_quotes: false,
             is_on_one_line: false,
             is_without_parentheses: false,
+            is_without_comment_behind: false,
             follows: None,
         }
     }
@@ -993,6 +1008,8 @@ impl<'a, 'o> Printer<'a, 'o> {
             "script" if lang.ends_with(b"json") || lang.ends_with(b"importmap") => {
                 Some(Parser::Json)
             }
+            // The plugin reads it as JavaScript, and `<p>{{a}}</p>` in a `text/template` is JSX, which gets a `;`.
+            "script" if self.is_data_block(attributes) => None,
             "script" => Some(Parser::BabelTs),
             "style" if lang == b"less" => Some(Parser::Less),
             "style" if matches!(lang, b"sass" | b"scss") => Some(Parser::Scss),
@@ -1865,6 +1882,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: true,
+                    is_without_comment_behind: false,
                     follows: None,
                 }),
             ),
@@ -1876,6 +1894,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: false,
+                    is_without_comment_behind: true,
                     follows: None,
                 }),
             ),
@@ -1919,11 +1938,12 @@ impl<'a, 'o> Printer<'a, 'o> {
                 body,
                 fallback,
             } => {
-                // Without an `as`, Svelte goes on where the expression ends, which is before a `)`. The plugin prints
-                // `{#each (a = 1)}`.
+                // Without an `as`, Svelte goes on where the expression ends, which is before a `)` and before a comment. The
+                // plugin prints `{#each (a = 1)}`.
                 let list = Self::code(Js {
                     is_on_one_line: true,
                     is_without_parentheses: context.is_none(),
+                    is_without_comment_behind: context.is_none(),
                     ..self.js(expression)
                 });
                 let mut parts = vec![Doc::Token("{#each "), list];
@@ -2035,6 +2055,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: false,
+                    is_without_comment_behind: false,
                     follows: None,
                 });
                 Doc::List(vec![

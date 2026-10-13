@@ -2499,29 +2499,34 @@ it("Blob.stream() -> new Response(stream).text()", async () => {
   expect(text).toBe("abdefgh");
 });
 
+// A reader pulls the bytes of a blob into a buffer no larger than what the blob has left. What it
+// reads is what it read out of a larger one.
 describe("a stream over bytes in memory", () => {
-  // The first chunk holds at most this much. A body that fits in it is the whole stream.
+  const MB = 1024 * 1024;
+  // The first chunk holds at most this much.
   const FIRST_CHUNK = 16384;
-  const bytesOf = size => {
-    const bytes = new Uint8Array(size);
-    for (let i = 0; i < size; i++) bytes[i] = i % 251;
-    return bytes;
-  };
+  // A period that no chunk size is a multiple of, so that a chunk at the wrong offset shows.
+  const bytesOf = size => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz");
   const sources = {
     "Response.body": bytes => new Response(bytes).body,
     "Request.body": bytes => new Request("http://localhost/", { method: "POST", body: bytes }).body,
     "Blob.stream()": bytes => new Blob([bytes]).stream(),
     "Blob.slice().stream()": bytes => new Blob(["abc", bytes, "def"]).slice(3, 3 + bytes.length).stream(),
   };
-  const sizes = [1, 100, FIRST_CHUNK - 1, FIRST_CHUNK, FIRST_CHUNK + 1, 3 * FIRST_CHUNK];
+  const sizes = [1, 100, FIRST_CHUNK - 1, FIRST_CHUNK, FIRST_CHUNK + 1, 3 * FIRST_CHUNK, 300_000];
   const cases = Object.keys(sources).flatMap(source => sizes.map(size => [source, size]));
 
-  test.each(cases)("%s of %d bytes reads as the chunks it always did", async (source, size) => {
-    const bytes = bytesOf(size);
-    const reader = sources[source](bytes).getReader();
+  async function chunksOf(stream) {
+    const reader = stream.getReader();
     const chunks = [];
     for (let result = await reader.read(); !result.done; result = await reader.read()) chunks.push(result.value);
     await reader.closed;
+    return chunks;
+  }
+
+  test.each(cases)("%s of %d bytes is its first 16384 bytes, then the rest", async (source, size) => {
+    const bytes = bytesOf(size);
+    const chunks = await chunksOf(sources[source](bytes));
     expect({
       sizes: chunks.map(chunk => chunk.byteLength),
       content: Buffer.concat(chunks).equals(bytes),
@@ -2529,6 +2534,27 @@ describe("a stream over bytes in memory", () => {
       sizes: size <= FIRST_CHUNK ? [size] : [FIRST_CHUNK, size - FIRST_CHUNK],
       content: true,
     });
+  });
+
+  // The buffer starts at 256 KiB, or at the chunk size asked for when that is more, doubles once when a pull
+  // fills it, and holds 2 MiB at most.
+  test.each([
+    [300_000, undefined, [16384, 283616]],
+    [300_000, 1000, [16384, 262144, 21472]],
+    [300_000, MB, [16384, 283616]],
+    [3 * MB, undefined, [16384, 2097152, 1032192]],
+    [3 * MB, 1000, [16384, 262144, 524288, 524288, 524288, 524288, 524288, 245760]],
+    [3 * MB, MB, [16384, 1048576, 2080768]],
+    [5 * MB + 7, 4 * MB, [16384, 2097152, 2097152, 1032199]],
+  ])("a Blob of %d bytes .stream(%p) reads as the chunks it always did", async (size, chunkSize, expected) => {
+    const bytes = bytesOf(size);
+    const chunks = await chunksOf(new Blob([bytes]).stream(chunkSize));
+    expect({
+      sizes: chunks.map(chunk => chunk.byteLength),
+      // A chunk is a buffer of its own, not a view of a larger one.
+      whole: chunks.every(chunk => chunk.byteOffset === 0 && chunk.buffer.byteLength === chunk.byteLength),
+      content: Buffer.concat(chunks).equals(bytes),
+    }).toEqual({ sizes: expected, whole: true, content: true });
   });
 
   test.each(cases)("%s of %d bytes gives the same bytes to every consumer", async (source, size) => {
@@ -2545,42 +2571,21 @@ describe("a stream over bytes in memory", () => {
     expect({
       iterated: Buffer.concat(iterated).equals(bytes),
       response: Buffer.from(await new Response(stream()).arrayBuffer()).equals(bytes),
-      tee: [Buffer.from(await new Response(left).bytes()).equals(bytes), (await new Response(right).bytes()).length],
+      tee: [
+        Buffer.from(await new Response(left).bytes()).equals(bytes),
+        Buffer.from(await new Response(right).bytes()).equals(bytes),
+      ],
       piped: Buffer.concat(piped).equals(bytes),
       first: [first.done, first.value.byteLength],
       afterCancel: await cancelled.read(),
     }).toEqual({
       iterated: true,
       response: true,
-      tee: [true, size],
+      tee: [true, true],
       piped: true,
       first: [false, Math.min(size, FIRST_CHUNK)],
       afterCancel: { done: true, value: undefined },
     });
-  });
-
-  // A body that the first chunk holds whole needs nothing to pull from afterwards.
-  test.concurrent.each([
-    [FIRST_CHUNK, 0],
-    [FIRST_CHUNK + 1, 200],
-  ])("a body of %d bytes leaves %d sources to pull from", async (size, expected) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { heapStats } = require("bun:jsc");
-         const body = Buffer.alloc(${size}, "a").toString();
-         const readers = [];
-         for (let i = 0; i < 200; i++) readers.push(new Response(body).body.getReader());
-         Bun.gc(true);
-         console.log(heapStats().objectTypeCounts.NativeStreamSourceAdapter ?? 0, readers.length);`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${expected} 200\n`, stderr: "", exitCode: 0 });
   });
 });
 

@@ -73,9 +73,6 @@ impl readable_stream::SourceContext for ByteBlobLoader {
 bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn parent; }
 
 impl ByteBlobLoader {
-    /// The most `drain` takes at once.
-    const DRAIN_SIZE: blob::SizeType = 16384;
-
     pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // In-place init — `self` is a pre-allocated slot inside `Source`.
         let store = blob.store.get().as_ref().unwrap().clone();
@@ -102,18 +99,19 @@ impl ByteBlobLoader {
     }
 
     pub(crate) fn on_start(&mut self) -> streams::Start {
-        // What one `drain` would take is the whole stream: hand it over as the only chunk, so that
-        // the consumer does not allocate a slab to pull into just to learn that nothing is left.
-        if self.remain <= Self::DRAIN_SIZE {
-            let bytes = self.drain();
-            if !bytes.is_empty() {
-                self.done = true;
-                self.clear_data();
-                return streams::Start::OwnedAndDone(bytes);
-            }
-        }
         // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
         streams::Start::ChunkSize(self.chunk_size)
+    }
+
+    /// The bytes `drain` and `on_pull` have yet to hand over.
+    fn remaining(&self) -> usize {
+        let Some(store) = &self.store else {
+            return 0;
+        };
+        let stored = store.shared_view().len();
+        stored
+            .saturating_sub(self.offset as usize)
+            .min(self.remain as usize)
     }
 
     pub(crate) fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {
@@ -218,7 +216,7 @@ impl ByteBlobLoader {
         };
         let temporary = store.shared_view();
         let temporary = &temporary[self.offset as usize..];
-        let take = (Self::DRAIN_SIZE as usize).min(temporary.len().min(self.remain as usize));
+        let take = 16384usize.min(temporary.len().min(self.remain as usize));
         let temporary = &temporary[..take];
 
         // A single owning copy (avoids a `ManuallyDrop` borrow dance).
@@ -257,4 +255,10 @@ impl ByteBlobLoader {
         }
         0
     }
+}
+
+/// What the stream has left, for its reader to size the buffer it pulls into.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__ByteBlobLoader__remaining(source: &Source) -> usize {
+    source.context.remaining()
 }

@@ -34,7 +34,32 @@ export default {
 };
 ```
 
-Load it from an ESLint config or an oxlint config:
+Load it in `bunfig.toml`. Bun's default rules stay on, and the plugin's rules are added to them.
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["./lint/plugin.js"]
+
+[lint.rules]
+"local/no-todo" = "warn"
+```
+
+```bash terminal icon="terminal"
+bun lint
+```
+
+```txt
+1 | // TODO: handle errors
+    ^
+warn: Open an issue instead of leaving a TODO.  local/no-todo
+   at src/index.js:1:1
+
+1 warning in 1 file. Linted 3 files [15.33ms]
+```
+
+You don't need the `eslint` package. To learn the API, read ESLint's guide to [plugins](https://eslint.org/docs/latest/extend/plugins).
+
+If you have an ESLint config or an oxlint config, load it there as usual:
 
 <CodeGroup>
 
@@ -58,39 +83,40 @@ export default [
 
 </CodeGroup>
 
-```bash terminal icon="terminal"
-bun lint
-```
-
-```txt
-/app/src/index.js
-  1:1  warning  Open an issue instead of leaving a TODO  local/no-todo
-
-✖ 1 problem (0 errors, 1 warning)
-
-Linted 3 files [73.16ms]
-```
-
-You don't need the `eslint` package. To learn the API, read ESLint's guide to [plugins](https://eslint.org/docs/latest/extend/plugins).
-
-<Note>
-  `bunfig.toml` can't load plugins. Once you add an `eslint.config.js` or `.oxlintrc.json`, that file decides which
-  rules are on, and Bun's defaults no longer apply.
-</Note>
+`plugins` in `bunfig.toml` works next to those files too.
 
 ## Plugins from npm
 
-Install and import them as usual.
+Install the package and name it. ESLint's short names work, so `"perfectionist"` is `eslint-plugin-perfectionist`.
 
-```js eslint.config.js icon="/icons/javascript.svg"
-import perfectionist from "eslint-plugin-perfectionist";
+```bash terminal icon="terminal"
+bun add -d eslint-plugin-perfectionist
+```
 
-export default [
-  {
-    plugins: { perfectionist },
-    rules: { "perfectionist/sort-imports": "error" },
-  },
-];
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["perfectionist"]
+
+[lint.rules]
+"perfectionist/sort-imports" = "error"
+```
+
+A path is relative to `bunfig.toml`. A rule's prefix is the plugin's own name, `meta.name`, without `eslint-plugin-`. To use another prefix:
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = [{ name = "sort", specifier = "eslint-plugin-perfectionist" }]
+
+[lint.rules]
+"sort/sort-imports" = "error"
+```
+
+You don't load the plugins that are built in, such as `react`, `import`, or `unicorn`. Their [rules](/lint/rules) work without it.
+
+For one run, use `--plugin`:
+
+```bash terminal icon="terminal"
+bun lint --plugin perfectionist --rule 'perfectionist/sort-imports: error'
 ```
 
 With an ESLint config, six plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, and `prettier`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.

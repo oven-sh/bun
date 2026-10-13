@@ -917,6 +917,8 @@ impl Config {
                 .js_plugin_places
                 .push(reader.js_locations.len() as u32);
             reader.js_locations.push((plugin.name.clone(), location));
+            // It is asked for by name, so nothing here stands in for it: `@stylistic` is not left to `bun fmt`.
+            reader.foreign_prefixes.push(plugin.name.clone());
             reader.js_plugins.push(plugin);
         }
         add_foreign_prefixes(registry, json, &mut reader.foreign_prefixes);

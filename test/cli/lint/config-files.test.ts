@@ -5104,7 +5104,6 @@ describe.concurrent("whose configuration files count", () => {
       [".oxlintrc.json", ["--rule", "no-var: error"], [["a.js:1:1 no-var", "a.js:2:7 eqeqeq"], 1]],
       [".oxlintrc.json", ["--ext", ".js"], refused("--ext .js", "ESLint", withOxlint)],
       [".oxlintrc.json", ["--parser", "espree"], refused("--parser espree", "ESLint", withOxlint)],
-      [".oxlintrc.json", ["--plugin", "demo"], refused("--plugin demo", "ESLint", withOxlint)],
       [
         ".oxlintrc.json",
         ["--report-unused-inline-configs", "error"],

@@ -143,7 +143,7 @@ If the project also has an ESLint config, Bun uses the oxlint config. Pick the o
 If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
 
 - **The rules are oxlint 1.87's**, whatever version you had installed.
-- **No `jsdoc/*` or `vue/*` rules.** If you turn one on by name, the run exits with code `2`. If you only list the plugin, you get a note.
+- **No `jsdoc/*` or `vue/*` rules.** If you turn one on by name, the run exits with code `2`. If you only list the plugin, you get a note. To run `eslint-plugin-jsdoc` or `eslint-plugin-vue` instead, add it to [`jsPlugins`](/lint/plugins).
 - **An unknown rule doesn't stop the run.** oxlint rejects the config. Bun runs the other rules, then exits with code `2`. `--allow-unsupported` turns that into a warning.
 - **Output is sorted** by file and line. oxlint prints files as its threads finish.
 - **Syntax errors can be worded differently.** oxlint also rejects a few programs that Bun lints, such as `let a; let a;`.

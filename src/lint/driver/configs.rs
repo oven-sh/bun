@@ -1015,7 +1015,7 @@ impl<'l> Loader<'l> {
             // The others are `named_plugins`.
             let plugins = (options.plugin.iter())
                 .map(|name| (plugin_shorthand(name), Json::String(name.clone())))
-                .filter(|it| Plugin::of_oxlint_prefix(&it.0).is_some());
+                .filter(|it| Plugin::spelled(&it.0).any(|it| !it.has_no_rules()));
             first.push((b"plugins", Json::Object(plugins.collect())));
         }
         let mut all = vec![object(first)];
@@ -1337,8 +1337,8 @@ impl<'l> Loader<'l> {
         for (at, specifier) in options.plugin.iter().enumerate() {
             let written = options.plugins_of_bunfig.get(at);
             let mistake = |message: Vec<u8>| native::Mistake::new(message, written.map(|it| it.at));
-            let is_built_in =
-                |name: &[u8]| Plugin::of_oxlint_prefix(name).is_some() || name == b"eslint";
+            // Of jsdoc and vue there is only the name here.
+            let is_built_in = |name: &[u8]| Plugin::spelled(name).any(|it| !it.has_no_rules());
             let is_path = specifier.starts_with(b".") || paths::is_absolute(specifier);
             // As with ESLint, `perfectionist` is eslint-plugin-perfectionist.
             let long = plugin_longhand(specifier).filter(|_| !is_path);

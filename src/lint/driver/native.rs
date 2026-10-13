@@ -105,7 +105,9 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8]) -> Vec<u8> {
             id,
             b"\" is not supported\n  bun lint has no ",
             plugin.prefix().as_bytes(),
-            b" rules",
+            b" rules. To run eslint-plugin-",
+            plugin.prefix().as_bytes(),
+            b", add it to plugins in [lint]",
         ]
         .concat(),
         // It has the prefix of a plugin that isn't built in.

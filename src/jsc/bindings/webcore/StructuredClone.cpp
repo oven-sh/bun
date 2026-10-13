@@ -40,9 +40,7 @@
 namespace WebCore {
 using namespace JSC;
 
-// Copies a tree made of plain objects, dense arrays, strings and other primitives object by object,
-// with no serialized form in between. Nothing here runs script or throws: what it cannot copy as it
-// is ends the attempt, and the caller serializes the value instead.
+// Copies a tree of plain objects, dense arrays and primitives without running script or throwing; anything else in it ends the attempt, and the caller serializes.
 class PlainTreeCloner {
 public:
     PlainTreeCloner(VM& vm, JSGlobalObject* globalObject)
@@ -83,8 +81,7 @@ private:
         Structure* structure = object->structure();
         if (!structure->canPerformFastPropertyEnumerationCommon() || !structure->hasInlineStorage())
             return {};
-        // Only for an object whose own properties are all enumerable, writable, configurable data properties
-        // with string keys, on Object.prototype of this global. The clone takes the structure as it is.
+        // Succeeds only when every own property is a plain data property with a string key and the prototype is this global's Object.prototype.
         JSObject* clone = tryCreateObjectViaCloning(m_vm, m_globalObject, object);
         if (!clone) {
             // An object that never had a property is refused as well: it has no structure worth sharing.

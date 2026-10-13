@@ -240,8 +240,8 @@ pub trait Modules: Sync {
         lookup: &Lookup,
     ) -> Option<Vec<u8>>;
 
-    /// Where a path in the options of a rule starts, in the same form: the working directory, or the directory above it that
-    /// has the bunfig.toml of the run.
+    /// Where a path in the options of a rule starts, in the same form: the working directory. In a run without a configuration
+    /// of ESLint or oxlint, whose options are those of a bunfig.toml, where that is.
     fn cwd(&self) -> &[u8];
 
     /// Whether there is a file or a directory at `path`. It can be asked at any time.

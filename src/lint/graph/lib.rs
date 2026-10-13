@@ -52,8 +52,8 @@ pub struct Store {
     session: Session,
     disk: OnceLock<Disk>,
     cwd: Vec<u8>,
-    /// [`Modules::cwd`]
-    start: Vec<u8>,
+    /// [`Modules::cwd`], if not `cwd`.
+    start: OnceLock<Vec<u8>>,
 }
 
 impl Store {
@@ -63,16 +63,13 @@ impl Store {
             session: Session::new(),
             disk: OnceLock::new(),
             cwd: from_native(cwd),
-            start: from_native(cwd),
+            start: OnceLock::new(),
         }
     }
 
-    /// `start`: where the paths in the options of a rule start, if not in `cwd`.
-    pub fn starting_at(self, start: &[u8]) -> Store {
-        Store {
-            start: from_native(start),
-            ..self
-        }
+    /// `start`: where the paths in the options of a rule start, if not in `cwd`. Before a rule asks.
+    pub fn start_at(&self, start: &[u8]) {
+        self.start.get_or_init(|| from_native(start));
     }
 
     fn disk(&self) -> &Disk {
@@ -1259,7 +1256,7 @@ impl Modules for Graph<'_> {
     }
 
     fn cwd(&self) -> &[u8] {
-        typescript_path(&self.store.start)
+        typescript_path(self.store.start.get().unwrap_or(&self.store.cwd))
     }
 
     fn exists(&self, path: &[u8]) -> bool {

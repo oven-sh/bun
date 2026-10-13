@@ -366,6 +366,8 @@ impl LintCommand {
                     }
                     Ok(match (&defaults, &of_bun_format) {
                         (Some(_), Some(_)) => Above::Unwanted,
+                        (Some(it), None) if it.names_a_format_rule() => Above::Needed,
+                        (Some(_), None) if options.names_a_format_rule() => Above::Needed,
                         (Some(_), None) => Above::Optional,
                         (None, _) => Above::Needed,
                     })

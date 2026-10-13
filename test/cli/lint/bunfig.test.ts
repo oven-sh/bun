@@ -814,6 +814,71 @@ rules = { "no-console" = "off" }
   });
 
   test.each([
+    [
+      "eslint.config.js",
+      (rules: string) =>
+        `import plugin from "eslint-plugin-import";\nexport default [{ plugins: { import: plugin }, rules: ${rules} }];\n`,
+    ],
+    [
+      ".eslintrc.json",
+      (rules: string) =>
+        `{ "root": true, "plugins": ["import"], "parserOptions": { "sourceType": "module", "ecmaVersion": 2022 }, "rules": ${rules} }`,
+    ],
+  ])("a path in the options of a rule in %s starts in the working directory, as it did", async (name, config) => {
+    const rules = `{ "import/no-restricted-paths": ["error", { "zones": [{ "target": "./src/client", "from": "./src/server" }] }] }`;
+    const files = {
+      "bunfig.toml": `[lint]\nmaxWarnings = 10\n`,
+      "package.json": `{ "type": "module" }`,
+      "node_modules/eslint-plugin-import/package.json": `{ "name": "eslint-plugin-import", "version": "2.31.0", "main": "index.js", "type": "commonjs" }`,
+      "node_modules/eslint-plugin-import/index.js": `module.exports = { meta: { name: "eslint-plugin-import" }, rules: { "no-restricted-paths": { meta: { schema: false }, create() { return {}; } } } };\n`,
+      [`packages/app/${name}`]: config(rules),
+      "packages/app/src/server/s.js": "export const s = 1;\n",
+      "packages/app/src/client/c.js": `import { s } from "../server/s.js";\nexport const c = s;\n`,
+    };
+    expect(await lintIn("packages/app", files, [])).toMatchObject({
+      found: ["packages/app/src/client/c.js:1 import/no-restricted-paths"],
+      exitCode: 1,
+    });
+  });
+
+  test("a suppressions file with the usual name that is nearer than bunfig.toml is the one, with its names", async () => {
+    using dir = tempDir("bun-lint", {
+      "bunfig.toml": `[lint.rules]\n"no-debugger" = "error"\n`,
+      "packages/app/eslint-suppressions.json": `{ "src/a.js": { "no-debugger": { "count": 1 } } }`,
+      "packages/app/src/a.js": "debugger;\n",
+      "packages/lib/b.js": "debugger;\n",
+    });
+    for (const cwd of ["packages/app", "packages/app/src"]) {
+      expect(await lintAt(String(dir), cwd, [])).toMatchObject({ found: [], exitCode: 0 });
+    }
+    // It is not above these.
+    expect(await lintAt(String(dir), "packages/lib", [])).toMatchObject({ found: ["packages/lib/b.js:1 no-debugger"] });
+    expect(await lintAt(String(dir), ".", ["packages/app"])).toMatchObject({
+      found: ["packages/app/src/a.js:1 no-debugger"],
+    });
+  });
+
+  test.each([
+    ["[lint.rules]", `[lint.rules]\n"bun/format" = "error"\n`, []],
+    ["[[lint.overrides]]", `[[lint.overrides]]\nfiles = ["*.js"]\nrules = { "bun/format" = "error" }\n`, []],
+    ["--rule", `[lint]\nquiet = false\n`, ["--rule", "bun/format: error"]],
+  ])("with bun/format in %s, a bunfig.toml above that cannot be used is not passed over", async (_, bunfig, args) => {
+    const files = {
+      "bunfig.toml": "[fmt]\nsemi = false\n",
+      "work/bunfig.toml": "[fmt]\nsemii = true\n",
+      "work/project/bunfig.toml": bunfig,
+      "work/project/a.js": "export const a = 1\n",
+    };
+    expect(await lintIn("work/project", files, args)).toEqual({
+      found: [],
+      stderr: `2 | semii = true\n    ^\nerror: Unknown key "semii" in [fmt]\n  Did you mean "semi"?\n    at ../bunfig.toml:2:1`,
+      exitCode: 2,
+    });
+    const { "work/bunfig.toml": _broken, ...rest } = files;
+    expect(await lintIn("work/project", rest, args)).toMatchObject({ found: [], exitCode: 0 });
+  });
+
+  test.each([
     ["that is no TOML", "[install\n"],
     ["with a mistake in [fmt]", "[fmt]\nprintWidht = 80\n"],
     ["with a mistake in [lint]", "[lint]\nnope = 1\n"],

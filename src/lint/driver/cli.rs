@@ -939,6 +939,13 @@ impl Options {
         self
     }
 
+    /// Whether a rule is named that holds a file against what `bun fmt` prints, and so needs `[fmt]`.
+    pub fn names_a_format_rule(&self) -> bool {
+        let of_overrides = self.overrides.iter().flat_map(|it| &it.rules);
+        let mut names = self.rule.iter().chain(of_overrides).map(|it| &it.0[..]);
+        names.any(|it| matches!(it, b"bun/format" | b"prettier/prettier"))
+    }
+
     /// Where the paths and the patterns in bunfig.toml start: where the file is, which is the project to a run from any
     /// directory of it. `--config` can name a file that is kept anywhere, and then it is the working directory.
     pub(crate) fn start_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {

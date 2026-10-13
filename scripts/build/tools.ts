@@ -10,7 +10,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
-import { pins } from "./ci-images/spec.ts";
+import { locations, pins } from "./ci-images/spec.ts";
 import type { Arch, Config, OS, Toolchain } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -140,16 +140,21 @@ export function findBun(os: OS): string {
 /**
  * On a CI machine the tools come from its image, and the image installs what
  * ci-images/spec.ts pins. A tool that reports another version means the
- * machine is not the image the spec describes. clang and lld are compared with
- * the same spec where they are found (findLlvmTool).
+ * machine is not the image the spec describes. Elsewhere clang only has to be
+ * of the pin's release series (findLlvmTool).
  */
-export function checkImageTools(toolchain: { bun: string; cmake: string }): void {
+export function checkImageTools(toolchain: { bun: string; cmake: string; clangVersion: string | undefined }): void {
   const tools: [name: string, expected: string, actual: { version: string } | { reason: string }][] = [
     ["bun", pins.bun.version, getToolVersion(toolchain.bun, "--version")],
     ["cmake", pins.cmake.version, getToolVersion(toolchain.cmake, "--version")],
     // CI runs the build with the image's node.
     ["node", pins.nodejs.version, { version: process.versions.node }],
   ];
+  // An explicit LLVM directory is its own pin (see toolchainOverride).
+  if (toolchainOverride.llvm === undefined) {
+    const version = toolchain.clangVersion;
+    tools.push(["clang", pins.llvm.version, version === undefined ? { reason: "of no known version" } : { version }]);
+  }
   for (const [name, expected, actual] of tools) {
     if (!("version" in actual) || actual.version !== expected) {
       throw new BuildError(
@@ -369,8 +374,8 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 
 /**
  * LLVM version constraint: the release CI's images install. Any version in
- * the same major.minor range is accepted (e.g. apt.llvm.org serves 23.1.2
- * snapshots while we target 23.1.1).
+ * the same major.minor range is accepted: a package manager can often only be
+ * asked for a major (apt.llvm.org serves snapshots of the release branch).
  */
 export const LLVM_VERSION = pins.llvm.version;
 const [LLVM_MAJOR, LLVM_MINOR] = LLVM_VERSION.split(".");
@@ -425,6 +430,10 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
   if (os === "windows") {
     // Prefer standalone LLVM over VS-bundled
     paths.push("C:\\Program Files\\LLVM\\bin");
+  }
+
+  if (os === "linux") {
+    paths.push(`${locations.llvm}/bin`);
   }
 
   if (os === "linux" || os === "darwin") {

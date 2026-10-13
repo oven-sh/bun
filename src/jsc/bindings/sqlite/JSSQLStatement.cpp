@@ -1532,8 +1532,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     bool didSetBindings = false;
     bool didExecuteAny = false;
 
-    int rc = SQLITE_OK;
-
 #if ASSERT_ENABLED
     int maxSqlStringBytes = end - sqlStringHead;
 #endif
@@ -1559,10 +1557,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         ASSERT(end - sqlStringHead >= 0);
         ASSERT(end - sqlStringHead <= maxSqlStringBytes);
 
-        rc = sqlite3_prepare_v3(db, sqlStringHead, end - sqlStringHead, 0, &sql.stmt, &tail);
+        int rc = sqlite3_prepare_v3(db, sqlStringHead, end - sqlStringHead, 0, &sql.stmt, &tail);
 
-        if (rc != SQLITE_OK)
-            break;
+        if (rc != SQLITE_OK) {
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
+            return {};
+        }
 
         if (!sql.stmt) {
             // Empty statement. Stop if sqlite3_prepare_v3 made no progress
@@ -1603,13 +1603,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
             rc = sqlite3_step(sql.stmt);
         } while (rc == SQLITE_ROW);
 
+        // Throw while the statement is alive: the next prepare replaces the
+        // error, and sqlite3_finalize resets its byte offset to -1.
+        if (rc != SQLITE_DONE && rc != SQLITE_OK) [[unlikely]] {
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
+            return {};
+        }
+
         didExecuteAny = true;
         sqlStringHead = tail;
-    }
-
-    if (rc != SQLITE_OK && rc != SQLITE_DONE) [[unlikely]] {
-        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
-        return {};
     }
 
     if (!didExecuteAny) {

@@ -149,6 +149,10 @@ declare module "bun:sqlite" {
      *
      * Internally, this calls `sqlite3_prepare_v3` followed by `sqlite3_step` and `sqlite3_finalize`.
      *
+     * `sql` can contain several statements separated by `;`. They run in order.
+     * The first statement that fails stops the call: `run` throws, and the
+     * statements after it do not run.
+     *
      * The following types can be used when binding parameters:
      *
      * | JavaScript type | SQLite type            |

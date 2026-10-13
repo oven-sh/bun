@@ -2063,6 +2063,42 @@ describe("Error handling", () => {
       expect((err as Error).message).toContain("FOREIGN KEY");
     }
   });
+
+  test("a multi-statement query stops at the first statement that fails", async () => {
+    await sql`CREATE TABLE stops (x INTEGER UNIQUE)`;
+    await sql`INSERT INTO stops VALUES (1)`;
+    const describeError = (error: any) => ({
+      isSQLiteError: error instanceof SQL.SQLiteError,
+      code: error?.code,
+      message: error?.message,
+      byteOffset: error?.byteOffset,
+    });
+    const unique = {
+      isSQLiteError: true,
+      code: "SQLITE_CONSTRAINT_UNIQUE",
+      message: "UNIQUE constraint failed: stops.x",
+      byteOffset: -1,
+    };
+    const rows = async () => (await sql`SELECT x FROM stops ORDER BY x`).map((row: { x: number }) => row.x);
+
+    // The duplicate INSERT fails in sqlite3_step. Text after it made the query resolve and run to the end.
+    const unsafe = await sql.unsafe("INSERT INTO stops VALUES (1); INSERT INTO stops VALUES (2)").catch(e => e);
+    expect({ error: describeError(unsafe), rows: await rows() }).toEqual({ error: unique, rows: [1] });
+
+    using dir = tempDir("sqlite-sql-stops", {
+      "statements.sql": "INSERT INTO stops VALUES (3);\nINSERT INTO stops VALUES (1);\nINSERT INTO stops VALUES (4);\n",
+    });
+    const file = await sql.file(join(String(dir), "statements.sql")).catch(e => e);
+    expect({ error: describeError(file), rows: await rows() }).toEqual({ error: unique, rows: [1, 3] });
+
+    // The rejection reaches sql.begin, which rolls back the statement that ran before the failure.
+    const transaction = await sql
+      .begin(async tx => {
+        await tx.unsafe("INSERT INTO stops VALUES (5); INSERT INTO stops VALUES (1); INSERT INTO stops VALUES (6)");
+      })
+      .catch(e => e);
+    expect({ error: describeError(transaction), rows: await rows() }).toEqual({ error: unique, rows: [1, 3] });
+  });
 });
 
 describe("Connection management", () => {

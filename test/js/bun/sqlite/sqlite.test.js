@@ -1286,6 +1286,69 @@ it("syntax error sets the byteOffset", () => {
   }
 });
 
+// A statement that failed in sqlite3_step was forgotten when any text followed it, even a newline:
+// the next sqlite3_prepare_v3 replaced the error, and the rest of the text ran (#37415).
+it.each(["run", "exec"])("%s() stops and throws at the first statement that fails, whatever follows it", method => {
+  const attempt = (sql, setup = "") => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (x INTEGER UNIQUE)");
+    db.run("INSERT INTO t VALUES (1)");
+    if (setup) db.run(setup);
+    let error;
+    try {
+      db[method](sql);
+    } catch (e) {
+      error = e;
+    }
+    return {
+      sql,
+      error: error && { code: error.code, message: error.message, byteOffset: error.byteOffset },
+      rows: db
+        .query("SELECT x FROM t ORDER BY x")
+        .all()
+        .map(row => row.x),
+    };
+  };
+
+  const tails = [
+    "",
+    ";",
+    ";\n",
+    "; -- c",
+    "; SELECT 1",
+    "; INSERT INTO t VALUES (2)",
+    ";\nINSERT INTO t VALUES (2);\n",
+  ];
+
+  // The failing statement is the first one: nothing of the text is applied.
+  const duplicate = "INSERT INTO t VALUES (1)";
+  const unique = { code: "SQLITE_CONSTRAINT_UNIQUE", message: "UNIQUE constraint failed: t.x", byteOffset: -1 };
+  expect(tails.map(tail => attempt(duplicate + tail))).toEqual(
+    tails.map(tail => ({ sql: duplicate + tail, error: unique, rows: [1] })),
+  );
+
+  // The failing statement is in the middle: the statements before it stay applied, the ones after it do not run.
+  // This ALTER prepares, then fails in sqlite3_step because the table has rows.
+  const alter = "INSERT INTO t VALUES (3); ALTER TABLE t ADD COLUMN c TEXT NOT NULL DEFAULT (datetime('now'))";
+  const nonConstant = {
+    code: "SQLITE_ERROR",
+    message: "Cannot add a column with non-constant default",
+    byteOffset: -1,
+  };
+  expect(tails.map(tail => attempt(alter + tail))).toEqual(
+    tails.map(tail => ({ sql: alter + tail, error: nonConstant, rows: [1, 3] })),
+  );
+
+  // An error that the schema raises by itself.
+  const guard =
+    "CREATE TRIGGER guard BEFORE INSERT ON t WHEN NEW.x = 5 BEGIN SELECT RAISE(ABORT, 'five is refused'); END";
+  const refused = { code: "SQLITE_CONSTRAINT_TRIGGER", message: "five is refused", byteOffset: -1 };
+  const blocked = "INSERT INTO t VALUES (4); INSERT INTO t VALUES (5)";
+  expect(tails.map(tail => attempt(blocked + tail, guard))).toEqual(
+    tails.map(tail => ({ sql: blocked + tail, error: refused, rows: [1, 4] })),
+  );
+});
+
 it("Missing DB throws SQLITE_CANTOPEN", () => {
   try {
     new Database("./definitely/not/found");

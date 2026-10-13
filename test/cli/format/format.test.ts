@@ -4018,7 +4018,7 @@ describe.concurrent("how a path is written", () => {
       commandLine: [],
     };
     await using proc = spawn({
-      cmd: [bunExe(), "-e", `const given = ${JSON.stringify(given)};\n${source}`],
+      cmd: [bunExe(), "--no-install", "-e", `const given = ${JSON.stringify(given)};\n${source}`],
       env,
       cwd: String(dir),
       stdin: "ignore",

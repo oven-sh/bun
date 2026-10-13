@@ -670,7 +670,7 @@ describe.concurrent("an eslint.config.js", () => {
     // What `require.resolve(..)` returns is asked for with `/`.
     const content = { extends: ["./base.json", String.raw`C:\t\other.json`], parser: "nowhere", plugins: ["nowhere"] };
     await using proc = spawn({
-      cmd: [bunExe(), "-e", given("C:/t/.eslintrc.json", { pluginsFrom: "C:/t", content }) + source],
+      cmd: [bunExe(), "--no-install", "-e", given("C:/t/.eslintrc.json", { pluginsFrom: "C:/t", content }) + source],
       env,
       cwd: String(dir),
       stdout: "pipe",
@@ -701,7 +701,7 @@ describe.concurrent("an eslint.config.js", () => {
       .replaceAll('require("node:path")', 'require("node:path").win32');
     const content = { extends: ["C:\\t\\base.json", ".\\near.json", "a-package"], parser: "C:\\t\\parser.js" };
     await using proc = spawn({
-      cmd: [bunExe(), "-e", given("C:/t/.eslintrc.json", { pluginsFrom: "C:/t", content }) + source],
+      cmd: [bunExe(), "--no-install", "-e", given("C:/t/.eslintrc.json", { pluginsFrom: "C:/t", content }) + source],
       env,
       cwd: String(dir),
       stdout: "pipe",
@@ -731,7 +731,7 @@ describe.concurrent("an eslint.config.js", () => {
     const root = String(dir).replaceAll("\\", "/");
     const path = `${root}/./.eslintrc.js`;
     await using proc = spawn({
-      cmd: [bunExe(), "-e", given(path, { pluginsFrom: root }) + source.join("")],
+      cmd: [bunExe(), "--no-install", "-e", given(path, { pluginsFrom: root }) + source.join("")],
       env,
       cwd: String(dir),
       stdout: "pipe",
@@ -761,7 +761,7 @@ describe.concurrent("an eslint.config.js", () => {
     const keys = await Promise.all(
       paths.map(async path => {
         await using proc = spawn({
-          cmd: [bunExe(), "-e", given(path) + source.join("")],
+          cmd: [bunExe(), "--no-install", "-e", given(path) + source.join("")],
           env,
           cwd: join(path, ".."),
           stdout: "pipe",

@@ -1172,7 +1172,7 @@ fn plan_hoisted(
             let tag = pkg_res[owner as usize].tag;
             if tag != ResolutionTag::Root
                 && tag != ResolutionTag::Workspace
-                && has_bundled_deps(lockfile, owner)
+                && lockfile.has_bundled_dependencies(owner)
             {
                 continue;
             }
@@ -1190,7 +1190,8 @@ fn plan_hoisted(
             {
                 continue;
             }
-            if !extracted(pkg_res[pkg_id as usize].tag) || has_bundled_deps(lockfile, pkg_id) {
+            if !extracted(pkg_res[pkg_id as usize].tag) || lockfile.has_bundled_dependencies(pkg_id)
+            {
                 continue;
             }
             let Some(nested) = descend(&dir, alias)
@@ -1293,15 +1294,6 @@ fn tree_importers(lockfile: &Lockfile) -> Vec<PackageID> {
     importers
 }
 
-fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
-    if pkg_id as usize >= lockfile.packages.len() {
-        return false;
-    }
-    let deps = lockfile.buffers.dependencies.as_slice();
-    let slice = lockfile.packages.items_dependencies()[pkg_id as usize];
-    (slice.begin() as usize..slice.end() as usize).any(|i| deps[i].behavior.is_bundled())
-}
-
 /// Hoisted post-install pass for dedupe / audit fix / update (install_with_manager.rs): removes the copies
 /// `before` placed in a nested or workspace `node_modules` that the install now provides from an ancestor.
 /// The folders are compared with the install tree, not the lockfile's: only the install tree applies the
@@ -1381,8 +1373,9 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 None => continue,
             },
         };
-        if has_bundled_deps(before, tree_owner(before, old_idx))
-            || surviving.is_some_and(|id| has_bundled_deps(after, tree_owner(after, id as usize)))
+        if before.has_bundled_dependencies(tree_owner(before, old_idx))
+            || surviving
+                .is_some_and(|id| after.has_bundled_dependencies(tree_owner(after, id as usize)))
         {
             continue;
         }
@@ -1437,7 +1430,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             || selected_after
                 .as_ref()
                 .is_some_and(|sel| sel.binary_search(&(pkg_id as PackageID)).is_err())
-            || has_bundled_deps(after, pkg_id as PackageID)
+            || after.has_bundled_dependencies(pkg_id as PackageID)
         {
             continue;
         }

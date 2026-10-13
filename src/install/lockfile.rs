@@ -928,6 +928,43 @@ impl Lockfile {
                 == ResolutionTag::Folder
     }
 
+    /// Does package `id` ship dependencies in its own `node_modules` (`bundledDependencies`)?
+    pub(crate) fn has_bundled_dependencies(&self, id: PackageID) -> bool {
+        self.bundled_dependencies(id).next().is_some()
+    }
+
+    /// The sorted names of the dependencies that package `id` ships in its own `node_modules`.
+    /// Empty for a package that is not extracted from a tarball or a repository: the
+    /// `node_modules` of a `file:` folder or of a `link:` belongs to the user.
+    pub(crate) fn bundled_dependency_names(&self, id: PackageID) -> Vec<&[u8]> {
+        let extracted = self
+            .packages
+            .items_resolution()
+            .get(id as usize)
+            .is_some_and(|resolution| resolution.tag.can_enqueue_install_task());
+        if !extracted {
+            return Vec::new();
+        }
+        let buf = self.buffers.string_bytes.as_slice();
+        let mut names: Vec<&[u8]> = self
+            .bundled_dependencies(id)
+            .map(|dependency| dependency.name.slice(buf))
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
+    fn bundled_dependencies(&self, id: PackageID) -> impl Iterator<Item = &Dependency> {
+        let dependencies = match self.packages.items_dependencies().get(id as usize) {
+            Some(slice) => slice.get(self.buffers.dependencies.as_slice()),
+            None => &[],
+        };
+        dependencies
+            .iter()
+            .filter(|dependency| dependency.behavior.is_bundled())
+    }
+
     /// Returns the package id of the workspace the install is taking place in.
     pub(crate) fn get_workspace_package_id(
         &self,
@@ -1381,10 +1418,15 @@ impl<'a> Cloner<'a> {
 impl Lockfile {
     /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        while self
+            .hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)?
+            .late_bound_optional_peer
+        {}
         Ok(())
     }
 
+    /// Returns `Builder::filtered_bundled_dependency`: the installer links the bins of such a
+    /// dependency from the copy its dependent ships.
     pub(crate) fn filter(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1392,18 +1434,19 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(), tree::SubtreeError> {
-        self.hoist::<{ tree::BuilderMethod::Filter }>(
-            log,
-            Some(manager),
-            install_root_dependencies,
-            workspace_filters,
-            packages_to_install,
-        )?;
-        Ok(())
+    ) -> Result<bool, tree::SubtreeError> {
+        Ok(self
+            .hoist::<{ tree::BuilderMethod::Filter }>(
+                log,
+                Some(manager),
+                install_root_dependencies,
+                workspace_filters,
+                packages_to_install,
+            )?
+            .filtered_bundled_dependency)
     }
 
-    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
+    /// Sets `buffers.trees`/`hoisted_dependencies`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1413,7 +1456,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<bool, tree::SubtreeError> {
+    ) -> Result<HoistResult, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // Only the install applies the barrier, so the saved tree does not depend on it.
@@ -1444,6 +1487,7 @@ impl Lockfile {
             packages_to_install,
             pending_optional_peers: Default::default(),
             late_bound_optional_peer: false,
+            filtered_bundled_dependency: false,
             list: Default::default(),
             sort_buf: Default::default(),
         };
@@ -1462,11 +1506,20 @@ impl Lockfile {
         }
 
         let cleaned = builder.clean()?;
-        let late_bound_optional_peer = builder.late_bound_optional_peer;
+        let result = HoistResult {
+            late_bound_optional_peer: builder.late_bound_optional_peer,
+            filtered_bundled_dependency: builder.filtered_bundled_dependency,
+        };
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(late_bound_optional_peer)
+        Ok(result)
     }
+}
+
+/// The `tree::Builder` flags of the same names, as one `Lockfile::hoist` pass left them.
+pub(crate) struct HoistResult {
+    pub(crate) late_bound_optional_peer: bool,
+    pub(crate) filtered_bundled_dependency: bool,
 }
 
 #[derive(Clone, Copy)]

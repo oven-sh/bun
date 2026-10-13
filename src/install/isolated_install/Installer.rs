@@ -2424,6 +2424,20 @@ impl<'a> Installer<'a> {
             }
         }
 
+        // A bundled dependency has no store entry: the package ships it in its own folder.
+        let parent_pkg_id =
+            node_pkg_ids[entry_node_ids[parent_entry_id.get() as usize].get() as usize];
+        let bundled_names = lockfile.bundled_dependency_names(parent_pkg_id);
+        if !bundled_names.is_empty() {
+            let mut package_dir = AutoAbsPath::init_top_level_dir();
+            self.append_real_store_path(&mut package_dir, parent_entry_id, Which::Staging);
+            bin_real::link_bundled(
+                package_dir.slice(),
+                &bundled_names,
+                self.manager().options.bin_path,
+            )?;
+        }
+
         Ok(())
     }
 

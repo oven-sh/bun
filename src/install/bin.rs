@@ -7,7 +7,6 @@ use bun_collections::{StringHashMap, VecExt};
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;
-#[cfg(not(windows))]
 use bun_paths::MAX_PATH_BYTES;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_paths::resolve_path;
@@ -1990,4 +1989,162 @@ impl<'a> Linker<'a> {
             }
         }
     }
+}
+
+/// Links the bins of the dependencies that the package at `package_dir` bundles into
+/// `<package_dir>/node_modules/.bin`. `names` are the bundled names, sorted.
+///
+/// The installers place nothing for a bundled dependency: the package ships the copy in its
+/// own `node_modules`, and the lockfile can resolve the name to another version or to
+/// nothing. So the `bin` in the shipped `package.json` decides, as it does for npm.
+pub(crate) fn link_bundled(
+    package_dir: &[u8],
+    names: &[&[u8]],
+    global_bin_path: &ZStr,
+) -> Result<(), Error> {
+    // `AbsPath` does not check that what it holds fits in its buffer.
+    if package_dir.len() + b"/node_modules/.bin".len() >= MAX_PATH_BYTES {
+        return Ok(());
+    }
+    let Ok(mut node_modules_path) = <AbsPath>::from(package_dir) else {
+        return Ok(());
+    };
+    let _ = node_modules_path.append(b"node_modules");
+
+    // The package decides what its `node_modules` and the entries in it are. Through a link,
+    // a bin and the chmod of its target would land outside of the package.
+    if !is_directory(node_modules_path.slice_z()) {
+        return Ok(());
+    }
+
+    let mut string_bytes: Vec<u8> = Vec::new();
+    let mut string_pool = bun_semver::string::StringPool::default();
+    let mut extern_strings: Vec<ExternalString> = Vec::new();
+    // Most package.json files are smaller: one read each.
+    let mut package_json: Vec<u8> = Vec::with_capacity(4096);
+    let mut seen: StringHashMap<()> = StringHashMap::default();
+    let mut abs_target_buf = path::path_buffer_pool::get();
+    let mut abs_dest_buf = path::path_buffer_pool::get();
+    let mut rel_buf = path::path_buffer_pool::get();
+    let mut checked_bin_dir = false;
+    let mut first_err: Option<Error> = None;
+
+    for &name in names {
+        let mut string_buf = bun_semver::string::Buf {
+            bytes: &mut string_bytes,
+            pool: &mut string_pool,
+        };
+        let Some(bin) = bundled_bin(
+            &mut node_modules_path,
+            name,
+            &mut package_json,
+            &mut string_buf,
+            &mut extern_strings,
+        ) else {
+            continue;
+        };
+
+        if !checked_bin_dir {
+            checked_bin_dir = true;
+            let mut bin_dir = node_modules_path.save();
+            let _ = bin_dir.append(b".bin");
+            match sys::lstat(bin_dir.slice_z()) {
+                Ok(stat) if is_directory_mode(&stat) => {}
+                Err(err) if err.get_errno() == sys::Errno::ENOENT => {}
+                _ => return Ok(()),
+            }
+        }
+
+        let package_name = strings::StringOrTinyString::init(name);
+        let node_modules_ptr: *mut AbsPath = &raw mut node_modules_path;
+        let mut linker = Linker {
+            bin,
+            target_node_modules_path: node_modules_ptr.cast_const(),
+            target_package_name: package_name,
+            seen: Some(&mut seen),
+            // SAFETY: `node_modules_ptr` points at the live local above. The only other pointer
+            // to it is `target_node_modules_path`, which `Linker::link` never writes through.
+            node_modules_path: unsafe { &mut *node_modules_ptr },
+            package_name,
+            global_bin_path,
+            string_buf: &string_bytes,
+            extern_string_buf: &extern_strings,
+            abs_target_buf: &mut abs_target_buf[..],
+            abs_dest_buf: &mut abs_dest_buf[..],
+            rel_buf: &mut rel_buf[..],
+            err: None,
+            skipped_due_to_missing_bin: false,
+        };
+        linker.link(false);
+
+        if let Some(err) = linker.err {
+            // npm links nothing for a `directories.bin` that is not a directory.
+            if bin.tag == Tag::Dir && err == Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
+                continue;
+            }
+            first_err.get_or_insert(err);
+        }
+    }
+
+    match first_err {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
+/// The `bin` of `<node_modules_path>/<name>/package.json`. `None` when the package does not
+/// ship that folder, or ships a link in place of it.
+fn bundled_bin(
+    node_modules_path: &mut AbsPath,
+    name: &[u8],
+    package_json: &mut Vec<u8>,
+    string_buf: &mut bun_semver::string::Buf<'_>,
+    extern_strings: &mut Vec<ExternalString>,
+) -> Option<Bin> {
+    const PACKAGE_JSON: &[u8] = b"package.json";
+    // Two separators and the NUL.
+    if !crate::package_installer::alias_is_safe_install_target(name)
+        || node_modules_path.len() + name.len() + PACKAGE_JSON.len() + 3 > MAX_PATH_BYTES
+    {
+        return None;
+    }
+
+    let mut path = node_modules_path.save();
+    for folder in strings::split(name, b"/") {
+        let _ = path.append(folder);
+        if !is_directory(path.slice_z()) {
+            return None;
+        }
+    }
+    let _ = path.append(PACKAGE_JSON);
+
+    package_json.clear();
+    sys::File::openat(Fd::cwd(), path.slice(), sys::O::RDONLY, 0)
+        .ok()?
+        .read_to_end_with_array_list(package_json, sys::SizeHint::ProbablySmall)
+        .ok()?;
+
+    crate::initialize_store();
+    let source = bun_ast::Source::init_path_string(path.slice(), package_json.as_slice());
+    let mut log = bun_ast::Log::init();
+    let json = crate::bun_json::ParsedJson::parse_package_json(&source, &mut log).ok()?;
+
+    if let Some(bin_expr) = json.root.get(b"bin") {
+        let bin = Bin::parse_append(&bin_expr, string_buf, extern_strings).ok()?;
+        if bin.tag != Tag::None {
+            return Some(bin);
+        }
+    }
+    let bin_dir_expr = json.root.get(b"directories")?.get(b"bin")?;
+    let bin = Bin::parse_append_from_directories(&bin_dir_expr, string_buf).ok()?;
+    (bin.tag != Tag::None).then_some(bin)
+}
+
+/// True when `path` is a directory, and not a link to one.
+fn is_directory(path: &ZStr) -> bool {
+    sys::lstat(path).is_ok_and(|stat| is_directory_mode(&stat))
+}
+
+fn is_directory_mode(stat: &sys::Stat) -> bool {
+    sys::kind_from_mode(stat.st_mode as sys::Mode) == sys::EntryKind::Directory
 }

@@ -3,7 +3,7 @@ import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-fo
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { once } from "events";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, realpath, rename, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -26,7 +26,7 @@ import {
   writeShebangScript,
 } from "harness";
 import { createServer as createTcpServer, connect as tcpConnect, type Socket } from "net";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { TestRegistry } from "registry";
 import { createServer as createTlsServer } from "tls";
 const { parseLockfile } = install_test_helpers;
@@ -1849,6 +1849,350 @@ index 0000000..1111111 100644
     expect(stdout).toBe("registry bd, registry tr\n");
     expect(requests.tarballs.toSorted()).toEqual(["bd", "outer", "tr"]);
     expect(exitCode).toBe(0);
+  });
+});
+
+// The installers place nothing for a bundled dependency: the tarball of its dependent ships it.
+// They link its bins into `<dependent>/node_modules/.bin`, as npm does, from the `bin` of the
+// package.json that the tarball ships. The registry can have another version of the name.
+describe.concurrent("bins of bundled dependencies", () => {
+  /** A bin that writes `<output>.txt` into the directory it runs in. */
+  const binFile = (output: string) =>
+    `#!/usr/bin/env node\nrequire("fs").writeFileSync(${JSON.stringify(output + ".txt")}, ${JSON.stringify(output)});\n`;
+  const shippedPackageJson = (name: string, fields: object = {}) =>
+    JSON.stringify({ name, version: "1.0.0", ...fields });
+  /** The copy of `tool` that a tarball ships in its node_modules. */
+  const shippedTool = {
+    "node_modules/tool/package.json": shippedPackageJson("tool", { bin: { tool: "tool.js" } }),
+    "node_modules/tool/tool.js": binFile("shipped-tool"),
+  };
+
+  /** The registry manifest of each package, and the files its tarball holds next to package.json. */
+  type Package = { manifest?: { version?: string; [field: string]: unknown }; files?: Record<string, string> };
+  const packages: Record<string, Package> = {
+    // bun asks the registry for a bundled name. This `tool` has other bins than the shipped copies.
+    "tool": {
+      manifest: { bin: { "registry-tool": "registry.js" } },
+      files: { "registry.js": binFile("registry-tool") },
+    },
+    "runs-tool": {
+      manifest: {
+        dependencies: { tool: "1.0.0" },
+        bundleDependencies: ["tool"],
+        scripts: { postinstall: "tool" },
+        hasInstallScript: true,
+      },
+      files: shippedTool,
+    },
+    "bundles-all": {
+      manifest: { version: "2.0.0", dependencies: { tool: "1.0.0" }, bundleDependencies: true },
+      files: shippedTool,
+    },
+    // A tarball can ship a node_modules that its package.json does not declare. npm links nothing for it.
+    "ships-undeclared": { files: shippedTool },
+    "bundles-shapes": {
+      manifest: {
+        dependencies: {
+          "@scoped/string-bin": "1.0.0",
+          "bin-dir": "1.0.0",
+          "bin-map": "1.0.0",
+          "bin-dir-is-a-file": "1.0.0",
+          "no-target": "1.0.0",
+          "not-shipped": "1.0.0",
+          "not/a/folder": "1.0.0",
+        },
+        bundleDependencies: [
+          "@scoped/string-bin",
+          "bin-dir",
+          "bin-map",
+          "bin-dir-is-a-file",
+          "no-target",
+          "not-shipped",
+          "not/a/folder",
+        ],
+      },
+      files: {
+        "node_modules/@scoped/string-bin/package.json": shippedPackageJson("@scoped/string-bin", { bin: "cli.js" }),
+        "node_modules/@scoped/string-bin/cli.js": binFile("string-bin"),
+        "node_modules/bin-dir/package.json": shippedPackageJson("bin-dir", { directories: { bin: "bins" } }),
+        "node_modules/bin-dir/bins/dir-one": binFile("dir-one"),
+        "node_modules/bin-dir/bins/dir-two": binFile("dir-two"),
+        "node_modules/bin-map/package.json": shippedPackageJson("bin-map", {
+          bin: { "map-one": "one.js", "map-two": "lib/two.js" },
+        }),
+        "node_modules/bin-map/one.js": binFile("map-one"),
+        "node_modules/bin-map/lib/two.js": binFile("map-two"),
+        // npm links nothing for these two and for `not-shipped`, and exits 0.
+        "node_modules/bin-dir-is-a-file/package.json": shippedPackageJson("bin-dir-is-a-file", {
+          directories: { bin: "bins" },
+        }),
+        "node_modules/bin-dir-is-a-file/bins": "",
+        "node_modules/no-target/package.json": shippedPackageJson("no-target", { bin: { "no-target": "missing.js" } }),
+        // A name of more than a scope and a folder is not the name of a folder in node_modules.
+        "node_modules/not/a/folder/package.json": shippedPackageJson("not/a/folder", {
+          bin: { "not-a-folder": "cli.js" },
+        }),
+        "node_modules/not/a/folder/cli.js": binFile("not-a-folder"),
+        // Shipped, but not in bundleDependencies.
+        "node_modules/undeclared/package.json": shippedPackageJson("undeclared", {
+          bin: { undeclared: "undeclared.js" },
+        }),
+        "node_modules/undeclared/undeclared.js": binFile("undeclared"),
+      },
+    },
+    "has-nested": { manifest: { dependencies: { "runs-tool": "1.0.0" } } },
+    "@scoped/string-bin": {},
+    "bin-dir": {},
+    "bin-map": {},
+    "bin-dir-is-a-file": {},
+    "no-target": {},
+    "not-shipped": {},
+    "not/a/folder": {},
+  };
+  const manifestOf = (name: string) => ({ name, version: "1.0.0", ...packages[name].manifest });
+  const versionOf = (name: string) => manifestOf(name).version;
+  const tarballs: Record<string, Uint8Array> = {};
+
+  beforeAll(async () => {
+    for (const name of Object.keys(packages)) {
+      const archive: Record<string, string> = { "package/package.json": JSON.stringify(manifestOf(name)) };
+      for (const [path, contents] of Object.entries(packages[name].files ?? {})) archive[`package/${path}`] = contents;
+      tarballs[name] = await new Bun.Archive(archive, { compress: "gzip" }).bytes();
+    }
+  });
+
+  function serveRegistry() {
+    return Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const path = decodeURIComponent(pathname.slice(1));
+        const tarballOf = path.match(/^(.+)\/-\/[^/]+\.tgz$/)?.[1];
+        const name = tarballOf ?? path;
+        if (!(name in packages)) return new Response("not found", { status: 404 });
+        if (tarballOf) return new Response(tarballs[name]);
+        return Response.json({
+          name,
+          "dist-tags": { latest: versionOf(name) },
+          versions: {
+            [versionOf(name)]: { ...manifestOf(name), dist: { tarball: `${origin}/${name}/-/tarball.tgz` } },
+          },
+        });
+      },
+    });
+  }
+
+  /** A project with `manifest` as its package.json, and what a test needs to install it. */
+  function project(registry: { url: URL }, linker: string, manifest: object, files: Record<string, string> = {}) {
+    const dir = tempDir("bundled-bins", {
+      ...files,
+      "package.json": JSON.stringify({ name: "project", ...manifest }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href, linker } }),
+    });
+    const cwd = String(dir);
+    const tmp = join(cwd, ".bun-tmp");
+    const projectEnv = {
+      ...env,
+      BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"),
+      BUN_TMPDIR: tmp,
+      TMPDIR: tmp,
+      TEMP: tmp,
+    };
+    /** Runs `bun <args>` in the project and expects it to succeed. */
+    async function bun(args: string[], extraEnv: Record<string, string> = {}) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...projectEnv, ...extraEnv },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: expect.any(String),
+        stderr: expect.not.stringContaining("error:"),
+        exitCode: 0,
+      });
+    }
+    /** `node_modules/<name>` of the project, a link into the store with the isolated linker. */
+    const installed = (name: string, ...path: string[]) => join(cwd, "node_modules", name, ...path);
+    /** The names in `node_modules/<name>/node_modules/.bin`, or `null` when there is no such folder. */
+    const binsOf = (name: string) => readdirSorted(installed(name, "node_modules", ".bin")).catch(() => null);
+    return { cwd, bun, installed, binsOf, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  /** What a `.bin` folder holds for the sorted bin `names`. */
+  const bins = (...names: string[]) => (isWindows ? names.flatMap(name => [`${name}.bunx`, `${name}.exe`]) : names);
+  const shippedToolLink = join("..", "tool", "tool.js");
+
+  for (const linker of ["hoisted", "isolated"]) {
+    test(`(${linker}) a lifecycle script of the dependent runs the bin`, async () => {
+      await using registry = serveRegistry();
+      using p = project(registry, linker, {
+        dependencies: { "runs-tool": "1.0.0" },
+        trustedDependencies: ["runs-tool"],
+      });
+
+      // A fresh resolve, then an install from bun.lock that has to download the tarball again.
+      for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+        await rm(join(p.cwd, "node_modules"), { recursive: true, force: true });
+        await rm(join(p.cwd, ".bun-cache"), { recursive: true, force: true });
+        await p.bun(args);
+
+        expect(await p.binsOf("runs-tool")).toEqual(bins("tool"));
+        expect(p.installed("runs-tool", "node_modules", ".bin", "tool")).toBeValidBin(shippedToolLink);
+        expect(await file(p.installed("runs-tool", "shipped-tool.txt")).text()).toBe("shipped-tool");
+      }
+    });
+
+    test(`(${linker}) the link does not wait for a script`, async () => {
+      await using registry = serveRegistry();
+      using p = project(registry, linker, { dependencies: { "runs-tool": "1.0.0" } });
+
+      await p.bun(["install"]);
+      expect(p.installed("runs-tool", "node_modules", ".bin", "tool")).toBeValidBin(shippedToolLink);
+      expect(await exists(p.installed("runs-tool", "shipped-tool.txt"))).toBeFalse();
+
+      await p.bun(["pm", "trust", "runs-tool"]);
+      expect(await file(p.installed("runs-tool", "shipped-tool.txt")).text()).toBe("shipped-tool");
+    });
+
+    test(`(${linker}) every kind of bin, and nothing that npm does not link`, async () => {
+      await using registry = serveRegistry();
+      using p = project(registry, linker, {
+        dependencies: { "bundles-shapes": "1.0.0", "bundles-all": "2.0.0", "ships-undeclared": "1.0.0" },
+      });
+
+      await p.bun(["install"]);
+      expect(await p.binsOf("bundles-shapes")).toEqual(bins("dir-one", "dir-two", "map-one", "map-two", "string-bin"));
+      const bin = (name: string) => p.installed("bundles-shapes", "node_modules", ".bin", name);
+      expect(bin("string-bin")).toBeValidBin(join("..", "@scoped", "string-bin", "cli.js"));
+      expect(bin("dir-two")).toBeValidBin(join("..", "bin-dir", "bins", "dir-two"));
+      expect(bin("map-two")).toBeValidBin(join("..", "bin-map", "lib", "two.js"));
+      expect(await p.binsOf("bundles-all")).toEqual(bins("tool"));
+      expect(await p.binsOf("ships-undeclared")).toBeNull();
+    });
+
+    test(`(${linker}) in a tarball dependency`, async () => {
+      await using registry = serveRegistry();
+      using p = project(registry, linker, {
+        dependencies: { "runs-tool": `${registry.url.href}runs-tool/-/tarball.tgz` },
+        trustedDependencies: ["runs-tool"],
+      });
+
+      await p.bun(["install"]);
+      expect(p.installed("runs-tool", "node_modules", ".bin", "tool")).toBeValidBin(shippedToolLink);
+      expect(await file(p.installed("runs-tool", "shipped-tool.txt")).text()).toBe("shipped-tool");
+    });
+
+    test(`(${linker}) in an aliased dependent and in a nested one`, async () => {
+      await using registry = serveRegistry();
+      // The alias takes `node_modules/runs-tool`, so the `runs-tool` of `has-nested` cannot hoist.
+      using p = project(registry, linker, {
+        dependencies: { "runs-tool": "npm:bundles-all@2.0.0", "has-nested": "1.0.0" },
+        trustedDependencies: ["runs-tool"],
+      });
+
+      await p.bun(["install"]);
+      expect(await p.binsOf("runs-tool")).toEqual(bins("tool"));
+
+      const nested =
+        linker === "hoisted"
+          ? p.installed("has-nested", "node_modules", "runs-tool")
+          : join(dirname(await realpath(p.installed("has-nested"))), "runs-tool");
+      expect(join(nested, "node_modules", ".bin", "tool")).toBeValidBin(shippedToolLink);
+      expect(await file(join(nested, "shipped-tool.txt")).text()).toBe("shipped-tool");
+    });
+  }
+
+  // The hoisted linker links the bins of every package again on each install.
+  test("(hoisted) an install links the bin again, and a newly trusted dependent finds it", async () => {
+    await using registry = serveRegistry();
+    using p = project(registry, "hoisted", { dependencies: { "runs-tool": "1.0.0" } });
+
+    await p.bun(["install"]);
+    await rm(p.installed("runs-tool", "node_modules", ".bin"), { recursive: true });
+    await writeFile(
+      join(p.cwd, "package.json"),
+      JSON.stringify({ name: "project", dependencies: { "runs-tool": "1.0.0" }, trustedDependencies: ["runs-tool"] }),
+    );
+    await p.bun(["install"]);
+    expect(p.installed("runs-tool", "node_modules", ".bin", "tool")).toBeValidBin(shippedToolLink);
+    expect(await file(p.installed("runs-tool", "shipped-tool.txt")).text()).toBe("shipped-tool");
+  });
+
+  // The dependent decides what the folders in its node_modules are. Through a link, a bin and
+  // the chmod of its target would land outside of the dependent.
+  test("(hoisted) nothing is linked through a link", async () => {
+    await using registry = serveRegistry();
+    using p = project(registry, "hoisted", { dependencies: { "runs-tool": "1.0.0" } });
+    const type = isWindows ? "junction" : "dir";
+    const nodeModules = p.installed("runs-tool", "node_modules");
+    const elsewhere = p.installed("runs-tool", "elsewhere");
+
+    await p.bun(["install"]);
+    expect(await p.binsOf("runs-tool")).toEqual(bins("tool"));
+
+    // `.bin` is a link.
+    await rm(join(nodeModules, ".bin"), { recursive: true });
+    await mkdir(elsewhere);
+    await symlink(elsewhere, join(nodeModules, ".bin"), type);
+    await p.bun(["install"]);
+    expect(await readdirSorted(elsewhere)).toEqual([]);
+
+    // The folder of the bundled dependency is a link.
+    await rm(join(nodeModules, ".bin"), { recursive: true });
+    await rename(join(nodeModules, "tool"), join(elsewhere, "tool"));
+    await symlink(join(elsewhere, "tool"), join(nodeModules, "tool"), type);
+    await p.bun(["install"]);
+    expect(await p.binsOf("runs-tool")).toBeNull();
+
+    // node_modules is a link.
+    await rm(join(nodeModules, "tool"), { recursive: true });
+    await rename(join(elsewhere, "tool"), join(nodeModules, "tool"));
+    await rename(nodeModules, join(elsewhere, "node_modules"));
+    await symlink(join(elsewhere, "node_modules"), nodeModules, type);
+    await p.bun(["install"]);
+    expect(await readdirSorted(join(elsewhere, "node_modules"))).toEqual(["tool"]);
+  });
+
+  // A `file:` folder and its node_modules belong to the user.
+  test("(hoisted) nothing is linked for a folder dependency", async () => {
+    await using registry = serveRegistry();
+    using p = project(
+      registry,
+      "hoisted",
+      { dependencies: { "folder-owner": "file:./folder-owner", "bundles-all": "2.0.0" } },
+      {
+        "folder-owner/package.json": shippedPackageJson("folder-owner", {
+          dependencies: { tool: "1.0.0" },
+          bundleDependencies: ["tool"],
+        }),
+        ...Object.fromEntries(
+          Object.entries(shippedTool).map(([path, contents]) => [`folder-owner/${path}`, contents]),
+        ),
+      },
+    );
+
+    await p.bun(["install"]);
+    expect(await p.binsOf("bundles-all")).toEqual(bins("tool"));
+    expect(await exists(p.installed("folder-owner", "node_modules", "tool", "tool.js"))).toBeTrue();
+    expect(await p.binsOf("folder-owner")).toBeNull();
+  });
+
+  // One entry of the global store serves every project, so the entry itself has to hold the link.
+  test("(isolated) an entry of the global store has the link", async () => {
+    await using registry = serveRegistry();
+    using first = project(registry, "isolated", { dependencies: { "bundles-all": "2.0.0" } });
+    using second = project(registry, "isolated", { dependencies: { "bundles-all": "2.0.0" } });
+    const store = { BUN_INSTALL_GLOBAL_STORE: "1", BUN_INSTALL_CACHE_DIR: join(first.cwd, ".bun-cache") };
+
+    for (const p of [first, second]) {
+      await p.bun(["install"], store);
+      expect(p.installed("bundles-all", "node_modules", ".bin", "tool")).toBeValidBin(shippedToolLink);
+    }
+    const links = await realpath(join(first.cwd, ".bun-cache", "links"));
+    expect(await realpath(second.installed("bundles-all"))).toStartWith(links);
   });
 });
 

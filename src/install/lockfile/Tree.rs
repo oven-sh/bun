@@ -436,6 +436,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
         ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
     /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
     pub(crate) late_bound_optional_peer: bool,
+    /// `Filter` left out a bundled dependency of a package it places; see `Lockfile::filter`.
+    pub(crate) filtered_bundled_dependency: bool,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
@@ -712,6 +714,8 @@ impl Tree {
                     lockfile,
                     &*builder.resolutions,
                 ) {
+                    builder.filtered_bundled_dependency |=
+                        dependencies[dep_id as usize].behavior.is_bundled();
                     continue;
                 }
 

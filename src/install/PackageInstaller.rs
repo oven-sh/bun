@@ -112,6 +112,10 @@ pub struct PackageInstaller<'a> {
     pub(crate) trees: Box<[TreeContext]>,
 
     pub(crate) seen_bin_links: StringHashMap<()>,
+
+    /// What `Lockfile::filter` returned: the tree left out a bundled dependency of a package
+    /// it places.
+    pub(crate) filtered_bundled_dependency: bool,
 }
 
 use bun_core::UnwrapOrOom;
@@ -705,20 +709,7 @@ impl<'a> PackageInstaller<'a> {
                 }
 
                 if let Some(err) = bin_linker.err {
-                    if log_level != Options::LogLevel::Silent {
-                        bun_ast::add_error_pretty!(
-                            manager.log_mut(),
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            "Failed to link <b>{}<r>: {}",
-                            bstr::BStr::new(alias),
-                            err.name(),
-                        );
-                    }
-
-                    if manager.options.enable.fail_early() {
-                        manager.crash();
-                    }
+                    Self::report_bin_link_error(manager, alias, err, log_level);
                 }
 
                 break;
@@ -727,6 +718,61 @@ impl<'a> PackageInstaller<'a> {
 
         for dep_id in deferred {
             tree.binaries.add(dep_id).unwrap_or_oom();
+        }
+    }
+
+    fn report_bin_link_error(
+        manager: &mut PackageManager,
+        alias: &[u8],
+        err: crate::Error,
+        log_level: Options::LogLevel,
+    ) {
+        if log_level != Options::LogLevel::Silent {
+            bun_ast::add_error_pretty!(
+                manager.log_mut(),
+                None,
+                bun_ast::Loc::EMPTY,
+                "Failed to link <b>{}<r>: {}",
+                bstr::BStr::new(alias),
+                err.name(),
+            );
+        }
+
+        if manager.options.enable.fail_early() {
+            manager.crash();
+        }
+    }
+
+    /// Requests the bin links of a package that the current tree holds at `alias`. Its own
+    /// bins wait for `link_tree_bins`. The bins of the dependencies it bundles are linked
+    /// here: the tree has no row for them, and the package folder already holds them.
+    fn request_bin_links(
+        &mut self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        alias: &[u8],
+        log_level: Options::LogLevel,
+    ) {
+        if self.bins[package_id as usize].tag != bin::Tag::None {
+            self.trees[self.current_tree_id as usize]
+                .binaries
+                .add(dependency_id)
+                .unwrap_or_oom();
+        }
+
+        if !self.filtered_bundled_dependency {
+            return;
+        }
+        let names = self.lockfile().bundled_dependency_names(package_id);
+        if names.is_empty() {
+            return;
+        }
+        let mut package_dir = self.node_modules.path.clone();
+        package_dir.push(SEP);
+        package_dir.extend_from_slice(alias);
+        let manager = self.manager_mut();
+        if let Err(err) = bin::link_bundled(&package_dir, &names, manager.options.bin_path) {
+            Self::report_bin_link_error(manager, alias, err, log_level);
         }
     }
 
@@ -1909,12 +1955,12 @@ impl<'a> PackageInstaller<'a> {
                         self.node.complete_one();
                     }
 
-                    if self.bins[package_id as usize].tag != bin::Tag::None {
-                        self.trees[self.current_tree_id as usize]
-                            .binaries
-                            .add(dependency_id)
-                            .unwrap_or_oom();
-                    }
+                    self.request_bin_links(
+                        dependency_id,
+                        package_id,
+                        alias.slice(string_buf!()),
+                        log_level,
+                    );
 
                     let dep =
                         &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
@@ -2211,12 +2257,12 @@ impl<'a> PackageInstaller<'a> {
 
             self.summary.skipped += 1;
 
-            if self.bins[package_id as usize].tag != bin::Tag::None {
-                self.trees[self.current_tree_id as usize]
-                    .binaries
-                    .add(dependency_id)
-                    .unwrap_or_oom();
-            }
+            self.request_bin_links(
+                dependency_id,
+                package_id,
+                alias.slice(string_buf!()),
+                log_level,
+            );
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;

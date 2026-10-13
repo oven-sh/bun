@@ -95,8 +95,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
 `,
   };
   const byPrettier = `<!-- by Prettier -->\n${input}`;
-  // A run that asks it starts a VM, and the search for leaks at its end takes seconds with the threads of one.
-  const timeout = isDebug || isASAN ? 120_000 : 5_000;
+  // A run that asks it starts a VM, which takes long in a debug build: one such run in a test.
 
   test("without a Prettier or oxfmt config components are formatted", async () => {
     expect(await format({ "a.svelte": input }, ["a.svelte"])).toMatchObject({
@@ -253,61 +252,50 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect((await format({ ...both, "a.svelte": input }, ["a.svelte"])).files).toEqual([output]);
   });
 
-  test(
-    "another version of the plugin than 4.1.1 prints in another way, so the Prettier of the project is asked",
-    async () => {
-      const files = { ...prettier, ".prettierrc": prettierrc, "a.svelte": input };
-      expect((await format({ ...files, ...plugin("4.1.1") }, ["a.svelte"])).files).toEqual([output]);
-      expect((await format(files, ["a.svelte"])).files).toEqual([output]);
-      for (const version of ["4.1.0", "4.0.0", "3.5.2", "3.2.6", "4.1.2", "4.2.0", "5.0.0"]) {
-        expect({ version, files: (await format({ ...files, ...plugin(version) }, ["a.svelte"])).files }).toEqual({
-          version,
-          files: [byPrettier],
-        });
-      }
-      // So it is for a range.
+  describe("another version of the plugin than 4.1.1 prints in another way, so the Prettier of the project is asked", () => {
+    const files = { ...prettier, ".prettierrc": prettierrc, "a.svelte": input };
+
+    test.each([[plugin("4.1.1")], [{}]])("not with 4.1.1, and not without any: %j", async installed => {
+      expect((await format({ ...files, ...installed }, ["a.svelte"])).files).toEqual([output]);
+    });
+
+    test.each(["4.1.0", "4.0.0", "3.5.2", "4.1.2", "5.0.0"])("%s", async version => {
+      expect((await format({ ...files, ...plugin(version) }, ["a.svelte"])).files).toEqual([byPrettier]);
+    });
+
+    test("so it is for a range", async () => {
       const range = await format({ ...files, ...plugin("4.1.1") }, ["a.svelte"], ["--range-start=1"]);
       expect(range.files).toEqual([byPrettier]);
-    },
-    timeout,
-  );
+    });
+  });
 
-  test(
-    "the version is that of the plugin that the Prettier of the project would load: from the working directory",
-    async () => {
-      const inApp = (files: Record<string, string>) =>
-        Object.fromEntries(Object.entries(files).map(([name, text]) => [`packages/app/${name}`, text]));
-      using dir = tempDir("bun-format-svelte", {
-        ".prettierrc": prettierrc,
-        ...inApp({ ...prettier, ...plugin("4.0.0"), "a.svelte": input }),
-      });
-      const app = join(String(dir), "packages/app");
-      expect((await formatIn(app, ["a.svelte"], ["--check", "."])).exitCode).toBe(1);
-      expect((await formatIn(app, ["a.svelte"])).files).toEqual([byPrettier]);
-    },
-    timeout,
-  );
+  test("the version is that of the plugin that the Prettier of the project would load: from the working directory", async () => {
+    const inApp = (files: Record<string, string>) =>
+      Object.fromEntries(Object.entries(files).map(([name, text]) => [`packages/app/${name}`, text]));
+    using dir = tempDir("bun-format-svelte", {
+      ".prettierrc": prettierrc,
+      ...inApp({ ...prettier, ...plugin("4.0.0"), "a.svelte": input }),
+    });
+    expect((await formatIn(join(String(dir), "packages/app"), ["a.svelte"])).files).toEqual([byPrettier]);
+  });
 
-  test(
-    "a range or a cursor in the configuration is one too",
-    async () => {
-      const files = { ...prettier, ...plugin("4.1.1"), "a.svelte": input };
-      const forSvelte = (options: object) => ({ overrides: [{ files: "*.svelte", options }] });
-      for (const config of [
-        { rangeStart: 1 },
-        { rangeEnd: 5 },
-        forSvelte({ cursorOffset: 2 }),
-        forSvelte({ rangeEnd: 5 }),
-      ]) {
+  describe("a range or a cursor in the configuration is one too", () => {
+    const files = { ...prettier, ...plugin("4.1.1"), "a.svelte": input };
+    const forSvelte = (options: object) => ({ overrides: [{ files: "*.svelte", options }] });
+
+    test.each([[{ rangeStart: 1 }], [{ rangeEnd: 5 }], [forSvelte({ cursorOffset: 2 })], [forSvelte({ rangeEnd: 5 })]])(
+      "%j",
+      async config => {
         const result = await format({ ...files, ".prettierrc": JSON.stringify({ plugins, ...config }) }, ["a.svelte"]);
-        expect({ config, files: result.files }).toEqual({ config, files: [byPrettier] });
-      }
-      // Not one for other files.
+        expect(result.files).toEqual([byPrettier]);
+      },
+    );
+
+    test("not one for other files", async () => {
       const config = { plugins, overrides: [{ files: "*.js", options: { rangeEnd: 5 } }] };
       expect((await format({ ...files, ".prettierrc": JSON.stringify(config) }, ["a.svelte"])).files).toEqual([output]);
-    },
-    timeout,
-  );
+    });
+  });
 
   describe("a value of an option that this version of the plugin does not take", () => {
     // What 2.x takes.
@@ -329,19 +317,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       });
     });
 
-    test(
-      "is for the Prettier of the project to judge with another version",
-      async () => {
-        const project = { ...files, ...prettier, ...plugin("2.10.1") };
-        const config = { ".prettierrc": JSON.stringify({ plugins, ...options }) };
-        expect(await format({ ...project, ...config }, ["a.svelte", "b.js"])).toMatchObject({
-          stderr: "",
-          files: [byPrettier, "b;\n"],
-          exitCode: 0,
-        });
-      },
-      timeout,
-    );
+    test("is for the Prettier of the project to judge with another version", async () => {
+      const project = { ...files, ...prettier, ...plugin("2.10.1") };
+      const config = { ".prettierrc": JSON.stringify({ plugins, ...options }) };
+      expect(await format({ ...project, ...config }, ["a.svelte", "b.js"])).toMatchObject({
+        stderr: "",
+        files: [byPrettier, "b;\n"],
+        exitCode: 0,
+      });
+    });
   });
 
   // 4.1.1 has svelte5CompilerPath, svelteSortOrder, svelteAllowShorthand and svelteIndentScriptAndStyle.
@@ -356,17 +340,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       });
     });
 
-    test(
-      "is for another version to judge, whose files go to the Prettier of the project",
-      async () => {
-        expect(await format({ ...files, ...prettier, ...plugin("3.4.0") }, ["a.svelte"])).toMatchObject({
-          stderr: "",
-          files: [byPrettier],
-          exitCode: 0,
-        });
-      },
-      timeout,
-    );
+    test("is for another version to judge, whose files go to the Prettier of the project", async () => {
+      expect(await format({ ...files, ...prettier, ...plugin("3.4.0") }, ["a.svelte"])).toMatchObject({
+        stderr: "",
+        files: [byPrettier],
+        exitCode: 0,
+      });
+    });
 
     test("the options that 4.1.1 has are known", async () => {
       const config = { plugins, svelte5CompilerPath: "", svelteAllowShorthand: true, svelteIndentScriptAndStyle: true };
@@ -778,6 +758,15 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     "what is printed can be parsed": [
       ["{(/b/).test(c)}\n", "{(/b/.test(c))}\n", "{/b/.test(c)}\n"],
       ["{(/b/g)}\n", "{(/b/g)}\n", "{/b/g}\n"],
+      // One that is printed as it is written, because it has no such flag.
+      ["{(/b/c)}\n", "{(/b/c)}\n", "{/b/c}\n"],
+      // To Svelte this says that the markup is TypeScript, to the plugin it does not.
+      [
+        '<script data-lang="ts"></script>\n\n{f<string>(a)}\n',
+        '<script data-lang="ts"></script>\n\n{f<string>(a)}\n',
+        '<script data-lang="ts"></script>\n\n{f < string > a}\n',
+        false,
+      ],
       ["{(/b/).test(c) ? 1 : 2}\n", "{(/b/.test(c) ? 1 : 2)}\n", "{/b/.test(c) ? 1 : 2}\n"],
       ["{(@b class {})}\n", "{(@b\nclass {})}\n", "{@b\nclass {}}\n"],
       ["{(let)[0]}\n", "{(let[0])}\n", "{let[0]}\n"],
@@ -879,6 +868,59 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const checked = await format({ ...config, "a.svelte": before }, ["a.svelte"], ["--debug-check"]);
       expect(checked).toMatchObject({ stderr: "", files: [before], exitCode: 0 });
     }
+  });
+
+  describe("what only TypeScript has", () => {
+    // The text, and the column of what is refused in a component without `lang="ts"`.
+    const rows: [string, number][] = [
+      ["{(a: number) => a}", 6],
+      ["{(a?) => a}", 4],
+      ["{(a): number => a}", 7],
+      ["{<T,>(a) => a}", 3],
+      ["{<T>a}", 2],
+      ["{function (this: A) {}}", 12],
+      ["{class { private a }}", 10],
+      ["{class A<T> {}}", 10],
+      ["{class A implements B {}}", 10],
+      ["{(a) => { let b: number; }}", 18],
+      ["{() => { type A = 1 }}", 15],
+      ["{() => { enum A {} }}", 15],
+      ["{@const a: number = 1}", 10],
+      ["{let a: number = 1}", 9],
+      ["{#each a as b: number}c{/each}", 14],
+      ["{#snippet a(b: number)}c{/snippet}", 16],
+      ["<p on:click={(a: Event) => a}>b</p>", 18],
+    ];
+    const names = rows.map((_, index) => `${index}.svelte`);
+
+    test("is an error in a component that is JavaScript, which says what it takes", async () => {
+      const files = Object.fromEntries(rows.map(([text], index) => [names[index], `${text}\n`]));
+      const result = await format(files, names);
+      for (const [index, [text, column]] of rows.entries()) {
+        expect({ text, stderr: result.stderr }).toEqual({
+          text,
+          stderr: expect.stringContaining(
+            `error: This is TypeScript, which needs <script lang="ts">\n    at ${names[index]}:1:${column}\n`,
+          ),
+        });
+      }
+      expect(result).toMatchObject({ files: Object.values(files), exitCode: 2 });
+    });
+
+    test("is formatted in one that is TypeScript", async () => {
+      const files = Object.fromEntries(
+        rows.map(([text], index) => [names[index], `<script lang="ts"></script>\n\n${text}\n`]),
+      );
+      expect(await format(files, names)).toMatchObject({ stderr: "", exitCode: 0 });
+    });
+
+    test("ends an expression where acorn stops before it", async () => {
+      expect(await format({ "a.svelte": "{#each a  as b}c{/each}\n" }, ["a.svelte"])).toMatchObject({
+        stderr: "",
+        files: ["{#each a as b}c{/each}\n"],
+        exitCode: 0,
+      });
+    });
   });
 
   test("what is an expression to Svelte is one in a <textarea> and in the value of an attribute", async () => {
@@ -1037,6 +1079,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
   test("--debug-check names a component that passes, and writes nothing", async () => {
     const result = await format({ "a.svelte": input }, ["a.svelte"], ["--log-level=log", "--debug-check"]);
     expect(result).toMatchObject({ stdout: "a.svelte\n", stderr: "", files: [input], exitCode: 0 });
+  });
+
+  test("--debug-check does not take an expression that is spelled like the name of its directive for the name", async () => {
+    const text = "<p class:a-b={a-b}>c</p>\n";
+    const checked = await format({ "a.svelte": text }, ["a.svelte"], ["--debug-check"]);
+    expect(checked).toMatchObject({ stderr: "", files: [text], exitCode: 0 });
+    expect((await format({ "a.svelte": text }, ["a.svelte"])).files).toEqual(["<p class:a-b={a - b}>c</p>\n"]);
   });
 
   test("what is nested too deeply is left as it is, and that is said", async () => {

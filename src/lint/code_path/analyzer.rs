@@ -59,12 +59,12 @@ struct Frame<'a> {
 }
 
 /// ESLint's `CodePathAnalyzer`.
-struct Builder<'s, 'a> {
+pub(super) struct Builder<'s, 'a> {
     file: &'a File<'a>,
     /// Where the graphs are built.
     store: &'s Store,
     /// The states of the code paths that have started and not ended.
-    states: Vec<State>,
+    pub(super) states: Vec<State>,
     /// Those of code paths that have ended, to be used again.
     spare_states: Vec<State>,
     /// The nodes that have been entered and not left.
@@ -312,7 +312,7 @@ fn with_default(default: Option<Expr>) -> Is {
 }
 
 impl<'s, 'a> Builder<'s, 'a> {
-    fn new(file: &'a File<'a>, store: &'s Store) -> Self {
+    pub(super) fn new(file: &'a File<'a>, store: &'s Store) -> Self {
         Builder {
             file,
             store,
@@ -327,7 +327,7 @@ impl<'s, 'a> Builder<'s, 'a> {
 
     /// `forwardCurrentToHead`
     #[inline]
-    fn forward_current_to_head(&mut self, cx: &mut Cx<'_, 'a>) {
+    pub(super) fn forward_current_to_head(&mut self, cx: &mut Cx<'_, 'a>) {
         let Some(state) = self.states.last_mut() else {
             return;
         };
@@ -367,7 +367,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         }
     }
 
-    fn start_code_path(&mut self, cx: &mut Cx<'_, 'a>) {
+    pub(super) fn start_code_path(&mut self, cx: &mut Cx<'_, 'a>) {
         self.forward_current_to_head(cx);
         let store = cx.store();
         let path = store.new_code_path();
@@ -379,7 +379,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         (cx.emit)(Event::CodePathStart(CodePath::new(cx.file, path), node));
     }
 
-    fn end_code_path(&mut self, cx: &mut Cx<'_, 'a>) {
+    pub(super) fn end_code_path(&mut self, cx: &mut Cx<'_, 'a>) {
         let Some(mut state) = self.states.pop() else {
             return;
         };

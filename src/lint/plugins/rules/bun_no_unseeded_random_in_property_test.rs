@@ -10,11 +10,11 @@ pub struct NoUnseededRandomInPropertyTest;
 
 const SAMPLE: Message = Message::new(
     "sample",
-    "What `sample()` draws here does not come from the seed of the run: a failure cannot be replayed or shrunk. Make it a parameter of the property.",
+    "`sample()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
 );
 const RANDOM: Message = Message::new(
     "random",
-    "`Math.random()` does not come from the seed of the run: a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
+    "`Math.random()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
 );
 
 const FAST_CHECK: &str = "fast-check";

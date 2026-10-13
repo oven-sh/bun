@@ -1,5 +1,5 @@
 //! Where micromark, which Prettier parses Markdown with, does not do what
-//! CommonMark says, and what `bun format` prints for real documents depends on
+//! CommonMark says, and what `bun fmt` prints for real documents depends on
 //! it. Each is behind `Options::micromark`, which only the formatter sets, or
 //! behind `Options::micromark_to_the_letter`: what oxfmt's parser, which follows
 //! micromark, leaves out on purpose. And

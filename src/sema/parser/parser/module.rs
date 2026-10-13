@@ -1,7 +1,8 @@
 //! Import and export declarations.
 
+use super::declared::Declares;
 use super::stmt::Start;
-use super::{ListKind, Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -109,6 +110,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     fn expression_as_module_specifier(&mut self, is_export: bool) {
         if self.is_read_as_by_other_parsers() {
+            // oxc's errors before this one count, so the file is not given up.
+            if self.recovers() && self.options.dialect.oxc {
+                return self.error_at_token(1109, &[]);
+            }
             return self.refuse(Refusal::Reported);
         }
         let at = self.pos();
@@ -189,8 +194,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline]
     pub(super) fn import_attributes_of_declaration(&mut self, is_export: bool) -> ResolutionMode {
         // After an import, `with` can be on the next line. After an export it starts a statement
-        // there.
-        if self.token() == T::With && !(is_export && self.newline_before() && !self.is_ecmascript) {
+        // there for TypeScript, and for nobody else.
+        let is_statement =
+            is_export && self.newline_before() && !self.is_ecmascript && !self.options.dialect.oxc;
+        if self.token() == T::With && !is_statement {
             return self.import_attributes_after_specifier(is_export);
         }
         if self.token() == T::Assert && !self.newline_before() {
@@ -298,6 +305,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !has_only_strings && !self.has_failed() {
             // In a TypeScript file Prettier asks typescript-estree, which takes any expression.
             match self.is_ecmascript {
+                // The linter has oxc's words for it.
+                true if self.options.dialect.oxc => {}
                 true => self.refuse(Refusal::Reported),
                 false if is_in_type => {}
                 false => self.after_expressions_of_declaration(open, declarations),
@@ -379,7 +388,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let (mut is_type_only, mut property_name, mut can_parse_as) = (false, None, true);
         let mut property_name_end = 0;
         let mut name = self.module_export_name();
-        if name.token == T::Type || name.token == T::TypeOf && self.is_flow {
+        if name.token == T::Type || name.token == T::TypeOf && self.is_flow() {
             // "If the first token of an import specifier is 'type', there are a lot of
             // possibilities"
             if self.token() == T::As {
@@ -461,6 +470,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     fn unusual_local_of_export_specifier(&mut self, specifier: &Specifier) {
         let local = specifier.property_name.unwrap_or(specifier.name);
+        if self.options.dialect.oxc && local.text.is_keyword_identifier() {
+            self.f.keyword_identifier_positions.push(local.pos);
+        }
         let is_reported = match self.is_read_as_by_other_parsers() {
             // It is a reference.
             true => local.token == T::String || local.token.is_reserved_word(),
@@ -501,7 +513,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let saved = self.leave_await_context_of_top_level();
         let clause_start = self.pos();
         let mut identifier = None;
-        if self.is_identifier() || self.token() == T::TypeOf && self.is_flow {
+        if self.is_identifier() || self.token() == T::TypeOf && self.is_flow() {
             identifier = Some((self.lx.atom, self.pos(), self.token()));
             self.next_after_name();
         }
@@ -540,9 +552,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
             }
         }
+        // Without a `=` oxc goes on with the clause, and misses the `from`.
         if let Some((name, name_pos, _)) = identifier
             && !is_deferred
             && !matches!(self.token(), T::Comma | T::From)
+            && (self.token() == T::Equals || !self.options.dialect.oxc)
         {
             let statement = self.import_equals(start, base, flags, (name, name_pos), type_only);
             self.context = saved;
@@ -561,6 +575,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let declaration = ImportId(self.f.imports.len() as u32);
         let has_clause = identifier.is_some() || matches!(self.token(), T::Asterisk | T::OpenBrace);
         if has_clause && (identifier.is_none() || self.eat(T::Comma)) {
+            if type_only && identifier.is_some() && self.reports_like_oxc() {
+                oxc::type_only_import_of_both(&mut self.f.diagnostics, self.lx.src, default_pos);
+            }
             if self.token() == T::Asterisk {
                 // `parseNamespaceImport`
                 namespace_start = self.pos();
@@ -584,6 +601,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     }
                     if specifier.is_type_only {
                         self.js_error((specifier.start, specifier.end), 8006, b"import...type");
+                        if type_only && self.reports_like_oxc() {
+                            let (errors, at) = (&mut self.f.diagnostics, specifier.start);
+                            oxc::type_modifier_twice(errors, at, oxc::Specifier::Import);
+                        }
                     }
                     self.s.import_specs.push(ImportSpec {
                         start: specifier.start,
@@ -632,12 +653,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         for index in specs..self.s.import_specs.len() {
             let ImportSpec { local, pos, .. } = self.s.import_specs[index];
             self.note_identifier(local, pos);
+            self.declare(local, Declares::Import);
         }
         if default.is_some() {
             self.note_identifier(default, default_pos);
+            self.declare(default, Declares::Import);
         }
         if namespace.is_some() {
             self.note_identifier(namespace, namespace_pos);
+            self.declare(namespace, Declares::Import);
         }
         let named = take_span!(self, import_specs, specs);
         let declaration = self.f.add_import(Import {
@@ -714,7 +738,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ImportEqualsTarget::Entity(entity)
         };
         self.semicolon();
+        if type_only && matches!(target, ImportEqualsTarget::Entity(_)) && self.reports_like_oxc() {
+            let statement = (start.pos, self.prev_end());
+            oxc::type_only_import_alias(&mut self.f.diagnostics, statement);
+        }
         self.note_identifier(name, name_pos);
+        self.declare(name, Declares::Import);
         let declaration = self.f.add_import_equals(ImportEquals {
             name,
             name_pos,
@@ -838,6 +867,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             if specifier.is_type_only {
                 self.js_error((specifier.start, specifier.end), 8006, b"export...type");
+                if type_only && self.reports_like_oxc() {
+                    let (errors, at) = (&mut self.f.diagnostics, specifier.start);
+                    oxc::type_modifier_twice(errors, at, oxc::Specifier::Export);
+                }
             }
             self.s.export_specs.push(ExportSpec {
                 start: specifier.start,
@@ -896,13 +929,20 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // `parseExportAssignment` has `setAwaitContext(true)`.
         let saved = match self.is_ecmascript {
             true => self.enter_context(0, ctx::DISALLOW_IN),
+            // For oxc only that of the file is in the await context.
+            false if self.options.dialect.oxc && !self.has_context(ctx::TOP_LEVEL) => {
+                self.enter_context(0, ctx::DISALLOW_IN)
+            }
             false => self.enter_context(ctx::AWAIT, ctx::DISALLOW_IN),
         };
         let expression = self.assignment_expression();
         self.context = saved;
         self.semicolon();
         let kind = match is_export_equals {
-            true => StmtKind::ExportAssign(expression),
+            true => {
+                self.f.rare_syntax |= rare::EXPORT_ASSIGNMENT;
+                StmtKind::ExportAssign(expression)
+            }
             false => StmtKind::ExportDefault(expression),
         };
         self.add_stmt(kind, start, modifiers)

@@ -2,7 +2,7 @@ use crate::jsx::{AttributeValue, get_jsx_element_name, get_prop_value};
 use crate::util_version::string_of;
 use bun_lint_oxlint::text::glob_match;
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_lint::glob::Minimatch;
 use bun_lint::prelude::*;
 use bun_lint::regex::SyntaxError;
 use bun_lint::rule::Plugin;
@@ -30,7 +30,7 @@ struct Original {
     event_handler_prop_prefix: Vec<u8>,
     /// `None`: a prefix is `false`, or both are plain names, which the lists of oxlint have as they are.
     regexes: Option<Regexes>,
-    ignore_component_names: Vec<Pattern>,
+    ignore_component_names: Vec<Minimatch>,
 }
 
 struct Regexes {
@@ -161,7 +161,7 @@ impl Original {
             ignore_component_names: options
                 .strings("ignoreComponentNames")
                 .into_iter()
-                .map(|it| Pattern::new(it.as_bytes(), GlobOptions::MINIMATCH_3))
+                .map(|it| Minimatch::new(it.as_bytes()))
                 .collect(),
         })
     }

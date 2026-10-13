@@ -1,23 +1,26 @@
 //! What the linter talks to: loads plugins, and runs their rules on a file.
 
-use super::engine::{Engine, Vm};
+use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
-use super::{ast, schema, scopes, tokens};
+use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
+use crate::code_path;
 use crate::estree::Dialect;
 use crate::fix::Fix;
-use crate::linter::write_json;
+use crate::language::{LanguageOptions, SourceType};
+use crate::linter::{normalize_plugin_name, write_json};
 use crate::options::Json;
 use crate::rule::Kind;
 use crate::selector::Selector;
-use crate::span::Span;
 use bun_core::printer::json_stringify;
 use bun_core::strings::Utf16OffsetTable;
 use bun_threading::Guarded;
+use core::cell::RefCell;
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// ESLint's `context.report()`.
 #[derive(Clone, Debug)]
@@ -26,10 +29,10 @@ pub struct Report {
     pub rule: u32,
     pub message: Vec<u8>,
     pub message_id: Option<Box<str>>,
-    /// From 1.
-    pub line: u32,
-    /// From 1, in UTF-16 code units.
-    pub column: u32,
+    /// From 1. `None`: the rule gave something that isn't a number.
+    pub line: Option<u32>,
+    /// From 1, in UTF-16 code units. `None`: as for `line`.
+    pub column: Option<u32>,
     /// `endLine` and `endColumn`.
     pub end: Option<(u32, u32)>,
     pub fix: Option<Fix>,
@@ -42,9 +45,8 @@ pub struct Suggested {
     pub message_id: Option<Box<str>>,
     /// `desc`
     pub message: Vec<u8>,
-    pub data: Vec<(Box<str>, Vec<u8>)>,
-    /// The rule gave `data`, which can be empty: ESLint has it in the message then.
-    pub has_data: bool,
+    /// `data` as JSON, if the rule gave any.
+    pub data: Option<Vec<u8>>,
     pub fix: Fix,
 }
 
@@ -53,20 +55,34 @@ pub struct Suggested {
 pub struct Failure {
     /// The index of the rule that threw, among those that were run.
     pub rule: Option<u32>,
-    /// The line of the node that was being visited.
-    pub line: Option<u32>,
+    pub at: ThrownAt,
     pub message: Vec<u8>,
+}
+
+/// Where a rule was when it threw.
+#[derive(Copy, Clone, Debug)]
+pub enum ThrownAt {
+    /// In its `create`.
+    Create,
+    /// In a listener, at a node on this line.
+    Line(u32),
+    /// At a node whose line can't be read, in a listener for code paths, or not in a rule at all.
+    Unknown,
 }
 
 impl From<Vec<u8>> for Failure {
     fn from(message: Vec<u8>) -> Failure {
         Failure {
             rule: None,
-            line: None,
+            at: ThrownAt::Unknown,
             message,
         }
     }
 }
+
+/// Parses the text of a file once more, on the thread that calls it, and hands over the result. It isn't called back if the text
+/// can't be parsed.
+pub type ParseAgain<'p> = dyn Fn(&mut dyn for<'f> FnMut(&'f File<'f>)) + Sync + 'p;
 
 /// The JavaScript that a run has loaded, in all realms together.
 #[derive(Clone, Default, Debug)]
@@ -141,62 +157,55 @@ pub(super) fn number(json: Option<&Json>) -> Option<u32> {
     }
 }
 
-fn text_of(json: Option<&Json>) -> Option<Box<str>> {
-    Some(std::str::from_utf8(json?.as_str()?).ok()?.into())
+/// [`Host::for_each`]
+struct Each<'e> {
+    /// The heavy ones, and the others.
+    lists: [Vec<usize>; 2],
+    /// How many of each are taken.
+    next: [AtomicUsize; 2],
+    work: &'e (dyn Fn(usize) + Sync),
 }
 
-/// `[start, end, text]`
-fn fix_of(json: Option<&Json>, offsets: &Utf16OffsetTable) -> Option<Fix> {
-    let [start, end, text] = json?.as_array()? else {
-        return None;
-    };
-    // The byte order mark is at -1.
-    let at = |it: &Json| match it {
-        Json::Number(n) if *n < 0.0 => Some(0),
-        it => Some(offsets.to_bytes(number(Some(it))?)),
-    };
-    Some(Fix {
-        span: Span::new(at(start)?, at(end)?),
-        text: text.as_str()?.to_vec(),
-    })
+impl Each<'_> {
+    fn is_left(&self, list: usize) -> bool {
+        self.next[list].load(Ordering::Relaxed) < self.lists[list].len()
+    }
+
+    fn take(&self, list: usize) -> bool {
+        let next = self.lists[list].get(self.next[list].fetch_add(1, Ordering::Relaxed));
+        next.map(|&it| (self.work)(it)).is_some()
+    }
 }
 
-/// `[rule, message, messageId, line, column, endLine, endColumn, fix, suggestions]`
-fn report_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Report> {
-    let parts = json.as_array()?;
-    let suggestions = parts.get(8).and_then(Json::as_array).unwrap_or_default();
-    // `[messageId, desc, data, fix]`
-    let suggested = |it: &Json| {
-        let parts = it.as_array()?;
-        let data = parts.get(2).and_then(Json::as_object);
-        let has_data = data.is_some();
-        let data = data.unwrap_or_default().iter().filter_map(|(key, value)| {
-            Some((
-                std::str::from_utf8(key).ok()?.into(),
-                value.as_str()?.to_vec(),
-            ))
-        });
-        Some(Suggested {
-            message_id: text_of(parts.first()),
-            message: parts.get(1)?.as_str()?.to_vec(),
-            data: data.collect(),
-            has_data,
-            fix: fix_of(parts.get(3), offsets)?,
-        })
-    };
-    Some(Report {
-        rule: number(parts.first())?,
-        message: parts.get(1)?.as_str()?.to_vec(),
-        message_id: text_of(parts.get(2)),
-        line: number(parts.get(3))?,
-        column: number(parts.get(4))?,
-        end: number(parts.get(5)).zip(number(parts.get(6))),
-        fix: fix_of(parts.get(7), offsets),
-        suggestions: suggestions.iter().filter_map(suggested).collect(),
-    })
+impl Work for Each<'_> {
+    fn has_heavy(&self) -> bool {
+        self.is_left(0)
+    }
+
+    fn heavy(&self) -> bool {
+        self.take(0)
+    }
+
+    fn light(&self, _realm: usize) -> bool {
+        self.take(1)
+    }
+
+    fn needs_realms(&self) -> bool {
+        self.is_left(1)
+    }
 }
 
-const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
+/// What [`Host::run_on_block`] is given besides the file.
+#[derive(Copy, Clone)]
+struct How<'h> {
+    settings: &'h FileSettings,
+    enabled: &'h [&'h Configured],
+    wants_fixes: bool,
+    physical_path_len: Option<usize>,
+}
+
+const OUT_OF_STEP: &[u8] =
+    b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 impl<'e> Host<'e> {
     /// `cwd`: ESLint's `context.cwd`.
@@ -234,6 +243,7 @@ impl<'e> Host<'e> {
                 self.state.lock().loading.realms += 1;
                 schema::write_start(&self.cwd, self.measures, out);
             }
+            ask::LAYOUTS => layouts::write(out),
             ask::LOADED => {
                 let parts = crate::json::parse(details);
                 if let Some(
@@ -275,14 +285,34 @@ impl<'e> Host<'e> {
         self.engine.has_shown(size, has_come);
     }
 
-    /// [`Engine::keep_vm`]
-    pub fn keep_a_realm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
-        self.engine.keep_vm(then)
+    /// [`Engine::work_off`]
+    pub fn work_off(&self, work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        self.engine.work_off(work, meanwhile)
     }
 
-    /// [`Engine::most_realms`]
-    pub fn most_realms(&self) -> usize {
-        self.engine.most_realms()
+    /// [`Engine::busy`]
+    pub fn busy(&self) -> usize {
+        self.engine.busy()
+    }
+
+    /// Calls `work` with every number below `count`, on threads that have a realm. `is_heavy`: whether the file with that number
+    /// is [`HEAVY`](super::HEAVY).
+    pub fn for_each(
+        &self,
+        count: usize,
+        is_heavy: &dyn Fn(usize) -> bool,
+        work: &(dyn Fn(usize) + Sync),
+    ) {
+        let (heavy, light) = (0..count).partition(|&it| is_heavy(it));
+        let each = Each {
+            lists: [heavy, light],
+            next: Default::default(),
+            work,
+        };
+        // Without a realm each fails, and says why.
+        if self.engine.work_off(&each, &mut || ()).is_err() {
+            each.finish_here();
+        }
     }
 
     /// Whether `rule` has asked for types, which are not there for a rule in JavaScript. It runs on no more file.
@@ -294,7 +324,9 @@ impl<'e> Host<'e> {
     /// Whether `thrown`, the message of what `rule` has thrown, says that it needs types. From then on it
     /// [has asked](Host::has_asked_for_types).
     pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
-        if !thrown.starts_with(ASKS_FOR_TYPES) {
+        // With an oxlint config the message comes after the class of the error.
+        let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
+        if !message.starts_with(ASKS_FOR_TYPES) {
             return false;
         }
         if !self.has_asked_for_types(rule) {
@@ -310,6 +342,15 @@ impl<'e> Host<'e> {
         crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
         rules.dedup_by(|a, b| Arc::ptr_eq(a, b));
         rules
+    }
+
+    /// The plugins that are known, each with where it is: `[directory, specifier, alias]` of [`Host::load`], or
+    /// `[location, null, prefix]` of [`Host::load_located`].
+    pub fn plugins(&self) -> Vec<(Arc<Plugin>, Json)> {
+        let state = self.state.lock();
+        let located =
+            |it: &Loaded| Some((Arc::clone(&it.plugin), crate::json::parse(&it.location)?));
+        state.plugins.iter().filter_map(located).collect()
     }
 
     /// Loads a plugin. `specifier`: a path, relative to `directory`, or the name of a package, which
@@ -449,13 +490,8 @@ impl<'e> Host<'e> {
                 }),
             };
             match parsed {
-                Ok((number, selector)) => {
-                    let counts = format!(
-                        "[{number},{},{}]",
-                        selector.attribute_count(),
-                        selector.identifier_count()
-                    );
-                    out.extend_from_slice(counts.as_bytes());
+                Ok((number, _)) => {
+                    out.extend_from_slice(number.to_string().as_bytes());
                 }
                 Err(error) => json_stringify(error.message(), out),
             }
@@ -463,16 +499,15 @@ impl<'e> Host<'e> {
         out.push(b']');
     }
 
-    /// Given JSON, the numbers of selectors, these.
-    fn selectors(&self, numbers: Option<&Json>) -> Vec<Option<Arc<Selector>>> {
-        let numbers = numbers.and_then(Json::as_array).unwrap_or_default();
-        if numbers.is_empty() {
+    /// The selectors with these numbers.
+    fn selectors_at(&self, numbers: impl Iterator<Item = u32>) -> Vec<Option<Arc<Selector>>> {
+        let mut numbers = numbers.peekable();
+        if numbers.peek().is_none() {
             return Vec::new();
         }
         let state = self.state.lock();
         numbers
-            .iter()
-            .map(|it| state.selectors.get(number(Some(it))? as usize)?.clone())
+            .map(|it| state.selectors.get(it as usize)?.clone())
             .collect()
     }
 
@@ -485,9 +520,9 @@ impl<'e> Host<'e> {
         positions
     }
 
-    /// The same. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if not all of it.
-    /// `wants_fixes`: `false` is ESLint's `disableFixes`. Not whether somebody reads them: to be asked for one is part of what a
-    /// rule does.
+    /// Runs the rules `enabled` on `file`. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if
+    /// not all of it. `wants_fixes`: `false` is ESLint's `disableFixes`. Not whether somebody reads them: to be asked for one is
+    /// part of what a rule does. `parse_again`: for a thread that has no realm. A thread that has one parses the text itself.
     pub fn run_on_block<'a>(
         &self,
         file: &'a File<'a>,
@@ -495,23 +530,41 @@ impl<'e> Host<'e> {
         enabled: &[&Configured],
         wants_fixes: bool,
         physical_path_len: Option<usize>,
+        parse_again: Option<&ParseAgain>,
     ) -> Result<Vec<Report>, Failure> {
+        let how = How {
+            settings,
+            enabled,
+            wants_fixes,
+            physical_path_len,
+        };
+        let size = file.text().len();
         let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        self.engine.with_vm(file.text().len(), &mut |vm| {
-            outcome = self.run_in(vm, file, settings, enabled, wants_fixes, physical_path_len);
-        })?;
-        outcome
+        if self.engine.is_here() {
+            (self.engine).with_vm_here(size, &mut |vm| outcome = self.run_in(vm, file, &how))?;
+        } else if let Some(parse_again) = parse_again {
+            self.engine.with_vm(size, &mut |vm| {
+                parse_again(&mut |file| outcome = self.run_in(vm, file, &how));
+            })?;
+        }
+        let (reports, used) = outcome?;
+        scopes::mark_used(file, used.into_iter());
+        Ok(reports)
     }
 
+    /// Returns the reports, and the indices of the variables that rules have marked as used.
     fn run_in<'a>(
         &self,
         vm: &mut dyn Vm,
         file: &'a File<'a>,
-        settings: &FileSettings,
-        enabled: &[&Configured],
-        wants_fixes: bool,
-        physical_path_len: Option<usize>,
-    ) -> Result<Vec<Report>, Failure> {
+        how: &How,
+    ) -> Result<(Vec<Report>, Vec<u32>), Failure> {
+        let How {
+            settings,
+            enabled,
+            wants_fixes,
+            physical_path_len,
+        } = *how;
         let text = file.text();
         let offsets = Utf16OffsetTable::without_bom(text);
         let has_mark = text.starts_with(b"\xEF\xBB\xBF");
@@ -523,7 +576,10 @@ impl<'e> Host<'e> {
         let flags = u32::from(wants_fixes)
             | (u32::from(has_mark) << 1)
             | (u32::from(is_espree) << 2)
-            | (u32::from(settings.sources.is_some()) << 3);
+            | (u32::from(settings.sources.is_some()) << 3)
+            | (u32::from(file.language().is_oxlint) << 4)
+            | (source_type_for_oxlint(file) << 5)
+            | (u32::from(ast::shortens_nodes(file)) << 8);
         wire::words(
             &mut message,
             &[
@@ -543,6 +599,9 @@ impl<'e> Host<'e> {
         message.extend_from_slice(if has_mark { &text[3..] } else { text });
 
         let mut nodes = None;
+        // What `code_path::estree::analyze` says about the file.
+        let mut code_paths: Option<Vec<u32>> = None;
+        let reported = RefCell::new(Vec::new());
         let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
             _ if self.serve_any(asked, details, out) => {}
             ask::SETTINGS => out.extend_from_slice(&settings.json),
@@ -555,41 +614,58 @@ impl<'e> Host<'e> {
                 }
             }
             ask::SELECTORS => self.describe_selectors(details, out),
-            // The numbers of selectors. With `AST`: these, and those of the types that are listened to, if only they matter.
-            ask::AST | ask::MATCHES => {
-                let details = crate::json::parse(details);
-                let parts = details.as_ref().and_then(Json::as_array);
-                let (numbers, types) = match asked {
-                    ask::AST => (
-                        parts.and_then(|it| it.first()),
-                        parts.and_then(|it| it.get(1)),
-                    ),
-                    _ => (details.as_ref(), None),
-                };
-                let selectors = self.selectors(numbers);
+            ask::LISTEN => {
+                let words: Vec<u32> = (details.as_chunks::<4>().0.iter())
+                    .map(|it| u32::from_le_bytes(*it))
+                    .collect();
+                let selectors = self.selectors_at(calls::selector_numbers(&words));
                 let selectors: Vec<Option<&Selector>> =
                     selectors.iter().map(Option::as_deref).collect();
-                let types = types.and_then(Json::as_array).map(|types| {
-                    let mut listened = [false; 256];
-                    for it in types.iter().filter_map(|it| number(Some(it))) {
-                        if let Some(it) = listened.get_mut(it as usize) {
-                            *it = true;
-                        }
-                    }
-                    listened
-                });
-                match asked {
-                    ask::AST => {
-                        nodes = Some(ast::write(file, &offsets, &selectors, types.as_ref(), out));
-                    }
-                    _ => ast::write_only_matches(file, &offsets, &selectors, out),
-                }
+                let known = calls::Known {
+                    nodes: &mut nodes,
+                    code_paths: &mut code_paths,
+                };
+                calls::listen(file, &offsets, &words, &selectors, known, out);
             }
+            ask::REPORTS => reports::read(details, &offsets, &mut reported.borrow_mut()),
+            ask::CONFIG_COMMENTS => directives::write(file, &offsets, out),
             ask::TOKENS => tokens::write(file, &offsets, out),
             ask::COMMENTS => tokens::write_comments(file, &offsets, out),
             ask::SCOPES => {
-                if let Some(nodes) = &nodes {
-                    scopes::write(file, &offsets, nodes, out);
+                if let Some(numbered) = &nodes {
+                    scopes::write(file, &offsets, numbered, &settings.globals, out);
+                }
+            }
+            ask::LIB_VARIABLES => {
+                // typescript-eslint defines the `const` of `x as const` after the libraries.
+                let for_const = LanguageOptions::lib_name_count() as u32;
+                let mut words = vec![for_const + 1, 0];
+                words.extend(file.language().lib_variable_entries());
+                words.push(for_const << 2 | 1);
+                words[1] = words.len() as u32 - 2;
+                wire::words(out, &words);
+            }
+            ask::LIB_VARIABLE => {
+                let entry = match details {
+                    b"const" => Some((LanguageOptions::lib_name_count() as u32) << 2 | 1),
+                    name => file.language().lib_variable_entry(name),
+                };
+                wire::words(out, entry.as_slice());
+            }
+            ask::LIB_NAME => {
+                if let Ok(id) = <[u8; 4]>::try_from(details) {
+                    let id = u32::from_le_bytes(id) as usize;
+                    out.extend_from_slice(match id == LanguageOptions::lib_name_count() {
+                        true => b"const",
+                        false => LanguageOptions::lib_name(id),
+                    });
+                }
+            }
+            ask::CODE_PATHS => {
+                if let Some(numbered) = &nodes {
+                    let analyzed = code_paths
+                        .get_or_insert_with(|| code_path::estree::analyze(file, numbered.view()));
+                    wire::words(out, analyzed);
                 }
             }
             _ => {}
@@ -600,24 +676,24 @@ impl<'e> Host<'e> {
                 return Err(OUT_OF_STEP.to_vec().into());
             };
             if kind == result::DONE && content.is_empty() {
-                return Ok(Vec::new());
+                return Ok((reported.take(), Vec::new()));
             }
-            let Some(Json::Array(parts)) = crate::json::parse(content) else {
+            let Some(parts) = crate::json::parse(content).and_then(Json::into_array) else {
                 return Err(OUT_OF_STEP.to_vec().into());
             };
             match kind {
                 result::DONE => {
-                    let part = |i: usize| parts.get(i).and_then(Json::as_array).unwrap_or_default();
-                    scopes::mark_used(file, part(1).iter().filter_map(|it| number(Some(it))));
-                    return Ok(part(0)
-                        .iter()
-                        .filter_map(|it| report_of(it, &offsets))
-                        .collect());
+                    let used = parts.iter().filter_map(|it| number(Some(it)));
+                    return Ok((reported.take(), used.collect()));
                 }
                 result::FAILED => {
                     return Err(Failure {
                         rule: number(parts.first()),
-                        line: number(parts.get(2)),
+                        at: match (parts.get(2), number(parts.get(2))) {
+                            (Some(Json::String(_)), _) => ThrownAt::Create,
+                            (_, Some(line)) => ThrownAt::Line(line),
+                            _ => ThrownAt::Unknown,
+                        },
                         message: parts
                             .get(1)
                             .and_then(Json::as_str)
@@ -661,7 +737,7 @@ impl<'e> Host<'e> {
                         _ => return Err(OUT_OF_STEP.to_vec().into()),
                     }
                     let loading = &mut self.state.lock().loading;
-                    loading.needs_the_configuration_for(b"what is in \"settings\"");
+                    loading.needs_the_configuration_for(b"\"settings\"");
                 }
                 _ => return Err(OUT_OF_STEP.to_vec().into()),
             }
@@ -669,7 +745,24 @@ impl<'e> Host<'e> {
     }
 }
 
-/// `{ name, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
+/// What oxlint takes the file for: 0 a module, 1 a script, 2 CommonJS, and 4 if it can't have JSX. With another configuration 0.
+fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
+    if !file.language().is_oxlint {
+        return 0;
+    }
+    let source_type = match crate::utils::oxlint::source_type(file) {
+        SourceType::Module => 0,
+        SourceType::Script => 1,
+        SourceType::CommonJs => 2,
+    };
+    let has_no_jsx = matches!(
+        file.path(),
+        [.., b'.', b't', b's'] | [.., b'.', b'c' | b'm', b't', b's']
+    );
+    source_type | (u32::from(has_no_jsx) << 2)
+}
+
+/// `{ name, isAlias, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
 /// numbered from `first`, in that order. `position`: that of the plugin. `needs_the_configuration`: no module exports it.
 fn plugin_of(
     described: &Json,
@@ -680,6 +773,11 @@ fn plugin_of(
         .get(b"name")
         .and_then(Json::as_str)
         .unwrap_or_default();
+    let name = match described.get(b"isAlias").and_then(Json::as_bool) {
+        Some(true) => Cow::Borrowed(name),
+        _ => normalize_plugin_name(name),
+    };
+    let name = &*name;
     let rules = described
         .get(b"rules")
         .and_then(Json::as_array)

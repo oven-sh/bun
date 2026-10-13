@@ -121,6 +121,6 @@ fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
 // `bun_yarr` is below this crate too. It calls RegularExpression.cpp itself: this is all it needs from here.
 #[unsafe(no_mangle)]
 fn __bun_yarr_initialize() {
-    // Idempotent. `bun lint` and `bun format` reach this before anything else starts JSC, and the defaults are theirs.
+    // Idempotent. `bun lint` and `bun fmt` reach this before anything else starts JSC, and the defaults are theirs.
     crate::initialize(crate::InitializeOptions::default());
 }

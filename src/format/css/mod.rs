@@ -296,7 +296,7 @@ fn parse_and_print<'o>(
             _ if matches!(
                 options.embedded_language_formatting,
                 EmbeddedLanguageFormatting::Off
-            ) =>
+            ) || crate::front_matter::has_indented_delimiter(front_matter) =>
             {
                 None
             }

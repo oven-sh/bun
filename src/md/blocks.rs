@@ -605,7 +605,7 @@ impl Parser<'_> {
             if let Some(extensions) = self.extensions
                 && line.indent < self.code_indent_offset
                 && off < self.size
-                && self.starts_extension_leaf[self.text[off as usize] as usize]
+                && self.starts_extension_leaf.has(self.text[off as usize])
             {
                 let interrupts_paragraph = effective_pivot_type == LineType::Text;
                 let end = (extensions.leaf)(&types::LeafStart {

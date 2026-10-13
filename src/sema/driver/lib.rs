@@ -147,7 +147,7 @@ pub(crate) fn for_each_parallel_in_turns(
         work,
     };
     // A thread of a pool that waited here for the others could wait for ever: they may all be waiting like it. It has its turn.
-    if !bun_threading::thread_pool::Thread::current().is_null() {
+    if !bun_threading::thread_pool::Thread::current().is_null() || keeps_regions() {
         return region.work_off();
     }
     let mut runners = vec![(); region.threads];
@@ -182,7 +182,19 @@ static OWN_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
 /// The parser nests as deep as on a thread of Bun's pool. The binder, the checker, hundreds of rules and the printers then walk
 /// the tree by recursion, with frames of their own size, so their threads have eight times that stack. What is not touched
 /// costs no memory.
-const STACK_OF_A_WORKER: u32 = 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
+pub const STACK_OF_A_WORKER: u32 = 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
+
+static KEEP_REGIONS: Guarded<Vec<ThreadId>> = Guarded::new(Vec::new());
+
+/// From now on, parallel regions that start on the calling thread run on that thread alone, like they do on a pool thread. Call
+/// this on a thread outside the pool that pool threads wait for. If it waited for them too, they'd deadlock.
+pub fn keep_regions_on_this_thread() {
+    KEEP_REGIONS.lock().push(std::thread::current().id());
+}
+
+fn keeps_regions() -> bool {
+    KEEP_REGIONS.lock().contains(&std::thread::current().id())
+}
 
 /// From now on parallel regions run on a pool of their own. For work that waits on its thread for what Bun's pool does:
 /// `bun lint` waits for rules in JavaScript, and such a rule can wait for a `Worker`, whose files are read and whose modules
@@ -1366,7 +1378,7 @@ pub fn check_provided_then<R>(
     provided: host::Provided,
     then: impl FnOnce(Report) -> R,
 ) -> R {
-    // Unless `bun lint` or `bun format` has one.
+    // Unless `bun lint` or `bun fmt` has one.
     use_a_pool_of_their_own("Bun Check");
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),

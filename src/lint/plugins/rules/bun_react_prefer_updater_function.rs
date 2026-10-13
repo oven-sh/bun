@@ -8,7 +8,7 @@ pub struct ReactPreferUpdaterFunction;
 
 const STALE_STATE: Message = Message::new(
     "staleState",
-    "`{{state}}` is the state as of the last render, which can be out of date when `{{setter}}` is called. Pass a function: `{{setter}}(previous => ..)`.",
+    "`{{state}}` may be out of date when `{{setter}}` is called. Pass a function: `{{setter}}(previous => ..)`.",
 );
 
 /// The identifiers that are spread into the array or the object literal `e`.

@@ -316,7 +316,7 @@ describe.concurrent("bun lint with processors", () => {
       expect(result.exitCode).toBe(1);
       // What the processor gives back without a name is for the language.
       const whole = await lint(files, ["b.txt"]);
-      expect(whole.stderr).toContain(`b.txt returns text in the language "fenced/text".`);
+      expect(whole.stderr).toContain(`b.txt returned code in the language "fenced/text", but`);
       expect(whole.exitCode).toBe(2);
     },
     timeout,
@@ -432,7 +432,7 @@ describe.concurrent("bun lint with languages", () => {
         ["-f", "json", "--timing", "c.vue"],
       );
       expect(summary(result.raw)).toMatchInlineSnapshot(`"c.vue: 2:1 lines/no-tabs tab p 8 v c.vue [fix 11,12 " "]"`);
-      expect(result.stderr).toContain("the package eslint has linted 1 texts");
+      expect(result.stderr).toContain("the eslint package linted 1 files");
       expect(result.exitCode).toBe(1);
     },
     timeout,
@@ -517,7 +517,7 @@ describe.concurrent("bun lint with languages", () => {
         "phase.js: 2:1 lines/no-tabs tab q 2 b phase.js [fix 45,46 " "]
         plain.js: 1:1 members/objects Identifier"
       `);
-      expect(result.stderr).toContain("the package eslint has linted 1 texts");
+      expect(result.stderr).toContain("the eslint package linted 1 files");
       expect(result.exitCode).toBe(1);
     },
     timeout,
@@ -617,6 +617,172 @@ describe.concurrent("bun lint with languages", () => {
     timeout,
   );
 
+  describe("config objects from bunfig.toml and the command line work with ESLint 9.0", () => {
+    // A stand-in for ESLint 9.0, which rejects keys it doesn't know. `basePath` in config objects came in 9.30.
+    const strictEslint = {
+      "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "9.0.0", main: "index.js" }),
+      "node_modules/eslint/lib/config/flat-config-array.js": `
+        const path = require("node:path");
+        const known = ["name", "files", "ignores", "settings", "linterOptions", "languageOptions", "processor", "plugins", "rules"];
+        exports.FlatConfigArray = class {
+          #configs = [];
+          constructor(configs, { basePath }) {
+            this.basePath = basePath;
+            this.push(...configs);
+          }
+          push(...configs) {
+            this.#configs.push(...configs);
+          }
+          normalize() {
+            const unknown = this.#configs.flatMap(Object.keys).find(key => !known.includes(key));
+            if (unknown !== undefined) throw new Error(\`Unexpected key "\${unknown}" found.\`);
+          }
+          getConfig(file) {
+            const relative = path.relative(this.basePath, file).replaceAll("\\\\", "/");
+            // Like in ESLint, a negated pattern on its own ignores nothing.
+            const matches = it => (typeof it === "function" ? it(file) : !it.startsWith("!") && new Bun.Glob(it).match(relative));
+            const applies = it => (it.files?.some(matches) ?? true) && !(it.rules && it.ignores?.some(matches));
+            return { rules: Object.assign({}, ...this.#configs.filter(applies).map(it => it.rules)) };
+          }
+        };`,
+      "node_modules/eslint/index.js": `
+        exports.Linter = class {
+          verify(text, configs, { filename }) {
+            const isOn = configs.getConfig(filename).rules["no-console"] !== "off";
+            return isOn ? [{ ruleId: "no-console", severity: 2, message: "from the installed ESLint", line: 1, column: 1 }] : [];
+          }
+          getSuppressedMessages() {
+            return [];
+          }
+        };`,
+    };
+    // The parser is an inline object, so the .vue files need the whole config file plus what Bun adds to it.
+    const config = `
+      const parser = { meta: { name: "vue-eslint-parser" }, parseForESLint() {} };
+      export default [{ rules: { "no-console": "error" } }, { files: ["**/*.vue"], languageOptions: { parser } }];`;
+    // Bun lints the .js files itself and sends the .vue files to the installed ESLint.
+    const tree = Object.fromEntries(
+      ["b", "b.test", "vendor/d.test", "deep/c.test"].flatMap(name => [
+        [`tree/${name}.js`, "console.log(1);\n"],
+        [`tree/${name}.vue`, "<template />\n"],
+      ]),
+    );
+    const bunfig = (prefix: string) => `
+[lint]
+ignorePatterns = ["${prefix}deep/"]
+[[lint.overrides]]
+files = ["*.test.*"]
+excludeFiles = ["${prefix}vendor/**"]
+rules = { "no-console" = "off" }
+`;
+    /** Returns the files under tree/ that have a problem. */
+    async function reported(files: Record<string, string>, args: string[]) {
+      const { raw, stderr, exitCode } = await lint({ ...strictEslint, ...tree, ...files }, ["-f", "json", ...args]);
+      expect({ stderr: stderr.replace(/^Linted .*$/m, ""), exitCode }).toEqual({ stderr: "", exitCode: 1 });
+      const results: { filePath: string; messages: unknown[] }[] = JSON.parse(raw);
+      const names = results.filter(it => it.messages.length > 0).map(it => it.filePath.replaceAll("\\", "/"));
+      return names.map(it => it.slice(it.indexOf("/tree/") + "/tree/".length)).sort();
+    }
+    const expected = ["b.js", "b.vue", "vendor/d.test.js", "vendor/d.test.vue"];
+
+    test(
+      "from the config file's directory",
+      async () => {
+        const files = { "tree/eslint.config.mjs": config, "tree/bunfig.toml": bunfig("") };
+        expect(await reported(files, ["--cwd", "tree", "."])).toEqual(expected);
+      },
+      timeout,
+    );
+
+    test(
+      "from a subdirectory",
+      async () => {
+        const files = { "eslint.config.mjs": config, "tree/bunfig.toml": bunfig("") };
+        expect(await reported(files, ["--cwd", "tree", "."])).toEqual(expected);
+      },
+      timeout,
+    );
+
+    test(
+      "from a directory above the config file",
+      async () => {
+        const files = { "tree/eslint.config.mjs": config, "bunfig.toml": bunfig("tree/") };
+        expect(await reported(files, ["tree"])).toEqual(expected);
+      },
+      timeout,
+    );
+
+    test(
+      "with --ignore-pattern and --rule from a subdirectory",
+      async () => {
+        const files = { "eslint.config.mjs": config, "tree/bunfig.toml": bunfig("") };
+        const args = ["--cwd", "tree", "--ignore-pattern", "vendor/", "--rule", "no-console: error", "."];
+        expect(await reported(files, args)).toEqual(["b.js", "b.test.js", "b.test.vue", "b.vue"]);
+      },
+      timeout,
+    );
+
+    test(
+      "extglobs and brace ranges select the same files on both sides",
+      async () => {
+        const names = ["a/x", "ab/x", "c/x", "f1", "f3", "f4"];
+        const both = (names: string[]) => names.flatMap(name => [`globs/${name}.js`, `globs/${name}.vue`]);
+        const override = (patterns: string) => ({
+          "eslint.config.mjs": config,
+          ...Object.fromEntries(
+            both(names).map(it => [`tree/${it}`, it.endsWith(".js") ? "console.log(1);\n" : "<template />\n"]),
+          ),
+          "tree/globs/bunfig.toml": `[[lint.overrides]]\n${patterns}\nrules = { "no-console" = "off" }\n`,
+        });
+        const globs = `["+(a|b)/**", "f{1..3}.*"]`;
+        const args = ["--cwd", "tree/globs", "."];
+        expect(await reported(override(`files = ${globs}`), args)).toEqual(both(["c/x", "f4"]));
+        expect(await reported(override(`files = "**/*"\nexcludeFiles = ${globs}`), args)).toEqual(
+          both(["a/x", "ab/x", "f1", "f3"]),
+        );
+      },
+      timeout,
+    );
+
+    test(
+      "negated patterns select the same files on both sides",
+      async () => {
+        const both = (names: string[]) => names.flatMap(name => [`negated/${name}.js`, `negated/${name}.vue`]).sort();
+        const sources = both(["a", "a.test", "src/b", "src/b.test"]).map(it => [
+          `tree/${it}`,
+          it.endsWith(".js") ? "console.log(1);\n" : "<template />\n",
+        ]);
+        const [plain, tests] = [both(["a", "src/b"]), both(["a.test", "src/b.test"])];
+        // The patterns, and the files that still get reported because the override doesn't apply to them.
+        const rows: Record<string, string[]> = {
+          'files = ["*.test.*"]': plain,
+          'files = ["!**/*.test.*"]': tests,
+          'files = ["!*.test.*"]': tests,
+          'files = ["!!*.test.*"]': plain,
+          'files = ["!src/**"]': both(["src/b", "src/b.test"]),
+          // `!(` starts an extglob group. It isn't a negation.
+          'files = ["!(a|b).{js,vue}"]': plain,
+          'files = ["!!(a|b).{js,vue}"]': tests,
+          'files = ["**/*"]\nexcludeFiles = ["!*.test.*"]': plain,
+          'files = ["**/*"]\nexcludeFiles = ["!**/*.test.*"]': plain,
+          'files = ["**/*"]\nexcludeFiles = ["!(a|b).{js,vue}"]': tests,
+        };
+        const run = (patterns: string) => {
+          const bunfig = `[[lint.overrides]]\n${patterns}\nrules = { "no-console" = "off" }\n`;
+          const files = {
+            "eslint.config.mjs": config,
+            ...Object.fromEntries(sources),
+            "tree/negated/bunfig.toml": bunfig,
+          };
+          return reported(files, ["--cwd", "tree/negated", "."]);
+        };
+        const results = await Promise.all(Object.keys(rows).map(run));
+        expect(Object.fromEntries(Object.keys(rows).map((patterns, at) => [patterns, results[at]]))).toEqual(rows);
+      },
+      timeout,
+    );
+  });
+
   test(
     "files for which the parser is asked for types all go to one engine",
     async () => {
@@ -670,7 +836,7 @@ describe.concurrent("bun lint with languages", () => {
       const result = await lint(lines, ["-f", "unix", "a.js", "b.txt"]);
       expect(result.stdout).toContain("a.js:1:1: Unexpected var, use let or const instead. [Error/no-var]");
       expect(result.stderr).toContain(
-        `1 file was not linted, only JavaScript and TypeScript can be (1 *.txt): b.txt. The package "eslint" lints other languages, if it is installed`,
+        "1 file was not linted because bun lint only supports JavaScript and TypeScript (1 *.txt): b.txt\n  To lint other languages, install eslint: bun add -d eslint",
       );
       expect(result.exitCode).toBe(2);
     },

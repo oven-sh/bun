@@ -158,7 +158,7 @@ impl Rule for JsxNoConstructedContextValues {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut constructions = std::mem::take(&mut cx.state.constructions);
-        constructions.sort_unstable_by_key(|it| At::enter(Node::Expr(it.element)));
+        utils::sort::sort_unstable_by_key(&mut constructions, |it| At::enter(Node::Expr(it.element)));
         let mut components = Components::new(cx.file());
         for construction in constructions {
             let element = Node::Expr(construction.element);

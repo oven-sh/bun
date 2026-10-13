@@ -3,6 +3,7 @@
 //! What is derived here: whether each is read or written, the scope it is in, what it resolves to,
 //! and all of it grouped by variable and by scope.
 
+use super::order;
 use super::scopes::{self, Cursor, NONE, ScopeTree, Step};
 use super::variables::{DeepPatterns, TYPE, VALUE, Variables};
 use super::{ReferenceFlags, ScopeKind};
@@ -54,11 +55,16 @@ pub(crate) struct RawReference {
 pub(crate) struct References {
     /// In source order.
     pub(crate) all: Vec<RawReference>,
-    /// Indices into `all` in the order ESLint makes the references. Empty if that is the source
+    /// Indices into `all`, with the names of each destructuring pattern before what else is in it. Empty if that is the source
     /// order.
     visiting_order: Vec<u32>,
-    /// Indices into `all`, variable by variable, in that order. After the last variable: what
-    /// resolves to nothing.
+    /// Those of `all` that are not visited where they are: the index, and the position that it is visited at.
+    moved: Vec<(u32, u32)>,
+    /// Indices into `all` in the order the scope manager makes the references. `None`: that of `visiting_order`. Computed on
+    /// demand.
+    as_made: OnceCell<Option<Vec<u32>>>,
+    /// Indices into `all`, variable by variable, in the order of `visiting_order`. After the last variable: what resolves to
+    /// nothing.
     by_variable: Vec<u32>,
     /// For each variable, where its references start in `by_variable`. Two more than there are
     /// variables.
@@ -68,9 +74,11 @@ pub(crate) struct References {
     /// For each expression that is an identifier, the index in `Variables::list` of the value that the
     /// name stands for where it is written.
     of_expr: Vec<u32>,
-    /// Indices into `all`, scope by scope, in that order, and where those of each scope start.
+    /// Indices into `all`, scope by scope, in the order of `as_made`, and where those of each scope start.
     /// Computed on demand.
     by_scope: OnceCell<(Vec<u32>, Vec<u32>)>,
+    /// The same in the order of `visiting_order`, as long as nothing has asked for `by_scope`.
+    by_scope_in_some_order: OnceCell<(Vec<u32>, Vec<u32>)>,
     scope_count: usize,
     /// What resolves to nothing, by name and then in that order. Computed on demand.
     unresolved_by_name: OnceCell<Vec<u32>>,
@@ -84,9 +92,13 @@ enum Access {
     Read,
     /// `a += value`, `a++`
     ReadWrite(ExprId),
-    /// The values that are assigned to it are listed, in the order of ESLint's references. Where
-    /// the pattern that it is part of starts.
-    Write(u32),
+    /// The values that are assigned to it are listed, in the order of ESLint's references.
+    Write {
+        /// Where the array or the object starts that it is destructured from. Where it is itself, without one.
+        start: u32,
+        /// `PatternVisitor` comes to it.
+        is_in_pattern: bool,
+    },
 }
 
 /// Some reference to the variable reads it.
@@ -115,7 +127,7 @@ fn sort_by_pos(found: &mut [RawReference]) {
 
 /// Sorts numbers of which each is near its place: it is moved there past the few that are greater. Where that turns out to be
 /// many, the rest is left to the standard library.
-fn sort_what_is_nearly_in_order(numbers: &mut [u64]) {
+pub(super) fn sort_what_is_nearly_in_order(numbers: &mut [u64]) {
     let mut moves = 0;
     for at in 1..numbers.len() {
         let (number, mut to) = (numbers[at], at);
@@ -247,6 +259,8 @@ struct Resolver<'t> {
     last_moved_to: u32,
     /// So far the references are visited in the order of `all`.
     is_visiting_order: bool,
+    /// The same as `moved`, for what only `References::as_made` moves.
+    moved_on_demand: Vec<(u32, u32)>,
 }
 
 impl<'t> Resolver<'t> {
@@ -278,6 +292,7 @@ impl<'t> Resolver<'t> {
             moved: Vec::new(),
             last_moved_to: 0,
             is_visiting_order: true,
+            moved_on_demand: Vec::new(),
             is_plain: scopes::is_javascript_mode(file) || tree.unvisited.is_empty(),
         }
     }
@@ -388,6 +403,9 @@ impl<'t> Resolver<'t> {
         }
         if it.from == it.pos {
             self.is_visiting_order &= it.pos >= self.last_moved_to;
+        } else if matches!(it.site, ReferenceSite::Declaration(_)) {
+            self.is_visiting_order &= it.pos >= self.last_moved_to;
+            self.moved_on_demand.push((self.all.len() as u32, it.from));
         } else {
             let last_visit = match self.moved.last() {
                 Some(&(index, visit)) if index as usize + 1 == self.all.len() => visit,
@@ -627,9 +645,13 @@ impl<'f> Collector<'f, '_> {
         } else {
             targets.last()
         };
-        let start = pattern
+        let literal = pattern
             .and_then(|it| hir.exprs.get(it.idx()))
+            .filter(|it| matches!(it.kind, ExprKind::Array(_) | ExprKind::Object(_)));
+        let start = literal
+            .or_else(|| hir.exprs.get(e.idx()))
             .map_or(0, |it| it.pos);
+        let is_in_pattern = literal.is_some() || iterated.is_some();
         // The values so far are innermost first. All but the outermost are defaults, which ESLint
         // lists outermost first, before the value itself.
         match (iterated, values.len()) {
@@ -642,7 +664,10 @@ impl<'f> Collector<'f, '_> {
                 values[..len - 1].reverse();
             }
         }
-        Access::Write(start)
+        Access::Write {
+            start,
+            is_in_pattern,
+        }
     }
 
     /// Whether `at` is `e`, or `e` in what `visitExpressionTarget` looks through.
@@ -659,7 +684,7 @@ impl<'f> Collector<'f, '_> {
     fn unvisited_tags(&self) -> Vec<ExprId> {
         let hir = &self.file.hir;
         let mut skipped: Vec<ExprId> = Vec::new();
-        if self.is_javascript && !self.file.language().has_scopes_of_oxc {
+        if self.is_javascript && !self.file.has_scopes_of_oxc() {
             let skips_opening_tags = self.file.language().eslint_major < 10;
             for jsx in hir.jsx {
                 let tags = [Some(jsx.close_tag), skips_opening_tags.then_some(jsx.tag)];
@@ -886,7 +911,7 @@ impl<'f> Collector<'f, '_> {
                     .into
                     .add(self.make(site, here, name, READ | WRITE, value))
             }
-            Access::Write(start) => {
+            Access::Write { start, .. } => {
                 for &value in &merge.values {
                     merge
                         .into
@@ -1322,7 +1347,7 @@ impl<'f> Collector<'f, '_> {
                     };
                     let variable = variables.get(scope, name);
                     if let Some(index) = variable.filter(declared) {
-                        return Some(Some(index));
+                        return Some(Some((index, pos)));
                     }
                     if variable.is_none()
                         && let scopes::Block::Class(class) = data.block
@@ -1335,11 +1360,11 @@ impl<'f> Collector<'f, '_> {
                 }
                 None
             });
-            if let Some(Some(index)) = found {
+            if let Some(Some((index, element))) = found {
                 let pos = variables.list[index as usize].first_pos;
-                self.push(
+                self.push_write(
                     ReferenceSite::Declaration(index),
-                    pos,
+                    (pos, element),
                     name,
                     READ,
                     ExprId::NONE,
@@ -1347,6 +1372,23 @@ impl<'f> Collector<'f, '_> {
             }
         }
     }
+}
+
+/// Whether `PatternVisitor` comes to `e`: a destructuring pattern, a `for`-`in` or a `for`-`of` assigns to it.
+pub(super) fn is_in_pattern(file: &File, e: ExprId) -> bool {
+    let collector = Collector {
+        file,
+        is_javascript: scopes::is_javascript_mode(file),
+        found: Vec::new(),
+        type_names: Vec::new(),
+    };
+    matches!(
+        collector.access(e, &mut SmallVec::new()),
+        Access::Write {
+            is_in_pattern: true,
+            ..
+        }
+    )
 }
 
 /// Whether what is directly in an expression of this kind can be what an assignment writes to.
@@ -1456,8 +1498,9 @@ impl References {
             all,
             of_expr,
             mut counts,
-            moved,
+            mut moved,
             is_visiting_order,
+            moved_on_demand,
             ..
         } = collector.merge(tree, variables);
         let marks = counts.iter().skip(1).map(|it| it & !COUNT).collect();
@@ -1474,16 +1517,21 @@ impl References {
             });
         }
 
+        moved.extend(moved_on_demand);
+
         let key = Key::Variable(variables.list.len());
         let (by_variable, variable_starts) = group_by(&all, &visiting_order, counts, key);
         References {
             all,
             visiting_order,
+            moved,
+            as_made: OnceCell::new(),
             by_variable,
             variable_starts,
             marks,
             of_expr,
             by_scope: OnceCell::new(),
+            by_scope_in_some_order: OnceCell::new(),
             scope_count: tree.scopes.len(),
             unresolved_by_name: OnceCell::new(),
         }
@@ -1515,11 +1563,19 @@ impl References {
         self.of_expr.get(e.idx()).copied().filter(|it| *it != NONE)
     }
 
-    /// Indices into `all` in the order ESLint makes the references. Empty if that is the order of
-    /// `all`.
+    /// Indices into `all`, with the names of each destructuring pattern before what else is in it. Empty if that is the order
+    /// of `all`.
     #[inline]
     pub(crate) fn visiting_order(&self) -> &[u32] {
         &self.visiting_order
+    }
+
+    /// Indices into `all` in the order the scope manager makes the references. Empty if that is the order of `all`.
+    pub(crate) fn as_made<'a>(&self, file: &'a File<'a>) -> &[u32] {
+        let made = self
+            .as_made
+            .get_or_init(|| order::as_made(file, &self.all, &self.moved));
+        made.as_deref().unwrap_or(&self.visiting_order)
     }
 
     /// Whether the variable at `index` of `Variables::list` has one of `marks`.
@@ -1556,18 +1612,43 @@ impl References {
         &sorted[start..start + len]
     }
 
-    /// The references that are written in the scopes `first..=last`.
+    /// `by_scope`, in `order`.
+    fn group_by_scope(&self, order: &[u32]) -> (Vec<u32>, Vec<u32>) {
+        let mut counts = vec![0u32; self.scope_count + 1];
+        self.all
+            .iter()
+            .for_each(|it| counts[it.from as usize + 1] += 1);
+        group_by(&self.all, order, counts, Key::Scope)
+    }
+
+    /// The references that are written in the scopes `first..=last`, those of each scope in the order they are made.
     #[inline]
-    pub(crate) fn in_scopes(&self, first: u32, last: u32) -> &[u32] {
-        let compute = || {
-            let mut counts = vec![0u32; self.scope_count + 1];
-            self.all
-                .iter()
-                .for_each(|it| counts[it.from as usize + 1] += 1);
-            group_by(&self.all, &self.visiting_order, counts, Key::Scope)
-        };
-        let (by_scope, starts) = self.by_scope.get_or_init(compute);
+    pub(crate) fn in_scopes<'a>(&self, file: &'a File<'a>, first: u32, last: u32) -> &[u32] {
+        let (by_scope, starts) = self
+            .by_scope
+            .get_or_init(|| self.group_by_scope(self.as_made(file)));
         Self::group(by_scope, starts, first as usize, last as usize)
+    }
+
+    /// The same for who does not care about the order, which then is not worked out.
+    #[inline]
+    pub(crate) fn in_scopes_in_some_order(&self, first: u32, last: u32) -> &[u32] {
+        let (by_scope, starts) = match self.by_scope.get() {
+            Some(made) => made,
+            None => self
+                .by_scope_in_some_order
+                .get_or_init(|| self.group_by_scope(&self.visiting_order)),
+        };
+        Self::group(by_scope, starts, first as usize, last as usize)
+    }
+
+    /// The same in the order of `visiting_order`, whatever else has been asked.
+    #[inline]
+    pub(crate) fn in_scope_as_visited(&self, scope: u32) -> &[u32] {
+        let (by_scope, starts) = self
+            .by_scope_in_some_order
+            .get_or_init(|| self.group_by_scope(&self.visiting_order));
+        Self::group(by_scope, starts, scope as usize, scope as usize)
     }
 
     /// The first reference that is written at `pos`.

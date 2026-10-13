@@ -39,7 +39,7 @@ pub(super) enum ByLength {
 }
 
 pub(super) struct Exclude {
-    pub(super) glob: bun_glob::Pattern,
+    pub(super) glob: bun_lint::glob::Minimatch,
     pub(super) has_slash: bool,
 }
 

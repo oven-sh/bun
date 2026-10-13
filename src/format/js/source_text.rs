@@ -105,6 +105,11 @@ impl<'a> SourceText<'a> {
     pub(crate) fn lines_after(self, end: u32) -> usize {
         let (mut rest, mut count) = (self.from(end), 0);
         loop {
+            // What there is between most nodes.
+            while let [first @ (b' ' | b'\t' | b'\n'), after @ ..] = rest {
+                count += usize::from(*first == b'\n');
+                rest = after;
+            }
             match (js_line_break_len(rest), js_whitespace_len(rest)) {
                 (0, 0) if rest.is_empty() => return 0,
                 (0, 0) => return count,

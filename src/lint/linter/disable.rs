@@ -1,10 +1,10 @@
 //! ESLint's `apply-disable-directives.js`: which messages the `eslint-disable` comments of a file
 //! suppress, and which of these comments do nothing.
 
-use super::message::{LintMessage, RuleId, Suppression};
+use super::message::{LintMessage, NotNumbers, RuleId, Suppression};
 use crate::ast::File;
 use crate::context::Severity;
-use crate::fix::Fix;
+use crate::fix::{Around, Fix};
 use crate::span::Span;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
@@ -63,6 +63,9 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) rules_to_ignore: &'i [RuleId],
     /// There are more of them, which have no name here.
     pub(crate) has_skipped_rules: bool,
+    /// Rules that are off, when there's no config file. An unused directive that names one isn't reported, because it may be
+    /// there for another tool.
+    pub(crate) off: &'i [RuleId],
 }
 
 impl Input<'_, '_> {
@@ -74,7 +77,7 @@ impl Input<'_, '_> {
         match rule {
             // What applies to all rules may be used by one that did not run.
             None => !self.rules_to_ignore.is_empty() || self.has_skipped_rules,
-            Some(rule) => self.rules_to_ignore.contains(rule),
+            Some(rule) => self.rules_to_ignore.contains(rule) || self.off.contains(rule),
         }
     }
 
@@ -137,6 +140,23 @@ impl Input<'_, '_> {
         None
     }
 
+    /// Removes a whole comment. ESLint puts a space in its place, which leaves a line with only a space on it, or a space at the
+    /// end of a line, and `bun fmt --check` fails on both. With no config file, a comment that ends its line goes with the
+    /// spaces around it, and with the line break too if nothing else is on the line.
+    fn removal_of(&self, comment: Span) -> Fix {
+        let around = Around::of(self.file.text(), comment);
+        if !self.file.language().stands_alone || around.line_break.is_none() {
+            return Fix {
+                span: comment,
+                text: b" ".to_vec(),
+            };
+        }
+        Fix {
+            span: around.whole_lines().unwrap_or(around.with_blanks),
+            text: Vec::new(),
+        }
+    }
+
     /// `processUnusedDirectives`, and the messages that `applyDirectives` makes of its result.
     /// `unused`: indices into the directives.
     fn report(&self, unused: &[u32], out: &mut Vec<LintMessage>) {
@@ -192,10 +212,7 @@ impl Input<'_, '_> {
                 description.extend_from_slice(name);
                 description.push(b'\'');
             }
-            let fix = Fix {
-                span: parent.comment,
-                text: b" ".to_vec(),
-            };
+            let fix = self.removal_of(parent.comment);
             out.push(self.message(group[0], parent, &description, fix));
         }
     }
@@ -243,8 +260,10 @@ impl Input<'_, '_> {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
+            reported: 0,
         }
     }
 

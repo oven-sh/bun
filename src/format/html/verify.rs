@@ -1,6 +1,6 @@
-//! A check that formatting has not lost or made up anything. `bun format` makes it before it writes a file.
+//! A check that formatting has not lost or made up anything: `bun fmt --debug-check`.
 //!
-//! What has been written is parsed, and compared with the file:
+//! What would be written is parsed, and compared with the file:
 //!
 //! - The elements, comments, blocks and declarations are the same, in the same order and in each other the same way, and the
 //!   elements have the same attributes in the same order. Upper and lower case do not count.
@@ -11,6 +11,7 @@
 use super::Parser;
 use super::ast::{Id, Kind, Tree};
 use super::parse;
+use bun_collections::ByteSet;
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
 
@@ -30,17 +31,10 @@ struct Reader {
 }
 
 /// The bytes that do not always count, or next to which another does not.
-const IS_SPECIAL: [bool; 256] = {
-    let mut is_special = [false; 256];
-    let (bytes, mut at) = (b"eE\\\xC2\xC4\xE1\xE2\xE3\xEF", 0);
-    while at < bytes.len() {
-        is_special[bytes[at] as usize] = true;
-        at += 1;
-    }
-    is_special
-};
+const SPECIAL: ByteSet = ByteSet::of(b"eE\\\xC2\xC4\xE1\xE2\xE3\xEF");
 
 /// `/^[+-]?0+(?!\d)/.test(text)`
+#[optimize(size)]
 fn is_zero(text: &[u8]) -> bool {
     let digits = match text {
         [b'+' | b'-', digits @ ..] => digits,
@@ -52,27 +46,31 @@ fn is_zero(text: &[u8]) -> bool {
 
 impl Reader {
     #[inline]
+    #[optimize(size)]
     fn add(&mut self, byte: u8) {
         let count = &mut self.bytes[usize::from(byte)];
         *count = count.wrapping_add(1);
     }
 
     /// `byte` does not count, whether it has been added or is going to be.
+    #[optimize(size)]
     fn take_back(&mut self, byte: u8) {
         let count = &mut self.bytes[usize::from(byte)];
         *count = count.wrapping_sub(1);
     }
 
+    #[optimize(size)]
     fn count(&mut self, text: &[u8]) {
         for (at, &byte) in text.iter().enumerate() {
             self.add(byte);
-            if IS_SPECIAL[usize::from(byte)] {
+            if SPECIAL.has(byte) {
                 self.look_around(text, at);
             }
         }
     }
 
-    /// Takes back what does not count because of the byte at `at`, which is one of `IS_SPECIAL`.
+    /// Un-counts the bytes that shouldn't count because of the byte at `at`, which is one of `SPECIAL`.
+    #[optimize(size)]
     fn look_around(&mut self, text: &[u8], at: usize) {
         let (before, rest) = text.split_at_checked(at).unwrap_or_default();
         let previous = before.last().copied().unwrap_or(0);
@@ -99,6 +97,7 @@ impl Reader {
     }
 
     /// The same for the value of an attribute, in which a quote can be written as an entity.
+    #[optimize(size)]
     fn count_value(&mut self, value: &[u8]) {
         self.count(value);
         for entity in [&b"&quot;"[..], b"&apos;"] {
@@ -111,6 +110,7 @@ impl Reader {
     }
 
     /// How often each letter is there, and each byte of a character that is not ASCII.
+    #[optimize(size)]
     fn letters(&self) -> [u64; 26 + 128] {
         let mut letters = [0; 26 + 128];
         for (count, lower) in letters.iter_mut().zip(b'a'..=b'z') {
@@ -121,6 +121,7 @@ impl Reader {
         letters
     }
 
+    #[optimize(size)]
     fn name(&mut self, namespace: &[u8], name: &[u8]) {
         for &byte in namespace.iter().chain(b":").chain(name) {
             self.structure.write_u8(byte.to_ascii_lowercase());
@@ -129,6 +130,7 @@ impl Reader {
     }
 
     /// What is said of `id` before what is in it.
+    #[optimize(size)]
     fn enter(&mut self, tree: &Tree<'_>, id: Id, text: &[u8]) {
         let node = &tree[id];
         if !matches!(node.kind, Kind::Text | Kind::Cdata) {
@@ -164,6 +166,7 @@ impl Reader {
     }
 }
 
+#[optimize(size)]
 fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
     let (content, front_matter_len) = super::without_front_matter(text);
     let mut tree = Tree::default();
@@ -198,6 +201,7 @@ fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
 
 /// Whether `after`, which is what has become of `before`, has all that is in `before` and nothing else. Both are what
 /// `prepared_text` makes of a text.
+#[optimize(size)]
 pub(crate) fn has_same_content(before: &[u8], after: &[u8], parser: Parser) -> bool {
     match (signature(before, parser), signature(after, parser)) {
         (Some(before), Some(after)) => before == after,

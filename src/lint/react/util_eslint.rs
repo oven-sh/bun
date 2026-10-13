@@ -46,22 +46,14 @@ pub(crate) fn is_space_between_tokens<'a>(file: &'a File<'a>, first: Span, secon
 
 /// `markVariableAsUsed`: ESLint's `sourceCode.markVariableAsUsed(name, node)`.
 pub(crate) fn mark_variable_as_used<'a>(name: Name<'a>, node: Node<'a>) {
-    let scope = node.scope();
-    let Some(variable) = scope.resolve_name(name) else {
-        if node.file().global_in_comments(name.bytes()).is_some() {
-            node.file().mark_global_used(name.bytes());
+    match node.scope().find_variable(name).map(Variable::kind) {
+        Some(VariableKind::Declared(symbol)) => symbol.mark_used(),
+        // Nobody asks the variable that a class has for its name in its own scope.
+        Some(VariableKind::NameInClass { .. } | VariableKind::ArgumentsOfFile) => {}
+        Some(VariableKind::Global(_)) | None => {
+            if node.file().global_in_comments(name.bytes()).is_some() {
+                node.file().mark_global_used(name.bytes());
+            }
         }
-        return;
-    };
-    // In a class its name is a second variable for ESLint: that one is found, and nobody asks it.
-    let declared_in = variable.scope();
-    let is_name_of_class_around = variable.declarations().any(|it| match it {
-        Declaration::Class(class) => {
-            (class.scope()).is_some_and(|inside| inside != declared_in && inside.contains(scope))
-        }
-        _ => false,
-    });
-    if !is_name_of_class_around {
-        variable.mark_used();
     }
 }

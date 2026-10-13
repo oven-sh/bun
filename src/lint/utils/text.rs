@@ -28,6 +28,14 @@ use bun_core::strings;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
+/// TypeScript's `getSpellingSuggestion`. Returns the candidate that `name` is most likely a typo of.
+pub fn spelling_suggestion<'c>(
+    name: &[u8],
+    candidates: impl Iterator<Item = &'c [u8]>,
+) -> Option<&'c [u8]> {
+    bun_sema::check::get_spelling_suggestion(name, candidates, |it| it, |a, b| a.cmp(b))
+}
+
 /// The last code point of `text`.
 pub fn last_code_point(text: &[u8]) -> Option<u32> {
     (!text.is_empty()).then(|| bun_core::lexer::last_char(text).0 as u32)

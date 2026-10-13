@@ -143,7 +143,9 @@ impl<'a> Checks<'a> {
             self.candidates.push(Candidate { node, when, step });
             self.errors.push(SyntaxError {
                 at,
+                end: 0,
                 message: message.into(),
+                ..SyntaxError::default()
             });
         }
     }
@@ -1097,7 +1099,7 @@ impl<'a> Checks<'a> {
             }
             return;
         }
-        // Nothing else of `bun format` wants the expressions by kind, and which error is the first does not count.
+        // Nothing else of `bun fmt` wants the expressions by kind, and which error is the first does not count.
         for (i, raw) in file.hir.exprs.iter().enumerate() {
             let is_checked = matches!(
                 raw.kind,
@@ -1168,7 +1170,7 @@ impl<'a> Checks<'a> {
                 }
             }
             Some(hir::ExprKind::ImportCall { args }) => {
-                // `import.source()`: the dialect of Babel, in which `bun format` has every file parsed, has it.
+                // `import.source()`: the dialect of Babel, in which `bun fmt` has every file parsed, has it.
                 if self.is_of_prettier && it.import_call_phase().is_some() {
                     let dot = skip_trivia(file.text(), it.span().start + "import".len() as u32);
                     // It is `defer` or `source`, or the parser had not taken it. The first letter can be `\u0073` or `\u{73}`.

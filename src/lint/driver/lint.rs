@@ -8,17 +8,17 @@ use crate::embedded::Framework;
 use crate::inferred::Inferred;
 use crate::results::{Counts, FileResult, Linted};
 use crate::run::{Fatal, Timing};
-use crate::{Linter, fs, paths};
+use crate::{Linter, fs, git, paths};
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::fix::SuggestionKind;
 use bun_lint::formats::{Formats, Reason};
-use bun_lint::js_plugin::{Host, Route};
+use bun_lint::js_plugin::{Host, ParseAgain, Route};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, ResolvedConfig, RuleId, Suggestion, apply_fixes,
-    is_parse_error, may_be_misread,
+    is_parse_error, is_redeclaration, may_be_misread,
 };
 use bun_lint::rule::{Kind, Plugin};
 use bun_lint_graph::Graph;
@@ -35,6 +35,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) linter: &'c Linter,
     pub(crate) options: &'c Options,
     pub(crate) cwd: &'c [u8],
+    /// `--staged`, `--changed`
+    pub(crate) only: Option<&'c git::Files<'c>>,
     /// The configuration of the working directory, if it is one of oxlint.
     pub(crate) of_oxlint: Option<&'c Loaded>,
     /// `--type-check`: what the type checker reports is reported too.
@@ -69,7 +71,7 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) invalid_tsconfigs: &'c Guarded<crate::typed::InvalidTsconfigs>,
     /// Which file imports which, for the rules that are about several files.
     pub(crate) modules: &'c Graph<'m>,
-    /// `bun format`, for the rules that hold a file against its formatted text.
+    /// `bun fmt`, for the rules that hold a file against its formatted text.
     pub(crate) formatter: &'c dyn Formats,
     /// The globals of the programs of the files. `None`: no file of the run can ask.
     pub(crate) inferred: Option<&'c Inferred<'c>>,
@@ -97,6 +99,18 @@ pub(crate) enum Fixes {
     Disabled,
 }
 
+/// Which rules run.
+#[derive(Copy, Clone, Default)]
+enum Which<'h> {
+    /// Those of the configuration.
+    #[default]
+    All,
+    /// It is only to be known whether it can be parsed.
+    None,
+    /// [`Context::with_help`]
+    WithHelp(&'h RuleFilter<'h>),
+}
+
 /// How a text is linted, if not like a file.
 #[derive(Copy, Clone, Default)]
 struct How<'h> {
@@ -109,10 +123,7 @@ struct How<'h> {
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
     /// [`File::is_later_script`]
     is_later_script: bool,
-    /// It is only to be known whether it can be parsed.
-    without_rules: bool,
-    /// [`Context::with_help`]
-    with_help: bool,
+    rules: Which<'h>,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -134,33 +145,19 @@ pub(crate) fn unused_directives_as_oxlint(result: &mut LintResult, is_script: bo
     }
 }
 
-/// Puts the messages that have fixes in the order in which the rules of oxlint report at one node: by the plugin, then by the name.
-/// Of two fixes with the same range the first is applied.
+/// Puts the messages, which are in the order in which oxlint reports them, in the order that its `Fixer::fix` gives them if one has
+/// a fix: by the range of the fix, those without one first. It applies the fixes in that order, and prints what is left in it.
+///
+/// Its sort is not stable, which shows from 33 messages on: those without a fix do not keep their order. Here they do.
 pub(crate) fn order_fixes_as_oxlint(messages: &mut [LintMessage]) {
-    const PLUGINS: [Plugin; 13] = [
-        Plugin::Import,
-        Plugin::Eslint,
-        Plugin::TypeScript,
-        Plugin::Jest,
-        Plugin::React,
-        Plugin::ReactPerf,
-        Plugin::Unicorn,
-        Plugin::JsxA11y,
-        Plugin::Oxc,
-        Plugin::Nextjs,
-        Plugin::Promise,
-        Plugin::Vitest,
-        Plugin::Node,
-    ];
-    bun_lint::utils::sort::sort_by_key(messages, |it| match (&it.fix, &it.rule_id) {
-        (None, _) => (0, ""),
-        (Some(_), Some(RuleId::Known(meta))) => {
-            let plugin = meta.plugin.in_oxlint();
-            let rank = PLUGINS.iter().position(|it| *it == plugin);
-            (rank.unwrap_or(PLUGINS.len()), meta.name)
-        }
-        (Some(_), _) => (PLUGINS.len(), ""),
-    });
+    if messages.iter().all(|it| it.fix.is_none()) {
+        return;
+    }
+    let range = |it: &LintMessage| it.fix.as_ref().map(|it| (it.span.start, it.span.end));
+    bun_lint::utils::sort::sort_by_key(messages, |it| range(it).unwrap_or_default());
+    for (it, reported) in messages.iter_mut().zip(1..) {
+        it.reported = reported;
+    }
 }
 
 impl Context<'_, '_> {
@@ -193,8 +190,15 @@ impl Context<'_, '_> {
         self.options.fix || self.options.fix_dry_run
     }
 
+    /// Whether fixes are applied to the file at `path`. A partly staged file won't be written, so its problems are reported
+    /// unfixed.
+    pub(crate) fn fixes_file(&self, path: &[u8]) -> bool {
+        self.fixes() && !self.only.is_some_and(|it| it.is_partly_staged(path))
+    }
+
     /// oxlint's `--fix-suggestions` and `--fix-dangerously`: a suggestion of a kind that they allow is as good as a fix.
-    /// `--fix-suggestions` alone makes no other change, `--fix-dangerously` makes all.
+    /// `--fix-suggestions` alone makes no other change, except for the fixes of JavaScript plugins, which oxlint applies under
+    /// any of the three flags. `--fix-dangerously` makes all.
     pub(crate) fn promote_suggestions(&self, result: &mut LintResult) {
         let options = self.options;
         if !options.fix_suggestions && !options.fix_dangerously {
@@ -207,7 +211,8 @@ impl Context<'_, '_> {
             }
         };
         for message in &mut result.messages {
-            if !options.fix_safely && !options.fix_dangerously {
+            let is_of_js_plugin = matches!(message.rule_id, Some(RuleId::Js(_)));
+            if !options.fix_safely && !options.fix_dangerously && !is_of_js_plugin {
                 message.fix = None;
             }
             if message.fix.is_none()
@@ -289,21 +294,25 @@ impl Context<'_, '_> {
     }
 
     /// Lints the text that the messages of `result` are about once more, and makes what oxlint says besides each message. Nothing, if
-    /// that was made the first time or there is no such thing: see [`Context::help_on_demand`].
-    pub(crate) fn with_help(&self, result: &FileResult) -> Vec<LintMessage> {
+    /// that was made the first time or there is no such thing: see [`Context::help_on_demand`]. `only`: the rules that are asked about.
+    pub(crate) fn with_help(
+        &self,
+        result: &FileResult,
+        only: Option<&[&RuleId]>,
+    ) -> Vec<LintMessage> {
         let (Some(linted), Some(text)) = (&result.linted, &result.text) else {
             return Vec::new();
         };
         let path = paths::from_native(&result.path);
         let was_made = result.had_types || Framework::of(&path).is_some();
-        let is_of_bun_test = |it: &LintMessage| matches!(&it.rule_id, Some(RuleId::Known(meta)) if meta.plugin == Plugin::BunTest);
-        let has_help =
-            linted.config.language.is_oxlint || result.messages.iter().any(is_of_bun_test);
+        let says_more = |it: &LintMessage| matches!(&it.rule_id, Some(RuleId::Known(meta) | RuleId::Named(meta, _)) if meta.plugin == Plugin::BunTest || meta.follows_oxlint || meta.has_hints);
+        let has_help = linted.config.language.is_oxlint || result.messages.iter().any(says_more);
         if was_made || !has_help {
             return Vec::new();
         }
+        let is_asked_about = |id: &RuleId, _: Severity| only.is_none_or(|only| only.contains(&id));
         let how = How {
-            with_help: true,
+            rules: Which::WithHelp(&is_asked_about),
             ..How::default()
         };
         self.verify_as(&path, text, &linted.config, &how).messages
@@ -312,7 +321,7 @@ impl Context<'_, '_> {
     /// Whether `text` can be parsed as the file at `path`.
     pub(crate) fn parses(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> bool {
         let how = How {
-            without_rules: true,
+            rules: Which::None,
             ..How::default()
         };
         let result = match Framework::of(path).filter(|_| config.language.is_oxlint) {
@@ -321,7 +330,9 @@ impl Context<'_, '_> {
             }
             None => self.verify_as(path, text, config, &how),
         };
-        !result.messages.iter().any(is_parse_error)
+        // oxc's parser takes a name that is declared twice, and oxlint writes `const a = 1; const a = 2;` for two `var`.
+        let is_refused = |it: &LintMessage| is_parse_error(it) && !is_redeclaration(it);
+        !result.messages.iter().any(is_refused)
     }
 
     /// The fixes of `rules` would have left the file at `path` with a syntax error.
@@ -376,9 +387,14 @@ impl Context<'_, '_> {
                 Fatal([b"Cannot read ", &path[..], b": ", &fs::describe(&error)].concat())
             })?,
         };
+        // Type errors don't come from a rule, so the second pass can't carry them over. No comment disables them either.
+        let (type_errors, messages): (Vec<LintMessage>, Vec<LintMessage>) =
+            (std::mem::take(&mut result.messages).into_iter())
+                .partition(crate::typed::is_type_error);
         let previous = LintResult {
-            messages: std::mem::take(&mut result.messages),
+            messages,
             suppressed: std::mem::take(&mut result.suppressed),
+            run_keys: std::mem::take(&mut result.run_keys),
             ..LintResult::default()
         };
         let again = Again {
@@ -390,17 +406,22 @@ impl Context<'_, '_> {
             ..How::default()
         };
         let framework = Framework::of(&path).filter(|_| config.language.is_oxlint);
-        let linted = match framework {
+        let mut linted = match framework {
             // Its scripts are linted one by one, so all rules run once more.
             Some(framework) => self.verify_scripts(framework, &path, &text, &config),
             None => self.verify_as(&path, &text, &config, &how),
         };
-        let (had_types, was_fixed) = (result.had_types, result.is_fixed);
+        if !type_errors.is_empty() {
+            linted.messages.extend(type_errors);
+            LintMessage::sort(&mut linted.messages);
+        }
+        let (had_types, was_fixed, fixes) = (result.had_types, result.is_fixed, result.fixes);
         let fixed_text = result.fixed_text.take();
         let shown = std::mem::take(&mut result.path);
         // What the other files export is known now, so all rules can run on what the fixes make of the text. Its types are gone.
         let mut fixable = linted.messages.iter().filter(|it| it.fix.is_some());
-        *result = match self.fixes() && !had_types && fixable.any(|it| self.should_fix(it)) {
+        let is_fixed_now = self.fixes_file(&path) && !had_types;
+        *result = match is_fixed_now && fixable.any(|it| self.should_fix(it)) {
             true => {
                 let mut verify = |text: &[u8]| match framework {
                     Some(framework) => self.verify_scripts(framework, &path, text, &config),
@@ -412,17 +433,21 @@ impl Context<'_, '_> {
             false => self.result(shown, linted, text, was_fixed, &config),
         };
         result.fixed_text = result.fixed_text.take().or(fixed_text);
+        result.fixes += fixes;
         result.had_types = had_types;
         Ok(())
     }
 
-    fn verify_as(
+    /// Parses `text` as the file at `path` on the calling thread, and calls `then` with the file. `then` gets `None` if the
+    /// code is nested too deeply.
+    fn parse(
         &self,
         path: &[u8],
         text: &[u8],
         config: &ResolvedConfig,
         as_what: &How,
-    ) -> LintResult {
+        then: &mut dyn for<'f> FnMut(Option<&'f File<'f>>),
+    ) {
         let started = self.timing.now();
         let session = self.memory;
         let arena = session.arena();
@@ -444,24 +469,14 @@ impl Context<'_, '_> {
                 };
                 let mut recycled = Recycled::of_this_thread();
                 let bound = bind_for_lint_in(&hir, bind_options, atoms, &mut recycled);
-                let parsed = self.timing.add(&self.timing.parse, started);
+                self.timing.add(&self.timing.parse, started);
                 if hir.mentioned.is_empty() {
                     self.timing.count(&self.timing.without_filter);
                 }
                 if hir.ran_out_of_stack || bound.ran_out_of_stack {
-                    return LintResult {
-                        messages: vec![too_deep()],
-                        ..LintResult::default()
-                    };
+                    return then(None);
                 }
                 let file = File::new(path, &hir, bound, atoms, &config.language, None);
-                // Whoever says what the file on the disk is sees to what is not read here.
-                if as_what.physical_path_len.is_some() && may_be_misread(&file) {
-                    return LintResult {
-                        is_unread: true,
-                        ..LintResult::default()
-                    };
-                }
                 file.set_modules(self.modules);
                 // Under the name of a component the formatter would print one of its scripts as a component.
                 if as_what.script.is_none() {
@@ -471,46 +486,117 @@ impl Context<'_, '_> {
                     file.set_inferred_globals(inferred);
                 }
                 file.set_later_script(as_what.is_later_script);
-                let options = self.lint_options();
-                // The parts of a file that is linted in parts are not put together a second time.
-                let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();
-                let waits_for_demand = self.help_on_demand && is_whole && !as_what.with_help;
-                let options = LintOptions {
-                    again: as_what.again,
-                    wants_fixes: match as_what.fixes {
-                        Fixes::IfRead => options.wants_fixes,
-                        Fixes::ForProcessor => true,
-                        Fixes::Disabled => false,
-                    },
-                    disables_fixes: as_what.fixes == Fixes::Disabled,
-                    // A processor is given the messages.
-                    wants_texts_of_fixes: options.wants_texts_of_fixes
-                        || as_what.physical_path_len.is_some(),
-                    wants_help: options.wants_help && !waits_for_demand,
-                    wants_messages: options.wants_messages || as_what.physical_path_len.is_some(),
-                    wants_places: options.wants_places || as_what.physical_path_len.is_some(),
-                    // Its rules have no such thing.
-                    js_plugins: options.js_plugins.filter(|_| !as_what.with_help),
-                    physical_path_len: as_what.physical_path_len,
-                    rule_filter: match as_what.without_rules {
-                        true => Some(&no_rule),
-                        false => as_what.script.map(|it| it.1).or(options.rule_filter),
-                    },
-                    ..options
-                };
-                let mut result = self.linter.lint(&file, config, &options);
-                if config.language.is_oxlint {
-                    unused_directives_as_oxlint(&mut result, as_what.script.is_some());
-                }
-                self.promote_suggestions(&mut result);
-                // What is fixed is another text in the end.
-                if self.keeps_text && is_whole && !self.fixes() {
-                    result.line_starts = file.known_line_starts().map(<[u32]>::to_vec);
-                }
-                self.timing.add(&self.timing.rules, parsed);
-                result
+                then(Some(&file));
             },
-        )
+        );
+    }
+
+    /// [`ParseAgain`] for the file at `path`.
+    pub(crate) fn parse_again(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        then: &mut dyn for<'f> FnMut(&'f File<'f>),
+    ) {
+        self.parse_again_as(path, text, config, &How::default(), then);
+    }
+
+    fn parse_again_as(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        as_what: &How,
+        then: &mut dyn for<'f> FnMut(&'f File<'f>),
+    ) {
+        self.parse(path, text, config, as_what, &mut |file| {
+            if let Some(file) = file {
+                then(file);
+            }
+        });
+    }
+
+    fn verify_as(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        as_what: &How,
+    ) -> LintResult {
+        let parse_again = |then: &mut dyn for<'f> FnMut(&'f File<'f>)| {
+            self.parse_again_as(path, text, config, as_what, then);
+        };
+        let mut result = LintResult::default();
+        self.parse(path, text, config, as_what, &mut |file| {
+            result = match file {
+                Some(file) => self.verify_parsed(file, config, as_what, &parse_again),
+                None => LintResult {
+                    messages: vec![too_deep()],
+                    ..LintResult::default()
+                },
+            };
+        });
+        result
+    }
+
+    fn verify_parsed<'f>(
+        &self,
+        file: &'f File<'f>,
+        config: &ResolvedConfig,
+        as_what: &How,
+        parse_again: &ParseAgain,
+    ) -> LintResult {
+        let parsed = self.timing.now();
+        // This is a processor's block that may be misread. Don't lint it. The caller decides what to do with it.
+        if as_what.physical_path_len.is_some() && may_be_misread(file) {
+            return LintResult {
+                is_unread: true,
+                ..LintResult::default()
+            };
+        }
+        let options = self.lint_options();
+        // Help on demand lints the text a second time. That only works for a file that's linted in one piece.
+        let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();
+        let is_for_help = matches!(as_what.rules, Which::WithHelp(_));
+        let waits_for_demand = self.help_on_demand && is_whole && !is_for_help;
+        let options = LintOptions {
+            again: as_what.again,
+            wants_fixes: match as_what.fixes {
+                Fixes::IfRead => options.wants_fixes,
+                Fixes::ForProcessor => true,
+                Fixes::Disabled => false,
+            },
+            disables_fixes: as_what.fixes == Fixes::Disabled,
+            // A block's messages are handed to its processor, so they have to be complete.
+            wants_texts_of_fixes: options.wants_texts_of_fixes
+                || as_what.physical_path_len.is_some(),
+            wants_help: options.wants_help && !waits_for_demand,
+            wants_messages: options.wants_messages || as_what.physical_path_len.is_some(),
+            wants_places: options.wants_places || as_what.physical_path_len.is_some(),
+            // JavaScript rules have no help, so there's no reason to run them again.
+            js_plugins: options.js_plugins.filter(|_| !is_for_help),
+            parse_again: Some(parse_again),
+            physical_path_len: as_what.physical_path_len,
+            rule_filter: match (as_what.rules, as_what.script) {
+                (Which::None, _) => Some(&no_rule),
+                (_, Some(script)) => Some(script.1),
+                (Which::WithHelp(only), None) => Some(only),
+                (Which::All, None) => options.rule_filter,
+            },
+            ..options
+        };
+        let mut result = self.linter.lint(file, config, &options);
+        if config.language.is_oxlint {
+            unused_directives_as_oxlint(&mut result, as_what.script.is_some());
+        }
+        self.promote_suggestions(&mut result);
+        // Fixes change the text, so these line starts wouldn't match the final one.
+        if self.keeps_text && is_whole && !self.fixes() {
+            result.line_starts = file.known_line_starts().map(<[u32]>::to_vec);
+        }
+        self.timing.add(&self.timing.rules, parsed);
+        result
     }
 
     /// ESLint's `verifyText`. `path`: what is printed. `path_to_verify`: what the file is linted as.
@@ -543,8 +629,8 @@ impl Context<'_, '_> {
         on_circular_fixes: &dyn Fn(&[u8]),
         verify: &mut dyn FnMut(&[u8]) -> LintResult,
     ) -> FileResult {
-        let (result, text, is_fixed) = match self.fixes() {
-            false => (verify(&text), text, false),
+        let (result, text, is_fixed, fixes) = match self.fixes_file(path_to_verify) {
+            false => (verify(&text), text, false, 0),
             true if config.language.is_oxlint => {
                 let mut result = verify(&text);
                 let mut messages = std::mem::take(&mut result.messages);
@@ -555,9 +641,12 @@ impl Context<'_, '_> {
                     return self.result(path, verify(&text), text, was_fixed, config);
                 }
                 result.messages = fixed.remaining;
+                // They are by place now.
+                bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| it.reported);
                 let is_fixed = fixed.is_fixed || was_fixed;
                 let mut result = self.result(path, result, text, is_fixed, config);
                 result.fixed_text = fixed.is_fixed.then_some(fixed.output);
+                result.fixes = fixed.count;
                 return result;
             }
             true => {
@@ -572,10 +661,12 @@ impl Context<'_, '_> {
                 if let Some(rules) = report.broken_by {
                     self.note_broken_fixes(path_to_verify, rules);
                 }
-                (report.result, report.output, report.is_fixed)
+                (report.result, report.output, report.is_fixed, report.fixes)
             }
         };
-        self.result(path, result, text, is_fixed || was_fixed, config)
+        let mut result = self.result(path, result, text, is_fixed || was_fixed, config);
+        result.fixes = fixes;
+        result
     }
 
     pub(crate) fn result(
@@ -611,11 +702,13 @@ impl Context<'_, '_> {
             counts,
             text: (is_fixed || (self.keeps_text && is_reported)).then_some(text),
             line_starts: result.line_starts.filter(|_| !is_fixed && is_reported),
+            run_keys: result.run_keys,
             messages: result.messages,
             suppressed: result.suppressed,
             thrown: result.thrown,
             had_types: false,
             is_fixed,
+            fixes: 0,
             fixed_text: None,
             linted: Some(Linted {
                 config: Arc::clone(config),

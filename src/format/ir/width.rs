@@ -221,20 +221,7 @@ pub(crate) struct OddBlocks(Vec<u64>);
 
 impl OddBlocks {
     pub(crate) fn mark(&mut self, source: &[u8]) {
-        let is_plain = |byte: u8| {
-            (is_printable(byte) & (byte != b'\\'))
-                | (byte == b'\t')
-                | (byte == b'\n')
-                | (byte == b'\r')
-        };
-        self.0.clear();
-        self.0.extend(source.chunks(BLOCK * 64).map(|blocks| {
-            let (blocks, rest) = blocks.as_chunks::<BLOCK>();
-            let marks = blocks.iter().rev().fold(0, |marks, block| {
-                marks << 1 | u64::from(!all_bytes(block, is_plain))
-            });
-            marks | u64::from(!all_bytes(rest, is_plain)) << (blocks.len() % 64)
-        }));
+        bun_highway::odd_blocks(source, &mut self.0);
     }
 
     /// Whether the text from `start` to `end`, which has no tab and no line break, is as wide as it

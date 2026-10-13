@@ -3,6 +3,7 @@
 //! https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 pub mod ast_util;
 pub mod codegen;

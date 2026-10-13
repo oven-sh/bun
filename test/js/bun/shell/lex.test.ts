@@ -1017,6 +1017,21 @@ describe("lex shell", () => {
       [{ Text: "echo" }, { Delimit: {} }, { Text: "a#b" }, { Delimit: {} }, { Eof: {} }],
     ],
     [
+      "hash after an escaped space is literal",
+      "echo one\\ #two",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "one #two" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "hash after an escaped space that starts the word is literal",
+      "echo \\ #x",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: " #x" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "hash after an escaped tab is literal",
+      "echo a\\\t#b",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "a\t#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
       "hash after a variable is literal",
       "echo $FOO#b",
       [{ Text: "echo" }, { Delimit: {} }, { Var: "FOO" }, { Text: "#b" }, { Delimit: {} }, { Eof: {} }],
@@ -1071,6 +1086,13 @@ describe("lex shell", () => {
   test("Bun.$ comment directly after an operator", async () => {
     const { stdout, exitCode } = await $`${{ raw: "echo a;# note\necho b|# c\ncat\n(echo d)#e\n" }}`.quiet();
     expect(stdout.toString()).toBe("a\nb\nd\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // bash: `echo one\ #two` prints `one #two`. An escaped space is part of the word, so the `#` is too.
+  test("Bun.$ hash after an escaped space", async () => {
+    const { stdout, exitCode } = await $`${{ raw: "echo one\\ #two 'a'\\ #b $(echo c\\ #d)\n" }}`.quiet();
+    expect(stdout.toString()).toBe("one #two a #b c #d\n");
     expect(exitCode).toBe(0);
   });
 

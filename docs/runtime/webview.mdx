@@ -341,6 +341,7 @@ An element is actionable when it:
 - has a non-zero bounding box
 - is inside the viewport
 - has been **stable** (bounding box unchanged) for two consecutive animation frames
+- has no animation that is about to start, on itself or on an ancestor (until it starts, an animation holds the element at its first position)
 - is the topmost element at its center point (not covered by an overlay)
 
 The check runs page-side at `requestAnimationFrame` rate. If the element never becomes actionable within `timeout` milliseconds (default `30000`), the promise rejects with an error like `timeout waiting for '#submit' to be actionable`.

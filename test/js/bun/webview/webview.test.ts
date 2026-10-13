@@ -675,9 +675,13 @@ itRendering("click(selector) does not take the position before the first frame f
   );
   // Under way, and the first callback runs in the frame that asked for it: nothing has moved by then. The second
   // skips a frame, so that it cannot be in that frame too.
-  await view.evaluate(`new Promise(resolve => {
+  await view.evaluate(`new Promise((resolve, reject) => {
+    const deadline = performance.now() + 2000;
     (function look() {
-      if (mover.getBoundingClientRect().left === 0) return setTimeout(look, 1);
+      if (mover.getBoundingClientRect().left === 0) {
+        if (performance.now() > deadline) return reject("mover never moved");
+        return setTimeout(look, 1);
+      }
       const { requestAnimationFrame } = window;
       let asked = 0;
       window.requestAnimationFrame = callback => {

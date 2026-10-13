@@ -10063,9 +10063,10 @@ declare module "bun" {
      *
      * Actionability is checked page-side at rAF rate: the element must be
      * attached, have non-zero size, be in the viewport, be stable (bounding
-     * box unchanged for 2 consecutive frames), and be the topmost element
-     * at its center point (not obscured). Once actionable, a native click
-     * fires at the center coordinates.
+     * box unchanged for 2 consecutive frames, and no animation of it or of
+     * an ancestor about to start), and be the topmost element at its center
+     * point (not obscured). Once actionable, a native click fires at the
+     * center coordinates.
      *
      * @example
      * ```ts

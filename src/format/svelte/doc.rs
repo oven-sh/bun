@@ -59,7 +59,7 @@ pub(crate) struct Js<'a> {
     pub(crate) is_on_one_line: bool,
     /// `removeParentheses`
     pub(crate) is_without_parentheses: bool,
-    /// Svelte takes no comment behind it: `{#each a}`.
+    /// Svelte goes on where it ends, and takes no comment there: `{#each a}`.
     pub(crate) is_without_comment_behind: bool,
     /// It is right behind a `{`.
     pub(crate) follows: Option<Brace>,

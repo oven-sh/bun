@@ -419,13 +419,15 @@ impl Check<'_, '_> {
                     (None, Some(this)) if this.kind == ExpressionKind::Text => {
                         self.reader.exact(this.span.of(self.text));
                     }
-                    (None, Some(this))
-                        if this.kind == ExpressionKind::StringLiteral
-                            && strings::index_of_any(this.span.of(self.text), b"\\&{")
-                                .is_none() =>
-                    {
-                        self.reader.exact(&without_quotes(this.span.of(self.text)));
-                        self.comments_around(this);
+                    (None, Some(this)) if this.kind == ExpressionKind::StringLiteral => {
+                        let string = without_quotes(this.span.of(self.text));
+                        match strings::index_of_any(&string, b"\\&{") {
+                            Some(_) => self.expression(this),
+                            None => {
+                                self.reader.exact(&string);
+                                self.comments_around(this);
+                            }
+                        }
                     }
                     (None, Some(this)) => self.expression(this),
                     (None, None) => {}

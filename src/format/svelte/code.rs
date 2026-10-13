@@ -90,6 +90,38 @@ fn can_end_with_comment(text: &[u8], comments: &[Comment]) -> bool {
             .any(|it| it.is_line() || it.preceded_by_newline() || it.followed_by_newline())
 }
 
+/// Whether `e` can end with `as B` once it is printed: the parentheses go in `() => (a as B)`.
+fn can_end_with_assertion(mut e: Expr<'_>) -> bool {
+    loop {
+        e = match e.kind() {
+            ExprKind::As { expr, .. } | ExprKind::AsConst(expr)
+                if e.is_angle_bracket_assertion() =>
+            {
+                expr
+            }
+            ExprKind::As { .. } | ExprKind::AsConst(_) => return true,
+            ExprKind::Fn(function) => match function.body() {
+                FnBody::Expr(body) => body,
+                _ => return false,
+            },
+            ExprKind::Unary {
+                op: UnOp::PostInc | UnOp::PostDec,
+                ..
+            } => return false,
+            ExprKind::Assign { value: it, .. }
+            | ExprKind::Binary { right: it, .. }
+            | ExprKind::Cond { no: it, .. }
+            | ExprKind::Unary { operand: it, .. }
+            | ExprKind::Await(it)
+            | ExprKind::Spread(it)
+            | ExprKind::Yield {
+                value: Some(it), ..
+            } => it,
+            _ => return false,
+        };
+    }
+}
+
 /// `textToDoc(forceIntoExpression(text), ..)`, and what is done to the document. Returns whether the last thing that is
 /// written is a comment at the end of a line. `None`: nothing is written.
 fn write_js_expression(
@@ -120,8 +152,11 @@ fn write_js_expression(
                 return false;
             };
             let comments = f.comments().unprinted_comments();
-            // As it is written, there is none: `{#each a[0 // b\n]}`.
-            if js.is_without_comment_behind && can_end_with_comment(&wrapped, comments) {
+            // As it is written, there is none: `{#each a[0 // b\n]}`. Nor is there an `as` that Svelte takes for that of the
+            // block, as there is in `{#each () => (a as B)}` without the parentheses.
+            if js.is_without_comment_behind
+                && (can_end_with_comment(&wrapped, comments) || can_end_with_assertion(e))
+            {
                 return false;
             }
             // One on a line of its own is printed at the end of a line too, and so is all that follows one that is.

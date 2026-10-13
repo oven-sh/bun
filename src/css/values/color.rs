@@ -2418,7 +2418,7 @@ impl HueInterpolationMethod {
                 let delta = *b - *a;
                 if 0.0 < delta && delta < 180.0 {
                     *a += 360.0;
-                } else if -180.0 < delta && delta < 0.0 {
+                } else if -180.0 < delta && delta <= 0.0 {
                     *b += 360.0;
                 }
             }

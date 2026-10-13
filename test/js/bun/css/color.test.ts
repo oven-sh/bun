@@ -1130,6 +1130,23 @@ color-mix(in oklch, lch(100% 0 0), blue) => oklch(0.726 0.1566 264.052) ± 0.001
 color-mix(in oklch, oklch(100% 0 0), blue) => oklch(0.726 0.15661 312.026) ± 0.001
 `,
     ],
+    [
+      // `longer hue` with a hue difference of 0 adds 360 to the second hue.
+      "color-computed-color-mix-function.html, longer hue",
+      `
+color-mix(in hsl longer hue, hsl(60deg 50% 50%), hsl(60deg 50% 50%)) => color(srgb 0.25 0.25 0.75)
+color-mix(in hsl longer hue, red, white) => color(srgb 0.625 0.875 0.875)
+color-mix(in hsl longer hue, red, black) => color(srgb 0.125 0.375 0.375)
+color-mix(in hsl longer hue, red, transparent) => color(srgb 0 1 1 / 0.5)
+color-mix(in hwb longer hue, red, white) => color(srgb 0.5 1 1)
+color-mix(in hwb longer hue, red, black) => color(srgb 0 0.5 0.5)
+color-mix(in hwb longer hue, red, transparent) => color(srgb 0 1 1 / 0.5)
+color-mix(in lch longer hue, red, white) => lch(77.145 53.4186 220.858)
+color-mix(in lch longer hue, red, black) => lch(27.145 53.4186 220.858)
+color-mix(in oklch longer hue, red, white) => oklch(0.81398 0.128842 209.234)
+color-mix(in oklch longer hue, red, black) => oklch(0.313978 0.128842 209.2339)
+`,
+    ],
   ])("%s", (_, text) => {
     for (const [specified, computed, epsilon] of rows(text)) {
       test(specified, () => expectComputed(specified, computed, epsilon === undefined ? 0.01 : Number(epsilon)));

@@ -5392,6 +5392,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// `members`, for `getPropertiesOfType(ty)`: an intersection has the list of properties that
     /// `getPropertiesOfUnionOrIntersectionType` assigned, which can lack some that
     /// `getPropertyOfType` finds by name (`listed_properties`).
+    /// Whether the list of properties that the intersection `ty` keeps lacks the members of a
+    /// constituent (`listed_members`).
+    pub(super) fn has_partial_list(&self, ty: TypeId) -> bool {
+        matches!(self.data(ty), TypeData::Intersection(_))
+            && (self.p.listed_properties.get(&self.task, &ty)).is_some_and(|listed| listed != ty)
+    }
+
     pub(super) fn listed_members(&mut self, ty: TypeId) -> Option<Members<'p>> {
         if matches!(self.data(ty), TypeData::Intersection(_))
             && let Some(listed) = self.p.listed_properties.get(&self.task, &ty)

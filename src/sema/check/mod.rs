@@ -194,7 +194,7 @@ pub struct Program<'s> {
     serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
     /// `Finished::listings` of the valid tasks so far: the first in serial order for each
     /// intersection. Written and read at a barrier (`Program::validate`).
-    serial_listings: Guarded<crate::util::FxHashMap<Sym, bool>>,
+    serial_listings: Guarded<ArenaHashMap<'s, Sym, bool>>,
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
@@ -472,7 +472,7 @@ impl<'s> Program<'s> {
             session,
             closed_a_cycle: Default::default(),
             serial_variances: Guarded::new(map_in(session.arena())),
-            serial_listings: Guarded::new(Default::default()),
+            serial_listings: Guarded::new(map_in(session.arena())),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,

@@ -3226,8 +3226,11 @@ fn check_with_references(
             one_is_built.notify_all();
         }
     };
+    // Each program occupies memory: it has its own copy of the declaration files it reaches,
+    // however few files the project lists. One thread checks a small project, so four of them
+    // take the place of a large one.
     let at_once = match (0..count).any(is_small) {
-        true => host.threads().min(count),
+        true => (host.threads().min(count)).min(large_at_once * 4),
         false => large_at_once,
     };
     std::thread::scope(|scope| {

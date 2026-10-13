@@ -4434,9 +4434,20 @@ impl<'p, 's> Checker<'p, 's> {
     /// `Program::validate` compares what each has noted, by the type alias that names `ty`: an
     /// intersection without one keeps no list of its own. `false`: nothing is noted.
     fn note_listing(&mut self, ty: TypeId, parts: &[TypeId], is_partial: bool) -> bool {
-        let Some(&(alias, ref type_arguments)) = self.stored_alias(ty) else {
+        let Some(alias) = self.listing_alias(ty, parts, is_partial) else {
             return false;
         };
+        if !self.task.listings.contains(&(alias, is_partial)) {
+            self.task.listings.push((alias, is_partial));
+        }
+        true
+    }
+
+    /// The type alias that names the intersection `ty` of `parts`, when the list of properties
+    /// that `ty` keeps is noted (`note_listing`): it has a mapped type that is written where it
+    /// is, and for a partial list the members of one are in place.
+    fn listing_alias(&self, ty: TypeId, parts: &[TypeId], is_partial: bool) -> Option<Sym> {
+        let &(alias, ref type_arguments) = self.stored_alias(ty)?;
         let from = self.resolution_start;
         let has_mapped_type = type_arguments.is_empty()
             && parts.iter().any(|&part| {
@@ -4448,10 +4459,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 ) && (!is_partial || self.stack[from..].contains(&Query::Shape(part)))
             });
-        if has_mapped_type && !self.task.listings.contains(&(alias, is_partial)) {
-            self.task.listings.push((alias, is_partial));
-        }
-        has_mapped_type
+        has_mapped_type.then_some(alias)
     }
 
     fn shape_of_synth(&mut self, object: TypeId) -> Built<'p> {
@@ -7028,8 +7036,10 @@ impl<'p, 's> Checker<'p, 's> {
             let from = self.resolution_start;
             if (members.iter()).any(|&member| self.stack[from..].contains(&Query::Shape(member))) {
                 self.properties_of_intersection(ty, &members);
-            } else {
-                self.note_complete_listing(ty, &members);
+            } else if self.listing_alias(ty, &members, false).is_some() {
+                // `getReducedType` assigns the list. It is the complete one, and it is kept: a
+                // later read while a constituent has its members in place finds it.
+                self.properties_of_intersection(ty, &members);
             }
         }
         // `isNeverReducedProperty`

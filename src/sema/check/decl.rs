@@ -1954,8 +1954,14 @@ impl<'p, 's> Checker<'p, 's> {
             _ => Span::new(tp.0, 1),
         };
         let mapping = self.types().mapping(around);
-        let is_new_name =
-            |pair: &(TypeId, TypeId)| matches!(self.data(pair.0), TypeData::StringLit { .. });
+        // The entries of a renamed clone: its new name, and the serial that tells its clones apart
+        // (`renamed_type_param`, `unique_type_params`).
+        let is_new_name = |pair: &(TypeId, TypeId)| {
+            matches!(
+                self.data(pair.0),
+                TypeData::StringLit { .. } | TypeData::NumberLit { .. }
+            )
+        };
         let before_renaming = if mapping.iter().any(is_new_name) {
             let kept = (mapping.iter().copied())
                 .filter(|pair| !is_new_name(pair))

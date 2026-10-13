@@ -1061,7 +1061,12 @@ impl<'l> Loader<'l> {
     }
 
     /// `file`: the configuration file, if there is one, and what it says. `None`: the package `eslint` is not installed.
-    fn for_eslint(&self, file: Option<(&[u8], &Config)>, base_path: &[u8]) -> Option<ForEslint> {
+    fn for_eslint(
+        &self,
+        file: Option<(&[u8], &Config)>,
+        base_path: &[u8],
+        named: &[NamedPlugin],
+    ) -> Option<ForEslint> {
         let has_eslint =
             |it: &[u8]| fs::is_file(&paths::join(it, b"node_modules/eslint/package.json"));
         let is_found_from = |from: &&[u8]| {
@@ -1080,9 +1085,7 @@ impl<'l> Loader<'l> {
         let native = |path: &[u8]| Json::String(paths::to_native(path.to_vec()));
         let only_errors = options.quiet && options.max_warnings == -1;
         let about_layout = formatting_rules().map(|it| Json::String(it.into()));
-        // They are loaded by now, or the run has ended.
-        let named = self.load_named_plugins(Flavor::Eslint).unwrap_or_default();
-        let mut added: Vec<Json> = Self::object_of_named(&named).into_iter().collect();
+        let mut added: Vec<Json> = Self::object_of_named(named).into_iter().collect();
         added.extend(self.added(base_path));
         let mut run = Vec::new();
         bun_lint::linter::write_json(
@@ -1614,6 +1617,11 @@ impl<'l> Loader<'l> {
                 ));
             }
         }
+        let named = match flavor {
+            // `rc` loads them.
+            Flavor::Oxlint => Vec::new(),
+            _ => self.named_plugins(Flavor::Eslint)?,
+        };
         let config = match flavor {
             Flavor::Eslint | Flavor::BuiltIn | Flavor::EslintRc => {
                 // ESLint throws.
@@ -1642,7 +1650,7 @@ impl<'l> Loader<'l> {
                         json
                     },
                     true,
-                    self.named_plugins(Flavor::Eslint)?,
+                    named.clone(),
                 )
                 .map_err(|Fatal(why)| Fatal(self.name_place(Some(path), &why)))?
             }
@@ -1671,7 +1679,7 @@ impl<'l> Loader<'l> {
             option(b"respectEslintDisableDirectives").and_then(Json::as_bool) != Some(false);
         let checks_types = is_on(b"typeCheck");
         let for_eslint = match flavor {
-            Flavor::Eslint => self.for_eslint(Some((path, &config)), base_path),
+            Flavor::Eslint => self.for_eslint(Some((path, &config)), base_path, &named),
             _ => None,
         };
         Ok(Arc::new(Loaded {
@@ -1735,13 +1743,9 @@ impl<'l> Loader<'l> {
         slot.get_or_init(|| match path {
             b"" if !self.options.config_lookup => {
                 self.check_flags(Flavor::Eslint, None)?;
+                let named = self.named_plugins(Flavor::Eslint)?;
                 Ok(Arc::new(Loaded {
-                    config: self.flat(
-                        base_path,
-                        Json::Array(Vec::new()),
-                        true,
-                        self.named_plugins(Flavor::Eslint)?,
-                    )?,
+                    config: self.flat(base_path, Json::Array(Vec::new()), true, named.clone())?,
                     flavor: Flavor::Eslint,
                     file: None,
                     wants_types: None,
@@ -1749,7 +1753,7 @@ impl<'l> Loader<'l> {
                     max_warnings: None,
                     respects_eslint_comments: true,
                     checks_types: false,
-                    for_eslint: self.for_eslint(None, base_path),
+                    for_eslint: self.for_eslint(None, base_path, &named),
                 }))
             }
             b"" => self.built_in(),

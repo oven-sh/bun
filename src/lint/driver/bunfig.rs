@@ -885,7 +885,13 @@ fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal>
                 for (key, value) in entries(item)? {
                     match &key.name[..] {
                         b"specifier" => specifier = Some(text(value)?),
-                        b"name" => alias = Some(text(value)?),
+                        b"name" => {
+                            let name = text(value)?;
+                            if name.is_empty() {
+                                return refuse(value.loc, &[b"A plugin's name can't be empty"]);
+                            }
+                            alias = Some(name);
+                        }
                         _ => {
                             let known = [b"name".to_vec(), b"specifier".to_vec()];
                             return unknown_key(

@@ -44,7 +44,7 @@ mod syntax;
 
 pub use config::{
     Config, ConfigError, FileConfig, InJavaScript, LegacyFailure, LegacyFile, LegacyKind,
-    LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
+    LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, NamedPlugin, oxlint_category,
 };
 pub use fixer::{
     FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, is_redeclaration,

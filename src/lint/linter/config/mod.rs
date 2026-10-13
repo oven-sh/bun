@@ -82,7 +82,7 @@ use crate::runner::RuleEntry;
 use bun_glob::Candidate;
 use cache::Cache;
 pub use eslintrc::{Eslint8, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LoadLegacy};
-pub use flat::{ConfigError, LoadLocatedPlugin};
+pub use flat::{ConfigError, LoadLocatedPlugin, NamedPlugin};
 use ignore_lines::IgnoreLines;
 use merge::RuleSetting;
 pub use rc::{LoadPlugin, oxlint_category, oxlint_lacks, oxlint_runs_on, strings_of};

@@ -271,7 +271,7 @@ pub(crate) const PARAMS: &[Param] = clap::concat_params!(
 );
 
 /// Flags only ESLint has. A flag never picks the tool. These lists only let a run reject flags that can't work with its config.
-const ONLY_OF_ESLINT: [&[u8]; 36] = [
+const ONLY_OF_ESLINT: [&[u8]; 35] = [
     b"config-lookup",
     b"rule",
     b"global",
@@ -295,7 +295,6 @@ const ONLY_OF_ESLINT: [&[u8]; 36] = [
     b"stats",
     b"env-info",
     b"parser",
-    b"plugin",
     b"cache",
     b"cache-file",
     b"cache-location",
@@ -323,12 +322,7 @@ const ONLY_OF_OXLINT: [&[u8]; 8] = [
 ];
 
 /// Those of [`ONLY_OF_ESLINT`] that nothing can be done about with a configuration of oxlint.
-const NOTHING_TO_OXLINT: [&[u8]; 4] = [
-    b"ext",
-    b"parser",
-    b"plugin",
-    b"report-unused-inline-configs",
-];
+const NOTHING_TO_OXLINT: [&[u8]; 3] = [b"ext", b"parser", b"report-unused-inline-configs"];
 
 /// Those that ESLint 8 has and ESLint 9 has not.
 const ONLY_OF_ESLINT_8: [&[u8]; 4] = [

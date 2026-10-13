@@ -14,6 +14,10 @@ use crate::rule::{Kind, Plugin, minor_of};
 use crate::runner::RuleEntry;
 use std::sync::Arc;
 
+/// A JavaScript plugin that is loaded already, and what `$jsPlugins` would have for it. These come from `plugins` in bunfig.toml
+/// and from `--plugin`.
+pub type NamedPlugin = (Arc<js_plugin::Plugin>, Json);
+
 /// Why a configuration cannot be used. The text is ESLint's where ESLint has one.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConfigError {
@@ -856,7 +860,7 @@ impl Config {
         base_path: &[u8],
         json: &Json,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, None, None)
+        Self::from_flat(registry, base_path, json, None, Vec::new(), false)
     }
 
     /// The same, with the plugins that are not implemented here. An object has beside `plugins` the key `$jsPlugins`, with
@@ -867,20 +871,20 @@ impl Config {
         base_path: &[u8],
         json: &Json,
         load_plugin: &mut LoadLocatedPlugin<'_>,
+        named: Vec<NamedPlugin>,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, Some(load_plugin), None)
+        Self::from_flat(registry, base_path, json, Some(load_plugin), named, false)
     }
 
     /// Builds the config for projects with no ESLint or oxlint config. `json` has the shape of a flat config, but doesn't
     /// have to declare plugins. See [`ResolvedConfig::has_every_rule`](crate::linter::ResolvedConfig).
-    /// `js_plugins`: what `plugins` in bunfig.toml and `--plugin` name, already loaded.
     pub fn without_a_file(
         registry: &Registry,
         base_path: &[u8],
         json: &Json,
-        js_plugins: Vec<Arc<js_plugin::Plugin>>,
+        named: Vec<NamedPlugin>,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, None, Some(js_plugins))
+        Self::from_flat(registry, base_path, json, None, named, true)
     }
 
     fn from_flat(
@@ -888,18 +892,19 @@ impl Config {
         base_path: &[u8],
         json: &Json,
         load_plugin: Option<&mut LoadLocatedPlugin<'_>>,
-        without_a_file: Option<Vec<Arc<js_plugin::Plugin>>>,
+        named: Vec<NamedPlugin>,
+        has_every_rule: bool,
     ) -> Result<Config, ConfigError> {
         let mut reader = Reader {
             registry,
             base_path: paths::absolute(base_path),
             prefers_typescript_rules: false,
-            has_every_rule: without_a_file.is_some(),
+            has_every_rule,
             objects: Vec::new(),
             notes: Vec::new(),
             advice: Vec::new(),
             unknown_rules: Vec::new(),
-            js_plugins: without_a_file.unwrap_or_default(),
+            js_plugins: Vec::new(),
             js_plugin_places: Vec::new(),
             js_locations: Vec::new(),
             defaults: 0,
@@ -907,6 +912,13 @@ impl Config {
             has_unknown_resolver: has_unknown_resolver(json),
             handing_back: Vec::new(),
         };
+        for (plugin, location) in named {
+            reader
+                .js_plugin_places
+                .push(reader.js_locations.len() as u32);
+            reader.js_locations.push((plugin.name.clone(), location));
+            reader.js_plugins.push(plugin);
+        }
         add_foreign_prefixes(registry, json, &mut reader.foreign_prefixes);
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
         for object in defaults.as_array().unwrap_or_default() {
@@ -941,6 +953,10 @@ impl Reader<'_> {
         load: &mut LoadLocatedPlugin<'_>,
     ) -> Result<(), ConfigError> {
         for (place, (prefix, location)) in self.js_locations.iter_mut().enumerate() {
+            // A `NamedPlugin`.
+            if self.js_plugin_places.contains(&(place as u32)) {
+                continue;
+            }
             let mut unknown = self.unknown_rules.iter();
             // A rule of `--rulesdir`, which has no prefix, can have the name of a rule that exists here.
             if prefix.is_empty()

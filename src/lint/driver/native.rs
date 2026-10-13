@@ -10,12 +10,11 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::Plugin as JsPlugin;
 use bun_lint::linter::{
-    Missing, Registry, RuleId, Step, mistake_in_options, oxlint_category, parse_rule_id,
-    severity_of, write_json,
+    Missing, NamedPlugin, Registry, RuleId, Step, mistake_in_options, oxlint_category,
+    parse_rule_id, severity_of, write_json,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::{Meta, Plugin};
-use std::sync::Arc;
 
 /// An invalid rule setting, or a plugin that can't be used.
 pub(crate) struct Mistake {
@@ -109,6 +108,13 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8]) -> Vec<u8> {
             b" rules",
         ]
         .concat(),
+        // It has the prefix of a plugin that isn't built in.
+        Missing::Unknown(None) if !parse_rule_id(id).0.is_empty() => [
+            b"Unknown rule \"",
+            id,
+            b"\"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]",
+        ]
+        .concat(),
         Missing::Unknown(None) => [b"Unknown rule \"", id, b"\""].concat(),
         Missing::Unknown(Some(close)) => [
             b"Unknown rule \"",
@@ -137,7 +143,7 @@ pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
 pub(crate) fn check_rules(
     linter: &Linter,
     options: &Options,
-    plugins: &[Arc<JsPlugin>],
+    plugins: &[NamedPlugin],
 ) -> Result<(), Mistake> {
     let check =
         |rules: &[(Vec<u8>, Json)], places: &[RuleOfBunfig]| check(linter, plugins, rules, places);
@@ -154,7 +160,7 @@ pub(crate) fn check_rules(
 /// `places` has the bunfig.toml locations of the first `places.len()` rules. The rest came from `--rule`.
 fn check(
     linter: &Linter,
-    plugins: &[Arc<JsPlugin>],
+    plugins: &[NamedPlugin],
     rules: &[(Vec<u8>, Json)],
     places: &[RuleOfBunfig],
 ) -> Result<(), Mistake> {
@@ -169,7 +175,7 @@ fn check(
         };
         let severity = parts.first().and_then(severity_of);
         let (prefix, name) = parse_rule_id(id);
-        if let Some(plugin) = plugins.iter().find(|it| *it.name == *prefix) {
+        if let Some((plugin, _)) = plugins.iter().find(|it| *it.0.name == *prefix) {
             let Some(rule) = plugin.rule(name) else {
                 return Err(Mistake {
                     message: unknown_rule_of(plugin, id, name),

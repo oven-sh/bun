@@ -2044,10 +2044,11 @@ describe("css tests", () => {
         const result = await Bun.build({ entrypoints: [join(String(dir), "a.css")], minify });
         outputs.push(await result.outputs[0].text());
       }
-      expect(outputs[0]).toEndWith(
+      // Without `minify` the first line is a comment with the path of the input file.
+      expect(outputs.map(css => css.replace(/^\/\*.*\*\/\n/, ""))).toEqual([
         ".btn {\n  border-image: linear-gradient(red, #00f) 1;\n}\n\n.btn.plain {\n  border-image: none;\n}\n",
-      );
-      expect(outputs[1]).toBe(".btn{border-image:linear-gradient(red,#00f) 1}.btn.plain{border-image:none}\n");
+        ".btn{border-image:linear-gradient(red,#00f) 1}.btn.plain{border-image:none}\n",
+      ]);
     });
   });
 

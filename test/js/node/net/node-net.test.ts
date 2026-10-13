@@ -16,6 +16,7 @@ import {
   tls as tlsCert,
   tmpdirSync,
 } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -1622,6 +1623,48 @@ describe("Socket fd adoption", () => {
     } finally {
       fs.closeSync(fd);
     }
+  });
+
+  // The hop that end() on an adopted socket fd takes to the event loop, as bun:internal-for-testing has it.
+  describe("queueLoopTask", () => {
+    it("calls its function after what the block queued and before an earlier immediate", async () => {
+      const { queueLoopTask } = require("bun:internal-for-testing");
+      const store = new AsyncLocalStorage<string>();
+      const events: string[] = [];
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setImmediate(() => {
+        events.push("setImmediate");
+        resolve();
+      });
+      store.run("store", () =>
+        queueLoopTask((a, b) => events.push(`task(${a}, ${b}) in ${store.getStore()}`), "a", "b"),
+      );
+      process.nextTick(() => events.push("nextTick"));
+      queueMicrotask(() => events.push("microtask"));
+      await promise;
+      const task = events.indexOf("task(a, b) in store");
+      expect({ before: events.slice(0, task).sort(), from: events.slice(task) }).toEqual({
+        before: ["microtask", "nextTick"],
+        from: ["task(a, b) in store", "setImmediate"],
+      });
+    });
+
+    // The VM releases its queue when it exits: the task never runs, and what it holds is let go.
+    it("drops a task that is still queued at exit", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("bun:internal-for-testing").queueLoopTask(() => console.log("the task ran"), {}, {});
+           process.exit(0);`,
+        ],
+        env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
   });
 });
 

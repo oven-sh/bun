@@ -146,6 +146,12 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
+// (fn, a, b): queues fn(a, b) on the VM's task queue, in the caller's async context. The queue
+// is drained next when the calling block, its nextTicks and its microtasks are over, before any
+// setImmediate callback. What fn throws is reported as uncaught after that async context is
+// left. Used, via $newCppFunction, by node:net.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionQueueLoopTask);
+
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
 

@@ -40,11 +40,22 @@ const plugin = (version: string) => ({
   "node_modules/prettier-plugin-svelte/package.json": JSON.stringify({ name: "prettier-plugin-svelte", version }),
 });
 
-// Where the plugin loses a comment, Bun keeps it. By the name of the case: what is recorded, once, and what Bun prints in its place.
+// Where what the plugin prints is another component, Bun prints the right thing. By the name of the case: what is recorded, once, and
+// what Bun prints in its place.
 const exceptions: Record<string, [recorded: string, printed: string]> = {
   // The plugin loses the comment of `bind:value={/** ( */ (() => value, (v) => ..)}`.
-  directives: ["() => value,", "/** ( */ () => value,"],
+  "directives": ["() => value,", "/** ( */ () => value,"],
+  // The plugin leaves out a `{:catch}` with nothing in it. Without one, Svelte throws the error again.
+  "generated gen2 3842": ["{#await p}{/await}", "{#await p catch}{/await}"],
+  "generated gen 5634": ["{/key}\n{/await}", "{/key}\n{:catch}{/await}"],
+  "generated gen 5622": ["{/await}", "{:catch e}{/await}"],
+  // The plugin takes a no-break space off the start of a component, where it is text to Svelte.
+  "generated gen 3860": ["some and &amp; text", "\u00A0 some and &amp; text"],
+  "generated gen 5952": ["there there here", "\u00A0there there here"],
+  "generated gen2 738": ["words text", "\u00A0 words text"],
 };
+// `bun fmt --debug-check-svelte` is compiled into debug and canary builds only.
+const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
 describe.concurrent("Svelte", () => {
   // One run for all the cases with the same options.
@@ -407,6 +418,13 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "<!-- @format -->\n<p>a</p>\n",
       "<!-- @format -->\n<p>a</p>\n",
     ]);
+    // Behind the comment the plugin leaves out the empty lines between the parts, and puts them back with the next run.
+    const parts = "<script>\n  let a;\n</script>\n\n<p>a</p>\n\n<style></style>\n";
+    for (const text of [parts, `<!-- @format -->\n${parts}`]) {
+      expect((await format({ ...config({ insertPragma: true }), "a.svelte": text }, ["a.svelte"])).files).toEqual([
+        `<!-- @format -->\n${parts}`,
+      ]);
+    }
   });
 
   // The text, what Bun makes of it, and what the plugin makes of it, which is another component, or none.
@@ -535,6 +553,314 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     },
   );
 
+  // By what is wrong with the plugin: the text, what Bun makes of it, and what the plugin makes of it. `null`: it refuses it.
+  // `false`: `--debug-check` has nothing to say about that, which has more white space where there is some, or a parenthesis.
+  const damaged: Record<string, [string, string, string | null, false?][]> = {
+    "scripts and style sheets are where the parser finds them": [
+      [
+        "<script module>\n  // writes a <style> tag\n</script>\n<script>\n  let  b = 2;\n</script>\n<p>{b}</p>\n<style>\n  p{margin:0}\n</style>\n",
+        "<script module>\n  // writes a <style> tag\n</script>\n\n<script>\n  let b = 2;\n</script>\n\n<p>{b}</p>\n\n<style>\n  p {\n    margin: 0;\n  }\n</style>\n",
+        "<script module>\n  // writes a <style> tag\n</script>\n\n<script></script>\n\n<p>{b}</p>\n\n<style>\n  p {\n    margin: 0;\n  }\n</style>\n",
+      ],
+      [
+        '<script lang= "ts">\n  let b:  string = ""\n</script>\n<p>{b}</p>\n',
+        '<script lang="ts">\n  let b: string = "";\n</script>\n\n<p>{b}</p>\n',
+        '<script lang="ts"></script>\n\n<p>{b}</p>\n',
+      ],
+      [
+        '<p>{"<!--"}</p>\n<script>let  b=2</script>\n<!-- z -->\n',
+        '<script>\n  let b = 2;\n</script>\n\n<p>{"<!--"}</p>\n<!-- z -->\n',
+        '<script></script>\n\n<p>{"<!--"}</p>\n<!-- z -->\n',
+      ],
+      [
+        '<style>b{content:"<script>"}</style>\n<p>y</p>\n<script>let  b = 2;</script>\n',
+        '<script>\n  let b = 2;\n</script>\n\n<p>y</p>\n\n<style>\n  b {\n    content: "<script>";\n  }\n</style>\n',
+        '<script></script>\n\n<p>y</p>\n\n<style>\n  b {\n    content: "<script>";\n  }\n</style>\n',
+      ],
+      [
+        '<div><script type = "y">let  b = 2</script></div>\n',
+        '<div>\n  <script type="y">\n    let b = 2;\n  </script>\n</div>\n',
+        '<div><script type="y"></script></div>\n',
+      ],
+      [
+        '<svelte:head><style media = "screen">b{c:d}</style></svelte:head>\n',
+        '<svelte:head\n  ><style media="screen">\n    b {\n      c: d;\n    }\n  </style></svelte:head\n>\n',
+        '<svelte:head><style media="screen"></style></svelte:head>\n',
+      ],
+      [
+        '<!-- prettier-ignore -->\n<svelte:head>\n  <script\n    src="y"\n    async>let b = 2;</script>\n</svelte:head>\n',
+        '<!-- prettier-ignore -->\n<svelte:head>\n  <script\n    src="y"\n    async>let b = 2;</script>\n</svelte:head>\n',
+        '<!-- prettier-ignore -->\n<svelte:head>\n  <script\n    src="y"\n    async ✂prettier:content✂="0">{}</script>\n</svelte:head>\n',
+      ],
+      [
+        '{@html `<script\n  type="application/ld+json">${JSON.stringify(data)}</script>`}\n',
+        '{@html `<script\n  type="application/ld+json">${JSON.stringify(data)}</script>`}\n',
+        '{@html `<script\n  type="application/ld+json" ✂prettier:content✂="0">{}</script>`}\n',
+      ],
+      [
+        "<textarea><style>b</style></textarea>\n",
+        "<textarea><style>b</style></textarea>\n",
+        '<textarea><style ✂prettier:content✂="0"></style></textarea>\n',
+      ],
+      [
+        "<div /* <script>y</script> */ b>y</div>\n",
+        "<div /* <script>y</script> */ b>y</div>\n",
+        '<div /* <script ✂prettier:content✂="0">{}</script> */ b>y</div>\n',
+      ],
+      [
+        '<template lang="pug">\np\n  <script>b</script>\n</template>\n',
+        '<template lang="pug">\np\n  <script>b</script>\n</template>\n',
+        '<template lang="pug">\np\n  <script ✂prettier:content✂="0">{}</script>\n</template>\n',
+      ],
+      ["{`<script>y</script\n>`}\n", "{`<script>y</script\n>`}\n", "{`<script>y</script>`}\n", false],
+      ["<p>{'<script>b</script>'}</p>\n", '<p>{"<script>b</script>"}</p>\n', '<p>{"<script>b</script>"}</p>\n'],
+      ['{@html "<style>" + css + "</style>"}\n', '{@html "<style>" + css + "</style>"}\n', null],
+      [
+        '<iframe srcdoc="<style>b</style><p>y</p>" title="u"></iframe>\n',
+        '<iframe srcdoc="<style>b</style><p>y</p>" title="u"></iframe>\n',
+        null,
+      ],
+      ['<style lang= "scss">b{c:d}</style>\n', '<style lang="scss">\n  b {\n    c: d;\n  }\n</style>\n', null],
+      ['<script lang="ts>let b</script>\n', '<script lang="ts>\n  let b;\n</script>\n', null],
+    ],
+    "a comment next to a script takes nothing with it": [
+      [
+        "<!-- d --><script>let b</script>\n<div>kept</div>\n",
+        "<!-- d -->\n<script>\n  let b;\n</script>\n\n<div>kept</div>\n",
+        "<!-- d -->\n<script>\n  let b;\n</script>\n",
+      ],
+      [
+        "<h1>first</h1>\n<p>second</p><!-- d --><style>b{c:d}</style>\n",
+        "<h1>first</h1>\n<p>second</p>\n\n<!-- d -->\n<style>\n  b {\n    c: d;\n  }\n</style>\n",
+        "<h1>first</h1>\n\n<!-- d -->\n<style>\n  b {\n    c: d;\n  }\n</style>\n",
+      ],
+      [
+        "kept <!-- d --><script></script>\n",
+        "<!-- d -->\n<script></script>\n\nkept\n",
+        "<!-- d -->\n<script></script>\n",
+      ],
+      [
+        "<p>first</p>\n<p>second</p>\n<!-- d --><!-- e --><script></script>\n",
+        "<!-- d -->\n<!-- e -->\n<script></script>\n\n<p>first</p>\n<p>second</p>\n",
+        "<!-- d -->\n<!-- e -->\n<script></script>\n\n<p>first</p>\n",
+      ],
+    ],
+    "white space that is text stays": [
+      ["<div>y</div>\nsome <b>words</b>\n", "<div>y</div>\nsome <b>words</b>\n", "<div>y</div>\nsome<b>words</b>\n"],
+      [
+        '<div>\n  <p>y</p>\n  See <a href="z">that</a>.\n</div>\n',
+        '<div>\n  <p>y</p>\n  See <a href="z">that</a>.\n</div>\n',
+        '<div>\n  <p>y</p>\n  See<a href="z">that</a>.\n</div>\n',
+      ],
+      ["<hr>some <i>words</i>\n", "<hr />\nsome <i>words</i>\n", "<hr />\nsome<i>words</i>\n"],
+      [
+        "b <script>let y</script>c\n",
+        "<script>\n  let y;\n</script>\n\nb c\n",
+        "<script>\n  let y;\n</script>\n\nbc\n",
+      ],
+      ["b <style></style>c\n", "b c\n\n<style></style>\n", "bc\n\n<style></style>\n"],
+      ["b <svelte:options runes />c\n", "<svelte:options runes />\n\nb c\n", "<svelte:options runes />\n\nbc\n"],
+      ["<b>y</b> <script></script>c\n", "<script></script>\n\n<b>y</b> c\n", "<script></script>\n\n<b>y</b>c\n"],
+      ["\u00A0b\n", "\u00A0b\n", "b\n"],
+      ["\u2028b\n", "\u2028b\n", "b\n"],
+      [
+        "<pre><span>let</span><span> </span><span>y</span></pre>\n",
+        "<pre><span>let</span><span> </span><span>y</span></pre>\n",
+        "<pre><span>let</span><span></span><span>y</span></pre>\n",
+      ],
+      [
+        "<pre>{#each rows as row}\n{row}\n{/each}</pre>\n",
+        "<pre>{#each rows as row}\n{row}\n{/each}</pre>\n",
+        "<pre>{#each rows as row}\n    {row}\n  {/each}</pre>\n",
+      ],
+      [
+        "<pre>{#if b}\n  c\n{:else}\n  d\n{/if}</pre>\n",
+        "<pre>{#if b}\n  c\n{:else}\n  d\n{/if}</pre>\n",
+        "<pre>{#if b}\n    c\n  {:else}\n    d\n  {/if}</pre>\n",
+      ],
+      ["<pre> </pre>\n", "<pre> </pre>\n", "<pre></pre>\n"],
+      ["<textarea> </textarea>\n", "<textarea> </textarea>\n", "<textarea></textarea>\n"],
+      ["<pre>\n\n</pre>\n", "<pre>\n\n</pre>\n", "<pre></pre>\n"],
+    ],
+    "what is ignored is there once, and is the same with every run": [
+      [
+        "<!-- prettier-ignore -->\nwords\n<style>b{c:d}</style>\n<p>behind</p>\n",
+        "<!-- prettier-ignore -->\nwords\n<p>behind</p>\n\n<style>\n  b {\n    c: d;\n  }\n</style>\n",
+        "<!-- prettier-ignore -->\nwords\n<style>b{c:d}</style>\n\n<p>behind</p>\n\n<style>\n  b {\n    c: d;\n  }\n</style>\n",
+      ],
+      [
+        "<p>\n  <!-- prettier-ignore -->\n  two   words\n</p>\n",
+        "<p>\n  <!-- prettier-ignore -->\n  two   words\n</p>\n",
+        "<p>\n  <!-- prettier-ignore -->\n  two   words\n\n</p>\n",
+        false,
+      ],
+      [
+        "{#if b}\n  <!-- prettier-ignore -->\n  two   words\n{/if}\n",
+        "{#if b}\n  <!-- prettier-ignore -->\n  two   words\n{/if}\n",
+        "{#if b}\n  <!-- prettier-ignore -->\n  two   words\n\n{/if}\n",
+        false,
+      ],
+      [
+        "<!-- prettier-ignore -->words <b>y</b>\n",
+        "<!-- prettier-ignore -->words <b>y</b>\n",
+        "<!-- prettier-ignore -->words  <b>y</b>\n",
+        false,
+      ],
+      [
+        "<p><!-- prettier-ignore --><script>b</script>y</p>\n",
+        "<p>\n  <!-- prettier-ignore --><script>\nb\n  </script>y\n</p>\n",
+        "<p>\n  <!-- prettier-ignore --><script>\nb\n  </script>y\n</p>\n",
+      ],
+      [
+        "<table>\n<tr><td>b\n<tr><td>c\n</table>\n",
+        "<table>\n  <tr><td>b\n<tr><td>c\n</table>\n",
+        "<table>\n  <tr><td>b\n<tr><td>c\n\n</table>\n",
+        false,
+      ],
+      [
+        "<ul>\n<!-- prettier-ignore -->\n<li>b\n<li>c\n</ul>\n",
+        "<ul>\n  <!-- prettier-ignore -->\n  <li>b\n  <li>c</li>\n</ul>\n",
+        "<ul>\n  <!-- prettier-ignore -->\n  <li>b\n\n  <li>c</li>\n</ul>\n",
+        false,
+      ],
+    ],
+    "comments in a start tag": [
+      ["<div /* d */>y</div>\n", "<div /* d */>y</div>\n", "<div>y</div>\n"],
+      ["<B\n  // d\n/>\n", "<B\n  // d\n/>\n", "<B />\n"],
+      ['<div\n  b="c"\n  // y > z\n>y</div>\n', '<div\n  b="c"\n  // y > z\n>\n  y\n</div>\n', '<div b="c">y</div>\n'],
+      ["<svelte:options runes /* d */ />\n", "<svelte:options runes /* d */ />\n", "<svelte:options runes />\n"],
+      ['<span b="c" // d\n>y</span>\n', '<span\n  b="c" // d\n>y</span\n>\n', '<span\n  b="c">y</span // d\n>\n'],
+      ['<pre b="c" // d\n>y</pre>\n', '<pre\n  b="c" // d\n>y</pre>\n', '<pre\n  b="c">y</pre> // d\n'],
+      ["<span // d\n>y</span>\n", "<span\n  // d\n>y</span\n>\n", "<span>y</span>\n"],
+    ],
+    "what is written is not left out": [
+      [
+        '<svelte:element this="h{level}">y</svelte:element>\n',
+        '<svelte:element this="h{level}">y</svelte:element>\n',
+        '<svelte:element this="h">y</svelte:element>\n',
+      ],
+      [
+        "<div use:b|c={d} bind:e|f={g} class:h|i={j} let:k|l={m} animate:n|o={p}></div>\n",
+        "<div use:b|c={d} bind:e|f={g} class:h|i={j} let:k|l={m} animate:n|o={p}></div>\n",
+        "<div use:b={d} bind:e={g} class:h={j} let:k={m} animate:n={p}></div>\n",
+      ],
+      ["<input bind:value|b />\n", "<input bind:value|b />\n", "<input bind:value={value | b} />\n"],
+      ["{#await b}c{:catch}{/await}\n", "{#await b}c{:catch}{/await}\n", "{#await b}c{/await}\n"],
+      ["{#await b}c{:catch d} {/await}\n", "{#await b}c{:catch d}{/await}\n", "{#await b}c{/await}\n"],
+      ["{#await b catch d}{/await}\n", "{#await b catch d}{/await}\n", "{#await b}{/await}\n"],
+    ],
+    "what is printed can be parsed": [
+      ["{(/b/).test(c)}\n", "{(/b/.test(c))}\n", "{/b/.test(c)}\n"],
+      ["{(/b/g)}\n", "{(/b/g)}\n", "{/b/g}\n"],
+      ["{(/b/).test(c) ? 1 : 2}\n", "{(/b/.test(c) ? 1 : 2)}\n", "{/b/.test(c) ? 1 : 2}\n"],
+      ["{(@b class {})}\n", "{(@b\nclass {})}\n", "{@b\nclass {}}\n"],
+      ["{(let)[0]}\n", "{(let[0])}\n", "{let[0]}\n"],
+      [
+        "<a bind:b={/* d */ () => c, (v) => c = v} />\n",
+        "<a bind:b={/* d */ () => c, (v) => (c = v)} />\n",
+        "<a bind:b={/* d */ (() => c, (v) => (c = v))} />\n",
+        false,
+      ],
+      ["{#each  b=1}y{/each}\n", "{#each b = 1}y{/each}\n", "{#each (b = 1)}y{/each}\n"],
+    ],
+    "a default that the plugin throws for": [
+      ["{#each b as { c = -1 }}{c}{/each}\n", "{#each b as { c = -1 }}{c}{/each}\n", null],
+      ["{#each b as { c = d() }}{c}{/each}\n", "{#each b as { c = d() }}{c}{/each}\n", null],
+      ["{#each b as [c  =  d.e, f = !g]}{c}{/each}\n", "{#each b as [c = d.e, f = !g]}{c}{/each}\n", null],
+      ["{#await b then { c = `d` }}{c}{/await}\n", "{#await b then { c = `d` }}{c}{/await}\n", null],
+      ["{#await b}y{:catch { c = d ?? e }}{c}{/await}\n", "{#await b}y{:catch { c = d ?? e }}{c}{/await}\n", null],
+      [
+        "{#each b as { c = [-1], d = { e: f() } }}{c}{/each}\n",
+        "{#each b as { c = [-1], d = { e: f() } }}{c}{/each}\n",
+        null,
+      ],
+      ["{#each b as { c = (d, e) }}{c}{/each}\n", "{#each b as { c = (d, e) }}{c}{/each}\n", null],
+    ],
+  };
+  describe.each(Object.entries(damaged))("%s", (_, rows) => {
+    const names = rows.map((_, index) => `${index}.svelte`);
+    const files = (which: 0 | 1) => Object.fromEntries(rows.map((it, index) => [names[index], it[which]]));
+
+    test.each([[{}], [{ ".prettierrc": prettierrc }], [{ ".oxfmtrc.json": oxfmtrc }]])("%j", async config => {
+      const expected = { stderr: "", files: rows.map(it => it[1]), exitCode: 0 };
+      expect(await format({ ...config, ...files(0) }, names)).toMatchObject(expected);
+      expect(await format({ ...config, ...files(1) }, names)).toMatchObject(expected);
+      const checked = await format({ ...config, ...files(0) }, names, ["--debug-check"]);
+      expect(checked).toMatchObject({ stderr: "", files: rows.map(it => it[0]), exitCode: 0 });
+    });
+
+    test.skipIf(!hasRunner)("--debug-check would not let what the plugin prints pass", async () => {
+      const seen = rows.filter(it => it[2] !== null && it[2] !== it[1]);
+      using dir = tempDir("bun-format-svelte", {
+        ...Object.fromEntries(
+          seen.flatMap((it, index) => it.slice(0, 3).map((text, which) => [`${index}.${which}`, text])),
+        ),
+      });
+      // Each with what Bun prints, then with what the plugin prints.
+      const pairs = seen.flatMap((_, index) => [`${index}.0`, `${index}.1`, `${index}.0`, `${index}.2`]);
+      await using proc = spawn({
+        cmd: [bunExe(), "fmt", "--debug-check-svelte", ...pairs],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const expected = seen.map(it => `same\n${it[3] === false ? "same" : "different"}\n`).join("");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
+  });
+
+  test("a start tag that ends with a `//` comment has its `>` on the next line, with bracketSameLine too", async () => {
+    const config = { ".prettierrc": JSON.stringify({ plugins, bracketSameLine: true }) };
+    const rows = [
+      ['<div b="c" // d\n>y</div>\n', '<div\n  b="c" // d\n>\n  y\n</div>\n'],
+      ['<span b="c" // d\n>y</span>\n', '<span\n  b="c" // d\n>y</span>\n'],
+      ['<B b="c" // d\n/>\n', '<B\n  b="c" // d\n/>\n'],
+      [
+        '<div><script b="c" // d\n>let e</script></div>\n',
+        '<div>\n  <script\n    b="c" // d\n  >\n    let e;\n  </script>\n</div>\n',
+      ],
+    ];
+    const names = rows.map((_, index) => `${index}.svelte`);
+    for (const which of [0, 1]) {
+      const files = Object.fromEntries(rows.map((it, index) => [names[index], it[which]]));
+      expect(await format({ ...config, ...files }, names)).toMatchObject({
+        stderr: "",
+        files: rows.map(it => it[1]),
+        exitCode: 0,
+      });
+    }
+  });
+
+  test("what is an expression to Svelte is one in a <textarea> and in the value of an attribute", async () => {
+    // The plugin takes what is in a `<style>` out of the text wherever it finds the letters, so it does not see these.
+    const files = {
+      "a.svelte": "<textarea><style>b{c:d}</style></textarea>\n",
+      "b.svelte": '<iframe srcdoc="<style>b{c:d}</style>" title="e"></iframe>\n',
+    };
+    const result = await format(files, Object.keys(files));
+    expect(result.stderr).toContain('error: Expected "}"\n    at a.svelte:1:21\n');
+    expect(result.stderr).toContain('error: Expected "}"\n    at b.svelte:1:27\n');
+    expect(result).toMatchObject({ files: Object.values(files), exitCode: 2 });
+  });
+
+  test("a no-break space at the end of a component is nothing to Svelte, and would be text before a <style>", async () => {
+    const result = await format({ "a.svelte": "<style></style>\n<p>b</p>\u00A0\n" }, ["a.svelte"]);
+    expect(result).toMatchObject({ stderr: "", files: ["<p>b</p>\n\n<style></style>\n"], exitCode: 0 });
+  });
+
+  test("a range or a cursor is refused with the reason", async () => {
+    for (const flag of ["--range-start=1", "--range-end=2", "--cursor-offset=1"]) {
+      using dir = tempDir("bun-format-svelte", { "a.svelte": input });
+      const result = await formatIn(String(dir), ["a.svelte"], [flag, "a.svelte"]);
+      expect(result.stderr).toStartWith(
+        `error: A range or a cursor offset cannot be used with a Svelte file: "${join(String(dir), "a.svelte")}".\n`,
+      );
+      expect(result).toMatchObject({ files: [input], exitCode: 2 });
+    }
+  });
+
   // The plugin writes the error to stderr too, and goes on.
   describe("what is in a script or a style sheet and cannot be parsed stays as it is, with a warning", () => {
     const warning = (message: string, [line, column, shown]: [number, number, string], name = "a.svelte") =>
@@ -642,12 +968,6 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "There is no open block to end here",
       [4, 5, "<p>{/if}</p>"],
     ],
-    [
-      "in a pattern that the plugin throws for",
-      "{#each a as { b = c() }}{b}{/each}\n",
-      "This cannot be formatted",
-      [1, 13, "{#each a as { b = c() }}{b}{/each}"],
-    ],
   ])("a syntax error is shown where it is: %s", async (_, text, message, [line, column, shown]) => {
     const caret = Buffer.alloc(`${line} | `.length + column - 1, " ").toString() + "^";
     for (const config of [{}, { ".prettierrc": prettierrc }, { ".oxfmtrc.json": oxfmtrc }]) {
@@ -670,10 +990,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "elements.svelte": `${Buffer.alloc(3 * depth, "<b>")}x${Buffer.alloc(4 * depth, "</b>")}\n`,
       "blocks.svelte": `${Buffer.alloc(7 * depth, "{#if a}")}x${Buffer.alloc(5 * depth, "{/if}")}\n`,
       "patterns.svelte": `{#each a as ${Buffer.alloc(depth, "[")}b${Buffer.alloc(depth, "]")}}{b}{/each}\n`,
+      "expressions.svelte": `{${Buffer.alloc(depth, "(")}a${Buffer.alloc(depth, ")")}}\n`,
       "fine.svelte": input,
     };
     const result = await format(files, Object.keys(files), ["--threads=1"]);
-    expect(result.files).toEqual([...Object.values(files).slice(0, 3), output]);
+    expect(result.files).toEqual([...Object.values(files).slice(0, 4), output]);
+    expect(result.stderr).toContain("error: The code is nested too deeply\n    at expressions.svelte\n");
     expect(result.stderr).toContain("error: The code is nested too deeply\n    at elements.svelte\n");
     expect(result.stderr).toContain("error: The code is nested too deeply\n    at blocks.svelte\n");
     expect(result.stderr).toMatch(refusalOf("patterns.svelte"));
@@ -690,6 +1012,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "paragraphs": repeated("<p>some words here</p>\n", n),
       "comments-not-closed": repeated("<!-- ", n),
       "scripts-not-closed": repeated("<script>", n),
+      "starts-of-scripts": repeated("<script ", n),
+      "starts-of-scripts-with-an-attribute": repeated("<script a=", n),
+      "starts-of-scripts-with-a-quote": repeated('<script a="', n),
       "styles-with-a-quote-not-closed": repeated('<style a="', n),
       "attributes-of-a-script": `<script ${repeated('a="b" ', n)}x`,
       "attributes-of-a-script-next-to-quotes": `<script ${repeated('a="b"c ', n)}>`,
@@ -763,6 +1088,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "parentheses-in-a-tag",
       "scripts-not-closed",
       "starts-of-blocks",
+      "starts-of-scripts",
+      "starts-of-scripts-with-a-quote",
+      "starts-of-scripts-with-an-attribute",
       "style-sheets",
       "styles-with-a-quote-not-closed",
       "textareas-not-closed",

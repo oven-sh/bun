@@ -37,6 +37,15 @@ inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::JSV
 }
 
 template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictUTF8String> : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictUTF8String> {
+    // Not through tryConvert's std::optional: the view is large, and this way it is never moved.
+    template<Bun::IDLConversionContext Ctx>
+    static Bun::Bindgen::JSStringUTF8View convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (value.isString()) [[likely]]
+            return Bun::Bindgen::JSStringUTF8View::create(globalObject, JSC::asString(value));
+        return Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictUTF8String>::convert(globalObject, value, ctx);
+    }
+
     template<Bun::IDLConversionContext Ctx>
     static std::optional<Bun::Bindgen::JSStringUTF8View> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
     {

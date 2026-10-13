@@ -104,6 +104,11 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         values: *mut MarkedArgumentBuffer,
     ) -> JSValue;
+    pub fn Bun__Bindgen__constructArrayFromValues(
+        global: *mut JSGlobalObject,
+        values: *const JSValue,
+        count: usize,
+    ) -> JSValue;
     pub fn Bun__Bindgen__createObject(
         global: *mut JSGlobalObject,
         structure_index: u32,

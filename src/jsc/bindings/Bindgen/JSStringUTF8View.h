@@ -21,21 +21,19 @@ public:
     {
     }
 
-    // Resolving a rope and converting can throw.
+    // Resolving a rope and converting can throw. Every path returns `result`, so it is built in the caller's slot.
     static JSStringUTF8View create(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSStringUTF8View result;
         result.m_view = string->view(&globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, result);
         result.m_isNull = false;
         if (result.m_view->is8Bit() && WTF::charactersAreAllASCII(result.m_view->span8())) [[likely]]
             return result;
-        if (!result.convert()) [[unlikely]] {
+        if (!result.convert()) [[unlikely]]
             JSC::throwOutOfMemoryError(&globalObject, scope);
-            return {};
-        }
         return result;
     }
 

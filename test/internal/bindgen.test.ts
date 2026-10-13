@@ -482,6 +482,11 @@ describe("arrays", () => {
     expect(bindgen.range(0)).toEqual([]);
     expect(bindgen.range(4)).toEqual([0, 1, 2, 3]);
     expect(bindgen.range(5000)).toEqual(Array.from({ length: 5000 }, (_, i) => i));
+    for (const length of [7, 8, 9]) {
+      expect(bindgen.range(length)).toEqual(Array.from({ length }, (_, i) => i));
+      const words = Array.from({ length }, (_, i) => "word" + i);
+      expect(bindgen.words(words.join(" "))).toEqual(words);
+    }
     expect(bindgen.words("one twö 三")).toEqual(["one", "twö", "三"]);
     expect(Array.isArray(bindgen.range(1))).toBe(true);
   });

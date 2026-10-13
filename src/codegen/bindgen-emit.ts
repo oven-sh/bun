@@ -577,7 +577,7 @@ ${table(`JS${name}PrototypeTableValues`, prototypeRows)}${table(`JS${name}Constr
 ${privateMethods
   .map(
     method =>
-      `    prototype->putDirect(vm, names.${method.privateSymbol}PrivateName(), JSC::JSFunction::create(vm, globalObject, ${method.length ?? method.requiredCount}, ${asciiLiteral(method.name)}, ${methodHostFunctionName(type, method)}, JSC::ImplementationVisibility::Public), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | 0);`,
+      `    prototype->putDirect(vm, names.${method.privateSymbol}PrivateName(), JSC::JSFunction::create(vm, globalObject, ${method.length ?? method.requiredCount}, ${asciiLiteral(method.name)}, ${methodHostFunctionName(type, method)}, JSC::ImplementationVisibility::Private), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | 0);`,
   )
   .join("\n")}
 }

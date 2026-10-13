@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { symlink } from "fs/promises";
-import { tempDir } from "harness";
+import { isDebug, tempDir } from "harness";
 import path from "path";
 
 test("Object prototype followSymlinks", async () => {
@@ -100,4 +100,26 @@ test("every option is read before a cwd that is too long is reported", () => {
   };
   expect(() => new Bun.Glob("*").scanSync(options)).toThrow("scanSync: invalid `cwd`, longer than");
   expect(read).toEqual(["cwd", "dot"]);
+});
+
+// Debug builds turn on showPrivateScriptsInStackTraces.
+test.skipIf(isDebug)("the native half of scan and scanSync is not in a stack trace", async () => {
+  const cwd = Buffer.alloc(100_000, "a").toString();
+  const glob = new Bun.Glob("*");
+  function scanSync() {
+    return [...glob.scanSync({ cwd })];
+  }
+  async function scan() {
+    return await Array.fromAsync(glob.scan({ cwd }));
+  }
+  const frames = (error: Error) => error.stack!.split("\n").filter(line => line.includes("__scan"));
+  let thrown: Error | undefined;
+  try {
+    scanSync();
+  } catch (error) {
+    thrown = error as Error;
+  }
+  expect(frames(thrown!)).toEqual([]);
+  expect(thrown!.stack).toContain("at scanSync");
+  expect(frames(await scan().catch(error => error))).toEqual([]);
 });

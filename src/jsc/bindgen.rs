@@ -520,7 +520,29 @@ pub mod to_js {
         items: I,
         mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsValue<'a>>,
     ) -> Result<'a, JsValue<'a>> {
+        // As many as a `MarkedArgumentBuffer` holds inline, on this stack, where the GC sees them just the same.
+        let mut inline = [JSValue::ZERO; 8];
+        let mut items = items.into_iter();
+        for count in 0..inline.len() {
+            let Some(item) = items.next() else {
+                // SAFETY: `count` initialized values.
+                return JsValue::from_js_result(crate::call_zero_is_throw(
+                    heap.global(),
+                    || unsafe {
+                        extern_types::Bun__Bindgen__constructArrayFromValues(
+                            heap.global_ptr(),
+                            inline.as_ptr(),
+                            count,
+                        )
+                    },
+                ));
+            };
+            inline[count] = convert(heap, item)?.0;
+        }
         MarkedArgumentBuffer::new(|values| {
+            for value in inline {
+                values.append(value);
+            }
             for item in items {
                 values.append(convert(heap, item)?.0);
             }

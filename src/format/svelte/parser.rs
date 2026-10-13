@@ -1988,12 +1988,89 @@ impl<'a> Parser<'a, '_> {
     }
 }
 
-/// `regex_lang_attribute`: whether the first `<script>` with a `lang` says `ts`. Not for one with a `>` in an attribute
-/// before it.
+/// `lang=(["'])?([^"' >]+)\1[^>]*>` at `at`: the second group. `last_end`: where the last `>` of `text` is.
+fn lang_at(text: &[u8], at: usize, last_end: usize) -> Option<&[u8]> {
+    let value = text.get(at..last_end)?.strip_prefix(b"lang=")?;
+    let (quote, value) = match value {
+        [quote @ (b'"' | b'\''), rest @ ..] => (Some(*quote), rest),
+        _ => (None, value),
+    };
+    let len = (value.iter())
+        .take_while(|it| !matches!(it, b'"' | b'\'' | b' ' | b'>'))
+        .count();
+    (len > 0 && quote.is_none_or(|quote| value.get(len) == Some(&quote))).then(|| &value[..len])
+}
+
+/// Where the white space at `at` ends, if there is any: `\s+`.
+fn behind_white_space(text: &[u8], mut at: usize) -> Option<usize> {
+    let start = at;
+    while let len @ 1.. = strings::js_whitespace_len(text.get(at..)?) {
+        at += len;
+    }
+    (at > start).then_some(at)
+}
+
+/// `(?:[^=>'"/]+=(?:"[^"]*"|'[^']*'|[^>\s]+)\s+)*lang=..` at `start`: the value of the `lang` behind attributes that have
+/// values, in which there can be a `>`. `failed`: from where there is no match, in the whole text.
+fn lang_behind_attributes<'a>(
+    text: &'a [u8],
+    (start, last_end): (usize, usize),
+    failed: &mut FxHashSet<usize>,
+) -> Option<&'a [u8]> {
+    // Where an attribute may start, and what is tried next there: a value in quotes, one without, no more attributes.
+    let mut stack = vec![(start, 0u8)];
+    while let Some((at, way)) = stack.pop() {
+        if way == 2 {
+            match lang_at(text, at, last_end) {
+                Some(lang) => return Some(lang),
+                None => _ = failed.insert(at),
+            }
+            continue;
+        }
+        if failed.contains(&at) {
+            continue;
+        }
+        stack.push((at, way + 1));
+        let name = strings::index_of_any(&text[at..], b"=>'\"/").filter(|&len| len > 0);
+        let Some(value) = name
+            .map(|len| at + len)
+            .filter(|&it| text[it] == b'=')
+            .map(|it| it + 1)
+        else {
+            continue;
+        };
+        let end = match (way, text.get(value)) {
+            (0, Some(quote @ (b'"' | b'\''))) => {
+                strings::index_of_char_usize(&text[value + 1..], *quote).map(|len| value + len + 2)
+            }
+            (0, _) => None,
+            _ => {
+                let mut end = value;
+                while end < text.len()
+                    && text[end] != b'>'
+                    && strings::js_whitespace_len(&text[end..]) == 0
+                {
+                    end += 1;
+                }
+                (end > value).then_some(end)
+            }
+        };
+        if let Some(next) = end.and_then(|it| behind_white_space(text, it)) {
+            stack.push((next, 0));
+        }
+    }
+    None
+}
+
+/// `regex_lang_attribute`: whether the first `<script>` with a `lang` says `ts`, be it the module or the instance.
 fn is_typescript(text: &[u8]) -> bool {
     let (mut at, mut has_comment_end) = (0, true);
-    // A `<script` before this has some of the attributes of one before it, and none of those is it.
+    // A `<script` before this has some of the attributes of one before it, and no `lang=` among those is it.
     let mut checked_until = 0;
+    let mut failed = FxHashSet::default();
+    let Some(last_end) = strings::last_index_of_char(text, b'>') else {
+        return false;
+    };
     while let Some(found) = strings::index_of_char_usize(&text[at..], b'<') {
         at += found + 1;
         let rest = &text[at..];
@@ -2004,34 +2081,31 @@ fn is_typescript(text: &[u8]) -> bool {
             }
             continue;
         }
-        let Some(attributes) = (rest.strip_prefix(b"script"))
-            .filter(|it| at >= checked_until && strings::js_whitespace_len(it) > 0)
+        let Some(attributes) = (rest.starts_with(b"script"))
+            .then(|| behind_white_space(text, at + 6))
+            .flatten()
         else {
             continue;
         };
         // No tag ends from here on.
-        let Some(end) = strings::index_of_char_usize(attributes, b'>') else {
+        let Some(end) = strings::index_of_char_usize(&text[attributes..], b'>') else {
             return false;
         };
-        let attributes = &attributes[..end];
-        // The last `lang=` that has a value.
-        let mut until = attributes.len();
-        while let Some(lang) = strings::last_index_of(&attributes[..until], b"lang=") {
-            until = lang;
-            let value = &attributes[lang + 5..];
-            let (quote, value) = match value {
-                [quote @ (b'"' | b'\''), rest @ ..] => (Some(*quote), rest),
-                _ => (None, value),
-            };
-            let len = value
-                .iter()
-                .take_while(|it| !matches!(it, b'"' | b'\'' | b' '))
-                .count();
-            if len > 0 && quote.is_none_or(|quote| value.get(len) == Some(&quote)) {
-                return &value[..len] == b"ts";
+        // `[^>]*lang=..`: the last `lang=` before the first `>` that has a value, whatever it is in.
+        let mut until = match attributes >= checked_until {
+            true => attributes + end,
+            false => attributes,
+        };
+        while let Some(lang) = strings::last_index_of(&text[attributes..until], b"lang=") {
+            until = attributes + lang;
+            if let Some(lang) = lang_at(text, until, last_end) {
+                return lang == b"ts";
             }
         }
-        checked_until = at + 6 + end;
+        checked_until = checked_until.max(attributes + end);
+        if let Some(lang) = lang_behind_attributes(text, (attributes, last_end), &mut failed) {
+            return lang == b"ts";
+        }
     }
     false
 }

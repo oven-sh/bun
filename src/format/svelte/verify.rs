@@ -415,11 +415,15 @@ impl Check<'_, '_> {
                 self.reader.name(b"", element.name);
                 match (element.this_with_more, element.this) {
                     (Some(written), _) => self.span(written),
-                    // `this={"a"}` is `this="a"`.
+                    // `this={"a"}` is `this="a"`, unless the text stands for something else than the string.
                     (None, Some(this)) if this.kind == ExpressionKind::Text => {
                         self.reader.exact(this.span.of(self.text));
                     }
-                    (None, Some(this)) if this.kind == ExpressionKind::StringLiteral => {
+                    (None, Some(this))
+                        if this.kind == ExpressionKind::StringLiteral
+                            && strings::index_of_any(this.span.of(self.text), b"\\&{")
+                                .is_none() =>
+                    {
                         self.reader.exact(&without_quotes(this.span.of(self.text)));
                         self.comments_around(this);
                     }

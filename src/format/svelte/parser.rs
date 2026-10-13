@@ -1375,7 +1375,7 @@ impl<'a> Parser<'a, '_> {
                 b'{' if !is_in_url && quote.is_none() && has_angle && !is_prelude => return None,
                 b';' | b'{' | b'}' if !is_in_url && quote.is_none() => return Some(at),
                 b'/' if !is_in_url && quote.is_none() && text.get(at + 1) == Some(&b'*') => {
-                    at += 1 + strings::index_of(&text[at + 2..], b"*/")? + 2;
+                    at += len_of_css_comment(&text[at..])? - 1;
                 }
                 _ => {}
             }
@@ -1392,8 +1392,8 @@ impl<'a> Parser<'a, '_> {
             // `allow_comment_or_whitespace`, but for `<!-- -->`, which is no comment to the formatter for style sheets.
             let rest = strings::trim_js_whitespace_start(text.get(at..)?);
             at = text.len() - rest.len();
-            if let [b'/', b'*', inner @ ..] = rest {
-                at += strings::index_of(inner, b"*/")? + 4;
+            if rest.starts_with(b"/*") {
+                at += len_of_css_comment(rest)?;
                 continue;
             }
             match rest.first()? {
@@ -2274,6 +2274,17 @@ fn is_typescript(text: &[u8]) -> bool {
 /// `/[a-zA-Z0-9_-]/`, and the `@` and the `\\` that a name can start with or have in it.
 fn is_in_css_name(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'@' | b'\\')
+}
+
+/// How long the comment is that `text` starts with. `None` also for one with the end of a style sheet and then the start of
+/// another in it: it is not closed, and the `*/` is one of the other. Svelte reads on there.
+fn len_of_css_comment(text: &[u8]) -> Option<usize> {
+    let len = 2 + strings::index_of(text.get(2..)?, b"*/")? + 2;
+    let end_tag = strings::index_of(&text[..len], b"</style");
+    match end_tag.is_some_and(|at| strings::contains(&text[at..len], b"<style")) {
+        true => None,
+        false => Some(len),
+    }
 }
 
 /// Where what is behind the white space and the comments at `at` starts.

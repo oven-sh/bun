@@ -24,6 +24,7 @@ import {
   UnitType,
   WithValueType,
 } from "./bindgen-lib-internal.ts";
+import { cap, low } from "./helpers.ts";
 
 export interface SchemaFile {
   origin: Origin;
@@ -393,16 +394,14 @@ const cppExtern = (symbol: string, signature: Signature, leading: readonly strin
 
 // ───────────────────────────── C++: classes ─────────────────────────────
 
-const capitalize = (name: string) => name[0].toUpperCase() + name.slice(1);
-
 /** As generate-classes.ts spells them: the role is part of the type segment. */
 const symbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}__${member}`;
 const classSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Class__${member}`;
 const protoSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Prototype__${member}`;
 const methodSymbolName = (type: ClassType, method: Method) =>
   (method.receiver === "static" ? classSymbolName : protoSymbolName)(type, method.name.replace(/^_+/, ""));
-const getterSymbolName = (type: ClassType, getter: Getter) => protoSymbolName(type, `get${capitalize(getter.name)}`);
-const setterSymbolName = (type: ClassType, getter: Getter) => protoSymbolName(type, `set${capitalize(getter.name)}`);
+const getterSymbolName = (type: ClassType, getter: Getter) => protoSymbolName(type, `get${cap(getter.name)}`);
+const setterSymbolName = (type: ClassType, getter: Getter) => protoSymbolName(type, `set${cap(getter.name)}`);
 
 const classSymbols = (type: ClassType) => [
   ...[...type.methods, ...type.staticMethods].map(method => methodSymbolName(type, method)),
@@ -425,8 +424,8 @@ namespace Bun::Bindgen::Generated {
 struct ${name}Traits {
     static constexpr auto className = ${asciiLiteral(name)};
     static constexpr unsigned classIndex = ${type.classIndex};
-    static constexpr unsigned numberOfInternalFields = ${type.internalFields.length};
-    static constexpr unsigned numberOfValues = ${type.values.length};
+    static constexpr unsigned numberOfInternalFields = ${type.numberOfInternalFields};
+    static constexpr unsigned numberOfCachedGetters = ${type.cachedGetters.length};
     static size_t payloadSize() { return ${symbolName(type, "payloadSize")}; }
     static void finalize(void* payload) { ${classSymbolName(type, "finalize")}(payload); }
 };
@@ -536,7 +535,7 @@ function cppSourceForClass(type: ClassType): string {
       row(
         builtin.name,
         "JSC::PropertyAttribute::Builtin",
-        `JSC::HashTableValue::BuiltinGeneratorType, ::WebCore::${builtin.builtin}, ${builtin.length}`,
+        `JSC::HashTableValue::BuiltinGeneratorType, ::WebCore::${low(name)}${cap(builtin.name)}CodeGenerator, ${builtin.length}`,
       ),
     ),
   ];
@@ -616,7 +615,7 @@ extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${type.origin!.stem}_$
 
 /** sizeof(JSC::JSDestructibleObject) */
 const offsetOfInternalFields = 24;
-const offsetOfPayload = (type: ClassType) => offsetOfInternalFields + 8 * type.internalFields.length;
+const offsetOfPayload = (type: ClassType) => offsetOfInternalFields + 8 * type.numberOfInternalFields;
 
 function cppSourceForFunction(fn: FunctionDefinition): string {
   const externs = fn.signatures.map(signature => cppExtern(thunkSymbol(fn, signature), signature)).join("\n");
@@ -1045,24 +1044,24 @@ let result = ${infallible(`<${rustPath} as ${trait}>::${setterName}(${[...receiv
     );
   }
 
-  const valueDeclarations = type.values
-    .map(value => {
-      const id = snakeCase(value);
-      return `    fn ${id}_get_cached(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsValue<'a>;
-    fn ${id}_set_cached<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsValue<'a, T>);`;
+  const fieldDeclarations = type.internalFields
+    .map(field => {
+      const id = snakeCase(field);
+      return `    fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsValue<'a>;
+    fn set_${id}_field<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsValue<'a, T>);`;
     })
     .join("\n");
-  const valueDefinitions = type.values
-    .map((value, index) => {
-      const id = snakeCase(value);
+  const fieldDefinitions = type.internalFields
+    .map((field, index) => {
+      const id = snakeCase(field);
       return `    #[inline(always)]
-    fn ${id}_get_cached(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsValue<'a> {
-        // SAFETY: internal field ${index} of ${type.internalFields.length}.
+    fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsValue<'a> {
+        // SAFETY: internal field ${index} of ${type.numberOfInternalFields}.
         unsafe { self.internal_field(heap, ${index}) }
     }
     #[inline(always)]
-    fn ${id}_set_cached<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsValue<'a, T>) {
-        // SAFETY: internal field ${index} of ${type.internalFields.length}.
+    fn set_${id}_field<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsValue<'a, T>) {
+        // SAFETY: internal field ${index} of ${type.numberOfInternalFields}.
         unsafe { self.set_internal_field(heap, ${index}, value) }
     }`;
     })
@@ -1108,13 +1107,13 @@ pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${ru
     unsafe { core::ptr::drop_in_place(payload) }
 }
 ${
-  type.values.length > 0
+  type.internalFields.length > 0
     ? `/// The JS values a \`${name}\` holds.
-pub trait ${name}Values<'a>: Copy {
-${valueDeclarations}
+pub trait ${name}InternalFields<'a>: Copy {
+${fieldDeclarations}
 }
-impl<'a> ${name}Values<'a> for bindgen::JsWrapper<'a, ${rustPath}> {
-${valueDefinitions}
+impl<'a> ${name}InternalFields<'a> for bindgen::JsWrapper<'a, ${rustPath}> {
+${fieldDefinitions}
 }
 `
     : ""

@@ -7,8 +7,8 @@ use crate::bindgen::{
     self, IntoError as _, JsCall, JsHeap, JsPayload as _, JsValue, JsWrapper, WithValue,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestColor, TestCounterClass, TestCounterValues as _, TestFailure, TestOptions, TestOptionsEcho,
-    TestTokenClass, TestValue,
+    TestColor, TestCounterClass, TestCounterInternalFields as _, TestFailure, TestOptions,
+    TestOptionsEcho, TestTokenClass, TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
@@ -195,11 +195,11 @@ impl TestCounterClass for TestCounter {
     }
 
     fn listen<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, listener: JsValue<'a>) {
-        this.listener_set_cached(heap, listener);
+        this.set_listener_field(heap, listener);
     }
 
     fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsCall<'a>) -> bindgen::Result<'a, i32> {
-        if let Some(listener) = this.listener_get_cached(&cx.heap).as_function() {
+        if let Some(listener) = this.listener_field(&cx.heap).as_function() {
             listener.call(cx, this.as_value(), &[])?;
         }
         Ok(this.with(&cx.payloads, |counter| counter.count))

@@ -9,7 +9,7 @@ fn flush<'a>(
         this.with_mut(&mut cx.payloads, |socket| socket.pending.extend_from_slice(bytes))
     });
     let chunk = this.with(&cx.payloads, |socket| cx.heap.create_utf8_string(&socket.pending))?;
-    let Some(callback) = this.ondata_get_cached(&cx.heap).as_function() else {
+    let Some(callback) = this.ondata_field(&cx.heap).as_function() else {
         return Ok(JsValue::UNDEFINED);
     };
     let result = callback.call(cx, this.as_value(), &[chunk.as_value()])?;

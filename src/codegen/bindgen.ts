@@ -66,7 +66,8 @@ function load(file: string): SchemaFile {
     } else if (value instanceof NamedType) {
       // Re-exporting an import is fine; the first file to export a type owns it.
       if (value.origin) continue;
-      assert(name === value.name, `${stem}.bind.ts: export const ${name} declares a type named ${value.name}`);
+      assert(/^[A-Z][A-Za-z0-9]*$/.test(name), `${stem}.bind.ts: type names are PascalCase: ${name}`);
+      value.name = name;
       value.origin = origin;
       result.types.push(value);
     } else {

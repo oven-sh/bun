@@ -9,7 +9,6 @@ import {
   ArrayType,
   BoolType,
   BufferSourceType,
-  BytesType,
   type ClassOptions,
   ClassType,
   type DictionaryOptions,
@@ -26,7 +25,6 @@ import {
   type Type,
   UnionType,
   UnitType,
-  Utf8Type,
 } from "./bindgen-lib-internal.ts";
 
 export type { Capability, Type } from "./bindgen-lib-internal.ts";
@@ -44,31 +42,21 @@ export const { i8, u8, i16, u16, i32, u32, i64, u64, usize } = integers;
 /** Strict: only a number. `.finite`, `.loose`. */
 export const f64 = new DoubleType();
 
-/** An owned `bun_core::String`. Strict: only a string. `.loose` for `ToString`. */
+/**
+ * An owned `bun_core::String`. Strict: only a string. `.loose` for `ToString`. `.utf8` for `&[u8]` for the duration
+ * of the call.
+ */
 export const string = new StringType();
-
-/** `&[u8]`, UTF-8, for the duration of the call. Strict: a string or `String` object. `.loose` for `ToString`. */
-export const utf8 = new Utf8Type();
 
 /** The JS value itself, as a `JsValue<'a>`. */
 export const any = new AnyType();
 
 /**
- * `&[u8]`: the bytes of a typed array, `DataView` or `ArrayBuffer`, for the duration of the call. Not shared
- * ones. Not for `capability: "js"`, where JavaScript could detach them.
+ * A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsValue<'a, ArrayBuffer>` whose `with_bytes`
+ * looks the bytes up each time. `.bytes` for `&[u8]` for the duration of the call, `.arrayBuffer` for a reference on
+ * the `JSC::ArrayBuffer`.
  */
-export const bytes = new BytesType();
-
-/** The same values as a `JsValue<'a, ArrayBuffer>`, whose `with_bytes` looks the bytes up each time. */
 export const bufferSource = new BufferSourceType();
-
-/** The `JSC::ArrayBuffer` behind an `ArrayBuffer`, typed array or `DataView`. Not shared ones. */
-export const arrayBuffer = new RefType(
-  "::Bun::IDLArrayBufferRef",
-  "ArrayBuffer | ArrayBufferView",
-  "bun_jsc::JSCArrayBuffer",
-  null,
-);
 
 /** The native `Blob` behind a JS `Blob`. */
 export const blob = new RefType("::Bun::IDLBlobRef", "Blob", "bun_jsc::webcore_types::Blob", "BunIDLConvertBlob.h");
@@ -78,18 +66,19 @@ const undefined_ = new UnitType("undefined");
 
 export const array = (element: Type) => new ArrayType(element);
 
-/** An array in place of a value lists several spellings of it; the first is the one given back to JS. */
-export const enumeration = (name: string, values: readonly (string | readonly string[])[]) =>
-  new EnumType(name, values);
+// A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.
 
-export const dictionary = (options: string | DictionaryOptions, members: Record<string, Type | MemberOptions>) =>
-  new DictionaryType(options, members);
+/** An array in place of a value lists several spellings of it; the first is the one given back to JS. */
+export const enumeration = (values: readonly (string | readonly string[])[]) => new EnumType(values);
+
+export const dictionary = (members: Record<string, Type | MemberOptions>, options?: DictionaryOptions) =>
+  new DictionaryType(members, options);
 
 /** Alternatives are tried in order. */
-export const union = (name: string, alternatives: Record<string, Type>) => new UnionType(name, alternatives);
+export const union = (alternatives: Record<string, Type>) => new UnionType(alternatives);
 
 /** A JS class whose state is the Rust struct at `options.rustPath`, stored inside the wrapper object. */
-const class_ = (name: string, options: ClassOptions) => new ClassType(name, options);
+const class_ = (options: ClassOptions) => new ClassType(options);
 export { class_ as class };
 
 /** The class being declared, in its own signatures: a `JsWrapper<'a, Self>`. */

@@ -16,9 +16,9 @@ impl Socket {
         }
         Ok(())
     }
-    // `passThis`: the wrapper reaches the class's `values`, not the payload.
+    // `passThis`: the wrapper reaches the class's `internalFields`, not the payload.
     fn listen<'a>(&mut self, this: JsWrapper<'a, Socket>, heap: &JsHeap<'a>, callback: JsValue<'a>) {
         self.bytes_written = 0;
-        this.ondata_set_cached(heap, callback);
+        this.set_ondata_field(heap, callback);
     }
 }

@@ -1,31 +1,26 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-export const SSLConfigSingleFile = b.union("SSLConfigSingleFile", {
+export const SSLConfigSingleFile = b.union({
   string: b.string,
-  buffer: b.arrayBuffer,
+  buffer: b.bufferSource.arrayBuffer,
   file: b.blob,
 });
 
-export const SSLConfigFile = b.union("SSLConfigFile", {
+export const SSLConfigFile = b.union({
   none: b.null,
   string: b.string,
-  buffer: b.arrayBuffer,
+  buffer: b.bufferSource.arrayBuffer,
   file: b.blob,
   array: b.array(SSLConfigSingleFile),
 });
 
-export const ALPNProtocols = b.union("ALPNProtocols", {
+export const ALPNProtocols = b.union({
   none: b.null,
   string: b.string,
-  buffer: b.arrayBuffer,
+  buffer: b.bufferSource.arrayBuffer,
 });
 
 export const SSLConfig = b.dictionary(
-  {
-    name: "SSLConfig",
-    userFacingName: "TLSOptions",
-    fromJS: true,
-  },
   {
     passphrase: b.string.nullable,
     dhParamsFile: {
@@ -112,5 +107,9 @@ export const SSLConfig = b.dictionary(
       type: b.string.nullable,
       internalName: "ecdh_curve",
     },
+  },
+  {
+    userFacingName: "TLSOptions",
+    fromJS: true,
   },
 );

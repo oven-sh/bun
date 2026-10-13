@@ -17,15 +17,15 @@ unsafe impl JsPayload for Socket {
         unreachable!()
     }
 }
-pub trait SocketValues<'a>: Copy {
-    fn ondata_get_cached(self, heap: &JsHeap<'a>) -> JsValue<'a>;
-    fn ondata_set_cached<T>(self, heap: &JsHeap<'a>, value: JsValue<'a, T>);
+pub trait SocketInternalFields<'a>: Copy {
+    fn ondata_field(self, heap: &JsHeap<'a>) -> JsValue<'a>;
+    fn set_ondata_field<T>(self, heap: &JsHeap<'a>, value: JsValue<'a, T>);
 }
-impl<'a> SocketValues<'a> for JsWrapper<'a, Socket> {
-    fn ondata_get_cached(self, heap: &JsHeap<'a>) -> JsValue<'a> {
+impl<'a> SocketInternalFields<'a> for JsWrapper<'a, Socket> {
+    fn ondata_field(self, heap: &JsHeap<'a>) -> JsValue<'a> {
         unsafe { self.internal_field(heap, 0) }
     }
-    fn ondata_set_cached<T>(self, heap: &JsHeap<'a>, value: JsValue<'a, T>) {
+    fn set_ondata_field<T>(self, heap: &JsHeap<'a>, value: JsValue<'a, T>) {
         unsafe { self.set_internal_field(heap, 0, value) }
     }
 }

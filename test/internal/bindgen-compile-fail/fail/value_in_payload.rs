@@ -1,4 +1,4 @@
-// E0478: a payload that holds a value the GC would not see. Values go in the class's `values`.
+// E0478: a payload that holds a value the GC would not see. Values go in the class's `internalFields`.
 struct Holder<'a> {
     callback: JsValue<'a>,
 }

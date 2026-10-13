@@ -1,6 +1,6 @@
 // The converted form for now, the value itself for whatever holds it longer.
-fn to_a_class_value<'a>(this: JsWrapper<'a, Socket>, heap: &JsHeap<'a>, name: WithValue<'a, &'a [u8]>) -> usize {
-    this.ondata_set_cached(heap, name.value);
+fn to_an_internal_field<'a>(this: JsWrapper<'a, Socket>, heap: &JsHeap<'a>, name: WithValue<'a, &'a [u8]>) -> usize {
+    this.set_ondata_field(heap, name.value);
     name.converted.len()
 }
 fn to_a_strong<'a>(heap: &JsHeap<'a>, name: WithValue<'a, &'a [u8]>) -> (Vec<u8>, Strong) {

@@ -2,7 +2,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::api::bun_object" });
 
-export const BracesOptions = b.dictionary("BracesOptions", {
+export const BracesOptions = b.dictionary({
   tokenize: b.bool.loose.default(false),
   parse: b.bool.loose.default(false),
 });

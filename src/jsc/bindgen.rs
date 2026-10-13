@@ -6,7 +6,7 @@
 //! 2. A pointer into memory JavaScript can free, detach, resize or alias is only reachable inside a
 //!    closure that borrows a field of `JsCall`, so rule 1 cannot happen while it is live.
 //! 3. A JS value is a [`JsValue<'a>`], tied to the host call. It cannot be stored anywhere that
-//!    outlives the call; a [`Strong`] and a class's `values` can hold one longer, and the GC visits
+//!    outlives the call; a [`Strong`] and a class's `internalFields` can hold one longer, and the GC visits
 //!    those.
 //!
 //! `test/internal/bindgen-compile-fail` holds one rejected program per hazard.
@@ -363,7 +363,7 @@ impl<'a> JsValue<'a, ArrayBuffer> {
 }
 
 /// An argument in both forms: converted for use now, and the value itself to hand to something that
-/// holds it longer (a class's `values`, a [`Strong`], a JS call, the return value).
+/// holds it longer (a class's `internalFields`, a [`Strong`], a JS call, the return value).
 #[derive(Clone, Copy)]
 pub struct WithValue<'a, T> {
     pub converted: T,
@@ -505,14 +505,14 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         JsWrapperStrong(self.as_value().to_strong(heap), PhantomData)
     }
 
-    /// For the generated `_get_cached`.
+    /// For the generated `x_field`.
     ///
     /// # Safety
-    /// `index` is one of the class's `values`.
+    /// `index` is one of the class's `internalFields`.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn internal_field(self, _: &JsHeap<'a>, index: usize) -> JsValue<'a> {
-        // SAFETY: generated offset inside the cell; `values` are initialized to `undefined`.
+        // SAFETY: generated offset inside the cell; they are initialized to `undefined`.
         JsValue::wrap(unsafe {
             self.0
                 .as_ptr()
@@ -523,7 +523,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         })
     }
 
-    /// For the generated `_set_cached`.
+    /// For the generated `set_x_field`.
     ///
     /// # Safety
     /// As [`internal_field`](Self::internal_field).

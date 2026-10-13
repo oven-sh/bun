@@ -23,27 +23,27 @@ export const requiredAndOptionalArg = b.fn({
   returns: b.i32,
 });
 
-export const utf8Echo = b.fn({ args: { text: b.utf8 }, returns: b.utf8 });
-export const utf8EchoLoose = b.fn({ args: { text: b.utf8.loose }, returns: b.utf8 });
-export const utf8Optional = b.fn({ args: { text: b.utf8.nullable }, returns: b.utf8.nullable });
+export const utf8Echo = b.fn({ args: { text: b.string.utf8 }, returns: b.string.utf8 });
+export const utf8EchoLoose = b.fn({ args: { text: b.string.utf8.loose }, returns: b.string.utf8 });
+export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
 
-export const TestColor = b.enumeration("TestColor", ["red", ["green", "lime"], "blue"]);
+export const TestColor = b.enumeration(["red", ["green", "lime"], "blue"]);
 export const nextColor = b.fn({ args: { color: TestColor }, returns: TestColor });
 
-export const TestOptions = b.dictionary("TestOptions", {
+export const TestOptions = b.dictionary({
   count: b.i32.default(1),
   flag: b.bool.loose.default(false),
-  name: b.utf8.optional,
+  name: b.string.utf8.optional,
   color: TestColor.default("red"),
   ratio: b.f64.nullable,
   payload: b.any,
   renamed: { type: b.u8.optional, altNames: ["oldName"] },
 });
-export const TestOptionsEcho = b.dictionary("TestOptionsEcho", {
+export const TestOptionsEcho = b.dictionary({
   count: b.i32,
   flag: b.bool,
-  name: b.utf8.optional,
+  name: b.string.utf8.optional,
   color: TestColor,
   ratio: b.f64.nullable,
   payload: b.any,
@@ -51,19 +51,19 @@ export const TestOptionsEcho = b.dictionary("TestOptionsEcho", {
 });
 export const optionsEcho = b.fn({ args: { options: TestOptions }, returns: TestOptionsEcho, capability: "heap" });
 
-export const TestValue = b.union("TestValue", {
+export const TestValue = b.union({
   number: b.f64,
   flag: b.bool,
-  text: b.utf8,
+  text: b.string.utf8,
   list: b.array(b.i32),
 });
-export const describeValue = b.fn({ args: { value: TestValue }, returns: b.utf8 });
+export const describeValue = b.fn({ args: { value: TestValue }, returns: b.string.utf8 });
 
 export const sumArray = b.fn({ args: { numbers: b.array(b.i32) }, returns: b.f64 });
 export const range = b.fn({ args: { length: b.u32 }, returns: b.array(b.u32) });
-export const words = b.fn({ args: { text: b.utf8 }, returns: b.array(b.utf8) });
+export const words = b.fn({ args: { text: b.string.utf8 }, returns: b.array(b.string.utf8) });
 
-export const sumBytes = b.fn({ args: { bytes: b.bytes }, returns: b.u32 });
+export const sumBytes = b.fn({ args: { bytes: b.bufferSource.bytes }, returns: b.u32 });
 /** The sum before `callback` runs, then after it, or `null` once the buffer is detached. */
 export const sumBeforeAndAfterCallback = b.fn({
   args: { buffer: b.bufferSource, callback: b.any },
@@ -73,18 +73,22 @@ export const sumBeforeAndAfterCallback = b.fn({
 });
 
 /** The original value if the converted text is not empty. */
-export const withValueEcho = b.fn({ args: { text: b.utf8.loose.withValue }, returns: b.any, capability: "heap" });
+export const withValueEcho = b.fn({
+  args: { text: b.string.utf8.loose.withValue },
+  returns: b.any,
+  capability: "heap",
+});
 
-export const TestFailure = b.enumeration("TestFailure", ["type", "range", "plain", "syscall", "value"]);
+export const TestFailure = b.enumeration(["type", "range", "plain", "syscall", "value"]);
 export const fail = b.fn({ args: { how: TestFailure, value: b.any }, capability: "heap", throws: true });
 
-export const TestCounter = b.class("TestCounter", {
+export const TestCounter = b.class({
   rustPath: "crate::bindgen_test::TestCounter",
   construct: { args: { start: b.i32.default(0) }, capability: "heap", throws: true },
-  values: ["listener"],
+  internalFields: ["listener"],
   proto: {
     count: { getter: b.i32 },
-    label: { getter: b.utf8, setter: true },
+    label: { getter: b.string.utf8, setter: true },
     tag: { getter: b.any, capability: "heap", cache: true },
     increment: { args: { by: b.i32.default(1) }, returns: b.i32, mutates: true },
     listen: { args: { listener: b.any }, capability: "heap", passThis: true },
@@ -93,14 +97,14 @@ export const TestCounter = b.class("TestCounter", {
     /** `other` may be `this`. */
     plus: { args: { other: b.self }, returns: b.i32, capability: "js" },
   },
-  klass: {
+  static: {
     starting: { args: { at: b.i32 }, returns: b.self, capability: "heap" },
     alive: { returns: b.usize },
   },
 });
 
 /** Only native code makes one. */
-export const TestToken = b.class("TestToken", {
+export const TestToken = b.class({
   rustPath: "crate::bindgen_test::TestToken",
   proto: {
     id: { getter: b.u32 },

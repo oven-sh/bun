@@ -35,7 +35,7 @@ struct ClassDefinition {
 //
 // Traits, generated:
 //     static constexpr ASCIILiteral className;
-//     static constexpr unsigned classIndex, numberOfInternalFields, numberOfValues;
+//     static constexpr unsigned classIndex, numberOfInternalFields, numberOfCachedGetters;
 //     static size_t payloadSize();            size_of::<T>(), a constant Rust defines
 //     static void finalize(void* payload);    drop_in_place::<T>
 template<typename Traits>
@@ -99,11 +99,11 @@ private:
     JSBindgenObject(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
-        // Rust reads the schema's `values`, which start as `undefined`. The rest hold cached getters: empty until computed.
+        // Rust reads the schema's `internalFields`, which start as `undefined`. The rest hold cached getters: empty until computed.
         unsigned index = 0;
         for (auto& field : internalFields()) {
             new (NotNull, &field) JSC::WriteBarrier<JSC::Unknown>;
-            if (index++ < Traits::numberOfValues)
+            if (index++ < numberOfInternalFields - Traits::numberOfCachedGetters)
                 field.setWithoutWriteBarrier(JSC::jsUndefined());
         }
     }

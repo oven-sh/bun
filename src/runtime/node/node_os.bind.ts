@@ -24,7 +24,7 @@ export const release = b.fn({ returns: b.string });
 export const totalmem = b.fn({ returns: b.u64 });
 export const uptime = b.fn({ returns: b.f64, capability: "js", throws: true });
 
-export const UserInfoOptions = b.dictionary("UserInfoOptions", {
+export const UserInfoOptions = b.dictionary({
   encoding: b.string.loose.default(""),
 });
 export const userInfo = b.fn({

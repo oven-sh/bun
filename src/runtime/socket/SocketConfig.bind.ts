@@ -1,18 +1,13 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { SSLConfig } from "./SSLConfig.bind.ts";
 
-export const SocketConfigBinaryType = b.enumeration("SocketConfigBinaryType", [
+export const SocketConfigBinaryType = b.enumeration([
   ["arraybuffer", "ArrayBuffer"],
   ["buffer", "Buffer"],
   ["uint8array", "Uint8Array"],
 ]);
 
 export const SocketConfigHandlers = b.dictionary(
-  {
-    name: "SocketConfigHandlers",
-    userFacingName: "SocketHandler",
-    fromJS: true,
-  },
   {
     open: { type: b.any, internalName: "onOpen" },
     close: { type: b.any, internalName: "onClose" },
@@ -33,20 +28,19 @@ export const SocketConfigHandlers = b.dictionary(
       internalName: "binary_type",
     },
   },
+  {
+    userFacingName: "SocketHandler",
+    fromJS: true,
+  },
 );
 
-export const SocketConfigTLS = b.union("SocketConfigTLS", {
+export const SocketConfigTLS = b.union({
   none: b.null,
   boolean: b.bool,
   object: SSLConfig,
 });
 
 export const SocketConfig = b.dictionary(
-  {
-    name: "SocketConfig",
-    userFacingName: "SocketOptions",
-    fromJS: true,
-  },
   {
     socket: {
       type: SocketConfigHandlers,
@@ -59,7 +53,7 @@ export const SocketConfig = b.dictionary(
       internalName: "allow_half_open",
     },
     hostname: {
-      type: b.string.loose.nullable.loose,
+      type: b.string.loose.falsyAsNull,
       altNames: ["host"],
     },
     port: b.u16.loose.nullable,
@@ -84,9 +78,13 @@ export const SocketConfig = b.dictionary(
       internalName: "pause_on_connect",
     },
     unix: {
-      type: b.string.nullable.loose,
+      type: b.string.falsyAsNull,
       internalName: "unix_", // `unix` is a predefined C macro...
     },
     fd: b.i32.optional,
+  },
+  {
+    userFacingName: "SocketOptions",
+    fromJS: true,
   },
 );

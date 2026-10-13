@@ -40,7 +40,10 @@ fn is_safe_to_declare<'a>(names: &[Name<'a>], scope: Scope<'a>) -> bool {
             let mut nodes = symbol.declarations().filter_map(Declaration::node);
             nodes.any(|node| block.contains(utils::estree_span(node)))
         };
-        if function_scope.symbols().any(|it| names.contains(&it.name()) && is_declared_in_block(it)) {
+        if function_scope
+            .symbols()
+            .any(|it| names.contains(&it.name()) && is_declared_in_block(it))
+        {
             return false;
         }
     }
@@ -66,7 +69,10 @@ fn is_safe_from_name_collisions<'a>(else_node: Stmt<'a>, scope: Scope<'a>) -> bo
 
 /// It could continue the statement before it, if that does not end with a `;`.
 fn can_continue_statement(token: Token) -> bool {
-    matches!(token.text().first(), Some(b'(' | b'[' | b'/' | b'+' | b'`' | b'-'))
+    matches!(
+        token.text().first(),
+        Some(b'(' | b'[' | b'/' | b'+' | b'`' | b'-')
+    )
 }
 
 /// `consequent`: that of the `if` whose `else` is `else_node`.
@@ -94,7 +100,8 @@ fn fix<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Optio
     if !last_token_of_else_block.is(";")
         && let Some(next_token) = file.token_after(end_token)
     {
-        let is_on_same_line = file.is_on_same_line(next_token.start(), last_token_of_else_block.start());
+        let is_on_same_line =
+            file.is_on_same_line(next_token.start(), last_token_of_else_block.start());
         if can_continue_statement(next_token) || (is_on_same_line && !next_token.is("}")) {
             return None;
         }
@@ -108,7 +115,10 @@ fn fix<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Optio
     Some(
         FixTracker::new(fixer)
             .retain_enclosing_function(else_node)
-            .replace_text_range(Span::new(else_token.start(), else_node.span().end), fixed_source),
+            .replace_text_range(
+                Span::new(else_token.start(), else_node.span().end),
+                fixed_source,
+            ),
     )
 }
 
@@ -124,10 +134,14 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>
             // For oxc nothing declares `arguments`, and the parameter of a `catch` is in the scope of its block.
             let of_catch = scope.parent().filter(|it| it.kind() == ScopeKind::Catch);
             let is_taken = |name: Name<'a>| {
-                scope.get_name(name).is_some_and(|it| !it.is_implicit_arguments())
+                scope
+                    .get_name(name)
+                    .is_some_and(|it| !it.is_implicit_arguments())
                     || of_catch.is_some_and(|it| it.get_name(name).is_some())
             };
-            if else_scope.node() == Node::Stmt(else_node) && else_scope.symbols().any(|it| is_taken(it.name())) {
+            if else_scope.node() == Node::Stmt(else_node)
+                && else_scope.symbols().any(|it| is_taken(it.name()))
+            {
                 return None;
             }
             (else_node.span().shrink(1, 1), body.last())
@@ -135,12 +149,17 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>
         _ => (else_node.span(), Some(else_node)),
     };
     let (start, end) = (consequent.span().end, else_node.span().end);
-    let needs_newline =
-        matches!(consequent.tag(), StmtTag::Expr | StmtTag::Return) && !consequent.text().ends_with(b";");
-    let is_open = last.is_some_and(|it| !matches!(it.text().trim_ascii_end().last(), Some(b';' | b'}')));
+    let needs_newline = matches!(consequent.tag(), StmtTag::Expr | StmtTag::Return)
+        && !consequent.text().ends_with(b";");
+    let is_open =
+        last.is_some_and(|it| !matches!(it.text().trim_ascii_end().last(), Some(b';' | b'}')));
     let after = file.text().get(end as usize..).unwrap_or_default();
-    let next = after.iter().copied().find(|it| !matches!(it, b' ' | b'\t' | 0x0b | 0x0c));
-    let needs_semicolon = is_open && next.is_some_and(|it| !matches!(it, b'\n' | b'\r' | b'}' | b';'));
+    let next = after
+        .iter()
+        .copied()
+        .find(|it| !matches!(it, b' ' | b'\t' | 0x0b | 0x0c));
+    let needs_semicolon =
+        is_open && next.is_some_and(|it| !matches!(it, b'\n' | b'\r' | b'}' | b';'));
     let newline: &[u8] = if needs_newline { b"\n" } else { b"" };
     let semicolon: &[u8] = if needs_semicolon { b";" } else { b"" };
     let text = [newline, file.slice(kept), semicolon];
@@ -184,7 +203,9 @@ fn returning_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
 }
 
 impl Rule for NoElseReturn {
-    const META: Meta = Meta::eslint("no-else-return", Kind::Suggestion).fixable(Fixable::Code).reports_on_exit();
+    const META: Meta = Meta::eslint("no-else-return", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .reports_on_exit();
     const ON: On = On::new().stmts(&[StmtTag::If]);
     no_state!();
 
@@ -217,9 +238,13 @@ impl Rule for NoElseReturn {
             Some(returning) => {
                 let (start, end) = (consequent.span().end, else_node.span().start);
                 cx.report(returning, UNEXPECTED)
+                    .called_with(statement)
                     .comments_apply_at(Span::new(start, end))
                     .first_label("This consequent block always returns,")
-                    .label(Span::new(start, end), "Making this `else` block unnecessary.")
+                    .label(
+                        Span::new(start, end),
+                        "Making this `else` block unnecessary.",
+                    )
             }
             None => cx.report(else_node, UNEXPECTED),
         };

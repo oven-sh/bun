@@ -370,13 +370,8 @@ impl<'a> TypeNode<'a> {
 
     /// Of an `Import`: the `with: { .. }` of `import("m", { with: { .. } })`.
     pub fn import_attributes(self) -> Option<ImportAttributes<'a>> {
-        let hir::TypeNodeKind::Import { attributes, .. } = self.try_raw()?.kind else {
-            return None;
-        };
-        if attributes == hir::ImportAttributesToken::None {
-            return None;
-        }
-        ImportAttributes::within(self.file, self.span())
+        let options = ImportAttributes::search_span_of_type(&self.file.hir, self.try_raw()?)?;
+        ImportAttributes::within(self.file, options)
     }
 }
 
@@ -479,14 +474,48 @@ pub struct ImportAttributes<'a> {
 }
 
 impl<'a> ImportAttributes<'a> {
-    /// The first that start in `span`.
+    /// The first clause whose keyword is in `span`. Clauses nested in its values come after it.
     pub(crate) fn within(file: &'a File<'a>, span: Span) -> Option<Self> {
-        let all = file.hir.import_attributes;
-        let &(keyword, object) = all.get(all.partition_point(|it| it.0 < span.start))?;
-        (keyword < span.end).then(|| ImportAttributes {
+        let index = Self::index_within(&file.hir, span)?;
+        let &(keyword, object) = file.hir.import_attributes.get(index)?;
+        Some(ImportAttributes {
             keyword,
             object: Expr::new(file, object),
         })
+    }
+
+    /// The index in `Hir::import_attributes` of what [`within`](Self::within) returns.
+    pub(crate) fn index_within(hir: &super::Hir, span: Span) -> Option<usize> {
+        let all = hir.import_attributes;
+        let first = all.partition_point(|it| it.0 < span.start);
+        all.get(first)
+            .is_some_and(|it| it.0 < span.end)
+            .then_some(first)
+    }
+
+    /// Where the keyword of the import type `ty` is, if it has options. The span starts after an argument that isn't a
+    /// string, which can have options of its own. `None` keeps a type without options from finding those of its type
+    /// arguments.
+    pub(crate) fn search_span_of_type(hir: &super::Hir, ty: &hir::TypeNode) -> Option<Span> {
+        let hir::TypeNodeKind::Import {
+            spec,
+            args,
+            attributes,
+            ..
+        } = ty.kind
+        else {
+            return None;
+        };
+        if attributes == hir::ImportAttributesToken::None {
+            return None;
+        }
+        // The parser keeps that argument in `args`.
+        let argument = match spec.is_none() {
+            true => hir.ids.get(args.range()).and_then(|it| it.first()),
+            false => None,
+        };
+        let argument = argument.and_then(|&it| hir.types.get(it as usize));
+        Some(Span::new(argument.map_or(ty.pos, |it| it.end), ty.end))
     }
 
     /// `with`, or the deprecated `assert`.

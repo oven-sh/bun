@@ -72,13 +72,16 @@
               "/runtime/index",
               "/runtime/watch-mode",
               "/runtime/check",
-              "/runtime/lint",
-              "/runtime/format",
               "/runtime/debugger",
               "/runtime/repl",
               "/runtime/bunfig",
               "/runtime/code-generation-from-strings"
             ]
+          },
+          {
+            "group": "Linter & Formatter",
+            "icon": "sparkles",
+            "pages": ["/runtime/lint", "/lint/rules/index", "/lint/plugins", "/runtime/format"]
           },
           {
             "group": "File & Module System",
@@ -311,7 +314,6 @@
           }
         ]
       },
-
       {
         "tab": "Guides",
         "icon": "map",
@@ -500,6 +502,16 @@
               "/guides/test/testing-library",
               "/guides/test/happy-dom",
               "/guides/test/svelte-test"
+            ]
+          },
+          {
+            "group": "Linter & Formatter",
+            "icon": "sparkles",
+            "pages": [
+              "/guides/lint/migrate-from-eslint",
+              "/guides/lint/migrate-from-oxlint",
+              "/guides/format/migrate-from-prettier",
+              "/guides/format/migrate-from-oxfmt"
             ]
           },
           {

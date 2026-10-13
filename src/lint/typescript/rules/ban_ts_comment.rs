@@ -164,8 +164,7 @@ impl BanTsComment {
                     });
                 }
                 DirectiveConfig::Banned if directive == "ignore" => {
-                    cx.report(place, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).suggest(
-                        REPLACE_TS_IGNORE_WITH_TS_EXPECT_ERROR,
+                    cx.report(place, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).suggest_change_of_behavior(REPLACE_TS_IGNORE_WITH_TS_EXPECT_ERROR, &[],
                         |fixer| {
                             let value = comment.comment_value();
                             let at = strings::index_of(value, TS_IGNORE)?;

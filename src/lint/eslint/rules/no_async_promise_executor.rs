@@ -7,7 +7,7 @@ pub struct NoAsyncPromiseExecutor;
 const ASYNC: Message = Message::new("async", "Promise executor functions should not be async.");
 
 impl Rule for NoAsyncPromiseExecutor {
-    const META: Meta = Meta::eslint("no-async-promise-executor", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-async-promise-executor", Kind::Problem).recommended().hints();
     const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
@@ -37,6 +37,7 @@ impl Rule for NoAsyncPromiseExecutor {
             return;
         }
         let start = executor.span().start;
-        cx.report(Span::new(start, start + "async".len() as u32), ASYNC);
+        cx.report(Span::new(start, start + "async".len() as u32), ASYNC)
+            .hint("If it throws, the promise never settles. Await outside of new Promise().");
     }
 }

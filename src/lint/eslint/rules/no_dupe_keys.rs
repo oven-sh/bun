@@ -96,6 +96,7 @@ impl NoDupeKeys {
             let is_duplicate = *defined & defines != 0;
             *defined |= defines;
             // oxlint points at the key before this one.
+            let first = *previous;
             let place = if is_oxlint { std::mem::replace(previous, here) } else { here };
             if !is_duplicate {
                 continue;
@@ -105,13 +106,14 @@ impl NoDupeKeys {
             }
             cx.report(place, UNEXPECTED)
                 .data("name", get_static_key_name(key).unwrap_or_default())
+                .hint_with(|| Some(format!("Only the last one counts. The first is on line {}.", cx.line_of(first.start))))
                 .labels_with(|labels| labels.push(here, "and duplicated here"));
         }
     }
 }
 
 impl Rule for NoDupeKeys {
-    const META: Meta = Meta::eslint("no-dupe-keys", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-dupe-keys", Kind::Problem).recommended().hints();
     const ON: On = On::new().exprs(&[ExprTag::Object]);
     /// What the properties so far of the object that is being checked define, and the last key of that name.
     type State<'a> = FxHashMap<Cow<'a, [u8]>, (u8, Span)>;

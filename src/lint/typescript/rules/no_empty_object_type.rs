@@ -88,7 +88,7 @@ impl NoEmptyObjectType {
             let report = cx.report(place, NO_EMPTY_INTERFACE).data("option", "allowInterfaces");
             if should_suggest {
                 REPLACEMENTS.into_iter().fold(report, |report, replacement| {
-                    report.suggest_with(
+                    report.suggest_change_of_behavior(
                         REPLACE_EMPTY_INTERFACE,
                         &[("replacement", replacement.as_bytes())],
                         |fixer| replace_interface(fixer, interface, replacement.as_bytes()),
@@ -99,7 +99,7 @@ impl NoEmptyObjectType {
         };
         let report = cx.report(place, NO_EMPTY_INTERFACE_WITH_SUPER);
         if should_suggest {
-            report.suggest(REPLACE_EMPTY_INTERFACE_WITH_SUPER, |fixer| {
+            report.suggest_change_of_behavior(REPLACE_EMPTY_INTERFACE_WITH_SUPER, &[], |fixer| {
                 replace_interface(fixer, interface, extended.text())
             });
         }
@@ -125,7 +125,7 @@ impl NoEmptyObjectType {
         }
         let report = cx.report(ty, NO_EMPTY_OBJECT).data("option", "allowObjectTypes");
         REPLACEMENTS.into_iter().fold(report, |report, replacement| {
-            report.suggest_with(
+            report.suggest_change_of_behavior(
                 REPLACE_EMPTY_OBJECT_TYPE,
                 &[("replacement", replacement.as_bytes())],
                 |fixer| fixer.replace(ty, replacement),

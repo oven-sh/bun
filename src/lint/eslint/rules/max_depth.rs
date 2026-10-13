@@ -111,7 +111,8 @@ impl MaxDepth {
     /// An `if` that is directly in another one, as that of `else if`, is not counted where it begins, and is where it
     /// ends. So what follows it in the function is less deep by one.
     fn enter_before_10<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let (Some(max), Node::Stmt(stmt), true) = (self.max, node, ends_a_block_before_10(node)) else {
+        let (Some(max), Node::Stmt(stmt), true) = (self.max, node, ends_a_block_before_10(node))
+        else {
             return;
         };
         let is_if = |it: Stmt| it.tag() == StmtTag::If;
@@ -125,7 +126,9 @@ impl MaxDepth {
         if let Ok(depth) = usize::try_from(*depth)
             && depth > max
         {
-            cx.report(stmt, TOO_DEEPLY).data("depth", depth).data("maxDepth", max);
+            cx.report(stmt, TOO_DEEPLY)
+                .data("depth", depth)
+                .data("maxDepth", max);
         }
     }
 }
@@ -142,18 +145,28 @@ const STATEMENTS: &[StmtTag] = &[
 ];
 /// The tag of a `with` statement.
 const WITH: &[StmtTag] = &[StmtTag::Block];
-const WALKED: NodeTags = NodeTags::FILE.union(NodeTags::FUNC).stmts(STATEMENTS).stmts(WITH);
+const WALKED: NodeTags = NodeTags::FILE
+    .union(NodeTags::FUNC)
+    .stmts(STATEMENTS)
+    .stmts(WITH);
 
 impl Rule for MaxDepth {
     const META: Meta = Meta::eslint("max-depth", Kind::Suggestion);
-    const ON: On = On::new().stmts(STATEMENTS).stmts(WITH).enter(WALKED).exit(WALKED);
+    const ON: On = On::new()
+        .stmts(STATEMENTS)
+        .stmts(WITH)
+        .enter(WALKED)
+        .exit(WALKED);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         MaxDepth {
             max: match object.has("maximum") || object.has("max") {
-                true => object.usize("maximum").filter(|max| *max != 0).or_else(|| object.usize("max")),
+                true => object
+                    .usize("maximum")
+                    .filter(|max| *max != 0)
+                    .or_else(|| object.usize("max")),
                 false => Some(options.number(0).map_or(4, |max| max as usize)),
             },
         }
@@ -175,17 +188,25 @@ impl Rule for MaxDepth {
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
-        let around = cx.state.ancestors.count(Node::Stmt(stmt), |ancestor| match ancestor {
-            Node::Func(_) => Ancestor::End,
-            Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
-            _ => Ancestor::Passed,
-        });
+        let around = cx
+            .state
+            .ancestors
+            .count(Node::Stmt(stmt), |ancestor| match ancestor {
+                Node::Func(_) => Ancestor::End,
+                Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
+                _ => Ancestor::Passed,
+            });
         let depth = around + 1;
         if depth > max {
             let whole = stmt.span();
             // oxlint points at the whole statement.
-            let end = if cx.language().is_oxlint { whole.end } else { whole.start + keyword.len() as u32 };
+            let end = if cx.language().is_oxlint {
+                whole.end
+            } else {
+                whole.start + keyword.len() as u32
+            };
             cx.report(Span::new(whole.start, end), TOO_DEEPLY)
+                .called_with(stmt)
                 .data("depth", depth)
                 .data("maxDepth", max);
         }

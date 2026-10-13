@@ -6,9 +6,10 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::codegen::{Codegen, print_expression};
-use rustc_hash::{FxHashMap, FxHashSet};
+use bun_lint_oxlint::hash_order::HashOrder;
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 
 const MISSING_CALLBACK: Message =
     Message::new("", "React hook {{hook}} requires an effect callback.");
@@ -383,43 +384,59 @@ fn order_in_table<'d, 'a>(
     inserted: &mut dyn Iterator<Item = (&'d Dependency<'a>, u32)>,
     symbols: &[(u32, u32)],
 ) -> Vec<u32> {
-    let mut table: FxHashSet<Hashed> = FxHashSet::default();
+    let (mut seen, mut table): (FxHashSet<Hashed>, HashOrder<u32>) =
+        (FxHashSet::default(), HashOrder::new());
     for (dependency, at) in inserted {
         let place = dependency.symbol.and_then(place_of_symbol);
-        table.insert(Hashed {
+        let hashed = Hashed {
             dependency,
             // oxc keeps the number so that `u32::MAX` is 0.
             symbol: place
                 .and_then(|it| symbols.binary_search(&it).ok())
                 .map(|it| it as u32 ^ u32::MAX),
-            at,
-        });
+        };
+        let hash = FxBuildHasher.hash_one(&hashed);
+        match seen.insert(hashed) {
+            true => table.insert(hash, at),
+            false => table.insert_again(),
+        }
     }
-    table.iter().map(|it| it.at).collect()
+    table.iter().collect()
 }
 
-/// Of `candidates`, which are positions in `declared`, the one that oxlint comes to first: it has them in a hash table.
-fn first_of_oxlint<'a>(
-    candidates: &[usize],
+/// The place of each of `declared` in the hash table in which oxlint has them.
+fn places_in_table<'a>(
     declared: &[(Dependency<'a>, u32)],
     file: &'a File<'a>,
     memo: &mut Memo<'a>,
-) -> Option<usize> {
-    if candidates.len() < 2 {
-        return candidates.first().copied();
-    }
-    let mut is_candidate = vec![false; declared.len()];
-    for at in candidates {
-        if let Some(it) = is_candidate.get_mut(*at) {
-            *it = true;
-        }
-    }
+) -> Vec<usize> {
     let symbols = memo
         .places_of_symbols
         .get_or_insert_with(|| places_of_symbols(file));
     let mut inserted = (declared.iter().enumerate()).map(|(at, it)| (&it.0, at as u32));
-    let order = order_in_table(&mut inserted, symbols);
-    (order.into_iter().map(|at| at as usize)).find(|at| is_candidate.get(*at) == Some(&true))
+    let mut places = vec![0; declared.len()];
+    for (place, at) in order_in_table(&mut inserted, symbols)
+        .into_iter()
+        .enumerate()
+    {
+        if let Some(it) = places.get_mut(at as usize) {
+            *it = place;
+        }
+    }
+    places
+}
+
+/// Puts `positions`, which are in `declared`, in the order in which oxlint comes to them.
+fn sort_as_oxlint<'a>(
+    positions: &mut [usize],
+    declared: &[(Dependency<'a>, u32)],
+    file: &'a File<'a>,
+    memo: &mut Memo<'a>,
+) {
+    if positions.len() > 1 {
+        let places = places_in_table(declared, file, memo);
+        utils::sort::sort_unstable_by_key(positions, |at| places.get(*at).copied());
+    }
 }
 
 /// A dependency that is hashed and compared as oxlint's `Dependency`.
@@ -427,7 +444,6 @@ struct Hashed<'d, 'a> {
     dependency: &'d Dependency<'a>,
     /// oxc's `SymbolId`
     symbol: Option<u32>,
-    at: u32,
 }
 
 /// As a `str` is hashed.
@@ -886,7 +902,7 @@ fn is_declaration_referentially_unique(symbol: Symbol) -> bool {
 /// `appended_to`: the array literal, if oxlint offers to put them at its end, and the `is_first` of [`replace_array`].
 fn report_missing<'a, R: Rule>(
     cx: &Cx<'a, R>,
-    hook: Name<'a>,
+    (node, hook): (Expr<'a>, Name<'a>),
     missing: &[(Span, Vec<u8>)],
     array: Span,
     mutable: Option<&[u8]>,
@@ -922,6 +938,7 @@ fn report_missing<'a, R: Rule>(
                 MISSING_DEPENDENCIES
             },
         )
+        .called_with(node)
         .comments_apply_at(array)
         .data("hook", hook)
         .data("dependencies", names)
@@ -1051,7 +1068,9 @@ pub(crate) fn run<'a, R: Rule>(
     };
     let args = call.args();
     let Some(callback_node) = args.get(callback_index) else {
-        cx.report(node, MISSING_CALLBACK).data("hook", hook);
+        cx.report(node, MISSING_CALLBACK)
+            .called_with(node)
+            .data("hook", hook);
         return;
     };
     let dependencies_node = args.get(callback_index + 1);
@@ -1059,6 +1078,7 @@ pub(crate) fn run<'a, R: Rule>(
     if dependencies_node.is_none() && !is_effect {
         if hook.is_any(&["useCallback", "useMemo"]) {
             cx.report(node, DEPENDENCY_ARRAY_REQUIRED)
+                .called_with(node)
                 .data("hook", hook)
                 .fix(|fixer| fixer.insert_after(callback_node.outer_span(), ", []"));
         }
@@ -1090,7 +1110,7 @@ pub(crate) fn run<'a, R: Rule>(
             let missing = || {
                 report_missing(
                     cx,
-                    hook,
+                    (node, hook),
                     &[(callback_expr.span(), name.bytes().to_vec())],
                     dependencies_node.outer_span(),
                     None,
@@ -1112,12 +1132,15 @@ pub(crate) fn run<'a, R: Rule>(
             }
         }
         _ => {
-            cx.report(callee, UNKNOWN_DEPENDENCIES).data("hook", hook);
+            cx.report(callee, UNKNOWN_DEPENDENCIES)
+                .called_with(node)
+                .data("hook", hook);
             return;
         }
     };
     if callback.is_async() && is_effect {
-        cx.report(callback.estree_span(), ASYNC_EFFECT);
+        cx.report(callback.estree_span(), ASYNC_EFFECT)
+            .called_with(node);
     }
 
     let array = dependencies_node.and_then(|it| {
@@ -1127,6 +1150,7 @@ pub(crate) fn run<'a, R: Rule>(
             ExprKind::Ident(name) if name.is("undefined") && symbol_of(array).is_none() => {}
             _ => drop(
                 cx.report(it.outer_span(), NOT_ARRAY_LITERAL)
+                    .called_with(node)
                     .data("hook", hook),
             ),
         }
@@ -1135,11 +1159,13 @@ pub(crate) fn run<'a, R: Rule>(
 
     let mut found = find_dependencies(callback, true);
     if is_effect && cx.file().mentions("current") {
-        report_refs_in_cleanups(cx, callback, &component, memo);
+        report_refs_in_cleanups(cx, (node, callback), &component, memo);
     }
     let Some(array) = array else {
         if is_effect && find_dependencies(callback, false).has_set_state_call {
-            cx.report(callee, INFINITE_RERENDER).data("hook", hook);
+            cx.report(callee, INFINITE_RERENDER)
+                .called_with(node)
+                .data("hook", hook);
         }
         return;
     };
@@ -1154,7 +1180,9 @@ pub(crate) fn run<'a, R: Rule>(
             continue;
         }
         if element.tag() == ExprTag::Spread {
-            cx.report(element, COMPLEX_EXPRESSION).data("hook", hook);
+            cx.report(element, COMPLEX_EXPRESSION)
+                .called_with(node)
+                .data("hook", hook);
             continue;
         }
         let element = inner(element);
@@ -1164,7 +1192,7 @@ pub(crate) fn run<'a, R: Rule>(
                 let number = found.paths.number_of(&dependency, |_| {});
                 let path = found.paths.get_mut(number);
                 if path.declared != 0 {
-                    cx.report(dependency.span, DUPLICATE);
+                    cx.report(dependency.span, DUPLICATE).called_with(node);
                 } else {
                     declared.push((dependency, number));
                     path.declared = declared.len() as u32;
@@ -1182,8 +1210,12 @@ pub(crate) fn run<'a, R: Rule>(
                         | ExprTag::String
                 );
                 match is_literal {
-                    true => drop(cx.report(element, LITERAL)),
-                    false => drop(cx.report(element, COMPLEX_EXPRESSION).data("hook", hook)),
+                    true => drop(cx.report(element, LITERAL).called_with(node)),
+                    false => drop(
+                        cx.report(element, COMPLEX_EXPRESSION)
+                            .called_with(node)
+                            .data("hook", hook),
+                    ),
                 }
             }
         }
@@ -1202,12 +1234,14 @@ pub(crate) fn run<'a, R: Rule>(
         }
         outer.push(at);
     }
-    let first_outer = first_of_oxlint(&outer, &declared, cx.file(), memo);
+    sort_as_oxlint(&mut outer, &declared, cx.file(), memo);
+    let first_outer = outer.first().copied();
     for (at, (dependency, _)) in outer
         .iter()
         .filter_map(|at| Some((*at, declared.get(*at)?)))
     {
         cx.report(dependency.span, UNNECESSARY_OUTER_SCOPE)
+            .called_with(node)
             .data("hook", hook)
             .data("dependency", dependency.name)
             .fix(|fixer| {
@@ -1258,7 +1292,7 @@ pub(crate) fn run<'a, R: Rule>(
             .collect();
         report_missing(
             cx,
-            hook,
+            (node, hook),
             &missing,
             array.span(),
             mutable.map(|it| it.0.text()).as_deref(),
@@ -1266,20 +1300,28 @@ pub(crate) fn run<'a, R: Rule>(
         );
     }
 
-    for (dependency, _) in &declared {
-        if let Some(Declared::Variable(declarator)) = dependency.symbol.and_then(declaration_of)
-            && let Some(init) = declarator.init().filter(|it| !it.is_parenthesized())
-            && let ExprKind::Call(call) = init.kind()
-            && func_call_without_react_namespace(call).is_some_and(|it| it.is("useEffectEvent"))
-        {
-            cx.report(dependency.span, USE_EFFECT_EVENT);
-        }
+    let is_effect_event = |dependency: &Dependency<'a>| {
+        matches!(dependency.symbol.and_then(declaration_of), Some(Declared::Variable(declarator))
+        if declarator.init().filter(|it| !it.is_parenthesized()).is_some_and(|init| {
+            matches!(init.kind(), ExprKind::Call(call)
+                if func_call_without_react_namespace(call).is_some_and(|it| it.is("useEffectEvent")))
+        }))
+    };
+    let mut effect_events: Vec<usize> = (declared.iter().enumerate())
+        .filter(|(_, it)| is_effect_event(&it.0))
+        .map(|it| it.0)
+        .collect();
+    sort_as_oxlint(&mut effect_events, &declared, cx.file(), memo);
+    for (dependency, _) in effect_events.iter().filter_map(|at| declared.get(*at)) {
+        cx.report(dependency.span, USE_EFFECT_EVENT)
+            .called_with(node);
     }
 
     // Effects may have more dependencies than they need.
     if !is_effect {
         let unnecessary = |dependency: &Dependency| {
             cx.report(array, UNNECESSARY_DEPENDENCY)
+                .called_with(node)
                 .data("hook", hook)
                 .data("dependency", dependency.text());
         };
@@ -1292,36 +1334,53 @@ pub(crate) fn run<'a, R: Rule>(
                 .filter_map(|it| (it.declared as usize).checked_sub(1));
             pairs.extend(above.map(|other| (at.min(other), at.max(other), at)));
         }
+        // oxlint goes through the pairs of its hash table.
+        if pairs.len() > 1 {
+            let places = places_in_table(&declared, cx.file(), memo);
+            let place = |at: usize| places.get(at).copied().unwrap_or(0);
+            for it in &mut pairs {
+                let (first, second) = (place(it.0), place(it.1));
+                (it.0, it.1) = (first.min(second), first.max(second));
+            }
+        }
         utils::sort::sort_unstable(&mut pairs);
         for (dependency, _) in pairs.iter().filter_map(|it| declared.get(it.2)) {
             unnecessary(dependency);
         }
-        for (dependency, number) in declared.iter().filter(|it| !paths.get(it.1).is_found) {
-            let is_needed = paths.get(*number).is_found_within
-                || paths.get(*number).is_undeclared
+        let is_needed = |number: u32| {
+            paths.get(number).is_found
+                || paths.get(number).is_found_within
+                || paths.get(number).is_undeclared
                 || paths
-                    .above(*number)
-                    .any(|it| it.is_undeclared || it.declared != 0);
-            if !is_needed {
-                unnecessary(dependency);
-            }
+                    .above(number)
+                    .any(|it| it.is_undeclared || it.declared != 0)
+        };
+        let mut not_needed: Vec<usize> = (declared.iter().enumerate())
+            .filter(|(_, it)| !is_needed(it.1))
+            .map(|it| it.0)
+            .collect();
+        sort_as_oxlint(&mut not_needed, &declared, cx.file(), memo);
+        for (dependency, _) in not_needed.iter().filter_map(|at| declared.get(*at)) {
+            unnecessary(dependency);
         }
     }
 
     let is_unique = |it: &Dependency<'a>| {
         it.chain.is_empty() && it.symbol.is_some_and(is_declaration_referentially_unique)
     };
-    let changing: Vec<usize> = (declared.iter().enumerate())
+    let mut changing: Vec<usize> = (declared.iter().enumerate())
         .filter(|(_, it)| is_unique(&it.0))
         .map(|it| it.0)
         .collect();
-    let first_changing = first_of_oxlint(&changing, &declared, cx.file(), memo)
-        .filter(|_| outer.is_empty() && undeclared.is_empty());
+    sort_as_oxlint(&mut changing, &declared, cx.file(), memo);
+    let first_changing =
+        (changing.first().copied()).filter(|_| outer.is_empty() && undeclared.is_empty());
     for (at, (dependency, _)) in changing
         .iter()
         .filter_map(|at| Some((*at, declared.get(*at)?)))
     {
         cx.report(dependency.span, CHANGES_EVERY_RENDER)
+            .called_with(node)
             .data("hook", hook)
             .data("dependency", dependency.name)
             .labels_with(|labels| {
@@ -1344,7 +1403,7 @@ pub(crate) fn run<'a, R: Rule>(
 
 fn report_refs_in_cleanups<'a, R: Rule>(
     cx: &Cx<'a, R>,
-    callback: Func<'a>,
+    (node, callback): (Expr<'a>, Func<'a>),
     component: &Component<'a>,
     memo: &mut Memo<'a>,
 ) {
@@ -1394,6 +1453,6 @@ fn report_refs_in_cleanups<'a, R: Rule>(
                 continue;
             }
         }
-        cx.report(member, REF_IN_CLEANUP);
+        cx.report(member, REF_IN_CLEANUP).called_with(node);
     }
 }

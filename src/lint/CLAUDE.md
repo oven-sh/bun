@@ -4,17 +4,127 @@ A linter that is compatible with ESLint and typescript-eslint: the same rule nam
 
 ## Layout
 
-| Path                                   | Crate                     | What                                                                                                                                                                                                                                                               |
-| -------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/lint/`                            | `bun_lint`                | The API: `ast/`, `semantic/`, `tokens/`, `types`, `code_path`, `regex`, `rule.rs`, `context.rs`, `fix.rs`, `options.rs`, `utils/`, `runner.rs`                                                                                                                     |
-| `src/lint/eslint/rules/*.rs`           | `bun_lint_eslint`         | One file per ESLint core rule                                                                                                                                                                                                                                      |
-| `src/lint/typescript/rules/*.rs`       | `bun_lint_typescript`     | One file per typescript-eslint rule                                                                                                                                                                                                                                |
-| `src/lint/plugins/rules/*.rs`          | `bun_lint_plugins`        | Rules of plugins: `react-hooks`, `import`, `n`, and oxlint's `oxc`, `promise`, `node`, `import`                                                                                                                                                                    |
-| `src/lint/{unicorn,react,jest}/rules/` | `bun_lint_unicorn`, ..    | oxlint's `unicorn` / `react`, `react-perf`, `jsx-a11y`, `nextjs` / `jest`, `vitest`: ports of oxlint's rules, found with its configuration only. In `jest/` also `bun:test`: the same rules for the tests of `bun test`, found with every configuration            |
-| `src/lint/oxlint/`                     | `bun_lint_oxlint`         | What the ports of oxlint's rules share: its `ast_util`, its printer, its module records                                                                                                                                                                            |
-| `src/lint/react_compiler/`             | `bun_lint_react_compiler` | The rules of the React Compiler, `react/*` of oxlint and `react-hooks/*` of the plugin for ESLint. `convert.rs` makes the tree of Bun's parser of one function, `src/react_compiler` compiles it, once per file. The rules are declared in `src/lint/react/rules/` |
-| `src/lint/conformance/`                | `bun_lint_conformance`    | Runs the test cases below, in `bun lint --run-eslint-tests` (debug and canary builds)                                                                                                                                                                              |
-| `test/cli/lint/conformance/bundle.zst` |                           | Upstream test cases as JSON, with what real ESLint reports for each. See the README there                                                                                                                                                                          |
+| Path                                   | Crate                     | What                                                                                                                                                                                                                                                                     |
+| -------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/lint/`                            | `bun_lint`                | The API: `ast/`, `semantic/`, `tokens/`, `types`, `code_path`, `regex`, `rule.rs`, `context.rs`, `fix.rs`, `options.rs`, `utils/`, `runner.rs`                                                                                                                           |
+| `src/lint/eslint/rules/*.rs`           | `bun_lint_eslint`         | One file per ESLint core rule                                                                                                                                                                                                                                            |
+| `src/lint/typescript/rules/*.rs`       | `bun_lint_typescript`     | One file per typescript-eslint rule                                                                                                                                                                                                                                      |
+| `src/lint/plugins/rules/*.rs`          | `bun_lint_plugins`        | Rules of plugins: `react-hooks`, `import`, `n`, and oxlint's `oxc`, `promise`, `node`, `import`                                                                                                                                                                          |
+| `src/lint/{unicorn,react,jest}/rules/` | `bun_lint_unicorn`, ..    | oxlint's `unicorn` / `react`, `react-perf`, `jsx-a11y`, `nextjs` / `jest`, `vitest`: ports of oxlint's rules, found with its configuration and without any, not with ESLint's. In `jest/` also `bun:test`: the same rules for `bun test`, found with every configuration |
+| `src/lint/oxlint/`                     | `bun_lint_oxlint`         | What the ports of oxlint's rules share: its `ast_util`, its printer, its module records                                                                                                                                                                                  |
+| `src/lint/react_compiler/`             | `bun_lint_react_compiler` | The rules of the React Compiler, `react/*` of oxlint and `react-hooks/*` of the plugin for ESLint. `convert.rs` makes the tree of Bun's parser of one function, `src/react_compiler` compiles it, once per file. The rules are declared in `src/lint/react/rules/`       |
+| `src/lint/conformance/`                | `bun_lint_conformance`    | Runs the test cases below, in `bun lint --run-eslint-tests` (debug and canary builds)                                                                                                                                                                                    |
+| `test/cli/lint/conformance/bundle.zst` |                           | Upstream test cases as JSON, with what real ESLint reports for each. See the README there                                                                                                                                                                                |
+
+## Add a rule: the checklist
+
+A rule is done when all four are done. CI fails if 2, 3 or 4 is missing.
+
+### 1. Write it
+
+One file, `src/lint/<crate>/rules/<name_in_snake_case>.rs`. See [Writing a rule](#writing-a-rule). Pick the crate by where the rule comes from:
+
+| The rule is                       | Crate                                 | `Meta`                                          |
+| --------------------------------- | ------------------------------------- | ----------------------------------------------- |
+| An ESLint core rule               | `eslint`                              | `Meta::eslint("no-foo", kind)`                  |
+| A typescript-eslint rule          | `typescript`                          | `Meta::typescript("no-foo", kind)`              |
+| A port of an ESLint plugin's rule | `plugins`, `react`                    | `Meta::plugin(Plugin::Import, "no-foo", kind)`  |
+| A port of an oxlint rule          | `unicorn`, `react`, `jest`, `plugins` | `Meta::oxlint(Plugin::Unicorn, "no-foo", kind)` |
+| Bun's own                         | `plugins`, file `bun_no_foo.rs`       | `Meta::plugin(Plugin::Bun, "no-foo", kind)`     |
+
+`kind` decides the default severity: `Kind::Problem` is for code that misbehaves, `Kind::Suggestion` for code that could be better.
+
+### 2. Register it
+
+- Add `module::Struct,` to the `bun_lint::rules! { .. }` list in the crate's `lib.rs`, in alphabetical order. That is the only list. `--rules`, name lookup, aliases, config validation and the docs URL all come from `META`.
+- **Options**: the JSON schema is data, not code.
+  - Bun's own rule: add `"bun/no-foo": [<schema of each option>]` to `src/lint/linter/schema/own.json`. `[]` means no options.
+  - A port: the schema comes from upstream. See the header of `src/lint/linter/schema/generate-schemas.mjs`.
+  - Then regenerate `schemas.txt` and `data.rs` with that script.
+- **On by default?** Almost never. `.recommended()` / `.presets(..)` mirror what upstream's presets turn on. What is on with no config file is `BUILT_IN` in `src/lint/driver/configs.rs`.
+
+### 3. Document it
+
+Every rule has a page: `docs/lint/rules/<plugin>/<rule>.mdx`. It shows up on the website, in `bun lint --explain <rule>` and in editors. Copy a good one: `eslint/eqeqeq.mdx` (options), `eslint/no-var.mdx` (short), `typescript/no-floating-promises.mdx` (types), `bun-test/no-focused-tests.mdx`.
+
+````mdx
+---
+title: "bun/no-foo"
+description: "Disallow `foo()` outside of tests"
+---
+
+What goes wrong without the rule, concretely. One short paragraph.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+foo();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+bar();
+```
+
+## Options
+````
+
+- You write `title` (the ID as reports print it), `description` (one line, at most 110 characters, no full stop) and the text. The rest of the frontmatter, the `## Configure` section and `index.mdx` are generated:
+  ```sh
+  bun src/codegen/lint-rule-docs.ts --write --bun=./build/debug/bun-debug
+  ```
+- **Every example is run.** Each `js` / `jsx` / `ts` / `tsx` block needs a marker on the line before it:
+
+  | Marker                                                          | Meaning                                                                                                |
+  | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+  | `{/* bad */}`                                                   | The rule reports this code                                                                             |
+  | `{/* good */}`                                                  | The rule reports nothing here, and the code parses                                                     |
+  | `{/* bad {"options": ["smart"]} */}`                            | With these options                                                                                     |
+  | `{/* bad {"count": 2} */}`                                      | Exactly two reports                                                                                    |
+  | `{/* good {"filename": "a.test.ts"} */}`                        | The file has this name                                                                                 |
+  | `{/* file "other.js" */}`                                       | Another file next to the next example                                                                  |
+  | `{/* bad {"root": true} */}`                                    | The example is its own project and working directory. For options that are paths, like `src/client/**` |
+  | `{/* bad {"root": true, "packages": {"prettier": "3.9.9"}} */}` | These packages are installed next to it                                                                |
+  | `{/* bad {"config": "oxlint", "settings": {..}} */}`            | Run next to an `.oxlintrc.json`. For a rule that only reports there                                    |
+  | `{/* skip */}`                                                  | Not run. For a fragment that cannot stand alone                                                        |
+  | `{/* never reports */}`                                         | On its own line: the rule reports nothing, so the page needs no `bad` example. Say why in the text     |
+
+- Prettier skips `docs/lint/rules` (`.prettierignore`): it would reformat the examples, and many rules are about exactly that.
+- Say the problem, not "This rule enforces ..". Use normal programmer English. Be succinct. Small realistic examples (`user`, `items`, `save()`, not `foo`). The good example shows how to fix the bad one.
+- Every claim is shown by an example or read in the source. Do not write what you remember about the rule from another linter, and do not copy another tool's docs.
+- An options table (`Option | Default | What it does`) plus an example for each option that is not obvious.
+- **`## Configure` is generated. Don't edit it.** It sits between two marker comments, before `## Examples`. It shows how to turn the rule on in `bunfig.toml`, then every option set to its default. A deprecated rule and a rule that never reports don't get one. Names, types and enum values come from the rule's schema. For an oxlint port, which has no schema, they come from the options table and the `options` of the examples. A default comes from upstream's `defaultOptions`, then from `default` in the schema, then from what you write under `## Options`:
+
+  | You write                                                    | The snippet has                                                |
+  | ------------------------------------------------------------ | -------------------------------------------------------------- |
+  | `` `20` `` in the `Default` column: JSON in backticks        | `max = 20,`                                                    |
+  | Anything else in that column, such as "none"                 | `# max = <number>,`                                            |
+  | ``the value of `fn` if you set it, otherwise `"it"` `` in it | `withinDescribe = "it",`                                       |
+  | `` `"always"` (default) `` or ``The default is `"always"` `` | `"always"`, for an option that is a plain value, not an object |
+
+  The test lints every example on the page twice, with the rule only turned on and with that snippet. If the reports differ, a default is wrong.
+
+### 4. Test it
+
+| The rule is | Where its tests are                                                                                                                            |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| A port      | Upstream's own cases, in `test/cli/lint/conformance/bundle.zst`, with what the real tool reports. See [Testing](#testing) and the README there |
+| Bun's own   | A table in `test/cli/lint/bun-rules.test.ts`: `«` and `»` mark what is reported, a plain string without them is a case with no report          |
+
+```sh
+bun bd test test/cli/lint/bun-rules.test.ts -t no-foo
+bun bd test test/cli/lint/rule-docs.test.ts   # a page for every rule, generated parts up to date, every example and snippet runs
+bun bd test test/cli/lint/conformance.test.ts
+```
+
+Test what the rule must NOT report as hard as what it must: a false positive costs more trust than a miss. If the message alone leaves a reader puzzled, add a hint (see `test/cli/lint/hints.test.ts`).
 
 ## Writing a rule
 
@@ -23,6 +133,7 @@ Read `rule.rs` (module docs) first, then `ast/mod.rs`. `eslint/rules/{no_debugge
 - File `no_foo_bar.rs`, struct `NoFooBar`, `Meta::eslint("no-foo-bar", ..)` / `Meta::typescript(..)`. `use bun_lint::prelude::*;`
 - The struct holds the parsed options and nothing else. It is shared by all threads. Per-file state is `type State<'a>`, returned by `start`, reached as `cx.state`. `no_state!();` writes both for a rule that keeps nothing and is for every file.
 - One `const NAME: Message = Message::new("messageId", "Text with {{placeholders}}.")` per upstream message, with upstream's `messageId` and text verbatim.
+- A message that does not tell what is wrong and what to do gets a hint: `.hint("One sentence.")` or `.hint_with(|| ..)` on the report, `.hints()` on `Meta`, and a case in `test/cli/lint/hints.test.ts`. `pretty` and `agent` print it under the message, no other format does, and never with a configuration of oxlint. It is Bun's own text: one line, about 90 characters, plain words. All work for it is in the closure, which runs only for a report that is shown.
 - `Meta` mirrors upstream `meta`: `kind`, `.fixable(..)`, `.has_suggestions()`, `.recommended()` / `.presets(..)`, `.requires_types()`, `.deprecated()`, `.extends_base_rule(..)`.
 - Options: apply upstream's `defaultOptions` / schema defaults by hand in `new`. `options.object(0)` is empty when missing, so every lookup falls back to the default.
 - The doc comment on the struct is upstream's `meta.docs.description`.
@@ -48,6 +159,24 @@ A listener is a method of `Rule`. `const ON: On` names those that are called, an
 - Reports are sorted by where they start. ESLint leaves what **starts at one place** in the order in which it was reported, which is the order of its traversal: every listener on entering a node before every listener on leaving one, the outer node first on entering and last on leaving, and what is reported when the program ends after all that. That order is printed, and it decides which fix wins. Here the end stands in for the node: the longer first. A rule says where that is wrong: `Meta::reports_on_exit()` (upstream reports in `:exit` listeners or at the end of a function's code path: after what is reported on entering, the shorter first), `Meta::reports_at_the_end()` (only in `Program:exit`: after all that, rule by rule), `Report::on_exit(bool)` where only some listeners are such, `Report::shorter_first()`.
 - **Two reports of one rule with the same span** stay in the order in which they were made. A rule in which two listeners (or two kinds, or two nodes of one kind) can report at one place listens by `enter` / `exit` for those kinds (right for a rule with types, or with few nodes), or collects the candidates and reports in `finish`, sorted by the start of the listened node, the longer first: see `no_unsafe_assignment.rs`. `--run-eslint-tests .. --in-order` fails a case whose messages come in another order than they were recorded.
 
+### When the rule itself fails
+
+A JavaScript rule that can't do its job throws: a file named in its options is missing, or isn't JSON. A report can't say that, because a report has the severity the rule is set to, and a comment can disable it.
+
+| The JavaScript rule                              | Here                                                                                      |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| throws in `create` because of its options alone  | `fn validate(options) -> Result<(), Vec<u8>>`. Checked once per config. It ends the run   |
+| throws anywhere else: `throw new Error(message)` | `cx.throw(node, "Error", message)`, then `return`. `node` is the node the listener is at  |
+| `JSON.parse(text)`                               | `bun_lint::linter::json_parse(text)`: V8's error messages, and no limit on nesting either |
+| `fs.readFileSync(path)`, `fs.existsSync(path)`   | `file.modules()?.read(path)`, `.exists(path)`                                             |
+
+What `cx.throw` does is what the real tool does with a rule that throws, whatever severity the rule has:
+
+- **oxlint config**: the file gets one error, `Error running JS plugin.`, with the path and `Error: message`. It has no rule name, no comment disables it, `--quiet` keeps it, and the exit code is 1. The file keeps what the rules that oxlint has itself report, and loses what every other rule reports: this rule, the JavaScript plugins, and the other native rules that oxlint doesn't have. That's what oxlint does when a rule of a JS plugin throws. A comment that disabled one of the lost reports then counts as unused. The next file is linted as usual.
+- **ESLint config, or none**: the run ends with exit code 2 and `message`, `Occurred while linting <file>:<line>`, `Rule: "<id>"`.
+
+Only one throw per file counts, so calling it from a listener that runs for every node prints one error. `start` has no `cx`: keep the problem in the state and throw from `finish` or the first listener. See `test/cli/lint/rule-throws.test.ts`.
+
 ### Performance rules
 
 - Decide from the syntax first. Touch tokens, comments, line/column, references, scopes and types only when the cheap checks have passed: each of these is computed lazily for the whole file on first use.
@@ -68,7 +197,7 @@ A listener is a method of `Rule`. `const ON: On` names those that are called, an
 ### Code conventions (Bun-wide, enforced by CI)
 
 - No `unsafe`. No `.unwrap()`/`.expect()`/indexing that user input can make panic: use `let .. else`, `?`, `.get()`.
-- Text is `&[u8]`. Searching goes through `bun_core::strings` (`index_of`, `index_of_char_usize`, `index_of_any`, `contains`, `contains_char`, `last_index_of_char`, `split`, ..): `str::find/rfind/contains/split*/replace*/matches`, `slice::windows`, `.iter().position(|b| *b == b'x')`, `.contains(&b'x')` are denied by lints. `==`, `starts_with`, `ends_with`, `trim_ascii`, `eq_ignore_ascii_case` are fine. What JavaScript does to a string (`trim`, `\s`, line breaks, `length`, `<`, `localeCompare`, `Number(s)`, `toFixed`) is written once, in `bun_core::strings` and `bun_core::fmt`: the table at the head of `utils/text.rs` says which function is which. A private helper for text in a rule is a finding of `test/internal/source-lints/shared-helpers.test.ts`.
+- Text is `&[u8]`. Searching goes through `bun_core::strings` (`index_of`, `index_of_char_usize`, `index_of_any`, `contains`, `contains_char`, `last_index_of_char`, `split`, ..): `str::find/rfind/contains/split*/replace*/matches`, `slice::windows`, `.iter().position(|b| *b == b'x')`, `.contains(&b'x')` are denied by lints. `==`, `starts_with`, `ends_with`, `trim_ascii`, `eq_ignore_ascii_case` are fine. What JavaScript does to a string (`trim`, `\s`, line breaks, `length`, `<`, `localeCompare`, `Number(s)`, `toFixed`) is written once, in `bun_core::strings` and `bun_core::fmt`: the table at the head of `utils/text.rs` says which function is which. Do not write a private helper for text in a rule.
 - No `std::fs`, `std::path`, `std::env`, `println!`.
 - Every warning is an error: no unused imports, variables, `mut`, dead code. `pub` only for what another crate uses, otherwise `pub(crate)` or private. (The rule struct and a struct used as its `State<'a>` have to be `pub`.)
 - The clippy lints in `[workspace.lints.clippy]` are denied too. The ones that bite: `derive_partial_eq_without_eq`, `or_fun_call` (`.or_else(|| f())`, not `.or(f())`), `needless_pass_by_value`, `redundant_clone`, `trivially_copy_pass_by_ref`, `needless_collect`.

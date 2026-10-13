@@ -102,7 +102,7 @@ impl AwaitThenable {
             labels.first("This expression is not Promise-like");
             labels.push(keyword, "");
         };
-        cx.report(place, AWAIT).comments_apply_at(keyword).labels_with(labels).suggest(REMOVE_AWAIT, |fixer| {
+        cx.report(place, AWAIT).comments_apply_at(keyword).labels_with(labels).suggest_change_of_behavior(REMOVE_AWAIT, &[], |fixer| {
             let file = fixer.file();
             let await_keyword = file.tokens_in(node).find(is_await_keyword)?;
             let await_removal_fix = fixer.remove(get_await_token_removal_range(file, await_keyword));
@@ -168,7 +168,7 @@ impl AwaitThenable {
                 labels.first("This value is not async iterable");
                 labels.push(head, "");
             })
-            .suggest(CONVERT_TO_ORDINARY_FOR, |fixer| remove_await_token(fixer, node.span()));
+            .suggest_change_of_behavior(CONVERT_TO_ORDINARY_FOR, &[], |fixer| remove_await_token(fixer, node.span()));
     }
 
     fn check_variable_declaration<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {

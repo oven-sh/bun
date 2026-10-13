@@ -16,11 +16,11 @@ pub struct PreferLazySchema {
 
 const EAGER_SCHEMA: Message = Message::new(
     "eagerSchema",
-    "This schema is built as soon as the module is evaluated. Build it when it is first used.",
+    "This schema is built as soon as the module is imported. Build it when it is first used.",
 );
 const EAGER_SCHEMA_WITH_WRAPPER: Message = Message::new(
     "eagerSchemaWithWrapper",
-    "This schema is built as soon as the module is evaluated. Build it when it is first used: `{{wrapper}}(() => ..)`.",
+    "This schema is built as soon as the module is imported. Build it when it is first used: `{{wrapper}}(() => ..)`.",
 );
 
 impl PreferLazySchema {
@@ -41,7 +41,10 @@ impl PreferLazySchema {
             return false;
         }
         match callee.kind() {
-            ExprKind::Ident(name) => self.factory_suffix.as_deref().is_some_and(|it| name.bytes().ends_with(it)),
+            ExprKind::Ident(name) => {
+                self.factory_suffix.as_deref().is_some_and(|it| name.bytes().ends_with(it))
+                    && self.lazy_wrapper.as_deref() != Some(name.bytes())
+            }
             ExprKind::Dot { name, .. } => is_listed(&self.methods, name.bytes()) || self.is_root(chain_start(callee)),
             _ => false,
         }

@@ -6,7 +6,7 @@ import { collect, concatenate } from "./bundle.ts";
 
 afterAll(endChildren);
 
-// The tests of Prettier and of oxfmt, and inputs of our own, run on `bun format`. See the README.md of prettier, oxfmt and own.
+// The tests of Prettier and of oxfmt, and inputs of our own, run on `bun fmt`. See the README.md of prettier, oxfmt and own.
 // `src/format/conformance` runs them: it says what is checked, and what is left out and why.
 //
 // `<suite>/expected.txt` is what the runner printed when it was last written: the checks that fail, one per line, the totals, and what is
@@ -42,7 +42,9 @@ test.skipIf(!hasRunner).concurrent.each([
     );
     await using proc = spawn({
       timeout: 4 * 60_000,
-      cmd: [bunExe(), "format", `--run-${runner}-tests`, bundle, `--every=${every}`],
+      cmd: [bunExe(), "fmt", `--run-${runner}-tests`, bundle, `--every=${every}`],
+      // Not in this repository, which has a `fmt` script.
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",

@@ -545,6 +545,12 @@ fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
                 {
                     return true;
                 }
+                // Without a `;`, the next line would be what it declares. Prettier writes it bare.
+                if matches!(parent, N::ExpressionStatement(_))
+                    && f.options().semicolons.is_as_needed()
+                {
+                    return true;
+                }
             }
             _ => {}
         }

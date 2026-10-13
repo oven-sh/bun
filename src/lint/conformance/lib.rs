@@ -33,6 +33,7 @@ use bun_lint::linter::{Config, FileConfig, LintMessage, Registry, ResolvedConfig
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
+use bun_lint::utils::sort;
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::sync::OnceLock;
@@ -541,7 +542,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             .paths()
             .filter_map(|path| Some((rule_at(path, directory.as_bytes())?, path)))
             .collect();
-        rules.sort_unstable();
+        sort::sort_unstable(&mut rules);
         for (name, path) in rules {
             if flags.rule.is_some_and(|only| only != name) {
                 continue;
@@ -603,7 +604,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     }
     // Those with types take a hundred times as long: they are begun first.
     let mut order: Vec<usize> = (0..chosen.len()).collect();
-    order.sort_by_key(|&at| chosen[at].kind != Kind::Typed);
+    sort::sort_by_key(&mut order, |&at| chosen[at].kind != Kind::Typed);
     let results: Vec<OnceLock<Result<Option<Problem>, ()>>> =
         chosen.iter().map(|_| OnceLock::new()).collect();
     let counts = Counts {

@@ -4,6 +4,7 @@
 //! written once more with the substitutions in the place of the placeholders.
 
 use super::Parser;
+use super::ast::{Flags, Kind, Tree};
 use super::js::write_string;
 use super::map_strings::{MapString, write_mapped};
 pub(crate) use super::utilities::is_placeholder_in_js;
@@ -18,7 +19,7 @@ use crate::text;
 use bun_core::strings;
 use smallvec::SmallVec;
 
-const PLACEHOLDER_START: &[u8] = b"PRETTIER_HTML_PLACEHOLDER_";
+pub(crate) const PLACEHOLDER_START: &[u8] = b"PRETTIER_HTML_PLACEHOLDER_";
 const PLACEHOLDER_END: &[u8] = b"_IN_JS";
 
 /// `isAngularComponentTemplate`: `` @Component({ template: `..` }) ``. `parent`: of the template.
@@ -284,13 +285,22 @@ impl MapString for Substitutions<'_> {
     }
 }
 
-/// Whether `document`, which is what has become of `text`, has all that is in `text` and nothing else: the check that a
-/// file gets before it is written. For oxfmt also no substitution twice: `<${a}>` gets the end tag `</${a}>` from
-/// Prettier, which is another program: no file is written with that. oxfmt leaves such a template as it is.
-fn keeps_content(
+/// Whether an element of `tree` with a substitution in its name has no end tag. It would get one: Prettier makes
+/// `<${a}>b</${a}>` of `<${a}>b`, which evaluates `a` twice. Such a template stays as it is.
+pub(super) fn would_repeat_substitution(tree: &Tree<'_>) -> bool {
+    tree.nodes.iter().any(|node| {
+        node.kind == Kind::Element
+            && !(node.flags).intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
+            && node.name.len() > PLACEHOLDER_START.len()
+            && strings::contains(&node.name.to_ascii_uppercase(), PLACEHOLDER_START)
+    })
+}
+
+/// Whether `document`, which is what has become of `text`, has as many substitutions. oxfmt leaves a template that has
+/// not as it is.
+fn has_as_many_substitutions(
     text: &[u8],
     document: Interned,
-    parser: Parser,
     options: &FormatOptions,
     f: &Formatter<'_>,
 ) -> bool {
@@ -309,15 +319,12 @@ fn keeps_content(
         &mut printed,
     )
     .is_ok()
-        && super::verify::has_same_content(text, &printed, parser)
-        // Those of the HTML are Prettier's for either tool.
-        && (!f.options().flavor.is_oxfmt()
-            || strings::split(text, PLACEHOLDER_START).count()
-                == strings::split(&printed, PLACEHOLDER_START).count())
+        && strings::split(text, PLACEHOLDER_START).count()
+            == strings::split(&printed, PLACEHOLDER_START).count()
 }
 
 /// Writes the template `e` as HTML, if that is what Prettier takes it for: `printEmbedHtmlLike`. Returns whether it
-/// has. If the text cannot be parsed, or something of it would be lost, it has not.
+/// has. If the text cannot be parsed, it has not.
 pub(crate) fn write_template<'a>(
     e: Expr<'a>,
     template: Template<'a>,
@@ -364,7 +371,8 @@ pub(crate) fn write_template<'a>(
     let Ok(top_level_count) = written else {
         return false;
     };
-    if !keeps_content(&text, document, parser, &options, f) {
+    // The options of the HTML are Prettier's for either tool.
+    if f.options().flavor.is_oxfmt() && !has_as_many_substitutions(&text, document, &options, f) {
         return false;
     }
     // In the order of the source, whatever the order of the placeholders: that of the comments.

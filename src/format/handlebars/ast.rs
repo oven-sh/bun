@@ -141,6 +141,8 @@ pub(crate) enum Kind {
     Comment {
         value: Text,
     },
+    /// `<!DOCTYPE html>`, which `@glimmer/syntax` has no node for.
+    Doctype,
     Path {
         head: Head,
         /// `head.original`
@@ -165,7 +167,17 @@ pub(crate) struct Node {
     /// `loc.start.offset` and `loc.end.offset`, in bytes.
     pub(crate) start: u32,
     pub(crate) end: u32,
+    /// `kind` is not all that the template says from `start` to `end`: the parsers have dropped or changed something.
+    /// So that text is printed, as for `prettier-ignore`.
+    pub(crate) is_as_written: bool,
 }
+
+const NO_NODE: Node = Node {
+    kind: Kind::Nothing,
+    start: 0,
+    end: 0,
+    is_as_written: false,
+};
 
 pub(crate) struct Tree {
     pub(crate) nodes: Vec<Node>,
@@ -173,8 +185,8 @@ pub(crate) struct Tree {
     /// The tails of paths, and block parameters.
     names: Vec<Text>,
     owned: Vec<u8>,
-    /// It is not all that the template says: the parsers have dropped or changed something.
-    pub(crate) is_damaged: bool,
+    /// The parsers have dropped something that is in no node. So the template is printed as it is written, all of it.
+    pub(crate) has_lost_text: bool,
 }
 
 impl Default for Tree {
@@ -184,7 +196,7 @@ impl Default for Tree {
             lists: Vec::new(),
             names: Vec::new(),
             owned: Vec::new(),
-            is_damaged: false,
+            has_lost_text: false,
         };
         tree.clear();
         tree
@@ -194,15 +206,11 @@ impl Default for Tree {
 impl Tree {
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
-        self.nodes.push(Node {
-            kind: Kind::Nothing,
-            start: 0,
-            end: 0,
-        });
+        self.nodes.push(NO_NODE);
         self.lists.clear();
         self.names.clear();
         self.owned.clear();
-        self.is_damaged = false;
+        self.has_lost_text = false;
     }
 
     pub(crate) fn add(&mut self, kind: Kind, start: usize, end: usize) -> NodeId {
@@ -210,16 +218,20 @@ impl Tree {
             kind,
             start: start as u32,
             end: end as u32,
+            is_as_written: false,
         });
         (self.nodes.len() - 1) as NodeId
     }
 
     pub(crate) fn node(&self, id: NodeId) -> Node {
-        self.nodes.get(id as usize).copied().unwrap_or(Node {
-            kind: Kind::Nothing,
-            start: 0,
-            end: 0,
-        })
+        self.nodes.get(id as usize).copied().unwrap_or(NO_NODE)
+    }
+
+    /// See [`Node::is_as_written`].
+    pub(crate) fn keep_as_written(&mut self, id: NodeId) {
+        if let Some(node) = self.nodes.get_mut(id as usize) {
+            node.is_as_written = true;
+        }
     }
 
     pub(crate) fn kind(&self, id: NodeId) -> Kind {

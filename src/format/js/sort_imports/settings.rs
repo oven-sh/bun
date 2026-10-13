@@ -5,6 +5,7 @@ use super::organize::{self, TypeOrder};
 use super::trivago::{self, ByLength, Exclude, Group};
 use super::{How, SortImports};
 use bun_core::strings;
+use bun_lint::glob::{Minimatch, MinimatchOptions};
 use bun_lint::options::Json;
 use bun_lint::regex::Regex;
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use std::sync::Arc;
 /// | `prettier-plugin-organize-imports` | `organizeImportsSkipDestructiveCodeActions`, `organizeImportsTypeOrder` |
 /// | the `compilerOptions` of the `tsconfig.json` of the file, which that plugin reads | `tsconfig.jsx`, `tsconfig.jsxFactory`, `tsconfig.jsxFragmentFactory`, `tsconfig.reactNamespace` |
 /// | oxfmt | `sortImports`, which used to be `experimentalSortImports` |
+/// | Bun | `bun.sortImports`, set by `sortImports` under `[fmt]` in bunfig.toml or by `--sort-imports` |
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Settings {
     entries: Vec<(Box<[u8]>, Box<[u8]>)>,
@@ -45,6 +47,7 @@ const OF_IANVS: [&[u8]; 3] = [
 /// How the names of `@trivago/prettier-plugin-sort-imports`, of `@ianvs/prettier-plugin-sort-imports` and of their forks end.
 const SORT_IMPORTS: &[u8] = b"/prettier-plugin-sort-imports";
 const ORGANIZE_IMPORTS: &[u8] = b"prettier-plugin-organize-imports";
+const OF_BUN: &[u8] = b"bun.sortImports";
 
 fn invalid(name: &[u8], value: &[u8]) -> Vec<u8> {
     [b"Invalid ", name, b" value: ", value, b"."].concat()
@@ -60,6 +63,7 @@ impl Settings {
                 | b"importOrderParserPlugins"
                 | b"sortImports"
                 | b"experimentalSortImports"
+                | OF_BUN
         ) || name.starts_with(b"organizeImports")
             || matches!(
                 name,
@@ -129,7 +133,7 @@ impl Settings {
         if !value.trim_ascii_start().starts_with(b"[") {
             return Ok(Some(vec![value.to_vec()]));
         }
-        let Some(Json::Array(items)) = bun_lint::json::parse(value) else {
+        let Some(items) = bun_lint::json::parse(value).and_then(Json::into_array) else {
             return Err(invalid(name, value));
         };
         let strings: Option<Vec<Vec<u8>>> = items
@@ -206,7 +210,7 @@ impl Settings {
                 .unwrap_or_default()
                 .iter())
             .map(|pattern| Exclude {
-                glob: bun_glob::Pattern::new(pattern, bun_glob::Options::MINIMATCH),
+                glob: Minimatch::with(pattern, MinimatchOptions::default()),
                 has_slash: strings::contains_char(pattern, b'/'),
             })
             .collect(),
@@ -287,13 +291,18 @@ impl Settings {
 
     /// `None`: imports are left as they are. `Err`: what is wrong, for the user.
     pub fn compile(&self) -> Result<Option<Arc<SortImports>>, Vec<u8>> {
-        if let Some(value) = self
-            .get(b"sortImports")
-            .or_else(|| self.get(b"experimentalSortImports"))
-        {
-            return Ok(super::oxfmt::compile(value)?.map(|options| {
+        // The last one set wins.
+        let is_about_all = |it: &&(Box<[u8]>, Box<[u8]>)| {
+            matches!(&*it.0, b"sortImports" | b"experimentalSortImports" | OF_BUN)
+        };
+        if let Some((name, value)) = self.entries.iter().rfind(is_about_all) {
+            let is_native = **name == *OF_BUN;
+            return Ok(super::oxfmt::compile(value, is_native)?.map(|options| {
                 Arc::new(SortImports {
-                    how: How::Oxfmt(options),
+                    how: match is_native {
+                        true => How::Native(options),
+                        false => How::Oxfmt(options),
+                    },
                 })
             }));
         }

@@ -75,7 +75,8 @@ impl Suppressions {
             }
             read => read.ok(),
         };
-        let Some(Json::Object(files)) = text.and_then(|text| bun_lint::json::parse(&text)) else {
+        let parsed = text.and_then(|text| bun_lint::json::parse(&text));
+        let Some(files) = parsed.and_then(Json::into_object) else {
             return Err(Fatal(
                 [b"Failed to parse suppressions file at ", path].concat(),
             ));
@@ -101,6 +102,7 @@ impl Suppressions {
     }
 
     /// `save`: `stringify(suppressions, { space: 2 })` of `json-stable-stringify`.
+    #[optimize(size)]
     pub(crate) fn save(&mut self, path: &[u8]) -> Result<(), Fatal> {
         bun_lint::utils::sort::sort_by(&mut self.0, |a, b| a.0.cmp(&b.0));
         let mut out = b"{".to_vec();

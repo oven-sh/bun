@@ -1,7 +1,8 @@
 //! Functions: declarations, expressions, arrow functions, parameters.
 
+use super::declared::Declares;
 use super::stmt::{ModifiersOf, Start};
-use super::{ListKind, Parser, ctx, take_span};
+use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -59,6 +60,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.note_identifier(name.0, name.1);
             self.next_after_name();
             name
+        } else if (self.token() == T::LessThan
+            || self.token() == T::OpenParen && flags.contains(Flags::AMBIENT))
+            && self.reports_like_oxc()
+        {
+            // `declare function ();`, `function <T>() {}`: oxc wants no name there.
+            (Atom::NONE, self.pos())
         } else if !flags.contains(Flags::DEFAULT) {
             let full = self.full_start();
             match self.missing_identifier(0, 0) {
@@ -77,6 +84,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     .map_or(start.pos, |it| it.pos),
             )
         };
+        if name.is_some() {
+            self.declare(name, Declares::Function);
+        }
         let func = self.function_rest(FnKind::Decl, fn_flags, name, name_pos, start.pos);
         let modifiers = self.take_modifiers(base);
         self.add_stmt(StmtKind::Fn(func), start, modifiers)
@@ -94,7 +104,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             flags |= Flags::GENERATOR;
         }
         // Its name is read in the context of its body.
-        let saved = self.enter_context(signature_context(flags), ctx::YIELD | ctx::AWAIT);
+        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
+        let saved = self.enter_context(signature_context(flags), cleared);
         let (mut name, mut name_pos) = (Atom::NONE, start);
         if self.is_binding_identifier() {
             (name, name_pos) = (self.lx.atom, self.pos());
@@ -140,13 +151,23 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         (name, name_pos): (Atom, u32),
         start: u32,
     ) -> FnId {
+        // For oxc, in whose types `await` and `yield` mean what they mean around the type, the type parameters and the return
+        // type are in the function.
+        let outer = self.context;
+        if self.options.dialect.oxc {
+            let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
+            self.context = outer & !cleared | signature_context(flags);
+        }
         let type_params = self.type_parameters();
         let anchor = match self.token() {
             T::OpenParen => self.pos(),
             // `createMissingList`
             _ => self.full_start().saturating_sub(1),
         };
+        let odd_parameters = self.odd_parameters;
         let (this_param, params) = self.parameters(signature_context(flags));
+        let parameters = (odd_parameters, this_param);
+        self.note_parameters_of_accessor(kind, params);
         let ret = match self.token() {
             T::Colon => {
                 self.next();
@@ -154,9 +175,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             _ => TypeNodeId::NONE,
         };
+        self.context = outer;
         // `parseFunctionBlockOrSemicolon`
         let (body, open) = match self.token() {
-            T::OpenBrace => self.function_block(signature_context(flags)),
+            T::OpenBrace => {
+                self.note_parameters(type_params, params);
+                self.function_block(signature_context(flags))
+            }
             // `parseBlock` without its `{`
             _ if kind == FnKind::Expr || self.recovers() && !self.can_parse_semicolon() => {
                 match code {
@@ -168,7 +193,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             _ => {
                 // Flow has a function without a body only where it is declared.
-                if self.is_flow && !self.has_context(ctx::AMBIENT) {
+                if self.is_flow() && !self.has_context(ctx::AMBIENT) {
                     self.fail();
                 }
                 self.semicolon();
@@ -197,18 +222,27 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
         }
+        if self.is_odd_function((kind, flags), parameters, &body) {
+            self.check_function_like_oxc(func, open);
+        }
         func
     }
 
     /// `parseFunctionBlock`, at the `{`: the body, and the position of the `{`.
     pub(crate) fn function_block(&mut self, context: u32) -> (FnBody, u32) {
         let open = self.pos();
-        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR;
+        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR | ctx::CLASS_MEMBER;
+        let cleared = cleared | ctx::IN_LOOP | ctx::IN_SWITCH;
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
         // Only a block whose `{` is put up with has none.
         let open_at = self.expect(T::OpenBrace).then_some(open);
+        if self.token() == T::String {
+            self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
+        }
+        self.open_function();
         let list = self.statements_until_close_brace();
+        self.close_scope();
         self.context = saved;
         self.expect_matching((T::OpenBrace, T::CloseBrace), open_at);
         if self.token() == T::Equals {
@@ -235,7 +269,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.token() != T::LessThan {
             return Span::EMPTY;
         }
-        if self.is_flow {
+        if self.is_flow() {
             return self.flow_type_parameters();
         }
         let less_than = self.pos();
@@ -252,12 +286,18 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let start = self.pos();
             let modifiers = self.s.modifiers.len();
             let flags = match self.token().is_modifier() {
-                true => self.modifiers(ModifiersOf::TypeParameter),
+                true => {
+                    self.f.rare_syntax |= rare::TYPE_PARAMETER_MODIFIER;
+                    self.modifiers(ModifiersOf::TypeParameter)
+                }
                 false => Flags::empty(),
             };
             // The checker reports the others, which are in the list.
             let flags = flags & (Flags::IN | Flags::OUT | Flags::CONST);
             let (name, pos, start) = if self.is_identifier() {
+                if self.token() != T::Identifier && self.reports_like_oxc() {
+                    self.check_type_name_like_oxc(oxc::TypeName::TypeParameter);
+                }
                 let (name, pos) = (self.lx.atom, self.pos());
                 self.note_identifier(name, pos);
                 self.next_after_name();
@@ -298,12 +338,23 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.recovers() && self.s.type_params.len() == base {
             self.empty_type_parameters(less_than);
         }
+        if self.s.type_params.len() == base
+            && self.token() == T::GreaterThan
+            && self.reports_like_oxc()
+        {
+            let list = (less_than, self.lx.end);
+            oxc::empty_type_parameters(&mut self.f.diagnostics, list);
+        }
         if self.options.is_javascript
             && let [first, .., last] | [first @ last] = self.s.type_params[base..]
         {
             self.js_error((first.start, last.end), 8004, b"");
         } else if self.is_ecmascript {
-            self.report();
+            match self.is_for_oxc() {
+                // As for a list that is not empty: it is at what follows the `<`.
+                true => self.js_error((less_than + 1, Diagnostic::NO_LENGTH), 8004, b""),
+                false => self.report(),
+            }
         }
         self.expect(T::GreaterThan);
         take_span!(self, type_params, base)
@@ -378,6 +429,22 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         })
     }
 
+    /// `rare::ODD_ACCESSOR`, after the parameters of a function.
+    #[inline]
+    pub(crate) fn note_parameters_of_accessor(&mut self, kind: FnKind, params: Span<ParamId>) {
+        let first = self.f.params.get(params.start as usize);
+        let is_odd = match kind {
+            FnKind::Getter => !params.is_empty(),
+            FnKind::Setter => {
+                params.len != 1 || first.is_some_and(|it| it.flags.contains(Flags::REST))
+            }
+            _ => false,
+        };
+        if is_odd {
+            self.f.rare_syntax |= rare::ODD_ACCESSOR;
+        }
+    }
+
     /// `parseParametersWorker`
     pub(crate) fn parameter_list(&mut self, context: u32, close: T) -> Span<ParamId> {
         self.parameter_list_if(context, close, Ambiguity::Allowed)
@@ -421,9 +488,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         ambiguity: Ambiguity,
     ) -> Option<Span<ParamId>> {
         let outer_await = self.context & ctx::AWAIT;
-        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
+        // oxc reads the parameters of a signature in a type in the context around the type.
+        let cleared = match self.has_context(ctx::TYPE) {
+            true => self.cleared_in_types | ctx::TOP_LEVEL,
+            false => ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL,
+        };
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
+        let suspensions = self.suspensions;
         let base = self.s.params.len();
         let modifiers = self.s.param_modifiers.len();
         let decorators = self.s.decorators.len();
@@ -439,6 +511,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         self.leave_list(lists);
         self.context = saved;
+        if self.suspensions != suspensions {
+            self.f.rare_syntax |= rare::SUSPENDS_IN_PARAMETERS;
+        }
         if self.s.params.len() > base + 1 {
             self.note_names_of_parameters(base);
         }
@@ -522,6 +597,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             pat = self
                 .f
                 .pat(PatKind::Ident(known::this), self.lx.start, self.lx.end);
+            if self.s.params.len() > base && self.reports_like_oxc() {
+                oxc::this_after_parameter(&mut self.f.diagnostics, self.lx.start);
+            }
             self.next();
             // A decorator of `this` is an error of the parser.
             if token.is_modifier() || token == T::At {
@@ -560,6 +638,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.next();
                 flags |= Flags::OPTIONAL;
             }
+        }
+        if !flags.is_empty() || has_modifiers {
+            self.odd_parameters = self.odd_parameters.wrapping_add(1);
         }
         let ty = self.type_annotation();
         // `this` has none.
@@ -705,7 +786,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 return false;
             }
             p.next();
-            p.token() == T::EqualsGreaterThan && !p.newline_before()
+            // oxc takes the arrow function, and reports the line break.
+            p.token() == T::EqualsGreaterThan && (!p.newline_before() || p.options.dialect.oxc)
         });
         if !is_arrow {
             return None;
@@ -768,7 +850,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.next();
             match self.token() {
                 // `(a: T)` can be a cast.
-                T::Colon if self.is_flow => Tristate::Unknown,
+                T::Colon if self.is_flow() => Tristate::Unknown,
                 // "If we have something like '(a:', then we must have a type-annotated parameter"
                 T::Colon => Tristate::True,
                 T::Question => {
@@ -790,7 +872,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if !self.is_identifier() && self.token() != T::Const {
                 return Tristate::False;
             }
-            if !self.options.is_jsx || self.is_flow {
+            if !self.options.is_jsx || self.is_flow() {
                 return Tristate::Unknown;
             }
             // "JSX overrides"
@@ -837,11 +919,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true => Ambiguity::Allowed,
             false => Ambiguity::Refused,
         };
-        let (this_param, params) = self.parameters_if(signature_context(flags), ambiguity)?;
+        // oxc reads the parameters as an expression first, in the context around the arrow function.
+        let around = match self.options.dialect.oxc {
+            true => self.context & (ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL),
+            false => 0,
+        };
+        let context = signature_context(flags) | around;
+        let odd_parameters = self.odd_parameters;
+        let (this_param, params) = self.parameters_if(context, ambiguity)?;
+        let parameters = (odd_parameters, this_param);
         let errors = self.f.diagnostics.len();
         let has_return_colon = self.token() == T::Colon;
         let ret = match has_return_colon {
-            true if self.is_flow => {
+            true if self.is_flow() => {
                 self.next();
                 self.flow_return_type_of_arrow_function()
             }
@@ -859,6 +949,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return None;
         }
         let last = self.token();
+        if last == T::EqualsGreaterThan && self.newline_before() && self.is_for_oxc() {
+            oxc::arrow_after_line_break(&mut self.f.diagnostics, self.lx.start);
+        }
         if last != T::EqualsGreaterThan && !self.recovers() {
             // Before a `{` TypeScript takes it for an arrow function whose `=>` is missing.
             if last == T::OpenBrace && !self.has_failed() && !self.is_ecmascript {
@@ -879,6 +972,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let (body, open) = match last {
             T::EqualsGreaterThan | T::OpenBrace => {
+                if self.token() == T::OpenBrace {
+                    self.note_parameters(type_params, params);
+                }
                 self.arrow_function_body(flags, allow_return_type)
             }
             // `parseIdentifier`
@@ -915,6 +1011,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         });
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
+        }
+        if self.is_odd_function((FnKind::Arrow, flags), parameters, &body) {
+            self.check_function_like_oxc(func, open);
         }
         if self.reads_jsdoc() {
             self.function_jsdoc(func, start);
@@ -990,11 +1089,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             loc: TextRange { pos: full, end },
         });
         let anchor = self.pos();
+        if self.newline_before() && self.is_for_oxc() {
+            oxc::arrow_after_line_break(&mut self.f.diagnostics, anchor);
+        }
         self.next();
         let flags = match is_async {
             true => Flags::ASYNC,
             false => Flags::empty(),
         };
+        if self.token() == T::OpenBrace {
+            self.note_parameters(Span::EMPTY, Span::new(param.0, 1));
+        }
         let (body, open) = self.arrow_function_body(flags, allow_return_type);
         let func = self.f.add_fn(Func {
             kind: FnKind::Arrow,

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -169,8 +169,11 @@ describe("docs/lint/rules", () => {
 
     // The website underlines these in the examples.
     const now = reportsOf(examples, outcomes);
+    // A message can have a path in it, as import/no-relative-packages does. The file is written on Linux or macOS.
+    const portable = (reports: unknown) =>
+      isWindows && reports ? JSON.parse(JSON.stringify(reports).replaceAll("\\\\", "/")) : reports;
     for (const name of names)
-      if (!Bun.deepEquals(recorded[name], now[name]))
+      if (!Bun.deepEquals(portable(recorded[name]), portable(now[name])))
         wrong.push(`${name}: reports.json is out of date. Run \`bun src/codegen/lint-rule-docs.ts --write\`.`);
     expect(wrong).toEqual([]);
   });

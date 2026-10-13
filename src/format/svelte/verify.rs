@@ -590,7 +590,9 @@ pub(crate) fn has_same_content(
         signature(before, parsers, sensitivity),
         signature(after, parsers, sensitivity),
     ) {
-        (Some(before), Some(after)) => before == after,
+        // A comment in an expression is not counted. It is behind the expression once the parentheses go that it was in:
+        // `{a ? b : (c // d\n)}`.
+        (Some(before), Some(after)) => before.0 == after.0 && before.1 <= after.1,
         _ => false,
     }
 }

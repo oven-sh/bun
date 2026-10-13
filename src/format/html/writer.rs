@@ -374,6 +374,12 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.tag(Tag::EndLineSuffix);
     }
 
+    /// `lineSuffixBoundary`
+    pub(crate) fn line_suffix_boundary(&mut self) {
+        self.flush();
+        self.f.write_element(FormatElement::LineSuffixBoundary);
+    }
+
     /// `dedentToRoot(softline)`
     pub(crate) fn softline_dedented_to_root(&mut self) {
         self.indent_tag(Tag::StartDedent(DedentMode::Root));

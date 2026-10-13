@@ -1959,7 +1959,8 @@ impl<'a, 'o> Printer<'a, 'o> {
                             .tree
                             .fragment(it)
                             .iter()
-                            .any(|&it| !printer.is_empty_text(it))
+                            // In `<pre>` white space is something.
+                            .any(|&it| printer.pre_depth > 0 || !printer.is_empty_text(it))
                     })
                 };
                 // The plugin leaves out a `{:catch}` with nothing in it too. Without one, Svelte throws the error again.

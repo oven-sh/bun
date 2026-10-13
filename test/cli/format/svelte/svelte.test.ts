@@ -835,6 +835,144 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
   });
 
+  describe("a comment that waits for the end of the line does not get out of its expression", () => {
+    // The text, what becomes of it, what becomes of that, which stays, and what must not become of the text: the comment is
+    // behind the `}` there. Once the parentheses are gone the comment is behind the expression and no longer breaks it, as
+    // in a file of JavaScript. `null`: these were right before. `false`: `--debug-check` has nothing to say about that, where
+    // it is a comment in the tag.
+    const rows: [string, string, string, string | null, false?][] = [
+      [
+        "<button onclick={() => (\n  total += 1 // one more\n)}>+</button>\n",
+        "<button\n  onclick={() =>\n    (total += 1) // one more\n  }>+</button\n>\n",
+        "<button\n  onclick={() => (total += 1) // one more\n  }>+</button\n>\n",
+        "<button\n  onclick={() =>\n    (total += 1)}>+</button // one more\n>\n",
+      ],
+      [
+        "<button onclick={() => (\n  open = true\n  // and more\n)}>Open</button>\n",
+        "<button\n  onclick={() =>\n    (open = true)\n  // and more\n  }>Open</button\n>\n",
+        "<button\n  onclick={() => (open = true)\n  // and more\n  }>Open</button\n>\n",
+        "<button\n  onclick={() => (open = true)}>Open</button\n  // and more\n>\n",
+      ],
+      [
+        '{#each [\n  "x",\n  "y"\n  /* "z" */\n] as it}\n  <p>{it}</p>\n{/each}\n',
+        '{#each ["x", "y"]\n  /* "z" */\n as it}\n  <p>{it}</p>\n{/each}\n',
+        '{#each ["x", "y"]\n/* "z" */\n as it}\n  <p>{it}</p>\n{/each}\n',
+        '{#each ["x", "y"] as it}\n  /* "z" */\n  <p>{it}</p>\n{/each}\n',
+      ],
+      [
+        "{#if test(\n  b\n  /* , c */\n)}\n  <p>y</p>\n{/if}\n",
+        "{#if test(b)\n  /* , c */\n}\n  <p>y</p>\n{/if}\n",
+        "{#if test(b)\n/* , c */\n}\n  <p>y</p>\n{/if}\n",
+        "{#if test(b)}\n  /* , c */\n  <p>y</p>\n{/if}\n",
+      ],
+      [
+        "<p>\n  {ok ? b : (\n    c // or else\n  )}\n</p>\n",
+        "<p>\n  {ok\n    ? b\n    : c // or else\n  }\n</p>\n",
+        "<p>\n  {ok ? b : c // or else\n  }\n</p>\n",
+        "<p>\n  {ok ? b : c} // or else\n</p>\n",
+      ],
+      [
+        "<B value={ok ? b : (\n  c // or else\n)} />\n",
+        "<B\n  value={ok\n    ? b\n    : c // or else\n  }\n/>\n",
+        "<B\n  value={ok ? b : c // or else\n  }\n/>\n",
+        "<B\n  value={ok ? b : c} // or else\n/>\n",
+        false,
+      ],
+      [
+        "{#each rows as row}\n  {@const sum = (\n    row.b * row.c // both\n  )}\n  <p>{sum}</p>\n{/each}\n",
+        "{#each rows as row}\n  {@const sum =\n    row.b *\n    row.c // both\n  }\n  <p>{sum}</p>\n{/each}\n",
+        "{#each rows as row}\n  {@const sum = row.b * row.c // both\n  }\n  <p>{sum}</p>\n{/each}\n",
+        "{#each rows as row}\n  {@const sum =\n    row.b * row.c} // both\n  <p>{sum}</p>\n{/each}\n",
+      ],
+      [
+        "{#if q}\n  {@const z = // why\n    b + c}\n  <p>{z}</p>\n{/if}\n",
+        "{#if q}\n  {@const z = // why\n    b + c}\n  <p>{z}</p>\n{/if}\n",
+        "{#if q}\n  {@const z = // why\n    b + c}\n  <p>{z}</p>\n{/if}\n",
+        "{#if q}\n  {@const z = b + c} // why\n  <p>{z}</p>\n{/if}\n",
+      ],
+      [
+        "<p>\n  {list[\n    0 // the first\n  ]}\n</p>\n",
+        "<p>\n  {list[0] // the first\n  }\n</p>\n",
+        "<p>\n  {list[0] // the first\n  }\n</p>\n",
+        "<p>\n  {list[0]} // the first\n</p>\n",
+      ],
+      [
+        "{#snippet f(// c\n b)}y{/snippet}\n",
+        "{#snippet f( // c\n  b,\n)}y{/snippet}\n",
+        "{#snippet f( // c\n  b,\n)}y{/snippet}\n",
+        "{#snippet f(b)}y{/snippet} // c\n",
+      ],
+      [
+        "{#await (\n  p // q\n) then v}y{/await}\n",
+        "{#await p // q\n then v}y{/await}\n",
+        "{#await p // q\n then v}y{/await}\n",
+        null,
+      ],
+      [
+        '<p title="y {(\n  b // c\n)} z">w</p>\n',
+        '<p\n  title="y {b // c\n  } z"\n>\n  w\n</p>\n',
+        '<p\n  title="y {b // c\n  } z"\n>\n  w\n</p>\n',
+        null,
+      ],
+      ["<pre>{(\n  b // c\n)}</pre>\n", "<pre>{b // c\n  }</pre>\n", "<pre>{b // c\n  }</pre>\n", null],
+    ];
+    const names = rows.map((_, index) => `${index}.svelte`);
+    const files = (which: 0 | 1 | 2) => Object.fromEntries(rows.map((it, index) => [names[index], it[which]]));
+
+    test.each([[{}], [{ ".prettierrc": prettierrc }], [{ ".oxfmtrc.json": oxfmtrc }]])("%j", async config => {
+      const printed = (which: 1 | 2) => ({ stderr: "", files: rows.map(it => it[which]), exitCode: 0 });
+      expect(await format({ ...config, ...files(0) }, names)).toMatchObject(printed(1));
+      expect(await format({ ...config, ...files(1) }, names)).toMatchObject(printed(2));
+      expect(await format({ ...config, ...files(2) }, names)).toMatchObject(printed(2));
+      const checked = await format({ ...config, ...files(0) }, names, ["--debug-check"]);
+      expect(checked).toMatchObject({ stderr: "", files: rows.map(it => it[0]), exitCode: 0 });
+    });
+
+    test.skipIf(!hasRunner)("--debug-check would not let it out", async () => {
+      const seen = rows.filter(it => it[3] !== null);
+      using dir = tempDir("bun-format-svelte", {
+        ...Object.fromEntries(
+          seen.flatMap((it, index) => it.slice(0, 4).map((text, which) => [`${index}.${which}`, text])),
+        ),
+      });
+      const pairs = seen.flatMap((_, index) => [
+        `${index}.0`,
+        `${index}.1`,
+        `${index}.0`,
+        `${index}.2`,
+        `${index}.0`,
+        `${index}.3`,
+      ]);
+      await using proc = spawn({
+        cmd: [bunExe(), "fmt", "--debug-check-svelte", ...pairs],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const expected = seen.map(it => `same\nsame\n${it[4] === false ? "same" : "different"}\n`).join("");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
+  });
+
+  test("in <pre> a part of an await block that has white space in it has something in it", async () => {
+    const rows = [
+      "<pre>{#await b} {:then c} {:catch d} {/await}</pre>\n",
+      "<pre>{#await b}\n{:then c}\n{:catch d}\n{/await}</pre>\n",
+      "<pre>{#await b} {:then c}y{/await}</pre>\n",
+      "<pre>{#await b then c} {/await}</pre>\n",
+      "<pre>{#await b catch d} {/await}</pre>\n",
+      "<pre><i>{#await b} {:then c} {/await}</i></pre>\n",
+    ];
+    const names = rows.map((_, index) => `${index}.svelte`);
+    const files = Object.fromEntries(rows.map((it, index) => [names[index], it]));
+    expect(await format(files, names)).toMatchObject({ stderr: "", files: rows, exitCode: 0 });
+    // The control: elsewhere it is nothing.
+    const outside = await format({ "a.svelte": "<p>{#await b} {:then c} {:catch d} {/await}</p>\n" }, ["a.svelte"]);
+    expect(outside).toMatchObject({ stderr: "", files: ["<p>{#await b catch d}{/await}</p>\n"], exitCode: 0 });
+  });
+
   test("a start tag that ends with a comment at the end of a line has its `>` on the next, with bracketSameLine too", async () => {
     const config = { ".prettierrc": JSON.stringify({ plugins, bracketSameLine: true }) };
     const rows = [

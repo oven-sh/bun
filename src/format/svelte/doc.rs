@@ -395,6 +395,12 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Wr
         Doc::Hardline => out.hardline(),
         Doc::Literalline => out.text(b"\n"),
         Doc::BreakParent => out.break_parent(),
-        Doc::Code(code) => (how.code)(code, out),
+        Doc::Code(code) => {
+            (how.code)(code, out);
+            // A comment in it that waits for the end of the line is not for behind the `}`: `{a[0 // b\n]}`.
+            if matches!(**code, Code::Js(_)) {
+                out.line_suffix_boundary();
+            }
+        }
     }
 }

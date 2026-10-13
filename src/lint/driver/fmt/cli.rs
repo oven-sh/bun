@@ -55,6 +55,7 @@ const OPTIONS: &[Param] = &[
     clap::param!("--sort-tailwindcss              Sort Tailwind CSS classes"),
     clap::param!("--sort-package-json             Sort the keys of <b>package.json<r>"),
     clap::param!("--jsdoc                         Format JSDoc comments"),
+    clap::param!("--no-svelte                     Do not format Svelte components"),
 ];
 
 const FILES: &[Param] = &[
@@ -173,6 +174,7 @@ const OPPOSITES: &[Param] = &[
     clap::param!("--bracket-spacing"),
     clap::param!("--error-on-unmatched-pattern"),
     clap::param!("--insert-final-newline"),
+    clap::param!("--svelte"),
 ];
 
 pub const HELP: Help = Help {
@@ -419,6 +421,7 @@ pub(crate) fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
         b"sort-tailwindcss" => b"sortTailwindcss",
         b"sort-package-json" => b"sortPackageJson",
         b"jsdoc" => b"jsdoc",
+        b"svelte" => b"svelte",
         b"insert-final-newline" => b"insertFinalNewline",
         _ => return None,
     })

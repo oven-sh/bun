@@ -294,11 +294,12 @@ const FORMAT: Table = Table {
         b"insert-pragma",
         b"experimental-ternaries",
         b"experimental-operator-position",
-        // Features beyond Prettier's options. The first four also take a table, see `FEATURES`.
+        // Features beyond Prettier's options. The first five also take a table, see `FEATURES`.
         b"sort-imports",
         b"sort-tailwindcss",
         b"sort-package-json",
         b"jsdoc",
+        b"svelte",
         b"insert-final-newline",
     ],
     renamed: &[
@@ -338,6 +339,7 @@ const FORMAT: Table = Table {
         b"no-bracket-spacing",
         b"no-error-on-unmatched-pattern",
         b"no-insert-final-newline",
+        b"no-svelte",
         b"no-color",
         b"parser",
         b"plugin",
@@ -408,7 +410,7 @@ struct Feature {
     options: &'static [(&'static [u8], Takes)],
 }
 
-const FEATURES: [Feature; 4] = [
+const FEATURES: [Feature; 5] = [
     Feature {
         flag: b"sort-imports",
         name: b"sortImports",
@@ -460,6 +462,16 @@ const FEATURES: [Feature; 4] = [
             (b"jsdoc.lineWrappingStyle", Takes::String),
             (b"jsdoc.descriptionTag", Takes::Boolean),
             (b"jsdoc.keepUnparsableExampleIndent", Takes::Boolean),
+        ],
+    },
+    Feature {
+        flag: b"svelte",
+        name: b"svelte",
+        table: As::Parts,
+        options: &[
+            (b"svelte.sortOrder", Takes::String),
+            (b"svelte.allowShorthand", Takes::Boolean),
+            (b"svelte.indentScriptAndStyle", Takes::Boolean),
         ],
     },
 ];

@@ -78,6 +78,49 @@ pub(crate) fn write_output_files_to_disk(
     let bv2: &mut BundleV2 =
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
 
+    // The fallback root names an output from the path of an input: `root_path` can hold that file.
+    if !bv2.transpiler.options.missing_default_root_dir.is_empty() {
+        let parse_graph = c.parse_graph();
+        let additional = parse_graph.additional_output_files.iter();
+        let mut beside_chunks: Vec<Box<[u8]>> = Vec::new();
+        for chunk in chunks.iter() {
+            if matches!(
+                chunk.content.sourcemap(c.options.source_maps),
+                SourceMapOption::External | SourceMapOption::Linked
+            ) {
+                beside_chunks.push(strings::concat(&[&chunk.final_rel_path, b".map"]));
+            }
+            if c.options.generate_bytecode_cache && c.chunk_gets_bytecode(chunk) {
+                let extension = BYTECODE_EXTENSION.as_bytes();
+                beside_chunks.push(strings::concat(&[&chunk.final_rel_path, extension]));
+            }
+        }
+        let dest_paths = chunks
+            .iter()
+            .map(|chunk| &*chunk.final_rel_path)
+            .chain(beside_chunks.iter().map(|path| &**path))
+            .chain(additional.map(|file| &*file.dest_path));
+        let sources = parse_graph.input_files.items_source().iter();
+        let inputs = sources
+            .filter(|source| source.path.is_file())
+            .map(|source| source.path.text);
+        if let Some(input) = crate::output_file::replaced_input(
+            bun_sys::Fd::from_std_dir(&root_dir),
+            dest_paths,
+            inputs,
+        ) {
+            c.log_disjoint().add_error_fmt(
+                None,
+                Loc::EMPTY,
+                format_args!(
+                    "Refusing to overwrite input file {}",
+                    quote(crate::output_file::from_working_directory(input)),
+                ),
+            );
+            return Err(crate::Error::BuildFailed);
+        }
+    }
+
     // `code()`/`code_standalone()` take both `chunk` (an element of `chunks`)
     // and `chunks` as
     // `&Chunk` / `&[Chunk]` (read-only), so iterate by index and reborrow

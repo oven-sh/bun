@@ -2622,8 +2622,9 @@ struct WithOutputs<'h> {
     awaited: Guarded<Vec<usize>>,
     /// `Host::take_unreadable`, for this project: others are read through `disk` at the same time.
     unreadable: Guarded<Vec<Vec<u8>>>,
-    /// 1: the project is small, and is loaded and checked by the thread that builds it.
-    threads: usize,
+    /// A small project (`PlanOptions::files_of_a_small_project`): the thread that builds it
+    /// loads and checks it, with the plan of one thread. That thread has the stack of a worker.
+    is_small: bool,
 }
 
 impl WithOutputs<'_> {
@@ -2764,13 +2765,13 @@ impl Host for WithOutputs<'_> {
         self.disk.parse_package_json(arena, text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        if self.threads == 1 {
+        if self.is_small {
             return self.disk.on_this_thread(count, work);
         }
         self.disk.parallel(count, work);
     }
     fn is_of_one_thread(&self) -> bool {
-        self.threads == 1
+        self.is_small
     }
     fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         self.disk.on_this_thread(count, work);
@@ -2779,14 +2780,17 @@ impl Host for WithOutputs<'_> {
         self.disk.loaded();
     }
     fn threads(&self) -> usize {
-        self.threads
+        match self.is_small {
+            true => 1,
+            false => self.disk.threads(),
+        }
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         // The thread that builds a small project reads its files too: the threads that only
         // read serve one load at a time.
-        match self.threads {
-            1 => None,
-            _ => self.disk.io_pool(),
+        match self.is_small {
+            true => None,
+            false => self.disk.io_pool(),
         }
     }
 }
@@ -3055,7 +3059,7 @@ fn check_with_references(
                 .collect(),
             awaited: Guarded::new(Vec::new()),
             unreadable: Guarded::new(Vec::new()),
-            threads: if is_small(index) { 1 } else { host.threads() },
+            is_small: is_small(index),
         };
         for i in (0..index).filter(|&i| is_built[i]) {
             for (path, text) in emitted[i].lock().iter() {

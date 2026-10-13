@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { readdir, rm } from "fs/promises";
-import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot, toBeValidBin, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot, toBeValidBin } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 // Migration of yarn 2+ ("berry") lockfiles. Every fixture pins versions that are
 // NOT the newest ones the registry has for the requested ranges (e.g. no-deps@^1.0.0
@@ -11,7 +12,7 @@ import { join } from "path";
 
 expect.extend({ toBeValidBin });
 
-const verdaccio = new VerdaccioRegistry();
+const verdaccio = new TestRegistry();
 
 beforeAll(async () => {
   await verdaccio.start();

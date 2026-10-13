@@ -317,7 +317,7 @@ pub(crate) struct Printer<'a, 'o> {
     comments_of_attributes: FxHashMap<Id, [Vec<Comment>; 2]>,
     /// The comments in the start tags of elements without attributes.
     comments_of_elements: FxHashMap<Id, Vec<Comment>>,
-    /// The elements with a `//` comment as the last thing in the start tag.
+    /// The elements with a comment at the end of the start tag that goes on up to the end of the line, or is printed there.
     ends_tag_with_line_comment: FxHashSet<Id>,
 }
 
@@ -784,11 +784,10 @@ impl<'a, 'o> Printer<'a, 'o> {
             start = self.tree[previous].start;
         }
         newlines.resize(comments.len(), None);
-        // The plugin has `siblings.splice(siblings.indexOf(it), 1)` for each. Where there is no white space behind a comment,
-        // that is the index -1, and the last node of the markup goes.
-        let gone: FxHashSet<Id> = (comments.iter().copied())
-            .chain(newlines.iter().copied().flatten())
-            .collect();
+        // The plugin takes the white space out too, which can be all there is between two words: `a<!-- b -->\n<script>`, `c`.
+        // It has `siblings.splice(siblings.indexOf(it), 1)` for each. Where there is no white space behind a comment, that is
+        // the index -1, and the last node of the markup goes.
+        let gone: FxHashSet<Id> = comments.iter().copied().collect();
         self.tree.fragments[root as usize].retain(|it| !gone.contains(it));
         let mut result: Vec<LeadingComment> = (comments.iter().zip(&newlines))
             .map(|(&comment, text)| {
@@ -840,8 +839,16 @@ impl<'a, 'o> Printer<'a, 'o> {
                 continue;
             };
             let attributes = element.attributes.clone();
-            let last_end = attributes.last().map_or(0, |&it| self.tree[it].end);
-            if !last_comment.is_block && last_comment.span.start >= last_end {
+            let is_at_end_of_line = match attributes.last() {
+                None => !last_comment.is_block,
+                // `printTrailingComment` has a line suffix for these, and for all that follow one.
+                Some(&last) => {
+                    (all.iter().filter(|it| it.span.start >= self.tree[last].end)).any(|it| {
+                        !it.is_block || has_newline_backwards(self.text, it.span.start as usize)
+                    })
+                }
+            };
+            if is_at_end_of_line {
                 self.ends_tag_with_line_comment.insert(id);
             }
             let (Some(&first), Some(&last)) = (attributes.first(), attributes.last()) else {
@@ -933,8 +940,8 @@ impl<'a, 'o> Printer<'a, 'o> {
         Doc::List(parts)
     }
 
-    /// What is before the `>` of the start tag of `id`. `usual`: unless there is a `//` comment before it. There the plugin has
-    /// the `>` before the comment wherever it is on the same line: `<b a>c</b // d`.
+    /// What is before the `>` of the start tag of `id`. `usual`: unless there is a comment before it that is at the end of its
+    /// line. There the plugin has the `>` before the comment wherever it is on the same line: `<b a>c</b // d`.
     fn line_before_end_of_tag(&self, id: Id, usual: Doc<'a>) -> Doc<'a> {
         match self.ends_tag_with_line_comment.contains(&id) {
             true => dedent(Doc::Hardline),
@@ -2021,6 +2028,20 @@ impl<'a, 'o> Printer<'a, 'o> {
         ])
     }
 
+    /// The markup is the first thing in the file. If it starts with U+FEFF, that is written as an entity: it would be a byte
+    /// order mark.
+    fn keep_text_at_start_of_file(&mut self) {
+        let root = self.tree.fragment;
+        let first = (self.tree.fragment(root).iter())
+            .find(|&&it| !self.is_empty_text(it))
+            .copied();
+        if let Some(Kind::Text { raw }) = first.map(|it| &mut self.tree[it].kind)
+            && let Some(rest) = raw.trim_ascii_start().strip_prefix(crate::text::BOM)
+        {
+            *raw = Cow::Owned([b"&#xFEFF;", rest].concat());
+        }
+    }
+
     /// The markup is the last thing in the file. If it ends with what is white space to JavaScript and text to HTML, like a
     /// no-break space, that is written as an entity: Svelte has `trimEnd()`. The plugin leaves it to that.
     fn keep_text_at_end_of_file(&mut self) {
@@ -2130,7 +2151,8 @@ impl<'a, 'o> Printer<'a, 'o> {
             if !says_end_of_region(data) {
                 return None;
             }
-            self.tree.fragments[root as usize].drain(index..=at);
+            // Not the white space: see `remove_and_get_leading_comments`.
+            self.tree.fragments[root as usize].remove(at);
             return Some((white_space, child));
         }
         None
@@ -2162,17 +2184,15 @@ impl<'a, 'o> Printer<'a, 'o> {
             if !self.is_plain_comment(node) {
                 continue;
             }
-            let count = if self.tree[node].end == start {
-                1
-            } else if (nodes.get(index + 1))
-                .is_some_and(|&next| self.is_empty_text(next) && self.tree[next].end == start)
-            {
-                2
-            } else {
+            let is_before_options = self.tree[node].end == start
+                || (nodes.get(index + 1))
+                    .is_some_and(|&next| self.is_empty_text(next) && self.tree[next].end == start);
+            if !is_before_options {
                 continue;
-            };
+            }
             let printed = self.print_comment(node);
-            self.tree.fragments[root as usize].drain(index..index + count);
+            // Not the white space: see `remove_and_get_leading_comments`.
+            self.tree.fragments[root as usize].remove(index);
             return Some(printed);
         }
         None
@@ -2243,6 +2263,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         let Some(order) = self.svelte.sort_order else {
             self.put_top_level_parts_back();
             self.merge_adjacent_texts();
+            self.keep_text_at_start_of_file();
             self.keep_text_at_end_of_file();
             let result = self.print_root_fragment();
             return match self.options.insert_pragma && !has_pragma {
@@ -2290,6 +2311,9 @@ impl<'a, 'o> Printer<'a, 'o> {
             Part::Styles => !styles.is_empty(),
             Part::Markup => true,
         };
+        if order.iter().find(|it| is_there(it)) == Some(&Part::Markup) {
+            self.keep_text_at_start_of_file();
+        }
         if order.iter().rfind(|it| is_there(it)) == Some(&Part::Markup) {
             self.keep_text_at_end_of_file();
         }

@@ -6,6 +6,7 @@
     "lib": ["ESNext"],
     "paths": {
       "harness": ["./harness.ts"],
+      "blackhole": ["./blackhole.ts"],
       "mkfifo": ["./mkfifo.ts"],
       "node-harness": ["./js/node/harness.ts"],
       "s3-server": ["./packages/s3-server/index.ts"],

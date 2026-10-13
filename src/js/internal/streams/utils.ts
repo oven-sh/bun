@@ -82,19 +82,13 @@ function isWritableStream(obj) {
   return $inheritsWritableStream(obj);
 }
 
-// Node's isWritableStream(), for a WritableStream that is not native, as a polyfill makes it:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L90-L97
-// It has no isNodeStream() test: no caller needs one. isWritableStream() stays a class check: its
-// other callers give the stream to native code.
+// Node's isWritableStream(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L90-L97
 function isWritableStreamLike(obj) {
   return !!(obj && typeof obj.getWriter === "function" && typeof obj.abort === "function");
 }
 
-// Node has only a duck type, for a { readable, writable } pair. It tests isNodeStream() first, and
-// it accepts any object as `writable`:
+// Node accepts any object as `writable`, then pumpToWeb() calls its getWriter() outside a try:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L99-L106
-// The class check stays in front, so a TransformStream costs no getter call. `writable` must be a
-// web stream: pumpToWeb() calls its getWriter() where a throw is an unhandled rejection.
 function isTransformStream(obj) {
   return (
     $inheritsTransformStream(obj) ||

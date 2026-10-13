@@ -500,6 +500,12 @@ let a = 1;
       expect(result).toMatchObject({ stderr: message, stdout: "", files: { "a.svelte": input }, exitCode: 2 });
     }
     expect(on).toMatchObject({ stderr: "", files: { "a.svelte": formatted }, exitCode: 0 });
+    // It is not off where the config file counts for more.
+    for (const precedence of ["file-override", "prefer-file"]) {
+      const files = { ...withPlugin, ...bunfig("svelte = false"), "a.svelte": input };
+      const flags = [`--config-precedence=${precedence}`, "--parser=svelte", "a.svelte"];
+      expect(await format(files, flags)).toMatchObject({ stderr: "", files: { "a.svelte": formatted }, exitCode: 0 });
+    }
     // For the files of an override it is said of each.
     const config = '[[fmt.overrides]]\nfiles = "old/**"\noptions = { svelte = false }\n';
     const some = await format({ "bunfig.toml": config, "a.svelte": input, "old/b.svelte": input }, [

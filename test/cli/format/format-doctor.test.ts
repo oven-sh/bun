@@ -215,6 +215,25 @@ note: Svelte files are not formatted (svelte = false)
       expect(exitCode).toBe(0);
     });
 
+    test.each(["file-override", "prefer-file"])(
+      "they are not left alone with --config-precedence=%s",
+      async precedence => {
+        const files = { ...project("4.1.1"), "bunfig.toml": "[fmt]\nsvelte = false\n" };
+        const { stdout, exitCode } = await doctor(files, [`--config-precedence=${precedence}`]);
+        expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+Using bunfig.toml ([fmt])
+
+    3 files are formatted natively
+
+Built-in plugins: prettier-plugin-svelte
+
+You can remove: prettier, prettier-plugin-svelte
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+        expect(exitCode).toBe(0);
+      },
+    );
+
     test("says that some files are left alone if only an override turns it off", async () => {
       const { stdout, exitCode } = await doctor({
         ...project("4.1.1"),

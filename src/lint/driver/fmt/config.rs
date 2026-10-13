@@ -1698,9 +1698,11 @@ impl<'c> Configs<'c> {
                 && (self.has_svelte_plugin_of_bun() || is_up_to_flags()))
     }
 
-    /// Whether `--no-svelte` or `svelte = false` in `[fmt]` is there. An override can still turn it on for some files.
-    pub(crate) fn turns_svelte_off(&self) -> bool {
+    /// Whether `--no-svelte` or `svelte = false` in `[fmt]` keeps a component in `directory`, which has `scope`, from being
+    /// formatted: it is there, and with `--config-precedence` it counts. An override can still turn it on for some files.
+    pub(crate) fn turns_svelte_off(&self, scope: &Scope, directory: &[u8]) -> bool {
         self.svelte_of_flags(None) == Some(false)
+            && self.svelte_for(scope, Some(&paths::join(directory, b"a.svelte"))) == Svelte::Nobody
     }
 
     /// Whether a flag or `[fmt]` turns it off for the file at `path`.
@@ -1708,9 +1710,10 @@ impl<'c> Configs<'c> {
         self.svelte_of_flags(Some(path)) == Some(false)
     }
 
-    /// Whether an override of `[fmt]` has `svelte = false`.
+    /// Whether an override of `[fmt]` has `svelte = false`, and nothing counts for more.
     pub(crate) fn turns_svelte_off_for_some(&self) -> bool {
-        (self.overrides.iter()).any(|it| svelte_in(&it.settings) == Some(false))
+        matches!(self.options.config_precedence, Precedence::CliOverride)
+            && (self.overrides.iter()).any(|it| svelte_in(&it.settings) == Some(false))
     }
 
     /// Whether `--parser svelte`, or the same in `[fmt]`, is there.

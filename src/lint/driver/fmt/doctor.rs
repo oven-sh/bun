@@ -71,6 +71,7 @@ pub(super) fn report(
     let shown = |file: &[u8]| paths::relative(cwd, file);
     let file = configs.path_of_config(&own).map(shown);
     let is_oxfmt = configs.is_oxfmt_for(&own);
+    let is_svelte_off = configs.turns_svelte_off(&own, cwd);
     let found = files.found.iter().filter_map(|it| match it {
         Expanded::File(target) => Some(target),
         Expanded::Error(_) => None,
@@ -82,8 +83,7 @@ pub(super) fn report(
         let named = configs.packages_of_plugins(scope, Some(path));
         let missing = configs.missing_plugins(scope, Some(path)).iter();
         // With `svelte = false` nobody does what the plugin for it does.
-        let is_in_use =
-            |it: &&[u8]| !(configs.turns_svelte_off() && config::is_plugin_for_svelte(it));
+        let is_in_use = |it: &&[u8]| !(is_svelte_off && config::is_plugin_for_svelte(it));
         named
             .chain(missing.map(|it| &it[..]))
             .filter(is_in_use)
@@ -122,7 +122,7 @@ pub(super) fn report(
     let options = sorted(std::mem::take(&mut *configs.unsupported_options.lock()));
     let mut notes = std::mem::take(&mut *configs.warnings.lock());
     notes.extend(configs.note().map(<[u8]>::to_vec));
-    if configs.turns_svelte_off() {
+    if is_svelte_off {
         notes.push(b"Svelte files are not formatted (svelte = false)".to_vec());
     } else if configs.turns_svelte_off_for_some() {
         notes.push(b"Some Svelte files are not formatted (svelte = false in an override)".to_vec());

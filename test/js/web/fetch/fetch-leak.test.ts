@@ -743,7 +743,8 @@ test("should not leak using readable stream", async () => {
       SERVER_URL: server.url.href,
       // ASAN's quarantine retains freed allocations so RSS stays elevated
       // under bun-asan; the fixture only allows MAX_MEMORY_INCREASE MiB.
-      // Keeping every body costs 64 MB or more, 71 under ASAN. With none kept and half the body, CI has seen up to 7.4.
+      // Keeping every body costs 64 MB or more, 71 under ASAN. With none kept it grew by 4.8 at most in 480 local runs.
+      // Half the body grows as much (5.0), and CI has seen 7.4 with that.
       MAX_MEMORY_INCREASE: isASAN ? "64" : "16", // in MB
       // The fixture asserts RSS stabilizes after iteration 250, but with the
       // default 256 MB quarantine the freed bodies are never reused and

@@ -35,7 +35,9 @@ Inspect in browser:
 
 ### `--inspect-brk`
 
-The `--inspect-brk` flag behaves identically to `--inspect`, except it injects a breakpoint at the first line of the executed script. Use it to debug scripts that run quickly and exit immediately.
+The `--inspect-brk` flag behaves identically to `--inspect`, except the code does not execute until a debugger attaches, and the debugger then pauses before the first statement of the executed script. Use it to debug scripts that run quickly and exit immediately.
+
+The pause needs a debugger that has enabled breakpoints. A client of the protocol sends `Debugger.enable` and `Debugger.setBreakpointsActive` with `active: true` before `Inspector.initialized`. `debug.bun.sh` and the VS Code extension do this.
 
 ### `--inspect-wait`
 

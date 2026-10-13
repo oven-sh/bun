@@ -164,6 +164,7 @@ test/cli/test/parallel-startup-failure.test.ts
 test/js/node/test/parallel/test-child-process-windows-hide.js
 test/cli/inspect/BunFrontendDevServer.test.ts
 test/cli/inspect/HTTPServerAgent.test.ts
+test/cli/inspect/inspect-brk.test.ts
 test/cli/inspect/inspect.test.ts
 test/cli/install/bun-publish.test.ts
 test/cli/install/catalogs.test.ts

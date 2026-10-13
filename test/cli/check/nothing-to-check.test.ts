@@ -2,7 +2,7 @@
 // paths have no TypeScript file does not pass.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
@@ -61,12 +61,13 @@ async function run(cwd: string, cmd: string[], root = cwd) {
 const check = (dir: { toString(): string }, args: string[]) => run(String(dir), ["check", ...args]);
 const outcome = ({ stdout, exitCode }: { stdout: string; exitCode: number }) => ({ stdout, exitCode });
 
-const isConfig = (config: string) => ({
+// `isInProject`: a configuration file is at or above the working directory.
+const isConfig = (config: string, isInProject = true) => ({
   stdout: [
     `error: '${config}' is a configuration file, not a file to check`,
     `To use it as the project: bun check -p ${config}`,
     `To use it with the projects it references: bun check -b ${config}`,
-    `To check the project here: bun check`,
+    ...(isInProject ? [`To check the project here: bun check`] : []),
   ].join("\n"),
   exitCode: 1,
 });
@@ -111,11 +112,10 @@ describe("a run that names only configuration files", () => {
     expect(stderr).toMatch(/^\s*0 files loaded/m);
   });
 
-  test("is refused where no tsconfig.json is at the root", async () => {
-    using dir = project({ "packages/app/tsconfig.json": tsconfig, "packages/app/a.ts": `export {};\n` });
-    rmSync(join(String(dir), "tsconfig.json"));
+  test("is refused where no configuration file is at the root, which has no project to check", async () => {
+    using dir = tempDir("bun-check", { "packages/app/tsconfig.json": tsconfig, "packages/app/a.ts": `export {};\n` });
     const refused = await check(dir, ["packages/app/tsconfig.json"]);
-    expect(outcome(refused)).toEqual(isConfig("packages/app/tsconfig.json"));
+    expect(outcome(refused)).toEqual(isConfig("packages/app/tsconfig.json", false));
   });
 
   test.each(["tsconfig.json", "tsconfig.app.json"])(

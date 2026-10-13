@@ -1794,8 +1794,8 @@ fn is_named_like_config(path: &[u8]) -> bool {
 
 /// For paths that are all configuration files, which `-p` and `-b` take. `config` is the first.
 #[cold]
-fn config_named_as_path(cwd: &[u8], config: &[u8], is_case_sensitive: bool) -> Diagnostic {
-    let config = get_relative_path_from_directory(cwd, config, is_case_sensitive);
+fn config_named_as_path(disk: &host::Disk, cwd: &[u8], config: &[u8]) -> Diagnostic {
+    let config = get_relative_path_from_directory(cwd, config, disk.is_case_sensitive());
     let mut text = Vec::new();
     text.extend_from_slice(b"'");
     text.extend_from_slice(&config);
@@ -1804,7 +1804,9 @@ fn config_named_as_path(cwd: &[u8], config: &[u8], is_case_sensitive: bool) -> D
     text.extend_from_slice(&config);
     text.extend_from_slice(b"\nTo use it with the projects it references: bun check -b ");
     text.extend_from_slice(&config);
-    text.extend_from_slice(b"\nTo check the project here: bun check");
+    if config::find_config(disk, cwd).is_some() {
+        text.extend_from_slice(b"\nTo check the project here: bun check");
+    }
     refusal(text)
 }
 
@@ -1973,7 +1975,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             || is_named_like_config(path) && !disk.is_dir(path)
     };
     if !request.are_entry_points && missing.is_empty() && paths.iter().all(is_config) {
-        let refused = config_named_as_path(&cwd, &paths[0], is_case_sensitive);
+        let refused = config_named_as_path(disk, &cwd, &paths[0]);
         report.diagnostics.push(refused);
         return report;
     }

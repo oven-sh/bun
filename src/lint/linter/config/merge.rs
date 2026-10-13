@@ -2,6 +2,7 @@
 
 use crate::context::Severity;
 use crate::linter::resolved::severity_of;
+use crate::linter::schema::deep_merge_arrays;
 use crate::options::Json;
 use crate::rule::Plugin;
 
@@ -52,6 +53,9 @@ pub(crate) struct RuleSetting {
     pub(crate) has_only_severity: bool,
     /// It says nothing about a rule that something is said about before it.
     pub(crate) yields: bool,
+    /// The rule's default options with no config file: `$defaultOptions` in `bun lint`'s default config. Options from a later
+    /// setting are merged over them, the way ESLint merges options over a rule's `meta.defaultOptions`. Empty with a config file.
+    pub(crate) defaults: Vec<Json>,
 }
 
 impl RuleSetting {
@@ -69,6 +73,7 @@ impl RuleSetting {
             options: value[1..].to_vec(),
             has_only_severity: value.len() == 1,
             yields: false,
+            defaults: Vec::new(),
         })
     }
 }
@@ -91,7 +96,13 @@ pub(crate) fn merge_rules(
             Some(existing) if setting.has_only_severity && keeps_options => {
                 existing.severity = setting.severity
             }
-            Some(existing) => existing.clone_from(setting),
+            Some(existing) if existing.defaults.is_empty() => existing.clone_from(setting),
+            Some(existing) => {
+                let defaults = std::mem::take(&mut existing.defaults);
+                existing.clone_from(setting);
+                existing.options = deep_merge_arrays(&defaults, &setting.options);
+                existing.defaults = defaults;
+            }
             None => first.push(setting.clone()),
         }
     }

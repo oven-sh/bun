@@ -1,13 +1,14 @@
-//! The options that a rule accepts: ESLint's `meta.schema` and `meta.defaultOptions`.
+//! Schemas for rule options: ESLint's `meta.schema` and `meta.defaultOptions`.
 //!
-//! ESLint validates the options of every rule that is enabled, and refuses a configuration with
-//! options that the schema of the rule does not allow. The schemas are data here (117 KB for 340 rules,
-//! of which that of a rule is parsed when options for it are validated), not part of the rules.
+//! ESLint validates the options of every enabled rule, and rejects a config whose options don't
+//! match the rule's schema. Here the schemas are data, not part of the rules (200 KB for 360
+//! rules, 26 KB compressed). A rule's schema is parsed only when its options are validated.
 //!
-//! The default options are merged into the options for validating and for comparing only. A rule
-//! is made from the options as they are written, and knows its defaults itself.
+//! Default options are merged in only for validating and comparing. A rule is built from the
+//! options as written, and applies its own defaults.
 
 mod data;
+mod plain;
 mod validate;
 
 use crate::js_plugin;
@@ -15,71 +16,67 @@ use crate::linter::message::{RuleId, write_json};
 use crate::options::Json;
 use crate::rule::Meta;
 use bun_core::strings;
-use validate::Validator;
+pub use plain::OptionMistake;
+pub use validate::Step;
 pub(super) use validate::is_equal;
+use validate::{SchemaError, Validator};
 
-/// The strings of an entry of [`data::NAMES`].
-fn names(mut list: &[u8]) -> Json {
-    let mut all = Vec::new();
-    let mut name: Vec<u8> = Vec::new();
-    while let [shared, more, rest @ ..] = list
-        && let Some((added, rest)) = rest.split_at_checked(*more as usize)
-    {
-        name.truncate(*shared as usize);
-        name.extend_from_slice(added);
-        all.push(Json::String(name.clone()));
-        list = rest;
-    }
-    Json::Array(all)
+/// `schemas.txt` as `(rule id, JSON)` pairs, sorted by id. The JSON is `[meta.schema]` or `[meta.schema, meta.defaultOptions]`.
+/// A typescript-eslint rule that merges its defaults itself has `[meta.schema, [], defaultOptions]`. A rule that isn't listed
+/// takes no options.
+///
+/// Release builds embed the file compressed and inflate it here, the first time a schema is needed.
+fn schemas() -> &'static [(&'static [u8], &'static [u8])] {
+    static SCHEMAS: bun_core::Once<Vec<(&'static [u8], &'static [u8])>> = bun_core::Once::new();
+    SCHEMAS.get_or_init(|| {
+        let lines = bun_zstd::embed_compressed!(
+            "src/lint/linter/schema/schemas.txt",
+            include_bytes!("schemas.txt")
+        );
+        strings::split(lines, b"\n")
+            .filter_map(|line| strings::split_once_char(line, b'\t'))
+            .collect()
+    })
 }
 
-/// Writes `text` with what each `{"$":n}` stands for in its place. As text: to parse is dear however short the text is.
-fn write_with_shared(out: &mut Vec<u8>, mut text: &[u8]) {
-    const REFERENCE: &[u8] = b"{\"$\":";
-    while let Some(at) = strings::index_of(text, REFERENCE) {
-        let (before, reference) = text.split_at(at);
-        out.extend_from_slice(before);
-        let digits = &reference[REFERENCE.len()..];
-        let end = strings::index_of_char_usize(digits, b'}').unwrap_or(digits.len());
-        let shared = bun_core::fmt::parse_decimal::<usize>(&digits[..end]);
-        if let Some(shared) = shared.and_then(|it| data::SHARED.get(it)) {
-            write_with_shared(out, shared.as_bytes());
-        }
-        text = digits.get(end + 1..).unwrap_or_default();
-    }
-    out.extend_from_slice(text);
-}
-
-/// Puts what each `{"$names":n}` stands for in its place.
-fn put_names(json: &mut Json) {
-    let list = match &*json {
-        Json::Object(entries) => match &entries[..] {
-            [(key, Json::Number(index))] if key == b"$names" => data::NAMES.get(*index as usize),
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some(list) = list {
-        *json = names(list);
-        return;
-    }
-    match json {
-        Json::Object(entries) => entries.iter_mut().for_each(|it| put_names(&mut it.1)),
-        Json::Array(items) => items.iter_mut().for_each(put_names),
-        _ => {}
-    }
-}
-
-/// `[meta.schema]` or `[meta.schema, meta.defaultOptions]`. `None` if the rule takes no options.
+/// The rule's entry in [`schemas`], parsed. `None` if the rule takes no options.
 fn find(id: &[u8]) -> Option<Json> {
-    let at = data::SCHEMAS
-        .binary_search_by(|it| it.0.as_bytes().cmp(id))
-        .ok()?;
-    let mut text = Vec::new();
-    write_with_shared(&mut text, data::SCHEMAS[at].1.as_bytes());
-    let mut found = crate::json::parse(&text)?;
-    if strings::contains(&text, b"{\"$names\":") {
-        put_names(&mut found);
+    let schemas = schemas();
+    let at = schemas.binary_search_by(|it| it.0.cmp(id)).ok()?;
+    crate::json::parse(schemas[at].1)
+}
+
+/// Options that only `bun lint` has, as `(rule, option)`. Each is a boolean in the rule's first options object. They're valid
+/// where there's no ESLint or oxlint config file. With one, the schema is the original's, and so is the error for these.
+const OPTIONS_OF_BUN: [(&[u8], &[u8]); 4] = [
+    (
+        b"@typescript-eslint/no-loss-of-precision",
+        b"ignoreDecimals",
+    ),
+    (b"no-constant-binary-expression", b"allowLiteralToggle"),
+    (b"no-loss-of-precision", b"ignoreDecimals"),
+    (b"react/jsx-key", b"checkArraysOutsideJSX"),
+];
+
+/// [`find`], with [`OPTIONS_OF_BUN`] added to the schema.
+fn find_standing_alone(id: &[u8]) -> Option<Json> {
+    let found = find(id);
+    let mut own = OPTIONS_OF_BUN.iter().filter(|it| it.0 == id).peekable();
+    if own.peek().is_none() {
+        return found;
+    }
+    let empty = br#"[[{ "type": "object", "properties": {}, "additionalProperties": false }]]"#;
+    let mut found = found.or_else(|| crate::json::parse(empty))?;
+    let Json::Array(parts) = &mut found else {
+        return Some(found);
+    };
+    if let Some(Json::Array(items)) = parts.first_mut()
+        && let Some(Json::Object(first)) = items.first_mut()
+        && let Some((_, Json::Object(properties))) =
+            first.iter_mut().find(|it| it.0 == b"properties")
+    {
+        let boolean = || crate::json::parse(br#"{ "type": "boolean" }"#).unwrap_or(Json::Null);
+        properties.extend(own.map(|it| (it.1.to_vec(), boolean())));
     }
     Some(found)
 }
@@ -100,7 +97,7 @@ fn deep_merge_objects(first: &Json, second: &Json) -> Json {
 }
 
 /// `deepMergeArrays(defaults, options)`
-fn deep_merge_arrays(defaults: &[Json], options: &[Json]) -> Vec<Json> {
+pub(crate) fn deep_merge_arrays(defaults: &[Json], options: &[Json]) -> Vec<Json> {
     let merged = defaults
         .iter()
         .enumerate()
@@ -125,10 +122,58 @@ pub(crate) fn with_defaults(meta: &'static Meta, options: &[Json]) -> Vec<Json> 
     }
 }
 
+/// A rule's `meta.schema`, and `options` merged over its default options. `None` if the rule takes no options. Also `None`
+/// for rules ported from oxlint, which have no schema.
+pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Json, Vec<Json>)> {
+    if meta.follows_oxlint {
+        return None;
+    }
+    let found = find_standing_alone(&RuleId::Known(meta).to_vec())?;
+    let [schema, defaults @ ..] = found.as_array()? else {
+        return None;
+    };
+    // The defaults that a typescript-eslint rule merges itself come last. See [`schemas`].
+    let defaults = defaults.last().and_then(Json::as_array);
+    let merged = deep_merge_arrays(defaults.unwrap_or_default(), options);
+    Some((schema.clone(), merged))
+}
+
 /// Validates `options`, which are what follows the severity, as ESLint's `validateRulesConfig` does.
-/// `Err`: the lines of its message that follow `Key "rules": Key "<rule>":`.
-pub(crate) fn validate(meta: &'static Meta, options: &[Json]) -> Result<(), Vec<u8>> {
-    validate_by_id(&RuleId::Known(meta).to_vec(), options)
+/// `Err`: the lines of its message that follow `Key "rules": Key "<rule>":`. `stands_alone`: [`OPTIONS_OF_BUN`] are valid too.
+pub(crate) fn validate(
+    meta: &'static Meta,
+    options: &[Json],
+    stands_alone: bool,
+) -> Result<(), Vec<u8>> {
+    // Rules ported from oxlint have no schema. They ignore options they don't know.
+    if meta.follows_oxlint {
+        return Ok(());
+    }
+    let find = if stands_alone {
+        find_standing_alone
+    } else {
+        find
+    };
+    validate_found(&RuleId::Known(meta).to_vec(), options, find)
+}
+
+/// Validates `options` (without the severity) and describes the problem in Bun's own words. `rule` is the rule name as the
+/// user wrote it.
+pub fn mistake_in_options(
+    meta: &'static Meta,
+    rule: &[u8],
+    options: &[Json],
+) -> Option<OptionMistake> {
+    let id = RuleId::Known(meta).to_vec();
+    let needs_some = || data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id);
+    if meta.follows_oxlint || options.is_empty() && !needs_some() {
+        return None;
+    }
+    let found = find_standing_alone(&id);
+    let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
+    let defaults = parts.get(1).and_then(Json::as_array).unwrap_or_default();
+    let errors = errors_of(parts.first(), defaults, options).err()?;
+    Some(plain::explain(rule, &errors))
 }
 
 /// What stands in `json` for something that a configuration file has and JSON has not, other than a regular expression: what
@@ -146,27 +191,35 @@ pub(crate) fn placeholder(json: &Json) -> Option<&[u8]> {
 
 /// `options` as ajv sees them and as `JSON.stringify` prints them: a `Map`, a `Date` or a `RegExp` is an object without properties.
 fn without_placeholders(json: &Json) -> Json {
-    match json {
-        Json::Array(items) => Json::Array(items.iter().map(without_placeholders).collect()),
-        Json::Object(entries)
-            if entries
-                .iter()
-                .any(|it| it.0 == b"$unserializable" || it.0 == b"$regexp") =>
-        {
-            Json::Object(Vec::new())
+    let mut copy = json.clone();
+    let mut unseen = vec![&mut copy];
+    while let Some(next) = unseen.pop() {
+        match next {
+            Json::Array(items) => unseen.extend(items),
+            Json::Object(entries)
+                if entries
+                    .iter()
+                    .any(|it| it.0 == b"$unserializable" || it.0 == b"$regexp") =>
+            {
+                entries.clear();
+            }
+            Json::Object(entries) => unseen.extend(entries.iter_mut().map(|it| &mut it.1)),
+            _ => {}
         }
-        Json::Object(entries) => {
-            let entries = entries
-                .iter()
-                .map(|it| (it.0.clone(), without_placeholders(&it.1)));
-            Json::Object(entries.collect())
-        }
-        other => other.clone(),
     }
+    copy
 }
 
 /// The same for the rule that ESLint calls `id`, whether it is implemented or not.
 pub(crate) fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
+    validate_found(id, options, find)
+}
+
+fn validate_found(
+    id: &[u8],
+    options: &[Json],
+    find: fn(&[u8]) -> Option<Json>,
+) -> Result<(), Vec<u8>> {
     // Nearly no rule needs options: `generate-schemas.mjs` lists those that do.
     if options.is_empty() && !data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id) {
         return Ok(());
@@ -184,10 +237,7 @@ pub(crate) fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>>
 
 /// `meta.schema` of the rule that ESLint calls `id`. `None`: it takes no options, or there is no such rule.
 pub(crate) fn schema_of(id: &[u8]) -> Option<Json> {
-    match find(id)? {
-        Json::Array(parts) => parts.into_iter().next(),
-        _ => None,
-    }
+    find(id)?.into_array()?.into_iter().next()
 }
 
 /// Validates `options` with `schema`, which is `meta.schema`, as ESLint 8 does: it knows no `meta.defaultOptions`.
@@ -208,6 +258,13 @@ pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Ve
     }
 }
 
+impl js_plugin::Rule {
+    /// Checks `options` against `meta.schema`, as ESLint does. `Err`: ESLint's lines about what is wrong with them.
+    pub fn validate(&self, options: &[Json]) -> Result<(), Vec<u8>> {
+        validate_js(self, options).map(drop)
+    }
+}
+
 /// `options` with the default options of a rule of a JavaScript plugin: what ESLint has for a rule that it does not validate.
 pub(crate) fn with_js_defaults(rule: &js_plugin::Rule, options: &[Json]) -> Vec<Json> {
     deep_merge_arrays(&rule.default_options, options)
@@ -220,6 +277,45 @@ fn validate_with(
     defaults: &[Json],
     options: &[Json],
 ) -> Result<Vec<Json>, Vec<u8>> {
+    let errors = match errors_of(schema, defaults, options) {
+        Ok(options) => return Ok(options),
+        Err(errors) => errors,
+    };
+    // Ajv's functions call each other for every level of the options. ESLint reports the `RangeError` like any other error.
+    if errors.is_empty() {
+        return Err(b"\tMaximum call stack size exceeded\n".to_vec());
+    }
+    let mut message = Vec::new();
+    for error in &errors {
+        message.extend_from_slice(b"\tValue ");
+        write_json(&mut message, &error.data);
+        message.push(b' ');
+        message.extend_from_slice(&error.message);
+        message.extend_from_slice(b".\n");
+        if let Some((property, expected)) = &error.additional_property {
+            message.extend_from_slice(b"\t\tUnexpected property \"");
+            message.extend_from_slice(property);
+            message.extend_from_slice(b"\". Expected properties: ");
+            for (i, name) in expected.iter().enumerate() {
+                if i > 0 {
+                    message.extend_from_slice(b", ");
+                }
+                message.push(b'"');
+                message.extend_from_slice(name);
+                message.push(b'"');
+            }
+            message.extend_from_slice(b".\n");
+        }
+    }
+    Err(message)
+}
+
+/// Same as [`validate_with`], but returns the raw Ajv errors. None at all means the stack was too small for the options.
+fn errors_of(
+    schema: Option<&Json>,
+    defaults: &[Json],
+    options: &[Json],
+) -> Result<Vec<Json>, Vec<SchemaError>> {
     let options = deep_merge_arrays(defaults, options);
     if options.is_empty() && !matches!(schema, Some(Json::Object(_))) {
         return Ok(options);
@@ -243,35 +339,15 @@ fn validate_with(
     let mut validator = Validator {
         root: &schema,
         errors: Vec::new(),
+        is_out_of_stack: false,
     };
     let mut options = Json::Array(options);
-    if validator.validate(&schema, &mut options) {
-        return Ok(match options {
-            Json::Array(options) => options,
-            _ => Vec::new(),
-        });
+    let is_valid = validator.validate(&schema, &mut options);
+    if validator.is_out_of_stack {
+        return Err(Vec::new());
     }
-    let mut message = Vec::new();
-    for error in &validator.errors {
-        message.extend_from_slice(b"\tValue ");
-        write_json(&mut message, &error.data);
-        message.push(b' ');
-        message.extend_from_slice(&error.message);
-        message.extend_from_slice(b".\n");
-        if let Some((property, expected)) = &error.additional_property {
-            message.extend_from_slice(b"\t\tUnexpected property \"");
-            message.extend_from_slice(property);
-            message.extend_from_slice(b"\". Expected properties: ");
-            for (i, name) in expected.iter().enumerate() {
-                if i > 0 {
-                    message.extend_from_slice(b", ");
-                }
-                message.push(b'"');
-                message.extend_from_slice(name);
-                message.push(b'"');
-            }
-            message.extend_from_slice(b".\n");
-        }
+    if is_valid {
+        return Ok(options.into_array().unwrap_or_default());
     }
-    Err(message)
+    Err(validator.errors)
 }

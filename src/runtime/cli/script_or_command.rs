@@ -1,4 +1,4 @@
-//! `bun check`, `bun lint` and `bun format` ran the script of that name in `package.json` before they
+//! `bun check`, `bun lint` and `bun fmt` ran the script of that name in `package.json` before they
 //! were commands, so where a project has such a script they still do. In that script, and in what it
 //! runs, they are the commands: `"lint": "bun lint"`. So it is with a file `lint.ts` and with
 //! `node_modules/.bin/lint`.
@@ -7,11 +7,42 @@ use bun_core::{UnwrapOrOom, env_var};
 
 use super::check_command::working_directory;
 
-/// Whether `bun <command>` runs something of the project, as it did before `command` was one: a script
-/// of the nearest `package.json`, which is where `bun run` looks, a file, or what a package installs.
+/// The kind of thing `bun <command>` runs.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Runs {
+    Command,
+    /// A script in the nearest `package.json`, which is where `bun run` looks.
+    Script,
+    /// A file, an executable that a package installs, or scripts in other packages.
+    Other,
+}
+
+/// Whether `arg` asks `bun <command>` about itself, so it isn't passed to the project's own `command`.
+///
+/// Only flags that the tools behind such scripts don't have. `-v`, `--version`, `--init`, `--rules` and `--print-config` mean
+/// something to ESLint, oxlint, Prettier and others, and `bun lint -v` must not turn a failing script into exit code 0.
+/// `--doctor` and `--explain` are here because the migration guides send people to them who still have `"lint": "eslint ."`.
+fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
+    let name = bun_core::strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
+    match name {
+        b"--help" | b"-h" => true,
+        b"--help-all" | b"--doctor" => command != b"check",
+        b"--explain" => command == b"lint",
+        _ => false,
+    }
+}
+
+/// Whether `bun <command>` runs something from the project, as it did before `command` became a built-in command.
 #[cold]
 #[inline(never)]
 pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
+    let args = bun_core::argv().into_iter();
+    let mut of_command = (args.skip_while(|arg| *arg != command)).take_while(|arg| *arg != b"--");
+    !of_command.any(|arg| asks_the_command(command, arg)) && runs(command) != Runs::Command
+}
+
+/// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
+pub(crate) fn runs(command: &[u8]) -> Runs {
     use bun_paths::platform::Auto;
     use bun_paths::resolve_path::join_abs_string;
     let mut cwd = working_directory();
@@ -28,7 +59,7 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
         ) || arg.starts_with(b"--filter")
             || arg.starts_with(b"-F")
         {
-            return true;
+            return Runs::Other;
         }
         let given = match arg.strip_prefix(b"--cwd") {
             Some(b"") => args.next(),
@@ -39,27 +70,32 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
             cwd = join_abs_string::<Auto>(&cwd, &[given]).to_vec();
         }
     }
+    let other_if = |found: bool| if found { Runs::Other } else { Runs::Command };
     let Some((dir, path, contents)) = nearest_package_json(&cwd) else {
-        return is_file_or_executable(command, &cwd);
+        return other_if(is_file_or_executable(command, &cwd));
     };
     // In that script, and in what it runs, it is the command: `"lint": "bun lint"`.
     let running = env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get();
     if running
         .is_some_and(|running| running_package_scripts(running).any(|it| it == (command, dir)))
     {
-        return false;
+        return Runs::Command;
     }
     let by_an_older_bun =
         env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().filter(|_| command == b"check");
     if by_an_older_bun.is_some_and(|running| running_check_scripts(running).any(|it| it == dir)) {
-        return false;
+        return Runs::Command;
     }
     if package_of_inherited_script(command).is_some_and(|it| it == dir) {
-        return false;
+        return Runs::Command;
     }
-    has_script(command, &path, &contents)
-        || is_file_or_executable(command, &cwd)
-        || is_executable_beside_package_json(command, dir, &cwd)
+    if has_script(command, &path, &contents) {
+        return Runs::Script;
+    }
+    other_if(
+        is_file_or_executable(command, &cwd)
+            || is_executable_beside_package_json(command, dir, &cwd),
+    )
 }
 
 /// `bun run` puts the directory of the `package.json` in `PATH`, in front of every `node_modules/.bin`.
@@ -199,7 +235,7 @@ fn command_of_script(name: &[u8]) -> Option<&'static [u8]> {
     match name {
         b"check" | b"precheck" | b"postcheck" => Some(b"check"),
         b"lint" | b"prelint" | b"postlint" => Some(b"lint"),
-        b"format" | b"preformat" | b"postformat" => Some(b"format"),
+        b"fmt" | b"prefmt" | b"postfmt" => Some(b"fmt"),
         _ => None,
     }
 }
@@ -237,7 +273,7 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
         }
     };
     // `name` takes the place of what another package manager has said, for what the script runs.
-    for command in [&b"check"[..], b"lint", b"format"] {
+    for command in [&b"check"[..], b"lint", b"fmt"] {
         if let Some(inherited) = package_of_inherited_script(command) {
             note(command, &inherited);
         }

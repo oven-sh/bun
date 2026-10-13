@@ -277,6 +277,35 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
     bit_length.div_ceil(usize::BITS as usize)
 }
 
+/// A set of byte values that takes 32 bytes. Works as a `const` or a `static`.
+pub type ByteSet = ArrayBitSet<256, { num_masks_for(256) }>;
+
+impl ByteSet {
+    pub const fn of(bytes: &[u8]) -> ByteSet {
+        let (mut set, mut i) = (ByteSet::init_empty(), 0);
+        while i < bytes.len() {
+            set.set(bytes[i] as usize);
+            i += 1;
+        }
+        set
+    }
+
+    /// Also adds `first..=last`.
+    pub const fn with_range(mut self, first: u8, last: u8) -> ByteSet {
+        let mut byte = first as usize;
+        while byte <= last as usize {
+            self.set(byte);
+            byte += 1;
+        }
+        self
+    }
+
+    #[inline]
+    pub const fn has(&self, byte: u8) -> bool {
+        self.is_set(byte as usize)
+    }
+}
+
 /// A bit set with static size, which is backed by an array of usize.
 /// This set is good for sets with a larger size, but may use
 /// more bytes than necessary if your set is small.
@@ -321,7 +350,7 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 
     /// Returns true if the bit at the specified index
     /// is present in the set, false otherwise.
-    pub fn is_set(&self, index: usize) -> bool {
+    pub const fn is_set(&self, index: usize) -> bool {
         debug_assert!(index < Self::BIT_LENGTH);
         if NUM_MASKS == 0 {
             return false; // doesn't compile in this case
@@ -339,7 +368,7 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     }
 
     /// Adds a specific bit to the bit set
-    pub fn set(&mut self, index: usize) {
+    pub const fn set(&mut self, index: usize) {
         debug_assert!(index < Self::BIT_LENGTH);
         if NUM_MASKS == 0 {
             return; // doesn't compile in this case

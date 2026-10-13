@@ -88,8 +88,8 @@ impl Rule for NoArrayDelete {
                 labels.push(keyword, "");
             });
         match is_oxlint {
-            true => report.suggest(USE_SPLICE, |fixer| use_splice_as_tsgolint(fixer, keyword, object, argument)),
-            false => report.suggest(USE_SPLICE, |fixer| use_splice(fixer, node, object, key, is_sequence)),
+            true => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice_as_tsgolint(fixer, keyword, object, argument)),
+            false => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice(fixer, node, object, key, is_sequence)),
         };
     }
 }

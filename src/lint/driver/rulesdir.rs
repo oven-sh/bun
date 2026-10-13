@@ -33,6 +33,6 @@ pub(crate) fn load(environment: &Environment, directories: &[Vec<u8>]) -> Result
         return Ok(location.clone());
     }
     let why = rules.and_then(|it| it.get(b"$error")?.as_str());
-    let why = why.unwrap_or(b"The rules were not loaded.");
+    let why = why.unwrap_or(b"the rules could not be loaded");
     Err(Fatal([b"--rulesdir: ", why].concat()))
 }

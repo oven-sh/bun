@@ -163,20 +163,18 @@ const entries: Entry[] = [
     }),
   },
   // What is only imported for its types is not in a bundle.
-  ...[".script", ".js"].map(
-    (extension): Entry => ({
-      name: `--loader ${extension}:ts, a file that is only imported for its types`,
-      wrong: `types${extension}`,
-      isIncluded: true,
-      loader: [extension, "ts"],
-      commands: withLoader,
-      main: () => [`main${extension}`],
-      files: (isCorrect, seen) => ({
-        [`main${extension}`]: `${seen}import type { N } from "./types${extension}";\nexport const m: N = 1;\n${run}`,
-        [`types${extension}`]: `export type N = number;\nexport const n: N = ${value(isCorrect)};\n`,
-      }),
+  ...[".script", ".js"].map((extension): Entry => ({
+    name: `--loader ${extension}:ts, a file that is only imported for its types`,
+    wrong: `types${extension}`,
+    isIncluded: true,
+    loader: [extension, "ts"],
+    commands: withLoader,
+    main: () => [`main${extension}`],
+    files: (isCorrect, seen) => ({
+      [`main${extension}`]: `${seen}import type { N } from "./types${extension}";\nexport const m: N = 1;\n${run}`,
+      [`types${extension}`]: `export type N = number;\nexport const n: N = ${value(isCorrect)};\n`,
     }),
-  ),
+  })),
   {
     // Without `allowJs`.
     name: "a JavaScript file with its declaration file",
@@ -296,7 +294,10 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
     namesTheFile: printed.includes(entry.wrong),
     ran: command === "bun --check" && stdout.includes("it ran"),
     exitCode,
+    // Says why, if the exit code is not the expected one.
+    output: exitCode === (isCorrect ? 0 : 1) ? "" : `${proc.signalCode}\n${(stdout + stderr).slice(-4000)}`,
   }).toEqual({
+    output: "",
     codes: isCorrect ? [] : ["TS2322"],
     namesTheFile: !isCorrect,
     ran: isCorrect && command === "bun --check",
@@ -422,6 +423,7 @@ test("Bun.build: the check has the conditions and the loaders of the build, not 
 // a build more than there are threads, one that waited on a thread for what only that pool can do would wait for ever.
 test("a check in a bundle of more files than there are threads, and more such builds at once", async () => {
   const count = availableParallelism() + 1;
+  const buildCount = isDebug || isASAN ? 4 : count;
   const names = Array.from({ length: count }, (_, i) => `f${i}`);
   using dir = tempDir("bun-check", {
     "tsconfig.json": config({ noEmit: true }),
@@ -429,7 +431,7 @@ test("a check in a bundle of more files than there are threads, and more such bu
     "index.ts": names.map(name => `import { ${name} } from "./${name}";\n`).join("") + `export default [${names}];\n`,
     "wrong.ts": `import all from "./index";\nexport const wrong: string = all[0];\n`,
     "build.ts": `
-      const builds = Array.from({ length: ${isDebug || isASAN ? 4 : count} }, (_, i) =>
+      const builds = Array.from({ length: ${buildCount} }, (_, i) =>
         Bun.build({ entrypoints: [i === 0 ? "wrong.ts" : "index.ts"], outdir: "out" + i, throw: false, check: true }));
       console.log(JSON.stringify((await Promise.all(builds)).map(it => it.success)));
     `,
@@ -446,7 +448,8 @@ test("a check in a bundle of more files than there are threads, and more such bu
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { codes: (stdout + stderr).match(/TS\d+/g) ?? [], stdout, exitCode };
+    // Not the "TS6" that the random name of the directory can have in it.
+    return { codes: (stdout + stderr).match(/\bTS\d{4,5}\b/g) ?? [], stdout, exitCode };
   };
   const [right, wrong, builds] = await Promise.all([
     run(["build", "--check", "index.ts", "--outdir", "out"]),
@@ -456,8 +459,8 @@ test("a check in a bundle of more files than there are threads, and more such bu
   expect([right.codes, right.exitCode]).toEqual([[], 0]);
   expect([wrong.codes, wrong.exitCode]).toEqual([["TS2322"], 1]);
   const succeeded: boolean[] = JSON.parse(builds.stdout);
-  expect([succeeded.length > 3, succeeded.indexOf(false), succeeded.lastIndexOf(false), builds.exitCode]).toEqual([
-    true,
+  expect([succeeded.length, succeeded.indexOf(false), succeeded.lastIndexOf(false), builds.exitCode]).toEqual([
+    buildCount,
     0,
     0,
     0,

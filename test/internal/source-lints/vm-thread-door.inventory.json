@@ -95,7 +95,11 @@
     ]
   },
   "src/runtime/cli/lint_js.rs": {
-    "thread spawn": 1
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "Posted",
+      "Shared"
+    ]
   },
   "src/runtime/cli/open.rs": {
     "thread spawn": 1

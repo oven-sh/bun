@@ -152,7 +152,7 @@ struct Parser<'a, 'tool> {
     bump: &'a Bump,
     /// `./bunfig.toml`, which comes with the project: not the user's own file, not `--config`.
     is_project_file: bool,
-    /// Reads `[lint]` and `[format]`.
+    /// Reads `[lint]` and `[fmt]`.
     tool: Option<&'a mut crate::ToolReader<'tool>>,
 }
 

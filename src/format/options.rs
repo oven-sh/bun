@@ -46,6 +46,8 @@ pub struct FormatOptions {
     /// For HTML and what is like it.
     pub html_whitespace_sensitivity: HtmlWhitespaceSensitivity,
     pub vue_indent_script_and_style: bool,
+    /// For Svelte.
+    pub svelte: SvelteOptions,
     /// The name of the file, if it is not the one that it was parsed under: text from stdin.
     pub filepath: Option<Box<[u8]>>,
     /// Prettier's `parser`, if it is not left to the name of the file: `json5`, `babel`, ..
@@ -81,6 +83,8 @@ pub struct FormatOptions {
     pub format_javascript: Option<FormatJavaScript>,
     /// Parses the JavaScript and TypeScript in HTML. Without it they stay as they are.
     pub parse_javascript: Option<ParseJavaScript>,
+    /// Parses the expressions in a component of Svelte. Without it there is no telling where they end.
+    pub parse_parts: Option<ParseParts>,
     /// What the code is in, if it is in HTML.
     pub in_html: InHtml,
     /// Whose output to produce where the two differ.
@@ -93,6 +97,8 @@ pub struct FormatOptions {
     pub jsdoc: Option<JsdocOptions>,
     /// oxfmt's `sortTailwindcss`: how the classes of Tailwind CSS are sorted, if they are.
     pub tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
+    /// Format TOML even in Prettier's flavor. Only the caller that detects file types reads this.
+    pub toml: bool,
 }
 
 /// Formats JavaScript or TypeScript, which this crate cannot parse by itself. It is given the name of a file that
@@ -118,6 +124,46 @@ pub type ParseJavaScript = fn(Code<'_>, Then<'_>);
 /// The same for a caller that keeps what it parses with: a text can have many pieces of code in it.
 pub type JavaScriptParser<'p> = &'p dyn Fn(Code<'_>, Then<'_>);
 
+/// What a [`Part`] is.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Goal {
+    /// An expression, commas included.
+    Expression,
+    /// A `let`, `const` or `var`.
+    Declaration,
+    Type,
+}
+
+/// Code in a text whose end only a parser finds. More can follow it, in any language.
+#[derive(Debug, Copy, Clone)]
+pub struct Part {
+    pub goal: Goal,
+    /// Where it starts in the text.
+    pub from: u32,
+    /// Where the text ends for the parser.
+    pub until: u32,
+    pub is_typescript: bool,
+}
+
+/// What is called with the file that has become of a [`Part`], and with where the part ends in it, with the parentheses
+/// around it. The text of the file starts where the part starts, and the part is its only statement: a type is the type of
+/// an alias.
+pub type ThenWithEnd<'t> = &'t mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>, u32);
+
+/// Why a [`Part`] cannot be parsed.
+#[derive(Debug, Copy, Clone)]
+pub struct PartError {
+    /// Where the first error is in the text.
+    pub at: u32,
+    pub is_nested_too_deeply: bool,
+}
+
+/// Parses a part of the text that it has been made for.
+pub type ParsePart<'p> = &'p mut dyn FnMut(Part, ThenWithEnd<'_>) -> Result<(), PartError>;
+
+/// Calls what it is given with what parses the parts of a text.
+pub type ParseParts = fn(&[u8], &mut dyn FnMut(ParsePart<'_>));
+
 /// What Prettier tells the formatter of code that is in HTML: the options whose names start with `__`, and the parsers for
 /// what is less than a program.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
@@ -133,6 +179,10 @@ pub struct InHtml {
     pub is_style_attribute: bool,
     /// `singleQuote`, which `quote_style` does not say in an attribute.
     pub quote_style: QuoteStyle,
+    /// `singleQuote: true`, whatever the options say: what `prettier-plugin-svelte` asks for between double quotes.
+    pub has_single_quotes: bool,
+    /// The parser is `babel-ts`: TypeScript, in a tree of Babel.
+    pub has_tree_of_babel: bool,
 }
 
 /// What the code is.
@@ -157,6 +207,10 @@ pub enum HtmlRoot {
     NgDirective,
     /// `__ng_interpolation`
     NgInterpolation,
+    /// `svelteExpressionParser`, `svelteTSExpressionParser`: the root is a `File` whose `program` is an expression, or a function.
+    SvelteExpression,
+    /// `svelteStatementParser`, `svelteTSStatementParser`: the same with a statement, which loses its `;`.
+    SvelteStatement,
 }
 
 impl HtmlRoot {
@@ -170,6 +224,66 @@ impl HtmlRoot {
                 | HtmlRoot::NgDirective
                 | HtmlRoot::NgInterpolation
         )
+    }
+}
+
+/// The parts of a component of Svelte.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SveltePart {
+    Options,
+    Scripts,
+    Markup,
+    Styles,
+}
+
+impl SveltePart {
+    /// `options-scripts-markup-styles` and the like: each of the four once.
+    fn order(value: &[u8]) -> Option<[SveltePart; 4]> {
+        let mut order = Vec::with_capacity(4);
+        for name in bun_core::strings::split(value, b"-") {
+            let part = match name {
+                b"options" => SveltePart::Options,
+                b"scripts" => SveltePart::Scripts,
+                b"markup" => SveltePart::Markup,
+                b"styles" => SveltePart::Styles,
+                _ => return None,
+            };
+            if order.contains(&part) {
+                return None;
+            }
+            order.push(part);
+        }
+        <[SveltePart; 4]>::try_from(order).ok()
+    }
+}
+
+/// The options of `prettier-plugin-svelte`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct SvelteOptions {
+    /// `svelteSortOrder`. `None`: `"none"`.
+    pub sort_order: Option<[SveltePart; 4]>,
+    /// `svelteAllowShorthand`
+    pub allows_shorthand: bool,
+    /// `svelteIndentScriptAndStyle`
+    pub indents_script_and_style: bool,
+    /// Components are formatted, and so are the blocks of Svelte in Markdown. For components only the caller that detects
+    /// file types reads this.
+    pub is_on: bool,
+}
+
+impl Default for SvelteOptions {
+    fn default() -> Self {
+        SvelteOptions {
+            sort_order: Some([
+                SveltePart::Options,
+                SveltePart::Scripts,
+                SveltePart::Markup,
+                SveltePart::Styles,
+            ]),
+            allows_shorthand: true,
+            indents_script_and_style: true,
+            is_on: false,
+        }
     }
 }
 
@@ -320,6 +434,14 @@ impl FormatOptions {
                 };
             }
             b"vueIndentScriptAndStyle" => self.vue_indent_script_and_style = boolean()?,
+            b"svelteSortOrder" => {
+                self.svelte.sort_order = match value {
+                    b"none" => None,
+                    _ => Some(SveltePart::order(value).ok_or(InvalidOption)?),
+                };
+            }
+            b"svelteAllowShorthand" => self.svelte.allows_shorthand = boolean()?,
+            b"svelteIndentScriptAndStyle" => self.svelte.indents_script_and_style = boolean()?,
             b"filepath" => self.filepath = Some(value.into()),
             b"parser" => self.parser = Some(value.into()),
             b"rangeStart" => self.range_start = Some(number(u32::MAX)?),

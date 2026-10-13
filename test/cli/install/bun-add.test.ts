@@ -3752,12 +3752,7 @@ describe("should move existing dependency when an explicit group flag is given",
 describe("a spec without a name that resolves to a dependency package.json already declares", () => {
   type Kind = "folder" | "tarball" | "git";
   type Declared =
-    | "none"
-    | "dependencies"
-    | "devDependencies"
-    | "optionalDependencies"
-    | "peerDependencies"
-    | "optional peer";
+    "none" | "dependencies" | "devDependencies" | "optionalDependencies" | "peerDependencies" | "optional peer";
   type Flag = "" | "-d" | "--peer";
 
   const gitEnv = {

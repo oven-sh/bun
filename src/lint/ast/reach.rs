@@ -199,18 +199,21 @@ impl File<'_> {
                 .is_some_and(|&owner| self.is_import_attributes(owner))
     }
 
-    /// Whether `object` is the `{ .. }` of import attributes, which is not a node. They are in the order of the source, by
-    /// their keyword, which the `{ .. }` follows.
+    /// Whether `object` is the `{ .. }` of import attributes, which is not a node.
+    #[inline]
     pub(crate) fn is_import_attributes(&self, object: hir::ExprId) -> bool {
+        self.index_of_import_attributes(object).is_some()
+    }
+
+    /// The index in `Hir::import_attributes` of the clause whose `{ .. }` is `object`. The list is sorted by keyword, and
+    /// no other keyword fits between a keyword and its `{`.
+    pub(crate) fn index_of_import_attributes(&self, object: hir::ExprId) -> Option<usize> {
         let (all, start) = (
             self.hir.import_attributes,
             self.hir.exprs.get(object.idx()).map_or(0, |it| it.pos),
         );
-        let after = all.partition_point(|it| it.0 < start);
-        after
-            .checked_sub(1)
-            .and_then(|it| all.get(it))
-            .is_some_and(|it| it.1 == object)
+        let index = all.partition_point(|it| it.0 < start).checked_sub(1)?;
+        (all.get(index)?.1 == object).then_some(index)
     }
 }
 

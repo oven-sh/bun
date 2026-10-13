@@ -581,7 +581,7 @@ describe("bun pm cache unpack", () => {
     using box = sandbox();
     // Walk the records, descending into packages, to find where each one starts.
     const boundaries = new Set<number>();
-    for (let at = MAGIC.length; at < sound.length; ) {
+    for (let at = MAGIC.length; at < sound.length;) {
       boundaries.add(at);
       const pathLen = sound.readUInt32LE(at + 1);
       const header = 1 + 4 + pathLen + 4 + 8;
@@ -606,7 +606,7 @@ describe("bun pm cache unpack", () => {
     for (let i = 0; i < count; i++) {
       const at = Math.floor(i * stride);
       const damaged = Buffer.from(sound);
-      damaged[at] ^= 1 << i % 8;
+      damaged[at] ^= 1 << (i % 8);
       packs.push(damaged);
     }
     await expectAllRefused(box, packs);
@@ -815,7 +815,10 @@ describe("bun pm cache pack", () => {
       await installedProject(box);
       const online = snapshot(join(box.project, "node_modules", "no-deps"), false);
       if (!isWindows) {
-        const entry = join(box.cache, entryNames(box.cache).find(name => name.startsWith("no-deps@"))!);
+        const entry = join(
+          box.cache,
+          entryNames(box.cache).find(name => name.startsWith("no-deps@"))!,
+        );
         writeFileSync(join(entry, "a:b.js"), "colon");
         mkdirSync(join(entry, "empty", "nested"), { recursive: true });
         symlinkSync("../index.js", join(entry, "empty", "link"));
@@ -996,7 +999,10 @@ describe("bun pm cache pack", () => {
     async () => {
       using box = sandbox();
       await installedProject(box);
-      const entry = join(box.cache, entryNames(box.cache).find(name => name.startsWith("no-deps@"))!);
+      const entry = join(
+        box.cache,
+        entryNames(box.cache).find(name => name.startsWith("no-deps@"))!,
+      );
       writeFileSync(join(box.project, "cache.pack"), "the previous pack");
 
       for (const [path, target] of [

@@ -15,11 +15,11 @@ use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::bunfig::Bunfig;
 
-/// Reads what a bunfig has for `bun lint` or `bun format`, which know their flags. It is called with the whole file.
+/// Reads what a bunfig has for `bun lint` or `bun fmt`, which know their flags. It is called with the whole file.
 /// `Err`: what is wrong, and where.
 pub type ToolReader<'a> = dyn FnMut(&bun_ast::Expr) -> Result<(), (bun_ast::Loc, Vec<u8>)> + 'a;
 
-/// What the process ends with if its bunfig cannot be used. For `bun lint` and `bun format` that is what ESLint and
+/// What the process ends with if its bunfig cannot be used. For `bun lint` and `bun fmt` that is what ESLint and
 /// Prettier end with if their configuration cannot.
 fn exit_code_of_failure(cmd: CommandTag) -> u32 {
     match cmd {
@@ -180,8 +180,17 @@ fn load_config_path_for_tool(
 fn report_bunfig_load_failure(cmd: CommandTag, log: *mut bun_ast::Log, err: crate::Error) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
+    let is_of_tool = matches!(cmd, CommandTag::LintCommand | CommandTag::FormatCommand);
     if log.has_any() {
+        // `bun lint` and `bun fmt` print relative paths everywhere else, so do that here too.
+        let locations = log.msgs.iter_mut().filter(|_| is_of_tool);
+        for location in locations.filter_map(|it| it.data.location.as_mut()) {
+            location.file = bun_paths::basename(&location.file[..]).to_vec().into();
+        }
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        if is_of_tool {
+            Global::exit(exit_code_of_failure(cmd));
+        }
         Output::print_error("\n");
     }
     Output::err(err, "failed to load bunfig", ());
@@ -196,7 +205,7 @@ pub fn load_config(
     load_config_for_tool(cmd, user_config_path_, ctx, None)
 }
 
-/// As [`load_config`], for `bun lint` and `bun format`: `tool` is called with the file, if there is one.
+/// As [`load_config`], for `bun lint` and `bun fmt`: `tool` is called with the file, if there is one.
 pub fn load_config_for_tool(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,

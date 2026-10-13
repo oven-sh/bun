@@ -8,7 +8,7 @@ pub struct NoNegativeRepeatCount;
 
 const UNBOUNDED_COUNT: Message = Message::new(
     "unboundedCount",
-    "This count can be negative, and `repeat()` throws a `RangeError` then. Give it a lower bound.",
+    "`repeat()` throws a `RangeError` if this count is negative. Give it a lower bound.",
 );
 const CLAMP: Message = Message::new("clamp", "Add a lower bound of zero.");
 

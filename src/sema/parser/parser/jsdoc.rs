@@ -589,7 +589,13 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
                 && match it.kind {
                     DiagnosticKind::Grammar => reach == Reach::Checked,
                     DiagnosticKind::Checker => reach != Reach::Unvisited,
-                    DiagnosticKind::Parse | DiagnosticKind::Js | DiagnosticKind::JsDoc => false,
+                    DiagnosticKind::Parse
+                    | DiagnosticKind::Js
+                    | DiagnosticKind::JsDoc
+                    | DiagnosticKind::Oxc
+                    | DiagnosticKind::OxcFatal
+                    | DiagnosticKind::OxcSemantic
+                    | DiagnosticKind::OxcSecondReading => false,
                 }
         });
         self.f.diagnostics.append(&mut reported);

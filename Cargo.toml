@@ -487,3 +487,14 @@ bun_transpiler = { path = "src/transpiler" }
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
+
+# The runners behind `--run-typescript-tests`, `--run-prettier-tests` and `--run-eslint-tests`. Only canary and debug
+# builds have them, and the time goes into what they test, which keeps its own level.
+[profile.release.package.bun_sema_baselines]
+opt-level = "z"
+
+[profile.release.package.bun_format_conformance]
+opt-level = "z"
+
+[profile.release.package.bun_lint_conformance]
+opt-level = "z"

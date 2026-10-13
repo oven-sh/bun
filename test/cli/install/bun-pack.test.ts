@@ -4391,7 +4391,7 @@ function rawTarballMembers(tgz: Uint8Array) {
   const tar = Buffer.from(Bun.gunzipSync(tgz));
   const members: { names: Set<string>; contents: string }[] = [];
   let paxPath: string | undefined;
-  for (let offset = 0; offset + 512 <= tar.length; ) {
+  for (let offset = 0; offset + 512 <= tar.length;) {
     const header = tar.subarray(offset, offset + 512);
     if (header.every(byte => byte === 0)) break;
     const nameField = header.subarray(0, 100);
@@ -4404,7 +4404,7 @@ function rawTarballMembers(tgz: Uint8Array) {
 
     if (typeflag === "x") {
       // pax extended header data is a sequence of "<record length> <key>=<value>\n"
-      for (let pos = 0; pos < data.length; ) {
+      for (let pos = 0; pos < data.length;) {
         const space = data.indexOf(" ", pos);
         const recordLength = parseInt(data.toString("latin1", pos, space), 10);
         const record = data.toString("latin1", space + 1, pos + recordLength - 1);

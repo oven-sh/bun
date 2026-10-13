@@ -16,7 +16,7 @@ const REPLACE: Message = Message::new(
 );
 const UNCHECKED: Message = Message::new(
     "unchecked",
-    "Files like this are not checked: {{ reason }}.",
+    "This file was not checked because {{ reason }}.",
 );
 
 fn show_invisibles(shown: &[u8]) -> Vec<u8> {
@@ -118,6 +118,7 @@ impl Settings {
                 uses_configuration: self.uses_configuration,
                 file_info_options: self.file_info_options.as_ref(),
                 package_module: file.package_module(),
+                follows_packages: !file.language().stands_alone,
             }),
             None => Formatted::NotNative(Reason::NoFormatter),
         };
@@ -139,8 +140,10 @@ impl Settings {
         let (formatted, hunks) = match self.compare(like, file, source) {
             Ok(Some(it)) => it,
             Ok(None) | Err(Reason::NoFormatter) => return,
-            Err(reason) if like == Like::InstalledPrettier => return file.hand_back(reason),
-            // `bun/format` stands in for nothing, so nobody else looks at the file.
+            Err(reason) if like == Like::InstalledPrettier && !file.language().stands_alone => {
+                return file.hand_back(reason);
+            }
+            // There's no package rule to fall back to, so report that the file wasn't checked.
             Err(reason) => {
                 // Behind the comments at the top, one of which may turn the rule off.
                 let at = cx.program_span().start;

@@ -1370,7 +1370,11 @@ describe.concurrent("transitive file dependencies of registry packages", () => {
         entries.find(entry => entry.startsWith("file-dep-with-peer-on-files@"))!,
         "node_modules",
       );
-      const peer = join(bunDir, entries.find(entry => entry.startsWith("peer-on-files@"))!, "node_modules");
+      const peer = join(
+        bunDir,
+        entries.find(entry => entry.startsWith("peer-on-files@"))!,
+        "node_modules",
+      );
       expect(
         await Promise.all([
           entries.map(entry => entry.replace(/\+[0-9a-f]{16}$/, "")),

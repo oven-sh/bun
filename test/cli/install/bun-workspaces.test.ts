@@ -476,6 +476,36 @@ describe("workspace member package.json without a name", () => {
   });
 });
 
+test.concurrent("extglob and brace sequence workspace patterns", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const good = ["packages/pkg1", "packages/pkg2", "apps/web", "apps/api", "libs/lib1", "libs/lib2"];
+  // Installing any of these would fail.
+  const excluded = ["packages/internal", "apps/other", "libs/lib3"];
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/!(internal)", "apps/@(web|api)", "libs/lib{1..2}"],
+      }),
+    ),
+    ...good.map(dir => write(join(packageDir, dir, "package.json"), JSON.stringify({ name: dir.split("/")[1] }))),
+    ...excluded.map(dir =>
+      write(
+        join(packageDir, dir, "package.json"),
+        JSON.stringify({ name: dir.split("/")[1], dependencies: { "doesnt-exist-oops": "1.2.3" } }),
+      ),
+    ),
+  ]);
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+
+  const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as { workspaces: object };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", ...good].sort());
+});
+
 test("dependency on same name as workspace and dist-tag", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

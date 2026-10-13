@@ -8,6 +8,7 @@ use bun_alloc::Arena as Bump;
 use bun_ast::Loc;
 use bun_ast::{self, E, Expr, expr as js_expr};
 use bun_collections::{StringHashMap, index_sort};
+use bun_core::fmt::TerminalHyperlink;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::dependency::{self, Behavior};
@@ -33,22 +34,6 @@ use bun_semver::{self as semver, SlicedString};
 use crate::Command;
 use crate::cli::cli_dupe;
 use crate::cli::outdated_command::{printed, printed_width};
-
-/// Plain `text` when `link` is empty.
-struct TerminalHyperlink<'a> {
-    link: &'a str,
-    text: &'a str,
-}
-
-impl fmt::Display for TerminalHyperlink<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.link.is_empty() {
-            return f.write_str(self.text);
-        }
-        // OSC8 = ESC ]8;; ; ST = ESC \
-        write!(f, "\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\", self.link, self.text)
-    }
-}
 
 pub(crate) struct UpdateInteractiveCommand;
 
@@ -1118,10 +1103,11 @@ impl UpdateInteractiveCommand {
                         } else {
                             String::new()
                         };
-                    let hyperlink = TerminalHyperlink {
-                        link: &package_url,
-                        text: &display_name,
-                    };
+                    let hyperlink = TerminalHyperlink::new(
+                        package_url.as_bytes(),
+                        display_name.as_bytes(),
+                        !package_url.is_empty(),
+                    );
 
                     match color {
                         Some(CheckboxColor::Red) => bun_core::pretty!("<r><red>{}<r>", hyperlink),

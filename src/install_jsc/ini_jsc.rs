@@ -1,7 +1,8 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc as _, StringJsc};
+use bun_core::Utf8Bytes;
+use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc as _, StringJsc};
 
 /// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
 /// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
@@ -18,6 +19,28 @@ pub fn ini_testing_load_npmrc_from_js(
     IniTestingAPIs::load_npmrc_from_js(global, frame)
 }
 
+/// A typed array or `ArrayBuffer` lends its bytes (no JS may run while they are in use), any other value is read as a string.
+enum IniInput {
+    Bytes(ArrayBuffer),
+    Utf8(Utf8Bytes<'static>),
+}
+
+impl IniInput {
+    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        match value.as_array_buffer(global) {
+            Some(buffer) => Ok(Self::Bytes(buffer)),
+            None => Ok(Self::Utf8(value.to_utf8(global)?)),
+        }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Bytes(buffer) => buffer.byte_slice(),
+            Self::Utf8(utf8) => utf8,
+        }
+    }
+}
+
 pub(crate) struct IniTestingAPIs;
 
 impl IniTestingAPIs {
@@ -31,11 +54,6 @@ impl IniTestingAPIs {
         use bun_ini::load_npmrc;
         use bun_install::npm::Registry;
         use bun_options_types::schema::api::{BunInstall, NpmRegistry};
-
-        let arg = frame.argument(0);
-        let npmrc_contents = arg.to_js_string_view(global)?;
-        let npmrc_utf8 = npmrc_contents.to_utf8();
-        let source = Source::init_path_string(b"<js>", npmrc_utf8.slice());
 
         let mut log = Log::init();
 
@@ -78,6 +96,10 @@ impl IniTestingAPIs {
 
             env_storage.insert(dotenv::Loader::init_with_map(dotenv::Map { map: envmap }))
         };
+
+        // Read after the getters of `env` ran, so they cannot detach a buffer that `source` borrows.
+        let input = IniInput::from_js(global, frame.argument(0))?;
+        let source = Source::init_path_string(b"<js>", input.bytes());
 
         let mut install = Box::new(BunInstall::default());
         if load_npmrc(&mut install, env, &mut log, &source).is_err() {
@@ -204,17 +226,20 @@ impl IniTestingAPIs {
         use bun_ini::Parser;
         use bun_jsc::JsError;
 
-        let arguments = frame.arguments();
-
-        let jsstr = arguments[0];
-        let bunstr = jsstr.to_js_string_view(global)?;
-        let utf8str = bunstr.to_utf8();
+        let input = IniInput::from_js(global, frame.argument(0))?;
 
         let env = global.bun_vm().as_mut().transpiler.env();
-        let source = bun_ast::Source::init_path_string(b"<src>", utf8str.slice());
+        let source = bun_ast::Source::init_path_string(b"<src>", input.bytes());
         let arena = bun_alloc::Arena::new();
+        let mut log = bun_ast::Log::init();
         let mut parser = Parser::init(&source, env);
-        parser.parse(&arena)?;
+        match parser.parse(&mut log, &arena) {
+            Ok(()) => {}
+            Err(bun_ini::Error::Alloc(_)) => return Err(JsError::OutOfMemory),
+            Err(bun_ini::Error::SourceTooLarge) => {
+                return Err(global.throw_value(log.to_js(global, format_args!("INI parse error"))?));
+            }
+        }
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
             Ok(v) => Ok(v),

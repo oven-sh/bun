@@ -1,7 +1,8 @@
 const { iniInternals } = require("bun:internal-for-testing");
 const { parse } = iniInternals;
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { totalmem } from "node:os";
 
 describe("parse ini", () => {
   test("weird section", () => {
@@ -639,6 +640,72 @@ brr = 3
       expect(() => parse(ini)).not.toThrow();
     });
   });
+});
+
+// The parser records a source position as an i32 byte offset, so it takes at most i32::MAX bytes.
+// The hooks parse a Uint8Array as it is, which lets a case hand over 2 GiB of untouched memory.
+// Each case runs in a child, so the array does not stay in the test runner.
+describe.concurrent("source length", () => {
+  // Inside a container totalmem() reports the RAM of the host, and constrainedMemory() the cgroup limit.
+  const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+
+  async function run(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const { parse, loadNpmrc } = require("bun:internal-for-testing").iniInternals;\n${code}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // The parser rejects the source by its length before it reads a byte, so the 2 GiB stay
+  // untouched virtual memory.
+  test("a source of 2 GiB is an error", async () => {
+    expect(
+      await run(`
+        const source = new Uint8Array(2 ** 31);
+        const results = {};
+        try {
+          results.parse = parse(source);
+        } catch (e) {
+          results.parse = e.message;
+        }
+        try {
+          results.loadNpmrc = loadNpmrc(source, {}).message;
+        } catch (e) {
+          results.loadNpmrc = "threw " + e.message;
+        }
+        console.log(JSON.stringify(results));
+      `),
+    ).toEqual({
+      stdout: JSON.stringify({
+        parse: "INI document is too large to parse (2 GiB maximum)",
+        loadNpmrc: "INI document is too large to parse (2 GiB maximum)",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The largest source the parser takes. The key line starts 4 bytes before i32::MAX. The comment
+  // line before it is untouched memory, and the search for its line end reads all of it: on Linux
+  // that maps the shared zero page, elsewhere it commits the 2 GiB.
+  test.skipIf(!isLinux && memory < 10 * 1024 ** 3)(
+    "a source one byte under 2 GiB parses",
+    async () => {
+      expect(
+        await run(`
+          const source = new Uint8Array(2 ** 31 - 1);
+          source[0] = "#".charCodeAt(0);
+          source.set(Buffer.from("\\nk=v"), source.length - 4);
+          console.log(JSON.stringify(parse(source)));
+        `),
+      ).toEqual({ stdout: JSON.stringify({ k: "v" }), stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
 });
 
 const wtf = {

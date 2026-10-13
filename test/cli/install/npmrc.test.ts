@@ -1,9 +1,20 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "fs";
+import { chmodSync, closeSync, ftruncateSync, mkdirSync, openSync, readdirSync, writeFileSync, writeSync } from "fs";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, isIPv6, isLinux, isWindows, tempDir, tls, unprivilegedSpawnOptions } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isIPv6,
+  isLinux,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tls,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { createServer as createTlsServer } from "node:tls";
+import { totalmem } from "os";
 import { basename, dirname, join } from "path";
 import { TestRegistry } from "registry";
 const { iniInternals } = require("bun:internal-for-testing");
@@ -5486,6 +5497,89 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     const { stderr, exitCode } = await run(["install"], () => {});
     expect(stderr).not.toContain("warn:");
     expect(exitCode).toBe(0);
+  });
+});
+
+// The INI parser records a source position as an i32 byte offset, so it does not take a source of 2 GiB or more. bun
+// treats such a `.npmrc` like one that it cannot read. `~/.npmrc` names the cache directory here (a folder beside
+// it), so `bun pm cache` shows that it applied and that no line of `./.npmrc` replaced it.
+describe.concurrent("source positions in a .npmrc", () => {
+  async function run(dir: string, ...cmd: string[]) {
+    const home = join(dir, "home");
+    // It would win over `cache`.
+    const { BUN_INSTALL_CACHE_DIR, ...withoutCacheDir } = env;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: join(dir, "project"),
+      env: { ...withoutCacheDir, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: normalizeBunSnapshot(stdout, dir),
+      stderr: normalizeBunSnapshot(stderr, dir),
+      exitCode,
+      signalCode: proc.signalCode,
+    };
+  }
+
+  const files = {
+    "home/.npmrc": "cache=from-home\n",
+    "project/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+  };
+
+  // The file is sparse: the hole takes no disk space and reads back as NUL bytes. bun reads the whole file before the
+  // parser rejects it, so each child needs 2 GiB of memory. NTFS would fill the hole on disk. Inside a container
+  // totalmem() reports the RAM of the host, and constrainedMemory() the cgroup limit.
+  test.skipIf(isWindows || Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
+    "a .npmrc of 2 GiB or more is ignored with a warning, and an install does not go on without it",
+    async () => {
+      using dir = tempDir("npmrc-too-large", files);
+      // A comment line that ends past 2 GiB, then a key line, which starts past i32::MAX.
+      const head = "cache=from-project\n#";
+      const tail = "\na=b\n";
+      const size = 2 ** 31 + 16;
+      const fd = openSync(join(String(dir), "project", ".npmrc"), "w");
+      try {
+        ftruncateSync(fd, size);
+        writeSync(fd, head, 0);
+        writeSync(fd, tail, size - tail.length);
+      } finally {
+        closeSync(fd);
+      }
+      const warning =
+        "warn: INI document is too large to parse (2 GiB maximum)\n" +
+        "ignoring registry and auth settings in <dir>/project/.npmrc";
+
+      expect(await run(String(dir), "pm", "cache")).toEqual({
+        stdout: "<dir>/home/from-home",
+        stderr: warning,
+        exitCode: 0,
+        signalCode: null,
+      });
+      expect(await run(String(dir), "install")).toEqual({
+        stdout: expect.any(String),
+        stderr: warning + "\nerror: cannot read .npmrc, refusing to install packages\n    at <dir>/project/.npmrc",
+        exitCode: 1,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
+
+  // A quoted key is parsed as JSON, and an array key becomes its string form, which prints 1e99 as 100 digits: this
+  // key is 112 bytes from a file of 24. bun 1.4.0 to 1.4.3 took it for a `certfile` line and aborted on the position
+  // of that word, which they found by a walk back from the value over the parsed key.
+  test("a key longer than its source text does not abort", async () => {
+    using dir = tempDir("npmrc-long-key", { ...files, "project/.npmrc": `'["//:certfile",1e99]'=x` });
+
+    expect(await run(String(dir), "pm", "cache")).toEqual({
+      stdout: "<dir>/home/from-home",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });
 

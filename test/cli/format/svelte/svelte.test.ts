@@ -872,6 +872,25 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#await b}y{:then row : /* c */: T}z{:catch e : /* d */: U}w{/await}\n`,
       ],
     ],
+    "the string of `this` keeps its quotes": [
+      [
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        // What the plugin prints.
+        '<svelte:element this={"b"c"}>y</svelte:element>\n',
+      ],
+      [
+        "<svelte:element this={'b\\'c'}>y</svelte:element>\n",
+        '<svelte:element this={"b\'c"}>y</svelte:element>\n',
+        null,
+      ],
+      [
+        "<svelte:element this='b\"c'>y</svelte:element>\n",
+        "<svelte:element this='b\"c'>y</svelte:element>\n",
+        '<svelte:element this="b"c">y</svelte:element>\n',
+      ],
+      ["<svelte:element this={'b'}>y</svelte:element>\n", '<svelte:element this={"b"}>y</svelte:element>\n', null],
+    ],
     "a declaration ends behind its `;`": [
       ["{const sum = 1;}\n", "{const sum = 1}\n", null],
       ["{let sum ;}\n", "{let sum}\n", null],
@@ -1086,7 +1105,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       [
         "<style><!-- </style> -->b{margin:0}</style>\n",
         "1 | <style><!-- </style> -->b{margin:0}</style>\n" +
-          "                                       ^\nerror: This end tag has no start tag\n    at 2.svelte:1:36\n\n",
+          '                                    ^\nerror: Expected "}"\n    at 2.svelte:1:33\n\n',
       ],
       [
         "<style>b{c:</style>}</style>\n",
@@ -1143,6 +1162,10 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "{#if b}{@const c = class { // d\n    e = 1;\n  }}{c}{/if}\n",
         "{#if b}{@const c = class {\n    // d\n    e = 1;\n  }}{c}{/if}\n",
       ],
+      // A name without its escape, modifiers in the usual order, a name that is written twice.
+      [`${typescript}{b\\u{63}}\n`, `${typescript}{bc}\n`],
+      [`${typescript}{class{static private b}}\n`, `${typescript}{class {\n  private static b;\n}}\n`],
+      ["{#each b as { c = {d,e} }}y{/each}\n", "{#each b as { c = { d: d, e: e } }}y{/each}\n"],
       // The value of a `style:` directive is broken into lines like text.
       [
         '<p style:background="linear-gradient(red, orange, yellow, green, blue, indigo, violet, white)">y</p>\n',

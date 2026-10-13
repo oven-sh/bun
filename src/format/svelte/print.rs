@@ -1788,15 +1788,23 @@ impl<'a, 'o> Printer<'a, 'o> {
     /// `this=` of `<svelte:element>` with a string.
     fn print_tag_name(&self, tag: Expression) -> Doc<'a> {
         let written = tag.span.of(self.text);
-        let is_in_braces = (tag.span.start as usize)
+        let before = (tag.span.start as usize)
             .checked_sub(1)
-            .and_then(|at| self.text.get(at))
-            == Some(&b'{');
+            .and_then(|at| self.text.get(at));
+        let is_in_braces = before == Some(&b'{');
         // A literal has its quotes, the text of an attribute has not.
         let value = match written {
             [open @ (b'"' | b'\''), inner @ .., close] if open == close => inner,
             _ => written,
         };
+        // The plugin puts what the string stands for between double quotes: `this={'a"b'}` becomes `this={"a"b"}`.
+        if is_in_braces && strings::index_of_any(value, b"\"\\").is_some() {
+            return self.print_js_in_braces(tag);
+        }
+        if strings::contains_char(value, b'"') {
+            let quote = Doc::Token(if before == Some(&b'\'') { "'" } else { "" });
+            return Doc::List(vec![quote.clone(), text(value), quote]);
+        }
         Doc::List(vec![
             Doc::Token(if is_in_braces { "{\"" } else { "\"" }),
             text(value),

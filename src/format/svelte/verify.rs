@@ -7,8 +7,8 @@
 //!   anywhere, and so can comments, which go with them.
 //! - The code in the markup has the same tokens in the same order: expressions, declarations, patterns, the heads of
 //!   snippets. Free to change is what a formatter changes: parentheses, `,` and `;`, the quotes of strings and of keys, how a
-//!   number is written, the order of the flags of a regular expression, the `|` before the first type of a union, and the
-//!   text of a template that can be in another language. So `(a + b) * c` is `a + b * c` here. Code that cannot be parsed
+//!   number is written, an escape in a name, the order of the flags of a regular expression and of modifiers, the `|` before
+//!   the first type of a union, and the text of a template that can be in another language. So `(a + b) * c` is `a + b * c` here. Code that cannot be parsed
 //!   by itself has the same letters as often.
 //! - All that is text has the same letters as often: comments, scripts, style sheets.
 //! - There are as many comments: in the markup, between attributes, and in and around the code in the markup, where
@@ -30,6 +30,7 @@ use crate::html::js::Parse;
 use crate::html::verify::{Reader, Signature};
 use crate::js::utils::number::format_trimmed_number;
 use crate::options::HtmlWhitespaceSensitivity;
+use crate::verify::without_unicode_escapes;
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::tokens::{Token, TokenKind};
@@ -646,7 +647,27 @@ fn read_tokens<'a>(
                     templates.pop();
                 }
             }
-            _ => reader.exact(&token.decoded_value()),
+            // `static private` is `private static`.
+            TokenKind::Identifier | TokenKind::Keyword
+                if matches!(
+                    text,
+                    b"abstract"
+                        | b"accessor"
+                        | b"declare"
+                        | b"override"
+                        | b"private"
+                        | b"protected"
+                        | b"public"
+                        | b"readonly"
+                        | b"static"
+                ) =>
+            {
+                reader.count(text)
+            }
+            _ if strings::contains_char(text, b'\\') => {
+                reader.exact(&without_unicode_escapes(text))
+            }
+            _ => reader.exact(text),
         }
         previous = Some(token);
     }

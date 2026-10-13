@@ -27,9 +27,6 @@ pub struct Refusal {
     pub message: Vec<u8>,
 }
 
-/// [`lint`] or [`format`]: what a bunfig.toml says to the command. `Ok(None)`: nothing.
-pub type Read<T> = fn(&Expr) -> Result<Option<T>, Refusal>;
-
 fn refuse<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
     Err(Refusal {
         at,
@@ -1040,14 +1037,11 @@ fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     entries(table)?.into_iter().map(one).collect()
 }
 
-/// What `[lint]` of `file` says, and `[fmt]`, which is for the rule that holds a file against what `bun fmt` prints.
+/// What `[lint]` of `file` says.
 pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
-    let mut options = crate::cli::Options {
-        of_bun_format: format(file)?.map(Box::new),
-        ..Default::default()
-    };
+    let mut options = crate::cli::Options::default();
     let Some(section) = file.get(b"lint") else {
-        return Ok(options.of_bun_format.is_some().then_some(options));
+        return Ok(None);
     };
     for (key, value) in entries(&section)? {
         let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);

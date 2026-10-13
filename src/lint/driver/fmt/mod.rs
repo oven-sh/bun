@@ -2163,7 +2163,7 @@ impl Run<'_> {
         match scope.as_ref().map(|scope| configs.config_of(scope)) {
             Ok(Ok(other)) => {
                 let other = other.map(|it| &it.path[..]);
-                crate::init::FORMAT.add(other, self.environment)
+                crate::init::FORMAT.add(other, &self.options.bunfig, self.environment)
             }
             Ok(Err(Fatal(error))) => self.fail_to_start(configs.flavor, &error),
             Err(Fatal(error)) => self.fail_to_start(configs.flavor, error),

@@ -251,8 +251,8 @@ const FUNCTIONS: [&[u8]; 9] = [
 /// What turns the sorting on.
 #[derive(Clone, Copy)]
 pub(crate) enum SetBy<'a> {
-    /// `[fmt]` or the flag. Paths are relative to the working directory.
-    Bun,
+    /// `[fmt]` or the flag. Paths, which only `[fmt]` has, are relative to this directory: where bunfig.toml is.
+    Bun(&'a [u8]),
     /// An oxfmt config in this directory, which paths are relative to.
     Oxfmt(&'a [u8]),
     /// `prettier-plugin-tailwindcss` in a Prettier config. Paths are relative to this directory.
@@ -323,13 +323,11 @@ pub(crate) fn warning_of_plugin(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> 
 /// Resolves `sortTailwindcss` for a file in `directory`. `value` is the option as JSON, and it isn't `false`.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
-    environment: &Environment,
     value: &[u8],
     (set_by, directory): (SetBy, &[u8]),
 ) -> Tailwind {
     let base = match set_by {
-        SetBy::Bun => &environment.cwd,
-        SetBy::Oxfmt(base) | SetBy::Plugin(base) => base,
+        SetBy::Bun(base) | SetBy::Oxfmt(base) | SetBy::Plugin(base) => base,
     };
     // `true` has no keys.
     let json = bun_lint::json::parse(value);
@@ -409,7 +407,7 @@ pub(crate) fn for_file(
     };
     Tailwind {
         functions: Names::new(match (set_by, get(b"functions")) {
-            (SetBy::Bun, None) => FUNCTIONS.map(<[u8]>::to_vec).to_vec(),
+            (SetBy::Bun(_), None) => FUNCTIONS.map(<[u8]>::to_vec).to_vec(),
             _ => names(b"functions"),
         }),
         attributes: Names::new(names(b"attributes")),

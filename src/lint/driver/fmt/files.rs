@@ -470,10 +470,17 @@ impl Ignored {
                 }
             }
         }
-        if !options.ignore_pattern.is_empty() {
-            let lines = options.ignore_pattern.join(&b"\n"[..]);
-            files
-                .extend(gitignore::with_text(None, cwd, &lines, flavor == Flavor::Oxfmt).map(Some));
+        let all = &options.ignore_pattern;
+        let (of_bunfig, of_flags) = all.split_at(options.ignore_patterns_of_bunfig.min(all.len()));
+        for (start, lines) in [
+            (&options.directory_of_bunfig(cwd)[..], of_bunfig),
+            (cwd, of_flags),
+        ] {
+            if !lines.is_empty() {
+                let lines = lines.join(&b"\n"[..]);
+                let is_oxfmt = flavor == Flavor::Oxfmt;
+                files.extend(gitignore::with_text(None, start, &lines, is_oxfmt).map(Some));
+            }
         }
         Ok(Ignored {
             directories,

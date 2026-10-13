@@ -77,6 +77,7 @@ fn load_bunfig(
     config_path: &ZStr,
     ctx: Context<'_>,
     tool: Option<&mut ToolReader<'_>>,
+    is_only_for_tool: bool,
 ) -> Result<(), crate::Error> {
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
@@ -104,7 +105,7 @@ fn load_bunfig(
         unsafe { (*log_ptr).level = lvl };
     });
     ctx.debug.loaded_bunfig = true;
-    Bunfig::parse(cmd, &source, ctx, tool)
+    Bunfig::parse(cmd, &source, ctx, tool, is_only_for_tool)
 }
 
 fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
@@ -115,7 +116,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
 
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        load_bunfig(cmd, true, path, ctx, None)?;
+        load_bunfig(cmd, true, path, ctx, None, false)?;
     }
     Ok(())
 }
@@ -155,11 +156,22 @@ fn load_config_path_for_tool(
         }
     }
 
-    load_bunfig(cmd, auto_loaded, config_path, ctx, tool)
+    load_bunfig(cmd, auto_loaded, config_path, ctx, tool, false)
 }
 
 #[cold]
 fn report_bunfig_load_failure(cmd: CommandTag, log: *mut bun_ast::Log, err: crate::Error) -> ! {
+    report_bunfig_load_failure_as(cmd, log, err, None)
+}
+
+/// `shown`: what the file is called, if that is not its name.
+#[cold]
+fn report_bunfig_load_failure_as(
+    cmd: CommandTag,
+    log: *mut bun_ast::Log,
+    err: crate::Error,
+    shown: Option<&[u8]>,
+) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
     let is_of_tool = matches!(cmd, CommandTag::LintCommand | CommandTag::FormatCommand);
@@ -167,7 +179,9 @@ fn report_bunfig_load_failure(cmd: CommandTag, log: *mut bun_ast::Log, err: crat
         // `bun lint` and `bun fmt` print relative paths everywhere else, so do that here too.
         let locations = log.msgs.iter_mut().filter(|_| is_of_tool);
         for location in locations.filter_map(|it| it.data.location.as_mut()) {
-            location.file = bun_paths::basename(&location.file[..]).to_vec().into();
+            location.file = (shown.unwrap_or_else(|| bun_paths::basename(&location.file[..])))
+                .to_vec()
+                .into();
         }
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         if is_of_tool {
@@ -285,6 +299,43 @@ pub fn load_config_for_tool(
         report_bunfig_load_failure(cmd, ctx.log, err);
     }
     Ok(())
+}
+
+/// For `bun lint` and `bun fmt`, which have not found all that is for them in the working directory: has `tool` read the
+/// bunfig.toml of each directory above it, from the nearest, until `tool` says that it has enough. It is called with the file
+/// and its path from the working directory. Nothing else in these files counts.
+pub fn load_config_above_for_tool(
+    cmd: CommandTag,
+    ctx: Context<'_>,
+    tool: &mut dyn FnMut(&bun_ast::Expr, &[u8]) -> Result<bool, (bun_ast::Loc, Vec<u8>)>,
+) -> Option<()> {
+    let cwd = ctx.args.absolute_working_dir.clone()?;
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let mut shown = b"bunfig.toml".to_vec();
+    let mut below = join_config_path(&cwd, &shown, &mut buffer)?
+        .as_bytes()
+        .to_vec();
+    loop {
+        shown.splice(0..0, *b"../");
+        let path = join_config_path(&cwd, &shown, &mut buffer)?;
+        // The root is its own parent.
+        if path.as_bytes() == below {
+            return None;
+        }
+        let mut has_enough = false;
+        let read: &mut ToolReader<'_> = &mut |file| {
+            has_enough = tool(file, &shown)?;
+            Ok(())
+        };
+        if let Err(err) = load_bunfig(cmd, true, path, &mut *ctx, Some(read), true) {
+            report_bunfig_load_failure_as(cmd, ctx.log, err, Some(&shown));
+        }
+        if has_enough {
+            return Some(());
+        }
+        below.clear();
+        below.extend_from_slice(path.as_bytes());
+    }
 }
 
 pub fn load_config_with_cmd_args(

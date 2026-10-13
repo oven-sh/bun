@@ -501,12 +501,12 @@ impl<S: RuleSet> Linter<S> {
             true => file.config_comments(),
             false => &[],
         };
-        // ESLint takes `oxlint-disable` and the like for ordinary comments.
+        // ESLint takes `oxlint-disable` and the like for ordinary comments. Without a configuration of either, those of both count.
         let is_understood = |it: &&ConfigComment| {
             let is_called_oxlint = file.slice(it.label_span).starts_with(b"oxlint");
             match config.understands_oxlint_comments {
                 true => is_called_oxlint || options.respects_eslint_comments,
-                false => !is_called_oxlint && !it.is_only_of_oxlint,
+                false => config.has_every_rule || (!is_called_oxlint && !it.is_only_of_oxlint),
             }
         };
         let prepared = config.prepared.get_or_init(|| self.prepare(config));
@@ -1805,6 +1805,10 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             names,
             justification: self.file.slice(comment.justification),
             start,
+            tool: match self.file.slice(comment.label_span).starts_with(b"oxlint") {
+                true => "oxlint",
+                false => "eslint",
+            },
         });
     }
 }

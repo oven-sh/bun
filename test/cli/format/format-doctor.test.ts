@@ -85,7 +85,7 @@ Not checked:    other tools' configs, CI files, Git hooks
   test("-f json prints the same report as JSON", async () => {
     const { stdout, exitCode } = await doctor(prettier, ["-f", "json"]);
     expect(JSON.parse(stdout)).toEqual({
-      config: { path: ".prettierrc", kind: "prettier", nested: [], editorconfig: true },
+      config: { path: ".prettierrc", kind: "prettier", nested: [], editorconfig: true, bunfig: null },
       files: { formatted: 4, by_prettier: { "*.astro": 2 }, not_formatted: {}, left_for_plugins: 0 },
       plugins: {
         built_in: ["@ianvs/prettier-plugin-sort-imports"],
@@ -186,6 +186,7 @@ Still needed:   prettier, prettier-plugin-svelte (some files go to them)
     test("with `svelte = true` in [fmt], another version is not in use", async () => {
       const { stdout, exitCode } = await doctor({ ...project("3.4.0"), "bunfig.toml": "[fmt]\nsvelte = true\n" });
       expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+Using bunfig.toml ([fmt])
 
     3 files are formatted natively
 
@@ -203,7 +204,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     ])("says that the files are left alone: %s", async (_, files, args) => {
       const { stdout, exitCode } = await doctor({ ...project("3.4.0"), ...files }, args);
       expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
-
+${"bunfig.toml" in files ? "Using bunfig.toml ([fmt])\n" : ""}
     2 files are formatted natively
 
 Built-in plugins: prettier-plugin-svelte
@@ -380,6 +381,15 @@ Not checked:    other tools' configs, CI files, Git hooks
 `);
     expect(isUntouched).toBe(true);
     expect(exitCode).toBe(0);
+  });
+
+  test("with only [fmt] in bunfig.toml, says so, and not to add the section", async () => {
+    const { stdout, stderr, exitCode } = await doctor({ "a.js": ugly, "bunfig.toml": "[fmt]\nsemi = false\n" });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "Using bunfig.toml ([fmt], on top of Prettier's defaults)\n\n    2 files are formatted natively\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("without a config file", async () => {

@@ -3,6 +3,7 @@
 
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
+use crate::paths;
 use bun_clap as clap;
 use bun_core::strings;
 
@@ -258,7 +259,7 @@ pub enum LogLevel {
 /// One entry of `[[fmt.overrides]]`.
 #[derive(Clone, Debug, Default)]
 pub struct Override {
-    /// Globs matched against the path relative to the working directory. A glob without a slash matches the file name.
+    /// Globs matched against the path relative to where bunfig.toml is. A glob without a slash matches the file name.
     pub files: Vec<Vec<u8>>,
     pub excluded: Vec<Vec<u8>>,
     /// Same format as [`Options::format`].
@@ -303,6 +304,12 @@ pub struct Options {
     pub ignore_path: Option<Vec<Vec<u8>>>,
     /// Lines of an ignore file that is in the working directory.
     pub ignore_pattern: Vec<Vec<u8>>,
+    /// How many of them, the first, are of bunfig.toml: lines of an ignore file that is where that file is.
+    pub ignore_patterns_of_bunfig: usize,
+    /// The bunfig that was read, or would have been: a path from the working directory.
+    pub bunfig: Vec<u8>,
+    /// It has a `[fmt]` section, which was read.
+    pub has_section_of_bunfig: bool,
     /// `--staged`, `--changed`
     pub only: Option<crate::git::Only>,
     pub with_node_modules: bool,
@@ -359,6 +366,9 @@ impl Default for Options {
             config_precedence: Precedence::default(),
             ignore_path: None,
             ignore_pattern: Vec::new(),
+            ignore_patterns_of_bunfig: 0,
+            bunfig: b"bunfig.toml".to_vec(),
+            has_section_of_bunfig: false,
             only: None,
             with_node_modules: false,
             error_on_unmatched_pattern: true,
@@ -600,6 +610,32 @@ impl Options {
     /// `args`: what follows `format` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         Options::default().with(args)
+    }
+
+    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts where
+    /// the file is.
+    pub fn of_bunfig_at(mut self, path: &[u8]) -> Options {
+        self.bunfig = paths::from_native(path);
+        self.has_section_of_bunfig = true;
+        self.ignore_patterns_of_bunfig = self.ignore_pattern.len();
+        let directory = paths::dirname(&self.bunfig).to_vec();
+        if directory != b"." {
+            let is_relative = |it: &&mut Vec<u8>| it.starts_with(b"./") || it.starts_with(b"../");
+            let plugins = self.plugins.iter_mut().filter(is_relative);
+            let files = self.ignore_path.iter_mut().flatten();
+            for it in self.config.iter_mut().chain(files).chain(plugins) {
+                let written = paths::from_native(it);
+                if !paths::is_absolute(&written) {
+                    *it = paths::join_normalized(&directory, &written);
+                }
+            }
+        }
+        self
+    }
+
+    /// Where [`Options::bunfig`] is.
+    pub(crate) fn directory_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {
+        paths::dirname(&paths::resolve(cwd, &self.bunfig)).to_vec()
     }
 
     /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::format`].

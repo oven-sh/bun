@@ -974,8 +974,10 @@ pub(crate) struct Configs<'c> {
     options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
-    /// `[[fmt.overrides]]`. Globs are relative to the working directory.
+    /// `[[fmt.overrides]]`. Globs are relative to `directory_of_bunfig`.
     overrides: Vec<Override>,
+    /// [`Options::directory_of_bunfig`]
+    directory_of_bunfig: Vec<u8>,
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
     /// [`Configs::name`]
@@ -1006,6 +1008,11 @@ pub(crate) struct Configs<'c> {
 impl<'c> Configs<'c> {
     pub(crate) fn new(options: &'c Options, environment: &'c Environment<'c>) -> Configs<'c> {
         Configs::with(Cow::Borrowed(options), environment, false)
+    }
+
+    /// The bunfig whose `[fmt]` was read: its path from the working directory.
+    pub(crate) fn bunfig(&self) -> Option<&[u8]> {
+        (self.options.has_section_of_bunfig).then_some(&self.options.bunfig[..])
     }
 
     /// The same for a rule of the linter, with options that nobody else keeps. The linter says whose configuration counts.
@@ -1039,6 +1046,7 @@ impl<'c> Configs<'c> {
             })
             .collect();
         let mut configs = Configs {
+            directory_of_bunfig: options.directory_of_bunfig(&environment.cwd),
             options,
             overrides,
             environment,
@@ -1753,9 +1761,9 @@ impl<'c> Configs<'c> {
     fn svelte_of_flags(&self, path: Option<&[u8]>) -> Option<bool> {
         let mut relative = None;
         let mut is_for_it = |it: &Override| {
-            let cwd = &self.environment.cwd;
+            let start = &self.directory_of_bunfig;
             path.is_some_and(|path| {
-                it.matches(relative.get_or_insert_with(|| paths::relative(cwd, path)))
+                it.matches(relative.get_or_insert_with(|| paths::relative(start, path)))
             })
         };
         let overrides = self.overrides.iter().rev();
@@ -1869,7 +1877,7 @@ impl<'c> Configs<'c> {
         let mut from_flags: Vec<(&[u8], &[u8])> =
             (self.options.format.iter().map(|it| (it.0, &it.1[..]))).collect();
         if let Some(path) = path.filter(|_| !self.overrides.is_empty()) {
-            let relative = paths::relative(&self.environment.cwd, path);
+            let relative = paths::relative(&self.directory_of_bunfig, path);
             for it in self.overrides.iter().filter(|it| it.matches(&relative)) {
                 from_flags.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
             }
@@ -2037,7 +2045,7 @@ impl<'c> Configs<'c> {
             (Some(value), _, Some(config)) if config.is_oxfmt => {
                 (value, SetBy::Oxfmt(paths::dirname(&config.path)))
             }
-            (Some(value), ..) => (value, SetBy::Bun),
+            (Some(value), ..) => (value, SetBy::Bun(&self.directory_of_bunfig)),
             (None, Some(entries), _) => {
                 if let Some(warning) = tailwind::warning_of_plugin(&entries) {
                     self.warn(&[&warning]);
@@ -2048,11 +2056,11 @@ impl<'c> Configs<'c> {
                 let found = scope.config.as_ref().map(|it| paths::dirname(&it.path));
                 (value, SetBy::Plugin(found.unwrap_or(&self.environment.cwd)))
             }
-            (None, None, _) => (b"false".to_vec(), SetBy::Bun),
+            (None, None, _) => (b"false".to_vec(), SetBy::Bun(&self.directory_of_bunfig)),
         };
         if value != b"false" {
             let places = (set_by, directory);
-            let mut tailwind = tailwind::for_file(&self.classes, self.environment, &value, places);
+            let mut tailwind = tailwind::for_file(&self.classes, &value, places);
             tailwind.oxc = self.oxc_for(scope, path, resolved.options.parser.as_deref());
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }

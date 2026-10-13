@@ -161,6 +161,7 @@ pub(super) fn report(
                     (b"kind", text(kind)),
                     (b"nested", texts(&nested)),
                     (b"editorconfig", Json::Bool(own.has_editorconfig())),
+                    (b"bunfig", configs.bunfig().map_or(Json::Null, text)),
                 ]),
             ),
             (
@@ -206,12 +207,26 @@ pub(super) fn report(
                 kind
             );
         }
+        (None, Flavor::Prettier) if configs.bunfig().is_some() => {}
         (None, Flavor::Prettier) => out.extend_from_slice(
             b"No Prettier or oxfmt config found. Bun formats like Prettier by default.\n",
         ),
         (None, Flavor::Oxfmt) => {
             out.extend_from_slice(b"No config file found. Using oxfmt's defaults.\n");
         }
+    }
+    if let Some(bunfig) = configs.bunfig() {
+        let what = match file.is_none() && !is_oxfmt {
+            true => "[fmt], on top of Prettier's defaults",
+            false => "[fmt]",
+        };
+        pretty!(
+            &mut out,
+            colors,
+            "Using <b>{}<r> <d>({})<r>\n",
+            BStr::new(bunfig),
+            what
+        );
     }
     if !nested.is_empty() {
         pretty!(
@@ -276,7 +291,7 @@ pub(super) fn report(
         );
     }
     packages.write(&mut out, colors);
-    if file.is_none() && !is_oxfmt {
+    if file.is_none() && !is_oxfmt && configs.bunfig().is_none() {
         out.extend_from_slice(b"\nRun bun fmt --init to add a [fmt] section to bunfig.toml\n");
     }
     write_notes(&mut out, colors, &notes);

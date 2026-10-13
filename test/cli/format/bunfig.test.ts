@@ -925,3 +925,150 @@ describe.concurrent(".oxfmtrc.json next to a Prettier config", () => {
     expect(results.map(it => it.stderr)).toEqual(["", "", ""]);
   });
 });
+
+describe.concurrent("a bunfig.toml above the working directory", () => {
+  /** Runs `bun fmt ...args` in `cwd`, a directory of `files`. Returns the files that it changed, by their paths from the root. */
+  async function formatIn(cwd: string, files: Record<string, string>, args: string[], before: string[] = []) {
+    using dir = tempDir("bun-format-bunfig", files);
+    await using proc = spawn({
+      cmd: [bunExe(), ...before, "fmt", "--log-level=warn", ...args],
+      env: bunEnv,
+      cwd: join(String(dir), cwd),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const after = Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]);
+    return {
+      stdout,
+      stderr,
+      exitCode,
+      changed: Object.fromEntries(after.filter(([name, text]) => text !== files[name])),
+    };
+  }
+
+  const code = `a("b");\n`;
+  const project = {
+    "bunfig.toml": `[fmt]
+semi = false
+ignorePatterns = ["packages/app/vendor/", "**/gen/**", "packages/*/out/"]
+
+[[fmt.overrides]]
+files = ["packages/app/test/**"]
+excludeFiles = ["packages/app/test/keep/**"]
+options = { singleQuote = true }
+`,
+    "packages/app/src/a.js": code,
+    "packages/app/src/gen/b.js": code,
+    "packages/app/vendor/c.js": code,
+    "packages/app/out/d.js": code,
+    "packages/app/test/e.js": code,
+    "packages/app/test/keep/f.js": code,
+  };
+  const expected = {
+    "packages/app/src/a.js": `a("b")\n`,
+    "packages/app/test/e.js": `a('b')\n`,
+    "packages/app/test/keep/f.js": `a("b")\n`,
+  };
+
+  test.each([
+    [".", ["packages/app"]],
+    ["packages/app", ["."]],
+    ["packages/app", []],
+    ["packages/app/src", [".."]],
+    ["packages/app/test/keep", ["../.."]],
+    ["packages/app/vendor", ["../../../packages"]],
+  ])("the same is written from %s with %j", async (cwd, args) => {
+    expect(await formatIn(cwd, project, args)).toEqual({ stdout: "", stderr: "", exitCode: 0, changed: expected });
+  });
+
+  test("--config names the same file", async () => {
+    const result = await formatIn("packages/app", project, ["."], ["--config=../../bunfig.toml"]);
+    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0, changed: expected });
+  });
+
+  test("--ignore-pattern starts in the working directory", async () => {
+    const { changed } = await formatIn("packages/app", project, [".", "--ignore-pattern", "test/"]);
+    expect(changed).toEqual({ "packages/app/src/a.js": `a("b")\n` });
+  });
+
+  test("ignorePath and config start where bunfig.toml is", async () => {
+    const files = {
+      ...project,
+      "bunfig.toml": `[fmt]\nignorePath = ["tools/ignored"]\nconfig = "tools/style.json"\n`,
+      "tools/ignored": "../packages/app/test/\nvendor\ngen\nout\n",
+      "tools/style.json": `{ "semi": false }`,
+    };
+    for (const [cwd, args] of [
+      [".", ["packages"]],
+      ["packages/app", ["."]],
+      ["packages/app/src", [".."]],
+    ] as const) {
+      const result = await formatIn(cwd, files, [...args]);
+      expect(result).toMatchObject({ stderr: "", exitCode: 0, changed: { "packages/app/src/a.js": `a("b")\n` } });
+    }
+  });
+
+  test("the stylesheet of sortTailwindcss starts where bunfig.toml is", async () => {
+    const files = {
+      "bunfig.toml": `[fmt.sortTailwindcss]\nstylesheet = "./styles/app.css"\n`,
+      "styles/app.css": "/* reversed */\n",
+      // Not this one.
+      "packages/app/styles/app.css": "",
+      "node_modules/tailwindcss/package.json": `{ "name": "tailwindcss", "version": "4.0.0", "main": "index.js" }`,
+      "node_modules/tailwindcss/theme.css": "",
+      "node_modules/tailwindcss/index.js": `const order = ["m-2", "flex", "p-4"];
+exports.__unstable__loadDesignSystem = async css => {
+  const sign = css.includes("reversed") ? -1 : 1;
+  return { getClassOrder: classes => classes.map(name => [name, BigInt(sign * order.indexOf(name))]) };
+};
+`,
+      "packages/app/a.jsx": `<a className="flex p-4 m-2" />;\n`,
+    };
+    for (const [cwd, args] of [
+      [".", ["packages"]],
+      ["packages/app", ["a.jsx"]],
+    ] as const) {
+      const result = await formatIn(cwd, files, [...args]);
+      expect(result).toMatchObject({
+        stderr: "",
+        changed: { "packages/app/a.jsx": `<a className="p-4 flex m-2" />;\n` },
+      });
+    }
+  });
+
+  test("the nearest that has a [fmt] section counts", async () => {
+    const files = {
+      "bunfig.toml": `[fmt]\nsemi = false\n`,
+      "packages/bunfig.toml": `[lint.rules]\n"no-console" = "error"\n`,
+      "packages/app/bunfig.toml": `[test]\ncoverage = true\n`,
+      "packages/app/a.js": code,
+      "packages/own/bunfig.toml": `[fmt]\nsingleQuote = true\n`,
+      "packages/own/src/a.js": code,
+    };
+    expect((await formatIn("packages/app", files, ["."])).changed).toEqual({ "packages/app/a.js": `a("b")\n` });
+    expect((await formatIn("packages/own/src", files, ["."])).changed).toEqual({
+      "packages/own/src/a.js": `a('b');\n`,
+    });
+  });
+
+  test.each([
+    [`[fmt]\nsem = false\n`, `error: Unknown key "sem" in [fmt]\n  Did you mean "semi"?\n    at ../../bunfig.toml:2:1`],
+    [`[fmt]\nprintWidth = "wide"\n`, `    at ../../bunfig.toml:2:14`],
+  ])("a mistake is shown with the path of the file: %j", async (bunfig, message) => {
+    const result = await formatIn("packages/app", { "bunfig.toml": bunfig, "packages/app/a.js": code }, ["."]);
+    expect(result.stderr).toContain(message);
+    expect(result).toMatchObject({ exitCode: 2, changed: {} });
+  });
+
+  test("--init says that there is one, and writes nothing", async () => {
+    const files = { "bunfig.toml": `[fmt]\nsemi = false\n`, "packages/app/a.js": code };
+    const result = await formatIn("packages/app", files, ["--init"]);
+    expect(result).toEqual({
+      stdout: "../../bunfig.toml already has a [fmt] section\n",
+      stderr: "",
+      exitCode: 0,
+      changed: {},
+    });
+  });
+});

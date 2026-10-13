@@ -27,6 +27,8 @@ pub(crate) struct Parent<'a> {
     pub(crate) justification: &'a [u8],
     /// Where the comment starts.
     pub(crate) start: (u32, u32),
+    /// `eslint`, or `oxlint`: what it is called after.
+    pub(crate) tool: &'static str,
 }
 
 /// One rule of such a comment, or all rules if it names none.
@@ -225,15 +227,14 @@ impl Input<'_, '_> {
         fix: Fix,
     ) -> LintMessage {
         let directive = &self.directives[directive as usize];
-        let (what, why) = match directive.kind {
-            Kind::Enable => (
-                "enable",
-                &b"no matching eslint-disable directives were found"[..],
+        let tool = parent.tool;
+        let mut message = match directive.kind {
+            Kind::Enable => format!(
+                "Unused {tool}-enable directive (no matching {tool}-disable directives were found"
             ),
-            _ => ("disable", &b"no problems were reported"[..]),
-        };
-        let mut message = format!("Unused eslint-{what} directive (").into_bytes();
-        message.extend_from_slice(why);
+            _ => format!("Unused {tool}-disable directive (no problems were reported"),
+        }
+        .into_bytes();
         if !description.is_empty() {
             message.extend_from_slice(if directive.kind == Kind::Enable {
                 b" for "

@@ -611,6 +611,214 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   });
 });
 
+describe.concurrent("a bunfig.toml above the working directory", () => {
+  /** Runs `bun lint -f unix ...args` in `cwd`, a directory of `files`. Returns the problems as `path:line rule`, from the root. */
+  async function lintIn(cwd: string, files: Record<string, string>, args: string[], before: string[] = []) {
+    using dir = tempDir("bun-lint", files);
+    await using proc = spawn({
+      cmd: [bunExe(), ...before, "lint", "-f", "unix", ...args],
+      env,
+      cwd: join(String(dir), cwd),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const found = [...stdout.replaceAll("\\", "/").matchAll(/^(\S+?):(\d+):\d+: .* \[\w+\/(.+)\]$/gm)].map(
+      ([, path, line, rule]) => {
+        // oxlint's paths start in the working directory.
+        const whole = path.includes("bun-lint_")
+          ? path.replace(/^.*bun-lint_\w+\//, "")
+          : join(cwd, path).replaceAll("\\", "/");
+        return `${whole}:${line} ${rule.replace(/^eslint\((.+)\)$/, "$1").replace(/^(\w+)\((.+)\)$/, "$1/$2")}`;
+      },
+    );
+    return {
+      found: found.sort(),
+      stderr: normalizeBunSnapshot(stderr, String(dir)).replace(/ \[[\d.]+m?s\]/, ""),
+      exitCode,
+    };
+  }
+
+  const code = "// TODO\ndebugger;\nconsole.log(1);\n";
+  const project = {
+    "package.json": `{ "type": "module" }`,
+    "bunfig.toml": `[lint]
+ignorePatterns = ["packages/app/vendor/", "**/gen/**", "packages/*/out/"]
+plugins = ["./tools/plugin.js"]
+
+[lint.rules]
+"no-debugger" = "error"
+"no-console" = "error"
+"local/no-todo" = "warn"
+
+[[lint.overrides]]
+files = ["packages/app/test/**"]
+excludeFiles = ["packages/app/test/keep/**"]
+rules = { "no-console" = "off" }
+`,
+    "tools/plugin.js": `export default { meta: { name: "local" }, rules: { "no-todo": { create: context => ({
+      Program() { for (const it of context.sourceCode.getAllComments()) if (it.value.includes("TODO")) context.report({ node: it, message: "No TODO." }); },
+    }) } } };\n`,
+    "packages/app/src/a.js": code,
+    "packages/app/src/gen/b.js": code,
+    "packages/app/vendor/c.js": code,
+    "packages/app/out/d.js": code,
+    "packages/app/test/e.js": code,
+    "packages/app/test/keep/f.js": code,
+  };
+  const all = (path: string) => [`${path}:1 local/no-todo`, `${path}:2 no-debugger`, `${path}:3 no-console`];
+  const expected = [
+    ...all("packages/app/src/a.js"),
+    ...all("packages/app/test/e.js").slice(0, 2),
+    ...all("packages/app/test/keep/f.js"),
+  ].sort();
+
+  const configs: [string, Record<string, string>][] = [
+    ["no config file", {}],
+    ["eslint.config.js", { "eslint.config.js": "export default [{ rules: {} }];\n" }],
+    [".oxlintrc.json", { ".oxlintrc.json": `{ "rules": {} }` }],
+    [
+      ".eslintrc.json",
+      { ".eslintrc.json": `{ "root": true, "parserOptions": { "ecmaVersion": 2022, "sourceType": "module" } }` },
+    ],
+  ];
+  describe.each(configs)("%s", (_, config) => {
+    test.each([
+      [".", ["packages/app"]],
+      ["packages/app", ["."]],
+      ["packages/app", []],
+      ["packages/app/src", [".."]],
+      ["packages/app/test/keep", ["../.."]],
+      ["tools", ["../packages"]],
+    ])("the same is found from %s with %j", async (cwd, args) => {
+      expect(await lintIn(cwd, { ...project, ...config }, args)).toMatchObject({ found: expected, exitCode: 1 });
+    });
+
+    test("--config names the same file", async () => {
+      const result = await lintIn("packages/app", { ...project, ...config }, ["."], ["--config=../../bunfig.toml"]);
+      expect(result).toMatchObject({ found: expected, exitCode: 1 });
+    });
+
+    test("--ignore-pattern starts in the working directory", async () => {
+      const result = await lintIn("packages/app", { ...project, ...config }, [".", "--ignore-pattern", "test/"]);
+      expect(result).toMatchObject({ found: all("packages/app/src/a.js").sort(), exitCode: 1 });
+    });
+  });
+
+  test("ignorePath, and what the file has, start where bunfig.toml is", async () => {
+    const files = {
+      ...project,
+      "bunfig.toml": `[lint]\nignorePath = "tools/ignored"\n`,
+      "tools/ignored": "packages/app/test/\nvendor\ngen\nout\n",
+    };
+    for (const [cwd, args] of [
+      [".", ["packages"]],
+      ["packages/app", ["."]],
+      ["packages/app/src", [".."]],
+    ] as const) {
+      expect(await lintIn(cwd, files, [...args])).toMatchObject({
+        found: ["packages/app/src/a.js:2 no-debugger"],
+        exitCode: 1,
+      });
+    }
+    // The flag's path and patterns start in the working directory.
+    const byFlag = await lintIn("packages/app", { ...files, "packages/app/mine": "src\nvendor\nout\n" }, [
+      ".",
+      "--ignore-path",
+      "mine",
+    ]);
+    expect(byFlag.found).toEqual(["packages/app/test/e.js:2 no-debugger", "packages/app/test/keep/f.js:2 no-debugger"]);
+  });
+
+  test("config starts where bunfig.toml is", async () => {
+    const files = {
+      "bunfig.toml": `[lint]\nconfig = "tools/lint.config.js"\n`,
+      "package.json": `{ "type": "module" }`,
+      "tools/lint.config.js": `export default [{ rules: { "no-console": "error" } }];\n`,
+      "packages/app/a.js": code,
+    };
+    expect(await lintIn("packages/app", files, ["."])).toMatchObject({
+      found: ["packages/app/a.js:3 no-console"],
+      exitCode: 1,
+    });
+  });
+
+  test("the nearest that has a [lint] section counts, and nothing else of those above", async () => {
+    const files = {
+      "bunfig.toml": `preload = ["./missing.js"]\nlogLevel = 1\n[lint.rules]\n"no-console" = "error"\n`,
+      "packages/bunfig.toml": `[test]\ncoverage = true\n`,
+      "packages/app/bunfig.toml": `[install]\nexact = true\n`,
+      "packages/app/a.js": code,
+      "packages/own/bunfig.toml": `[lint.rules]\n"no-debugger" = "off"\n`,
+      "packages/own/a.js": code,
+      "packages/own/src/a.js": code,
+    };
+    expect((await lintIn("packages/app", files, ["."])).found).toEqual([
+      "packages/app/a.js:2 no-debugger",
+      "packages/app/a.js:3 no-console",
+    ]);
+    expect(await lintIn("packages/own/src", files, ["."])).toMatchObject({ found: [], exitCode: 0 });
+  });
+
+  test("bun/format holds a file against the [fmt] that bun fmt would read, wherever [lint] is", async () => {
+    const files = {
+      "bunfig.toml": `[fmt]\nsemi = false\n[lint.rules]\n"no-debugger" = "off"\n`,
+      "packages/bunfig.toml": `[lint.rules]\n"bun/format" = "error"\n`,
+      "packages/app/a.js": `export const a = "b";\n`,
+      "packages/app/b.js": `export const a = "b"\n`,
+      "packages/own/bunfig.toml": `[fmt]\nsingleQuote = true\n`,
+      "packages/own/a.js": `export const a = "b";\n`,
+      "packages/own/b.js": `export const a = 'b';\n`,
+    };
+    expect((await lintIn("packages/app", files, ["."])).found).toEqual(["packages/app/a.js:1 bun/format"]);
+    expect((await lintIn("packages/own", files, ["."])).found).toEqual(["packages/own/a.js:1 bun/format"]);
+  });
+
+  test.each([
+    [
+      `[lint.rules]\n"no-consol" = "error"\n`,
+      `error: Unknown rule "no-consol"\n  Did you mean "no-console"?\n    at ../../bunfig.toml:2:1`,
+    ],
+    [
+      `[lint]\nignorePat = "a"\n`,
+      `error: Unknown key "ignorePat" in [lint]\n  Did you mean "ignorePath"?\n    at ../../bunfig.toml:2:1`,
+    ],
+    [`[lint]\nplugins = ["./nope.js"]\n`, `    at ../../bunfig.toml:2:12`],
+    [`[lint\n`, `    at ../../bunfig.toml:1:6`],
+  ])("a mistake is shown with the path of the file: %j", async (bunfig, message) => {
+    const { found, stderr, exitCode } = await lintIn(
+      "packages/app",
+      { "bunfig.toml": bunfig, "packages/app/a.js": code },
+      ["."],
+    );
+    expect(stderr).toContain(message);
+    expect({ found, exitCode }).toEqual({ found: [], exitCode: 2 });
+  });
+
+  test("--init says that there is one, and writes nothing", async () => {
+    using dir = tempDir("bun-lint", {
+      "bunfig.toml": `[lint.rules]\n"no-console" = "error"\n`,
+      "packages/app/a.js": code,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "--init"],
+      env,
+      cwd: join(String(dir), "packages/app"),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "../../bunfig.toml already has a [lint] section\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(existsSync(join(String(dir), "packages/app/bunfig.toml"))).toBe(false);
+  });
+});
+
 describe.concurrent("[[lint.overrides]]", () => {
   /** Returns the problems as `file rule severity`. This output format is the same for every kind of config. */
   async function problems(files: Record<string, string>, args: string[] = []) {

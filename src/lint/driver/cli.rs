@@ -4,6 +4,7 @@
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
 use crate::configs::{Flavor, is_category};
+use crate::paths;
 use bun_clap as clap;
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -440,6 +441,8 @@ pub struct Options {
     pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
     /// The bunfig that was read, as written: `bunfig.toml`, or the path from `bun --config=<path> lint`.
     pub bunfig: Vec<u8>,
+    /// It has a `[lint]` section, which was read.
+    pub has_section_of_bunfig: bool,
     /// `[[lint.overrides]]` from bunfig.toml. There's no flag for it.
     pub overrides: Vec<Override>,
     /// Only set if there are `overrides`. The command line's options on their own, because its rules and globals apply
@@ -450,6 +453,8 @@ pub struct Options {
     pub fix_type: Option<Vec<FixType>>,
     pub ignore: bool,
     pub ignore_pattern: Vec<Vec<u8>>,
+    /// How many of them, the first, are of bunfig.toml: those start where that file is.
+    pub ignore_patterns_of_bunfig: usize,
     /// `--staged`, `--changed`
     pub only: Option<crate::git::Only>,
     pub stdin: bool,
@@ -521,6 +526,8 @@ pub struct Options {
     pub deny_warnings: bool,
     pub silent: bool,
     pub ignore_path: Option<Vec<u8>>,
+    /// `ignorePath` of bunfig.toml as it is written there: to oxlint it is a name, for every directory.
+    pub ignore_file_name_of_bunfig: Option<Vec<u8>>,
     pub disable_nested_config: bool,
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
     pub allow_unsupported: bool,
@@ -556,6 +563,7 @@ impl Default for Options {
             rule: Vec::new(),
             rules_of_bunfig: Vec::new(),
             bunfig: b"bunfig.toml".to_vec(),
+            has_section_of_bunfig: false,
             overrides: Vec::new(),
             of_command_line: None,
             fix: false,
@@ -563,6 +571,7 @@ impl Default for Options {
             fix_type: None,
             ignore: true,
             ignore_pattern: Vec::new(),
+            ignore_patterns_of_bunfig: 0,
             only: None,
             stdin: false,
             stdin_filename: None,
@@ -612,6 +621,7 @@ impl Default for Options {
             deny_warnings: false,
             silent: false,
             ignore_path: None,
+            ignore_file_name_of_bunfig: None,
             disable_nested_config: false,
             allow_unsupported: false,
             native_plugin_rules: NativePlugins::All,
@@ -810,7 +820,10 @@ impl Options {
             b"deny" => self.filters.push((Severity::Error, text.to_vec())),
             b"deny-warnings" => self.deny_warnings = is_on,
             b"silent" => self.silent = is_on,
-            b"ignore-path" => self.ignore_path = owned(),
+            b"ignore-path" => {
+                self.ignore_path = owned();
+                self.ignore_file_name_of_bunfig = None;
+            }
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"allow-unsupported" => self.allow_unsupported = is_on,
             b"native-plugin-rules" => match NativePlugins::parse(text) {
@@ -883,6 +896,32 @@ impl Options {
     /// `args`: what follows `lint` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         Options::default().with(args)
+    }
+
+    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts where
+    /// the file is.
+    pub fn of_bunfig_at(mut self, path: &[u8]) -> Options {
+        self.bunfig = paths::from_native(path);
+        self.has_section_of_bunfig = true;
+        self.ignore_patterns_of_bunfig = self.ignore_pattern.len();
+        self.ignore_file_name_of_bunfig
+            .clone_from(&self.ignore_path);
+        let directory = paths::dirname(&self.bunfig).to_vec();
+        if directory != b"." {
+            let all = [
+                &mut self.config,
+                &mut self.ignore_path,
+                &mut self.suppressions_location,
+                &mut self.tsconfig,
+            ];
+            for it in all.into_iter().flatten() {
+                let written = paths::from_native(it);
+                if !paths::is_absolute(&written) {
+                    *it = paths::join_normalized(&directory, &written);
+                }
+            }
+        }
+        self
     }
 
     /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::lint`].

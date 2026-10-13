@@ -949,7 +949,9 @@ impl Run<'_> {
         }
         if options.init {
             return match loader.for_directory(&environment.cwd) {
-                Ok(found) => crate::init::LINT.add(found.file.as_deref(), environment),
+                Ok(found) => {
+                    crate::init::LINT.add(found.file.as_deref(), &options.bunfig, environment)
+                }
                 Err(Fatal(error)) => self.fail(&error),
             };
         }

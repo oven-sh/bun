@@ -63,28 +63,31 @@ fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
         .last()
 }
 
-/// What bunfig.toml says to `command`, which `read` reads. `None`: nothing, or there is no such file.
-/// A file that cannot be used ends the process. It is looked for in the working directory: call this after `--cwd`.
-pub(crate) fn defaults_of_bunfig<T>(
+/// Has `read` read the bunfig.toml files that can say something to `command`, each with its path from the working directory:
+/// the one in the working directory, then those above it, from the nearest, until `read` says that it has enough. With
+/// `--config` there is only that file. A file that cannot be used ends the process. Call this after `--cwd`.
+pub(crate) fn read_bunfigs(
     ctx: &mut ContextData,
     tag: Tag,
     command: &[u8],
-    read: bunfig::Read<T>,
-) -> Option<T> {
-    let mut defaults = None;
-    let mut tool = |file: &bun_ast::Expr| match read(file) {
-        Ok(read) => {
-            defaults = read;
-            Ok(())
-        }
-        Err(refusal) => Err((refusal.at, refusal.message)),
+    read: &mut dyn FnMut(&bun_ast::Expr, &[u8]) -> Result<bool, bunfig::Refusal>,
+) {
+    let mut read = |file: &bun_ast::Expr, path: &[u8]| {
+        read(file, path).map_err(|refusal| (refusal.at, refusal.message))
     };
-    let path = bunfig_before(command);
-    if let Err(err) = bun_bunfig::load_config_for_tool(tag, path, ctx, Some(&mut tool)) {
+    let named = bunfig_before(command);
+    let mut has_enough = false;
+    let here = &mut |file: &bun_ast::Expr| {
+        has_enough = read(file, named.unwrap_or(b"bunfig.toml"))?;
+        Ok(())
+    };
+    if let Err(err) = bun_bunfig::load_config_for_tool(tag, named, ctx, Some(here)) {
         Output::err(err, "failed to load bunfig", ());
         Global::exit(2);
     }
-    defaults
+    if named.is_none() && !has_enough {
+        bun_bunfig::load_config_above_for_tool(tag, ctx, &mut read);
+    }
 }
 
 /// `--disallow-code-generation-from-strings` among the flags of `bun`, which precede `command`: it holds for the plugins and
@@ -346,9 +349,19 @@ impl LintCommand {
             Global::exit(0);
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
-            let mut defaults = defaults_of_bunfig(ctx, Tag::LintCommand, b"lint", bunfig::lint);
-            if let (Some(defaults), Some(path)) = (&mut defaults, bunfig_before(b"lint")) {
-                defaults.bunfig = path.to_vec();
+            // `[fmt]` is for the rule that holds a file against what `bun fmt` prints: it is the one that `bun fmt` would read.
+            let (mut defaults, mut of_bun_format) = (None, None);
+            read_bunfigs(ctx, Tag::LintCommand, b"lint", &mut |file, path| {
+                if defaults.is_none() {
+                    defaults = bunfig::lint(file)?.map(|it| it.of_bunfig_at(path));
+                }
+                if of_bun_format.is_none() {
+                    of_bun_format = bunfig::format(file)?.map(|it| it.of_bunfig_at(path));
+                }
+                Ok(defaults.is_some() && of_bun_format.is_some())
+            });
+            if let Some(of_bun_format) = of_bun_format {
+                defaults.get_or_insert_default().of_bun_format = Some(Box::new(of_bun_format));
             }
             match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
                 None => bun_lint_driver::run(&options, environment),

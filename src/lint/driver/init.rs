@@ -1,4 +1,5 @@
-//! `bun lint --init` and `bun fmt --init`. Adds the command's section to the bunfig.toml in the working directory.
+//! `bun lint --init` and `bun fmt --init`. Adds the command's section to the bunfig.toml in the working directory, unless one
+//! above it has the section: a new one would take its place.
 
 use crate::format::summary::write_error;
 use crate::run::{Environment, Outcome};
@@ -44,7 +45,7 @@ impl Section {
     }
 
     /// `Ok` says what was done. `Err` says why nothing was.
-    fn try_add(&self, other: Option<&[u8]>, cwd: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
+    fn try_add(&self, other: Option<&[u8]>, read: &[u8], cwd: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
         if let Some(other) = other {
             let key = match paths::basename(other).starts_with(b"package.") {
                 true => format!("{} in ", self.key_in_package),
@@ -53,6 +54,10 @@ impl Section {
             let shown = paths::relative(cwd, other);
             let end = b". bunfig.toml is not needed.";
             return Ok([b"Using ", key.as_bytes(), &shown, end].concat());
+        }
+        if read.starts_with(b"../") {
+            let end = format!(" already has a [{}] section", self.name);
+            return Ok([read, end.as_bytes()].concat());
         }
         let path = paths::join(cwd, b"bunfig.toml");
         let before = match fs::read(&path) {
@@ -104,11 +109,17 @@ impl Section {
         Ok(format!("Added [{}] to bunfig.toml", self.name).into_bytes())
     }
 
-    /// `other` is another tool's config file, if one applies in the working directory.
+    /// `other` is another tool's config file, if one applies in the working directory. `read` is the path of the bunfig that
+    /// the run has read, or would have.
     #[optimize(size)]
-    pub(crate) fn add(&self, other: Option<&[u8]>, environment: &Environment) -> Outcome {
+    pub(crate) fn add(
+        &self,
+        other: Option<&[u8]>,
+        read: &[u8],
+        environment: &Environment,
+    ) -> Outcome {
         let mut out = Outcome::default();
-        match self.try_add(other, &environment.cwd) {
+        match self.try_add(other, read, &environment.cwd) {
             Ok(done) => out.stdout = [&done[..], b"\n"].concat(),
             Err(why) => {
                 write_error(&mut out.stderr, environment.stderr.colors, &why);

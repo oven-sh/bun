@@ -805,6 +805,56 @@ describe.concurrent("comments", () => {
     "react/rules-of-hooks": "error",
   });
 
+  // Both tools' comments count when neither tool's config is there.
+  test.each(["eslint", "oxlint"])("%s-disable in every form", async tool => {
+    const code = `// ${tool}-disable-next-line no-debugger
+debugger;
+debugger; // ${tool}-disable-line no-debugger
+/* ${tool}-disable no-debugger */
+debugger;
+/* ${tool}-enable no-debugger */
+debugger;
+// ${tool}-disable-next-line
+debugger;
+// ${tool}-disable-next-line eslint/no-debugger -- with a reason
+debugger;
+// ${tool}-disable-next-line typescript/no-explicit-any
+export const a: any = 1;
+// ${tool}-disable-next-line unicorn/no-null
+debugger;
+`;
+    const { stdout, exitCode } = await lint({ "a.ts": code, ...rules }, ["-f", "json"]);
+    // The last comment is for another rule, so it is unused.
+    expect(problems(stdout)).toEqual(["a.ts:7 no-debugger", "a.ts:14 null", "a.ts:15 no-debugger"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(["eslint", "oxlint"])("// %s-disable is for the rest of the file, up to the next -enable", async tool => {
+    const code = `debugger;\n// ${tool}-disable no-debugger\ndebugger;\ndebugger;\n// ${tool}-enable no-debugger\ndebugger;\n`;
+    const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
+    expect(problems(stdout)).toEqual(["a.js:1 no-debugger", "a.js:6 no-debugger"]);
+  });
+
+  test.each(["eslint", "oxlint"])("an unused %s-disable comment is called what it is called", async tool => {
+    const files = {
+      "a.js": `// ${tool}-disable-next-line no-debugger\nexport const a = 1;\n/* ${tool}-enable no-debugger */\n`,
+    };
+    const { stdout, exitCode } = await lint(files, ["-f", "unix", "--report-unused-disable-directives"]);
+    expect(stdout).toContain(
+      `:1:1: Unused ${tool}-disable directive (no problems were reported from 'no-debugger'). [Error]`,
+    );
+    expect(stdout).toContain(
+      `:3:1: Unused ${tool}-enable directive (no matching ${tool}-disable directives were found for 'no-debugger'). [Error]`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("the comments of the two can be mixed", async () => {
+    const code = `/* oxlint-disable no-debugger */\ndebugger;\n/* eslint-enable no-debugger */\ndebugger;\n`;
+    const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
+    expect(problems(stdout)).toEqual(["a.js:4 no-debugger"]);
+  });
+
   test("eslint-disable accepts every name of a rule", async () => {
     const code = `// eslint-disable-next-line unicorn/no-null
 export const a = null;
@@ -1207,6 +1257,17 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
   const source = { "a.js": "export default null;\n" };
   const flat = (rules: unknown) => ({
     "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n`,
+  });
+
+  test("to an ESLint config, oxlint-disable and // eslint-disable are ordinary comments", async () => {
+    const code = `// oxlint-disable-next-line no-debugger\ndebugger;\n// eslint-disable no-debugger\ndebugger;\n// eslint-disable-next-line no-debugger\ndebugger;\n`;
+    const legacy = { root: true, rules: { "no-debugger": "error" } };
+    const [inFlat, inLegacy] = await Promise.all([
+      lint({ "a.js": code, ...flat({ "no-debugger": "error" }) }, ["-f", "json"]),
+      lint({ "a.js": code, ".eslintrc.json": JSON.stringify(legacy) }, ["-f", "json"]),
+    ]);
+    expect(problems(inFlat.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
+    expect(problems(inLegacy.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
   });
 
   test("an ESLint config still has to declare its plugins", async () => {

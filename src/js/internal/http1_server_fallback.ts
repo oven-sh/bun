@@ -552,6 +552,7 @@ function connectionListenerHTTP1(server, socket, options) {
     const expect = req.headers.expect;
     if (expect !== undefined && versionMajor === 1 && versionMinor === 1) {
       if (continueExpression.test(String(expect))) {
+        res._expect_continue = true;
         if (server.listenerCount("checkContinue") > 0) {
           server.emit("checkContinue", req, res);
         } else {

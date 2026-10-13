@@ -1110,6 +1110,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // parserOnIncoming (RFC 7231 5.1.1: expectation values compare
             // case-insensitively); computed natively into the bitfield.
             if ((dispatchBits & DISPATCH_EXPECT_CONTINUE) !== 0) {
+              http_res._expect_continue = true;
               if (server.listenerCount("checkContinue") > 0) {
                 server.emit("checkContinue", http_req, http_res);
               } else {
@@ -2448,6 +2449,14 @@ const kMaxNativeKeepAliveSecs = 0x7fffffff;
 let renderedAutoHeaders = 0;
 let renderedKeepAliveSecs = 0;
 
+// Node's writeHead: a final response to an Expect: 100-continue request that got no
+// 100 Continue leaves the announced body unsent, so the connection cannot be reused.
+function clearKeepAliveIfContinueNotSent(res) {
+  if (res._expect_continue && !res._sent100) {
+    res.shouldKeepAlive = false;
+  }
+}
+
 function renderNativeHeaders(res) {
   // Computed in locals and published to the module out-params only at
   // return: String(value) below can run user toString() code that
@@ -2562,6 +2571,10 @@ function renderNativeHeaders(res) {
         }
       }
     }
+
+    // An implicit header skips writeHead() (callWriteHeadIfObservable), so the
+    // rule that Node.js applies there also runs where the header renders.
+    clearKeepAliveIfContinueNotSent(res);
 
     if (res._removedConnection) {
       // Node's _storeHeader: `this._last = !this.shouldKeepAlive` - no
@@ -3316,6 +3329,9 @@ ServerResponse.prototype.setTimeout = function setTimeout(msecs, callback) {
 
 ServerResponse.prototype._removedConnection = false;
 
+// Set by the dispatcher on the response to a request that carries Expect: 100-continue.
+ServerResponse.prototype._expect_continue = false;
+
 ServerResponse.prototype._removedContLen = false;
 
 ServerResponse.prototype._hasBody = true;
@@ -3982,6 +3998,8 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
     throw $ERR_HTTP_HEADERS_SENT("writeHead");
   }
   _writeHead(statusCode, statusMessage, headers, this);
+
+  clearKeepAliveIfContinueNotSent(this);
 
   // Node.js renders the header block immediately in writeHead(), so mutating
   // res.statusCode/statusMessage afterwards has no effect on the wire.

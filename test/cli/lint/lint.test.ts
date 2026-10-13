@@ -623,6 +623,49 @@ describe.concurrent("bun lint", () => {
 
   // Each row is what oxlint 1.87 prints. oxc's parser reports these, so the file isn't linted. tsc leaves them to its checker
   // (TS1308, TS1163), and typescript-estree says nothing.
+  // Every row was run on oxlint 1.87.
+  test("with .oxlintrc.json an `await` that is put up with outside every body makes the file a module", async () => {
+    // What the `await` of `await (z);` in the next line is. In a script it is the name of a function.
+    const rows: [extensions: string, code: string, found: "the operator" | "a name"][] = [
+      ["ts tsx", "function f(): { [await g()]: 1 } { return null!; }", "the operator"],
+      ["ts", "const f = function (): { [await g()]: 1 } { return null!; };", "the operator"],
+      ["ts", "function* f(): { [await g()]: 1 } {}", "the operator"],
+      ["ts", "function f<T extends { [await g()]: 1 }>(t: T) {}", "the operator"],
+      ["ts", "function f<T = { [await g()]: 1 }>() {}", "the operator"],
+      ["ts", "function f(this: { [await g()]: 1 }) {}", "the operator"],
+      ["ts", "declare function f(): { [await g()]: 1 };", "the operator"],
+      ["ts", "class A { m(): { [await g()]: 1 } { return null!; } }", "the operator"],
+      ["ts", "class A { get x(): { [await g()]: 1 } { return null!; } }", "the operator"],
+      ["ts", "const o = { m(): { [await g()]: 1 } { return null!; } };", "the operator"],
+      ["ts", "function f(a = (): { [await g()]: 1 } => null!) {}", "the operator"],
+      ["ts", "function f(a = function (): { [await g()]: 1 } { return null!; }) {}", "the operator"],
+      ["ts", "class A { x = function (): { [await g()]: 1 } { return null!; }; }", "the operator"],
+      ["ts", "class A { static { function f(): { [await g()]: 1 } { return null!; } } }", "the operator"],
+      ["ts js", "class A { x = await g(); }", "the operator"],
+      ["ts", "enum E { A = await g }", "the operator"],
+      ["ts", "type T = { [await g()]: 1 };", "the operator"],
+      ["ts", "const f = (): { [await g()]: 1 } => null!;", "the operator"],
+      ["ts js", "function f() {}", "a name"],
+      ["ts", "function f(): { [await (g)]: 1 } { return null!; }", "a name"],
+      ["ts", "async function f(): { [await g()]: Promise<1> } { return null!; }", "a name"],
+      ["ts", "const f = async (): { [await g()]: 1 } => null!;", "a name"],
+      ["ts", "const f = async <T extends { [await g()]: 1 }>() => {};", "a name"],
+      ["ts", "async function o() { const f = (): { [await g()]: 1 } => null!; }", "a name"],
+    ];
+    const cases = rows.flatMap(([extensions, code, found], i) =>
+      extensions.split(" ").map(extension => ({ name: `${i}.${extension}`, code, found })),
+    );
+    const files = Object.fromEntries(cases.map(({ name, code }) => [name, code + "\nawait (z);\n"]));
+    const config = { categories: { correctness: "off" }, rules: { "no-undef": "error" } };
+    const { raw } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json"]);
+    const found: Record<string, string> = Object.fromEntries(cases.map(({ name }) => [name, "the operator"]));
+    for (const { filename, code, message } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      if (code !== "eslint(no-undef)") found[filename] = message;
+      else if (message === "'await' is not defined.") found[filename] = "a name";
+    }
+    expect(found).toEqual(Object.fromEntries(cases.map(({ name, found }) => [name, found])));
+  });
+
   test("with .oxlintrc.json `await` outside an async function and `yield` outside a generator are errors", async () => {
     const all = "ts tsx mts cts js jsx mjs cjs";
     const typescript = "ts tsx mts cts";

@@ -60,6 +60,8 @@ pub(crate) mod ctx {
     pub(crate) const IN_SWITCH: u32 = 1 << 13;
     /// The node is in the body of a namespace.
     pub(crate) const IN_NAMESPACE: u32 = 1 << 14;
+    /// The body of no function encloses the node. The parameters of one can, its return type, or a class.
+    pub(crate) const OUTSIDE_BODIES: u32 = 1 << 15;
 }
 
 macro_rules! stacks {
@@ -446,7 +448,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         let is_script = options.is_javascript && !options.is_json;
         let is_ecmascript = options.dialect.ecmascript && is_script;
         let is_flow = options.dialect.flow && is_script;
-        let mut context = ctx::TOP_LEVEL;
+        let mut context = ctx::TOP_LEVEL | ctx::OUTSIDE_BODIES;
         if options.is_declaration_file {
             context |= ctx::AMBIENT;
         }

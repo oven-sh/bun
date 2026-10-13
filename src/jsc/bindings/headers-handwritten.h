@@ -430,6 +430,16 @@ extern "C" JSC::EncodedJSValue Bun__encoding__constructFromUTF16(void*, const ch
 
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
 
+namespace JSC {
+class JSArray;
+}
+
+namespace Bun {
+// The index keys of Object.keys(array) without an Identifier per index: appends the own enumerable
+// indexes at or after `start`, ascending, and returns how many come before `start`.
+uint32_t appendOwnEnumerableIndexes(JSC::JSArray*, uint32_t start, WTF::Vector<uint32_t, 16>& indexes);
+}
+
 /// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);

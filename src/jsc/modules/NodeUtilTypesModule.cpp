@@ -34,6 +34,7 @@
 #include "JSKeyObject.h"
 
 #include "NodeUtilTypesModule.h"
+#include "headers-handwritten.h"
 
 using namespace JSC;
 
@@ -300,7 +301,8 @@ static bool withCycleGuard(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumen
 
 // JS `actual[key]` guarded by `ObjectPrototypePropertyIsEnumerable`: the
 // property must be an own enumerable of `actual`, but the value read is an
-// ordinary get, exactly like the JS implementation.
+// ordinary get. node takes a data property's value from its descriptor, which
+// only a Proxy can tell from a get.
 static bool ownEnumerableThenCompare(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, JSC::PropertyName propertyName)
 {
     JSC::PropertySlot ownSlot(actualObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
@@ -315,6 +317,38 @@ static bool ownEnumerableThenCompare(JSC::JSGlobalObject* globalObject, JSC::Mar
     return compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
 }
 
+// Stands in for node's hasUnequalTag (`a[Symbol.toStringTag] !== b[Symbol.toStringTag]`) with the
+// class string of Object.prototype.toString. A tag that is not a string, or that equals the built-in
+// class name, compares equal here; node rejects it.
+static NEVER_INLINE bool sameTypeTag(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    JSC::JSString* actualTag = JSC::objectPrototypeToString(globalObject, actual);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSC::JSString* expectedTag = JSC::objectPrototypeToString(globalObject, expected);
+    RETURN_IF_EXCEPTION(scope, false);
+    return actualTag->equal(globalObject, expectedTag);
+}
+
+// Both structures hold the same class string in JSC's cache, which never holds an own tag or a getter's.
+static ALWAYS_INLINE bool sameCachedTypeTag(JSC::JSObject* actual, JSC::JSObject* expected)
+{
+    JSC::Structure* actualStructure = actual->structure();
+    JSC::Structure* expectedStructure = expected->structure();
+    JSValue tag = actualStructure->cachedSpecialProperty(JSC::CachedSpecialPropertyKey::ToStringTag);
+    return tag && (actualStructure == expectedStructure || tag == expectedStructure->cachedSpecialProperty(JSC::CachedSpecialPropertyKey::ToStringTag));
+}
+
+static bool subsetOfKeys(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, const JSC::PropertyNameArrayBuilder& names)
+{
+    for (size_t i = 0; i < names.size(); i++) {
+        bool equal = ownEnumerableThenCompare(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names[i]);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal)
+            return false;
+    }
+    return true;
+}
+
 // Own enumerable string and symbol properties of `expected` only.
 static bool objectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
@@ -326,13 +360,7 @@ static bool objectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentB
     JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
     expectedObject->methodTable()->getOwnPropertyNames(expectedObject, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, false);
-    for (size_t i = 0; i < names.size(); i++) {
-        bool equal = ownEnumerableThenCompare(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names[i]);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!equal)
-            return false;
-    }
-    return true;
+    return subsetOfKeys(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names);
 }
 
 // Expected's own enumerable non-index string+symbol properties only — index keys are covered
@@ -347,37 +375,210 @@ static bool nonIndexObjectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedA
     JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
     expectedObject->getOwnNonIndexPropertyNames(globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, false);
-    for (size_t i = 0; i < names.size(); i++) {
-        bool equal = ownEnumerableThenCompare(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names[i]);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!equal)
-            return false;
+    return subsetOfKeys(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, names);
+}
+
+// node's getOwnNonIndexProperties(array, ONLY_ENUMERABLE). A Proxy has no keys of its own: its
+// ownKeys trap lists them and each non-index key is asked for its descriptor.
+static void ownEnumerableNonIndexKeys(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* array, JSC::PropertyNameArrayBuilder& names)
+{
+    if (array->type() != JSC::ProxyObjectType) [[likely]] {
+        array->getOwnNonIndexPropertyNames(globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+        return;
+    }
+    JSC::PropertyNameArrayBuilder keys(globalObject->vm(), JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+    array->methodTable()->getOwnPropertyNames(array, globalObject, keys, JSC::DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (const auto& key : keys) {
+        if (JSC::parseIndex(key))
+            continue;
+        JSC::PropertySlot slot(array, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+        bool owns = array->methodTable()->getOwnPropertySlot(array, globalObject, key, slot);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (owns && !(slot.attributes() & JSC::PropertyAttribute::DontEnum))
+            names.add(key);
+    }
+}
+
+// A real array keeps its own named keys in its Structure, and has none when no property slot is in use.
+static ALWAYS_INLINE bool hasNoNamedKeys(JSC::JSObject* array)
+{
+    if (!JSC::isJSArray(array))
+        return false;
+    JSC::Structure* structure = array->structure();
+    return structure->maxOffset() == JSC::invalidOffset && !structure->hasNonReifiedStaticProperties();
+}
+
+static NEVER_INLINE bool ownsIndex(JSC::JSGlobalObject* globalObject, JSC::JSObject* array, uint64_t index)
+{
+    if (index <= MAX_ARRAY_INDEX) [[likely]]
+        return array->hasOwnProperty(globalObject, static_cast<unsigned>(index));
+    return array->hasOwnProperty(globalObject, JSC::Identifier::from(globalObject->vm(), index));
+}
+
+// node's element read and hole test (`array[index] === undefined && !hasOwn(array, index)`): an
+// ordinary read, then an own-property test only when it reads undefined. Empty = a hole, or an
+// exception.
+static ALWAYS_INLINE JSValue elementOrHole(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* array, uint64_t index)
+{
+    if (index <= MAX_ARRAY_INDEX) [[likely]] {
+        if (JSValue element = array->tryGetIndexQuickly(static_cast<unsigned>(index))) [[likely]]
+            return element;
+    }
+    JSValue element = array->get(globalObject, index);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (element.isUndefined()) {
+        bool owns = ownsIndex(globalObject, array, index);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!owns)
+            return {};
+    }
+    return element;
+}
+
+// Object.keys(array), listed once at the first hole as node lists it: own enumerable index keys
+// ascending, then named string keys. A real array gives its index keys from its storage, so no
+// Identifier is made per index. A Proxy lists every key through its traps.
+class ArrayKeys {
+    WTF_FORBID_HEAP_ALLOCATION;
+    WTF_MAKE_NONCOPYABLE(ArrayKeys);
+
+public:
+    ArrayKeys() = default;
+
+    // `start` is the position of the first hole. No walk reads a key before it, so a real array
+    // counts those and keeps the rest. `listedNames` are the array's named keys when the caller
+    // has them (strings, then symbols).
+    void list(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* array, uint64_t start, const JSC::PropertyNameArrayBuilder* listedNames)
+    {
+        m_array = array;
+        if (!JSC::isJSArray(array)) {
+            m_ownNames.emplace(globalObject->vm(), JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+            array->methodTable()->getOwnPropertyNames(array, globalObject, *m_ownNames, JSC::DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, void());
+            m_names = &*m_ownNames;
+            m_nameCount = m_ownNames->size();
+            return;
+        }
+        m_before = Bun::appendOwnEnumerableIndexes(uncheckedDowncast<JSC::JSArray>(array), static_cast<uint32_t>(std::min<uint64_t>(start, std::numeric_limits<uint32_t>::max())), m_indexes);
+        if (listedNames) {
+            m_names = listedNames;
+            while (m_nameCount < listedNames->size() && !(*listedNames)[m_nameCount].isSymbol())
+                m_nameCount++;
+            return;
+        }
+        if (hasNoNamedKeys(array))
+            return;
+        m_ownNames.emplace(globalObject->vm(), JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        array->getOwnNonIndexPropertyNames(globalObject, *m_ownNames, JSC::DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, void());
+        m_names = &*m_ownNames;
+        m_nameCount = m_ownNames->size();
+    }
+
+    // Object.keys(array).length
+    int64_t count() const { return static_cast<int64_t>(m_before + m_indexes.size() + m_nameCount); }
+
+    // array[Object.keys(array)[position]], for a position from `start` on.
+    ALWAYS_INLINE JSValue valueAt(JSC::JSGlobalObject* globalObject, int64_t position) const
+    {
+        ASSERT(position >= static_cast<int64_t>(m_before) && position < count());
+        const size_t offset = static_cast<size_t>(position) - m_before;
+        if (offset < m_indexes.size()) {
+            const uint32_t index = m_indexes[offset];
+            if (JSValue element = m_array->tryGetIndexQuickly(index)) [[likely]]
+                return element;
+            return m_array->get(globalObject, index);
+        }
+        return m_array->get(globalObject, (*m_names)[static_cast<unsigned>(offset - m_indexes.size())]);
+    }
+
+private:
+    JSC::JSObject* m_array { nullptr };
+    size_t m_before { 0 };
+    WTF::Vector<uint32_t, 16> m_indexes;
+    const JSC::PropertyNameArrayBuilder* m_names { nullptr };
+    size_t m_nameCount { 0 };
+    std::optional<JSC::PropertyNameArrayBuilder> m_ownNames;
+};
+
+// node's partialSparseArrayEquiv: from the first hole on either side, the rest of expected's keys
+// match in order inside the rest of actual's. The starts are array positions, so they can be
+// past the key counts.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L923-L943
+static NEVER_INLINE bool sparseArraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actual, uint64_t actualStart, JSC::JSObject* expected, uint64_t expectedStart, const JSC::PropertyNameArrayBuilder* expectedNames)
+{
+    ArrayKeys actualKeys;
+    actualKeys.list(globalObject, scope, actual, actualStart, nullptr);
+    RETURN_IF_EXCEPTION(scope, false);
+    ArrayKeys expectedKeys;
+    expectedKeys.list(globalObject, scope, expected, expectedStart, expectedNames);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    const int64_t actualCount = actualKeys.count();
+    const int64_t remainingExpected = expectedKeys.count() - static_cast<int64_t>(expectedStart);
+    int64_t actualPos = static_cast<int64_t>(actualStart);
+    if (actualCount - actualPos < remainingExpected)
+        return false;
+
+    for (int64_t i = 0; i < remainingExpected; i++) {
+        while (true) {
+            JSValue actualValue = actualKeys.valueAt(globalObject, actualPos);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue expectedValue = expectedKeys.valueAt(globalObject, static_cast<int64_t>(expectedStart) + i);
+            RETURN_IF_EXCEPTION(scope, false);
+            bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (equal)
+                break;
+            actualPos++;
+            if (actualPos > actualCount - remainingExpected + i)
+                return false;
+        }
+        actualPos++;
     }
     return true;
 }
 
-// Expected's elements as a subsequence of actual's, in order with gaps, then
-// expected's own enumerable non-index properties.
-static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+// What node's array arm settles before it looks for a cycle.
+struct ArrayPair {
+    uint64_t actualLength { 0 };
+    uint64_t expectedLength { 0 };
+    // Expected's own enumerable non-index keys, or null when it has none.
+    const JSC::PropertyNameArrayBuilder* expectedNames { nullptr };
+};
+
+// node's array arm behind the cycle check: expected's named keys, then expected's elements as a
+// subsequence of actual's, in order with gaps.
+static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, const ArrayPair& pair)
 {
     JSC::JSObject* actualObject = actual.getObject();
     JSC::JSObject* expectedObject = expected.getObject();
-    const uint64_t actualLength = static_cast<uint64_t>(JSC::toLength(globalObject, actualObject));
-    RETURN_IF_EXCEPTION(scope, false);
-    const uint64_t expectedLength = static_cast<uint64_t>(JSC::toLength(globalObject, expectedObject));
-    RETURN_IF_EXCEPTION(scope, false);
-    if (expectedLength > actualLength)
-        return false;
-
-    uint64_t actualPos = 0;
-    for (uint64_t i = 0; i < expectedLength; i++) {
-        const uint64_t lastCandidate = actualLength - expectedLength + i;
-        JSValue expectedElement = expectedObject->getIndex(globalObject, i);
+    if (pair.expectedNames) {
+        bool namesEqual = subsetOfKeys(globalObject, gcBuffer, cycles, scope, actualObject, expectedObject, *pair.expectedNames);
         RETURN_IF_EXCEPTION(scope, false);
+        if (!namesEqual)
+            return false;
+    }
+
+    // node's partialArrayEquiv, until the first hole on either side. node reads both lengths again
+    // at every step. They are read once here, so a comparison that changes a length can differ.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L945-L965
+    uint64_t actualPos = 0;
+    for (uint64_t i = 0; i < pair.expectedLength; i++) {
+        JSValue expectedElement = elementOrHole(globalObject, scope, expectedObject, i);
+        if (!expectedElement) [[unlikely]] {
+            RETURN_IF_EXCEPTION(scope, false);
+            return sparseArraySubsequence(globalObject, gcBuffer, cycles, scope, actualObject, actualPos, expectedObject, i, pair.expectedNames);
+        }
+        const uint64_t lastCandidate = pair.actualLength - pair.expectedLength + i;
         bool matched = false;
         while (actualPos <= lastCandidate) {
-            JSValue actualElement = actualObject->getIndex(globalObject, actualPos);
-            RETURN_IF_EXCEPTION(scope, false);
+            JSValue actualElement = elementOrHole(globalObject, scope, actualObject, actualPos);
+            if (!actualElement) [[unlikely]] {
+                RETURN_IF_EXCEPTION(scope, false);
+                return sparseArraySubsequence(globalObject, gcBuffer, cycles, scope, actualObject, actualPos, expectedObject, i, pair.expectedNames);
+            }
             bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualElement, expectedElement);
             RETURN_IF_EXCEPTION(scope, false);
             actualPos++;
@@ -389,8 +590,39 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
         if (!matched)
             return false;
     }
+    return true;
+}
 
-    return nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+// node's array arm ahead of the cycle check: the length gate, expected's named keys, and the exit
+// for an expected with no element and no named key. node also takes that exit when `expected.size`
+// is 0, which is not ported.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L294-L308
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L510-L515
+static bool arrayArm(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
+{
+    JSC::JSObject* expectedObject = expected.getObject();
+    ArrayPair pair;
+    pair.actualLength = static_cast<uint64_t>(JSC::toLength(globalObject, actual.getObject()));
+    RETURN_IF_EXCEPTION(scope, false);
+    pair.expectedLength = static_cast<uint64_t>(JSC::toLength(globalObject, expectedObject));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (pair.expectedLength > pair.actualLength)
+        return false;
+
+    std::optional<JSC::PropertyNameArrayBuilder> expectedNames;
+    if (!hasNoNamedKeys(expectedObject)) [[unlikely]] {
+        expectedNames.emplace(globalObject->vm(), JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+        ownEnumerableNonIndexKeys(globalObject, scope, expectedObject, *expectedNames);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (expectedNames->size())
+            pair.expectedNames = &*expectedNames;
+    }
+    if (!pair.expectedLength && !pair.expectedNames)
+        return true;
+
+    return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, [&pair](auto&&... arguments) {
+        return arraySubsequence(arguments..., pair);
+    });
 }
 
 // Expected's entries as a subset of actual's: identity keys fast-path with
@@ -682,12 +914,6 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         || expectedType == JSC::JSWeakSetType || expectedType == JSC::JSWeakMapType || expectedType == JSC::JSPromiseType)
         return false;
 
-    if (actualType == JSC::JSMapType && expectedType == JSC::JSMapType) {
-        if (uncheckedDowncast<JSC::JSMap>(expected.asCell())->size() > uncheckedDowncast<JSC::JSMap>(actual.asCell())->size())
-            return false;
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, mapSubsetAndProps);
-    }
-
     const bool actualIsView = actual.isCell() && JSC::isTypedArrayTypeIncludingDataView(actualType);
     const bool expectedIsView = expected.isCell() && JSC::isTypedArrayTypeIncludingDataView(expectedType);
     if (actualIsView || expectedIsView) {
@@ -704,18 +930,26 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, nonIndexObjectSubset);
     }
 
+    // node compares Symbol.toStringTag in every arm but the view arm, which compares the intrinsic tag.
+    if (actual.isObject() && expected.isObject() && !sameCachedTypeTag(JSC::asObject(actual), JSC::asObject(expected))) {
+        if (!actual.isCallable() && !expected.isCallable()) {
+            bool tagsEqual = sameTypeTag(globalObject, scope, actual, expected);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!tagsEqual)
+                return false;
+        }
+    }
+
+    if (actualType == JSC::JSMapType && expectedType == JSC::JSMapType) {
+        if (uncheckedDowncast<JSC::JSMap>(expected.asCell())->size() > uncheckedDowncast<JSC::JSMap>(actual.asCell())->size())
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, mapSubsetAndProps);
+    }
+
     const bool actualIsBuffer = actualType == JSC::ArrayBufferType;
     const bool expectedIsBuffer = expectedType == JSC::ArrayBufferType;
     if (actualIsBuffer || expectedIsBuffer) {
         if (actualIsBuffer != expectedIsBuffer)
-            return false;
-        JSC::JSString* actualTag = JSC::objectPrototypeToString(globalObject, actual);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSC::JSString* expectedTag = JSC::objectPrototypeToString(globalObject, expected);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool tagsEqual = actualTag->equal(globalObject, expectedTag);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!tagsEqual)
             return false;
         bool contents = partialBufferContentsEquiv(globalObject, scope, actual, expected);
         RETURN_IF_EXCEPTION(scope, false);
@@ -825,7 +1059,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
     if (actualIsArray != expectedIsArray)
         return false;
     if (actualIsArray)
-        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, arraySubsequence);
+        return arrayArm(globalObject, gcBuffer, cycles, scope, actual, expected);
 
     // At least one side is a primitive, null, or callable: full strict deep
     // equality decides.
@@ -834,16 +1068,6 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         RETURN_IF_EXCEPTION(scope, false);
         return equal;
     }
-
-    // Objects with different type tags are never partially equal.
-    JSC::JSString* actualTag = JSC::objectPrototypeToString(globalObject, actual);
-    RETURN_IF_EXCEPTION(scope, false);
-    JSC::JSString* expectedTag = JSC::objectPrototypeToString(globalObject, expected);
-    RETURN_IF_EXCEPTION(scope, false);
-    bool tagsEqual = actualTag->equal(globalObject, expectedTag);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!tagsEqual)
-        return false;
 
     return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
 }

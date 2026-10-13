@@ -904,7 +904,7 @@ describe("Structured Clone Fast Path", () => {
   });
 });
 
-// structuredClone() copies a tree of plain objects, dense arrays, strings and other primitives object by
+// structuredClone() copies a tree of plain objects, arrays, strings and other primitives object by
 // object. One value of another kind, anywhere in the tree, sends the whole value through serialization.
 describe("structuredClone of a tree of plain objects and arrays", () => {
   // The prototypes a clone has, by identity: the Object.prototype of another realm is none of them.
@@ -965,8 +965,11 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
   delete deleted.a;
   const outOfLine: any = {};
   for (let i = 0; i < 40; i++) outOfLine[`p${i}`] = i % 3 ? { i } : [i, `${i}`];
-  const deep: any = {};
-  for (let i = 0, cursor = deep; i < 200; i++) cursor = cursor.next = { i };
+  const chainOf = (length: number) => {
+    const chain: any = {};
+    for (let i = 0, cursor = chain; i < length; i++) cursor = cursor.next = { i };
+    return chain;
+  };
 
   const trees: Record<string, unknown> = {
     "primitives of every kind": { a: 1, b: "two", c: null, d: undefined, e: true, f: 1.5, g: -0, h: NaN },
@@ -987,7 +990,7 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
       nested: { shared },
     })),
     "properties out of line": outOfLine,
-    "a chain 200 objects long": deep,
+    "a chain 200 objects long": chainOf(200),
     "a NaN among doubles": [1.5, NaN],
     // A hole stays a hole, in an array of any shape.
     "holes": { ints: [1, , 3], doubles: [1.5, , 2.5], objects: [{ a: 1 }, , "x"], nothing: new Array(3), tail: [1, 2, ,] }, // prettier-ignore
@@ -999,8 +1002,7 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     "an Array subclass": [new (class List extends Array {})(1, 2)],
     "a class instance": { point: new Point() },
     "a null prototype": { bare: Object.assign(Object.create(null), { a: { b: 1 } }) },
-    "frozen, sealed and non-extensible objects": {
-      frozen: Object.freeze({ a: [1, 2] }),
+    "a frozen array, a sealed and a non-extensible object": {
       list: Object.freeze([1, { a: 1 }]),
       sealed: Object.seal({ a: { b: 1 } }),
       closed: Object.preventExtensions({ a: { b: 1 } }),
@@ -1050,24 +1052,22 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     ]);
   });
 
+  // Each is cloned on its own: the first and the last are copied, the two in between are serialized.
   test("the clone is plain whatever the input was", () => {
-    const clone: any = structuredClone({
-      frozen: Object.freeze({ a: Object.freeze([1, 2]) }),
-      point: new Point(),
-      symbols: { a: 1, [Symbol("s")]: 2 },
-      hole: [1, , 3],
-    });
-    clone.frozen.a.push(3);
-    clone.frozen.b = 1;
+    const frozen: any = structuredClone({ frozen: Object.freeze({ a: [1, 2] }) }).frozen;
+    const point = structuredClone({ point: new Point() }).point;
+    const symbols = structuredClone({ symbols: { a: 1, [Symbol("s")]: 2 } }).symbols;
+    const hole = structuredClone({ hole: [1, , 3] }).hole;
+    const isFrozen = Object.isFrozen(frozen);
+    frozen.a.push(3);
+    frozen.b = 1;
     expect({
-      frozen: clone.frozen,
-      isFrozen: [Object.isFrozen(clone.frozen), Object.isFrozen(clone.frozen.a)],
-      point: [Object.getPrototypeOf(clone.point) === Object.prototype, clone.point],
-      symbols: Reflect.ownKeys(clone.symbols),
-      hole: [1 in clone.hole, clone.hole.length],
+      frozen: [isFrozen, frozen],
+      point: [Object.getPrototypeOf(point) === Object.prototype, point],
+      symbols: Reflect.ownKeys(symbols),
+      hole: [1 in hole, hole.length],
     }).toEqual({
-      frozen: { a: [1, 2, 3], b: 1 },
-      isFrozen: [false, false],
+      frozen: [false, { a: [1, 2, 3], b: 1 }],
       point: [true, { x: 1, y: { z: 2 } }],
       symbols: ["a"],
       hole: [false, 3],
@@ -1106,11 +1106,6 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
   });
 
   test("a chain deeper than the copy goes is serialized, and one too deep for that throws", () => {
-    const chainOf = (length: number) => {
-      const chain: any = {};
-      for (let i = 0, cursor = chain; i < length; i++) cursor = cursor.next = { i };
-      return chain;
-    };
     // [objects in the clone, `i` of the last one]
     const cloned = (length: number) => {
       let count = 0;

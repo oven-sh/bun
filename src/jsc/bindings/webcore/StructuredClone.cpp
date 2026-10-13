@@ -40,7 +40,7 @@
 namespace WebCore {
 using namespace JSC;
 
-// Copies a tree of plain objects, dense arrays and primitives without running script or throwing; anything else in it ends the attempt, and the caller serializes.
+// Copies a tree of plain objects, arrays and primitives without running script or throwing; anything else in it ends the attempt, and the caller serializes.
 class PlainTreeCloner {
 public:
     PlainTreeCloner(VM& vm, JSGlobalObject* globalObject)
@@ -92,7 +92,7 @@ private:
         remember(object, clone);
 
         PropertyOffset maxOffset = structure->maxOffset();
-        PropertyOffset inlineEnd = std::min<PropertyOffset>(maxOffset + 1, structure->inlineCapacity());
+        PropertyOffset inlineEnd = structure->inlineSize();
         for (PropertyOffset offset = 0; offset < inlineEnd; ++offset) {
             if (!cloneProperty(object, clone, offset))
                 return {};
@@ -138,7 +138,6 @@ private:
 
         if (shape == UndecidedShape)
             return clone;
-        // Numbers have nothing to clone in them.
         if (shape == Int32Shape || shape == DoubleShape) {
             static_assert(sizeof(double) == sizeof(JSValue));
             memcpy(static_cast<void*>(clone->butterfly()->contiguous().data()), static_cast<const void*>(array->butterfly()->contiguous().data()), length * sizeof(JSValue));
@@ -149,7 +148,7 @@ private:
             JSValue value = array->butterfly()->contiguous().at(array, i).get();
             if (!value)
                 continue;
-            if (value.isCell()) {
+            if (value.isCell() && !value.asCell()->isString()) {
                 value = this->clone(value);
                 if (!value)
                     return {};

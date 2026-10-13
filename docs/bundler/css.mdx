@@ -613,9 +613,12 @@ CSS includes the following math functions:
 }
 ```
 
-Bun's CSS bundler evaluates these expressions at build time when all values are known constants (not variables). Bun does this in the properties whose values it parses, such as `padding` and `transform`. Bun prints a custom property as written, because its value has no type until a property uses it. Bun also prints as written a property whose value it does not parse. The browser evaluates the math functions that stay in the output.
+Bun's CSS bundler evaluates these expressions at build time when it can compute the result. Two conditions apply:
 
-For the example above, Bun prints:
+- The values are constants (not variables) in units that Bun can combine. `round(14.8px, 5px)` becomes `15px`. A length and a percentage do not combine at build time, so `clamp(200px, 50%, 800px)` stays as written.
+- Bun parses the value of the property, as it does for `padding` and `transform`. Bun prints a custom property as written, because its value has no type until a property uses it. Bun also prints as written a property whose value it does not parse.
+
+The browser evaluates the math functions that stay in the output. For the example above, Bun prints:
 
 ```css title="styles.css" icon="file-code"
 .dynamic-sizing {

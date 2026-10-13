@@ -718,6 +718,7 @@ dependencies = [
  "bun_parsers",
  "bun_url",
  "strum",
+ "thiserror",
 ]
 
 [[package]]

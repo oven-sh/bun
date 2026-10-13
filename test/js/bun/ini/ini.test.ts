@@ -1,7 +1,8 @@
 const { iniInternals } = require("bun:internal-for-testing");
 const { parse } = iniInternals;
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { totalmem } from "node:os";
 
 describe("parse ini", () => {
   test("weird section", () => {
@@ -571,6 +572,87 @@ brr = 3
     test("bare continuation byte in escaped context", () => {
       const ini = Buffer.concat([Buffer.from("key = \\"), Buffer.from([0x80])]).toString("latin1");
       expect(() => parse(ini)).not.toThrow();
+    });
+  });
+});
+
+// The parser records a source position as an i32 byte offset. A position outside that range used
+// to abort the process, so each case runs in a child. The hooks parse a Uint8Array as it is, which
+// lets a case hand over 2 GiB of untouched memory.
+describe.concurrent("source positions", () => {
+  async function run(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const { parse, loadNpmrc } = require("bun:internal-for-testing").iniInternals;\n${code}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // The parser rejects the source by its length before it reads a byte, so the 2 GiB stay
+  // untouched virtual memory.
+  test("a source of 2 GiB is an error", async () => {
+    expect(
+      await run(`
+        const source = new Uint8Array(2 ** 31);
+        const results = {};
+        try {
+          results.parse = parse(source);
+        } catch (e) {
+          results.parse = e.message;
+        }
+        try {
+          results.loadNpmrc = loadNpmrc(source, {}).message;
+        } catch (e) {
+          results.loadNpmrc = "threw " + e.message;
+        }
+        console.log(JSON.stringify(results));
+      `),
+    ).toEqual({
+      stdout: JSON.stringify({
+        parse: "INI document is too large to parse (2 GiB maximum)",
+        loadNpmrc: "INI document is too large to parse (2 GiB maximum)",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The largest source the parser takes. The key line starts 4 bytes before i32::MAX. The comment
+  // line before it is untouched memory, and the search for its line end reads all of it: on Linux
+  // that maps the shared zero page, elsewhere it commits the 2 GiB.
+  test.skipIf(!isLinux && totalmem() < 10 * 1024 ** 3)(
+    "a source one byte under 2 GiB parses",
+    async () => {
+      expect(
+        await run(`
+          const source = new Uint8Array(2 ** 31 - 1);
+          source[0] = "#".charCodeAt(0);
+          source.set(Buffer.from("\\nk=v"), source.length - 4);
+          console.log(JSON.stringify(parse(source)));
+        `),
+      ).toEqual({ stdout: JSON.stringify({ k: "v" }), stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
+
+  // A quoted key is parsed as JSON and an array key becomes its string form, which prints 1e99
+  // as 100 digits. So this key is 112 bytes from a file of 24. The position of `certfile` was
+  // computed by a walk back from the value over the parsed key, which passed the start of the file.
+  test("a key longer than its source text loads", async () => {
+    expect(
+      await run(`
+        const source = ${JSON.stringify(`'["//:certfile",1e99]'=x`)};
+        const [key] = Object.keys(parse(source));
+        const { default_registry_url } = loadNpmrc(source, {});
+        console.log(JSON.stringify({ source: source.length, key: key.length, default_registry_url }));
+      `),
+    ).toEqual({
+      stdout: JSON.stringify({ source: 24, key: 112, default_registry_url: "https://registry.npmjs.org/" }),
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

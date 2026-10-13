@@ -1,7 +1,9 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { closeSync, ftruncateSync, openSync, writeSync } from "fs";
 import { rm } from "fs/promises";
-import { bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
+import { bunExe, bunEnv as env, isIPv6, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { totalmem } from "os";
 import { join } from "path";
 import { TestRegistry } from "registry";
 const { iniInternals } = require("bun:internal-for-testing");
@@ -624,6 +626,111 @@ registry=https://somehost.com/org1/npm/registry/
     expect(stderr).toContain("_password=" + Buffer.alloc(secret.length, "*").toString());
     expect(stderr).not.toContain(secret);
     expect(exitCode).toBe(0);
+  });
+});
+
+// `bun pm cache` loads `$HOME/.npmrc` and `./.npmrc`, prints the cache directory and contacts no
+// registry. Each case has a HOME of its own, so only the files of the case load, and the cache
+// directory is `$HOME/.bun/install/cache` unless a `.npmrc` moves it.
+describe.concurrent("a .npmrc that bun reports and then continues", () => {
+  const packageJson = JSON.stringify({ name: "foo", version: "1.0.0" });
+
+  async function pmCache(dir: string) {
+    const home = join(dir, "home");
+    const spawnEnv = { ...env, HOME: home, USERPROFILE: home, NO_COLOR: "1" };
+    for (const name of ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"]) {
+      delete spawnEnv[name];
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: join(dir, "project"),
+      env: spawnEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: normalizeBunSnapshot(stdout, dir),
+      stderr: normalizeBunSnapshot(stderr, dir),
+      exitCode,
+      signalCode: proc.signalCode,
+    };
+  }
+
+  // The parser records positions as i32 byte offsets, so it cannot take 2 GiB. The file is
+  // sparse: the hole takes no disk space and reads back as NUL bytes. bun reads the whole file
+  // before it rejects it, so the child needs 2 GiB of memory. NTFS would fill the hole on disk.
+  test.skipIf(isWindows || totalmem() < 10 * 1024 ** 3)(
+    "a .npmrc of 2 GiB or more is an error and no line of it applies",
+    async () => {
+      using dir = tempDir("npmrc-too-large", { "home/.keep": "", "project/package.json": packageJson });
+      // A comment line that ends past 2 GiB, then a key line. The first line would move the cache
+      // directory if any of the file applied.
+      const head = "cache=applied\n#";
+      const tail = "\na=b\n";
+      const size = 2 ** 31 + 16;
+      const fd = openSync(join(String(dir), "project", ".npmrc"), "w");
+      try {
+        ftruncateSync(fd, size);
+        writeSync(fd, head, 0);
+        writeSync(fd, tail, size - tail.length);
+      } finally {
+        closeSync(fd);
+      }
+
+      expect(await pmCache(String(dir))).toEqual({
+        stdout: "<dir>/home/.bun/install/cache",
+        stderr:
+          "warn: Encountered an error while reading .npmrc:\n\n" +
+          "error: INI document is too large to parse (2 GiB maximum)\n" +
+          "    at .npmrc",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
+
+  // The quoted array key parses to 112 bytes, more than the 24 bytes of the file. The warning
+  // points at the option name, which it finds by a walk back from the value over the parsed key.
+  // That walk passed the start of the file. Now the warning points at the value.
+  test("a key longer than its source text keeps its warning", async () => {
+    using dir = tempDir("npmrc-long-key", {
+      "home/.keep": "",
+      "project/.npmrc": `'["//:certfile",1e99]'=x`,
+      "project/package.json": packageJson,
+    });
+
+    expect(await pmCache(String(dir))).toEqual({
+      stdout: "<dir>/home/.bun/install/cache",
+      stderr:
+        `1 | '["//:certfile",1e99]'=x\n` +
+        "                           ^\n" +
+        "warn: certfile is not supported; ignoring this .npmrc option\n" +
+        "   at .npmrc:1:24",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // One log collected the errors of every file, and it printed in full after each file.
+  test("an error in $HOME/.npmrc does not print again under ./.npmrc", async () => {
+    using dir = tempDir("npmrc-error-once", {
+      "home/.npmrc": "//registry.example/:_auth=\n",
+      "project/.npmrc": "save-exact=true\n",
+      "project/package.json": packageJson,
+    });
+
+    expect(await pmCache(String(dir))).toEqual({
+      stdout: "<dir>/home/.bun/install/cache",
+      stderr:
+        "warn: Encountered an error while reading <dir>/home/.npmrc:\n\n" +
+        `error: invalid _auth value, expected base64 encoded "<username>:<password>", received an empty string\n` +
+        "    at <dir>/home/.npmrc",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });
 

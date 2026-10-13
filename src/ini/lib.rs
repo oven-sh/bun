@@ -120,6 +120,9 @@ bun_core::comptime_string_map! {
     };
 }
 
+pub mod error;
+pub use error::Error;
+
 pub use draft::{Parser, RegistryAuth, apply_registry_auth, load_npmrc, load_npmrc_config};
 
 mod draft {
@@ -139,7 +142,7 @@ mod draft {
     use bun_url::URL;
 
     use super::{
-        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted, next_dot,
+        ConfigItem, ConfigOpt, Error, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted, next_dot,
         should_skip_line,
     };
 
@@ -200,9 +203,8 @@ mod draft {
             }
         }
 
-        // deinit -> Drop: `logger` is owned and drops automatically.
-
-        pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
+        pub fn parse(&mut self, log: &mut Log, bump: &'a Arena) -> Result<(), Error> {
+            self.source.check_parseable_len(log, "INI document")?;
             let src = self.src;
             let env = self.env;
             let source_path = self.source.path.text;
@@ -266,7 +268,7 @@ mod draft {
                         let mut r = root;
                         let parent_object = match r.get_or_put_object(section, bump) {
                             Ok(v) => v,
-                            Err(E::SetError::OutOfMemory) => return Err(AllocError),
+                            Err(E::SetError::OutOfMemory) => return Err(AllocError.into()),
                             Err(E::SetError::Clobber) => {
                                 // We're in here if key exists but it is not an object
                                 //
@@ -1045,14 +1047,12 @@ mod draft {
                                 if let Some(value_expr) = prop.value {
                                     if let Some(value) = value_expr.as_utf8_string_literal() {
                                         // `put` stamps the key with the value's loc, so walk back over `<key>=` to the option name.
-                                        let optname_loc = match keyexpr.loc.to_nullable() {
-                                            Some(loc) => Loc {
-                                                start: loc.start
-                                                    - i32::try_from(key.len() - index)
-                                                        .expect("int cast"),
-                                            },
-                                            None => keyexpr.loc,
-                                        };
+                                        // A quoted key can parse to more bytes than its source text, so the walk can pass the start of the file.
+                                        let optname_loc = usize::try_from(keyexpr.loc.start)
+                                            .ok()
+                                            .and_then(|start| start.checked_sub(key.len() - index))
+                                            .and_then(|start| i32::try_from(start).ok())
+                                            .map_or(keyexpr.loc, |start| Loc { start });
                                         return Some(IniOption::Some(ConfigItem {
                                             registry_url: Box::<[u8]>::from(url_part),
                                             value: Box::<[u8]>::from(value),
@@ -1238,8 +1238,6 @@ mod draft {
         auto_loaded: bool,
         npmrc_paths: &[&ZStr],
     ) -> Vec<RegistryAuth> {
-        let mut log = Log::init();
-
         let mut configs: Vec<RegistryAuth> = Vec::new();
 
         for &npmrc_path in npmrc_paths {
@@ -1262,9 +1260,12 @@ mod draft {
             };
             // `source.contents` is owned; drops at end of loop iteration.
 
+            // One log per file, so an error prints only under the header of its own file.
+            let mut log = Log::init();
             match load_npmrc(install, env, &mut log, &source, &mut configs) {
-                Ok(()) => {}
-                Err(AllocError) => bun_core::out_of_memory(),
+                // The parser logged it; it prints below like every other `.npmrc` error.
+                Ok(()) | Err(Error::SourceTooLarge) => {}
+                Err(Error::Alloc(_)) => bun_core::out_of_memory(),
             }
             if log.has_errors() {
                 if log.errors == 1 {
@@ -1326,11 +1327,11 @@ mod draft {
         log: &mut Log,
         source: &Source,
         configs: &mut Vec<RegistryAuth>,
-    ) -> OOM<()> {
+    ) -> Result<(), Error> {
         let arena = Arena::new();
         let bump = &arena;
         let mut parser = Parser::init(source, env);
-        parser.parse(bump)?;
+        parser.parse(log, bump)?;
         // Need to be very, very careful here with strings.
         // They are allocated in the Parser's arena, which of course gets
         // deinitialized at the end of the scope.
@@ -1483,7 +1484,7 @@ mod draft {
             install.public_hoist_pattern =
                 match pnpm_matcher_from_expr(&public_hoist_pattern_expr, log, source, bump) {
                     Ok(v) => Some(v),
-                    Err(FromExprError::OutOfMemory) => return Err(AllocError),
+                    Err(FromExprError::OutOfMemory) => return Err(AllocError.into()),
                     Err(FromExprError::UnexpectedExpr) => {
                         log.reset();
                         None
@@ -1495,7 +1496,7 @@ mod draft {
             install.hoist_pattern =
                 match pnpm_matcher_from_expr(&hoist_pattern_expr, log, source, bump) {
                     Ok(v) => Some(v),
-                    Err(FromExprError::OutOfMemory) => return Err(AllocError),
+                    Err(FromExprError::OutOfMemory) => return Err(AllocError.into()),
                     Err(FromExprError::UnexpectedExpr) => {
                         log.reset();
                         None

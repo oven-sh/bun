@@ -1901,10 +1901,7 @@ type HookOptions = {
   timeout?: number;
 };
 
-// A port of node's createSubtest() shift and Test constructor defaults:
-//   https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1013-L1025
-//   https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L575-L581
-// Not ported: the undocumented `...options` spread at #L1038, where options.name and options.fn win.
+// Port of createSubtest(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1013-L1025
 function parseTestArgs(arg0: unknown, arg1: unknown, arg2: unknown) {
   let options = arg1;
   let fn = arg2;
@@ -1921,8 +1918,9 @@ function parseTestArgs(arg0: unknown, arg1: unknown, arg2: unknown) {
   if (options === null || typeof options !== "object") {
     options = kDefaultOptions;
   }
+  // Not ported: node spreads the options over { fn, name } at #L1038, so options.name and options.fn win there.
   const hasFn = typeof fn === "function";
-  // Before fn is defaulted: kDefaultFunction has a name, node's noop does not.
+  // The Test constructor (#L575-L581) defaults fn first. Its noop has no name, kDefaultFunction has one.
   const name: string =
     typeof arg0 === "string" && arg0 !== "" ? arg0 : (hasFn && (fn as Function).name) || kDefaultName;
   if (!hasFn) {

@@ -98,6 +98,8 @@ pub(crate) enum Kind {
     Toml,
     /// HTML, Vue, Angular templates, Lightning Web Components, MJML.
     Html(bun_format::html::Parser),
+    /// See [`Configs::formats_svelte`].
+    Svelte,
 }
 
 impl Kind {
@@ -112,6 +114,8 @@ impl Kind {
             b"mdx" => Some(Kind::Mdx),
             b"graphql" => Some(Kind::GraphQl),
             b"glimmer" => Some(Kind::Handlebars),
+            // Of `prettier-plugin-svelte`. Whether it is this one that reads the file: `Configs::formats_svelte`.
+            b"svelte" => Some(Kind::Svelte),
             b"babel" | b"babel-flow" | b"babel-ts" | b"flow" | b"typescript" | b"acorn"
             | b"espree" | b"meriyah" | b"oxc" | b"oxc-ts" => Some(Kind::Script),
             _ => None,
@@ -124,10 +128,14 @@ impl Kind {
         // No configuration file of oxfmt has `parser`. Its tests do.
         if !options.flavor.is_oxfmt() || options.parser.is_some() {
             let is_toml = || options.toml && options.parser.is_none() && is_toml(path);
+            let is_svelte =
+                || options.svelte.is_on && options.parser.is_none() && path.ends_with(b".svelte");
             return Kind::of(path, options.parser.as_deref())
-                .or_else(|| is_toml().then_some(Kind::Toml));
+                .or_else(|| is_toml().then_some(Kind::Toml))
+                .or_else(|| is_svelte().then_some(Kind::Svelte));
         }
-        classify_for_oxfmt(path)
+        let is_svelte = || options.svelte.is_on && is_svelte_for_oxfmt(path);
+        classify_for_oxfmt(path).or_else(|| is_svelte().then_some(Kind::Svelte))
     }
 
     /// Of the file at `path`. `parser`: Prettier's option of that name, which decides if it is set.
@@ -369,7 +377,7 @@ pub(crate) fn is_svelte_for_oxfmt(path: &[u8]) -> bool {
 pub(crate) fn language_for_oxfmt(path: &[u8], formats_svelte: bool) -> Language {
     match classify_for_oxfmt(path) {
         Some(_) => Language::Supported,
-        None if formats_svelte && is_svelte_for_oxfmt(path) => Language::Other,
+        None if formats_svelte && is_svelte_for_oxfmt(path) => Language::Supported,
         None => Language::Unknown,
     }
 }
@@ -920,7 +928,7 @@ pub(crate) fn expand_as_oxfmt(
     }
     // Nothing is said about a file that there is no parser for, and it does not count.
     found.retain(|it| {
-        language_for_oxfmt(&it.path, configs.formats_svelte(&it.scope, &it.path))
+        language_for_oxfmt(&it.path, configs.formats_svelte(&it.scope, Some(&it.path)))
             != Language::Unknown
     });
     index_sort::sort_slice_by(&mut found[..], |a, b| a.path.cmp(&b.path));

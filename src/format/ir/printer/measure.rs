@@ -64,6 +64,11 @@ impl<'d> Measure<'d> {
             mode: printer.mode,
         }
     }
+
+    /// Whether the line is wider than `print_width` already.
+    pub(super) fn is_past(&self, print_width: usize) -> bool {
+        self.line_width + self.pending_indent + usize::from(self.pending_space) > print_width
+    }
 }
 
 /// Tells when to stop measuring.

@@ -1596,30 +1596,30 @@ exports.format = async (text, options) => {
   return text.replace(/ +/g, " ");
 };
 `,
-      "node_modules/prettier-plugin-svelte/package.json": '{ "name": "prettier-plugin-svelte", "version": "4.0.0" }',
+      "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "4.0.0" }',
     };
-    const config = { plugins: ["prettier-plugin-svelte"], svelteSortOrder: "none", semi: false };
+    const config = { plugins: ["prettier-plugin-astro"], astroAllowShorthand: true, semi: false };
     const files = {
       ...packages,
-      ".prettierrc": '{\n  "plugins": ["prettier-plugin-svelte"],\n  "svelteSortOrder": "none",\n  "semi": false\n}\n',
-      "a.svelte": "<p   >a</p>\n",
+      ".prettierrc": '{\n  "plugins": ["prettier-plugin-astro"],\n  "astroAllowShorthand": true,\n  "semi": false\n}\n',
+      "a.astro": "<p   >a</p>\n",
       "b.js": "b  ;\n",
     };
-    const reads = ["a.svelte", "b.js", "node_modules/prettier/calls.txt", "node_modules/prettier/paths.txt"];
+    const reads = ["a.astro", "b.js", "node_modules/prettier/calls.txt", "node_modules/prettier/paths.txt"];
 
     test(
       "goes to the project's own Prettier, with its configuration file and the flags",
       async () => {
         const result = await format(files, ["--tab-width", "8"], { reads });
-        expect(result.files["a.svelte"]).toBe("<p >a</p>\n");
+        expect(result.files["a.astro"]).toBe("<p >a</p>\n");
         expect(result.files["b.js"]).toBe("b\n");
         const calls = result.files[reads[2]]!.trim().split("\n");
         expect(calls.map(it => JSON.parse(it))).toEqual([
-          { ...config, tabWidth: 8, filepath: expect.stringMatching(/[\\/]a\.svelte$/) },
+          { ...config, tabWidth: 8, filepath: expect.stringMatching(/[\\/]a\.astro$/) },
         ]);
         // A plugin sees paths as the system writes them.
         const paths = [JSON.parse(calls[0]).filepath, ...result.files[reads[3]]!.trim().split("\n")];
-        expect(paths.map(it => basename(it))).toEqual(["a.svelte", "a.svelte", ".prettierrc"]);
+        expect(paths.map(it => basename(it))).toEqual(["a.astro", "a.astro", ".prettierrc"]);
         expect(paths).toEqual(paths.map(it => resolve(it)));
         expect(result.stderr).toContain("Used your installed Prettier for 1 file in a language that needs a plugin");
         expect(result.exitCode).toBe(0);
@@ -1698,9 +1698,9 @@ exports.format = async (text, options) => {
         return formatWithPrettier().then(result => [result, ...seen]);
       })()`;
       const runs = [
-        run("win32", "C:/proj/src/a.svelte", "C:/proj/.prettierrc"),
-        run("win32", "//server/share/a.svelte", null),
-        run("posix", "/proj/a\\b.svelte", "/proj/.prettierrc"),
+        run("win32", "C:/proj/src/a.astro", "C:/proj/.prettierrc"),
+        run("win32", "//server/share/a.astro", null),
+        run("posix", "/proj/a\\b.astro", "/proj/.prettierrc"),
       ];
       await using proc = spawn({
         cmd: [bunExe(), "-e", `Promise.all([${runs}]).then(all => console.log(JSON.stringify(all)));`],
@@ -1710,9 +1710,9 @@ exports.format = async (text, options) => {
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(JSON.parse(stdout)).toEqual([
-        ["0x", String.raw`C:\proj\src\a.svelte`, String.raw`C:\proj\.prettierrc`, String.raw`C:\proj\src\a.svelte`],
-        ["0x", String.raw`\\server\share\a.svelte`, null, String.raw`\\server\share\a.svelte`],
-        ["0x", "/proj/a\\b.svelte", "/proj/.prettierrc", "/proj/a\\b.svelte"],
+        ["0x", String.raw`C:\proj\src\a.astro`, String.raw`C:\proj\.prettierrc`, String.raw`C:\proj\src\a.astro`],
+        ["0x", String.raw`\\server\share\a.astro`, null, String.raw`\\server\share\a.astro`],
+        ["0x", "/proj/a\\b.astro", "/proj/.prettierrc", "/proj/a\\b.astro"],
       ]);
       expect(exitCode).toBe(0);
     });
@@ -1721,11 +1721,11 @@ exports.format = async (text, options) => {
       "is checked, and listed",
       async () => {
         const checked = await format(files, ["--check"], { reads });
-        expect(checked.files["a.svelte"]).toBe(files["a.svelte"]);
-        expect(checked.stderr).toContain("[warn] a.svelte");
+        expect(checked.files["a.astro"]).toBe(files["a.astro"]);
+        expect(checked.stderr).toContain("[warn] a.astro");
         expect(checked.exitCode).toBe(1);
-        expect(await different(files, [])).toEqual(["a.svelte", "b.js"]);
-        const fine = await format({ ...files, "a.svelte": "<p>a</p>\n", "b.js": "b\n" }, ["--check"]);
+        expect(await different(files, [])).toEqual(["a.astro", "b.js"]);
+        const fine = await format({ ...files, "a.astro": "<p>a</p>\n", "b.js": "b\n" }, ["--check"]);
         expect(fine.stdout).toContain("All matched files use Prettier code style!");
         expect(fine.exitCode).toBe(0);
       },
@@ -1735,9 +1735,9 @@ exports.format = async (text, options) => {
     test(
       "from standard input",
       async () => {
-        const result = await format(files, ["--stdin-filepath", "c.svelte"], { stdin: "<p   >c</p>\n" });
+        const result = await format(files, ["--stdin-filepath", "c.astro"], { stdin: "<p   >c</p>\n" });
         expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
-        const checked = await format(files, ["--stdin-filepath", "c.svelte", "--check"], { stdin: "<p   >c</p>\n" });
+        const checked = await format(files, ["--stdin-filepath", "c.astro", "--check"], { stdin: "<p   >c</p>\n" });
         expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
       },
       timeout,
@@ -1747,13 +1747,13 @@ exports.format = async (text, options) => {
       "--parser with the plugin's parser: piped code goes to Prettier without a file name",
       async () => {
         const stdin = "<p   >c</p>\n";
-        const result = await format(files, ["--parser", "svelte", "--tab-width", "8"], { stdin, reads });
+        const result = await format(files, ["--parser", "astro", "--tab-width", "8"], { stdin, reads });
         expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
-        expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
+        expect(result.files["a.astro"]).toBe(files["a.astro"]);
         // `JSON.stringify` drops `filepath: undefined`.
-        expect(JSON.parse(result.files[reads[2]]!)).toEqual({ ...config, parser: "svelte", tabWidth: 8 });
+        expect(JSON.parse(result.files[reads[2]]!)).toEqual({ ...config, parser: "astro", tabWidth: 8 });
         expect(result.files[reads[3]]!.split("\n")[0]).toBe("undefined");
-        const checked = await format(files, ["--parser", "svelte", "--check"], { stdin });
+        const checked = await format(files, ["--parser", "astro", "--check"], { stdin });
         expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
       },
       timeout,
@@ -1765,7 +1765,7 @@ exports.format = async (text, options) => {
     ])(
       "--parser with the plugin's parser, and the code doesn't parse: %j",
       async (flags, stderr, exitCode) => {
-        const result = await format(files, ["--parser", "svelte", ...flags], { stdin: "<p>broken</p>\n" });
+        const result = await format(files, ["--parser", "astro", ...flags], { stdin: "<p>broken</p>\n" });
         expect(result).toMatchObject({ raw: "", stderr, exitCode });
       },
       timeout,
@@ -1790,14 +1790,14 @@ exports.format = async (text, { parser }) => {
     );
 
     test("--parser with the plugin's parser, and nothing is installed", async () => {
-      const result = await format({ ".prettierrc": files[".prettierrc"] }, ["--parser", "svelte"], {
+      const result = await format({ ".prettierrc": files[".prettierrc"] }, ["--parser", "astro"], {
         stdin: "<p   >c</p>\n",
       });
       expect(result.raw).toBe("");
       expect(result.stderr.split("\n")).toEqual([
-        "warn: Not installed: prettier, prettier-plugin-svelte",
+        "warn: Not installed: prettier, prettier-plugin-astro",
         "  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
-        "error: 1 file was not formatted because bun fmt does not support its language yet: 1 svelte",
+        "error: 1 file was not formatted because bun fmt does not support its language yet: 1 astro",
         "  Use --allow-unsupported to make this a warning.",
       ]);
       expect(result.exitCode).toBe(2);
@@ -1805,13 +1805,13 @@ exports.format = async (text, { parser }) => {
 
     // As Prettier 3.9.9 with a plugin that throws this.
     test.each<[string[], string, number]>([
-      [[], "error: c.svelte: SyntaxError: Unexpected token (1:2)", 2],
+      [[], "error: c.astro: SyntaxError: Unexpected token (1:2)", 2],
       [["--check"], "error: Unexpected token (1:2)", 0],
       [["--list-different"], "error: Unexpected token (1:2)", 0],
     ])(
       "from standard input, and it does not parse: %j",
       async (flags, stderr, exitCode) => {
-        const result = await format(files, [...flags, "--stdin-filepath", "c.svelte"], { stdin: "<p>broken</p>\n" });
+        const result = await format(files, [...flags, "--stdin-filepath", "c.astro"], { stdin: "<p>broken</p>\n" });
         expect(result).toMatchObject({ raw: "", stderr, exitCode });
       },
       timeout,
@@ -1820,18 +1820,18 @@ exports.format = async (text, { parser }) => {
     // Who gets the text back with 0 takes it for formatted. Prettier 3.9.9 without the plugin: `Cannot find package`, and 2,
     // whatever the flags.
     describe.each([
-      ["prettier, prettier-plugin-svelte", []],
-      ["prettier-plugin-svelte", ["node_modules/prettier/package.json"]],
-      ["prettier", ["node_modules/prettier-plugin-svelte/package.json"]],
+      ["prettier, prettier-plugin-astro", []],
+      ["prettier-plugin-astro", ["node_modules/prettier/package.json"]],
+      ["prettier", ["node_modules/prettier-plugin-astro/package.json"]],
     ])("from standard input, and not installed: %s", (missing, installed) => {
       const project = {
         ".prettierrc": files[".prettierrc"],
         ...Object.fromEntries(installed.map(name => [name, "{}"])),
       };
       const stdin = "<p   >c</p>\n";
-      const unsupported = "1 file was not formatted because bun fmt does not support its language yet: 1 .svelte";
+      const unsupported = "1 file was not formatted because bun fmt does not support its language yet: 1 .astro";
       test.each([[[]], [["--check"]], [["--list-different"]]])("%j", async flags => {
-        const result = await format(project, [...flags, "--stdin-filepath", "c.svelte"], { stdin });
+        const result = await format(project, [...flags, "--stdin-filepath", "c.astro"], { stdin });
         expect(result.raw).toBe("");
         expect(result.stderr.split("\n")).toEqual([
           `warn: Not installed: ${missing}`,
@@ -1846,7 +1846,7 @@ exports.format = async (text, { parser }) => {
         [["--check"], ""],
         [["--list-different"], ""],
       ])("--allow-unsupported %j", async (flags, raw) => {
-        const args = ["--allow-unsupported", ...flags, "--stdin-filepath", "c.svelte"];
+        const args = ["--allow-unsupported", ...flags, "--stdin-filepath", "c.astro"];
         const result = await format(project, args, { stdin });
         expect(result.raw).toBe(raw);
         expect(result.stderr.split("\n").at(-1)).toBe(`warn: ${unsupported}`);
@@ -1858,7 +1858,7 @@ exports.format = async (text, { parser }) => {
     test(
       "more files than there are threads",
       async () => {
-        const names = Array.from({ length: availableParallelism() + 1 }, (_, index) => `many/${index}.svelte`);
+        const names = Array.from({ length: availableParallelism() + 1 }, (_, index) => `many/${index}.astro`);
         const reading = packages["node_modules/prettier/index.cjs"].replace(
           "exports.format = async (text, options) => {",
           "exports.format = async (text, options) => {\n  await fs.promises.readFile(__filename);",
@@ -1887,15 +1887,15 @@ exports.format = async (text, { parser }) => {
           {
             ...files,
             [`node_modules/${sorter}/package.json`]: `{ "name": "${sorter}", "version": "4.0.0" }`,
-            ".prettierrc": `{\n  "plugins": ["prettier-plugin-svelte", "${sorter}"],\n  "importOrder": ["^b", "^a"]\n}\n`,
+            ".prettierrc": `{\n  "plugins": ["prettier-plugin-astro", "${sorter}"],\n  "importOrder": ["^b", "^a"]\n}\n`,
             "c.ts": 'import a from "a";\nimport b from "b";\n',
             "d.ts": 'import a from "a";\nimport b from "b";\n',
           },
           [],
-          { reads: ["a.svelte", "c.ts", "d.ts"] },
+          { reads: ["a.astro", "c.ts", "d.ts"] },
         );
         const sorted = 'import b from "b";\nimport a from "a";\n';
-        expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.ts": sorted, "d.ts": sorted });
+        expect(result.files).toEqual({ "a.astro": "<p >a</p>\n", "c.ts": sorted, "d.ts": sorted });
         expect(result.exitCode).toBe(0);
       },
       timeout,
@@ -1905,7 +1905,7 @@ exports.format = async (text, { parser }) => {
     test(
       "a Prettier that ends the process ends the run, and every file is whole",
       async () => {
-        const names = Array.from({ length: 8 }, (_, index) => `${index}.svelte`);
+        const names = Array.from({ length: 8 }, (_, index) => `${index}.astro`);
         const exits = packages["node_modules/prettier/index.cjs"].replace(
           "exports.format = async (text, options) => {",
           'exports.format = async (text, options) => {\n  if (text.includes("ends")) process.exit(7);',
@@ -1913,7 +1913,7 @@ exports.format = async (text, { parser }) => {
         using dir = tempDir("bun-format-exit", {
           ...files,
           "node_modules/prettier/index.cjs": exits,
-          "many/ends.svelte": "<p   >ends</p>\n",
+          "many/ends.astro": "<p   >ends</p>\n",
           ...Object.fromEntries(names.map(name => [`many/${name}`, "<p   >a</p>\n"])),
         });
         await using proc = spawn({ cmd: [...command, "many"], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
@@ -1921,8 +1921,8 @@ exports.format = async (text, { parser }) => {
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 7 });
         // Another thread may be between writing a file under another name and giving it its name.
         const left = readdirSync(join(String(dir), "many")).filter(name => !name.endsWith(".tmp"));
-        expect(left.sort()).toEqual([...names, "ends.svelte"]);
-        expect(readFileSync(join(String(dir), "many/ends.svelte"), "utf8")).toBe("<p   >ends</p>\n");
+        expect(left.sort()).toEqual([...names, "ends.astro"]);
+        expect(readFileSync(join(String(dir), "many/ends.astro"), "utf8")).toBe("<p   >ends</p>\n");
         for (const name of names) {
           expect(["<p   >a</p>\n", "<p >a</p>\n"]).toContain(readFileSync(join(String(dir), "many", name), "utf8"));
         }
@@ -1938,12 +1938,12 @@ exports.format = async (text, { parser }) => {
           'exports.format = async (text, options) => {\n  if (text.includes("waits")) await new Promise(() => {});',
         );
         const result = await format(
-          { ...files, "node_modules/prettier/index.cjs": waits, "c.svelte": "<p   >waits</p>\n" },
+          { ...files, "node_modules/prettier/index.cjs": waits, "c.astro": "<p   >waits</p>\n" },
           [],
-          { reads: ["a.svelte", "c.svelte"] },
+          { reads: ["a.astro", "c.astro"] },
         );
-        expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.svelte": "<p   >waits</p>\n" });
-        expect(result.stderr).toContain("error: c.svelte: A promise never settled, and nothing is left to wait for.");
+        expect(result.files).toEqual({ "a.astro": "<p >a</p>\n", "c.astro": "<p   >waits</p>\n" });
+        expect(result.stderr).toContain("error: c.astro: A promise never settled, and nothing is left to wait for.");
         expect(result.exitCode).toBe(2);
       },
       timeout,
@@ -1956,7 +1956,7 @@ exports.format = async (text, { parser }) => {
 require("node:net").createServer(() => {}).listen(0, "127.0.0.1");
 ${packages["node_modules/prettier/index.cjs"]}`;
         const result = await format({ ...files, "node_modules/prettier/index.cjs": leaves }, [], { reads });
-        expect(result.files["a.svelte"]).toBe("<p >a</p>\n");
+        expect(result.files["a.astro"]).toBe("<p >a</p>\n");
         expect(result.exitCode).toBe(0);
       },
       timeout,
@@ -1965,9 +1965,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     test(
       "what Prettier throws is shown as it shows it",
       async () => {
-        const result = await format({ ...files, "a.svelte": "broken\n" }, [], { reads });
-        expect(result.files["a.svelte"]).toBe("broken\n");
-        expect(result.stderr).toContain("error: a.svelte: SyntaxError: Unexpected token (1:2)");
+        const result = await format({ ...files, "a.astro": "broken\n" }, [], { reads });
+        expect(result.files["a.astro"]).toBe("broken\n");
+        expect(result.stderr).toContain("error: a.astro: SyntaxError: Unexpected token (1:2)");
         expect(result.exitCode).toBe(2);
       },
       timeout,
@@ -1976,20 +1976,20 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     test(
       "is left as it is if the plugin is not installed, and what would help is said",
       async () => {
-        const { "node_modules/prettier-plugin-svelte/package.json": plugin, ...others } = files;
-        const result = await format(others, [], { reads: ["a.svelte"] });
-        expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
+        const { "node_modules/prettier-plugin-astro/package.json": plugin, ...others } = files;
+        const result = await format(others, [], { reads: ["a.astro"] });
+        expect(result.files["a.astro"]).toBe(files["a.astro"]);
         expect(result.stderr).toContain(
-          "warn: Not installed: prettier-plugin-svelte\n  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
+          "warn: Not installed: prettier-plugin-astro\n  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
         );
-        expect(result.stderr).toContain("does not support its language yet: 1 .svelte\n");
+        expect(result.stderr).toContain("does not support its language yet: 1 .astro\n");
         expect(result.exitCode).toBe(2);
       },
       timeout,
     );
   });
 
-  test("with an .oxfmtrc.json TOML is formatted, and Svelte is left as it is, which is said if the configuration has svelte", async () => {
+  test("with an .oxfmtrc.json TOML is formatted, and Svelte if the configuration has svelte", async () => {
     const files = {
       "a.svelte": "<p   >a</p>\n",
       "b.toml": "a   = 1\n",
@@ -2000,9 +2000,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const after = { ...files, "b.toml": "a = 1\n", "Pipfile": "[a]\nb = [1, 2]\n", "c.js": formatted };
     const reads = Object.keys(files);
     const result = await format({ ...files, ".oxfmtrc.json": '{ "svelte": {} }\n' }, [], { reads });
-    expect(result.files).toEqual(after);
-    expect(result.stderr).toContain("does not support its language yet: 1 .svelte\n");
-    expect(result.exitCode).toBe(2);
+    expect(result.files).toEqual({ ...after, "a.svelte": "<p>a</p>\n" });
+    expect(result.stderr).not.toContain("does not support");
+    expect(result.exitCode).toBe(0);
     const without = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [], { reads });
     expect(without.files).toEqual(after);
     expect(without.stderr).not.toContain("does not support");
@@ -2010,15 +2010,12 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     // oxfmt 0.72 formats the one, and gives the other back.
     const piped = (config: string) =>
       format({ ".oxfmtrc.json": config }, ["--stdin-filepath", "a.svelte"], { stdin: files["a.svelte"] });
-    expect(await piped('{ "svelte": {} }\n')).toMatchObject({
-      raw: "",
-      stderr: expect.stringContaining("does not support its language yet: 1 .svelte\n"),
-      exitCode: 2,
-    });
+    expect(await piped('{ "svelte": {} }\n')).toMatchObject({ raw: "<p>a</p>\n", stderr: "", exitCode: 0 });
     expect(await piped("{}\n")).toMatchObject({ raw: files["a.svelte"], stderr: "", exitCode: 0 });
-    // Prettier doesn't format TOML. Without a Prettier or oxfmt config, Bun formats it like any other language.
+    // Prettier doesn't format TOML, or Svelte without the plugin. Without a Prettier or oxfmt config, Bun formats them like
+    // any other language.
     expect(await different({ ...files, ".prettierrc": "{}\n" }, [])).toEqual(["c.js"]);
-    expect(await different(files, [])).toEqual(["b.toml", "c.js", "Pipfile"]);
+    expect(await different(files, [])).toEqual(["a.svelte", "b.toml", "c.js", "Pipfile"]);
     const broken = await format({ "b.toml": "a = = 1\n", ".oxfmtrc.json": "{}\n" }, [], { reads: ["b.toml"] });
     expect(broken.files["b.toml"]).toBe("a = = 1\n");
     expect(broken.stderr).toBe("1 | a = = 1\n        ^\nwarn: Expected a value but found '='\n   at b.toml:1:5");

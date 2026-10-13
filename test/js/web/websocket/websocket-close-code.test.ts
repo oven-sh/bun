@@ -8,7 +8,18 @@ import { bunEnv, bunExe } from "harness";
 import crypto from "node:crypto";
 import { once } from "node:events";
 import { type AddressInfo, connect, createServer, type Socket } from "node:net";
-import { type Departure, departure, startRawWssServer, startRecordingProxy } from "./proxy-test-utils";
+import {
+  clientEvents,
+  type Departure,
+  departure,
+  failed,
+  type RawWsPeer,
+  type RawWsServerOptions,
+  serverFrame,
+  startRawWsServer,
+  startRawWssServer,
+  startRecordingProxy,
+} from "./proxy-test-utils";
 
 describe.concurrent("WebSocket close() argument validation", () => {
   // Close codes an RFC 6455 endpoint must never put on the wire. close() has to
@@ -229,6 +240,82 @@ describe.concurrent("WebSocket client and server-sent close frames", () => {
       reason: "Server sent invalid UTF8",
       wasClean: false,
     });
+  });
+});
+
+// RFC 6455 section 7.1.7: a client that fails an open connection tells the server why in a Close frame. It does not
+// reset the connection. https://websockets.spec.whatwg.org/#feedback-from-the-protocol: error fires, then close.
+describe.concurrent("a connection the client fails", () => {
+  const MiB = 1024 * 1024;
+
+  /** A client of a server that writes `frames` after the 101: its events, and what the server got back. */
+  async function receive(frames: Uint8Array[], options: RawWsServerOptions = {}) {
+    const upgraded = Promise.withResolvers<RawWsPeer>();
+    using server = await startRawWsServer(peer => {
+      upgraded.resolve(peer);
+      for (const frame of frames) peer.socket.write(frame);
+    }, options);
+    const events = await clientEvents(new WebSocket(server.url, { tls: { rejectUnauthorized: false } }));
+    const peer = await upgraded.promise;
+    return { url: server.url, events, closeFrame: await peer.closeCode, departed: await peer.departed };
+  }
+
+  /** The server read a Close frame with `code`, and then the FIN of the client. */
+  const told = (url: string, reason: string, code: number) => ({
+    url,
+    events: failed(url, reason, code),
+    closeFrame: code,
+    departed: { fin: true },
+  });
+
+  const notUtf8 = serverFrame(0x1, Buffer.from([0xc3, 0x28]));
+
+  it.each([
+    ["a text frame that is not UTF-8", notUtf8, "Server sent invalid UTF8", 1007],
+    ["a frame with a reserved opcode", serverFrame(0x3, "x"), "Protocol error - unsupported control frame", 1002],
+    [
+      "a masked frame",
+      Buffer.from([0x81, 0x81, 0, 0, 0, 0, 0x78]),
+      "Protocol error - unexpected mask from server",
+      1002,
+    ],
+    ["a frame of more than 128 MiB", serverFrame(0x2, "", { declaredLength: 129 * MiB }), "Message too big", 1009],
+  ] as const)("%s", async (_, frame, reason, code) => {
+    const result = await receive([frame]);
+    expect(result).toEqual(told(result.url, reason, code));
+  });
+
+  it("with data of the server still in flight", async () => {
+    const result = await receive([notUtf8, serverFrame(0x2, Buffer.alloc(4 * MiB))]);
+    expect(result).toEqual(told(result.url, "Server sent invalid UTF8", 1007));
+  });
+
+  it("over wss://", async () => {
+    const result = await receive([notUtf8], { tls: true });
+    expect(result).toEqual(told(result.url, "Server sent invalid UTF8", 1007));
+  });
+
+  it("a connection the server drops fires close alone", async () => {
+    using server = await startRawWsServer(peer => peer.socket.destroy());
+    const events = await clientEvents(new WebSocket(server.url));
+    expect(events).toEqual([{ code: 1006, reason: "Connection ended", wasClean: false }]);
+  });
+
+  it("close() while the server still writes: the server reads the Close frame", async () => {
+    const upgraded = Promise.withResolvers<RawWsPeer>();
+    using server = await startRawWsServer(peer => {
+      upgraded.resolve(peer);
+      peer.socket.write(serverFrame(0x2, Buffer.alloc(8 * MiB)));
+    });
+    const ws = new WebSocket(server.url);
+    ws.onopen = () => ws.close(1000);
+    const event = await new Promise<CloseEvent>(resolve => (ws.onclose = resolve));
+    const peer = await upgraded.promise;
+    expect({
+      close: { code: event.code, wasClean: event.wasClean },
+      closeFrame: await peer.closeCode,
+      departed: await peer.departed,
+    }).toEqual({ close: { code: 1000, wasClean: true }, closeFrame: 1000, departed: { fin: true } });
   });
 });
 

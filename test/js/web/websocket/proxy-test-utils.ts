@@ -3,8 +3,8 @@
  * ws-proxy.test.ts and websocket-syscall-fault.test.ts.
  */
 
-import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "crypto";
+import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
 import net from "net";
 import tls from "tls";
 
@@ -256,6 +256,170 @@ export async function startRawWssServer(
     port,
     /** One per connection the server accepted so far. Each resolves when that connection is gone. */
     departures,
+    [Symbol.dispose]() {
+      server.close();
+    },
+  };
+}
+
+/** One frame as an endpoint wrote it. */
+export interface WireFrame {
+  fin: boolean;
+  rsv1: boolean;
+  opcode: number;
+  payload: Buffer;
+}
+
+/**
+ * One unmasked frame, as a server writes it. `declaredLength` is for the
+ * header of a frame whose payload never comes (or comes short).
+ */
+export function serverFrame(
+  opcode: number,
+  payload: string | Uint8Array = "",
+  options: { fin?: boolean; rsv1?: boolean; declaredLength?: number } = {},
+): Buffer {
+  const body = typeof payload === "string" ? Buffer.from(payload) : Buffer.from(payload);
+  const length = options.declaredLength ?? body.length;
+  const first = (options.fin === false ? 0 : 0x80) | (options.rsv1 ? 0x40 : 0) | opcode;
+  let header: Buffer;
+  if (length < 126) {
+    header = Buffer.from([first, length]);
+  } else if (length < 65536) {
+    header = Buffer.from([first, 126, 0, 0]);
+    header.writeUInt16BE(length, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = first;
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(length), 2);
+  }
+  return Buffer.concat([header, body]);
+}
+
+/** The connection of one client to `startRawWsServer`, after the server answered its upgrade. */
+export interface RawWsPeer {
+  socket: net.Socket;
+  /** The upgrade request as the client wrote it. */
+  request: string;
+  /** Every frame the client wrote so far, unmasked. */
+  frames: WireFrame[];
+  /**
+   * The status code of the Close frame of the client (1005 for one without a
+   * code), or `null` when its connection goes away without one. The server
+   * answers that Close frame with the same one and ends the connection.
+   */
+  closeCode: Promise<number | null>;
+  /** How the connection of the client went away. */
+  departed: Promise<Departure>;
+}
+
+export interface RawWsServerOptions {
+  tls?: boolean;
+  /** Accept a permessage-deflate offer, with no context takeover on either side. */
+  deflate?: boolean;
+  /**
+   * Writes the 101 response. The default is one write. A test passes this to
+   * choose how the bytes of the response, and what follows them, reach the client.
+   */
+  respond?: (socket: net.Socket, response: Buffer) => void | Promise<void>;
+}
+
+/**
+ * A ws:// (or wss://) server that answers the upgrade by hand and then runs
+ * `onUpgraded`: a test writes every byte the client reads after the 101, and
+ * reads every frame the client writes. It uses no WebSocket implementation,
+ * so it runs the same way under Node.js.
+ */
+export async function startRawWsServer(onUpgraded: (peer: RawWsPeer) => void, options: RawWsServerOptions = {}) {
+  let connections = 0;
+  const onSocket = (socket: net.Socket) => {
+    connections++;
+    const departed = departure(socket);
+    const closeCode = Promise.withResolvers<number | null>();
+    departed.then(() => closeCode.resolve(null));
+    const frames: WireFrame[] = [];
+    let request = "";
+    let upgraded = false;
+    let pending = Buffer.alloc(0);
+    const readFrames = () => {
+      for (;;) {
+        if (pending.length < 2) return;
+        const masked = (pending[1] & 0x80) !== 0;
+        let length = pending[1] & 0x7f;
+        let offset = 2;
+        if (length === 126) {
+          if (pending.length < 4) return;
+          length = pending.readUInt16BE(2);
+          offset = 4;
+        } else if (length === 127) {
+          if (pending.length < 10) return;
+          length = Number(pending.readBigUInt64BE(2));
+          offset = 10;
+        }
+        const mask = masked ? pending.subarray(offset, offset + 4) : null;
+        if (masked) offset += 4;
+        if (pending.length < offset + length) return;
+        const payload = Buffer.from(pending.subarray(offset, offset + length));
+        if (mask) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+        const frame = {
+          fin: (pending[0] & 0x80) !== 0,
+          rsv1: (pending[0] & 0x40) !== 0,
+          opcode: pending[0] & 0x0f,
+          payload,
+        };
+        pending = pending.subarray(offset + length);
+        frames.push(frame);
+        if (frame.opcode === 0x8) {
+          closeCode.resolve(payload.length >= 2 ? payload.readUInt16BE(0) : 1005);
+          socket.end(serverFrame(0x8, payload));
+        }
+      }
+    };
+    socket.on("data", (chunk: Buffer) => {
+      if (upgraded) {
+        pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+        return readFrames();
+      }
+      request += chunk.toString("latin1");
+      const end = request.indexOf("\r\n\r\n");
+      if (end === -1) return;
+      upgraded = true;
+      pending = Buffer.from(request.slice(end + 4), "latin1");
+      request = request.slice(0, end + 4);
+      const key = /^sec-websocket-key: (.*)\r$/im.exec(request)![1];
+      const accept = createHash("sha1")
+        .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+        .digest("base64");
+      const deflate = options.deflate && /^sec-websocket-extensions: .*permessage-deflate/im.test(request);
+      const response = Buffer.from(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+          `Sec-WebSocket-Accept: ${accept}\r\n` +
+          (deflate
+            ? "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n"
+            : "") +
+          "\r\n",
+      );
+      const peer: RawWsPeer = { socket, request, frames, closeCode: closeCode.promise, departed };
+      Promise.resolve((options.respond ?? ((socket, response) => void socket.write(response)))(socket, response)).then(
+        () => {
+          onUpgraded(peer);
+          readFrames();
+        },
+      );
+    });
+  };
+  const server = options.tls
+    ? tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, onSocket)
+    : net.createServer(onSocket);
+  const port = await startProxy(server);
+  return {
+    port,
+    url: `${options.tls ? "wss" : "ws"}://127.0.0.1:${port}/`,
+    /** How many connections the server accepted so far. */
+    get connections() {
+      return connections;
+    },
     [Symbol.dispose]() {
       server.close();
     },

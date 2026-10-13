@@ -10,9 +10,17 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import net, { AddressInfo, connect } from "net";
 import fs from "node:fs";
 import path from "node:path";
+import { deflateRawSync } from "node:zlib";
 import tls, { type TLSSocket } from "tls";
 // @ts-expect-error @types/ws: no ESM `Server`
 import { type ClientOptions, Server, WebSocket, WebSocketServer } from "ws";
+import {
+  type RawWsPeer,
+  type RawWsServerOptions,
+  serverFrame,
+  startRawWsServer,
+  startRecordingProxy,
+} from "../../web/websocket/proxy-test-utils";
 
 const strings = [
   {
@@ -2118,5 +2126,398 @@ describe("client TLS options", () => {
       expect(await dial(server.url, { ...trust, crl: read("ca2-crl.pem") })).toBe(anonymous);
       expect(await dial(server.url, { ...trust, crl: read("ca2-crl-agent3.pem") })).toBe("refused");
     });
+  });
+});
+
+// `maxPayload` and `handshakeTimeout` of the client. The events are those of Node.js v26.3.0 with ws 8.18.3, but where
+// a comment says what Bun does.
+describe("client limits", () => {
+  type Seen =
+    | "open"
+    | { message: number }
+    | { ping: number }
+    | { error: string; message: string; code?: string; readyState: number }
+    | { close: number; reason: string; readyState: number };
+
+  /** Everything a client emits until 'close', in order. */
+  function emitted(ws: WebSocket): Promise<Seen[]> {
+    const seen: Seen[] = [];
+    const { promise, resolve } = Promise.withResolvers<Seen[]>();
+    ws.on("open", () => seen.push("open"));
+    ws.on("message", data => seen.push({ message: (data as Buffer).length }));
+    ws.on("ping", data => seen.push({ ping: data.length }));
+    ws.on("error", (error: Error & { code?: string }) =>
+      seen.push({ error: error.constructor.name, message: error.message, code: error.code, readyState: ws.readyState }),
+    );
+    ws.on("close", (code, reason) => {
+      seen.push({ close: code, reason: String(reason), readyState: ws.readyState });
+      resolve(seen);
+    });
+    return promise;
+  }
+
+  const tooBig: Seen = {
+    error: "RangeError",
+    message: "Max payload size exceeded",
+    code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH",
+    readyState: WebSocket.CLOSING,
+  };
+  const timedOut: Seen = {
+    error: "Error",
+    message: "Opening handshake has timed out",
+    code: undefined,
+    readyState: WebSocket.CLOSING,
+  };
+  const abnormal: Seen = { close: 1006, reason: "", readyState: WebSocket.CLOSED };
+
+  const MiB = 1024 * 1024;
+  const bytes = (length: number) => Buffer.alloc(length, "x");
+
+  /**
+   * A client of a server that writes `frames` after the 101: what the client emitted, the status code of the Close
+   * frame the server read from it, and how its connection went away.
+   */
+  async function receive(frames: Uint8Array[], clientOptions: ClientOptions, serverOptions: RawWsServerOptions = {}) {
+    const upgraded = Promise.withResolvers<RawWsPeer>();
+    using server = await startRawWsServer(peer => {
+      upgraded.resolve(peer);
+      for (const frame of frames) peer.socket.write(frame);
+    }, serverOptions);
+    const events = await emitted(new WebSocket(server.url, clientOptions));
+    const peer = await upgraded.promise;
+    return { events, closeFrame: await peer.closeCode, departed: await peer.departed };
+  }
+
+  // The client tells the server why, in a Close frame that the server gets to read, and it is not reset.
+  const rejected = { events: ["open", tooBig, abnormal], closeFrame: 1009, departed: { fin: true } };
+
+  describe.concurrent("maxPayload", () => {
+    it.each([
+      ["text", 0x1],
+      ["binary", 0x2],
+    ] as const)("a %s message of the limit arrives, one byte more does not", async (_, opcode) => {
+      const frames = [serverFrame(opcode, bytes(1024)), serverFrame(opcode, bytes(1025))];
+      expect(await receive(frames, { maxPayload: 1024 })).toEqual({
+        ...rejected,
+        events: ["open", { message: 1024 }, tooBig, abnormal],
+      });
+    });
+
+    it("the fragments of a message count together", async () => {
+      const frames = [
+        serverFrame(0x1, bytes(600), { fin: false }),
+        serverFrame(0x0, bytes(600), { fin: false }),
+        serverFrame(0x0, bytes(600)),
+      ];
+      expect(await receive(frames, { maxPayload: 1024 })).toEqual(rejected);
+    });
+
+    it("a compressed message counts by what it inflates to", async () => {
+      // 122 bytes on the wire: inflated in one call.
+      const small = serverFrame(0x1, deflateRawSync(bytes(100_000)), { rsv1: true });
+      expect(await receive([small], { maxPayload: 1024 }, { deflate: true })).toEqual(rejected);
+
+      // 1 MiB of 2-bit symbols is about a quarter of that on the wire: under the limit there, and inflated as a stream.
+      const symbols = Buffer.alloc(MiB);
+      for (let i = 0, state = 0x9e3779b9; i < symbols.length; i++) {
+        state ^= state << 13;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        symbols[i] = 97 + (state & 3);
+      }
+      const deflated = deflateRawSync(symbols);
+      expect(deflated.length).toBeWithin(128 * 1024, 512 * 1024);
+      const large = serverFrame(0x2, deflated, { rsv1: true });
+      expect(await receive([large], { maxPayload: 512 * 1024 }, { deflate: true })).toEqual(rejected);
+    });
+
+    it("a frame that arrives with the 101 response counts", async () => {
+      const respond: RawWsServerOptions["respond"] = (socket, response) =>
+        void socket.write(Buffer.concat([response, serverFrame(0x1, bytes(5000))]));
+      expect(await receive([], { maxPayload: 1024 }, { respond })).toEqual(rejected);
+    });
+
+    it("control frames do not count", async () => {
+      const frames = [serverFrame(0x9, bytes(125)), serverFrame(0x1, bytes(100)), serverFrame(0x1, bytes(101))];
+      expect(await receive(frames, { maxPayload: 100 })).toEqual({
+        ...rejected,
+        events: ["open", { ping: 125 }, { message: 100 }, tooBig, abnormal],
+      });
+    });
+
+    it("the server reads the Close frame while it still has data in flight", async () => {
+      const frames = [serverFrame(0x1, bytes(100_000)), serverFrame(0x2, bytes(4 * MiB))];
+      expect(await receive(frames, { maxPayload: 1024 })).toEqual(rejected);
+    });
+
+    it("over wss://", async () => {
+      const options = { maxPayload: 1024, rejectUnauthorized: false };
+      expect(await receive([serverFrame(0x1, bytes(5000))], options, { tls: true })).toEqual(rejected);
+    });
+
+    // `proxy` is an option of Bun's `ws`. A wss:// target through it is TLS inside the tunnel.
+    it.each([false, true])("through an HTTP proxy, tls: %p", async tls => {
+      using proxy = await startRecordingProxy();
+      const options = { maxPayload: 1024, rejectUnauthorized: false, proxy: `http://127.0.0.1:${proxy.port}` };
+      const { events, closeFrame } = await receive([serverFrame(0x1, bytes(5000))], options as ClientOptions, { tls });
+      // How the connection of the server goes away is the doing of the proxy.
+      expect({ events, closeFrame }).toEqual({ events: rejected.events, closeFrame: 1009 });
+      expect(proxy.connections).toBe(1);
+    });
+
+    // A server that declares 150 MiB and ends. A limit below that fails the frame at its header.
+    const declares150MiB = [serverFrame(0x2, "", { declaredLength: 150 * MiB })];
+    async function receiveHeaderThenEnd(maxPayload: unknown) {
+      const upgraded = Promise.withResolvers<RawWsPeer>();
+      using server = await startRawWsServer(peer => {
+        upgraded.resolve(peer);
+        peer.socket.end(declares150MiB[0]);
+      });
+      const events = await emitted(new WebSocket(server.url, { maxPayload } as ClientOptions));
+      return { events, closeFrame: await (await upgraded.promise).closeCode };
+    }
+
+    // `maxPayload | 0`, and no limit when that is not above 0.
+    it.each([0, -1, NaN, null, Infinity, undefined, 200 * MiB])("%p is no limit below 150 MiB", async maxPayload => {
+      const { events, closeFrame } = await receiveHeaderThenEnd(maxPayload);
+      // Bun's 'close' has the reason text of the native socket for a connection the server dropped. npm ws has none.
+      expect(events.map(event => (typeof event === "object" && "close" in event ? event.close : event))).toEqual([
+        "open",
+        1006,
+      ]);
+      expect(closeFrame).toBeNull();
+    });
+
+    it.each([1.5, "2048"])("%p is a limit", async maxPayload => {
+      expect(await receiveHeaderThenEnd(maxPayload)).toEqual({ events: ["open", tooBig, abnormal], closeFrame: 1009 });
+    });
+
+    it("a BigInt throws", () => {
+      expect(() => new WebSocket("ws://127.0.0.1:1/", { maxPayload: 10n } as unknown as ClientOptions)).toThrow(
+        TypeError,
+      );
+    });
+
+    it("addEventListener and the on<event> properties get the same failure", async () => {
+      using server = await startRawWsServer(peer => peer.socket.write(serverFrame(0x1, bytes(5000))));
+      const ws = new WebSocket(server.url, { maxPayload: 1024 });
+      const seen: unknown[] = [];
+      const closed = Promise.withResolvers<void>();
+      ws.addEventListener("error", event => {
+        const { type, message, error } = event;
+        seen.push({ type, message, error: error.constructor.name, code: error.code, readyState: ws.readyState });
+      });
+      ws.onclose = ({ type, code, reason, wasClean }) => {
+        seen.push({ type, code, reason, wasClean, readyState: ws.readyState });
+        closed.resolve();
+      };
+      await closed.promise;
+      expect(seen).toEqual([
+        { type: "error", message: tooBig.message, error: tooBig.error, code: tooBig.code, readyState: 2 },
+        { type: "close", code: 1006, reason: "", wasClean: false, readyState: 3 },
+      ]);
+    });
+  });
+
+  describe.concurrent("handshakeTimeout", () => {
+    /** Takes connections and never answers them. */
+    async function muteServer() {
+      const sockets: net.Socket[] = [];
+      const server = net.createServer(socket => void sockets.push(socket)).listen(0, "127.0.0.1");
+      await once(server, "listening");
+      return {
+        url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}/`,
+        get connections() {
+          return sockets.length;
+        },
+        [Symbol.dispose]() {
+          for (const socket of sockets) socket.destroy();
+          server.close();
+        },
+      };
+    }
+
+    it.each([300.7, 500])("%p ms without an answer fail the handshake", async handshakeTimeout => {
+      using server = await muteServer();
+      const start = performance.now();
+      expect(await emitted(new WebSocket(server.url, { handshakeTimeout }))).toEqual([timedOut, abnormal]);
+      expect(performance.now() - start).toBeGreaterThanOrEqual(Math.floor(handshakeTimeout));
+    });
+
+    it("addEventListener and the on<event> properties get the same failure", async () => {
+      using server = await muteServer();
+      const ws = new WebSocket(server.url, { handshakeTimeout: 100 });
+      const seen: unknown[] = [];
+      const closed = Promise.withResolvers<void>();
+      ws.onerror = ({ type, message, error }) => {
+        seen.push({ type, message, error: error.constructor.name, readyState: ws.readyState });
+      };
+      ws.addEventListener("close", ({ type, code, reason, wasClean }) => {
+        seen.push({ type, code, reason, wasClean, readyState: ws.readyState });
+        closed.resolve();
+      });
+      await closed.promise;
+      expect(seen).toEqual([
+        { type: "error", message: timedOut.message, error: "Error", readyState: 2 },
+        { type: "close", code: 1006, reason: "", wasClean: false, readyState: 3 },
+      ]);
+    });
+
+    // As the socket timeout of Node.js that npm ws sets, it starts again with each byte of the handshake.
+    it("a slow 101 that never pauses for that long still opens", async () => {
+      const handshakeTimeout = 1000;
+      let slow = false;
+      using server = await startRawWsServer(() => {}, {
+        async respond(socket, response) {
+          const pieces = slow ? 6 : 1;
+          const length = Math.ceil(response.length / pieces);
+          for (let i = 0; i < pieces; i++) {
+            if (i > 0) await new Promise(resolve => setTimeout(resolve, handshakeTimeout / 4));
+            socket.write(response.subarray(i * length, (i + 1) * length));
+          }
+        },
+      });
+      using mute = await muteServer();
+      // The first connection of a process is slow in a debug build, so it is not the one with the timeout.
+      const warm = new WebSocket(server.url);
+      await once(warm, "open");
+      warm.terminate();
+
+      slow = true;
+      const start = performance.now();
+      const silent = emitted(new WebSocket(mute.url, { handshakeTimeout }));
+      const ws = new WebSocket(server.url, { handshakeTimeout });
+      // Rejects with the 'error' of a timeout.
+      await once(ws, "open");
+      expect(performance.now() - start).toBeGreaterThan(handshakeTimeout);
+      ws.terminate();
+      // The same timeout on a server that sent nothing ran out before this 101 was complete.
+      const pending = new Promise(resolve => setTimeout(resolve, handshakeTimeout, "no timeout"));
+      expect(await Promise.race([silent, pending])).toEqual([timedOut, abnormal]);
+    });
+
+    it.each([
+      ["300", "TypeError", "ERR_INVALID_ARG_TYPE"],
+      [null, "TypeError", "ERR_INVALID_ARG_TYPE"],
+      [{}, "TypeError", "ERR_INVALID_ARG_TYPE"],
+      [-1, "RangeError", "ERR_OUT_OF_RANGE"],
+      [NaN, "RangeError", "ERR_OUT_OF_RANGE"],
+      [Infinity, "RangeError", "ERR_OUT_OF_RANGE"],
+    ])("%p throws and nothing connects", async (handshakeTimeout, name, code) => {
+      using server = await startRawWsServer(() => {});
+      let thrown: (Error & { code?: string }) | undefined;
+      try {
+        new WebSocket(server.url, { handshakeTimeout } as unknown as ClientOptions);
+      } catch (error) {
+        thrown = error as Error;
+      }
+      expect({ name: thrown?.name, code: thrown?.code }).toEqual({ name, code });
+      // The only connection the server gets is this one.
+      const ws = new WebSocket(server.url);
+      await once(ws, "open");
+      expect(server.connections).toBe(1);
+      ws.terminate();
+    });
+
+    it("a handshake that ends another way first takes the timer with it", async () => {
+      using mute = await muteServer();
+      using open = await startRawWsServer(() => {});
+      const refuses = net.createServer().listen(0, "127.0.0.1");
+      await once(refuses, "listening");
+      const refusedUrl = `ws://127.0.0.1:${(refuses.address() as AddressInfo).port}/`;
+      refuses.close();
+      await once(refuses, "close");
+      const answers200 = net
+        .createServer(socket => socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")))
+        .listen(0, "127.0.0.1");
+      await once(answers200, "listening");
+
+      function names(ws: WebSocket) {
+        const seen: string[] = [];
+        const settled = Promise.withResolvers<void>();
+        ws.on("open", () => (seen.push("open"), settled.resolve()));
+        ws.on("error", () => seen.push("error"));
+        ws.on("close", () => (seen.push("close"), settled.resolve()));
+        return { seen, settled: settled.promise };
+      }
+      // The first connection of a process is slow in a debug build, so it is not one with a timeout.
+      const warm = new WebSocket(open.url);
+      await once(warm, "open");
+      warm.terminate();
+
+      const handshakeTimeout = 100;
+      const closes = new WebSocket(mute.url, { handshakeTimeout });
+      const terminates = new WebSocket(mute.url, { handshakeTimeout });
+      // Long enough for a debug build to open it.
+      const opened = new WebSocket(open.url, { handshakeTimeout: 750 });
+      const clients = {
+        "close()": names(closes),
+        "terminate()": names(terminates),
+        "refused": names(new WebSocket(refusedUrl, { handshakeTimeout })),
+        "not a 101": names(new WebSocket(`ws://127.0.0.1:${(answers200.address() as AddressInfo).port}/`, { handshakeTimeout })), // prettier-ignore
+        "opened": names(opened),
+      };
+      closes.close();
+      terminates.terminate();
+      await Promise.all(Object.values(clients).map(client => client.settled));
+      // A timer that starts now and is longer fires after every timer above would have.
+      await emitted(new WebSocket(mute.url, { handshakeTimeout: 1500 }));
+      answers200.close();
+      const failed = ["error", "close"];
+      const seen = Object.fromEntries(Object.entries(clients).map(([name, client]) => [name, [...client.seen]]));
+      opened.terminate();
+      expect(seen).toEqual({
+        "close()": failed,
+        "terminate()": failed,
+        "refused": failed,
+        "not a 101": failed,
+        "opened": ["open"],
+      });
+    });
+  });
+
+  it("once() and on() listeners of one event each get it one time", async () => {
+    using server = await startRawWsServer(peer => {
+      peer.socket.write(serverFrame(0x1, "one"));
+      peer.socket.write(serverFrame(0x1, "two"));
+    });
+    const ws = new WebSocket(server.url);
+    const seen = { once: [] as string[], on: [] as string[] };
+    const both = Promise.withResolvers<void>();
+    ws.once("message", data => seen.once.push(String(data)));
+    ws.on("message", data => {
+      if (seen.on.push(String(data)) === 2) both.resolve();
+    });
+    await both.promise;
+    ws.terminate();
+    expect(seen).toEqual({ once: ["one"], on: ["one", "two"] });
+  });
+
+  it("once('error') as the only listener of 'error' gets it, and nothing is thrown", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { WebSocket } = require("ws");
+         const server = require("node:net")
+           .createServer(socket => socket.end("HTTP/1.1 400 Bad Request\\r\\n\\r\\n"))
+           .listen(0, "127.0.0.1", () => {
+             const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+             let errors = 0;
+             ws.once("error", () => errors++);
+             ws.on("close", () => {
+               console.log("errors:", errors);
+               server.close();
+             });
+           });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("errors: 1\n");
+    expect(exitCode).toBe(0);
   });
 });

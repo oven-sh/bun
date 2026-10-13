@@ -223,14 +223,24 @@ test("WebSocket client rejects decompression bombs", async () => {
 
   const port = await serverReady;
 
+  // What the client wrote after the upgrade, once its connection is gone.
+  const fromClient = Promise.withResolvers<Buffer>();
+
   tcpServer.on("connection", socket => {
     // Raw test server: tolerate client aborts, surface anything unexpected.
     socket.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
     });
     let buffer = Buffer.alloc(0);
+    let afterUpgrade: Buffer | undefined;
+    // `localhost` can be two addresses: only the connection that was upgraded counts.
+    socket.on("close", () => afterUpgrade && fromClient.resolve(afterUpgrade));
 
     socket.on("data", (data: Buffer) => {
+      if (afterUpgrade) {
+        afterUpgrade = Buffer.concat([afterUpgrade, data]);
+        return;
+      }
       buffer = Buffer.concat([buffer, data]);
 
       // Look for end of HTTP headers
@@ -245,6 +255,7 @@ test("WebSocket client rejects decompression bombs", async () => {
         socket.end();
         return;
       }
+      afterUpgrade = Buffer.alloc(0);
 
       const key = keyMatch[1];
       const acceptKey = crypto
@@ -300,6 +311,7 @@ test("WebSocket client rejects decompression bombs", async () => {
 
   let client: WebSocket | null = null;
   let messageReceived = false;
+  const events: string[] = [];
 
   try {
     // Connect with Bun's WebSocket client
@@ -316,10 +328,11 @@ test("WebSocket client rejects decompression bombs", async () => {
       };
 
       client!.onerror = () => {
-        // Error is expected
+        events.push("error");
       };
 
       client!.onclose = event => {
+        events.push("close");
         resolve({
           code: messageReceived ? -1 : event.code,
           reason: messageReceived ? "Message was received but should have been rejected" : event.reason,
@@ -330,6 +343,12 @@ test("WebSocket client rejects decompression bombs", async () => {
     // The connection should be closed with code 1009 (Message Too Big)
     expect(result.code).toBe(1009);
     expect(result.reason).toBe("Message too big");
+    // The client failed the connection: error fires before close.
+    expect(events).toEqual(["error", "close"]);
+    // And the server is told why: one masked Close frame with status 1009.
+    const frame = await fromClient.promise;
+    expect({ opcode: frame[0] & 0x0f, bytes: frame.length }).toEqual({ opcode: 0x8, bytes: 8 });
+    expect(((frame[6] ^ frame[2]) << 8) | (frame[7] ^ frame[3])).toBe(1009);
   } finally {
     // Ensure cleanup happens even on test failure/timeout
     if (client && client.readyState !== WebSocket.CLOSED) {

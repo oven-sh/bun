@@ -132,8 +132,8 @@ use crate::socket::upgraded_duplex::UpgradedDuplex;
 use crate::socket::windows_named_pipe::WindowsNamedPipe;
 
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
-use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use bun_http_jsc::websocket_client::websocket_upgrade_client::HandshakeTimer as WebSocketHandshakeTimer;
+use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use bun_sql_jsc::postgres::PostgresSQLConnection;
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};

@@ -2378,29 +2378,33 @@ let rawHeadOut;
 function setRawHead(response, headers) {
   const hasHandle = !!response[kHandle];
   if (!hasHandle && response._header) throw $ERR_HTTP_HEADERS_SENT("write");
-  const contentLength = response._contentLength;
-  const out = (rawHeadOut ??= new Float64Array(2));
+  const statusCode = response.statusCode;
+  const statusMessage = response.statusMessage;
+  const out = (rawHeadOut ??= new $Float64Array(2));
   let rawHead;
-  let facts = 0;
+  let contentLength;
   out[0] = 0;
   try {
-    try {
-      rawHead = flattenRawHead(headers, response._isLenientHeaderValidation(), response[kUniqueHeaders], out);
-    } finally {
-      // Node's matchHeader(), for each line that the walk reached. `| 0` makes the bits an int32: a `&` of the double that a Float64Array gives is a slow path below the DFG.
-      facts = out[0] | 0;
-      if (facts !== 0) matchRawHead(response, facts, out[1]);
-    }
+    rawHead = flattenRawHead(headers, response._isLenientHeaderValidation(), response[kUniqueHeaders], out);
+    // `| 0` makes the bits an int32: a `&` of the double that a Float64Array gives is a slow path below the DFG.
+    const facts = out[0] | 0;
+    const number = out[1];
+    // A writeHead() inside the toString() of a value set its own status, and a Content-Length that stays if the rest of this call throws.
+    response.statusCode = statusCode;
+    response.statusMessage = statusMessage;
+    contentLength = response._contentLength;
     if (!hasHandle) {
-      // Node's _storeHeader renders the lines. A throw here comes before writeHead() marks the headers as sent.
-      response._storeHeader(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n`, rawHead.slice(0, -1));
+      // Node's _storeHeader renders the lines, and its matchHeader() reads them in their order. A throw here comes before writeHead() marks the headers as sent.
+      response._storeHeader(`HTTP/1.1 ${statusCode} ${statusMessage}\r\n`, rawHead.slice(0, -1));
+      // _storeHeader took the number from the text of the line. Node takes it from the value.
+      if (facts & NodeHTTPRawHead.contentLength) response._contentLength = number;
     } else {
+      if (facts !== 0) matchRawHead(response, facts, number);
       if (response[headerStateSymbol] === NodeHTTPHeaderState.sent) {
         // The toString() of a value sent the head from inside the walk. Node sends a second head then. A handle cannot.
         if (response.finished) return;
         throw $ERR_HTTP_HEADERS_SENT("write");
       }
-      const statusCode = response.statusCode;
       // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L492-L497
       if (response.chunkedEncoding && (statusCode === 204 || statusCode === 304)) {
         response.chunkedEncoding = false;
@@ -2413,9 +2417,12 @@ function setRawHead(response, headers) {
     }
   } catch (error) {
     // The lines of a failed call are gone, and so is their Content-Length. What they said about the connection stays, as in Node.
-    if (response._last) response[kMustCloseConnection] = true;
-    response._contentLength = contentLength;
+    if (rawHead === undefined) matchRawHead(response, (out[0] | 0) & ~NodeHTTPRawHead.contentLength, 0);
+    else response._contentLength = contentLength;
     throw error;
+  } finally {
+    // Node's resOnFinish ends the connection of a response that has `_last`, also when the call threw or a toString() ended the response.
+    if (response._last) response[kMustCloseConnection] = true;
   }
   // Also with no handle: one can come later, and it writes these lines.
   response[kRawHead] = rawHead;
@@ -2596,7 +2603,6 @@ function renderNativeHeaders(res) {
       hasKeepAlive = (facts & NodeHTTPRawHead.keepAlive) !== 0;
       if (facts & NodeHTTPRawHead.transferEncoding) rawTransferEncoding = true;
       if (facts & NodeHTTPRawHead.contentLength) rawContentLength = true;
-      if (facts & NodeHTTPRawHead.close) res[kMustCloseConnection] = true;
     }
     if (headersMap !== null && headersMap !== undefined) {
       for (const key in headersMap) {

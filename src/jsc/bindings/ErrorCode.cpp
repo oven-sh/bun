@@ -1684,9 +1684,28 @@ JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope& scope, JSC::JSGlobalObject*
 
 JSC::EncodedJSValue INVALID_HTTP_TOKEN(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral label, JSC::JSValue token)
 {
+    auto& vm = JSC::getVM(globalObject);
     MessageBuilder builder;
     builder.append(label, " must be a valid HTTP token [\""_s);
-    JSValueToStringSafe(globalObject, builder, token);
+    // The `%s` of Node's util.format(): String(token), but an object whose toString() is not user code is inspected.
+    bool inspected = false;
+    if (token.isObject() && !token.isCallable()) {
+        JSValue toString = asObject(token)->get(globalObject, vm.propertyNames->toString);
+        RELEASE_RETURN_IF_EXCEPTION(scope, {});
+        auto* function = dynamicDowncast<JSC::JSFunction>(toString);
+        inspected = !function || function->isHostFunction();
+    }
+    if (inspected) {
+        JSValueToStringSafe(globalObject, builder, token);
+    } else if (token.isSymbol()) {
+        builder.append(asSymbol(token)->tryGetDescriptiveString().value_or(String()));
+    } else if (token.isNumber() && !token.asNumber() && std::signbit(token.asNumber())) {
+        builder.append("-0"_s);
+    } else {
+        auto text = token.toWTFString(globalObject);
+        RELEASE_RETURN_IF_EXCEPTION(scope, {});
+        builder.append(text, token.isBigInt() ? "n"_s : ""_s);
+    }
     RELEASE_RETURN_IF_EXCEPTION(scope, {});
     builder.append("\"]"_s);
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_HTTP_TOKEN, builder));

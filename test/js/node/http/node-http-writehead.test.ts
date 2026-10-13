@@ -301,6 +301,42 @@ describe("writeHead(status, headers) with no header set before sends the header 
     ]);
   });
 
+  test("a Cookie array is joined by its own join()", async () => {
+    class Jar extends Array<string> {
+      join() {
+        return "from the subclass";
+      }
+    }
+    const { headers, result } = await respond(res => {
+      const own = ["a", "b"];
+      own.join = () => "from its own join";
+      const cyclic: unknown[] = ["x"];
+      cyclic.push(cyclic);
+      const broken = ["a", "b"];
+      (broken as any).join = 5;
+      const thrown = code(() => res.writeHead(200, [["Cookie", broken]] as any));
+      res.writeHead(200, [
+        ["Cookie", Jar.from(["a", "b"])],
+        ["cookie", own],
+        ["COOKIE", cyclic],
+      ] as any);
+      res.end();
+      return thrown;
+    });
+    assert.deepStrictEqual(
+      { headers, result },
+      {
+        headers: [
+          "Cookie: from the subclass",
+          "cookie: from its own join",
+          "COOKIE: x; ",
+          "Transfer-Encoding: chunked",
+        ],
+        result: "TypeError",
+      },
+    );
+  });
+
   test("a Cookie array of one element is not joined, and one of no element is no line", async () => {
     const { headers } = await respond(res =>
       res.writeHead(200, flat("Cookie", [], "cookie", [null], "X-A", "1")).end(),
@@ -691,12 +727,53 @@ describe("writeHead(status, headers) with no header set before sends the header 
 
   test("a ServerResponse with no socket: a Content-Disposition that is not ASCII, after a Content-Length, throws", () => {
     const res = new http.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 } as any);
+    // Node.js does not reach the two lines behind the one that it refuses.
     const thrown = code(() =>
-      res.writeHead(200, pairs("Content-Length", "2", "Content-Disposition", 'attachment; filename="caf\u00e9.txt"')),
+      res.writeHead(
+        200,
+        pairs(
+          "Content-Length",
+          "2",
+          "Content-Disposition",
+          'attachment; filename="caf\u00e9.txt"',
+          "Connection",
+          "close",
+          "Transfer-Encoding",
+          "chunked",
+        ),
+      ),
     );
     assert.deepStrictEqual(
-      { thrown, headersSent: res.headersSent, head: (res as any)._header },
-      { thrown: "ERR_INVALID_CHAR", headersSent: false, head: null },
+      {
+        thrown,
+        headersSent: res.headersSent,
+        head: (res as any)._header,
+        last: (res as any)._last,
+        chunkedEncoding: res.chunkedEncoding,
+      },
+      { thrown: "ERR_INVALID_CHAR", headersSent: false, head: null, last: false, chunkedEncoding: false },
+    );
+  });
+
+  for (const [name, form] of forms) {
+    test(`a ServerResponse with no socket: a Content-Disposition that is not ASCII, before a Content-Length, is rendered: ${name}`, () => {
+      const res = new http.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 } as any);
+      res.sendDate = false;
+      res.writeHead(200, form("Content-Disposition", 'attachment; filename="caf\u00e9.txt"', "Content-Length", "2"));
+      assert.strictEqual(
+        (res as any)._header,
+        'HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename="caf\u00e9.txt"\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n',
+      );
+    });
+  }
+
+  test("a ServerResponse with no socket: res._contentLength is the number of the value, not of its text", () => {
+    const res = new http.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 } as any);
+    res.sendDate = false;
+    res.writeHead(200, { "Content-Length": true } as any);
+    assert.deepStrictEqual(
+      { head: (res as any)._header, contentLength: (res as any)._contentLength },
+      { head: "HTTP/1.1 200 OK\r\nContent-Length: true\r\nConnection: keep-alive\r\n\r\n", contentLength: 1 },
     );
   });
 });
@@ -1037,25 +1114,87 @@ describe("writeHead(status, headers) with no header set before reads the argumen
     );
   });
 
-  test("a value whose toString() calls writeHead() does not make the outer call throw", async () => {
-    const { headers, result } = await respond(res => {
+  test("an object for Connection or Transfer-Encoding is asked for a string once more, and that string says what the response does", async () => {
+    const { result } = await respond(res => {
+      const hints: string[] = [];
+      const value = (name: string, string: string, sent: string) => ({
+        [Symbol.toPrimitive](hint: string) {
+          hints.push(`${name} ${hint}`);
+          return hint === "string" ? string : sent;
+        },
+      });
+      res.writeHead(200, {
+        "Connection": value("Connection", "keep-alive", "close"),
+        "Transfer-Encoding": value("Transfer-Encoding", "chunked", "gzip"),
+      } as any);
+      const after = { hints, last: (res as any)._last, chunkedEncoding: res.chunkedEncoding };
+      // Not end(): the head says `gzip`, and the body would be in chunks.
+      res.destroy();
+      return after;
+    });
+    assert.deepStrictEqual(result, {
+      hints: [
+        "Connection string",
+        "Connection default",
+        "Connection string",
+        "Transfer-Encoding string",
+        "Transfer-Encoding default",
+        "Transfer-Encoding string",
+      ],
+      last: false,
+      chunkedEncoding: true,
+    });
+  });
+
+  test("a value whose toString() calls writeHead() does not make the outer call throw, and the outer call gives the status", async () => {
+    const { status, headers, result } = await respond(res => {
       let nested = false;
       const value = {
         toString() {
           if (!nested) {
             nested = true;
-            res.writeHead(201, { "X-N": "1" });
+            res.writeHead(201, "Inner", { "X-N": "1" });
           }
           return "a";
         },
       };
-      const thrown = code(() => res.writeHead(200, { "X-A": value as any, "X-B": "b" }));
+      const thrown = code(() => res.writeHead(200, "Outer", { "X-A": value as any, "X-B": "b" }));
       res.end();
       return thrown;
     });
     assert.deepStrictEqual(
-      { headers, result },
-      { headers: ["X-A: a", "X-B: b", "Transfer-Encoding: chunked"], result: undefined },
+      { status, headers, result },
+      { status: "HTTP/1.1 200 Outer", headers: ["X-A: a", "X-B: b", "Transfer-Encoding: chunked"], result: undefined },
+    );
+  });
+
+  test("a value whose toString() calls writeHead(), and then the outer call throws: the head of the inner call stays", async () => {
+    const { status, headers, body, result } = await respond(res => {
+      res.strictContentLength = true;
+      let nested = false;
+      const value = {
+        toString() {
+          if (!nested) {
+            nested = true;
+            res.writeHead(201, "Inner", { "Content-Length": 3, "Connection": "close" });
+          }
+          return "a";
+        },
+      };
+      const outer = code(() => res.writeHead(200, ["X-A", value, "bad name", "1"] as any));
+      const contentLength = (res as any)._contentLength;
+      const tooLong = code(() => res.end("too long"));
+      res.end("abc");
+      return { outer, contentLength, tooLong };
+    });
+    assert.deepStrictEqual(
+      { status, headers, body, result },
+      {
+        status: "HTTP/1.1 201 Inner",
+        headers: ["Content-Length: 3"],
+        body: "abc",
+        result: { outer: "ERR_INVALID_HTTP_TOKEN", contentLength: 3, tooLong: "ERR_HTTP_CONTENT_LENGTH_MISMATCH" },
+      },
     );
   });
 
@@ -1094,6 +1233,33 @@ describe("writeHead(status, headers) with no header set before reads the argumen
     });
     assert.deepStrictEqual({ headers, body, result }, { headers: ["Content-Length: 1"], body: "e", result: undefined });
   });
+
+  // Node.js notes `close` in res._last when it reads the line, and ends the connection when the response has finished.
+  for (const [name, write, sent] of [
+    [
+      "a value whose toString() ends the response",
+      (res: http.ServerResponse) => {
+        const value = { toString: () => (res.writableEnded || res.end("e"), "a") };
+        res.writeHead(200, { "Connection": "close", "X-A": value as any });
+      },
+      "e",
+    ],
+    [
+      "a value whose toString() calls writeHead() with `close`",
+      (res: http.ServerResponse) => {
+        const value = { toString: () => (res.headersSent || res.writeHead(200, { Connection: "close" }), "a") };
+        res.writeHead(200, { "X-A": value as any });
+        res.end("e");
+      },
+      "1\r\ne\r\n0\r\n\r\n",
+    ],
+  ] as const) {
+    test(`${name}: a Connection line with \`close\` still closes the connection`, async () => {
+      // The request asks for keep-alive. The second request gets no answer.
+      const { body, requests } = await respond(write, { request: KEEP_ALIVE, then: GET });
+      assert.deepStrictEqual({ body, requests }, { body: sent, requests: 1 });
+    });
+  }
 
   test("a response that waits behind another one on its connection", async () => {
     // The second response has no socket until the first one ends.
@@ -1761,12 +1927,8 @@ describe("writeHead(status, headers) with no header set before checks each name 
     return (result as string[]).map(thrown => thrown !== "ERR_HTTP_INVALID_HEADER_VALUE");
   }
 
-  // A character in a short value, in a 16-bit string, and at the ends and the middle of a value of 17 characters.
-  const values = units.flatMap(unit => [
-    `a${unit}b`,
-    wide(`a${unit}b`),
-    ...[0, 7, 8, 15, 16].map(at => "0123456789abcdefg".slice(0, at) + unit + "0123456789abcdefg".slice(at + 1)),
-  ]);
+  // A character inside a value, inside a value that is a 16-bit string, and as the whole value.
+  const values = units.flatMap(unit => [`a${unit}b`, wide(`a${unit}b`), unit]);
   for (const [rule, expression, options] of [
     ["the strict rule", strictHeaderCharRegex, {}],
     ["the rule of insecureHTTPParser", lenientHeaderCharRegex, { insecureHTTPParser: true }],
@@ -1858,7 +2020,13 @@ describe("writeHead(status, headers) with no header set before keeps nothing whe
       const messages = [
         message(() => res.writeHead(200, [{}, "1"] as any)),
         message(() => res.writeHead(200, [Symbol("s"), "1"] as any)),
+        message(() => res.writeHead(200, [Symbol(), "1"] as any)),
         message(() => res.writeHead(200, [null, "1"] as any)),
+        message(() => res.writeHead(200, [-0, "1"] as any)),
+        message(() => res.writeHead(200, [5n, "1"] as any)),
+        message(() => res.writeHead(200, [{ toString: () => "X-T" }, "1"] as any)),
+        message(() => res.writeHead(200, [new (class Name {})(), "1"] as any)),
+        message(() => res.writeHead(200, [function f() {}, "1"] as any)),
         message(() => res.writeHead(200, { "bad name": "1" })),
         message(() => res.writeHead(200, ["X-U", undefined] as any)),
         message(() => res.writeHead(200, ["X-B", "a\nb"])),
@@ -1870,7 +2038,13 @@ describe("writeHead(status, headers) with no header set before keeps nothing whe
     assert.deepStrictEqual(result, [
       'Header name must be a valid HTTP token ["{}"]',
       'Header name must be a valid HTTP token ["Symbol(s)"]',
+      'Header name must be a valid HTTP token ["Symbol()"]',
       'Header name must be a valid HTTP token ["null"]',
+      'Header name must be a valid HTTP token ["-0"]',
+      'Header name must be a valid HTTP token ["5n"]',
+      'Header name must be a valid HTTP token ["X-T"]',
+      'Header name must be a valid HTTP token ["Name {}"]',
+      'Header name must be a valid HTTP token ["function f() {}"]',
       'Header name must be a valid HTTP token ["bad name"]',
       'Invalid value "undefined" for header "X-U"',
       'Invalid character in header content ["X-B"]',
@@ -1970,10 +2144,73 @@ describe("where Bun still differs from Node.js after writeHead(status, headers)"
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
-  const { bunEnv, nodeExe } = await import("harness");
+  const { bunEnv, bunExe, nodeExe } = await import("harness");
   const node = nodeExe();
 
   describe("Bun only", () => {
+    // Bun gives the result of its walk through a Float64Array of the engine, not of the global that a program can replace.
+    test("a program that replaced globalThis.Float64Array", async () => {
+      const program = `
+        globalThis.Float64Array = function () { return [0, 0]; };
+        const http = require("node:http");
+        const res = new http.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 });
+        res.sendDate = false;
+        res.writeHead(200, { "Content-Length": 2, "X-A": "1" });
+        console.log(JSON.stringify(res._header));
+      `;
+      await using child = Bun.spawn({ cmd: [bunExe(), "-e", program], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+      const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      assert.deepStrictEqual(
+        { stdout, exitCode },
+        {
+          stdout:
+            JSON.stringify("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nX-A: 1\r\nConnection: keep-alive\r\n\r\n") + "\n",
+          exitCode: 0,
+        },
+      );
+    });
+
+    // Node.js keeps what the lines before the failure set. Its next head has `Content-Length: 100` and no Keep-Alive line.
+    test("after a writeHead() that throws, the next head has nothing of the failed call", async () => {
+      const { all, body, result } = await respond(
+        res => {
+          const thrown = code(() =>
+            res.writeHead(200, ["Content-Length", "100", "Keep-Alive", "timeout=9", "X-Bad", "a\nb"]),
+          );
+          const contentLength = (res as any)._contentLength;
+          res.write("a");
+          res.end("b");
+          return { thrown, contentLength };
+        },
+        { request: KEEP_ALIVE, then: GET },
+      );
+      assert.deepStrictEqual(
+        // The reply to the second request comes behind the body.
+        { headers: all.filter(line => !/^date:/i.test(line)), body: body.split("HTTP/1.1")[0], result },
+        {
+          headers: ["Connection: keep-alive", "Keep-Alive: timeout=5", "Transfer-Encoding: chunked"],
+          body: "1\r\na\r\n1\r\nb\r\n0\r\n\r\n",
+          result: { thrown: "ERR_INVALID_CHAR", contentLength: null },
+        },
+      );
+    });
+
+    // V8 says: Cannot read properties of undefined (reading '0').
+    test("an entry of a list of pairs that is undefined or null: the TypeError names the entry", async () => {
+      const { result } = await respond(res => {
+        const messages = [
+          message(() => res.writeHead(200, [["X-A", "1"], undefined] as any)),
+          message(() => res.writeHead(200, [["X-A", "1"], null] as any)),
+        ];
+        res.end();
+        return messages;
+      });
+      assert.deepStrictEqual(result, [
+        "undefined is not an object (evaluating 'entry[0]')",
+        "null is not an object (evaluating 'entry[0]')",
+      ]);
+    });
+
     // Node.js has no setter for headersSent.
     test("res.headersSent = false makes the headers of writeHead() changeable again", async () => {
       const { headers, result } = await respond(res => {

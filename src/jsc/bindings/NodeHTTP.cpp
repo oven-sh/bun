@@ -895,6 +895,20 @@ static ALWAYS_INLINE JSValue rawHeadListEntry(JSGlobalObject* globalObject, JSOb
     return list->get(globalObject, index);
 }
 
+// RE_CONN_CLOSE.test(value) and RE_TE_CHUNKED.test(value) of Node's matchHeader(). The test makes a string of the value as given, so it asks an object once more.
+static bool rawHeadGivenHasToken(JSGlobalObject* globalObject, JSValue given, StringView text, std::string_view lowerToken)
+{
+    if (!given.isObject()) [[likely]]
+        return svValueHasToken(HTTPLatin1String(text).view(), lowerToken);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* string = given.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    auto tested = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    return svValueHasToken(HTTPLatin1String(tested).view(), lowerToken);
+}
+
 // The line and matchHeader() of Node's storeHeader(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L608-L650. `given` is the value before it was made a string.
 static void appendRawHeadLine(RawHeadWalk& walk, JSString* name, StringView nameView, JSString* value, StringView text, JSValue given)
 {
@@ -912,9 +926,11 @@ static void appendRawHeadLine(RawHeadWalk& walk, JSString* name, StringView name
             walk.facts |= kRawHeadTrailer;
         break;
     case 10:
-        if (equalLettersIgnoringASCIICase(nameView, "connection"_s))
-            walk.facts |= svValueHasToken(HTTPLatin1String(text).view(), "close") ? kRawHeadClose : kRawHeadPersist;
-        else if (equalLettersIgnoringASCIICase(nameView, "keep-alive"_s))
+        if (equalLettersIgnoringASCIICase(nameView, "connection"_s)) {
+            bool close = rawHeadGivenHasToken(globalObject, given, text, "close");
+            RETURN_IF_EXCEPTION(scope, void());
+            walk.facts |= close ? kRawHeadClose : kRawHeadPersist;
+        } else if (equalLettersIgnoringASCIICase(nameView, "keep-alive"_s))
             walk.facts |= kRawHeadKeepAlive;
         break;
     case 14:
@@ -926,8 +942,11 @@ static void appendRawHeadLine(RawHeadWalk& walk, JSString* name, StringView name
         }
         break;
     case 17:
-        if (equalLettersIgnoringASCIICase(nameView, "transfer-encoding"_s))
-            walk.facts |= svValueHasToken(HTTPLatin1String(text).view(), "chunked") ? kRawHeadTransferEncoding | kRawHeadChunked : kRawHeadTransferEncoding;
+        if (equalLettersIgnoringASCIICase(nameView, "transfer-encoding"_s)) {
+            bool chunked = rawHeadGivenHasToken(globalObject, given, text, "chunked");
+            RETURN_IF_EXCEPTION(scope, void());
+            walk.facts |= chunked ? kRawHeadTransferEncoding | kRawHeadChunked : kRawHeadTransferEncoding;
+        }
         break;
     }
 
@@ -1013,34 +1032,19 @@ static void appendRawHeader(RawHeadWalk& walk, JSString* name, JSValue value)
         }
     }
 
-    // value.join("; "), for Cookie and for a name of the uniqueHeaders option.
-    JSValue lengthValue = list->get(globalObject, vm.propertyNames->length);
+    // value.join("; "), for Cookie and for a name of the uniqueHeaders option. What it gives is then a value like any other.
+    JSValue join = list->get(globalObject, vm.propertyNames->join);
     RETURN_IF_EXCEPTION(scope, void());
-    uint64_t count = lengthValue.toLength(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    StringBuilder text(OverflowPolicy::RecordOverflow);
-    for (uint64_t i = 0; i < count; i++) {
-        if (i)
-            text.append("; "_s);
-        JSValue element = rawHeadListEntry(globalObject, list, i);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (element.isUndefinedOrNull())
-            continue;
-        String part = element.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-        text.append(part);
-    }
-    if (text.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
+    auto callData = JSC::getCallData(join);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        throwTypeError(globalObject, scope, "value.join is not a function"_s);
         return;
     }
-    String line = text.toString();
-    if (hasInvalidHeaderChar(line, walk.lenient)) {
-        Bun::ERR::INVALID_CHAR(scope, globalObject, "header content"_s, nameView->toString());
-        return;
-    }
-    JSString* joinedValue = jsString(vm, line);
-    RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, nameView, joinedValue, line, joinedValue));
+    MarkedArgumentBuffer separator;
+    separator.append(jsNontrivialString(vm, "; "_s));
+    JSValue joinedValue = JSC::call(globalObject, join, callData, list, separator);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, appendRawHeadValue(walk, name, nameView, joinedValue));
 }
 
 // One own property of the headers object, as `ObjectHasOwn(headers, key)` and then `headers[key]` read it.
@@ -1094,6 +1098,11 @@ static void walkRawHead(RawHeadWalk& walk, JSValue headers)
             JSValue value;
             if (isPairs) {
                 JSValue pair = name;
+                if (pair.isUndefinedOrNull()) [[unlikely]] {
+                    // `entry[0]` in Node's loop. JSC would name an expression of the JavaScript that called this function.
+                    throwTypeError(globalObject, scope, makeString(pair.isNull() ? "null"_s : "undefined"_s, " is not an object (evaluating 'entry[0]')"_s));
+                    return;
+                }
                 name = pair.isObject() ? rawHeadListEntry(globalObject, asObject(pair), 0) : pair.get(globalObject, 0u);
                 RETURN_IF_EXCEPTION(scope, void());
                 value = pair.isObject() ? rawHeadListEntry(globalObject, asObject(pair), 1) : pair.get(globalObject, 1u);
@@ -1151,13 +1160,15 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPFlattenRawHead, (JSGlobalObject * globalObject, C
     ASSERT(callFrame->argumentCount() == 4);
     // This is an internal binding.
     JSValue uniqueHeaders = callFrame->uncheckedArgument(2);
-    auto* out = uncheckedDowncast<JSFloat64Array>(callFrame->uncheckedArgument(3));
-    ASSERT(out->length() >= 2 && !out->isDetached());
+    auto* out = dynamicDowncast<JSFloat64Array>(callFrame->uncheckedArgument(3));
 
     RawHeadWalk walk { globalObject, uniqueHeaders.isCell() ? dynamicDowncast<JSSet>(uniqueHeaders.asCell()) : nullptr, callFrame->uncheckedArgument(1).toBoolean(globalObject) };
     walkRawHead(walk, callFrame->uncheckedArgument(0));
-    out->typedVector()[0] = walk.facts;
-    out->typedVector()[1] = walk.contentLength;
+    // The walk ran JavaScript, so the length is read here. It is 0 for an array that was detached.
+    if (out && out->length() >= 2) [[likely]] {
+        out->typedVector()[0] = walk.facts;
+        out->typedVector()[1] = walk.contentLength;
+    }
     RETURN_IF_EXCEPTION(scope, {});
 
     walk.lines.append(jsNumber(walk.facts));

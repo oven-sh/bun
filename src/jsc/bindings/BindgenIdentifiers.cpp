@@ -10,6 +10,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/StructureInlines.h>
+#include <algorithm>
 #include <wtf/SIMDUTF.h>
 
 namespace Bun::Bindgen {
@@ -51,10 +52,11 @@ Identifiers& identifiers(VM& vm)
     return static_cast<WebCore::JSVMClientData*>(vm.clientData)->bindgenIdentifiers;
 }
 
+static_assert(std::ranges::all_of(Tables::objectStructures, [](const auto& structure) { return structure.memberCount <= JSFinalObject::maxInlineCapacity; }), "a returned dictionary has more members than an object holds inline");
+
 Structure* createObjectStructure(VM& vm, JSGlobalObject* globalObject, unsigned index)
 {
     auto [firstMemberNameIndex, memberCount] = Tables::objectStructures[index];
-    RELEASE_ASSERT(memberCount <= JSFinalObject::maxInlineCapacity);
     const Identifier* memberNames = identifiers(vm).identifiersAt(firstMemberNameIndex, memberCount);
     Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), memberCount);
     for (unsigned i = 0; i < memberCount; ++i) {

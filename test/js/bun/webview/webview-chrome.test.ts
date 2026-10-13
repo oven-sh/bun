@@ -936,6 +936,51 @@ it("chrome: click(selector) waits for animation to stop", async () => {
   expect(left).toBe(100);
 });
 
+// An animation has its first position until the frame after the one that starts it, and the compositor takes a few
+// frames to start one of a transform. It begins here when click() first looks for the button, which is the worst time.
+it.each([
+  ["left", "mover", "from { left: 0; } to { left: 100px; }"],
+  ["transform", "mover", "from { transform: translateX(0); } to { transform: translateX(100px); }"],
+  ["transform of an ancestor", "box", "from { transform: translateX(0); } to { transform: translateX(100px); }"],
+])("chrome: click(selector) waits for an animation of %s that has yet to start", async (_, animated, keyframes) => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes slide { ${keyframes} }
+          #box { position: fixed; left: 0; top: 50px; }
+          #mover { position: relative; width: 60px; height: 60px; }
+          .go { animation: slide 80ms linear forwards; }
+        </style>
+        <div id=box><button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button></div>
+        <script>
+          const { querySelector } = document;
+          document.querySelector = function (selector) {
+            ${animated}.className = "go";
+            return querySelector.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+it("chrome: click(selector) does not wait for the animations of other elements", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <button id=b onclick="window.__hit=1">b</button><i id=other></i>
+        <script>
+          // One that has yet to start, in every frame.
+          (function again() { other.animate([{ opacity: 0 }, { opacity: 1 }], 1000); requestAnimationFrame(again); })();
+        </script>
+      `),
+  );
+  await view.click("#b");
+  expect(await view.evaluate("String(window.__hit)")).toBe("1");
+});
+
 // --- scrollTo variants -----------------------------------------------------
 
 it("chrome: scrollTo with block: start aligns top", async () => {

@@ -277,15 +277,17 @@ enum class Method : uint8_t {
 // The predicate: attached + has size + in viewport + stable for 2 frames
 // + elementFromPoint at center returns the element (not obscured). Returns
 // the center coords as [cx, cy]; throws on timeout.
+// Each sample has a frame of its own, and an animation that has yet to start holds its element still: neither is stable.
 constexpr ASCIILiteral kActionabilityIIFE = R"js((async (sel, timeout) => {
 const deadline = performance.now() + timeout;
 let last;
 for (;;) {
+  await new Promise(f => requestAnimationFrame(f));
   const el = document.querySelector(sel);
   if (el) {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
+    if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight && !document.getAnimations().some(a => a.pending && a.effect?.target?.contains(el))) {
       if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
         const hit = document.elementFromPoint(cx, cy);
         if (hit === el || el.contains(hit)) return [cx, cy];
@@ -294,7 +296,6 @@ for (;;) {
     } else last = undefined;
   } else last = undefined;
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
-  await new Promise(f => requestAnimationFrame(f));
 }
 }))js"_s;
 

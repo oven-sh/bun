@@ -731,7 +731,7 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
 });
 
 test("should not leak using readable stream", async () => {
-  const buffer = Buffer.alloc(1024 * 128, "b");
+  const buffer = Buffer.alloc(1024 * 256, "b");
   using server = Bun.serve({
     port: 0,
     routes: { "/*": new Response(buffer) },
@@ -743,10 +743,10 @@ test("should not leak using readable stream", async () => {
       SERVER_URL: server.url.href,
       // ASAN's quarantine retains freed allocations so RSS stays elevated
       // under bun-asan; the fixture only allows MAX_MEMORY_INCREASE MiB.
-      // Keeping every body costs 26 MB or more. With none kept, CI has seen up to 7.4.
+      // Keeping every body costs 64 MB or more, 71 under ASAN. With none kept and half the body, CI has seen up to 7.4.
       MAX_MEMORY_INCREASE: isASAN ? "64" : "16", // in MB
       // The fixture asserts RSS stabilizes after iteration 250, but with the
-      // default 256 MB quarantine the freed 128 KB bodies are never reused and
+      // default 256 MB quarantine the freed bodies are never reused and
       // RSS keeps climbing through all 500 iterations (~97 MB past the sample
       // point, over the 64 MB allowance). Cap the quarantine so freed churn
       // recycles and the stabilization the test asserts can actually happen.

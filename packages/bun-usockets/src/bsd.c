@@ -931,6 +931,12 @@ int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd) {
     return bsd_would_block() ? LIBUS_QUEUED_INPUT_NONE : LIBUS_QUEUED_INPUT_ERROR;
 }
 
+int bsd_socket_is_unix(LIBUS_SOCKET_DESCRIPTOR fd) {
+    struct sockaddr_storage addr;
+    socklen_t length = sizeof(addr);
+    return getsockname(fd, (struct sockaddr *) &addr, &length) == 0 && addr.ss_family == AF_UNIX;
+}
+
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
     ssize_t injected = 0; int unused = 0;

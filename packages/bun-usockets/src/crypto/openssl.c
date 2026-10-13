@@ -2427,9 +2427,11 @@ struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
   return us_dispatch_timeout(s);
 }
 
-/* The read side delivers what the peer sent before it closes, unless the owner already let go. */
+/* The read side delivers what the peer sent before it closes, unless the owner already let go, or stopped reading until
+ * what was rejected drains (hangup_closes_unsent). */
 static struct us_socket_t *ssl_close_after_rejected_send(struct us_socket_t *s, int send_error) {
-  if (!s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) return s;
+  const int reads_go_on = !s->ssl_close_after_spill && !(s->hangup_closes_unsent && s->flags.is_paused);
+  if (reads_go_on && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) return s;
   if (s->ssl_handshake_state == HANDSHAKE_PENDING) {
     ssl_set_loop_data(s);
     ssl_trigger_handshake_econnreset(s);
@@ -2782,8 +2784,11 @@ restart:
   if (ssl_gone(s)) return NULL;
 
   /* The kernel named a dead peer, and need not report an end behind what that peer sent: the writable event looks again,
-   * once the owner has had this read. After the errno that the retries gave up on, the peer can still be sending. */
-  if (s->ssl_send_rejected && !s->unclassified_send_failures) us_internal_rearm_writable(s);
+   * once the owner has had this read. The peer can still be sending after the errno that the retries gave up on, and
+   * on a unix socket, where its shutdown(SHUT_RD) is our EPIPE. */
+  if (s->ssl_send_rejected && !s->unclassified_send_failures && !bsd_socket_is_unix(us_poll_fd(&s->p))) {
+    us_internal_rearm_writable(s);
+  }
 
   return s;
 }

@@ -6,30 +6,27 @@ import { longLimit, spawn } from "../children";
 
 // Most cases use TypeScript 7.0.2: `typescript7` in test/package.json, beside the JavaScript API in `typescript`.
 // `TSC` overrides that baseline. Cases covering selected backports name their pinned oracle separately.
-function nativeTypeScript(packageName = "typescript7", expectedVersion?: string) {
+function nativeTypeScript(packageName = "typescript7", expectedVersion = "7.0.2") {
+  const packagePath = require.resolve(`${packageName}/package.json`);
+  const { version, optionalDependencies } = JSON.parse(readFileSync(packagePath, "utf8"));
+  if (version !== expectedVersion) throw new Error(`Expected ${packageName} ${expectedVersion}, got ${version}`);
+  const name = `@typescript/typescript-${process.platform}-${process.arch}`;
+  // The older nightly did not publish every platform supported by the baseline.
+  if (!Object.hasOwn(optionalDependencies ?? {}, name)) return;
+  let nativePackagePath: string;
   try {
-    const packagePath = require.resolve(`${packageName}/package.json`);
-    const paths = [dirname(packagePath)];
-    const name = `@typescript/typescript-${process.platform}-${process.arch}`;
-    if (expectedVersion) {
-      const { version, optionalDependencies } = JSON.parse(readFileSync(packagePath, "utf8"));
-      if (version !== expectedVersion) throw new Error(`Expected ${packageName} ${expectedVersion}, got ${version}`);
-      // The older nightly did not publish every platform supported by the baseline.
-      if (!Object.hasOwn(optionalDependencies ?? {}, name)) return;
-    }
-    const nativePackagePath = require.resolve(`${name}/package.json`, { paths });
-    if (expectedVersion) {
-      const { version } = JSON.parse(readFileSync(nativePackagePath, "utf8"));
-      if (version !== expectedVersion) throw new Error(`Expected ${packageName} ${expectedVersion}, got ${version}`);
-    }
-    const executable = join(dirname(nativePackagePath), "lib", isWindows ? "tsc.exe" : "tsc");
-    if (expectedVersion && !statSync(executable).isFile())
-      throw new Error(`Not a TypeScript executable: ${executable}`);
-    return executable;
+    nativePackagePath = require.resolve(`${name}/package.json`, { paths: [dirname(packagePath)] });
   } catch (error) {
-    if (expectedVersion && (error as NodeJS.ErrnoException).code !== "MODULE_NOT_FOUND") throw error;
+    if ((error as NodeJS.ErrnoException).code !== "MODULE_NOT_FOUND") throw error;
     // An optional compiler package may not be installed, including with `--omit=optional`.
+    return;
   }
+  const native = JSON.parse(readFileSync(nativePackagePath, "utf8"));
+  if (native.version !== expectedVersion)
+    throw new Error(`Expected ${packageName} ${expectedVersion}, got ${native.version}`);
+  const executable = join(dirname(nativePackagePath), "lib", isWindows ? "tsc.exe" : "tsc");
+  if (!statSync(executable).isFile()) throw new Error(`Not a TypeScript executable: ${executable}`);
+  return executable;
 }
 export const tsc = process.env.TSC || nativeTypeScript();
 // The mapped-type identity backport follows microsoft/typescript-go#4913, after the 7.0.2 baseline.

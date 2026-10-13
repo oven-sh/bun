@@ -28,7 +28,7 @@ type State = {
   tag: string;
   ticks: number;
   port: any;
-  pid: number;
+  pid: number | undefined;
   settled: string | undefined;
   heard: string[];
   file: string;
@@ -922,9 +922,10 @@ const dir = String(
       import net from "node:net";
       // A server that keeps its connections alive, and counts them.
       const open = new Set();
+      let onClose = () => {};
       const server = net.createServer(socket => {
         open.add(socket);
-        socket.on("close", () => open.delete(socket)).on("error", () => {});
+        socket.on("close", () => { open.delete(socket); onClose(); }).on("error", () => {});
         socket.on("data", () => socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok"));
       });
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -938,7 +939,8 @@ const dir = String(
       await graph.run(() => app.fetchThroughItsOwnSession(url));
       const openBeforeDispose = open.size - theHosts;
       graph.dispose();
-      for (let turns = 0; open.size > theHosts && turns < 500; turns++) await new Promise(resolve => setImmediate(resolve));
+      // The HTTP thread closes it, whenever the system next runs that thread: no number of this thread's turns bounds that.
+      while (open.size > theHosts) await new Promise(resolve => (onClose = resolve));
       console.log(JSON.stringify({ openBeforeDispose, openAfter: open.size - theHosts, theHostsStillThere: theHosts }));
       process.exit(0);
     `,
@@ -1084,6 +1086,9 @@ const dir = String(
     `,
     "response-bodies-of-disposed-graphs.mjs": `
       import { heapStats } from "bun:jsc";
+      const protectedPromises = () => heapStats().protectedObjectTypeCounts.Promise ?? 0;
+      // What the process holds by itself, like the promise of this entry point.
+      const before = protectedPromises();
       // A body that never ends: a chunk per pull, the next one when the host says so.
       let release = () => {};
       const server = Bun.serve({ port: 0, fetch: request => new URL(request.url).pathname === "/turn" ? new Response("turn") : new Response(new ReadableStream({ async pull(controller) { controller.enqueue(new Uint8Array(1024)); await new Promise(resolve => (release = resolve)); } })) });
@@ -1107,7 +1112,7 @@ const dir = String(
       }
       await hostTurn();
       Bun.gc(true);
-      console.log(JSON.stringify({ text: Bun.peek.status(text), protectedPromises: heapStats().protectedObjectTypeCounts.Promise ?? 0 }));
+      console.log(JSON.stringify({ text: Bun.peek.status(text), protectedPromises: protectedPromises() - before }));
       process.exit(0);
     `,
     "errors-of-a-graph-made-by-a-graph.mjs": `
@@ -1802,7 +1807,9 @@ const dir = String(
         "fs.promises.realpath": () => fs.promises.realpath(dataFile),
         "fs.promises.opendir": () => fs.promises.opendir(import.meta.dir).then(async directory => { for await (const entry of directory) break; }),
         "fs.promises.mkdtemp": () => fs.promises.mkdtemp(dataFile + "-tmp-"),
-        "FileHandle.read": () => fs.promises.open(dataFile).then(handle => handle.read(Buffer.alloc(4), 0, 4, 0).finally(() => handle.close())),
+        // (close() is asked for while the read is under way, and waits for it. Asked for after it, a graph disposed during
+        // the read leaves the FileHandle unclosed: node:fs reports that as an uncaught exception when it is collected.)
+        "FileHandle.read": () => fs.promises.open(dataFile).then(handle => Promise.all([handle.read(Buffer.alloc(4), 0, 4, 0), handle.close()])),
         "Bun.file().slice().text()": () => Bun.file(dataFile).slice(0, 2).text(),
         "Bun.file().delete()": () => Bun.write(dataFile + ".deleted", "x").then(() => Bun.file(dataFile + ".deleted").delete()),
         "Bun.spawn().exited": () => Bun.spawn({ cmd: [process.execPath, "-e", "1"], stdio: ["ignore", "ignore", "ignore"] }).exited,
@@ -1948,7 +1955,7 @@ async function greetsThrough(options: object, tag: string): Promise<boolean> {
         close: () => resolve(false),
         error: () => resolve(false),
       },
-    } as Parameters<typeof Bun.connect>[0]);
+    } as unknown as Parameters<typeof Bun.connect>[0]);
   } catch {
     return false;
   }
@@ -2051,7 +2058,7 @@ let hostMysql: Bun.TCPSocketListener<{ tag?: string }>;
 let hostKeepAlive: Bun.TCPSocketListener<{ tag?: string }>;
 let hostUnix: Bun.UnixSocketListener<{ tag?: string }>;
 let hostHttp2: http2.Http2Server;
-let hostHttp: Bun.Server;
+let hostHttp: Bun.Server<{ tag: string }>;
 beforeAll(async () => {
   hostTcp = Bun.listen<{ tag?: string }>({ hostname: "127.0.0.1", port: 0, socket: tracksTags("tcp:") });
   hostTls = Bun.listen<{ tag?: string }>({
@@ -2163,7 +2170,7 @@ const kinds: Record<string, Kind> = {
     args: () => [bunExe()],
     alive: async state => {
       try {
-        process.kill(state.pid, 0);
+        process.kill(state.pid!, 0);
         return true;
       } catch {
         return false;
@@ -2242,7 +2249,7 @@ const kinds: Record<string, Kind> = {
     args: () => [bunExe()],
     alive: async state => {
       try {
-        process.kill(state.pid, 0);
+        process.kill(state.pid!, 0);
         return true;
       } catch {
         return false;
@@ -2475,7 +2482,7 @@ test("ModuleGraph isolation: a Bun.SQL query of a disposed graph reports nothing
 
 test("ModuleGraph isolation: a query the host makes on a disposed graph's Bun.SQL fails instead of waiting for ever", async () => {
   // Servers that let a client in and answer nothing afterwards.
-  using postgres = Bun.listen({
+  using postgres = Bun.listen<boolean | undefined>({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
@@ -2745,7 +2752,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
       let buffered = Buffer.alloc(0);
       socket.once("data", () => {
         socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
-        socket.on("data", data => {
+        socket.on("data", (data: Buffer) => {
           buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), type => {
             if (type === 0x51 /* Query */)
               socket.write(Buffer.concat([pgCommandComplete("LISTEN"), pgReadyForQuery()]));
@@ -3081,7 +3088,7 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     using made = await newGraph();
     const { graph, app } = made;
     const state = newState("held");
-    const server: Bun.Server = graph.run(() =>
+    const server: Bun.Server<undefined> = graph.run(() =>
       app.call(() => Bun.serve({ port: 0, fetch: () => new Response("held") })),
     );
     await graph.run(() =>

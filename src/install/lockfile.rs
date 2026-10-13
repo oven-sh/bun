@@ -950,6 +950,19 @@ impl Lockfile {
         }
     }
 
+    /// The workspaces whose dependency lists `request` names: the ones that received it under `--filter` / `-r`, else the cwd's.
+    pub(crate) fn workspaces_of_update_request(
+        &self,
+        pending: Option<&crate::package_manager_real::add_remove_with_filter::PendingWrite>,
+        workspace_name_hash: Option<PackageNameHash>,
+        request: &UpdateRequest,
+    ) -> Vec<PackageID> {
+        match pending {
+            Some(pending) => pending.workspace_ids_receiving(self, request.name_hash),
+            None => vec![self.get_workspace_package_id(workspace_name_hash)],
+        }
+    }
+
     /// Re-runnable: package_json_write_back binds again after re-deriving the declared columns.
     #[cold]
     #[inline(never)]
@@ -963,19 +976,12 @@ impl Lockfile {
         let string_buf = self.buffers.string_bytes.as_slice();
         let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
         let slice = self.packages.slice();
-        let cwd_workspace = [self.get_workspace_package_id(workspace_name_hash)];
 
         'request_updated: for update in updates.iter_mut() {
             update.e_string = None;
-            let filtered: Vec<PackageID>;
-            let workspace_ids: &[PackageID] = match pending {
-                Some(pending) => {
-                    filtered = pending.workspace_ids_receiving(self, update.name_hash);
-                    &filtered
-                }
-                None => &cwd_workspace,
-            };
-            for &workspace_package_id in workspace_ids {
+            let workspace_ids =
+                self.workspaces_of_update_request(pending, workspace_name_hash, update);
+            for &workspace_package_id in &workspace_ids {
                 let dep_list = slice.items_dependencies()[workspace_package_id as usize];
                 let res_list = slice.items_resolutions()[workspace_package_id as usize];
                 let workspace_deps: &[Dependency] =
@@ -1478,8 +1484,12 @@ pub(crate) type PendingResolutions = Vec<PendingResolution>;
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
+    /// `FILL_INTEGRITY`: take the registry manifest's integrity for npm packages
+    /// the migrated lockfile had none for (yarn berry records a checksum of its
+    /// own zip archive, not of the tarball).
     pub(crate) fn fetch_necessary_package_metadata_after_yarn_or_pnpm_migration<
         const UPDATE_OS_CPU: bool,
+        const FILL_INTEGRITY: bool,
     >(
         &mut self,
         manager: &mut PackageManager,
@@ -1521,10 +1531,7 @@ impl Lockfile {
             meta,
             ..
         } = pkgs.split_mut();
-        // One loop serves both modes: bind `pkg_metas` as an empty slice
-        // when the const generic is false.
-        let pkg_metas: &mut [self::package::meta::Meta] =
-            if UPDATE_OS_CPU { meta } else { &mut [] };
+        let pkg_metas: &mut [self::package::meta::Meta] = meta;
 
         for i in 0..len {
             let pkg_name = pkg_names[i];
@@ -1602,14 +1609,35 @@ impl Lockfile {
 
                     builder.clamp();
 
+                    let pkg_meta = &mut pkg_metas[i];
                     if UPDATE_OS_CPU {
-                        let pkg_meta = &mut pkg_metas[i];
                         // Update os/cpu metadata if not already set
                         if pkg_meta.os == Npm::OperatingSystem::ALL {
                             pkg_meta.os = pkg.package.os;
                         }
                         if pkg_meta.arch == Npm::Architecture::ALL {
                             pkg_meta.arch = pkg.package.cpu;
+                        }
+                    }
+                    // Only when the tarball is the one the manifest describes: under the
+                    // registry it was fetched from, or its recorded `dist.tarball`. A
+                    // fresh resolve records the same value.
+                    if FILL_INTEGRITY
+                        && !pkg_meta.integrity.tag.is_supported()
+                        && pkg.package.integrity.tag.is_supported()
+                    {
+                        let url = pkg_res
+                            .npm()
+                            .url
+                            .slice(self.buffers.string_bytes.as_slice());
+                        if url.is_empty()
+                            || bun_lock::url_is_under_registry(
+                                url,
+                                &crate::yarn_berry::registry_without_auth(scope.url.href()),
+                            )
+                            || url == pkg.package.tarball_url.slice(&manifest.string_buf)
+                        {
+                            pkg_meta.integrity = pkg.package.integrity;
                         }
                     }
                 }

@@ -695,12 +695,6 @@ impl Number {
         self.value
     }
 }
-impl From<f64> for Number {
-    #[inline]
-    fn from(v: f64) -> Self {
-        Number::new(v)
-    }
-}
 
 const DOUBLE_DIGIT: [&[u8]; 101] = [
     b"0", b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9", b"10", b"11", b"12", b"13", b"14",
@@ -2370,32 +2364,17 @@ pub struct RegExp {
 }
 impl RegExp {
     pub fn pattern(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i_) = self.flags_offset {
-            let mut i = i_;
-            while i > 0 && self.value[i as usize] != b'/' {
-                i -= 1;
-            }
-
-            return bun_core::trim(&self.value[..i as usize], b"/");
-        }
-
-        bun_core::trim(&self.value, b"/")
+        // Between the first slash and the last: flags have none. Not `trim`: a pattern can end in `\/`.
+        let end = bun_core::strings::last_index_of_char(&self.value, b'/').unwrap_or(0);
+        self.value.get(1..end).unwrap_or_default()
     }
 
     pub fn flags(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i) = self.flags_offset {
-            return &self.value[i as usize..];
-        }
-
-        b""
+        // Behind the last slash. Not by `flags_offset`, which wraps at 65,536.
+        let slash = bun_core::strings::last_index_of_char(&self.value, b'/');
+        slash
+            .and_then(|it| self.value.get(it + 1..))
+            .unwrap_or_default()
     }
 }
 

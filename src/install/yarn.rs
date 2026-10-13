@@ -158,6 +158,29 @@ impl<'a> Entry<'a> {
         strings::without_trailing_slash(path)
     }
 
+    /// `https://registry.npmjs.org/@scope/name/-/name-1.0.0.tgz` -> `@scope/name`
+    pub(crate) fn get_package_name_from_default_registry_url(url: &[u8]) -> Option<&[u8]> {
+        let host_and_path = url
+            .strip_prefix(b"https://")
+            .or_else(|| url.strip_prefix(b"http://"))?;
+        let path = host_and_path
+            .strip_prefix(b"registry.npmjs.org/")
+            .or_else(|| host_and_path.strip_prefix(b"registry.yarnpkg.com/"))?;
+        // `-` is a valid package name, so the first "/-/" can be inside `@scope/-`.
+        let scope_len = if path.starts_with(b"@") {
+            let scope_end = strings::index_of_char_usize(path, b'/')?;
+            if scope_end == b"@".len() {
+                return None;
+            }
+            scope_end + 1
+        } else {
+            0
+        };
+        let name_len = scope_len + strings::index_of_char_usize(&path[scope_len..], b'/')?;
+        let (name, rest) = path.split_at(name_len);
+        (rest.starts_with(b"/-/") && dependency::is_safe_install_folder_name(name)).then_some(name)
+    }
+
     pub(crate) fn parse_git_url(
         _yarn_lock: &YarnLock<'a>,
         version: &'a [u8],
@@ -597,8 +620,20 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     data: &[u8],
     dir: Fd,
 ) -> Result<LoadResult<'a>, Error> {
-    // yarn v2+ (berry) lockfiles are not supported; only the v1 format migrates.
-    if !strings::index_of(data, b"# yarn lockfile v1").is_some() {
+    // yarn 2+ (berry) lockfiles are YAML with a `__metadata` header. Yarn reads a
+    // file as v1 only when the marker is in the comment lines at its top, so a
+    // berry file that holds the marker further down is still a berry file.
+    let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
+    let has_v1_marker = match strings::index_of(data, b"# yarn lockfile v1") {
+        Some(at) if is_berry => strings::split(&data[..at], b"\n")
+            .all(|line| line.is_empty() || line.starts_with(b"#") || line == b"\r"),
+        Some(_) => true,
+        None => false,
+    };
+    if !has_v1_marker {
+        if is_berry {
+            return crate::yarn_berry::migrate_yarn_berry_lockfile(this, manager, log, data);
+        }
         return Err(crate::Error::UnsupportedYarnLockfileVersion);
     }
 
@@ -946,23 +981,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     || Entry::is_remote_tarball(resolved)
                     || resolved.ends_with(b".tgz")
                 {
-                    // https://registry.npmjs.org/package/-/package-version.tgz
-                    if strings::index_of(resolved, b"registry.npmjs.org/").is_some()
-                        || strings::index_of(resolved, b"registry.yarnpkg.com/").is_some()
+                    if let Some(name) = Entry::get_package_name_from_default_registry_url(resolved)
                     {
-                        if let Some(separator_idx) = strings::index_of(resolved, b"/-/") {
-                            if let Some(registry_idx) = strings::index_of(resolved, b"registry.") {
-                                let after_registry = &resolved[registry_idx..];
-                                if let Some(domain_slash) = strings::index_of(after_registry, b"/")
-                                {
-                                    let package_start = registry_idx + domain_slash + 1;
-                                    let extracted_name = &resolved[package_start..separator_idx];
-                                    break 'blk extracted_name;
-                                }
-                            }
-                        }
+                        break 'blk name;
                     }
-                    break 'blk base_name;
                 }
             }
             break 'blk base_name;
@@ -1907,7 +1929,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         return Err(crate::Error::LockfileResolveFailed);
     }
 
-    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true>(manager)?;
+    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true, false>(manager)?;
 
     if cfg!(debug_assertions) {
         this.verify_data()?;

@@ -21,7 +21,7 @@ const QUIC_STREAM_HEADERS_FLAGS_TERMINAL: u32 = 1;
 /// Mirrors Node's `Stream::State` (see `node_quic_binding.rs` for the
 /// `IDX_STATE_STREAM_*` offsets the JS layer reads).
 #[repr(C)]
-pub struct StreamState {
+pub(crate) struct StreamState {
     pub(crate) id: i64,
     pub(crate) pending: u8,
     pub(crate) fin_sent: u8,
@@ -105,7 +105,7 @@ pub(super) struct Inbound {
 /// `#[repr(C)]` so `vtable` is at offset 0 — the C shim reads it via
 /// `*(us_nq_vtable**)stream_ctx`. Without it Rust may reorder fields.
 #[repr(C)]
-pub struct QuicStream {
+pub(crate) struct QuicStream {
     /// MUST stay the first field — see `node_quic_shim.c`.
     vtable: *const lsquic::NqVtable,
     raw: Cell<*mut lsquic::lsquic_stream>,

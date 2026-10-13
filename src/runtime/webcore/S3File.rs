@@ -180,7 +180,7 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 }
 
 #[bun_jsc::host_fn]
-pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let cx = global.js_thread_of_caller(callframe);
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =

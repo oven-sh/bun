@@ -16,7 +16,7 @@ bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 /// `extern "C"` fns below; no JS wrapper class. `scratch` is moved out via
 /// `.take()` before any call that could re-enter.
 #[derive(Default)]
-pub struct TextEncoderStreamEncoder {
+pub(crate) struct TextEncoderStreamEncoder {
     pending_lead_surrogate: Cell<Option<u16>>,
     /// Reusable output buffer for the native-sink path so a
     /// `ByteStream → TextEncoderStream → JSSink` chain allocates nothing per
@@ -220,13 +220,15 @@ impl TextEncoderStreamEncoder {
 // wrapper cell, no prototype lookup) and drives it through these.
 
 #[unsafe(no_mangle)]
-pub extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncoderStreamEncoder {
+pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut TextEncoderStreamEncoder
+{
     Box::into_raw(Box::new(TextEncoderStreamEncoder::default()))
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__destroyForStream(this: *mut TextEncoderStreamEncoder) {
+pub(crate) extern "C" fn TextEncoderStreamEncoder__destroyForStream(
+    this: *mut TextEncoderStreamEncoder,
+) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `TextEncoderStreamEncoder__createForStream` and has not been
         // freed (the C++ cell clears its pointer before calling).
@@ -238,8 +240,7 @@ pub extern "C" fn TextEncoderStreamEncoder__destroyForStream(this: *mut TextEnco
 /// `chunk` (user JS — may throw), then encode. Returns a fresh `Uint8Array`
 /// on success, or `JSValue::zero` with the exception pending on `global`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
+pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     chunk: JSValue,
@@ -260,8 +261,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__flushForStream(
+pub(crate) extern "C" fn TextEncoderStreamEncoder__flushForStream(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
 ) -> JSValue {
@@ -281,8 +281,7 @@ const SCRATCH_CAP: usize = 64 * 1024;
 /// `undefined` for an empty output, or `JSValue::zero` with the exception
 /// pending on `global`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
+pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     chunk: JSValue,
@@ -333,8 +332,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
 
 /// Native-sink flush step; see `TextEncoderStreamEncoder__encodeIntoSink` for the return contract.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
+pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     sink_id: u8,

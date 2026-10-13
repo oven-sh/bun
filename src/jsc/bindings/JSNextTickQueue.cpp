@@ -66,11 +66,6 @@ JSNextTickQueue* JSNextTickQueue::create(JSC::JSGlobalObject* globalObject)
     return obj;
 }
 
-bool JSNextTickQueue::isEmpty()
-{
-    return !internalField(0) || internalField(0).get().asNumber() == 0;
-}
-
 void JSNextTickQueue::discard(JSC::VM& vm)
 {
     internalField(0).set(vm, this, jsNumber(0));

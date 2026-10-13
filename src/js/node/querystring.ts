@@ -9,7 +9,7 @@ const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const NumberPrototypeToString = Number.prototype.toString;
 
 var __commonJS =
-  (cb, mod: typeof module | undefined = undefined) =>
+  (cb, mod: { exports: any } | undefined = undefined) =>
   () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
 var require_src = __commonJS((exports, module) => {

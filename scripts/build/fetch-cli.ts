@@ -153,7 +153,7 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
   const forbidden = new Set(symbols);
   let undefinedSymbols = 0;
   const offenders: string[] = [];
-  for (let start = 0; start < objects.length; ) {
+  for (let start = 0; start < objects.length;) {
     let end = start;
     let length = 0;
     do {

@@ -175,15 +175,15 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
             throwArgumentMustBeFunctionError(lexicalGlobalObject, scope, 0, "callback"_s, "PerformanceObserver"_s, nullptr);
         });
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto* structure = structureForNewTarget<PerformanceObserver>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = PerformanceObserver::create(*context, callback.releaseNonNull());
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<PerformanceObserver>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<PerformanceObserver>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<PerformanceObserver>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSPerformanceObserverDOMConstructorConstruct, JSPerformanceObserverDOMConstructor::construct);

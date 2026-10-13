@@ -15,17 +15,15 @@ use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
 // Re-export so callers can write `body::InternalBlob`.
 use crate::jsc::HTTPHeaderName;
-pub use crate::webcore::InternalBlob;
+pub(crate) use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
-use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
+use bun_core::{Utf8Bytes, WTFString, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
 use bun_jsc::StringJsc as _;
 use bun_jsc::bun_string_jsc;
 
-/// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
-/// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
-/// (and in `Blob::Any`, `Response::construct_json`).
+/// Deref the `Value::WTFStringImpl` payload.
 ///
 /// # Safety (encapsulated)
 /// `Value::WTFStringImpl` always stores a non-null `*mut WTF::StringImpl`
@@ -35,7 +33,7 @@ use bun_jsc::bun_string_jsc;
 /// `&self` (refcount lives in a `Cell`), so a shared borrow suffices even for
 /// `r#ref()` / `deref()`.
 #[inline(always)]
-pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
+fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     // SAFETY: see fn doc — non-null, intrusive-refcounted, live while held.
     unsafe { &**s }
 }
@@ -94,7 +92,7 @@ bun_core::declare_scope!(BodyMixin, visible);
 // `UnsafeCell` inside suppresses LLVM `noalias` on `&Body` so a re-entrant
 // host call cannot stack two `&mut` to the same field.
 #[repr(C)]
-pub struct Body {
+pub(crate) struct Body {
     pub value: JsCell<Value>, // = Value::Empty,
 }
 
@@ -127,8 +125,8 @@ impl Body {
         unsafe { self.value.get_mut() }
     }
 
-    pub(crate) fn len(&self) -> blob::SizeType {
-        self.value_mut().size()
+    pub(crate) fn known_len(&self) -> Option<usize> {
+        self.value_mut().known_size()
     }
 }
 
@@ -202,7 +200,7 @@ impl Body {
 // at specific protocol points (e.g. resolve()). PORTING.md forbids `pub fn deinit(&mut self)`;
 // renamed to `reset()` since it cannot take `self` by value (in-place state transition).
 impl Body {
-    pub fn reset(&self) {
+    pub(crate) fn reset(&self) {
         self.value_mut().reset();
     }
 }
@@ -291,6 +289,11 @@ impl PendingValue {
         self.producer = streams::SourceHandle::None;
     }
 
+    /// `.text()` and friends, `Bun.write`, or a server's render-wait already reads this body.
+    pub(crate) fn has_consumer(&self) -> bool {
+        self.promise.is_some() || !self.action.is_none() || self.on_receive_value.is_some()
+    }
+
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
     #[inline]
     pub(crate) fn global(&self) -> &JSGlobalObject {
@@ -328,7 +331,7 @@ impl PendingValue {
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> bool {
-        if self.promise.is_some() {
+        if self.has_consumer() {
             return true;
         }
 
@@ -347,7 +350,7 @@ impl PendingValue {
     }
 
     pub(crate) fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
-        if self.promise.is_some() {
+        if self.has_consumer() {
             return true;
         }
 
@@ -463,7 +466,7 @@ impl PendingValue {
     }
 }
 
-pub enum Action {
+pub(crate) enum Action {
     None,
     GetText,
     GetJSON,
@@ -592,9 +595,6 @@ pub enum Tag {
     Null,
 }
 
-// Constructed/matched across several modules; boxing `SystemError` would
-// ripple through those callers.
-#[allow(clippy::large_enum_variant)]
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
@@ -674,13 +674,12 @@ impl ValueError {
 }
 
 impl From<AnyBlob> for Value {
-    /// Each arm moves its payload as is: a `WTFStringImpl`'s `+1` travels with
-    /// the pointer and is released by `Value::drop`, so nothing is ref'd here.
+    /// `Value::drop` releases the string's ref that `into_raw` hands over.
     fn from(blob: AnyBlob) -> Value {
         match blob {
             AnyBlob::Blob(b) => Value::Blob(b),
             AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
-            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
+            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s.into_raw()),
         }
     }
 }
@@ -762,6 +761,14 @@ impl Value {
             Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
             _ => 0,
+        }
+    }
+
+    /// `None` for a file that does not exist or is not seekable.
+    pub(crate) fn known_size(&mut self) -> Option<usize> {
+        match self.size() {
+            u64::MAX => None,
+            size => Some(size as usize),
         }
     }
 
@@ -887,8 +894,7 @@ impl Value {
         // the server's render-wait) owns this body and has retargeted `task`
         // to its own context; materializing a stream here would dispatch the
         // producer's remaining callbacks with that foreign context.
-        if locked.promise.is_some() || !locked.action.is_none() || locked.on_receive_value.is_some()
-        {
+        if locked.has_consumer() {
             return ReadableStream::in_use(cx.global());
         }
         let mut drain_result = DrainResult::EstimatedSize(0);
@@ -1238,17 +1244,28 @@ impl Value {
         }
     }
 
+    /// Moves the string out of the `WTFStringImpl` arm and leaves `Used`.
+    fn take_wtf_string(&mut self) -> WTFString {
+        let Value::WTFStringImpl(ptr) = *self else {
+            unreachable!("Value::take_wtf_string on a body that is not a string")
+        };
+        // `Value::drop` must not release the ref that the handle takes over.
+        let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
+        // SAFETY: the arm holds a non-null, live `WTF::StringImpl` and owns one
+        // ref on it (see `wtf_impl`). The arm was forgotten above, so that ref
+        // has exactly one owner: the handle. The forget and this adopt stand in
+        // for a by-value move, which `Value`'s raw arm and `impl Drop` rule out
+        // (E0509).
+        unsafe { WTFString::adopt(ptr) }
+    }
+
     pub(crate) fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
         let any_blob: AnyBlob = match self {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => {
                 if wtf_impl(str).can_use_as_utf8() {
-                    // Transfer the body's +1 to AnyBlob; suppress `Value::drop` so the
-                    // assignment below does not deref the StringImpl we just handed out.
-                    let s = *str;
-                    let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
-                    return Some(AnyBlob::WTFStringImpl(s));
+                    return Some(AnyBlob::WTFStringImpl(self.take_wtf_string()));
                 } else {
                     return None;
                 }
@@ -1285,9 +1302,7 @@ impl Value {
                         was_string: true,
                     });
                 } else {
-                    // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
-                    let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
-                    break 'brk AnyBlob::WTFStringImpl(str);
+                    break 'brk AnyBlob::WTFStringImpl(self.take_wtf_string());
                 }
             }
             Value::Locked(l) => l
@@ -1306,12 +1321,7 @@ impl Value {
         let any_blob: AnyBlob = match self {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
-            Value::WTFStringImpl(s) => {
-                let s = *s;
-                // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
-                let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
-                AnyBlob::WTFStringImpl(s)
-            }
+            Value::WTFStringImpl(_) => AnyBlob::WTFStringImpl(self.take_wtf_string()),
             Value::Locked(l) => l
                 .to_any_blob_allow_promise()
                 .unwrap_or(AnyBlob::Blob(Blob::default())),
@@ -1476,13 +1486,7 @@ impl Value {
             }));
         }
 
-        // `on_receive_value`: same consumer-owned-task guard as
-        // `locked_to_native_stream`.
-        if locked.promise.is_some()
-            || !locked.action.is_none()
-            || locked.readable.has()
-            || locked.on_receive_value.is_some()
-        {
+        if locked.has_consumer() || locked.readable.has() {
             return Ok(Value::Used);
         }
 
@@ -1576,9 +1580,7 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
-            if b.store()
-                .is_some_and(|store| !blob::store_reads_repeatably(store))
-            {
+            if b.store().is_some_and(blob::store_yields_bytes_once) {
                 // A pipe or other fd yields its bytes once: read it as one
                 // stream and tee that.
                 self.to_readable_stream(cx)?;
@@ -1928,7 +1930,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     return Ok(handle_body_already_used(global_object));
                 }
                 // reshaped for borrowck
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -1984,7 +1985,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -2036,7 +2036,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -2076,7 +2075,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
-                let _ = readable; // not consumed in this branch
             }
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
@@ -2085,7 +2083,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
             }
@@ -2191,7 +2188,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let _ = locked;
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {

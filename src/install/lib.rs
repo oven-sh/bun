@@ -1,4 +1,4 @@
-#![allow(nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
+#![allow(nonstandard_style)]
 #![feature(adt_const_params)]
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -129,6 +129,7 @@ pub mod repository_real;
 pub mod update_scope;
 pub mod update_transitive;
 pub mod yarn;
+pub mod yarn_berry;
 
 /// `repository` — re-export of the file-backed `repository_real` module
 /// (src/install/repository.rs). The earlier inline stub duplicated the

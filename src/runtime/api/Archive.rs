@@ -36,7 +36,7 @@ pub(crate) struct GzipOptions {
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
 // has no constructor, which the proc-macro does not expose.
 #[repr(C)]
-pub struct Archive {
+pub(crate) struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
     store: RefPtr<Store>,
     /// Compression settings for this archive
@@ -61,7 +61,7 @@ impl Archive {
     /// (`ArchiveClass__write`) resolves it as an associated item on the struct,
     /// so forward to the module-level [`write`] body below.
     #[inline]
-    pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self::write(global, callframe)
     }
 
@@ -412,7 +412,7 @@ fn get_entry_data<'a>(
 /// Options:
 ///   - gzip: { level?: number } - Override compression settings
 #[bun_jsc::host_fn]
-pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let cx = global.js_thread_of_caller(callframe);
     let [path_arg, data_arg, options_arg] = callframe.arguments_as_array::<3>();
     if data_arg.is_empty() {
@@ -510,8 +510,7 @@ impl Archive {
         let path_slice = path_arg.to_utf8(global)?;
 
         // Parse options
-        let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
-        // errdefer freePatterns — handled by Drop on Vec<Box<[u8]>>
+        let mut glob_patterns: Option<Vec<GlobPattern>> = None;
 
         if !options_arg.is_undefined_or_null() {
             if !options_arg.is_object() {
@@ -537,7 +536,7 @@ fn parse_pattern_arg(
     arg: JSValue,
     api_name: &[u8],
     name: &[u8],
-) -> JsResult<Option<Vec<Box<[u8]>>>> {
+) -> JsResult<Option<Vec<GlobPattern>>> {
     // Single string
     if arg.is_string() {
         let str_slice = arg.to_utf8(global)?;
@@ -545,8 +544,7 @@ fn parse_pattern_arg(
         if str_slice.slice().is_empty() {
             return Ok(None);
         }
-        let pattern: Box<[u8]> = Box::from(str_slice.slice());
-        let patterns = vec![pattern];
+        let patterns = vec![GlobPattern::new(str_slice.slice())];
         return Ok(Some(patterns));
     }
 
@@ -558,9 +556,8 @@ fn parse_pattern_arg(
             return Ok(None);
         }
 
-        let mut patterns: Vec<Box<[u8]>> =
+        let mut patterns: Vec<GlobPattern> =
             Vec::with_capacity(usize::try_from(len).expect("int cast"));
-        // errdefer { for p free; deinit } — handled by Drop on Vec<Box<[u8]>>
 
         // Use index-based iteration for safety (avoids issues if array mutates)
         let mut i: u32 = 0;
@@ -579,8 +576,7 @@ fn parse_pattern_arg(
                 i += 1;
                 continue;
             }
-            let pattern: Box<[u8]> = Box::from(str_slice.slice());
-            patterns.push(pattern);
+            patterns.push(GlobPattern::new(str_slice.slice()));
             i += 1;
         }
 
@@ -598,8 +594,6 @@ fn parse_pattern_arg(
         bstr::BStr::new(name),
     )))
 }
-
-// freePatterns deleted — Vec<Box<[u8]>> drops elements then itself.
 
 impl Archive {
     /// Instance method: archive.blob()
@@ -629,7 +623,7 @@ impl Archive {
         let cx = global.js_thread_of_caller(callframe);
         let glob_arg = callframe.argument(0);
 
-        let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
+        let mut glob_patterns: Option<Vec<GlobPattern>> = None;
         // errdefer freePatterns — handled by Drop
 
         if !glob_arg.is_undefined_or_null() {
@@ -644,7 +638,7 @@ impl Archive {
 // Generic Async Task Infrastructure
 // ============================================================================
 
-pub enum PromiseResult {
+pub(crate) enum PromiseResult {
     Resolve(JSValue),
     Reject(JSValue),
 }
@@ -661,14 +655,14 @@ impl PromiseResult {
 /// One `Bun.Archive` operation's pool-side work: `run` on the thread pool
 /// stores its result on `self`; `run_from_js` turns it into the promise's
 /// value. It is the off-thread part of an `AsyncTask<C>` job.
-pub trait TaskContext: Send + 'static {
+pub(crate) trait TaskContext: Send + 'static {
     /// Runs on thread pool. Stores its result on `self`.
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
 }
 
 /// The job for a `TaskContext`: the context off-thread, its promise on the JS side.
-pub struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
+pub(crate) struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 
 impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
     type OffThread = C;
@@ -711,15 +705,15 @@ pub enum ExtractError {
     ReadError,
 }
 
-pub enum ExtractResult {
+pub(crate) enum ExtractResult {
     Success(u32),
     Err(ExtractError),
 }
 
-pub struct ExtractContext {
+pub(crate) struct ExtractContext {
     store: RefPtr<Store>,
     path: Box<[u8]>,
-    glob_patterns: Option<Vec<Box<[u8]>>>,
+    glob_patterns: Option<Vec<GlobPattern>>,
     result: ExtractResult,
 }
 
@@ -781,7 +775,7 @@ fn start_extract_task(
     cx: &bun_jsc::JsThread<'_>,
     store: &RefPtr<Store>,
     path: &[u8],
-    glob_patterns: Option<Vec<Box<[u8]>>>,
+    glob_patterns: Option<Vec<GlobPattern>>,
 ) -> JsResult<JSValue> {
     let path_copy: Box<[u8]> = Box::from(path);
     // errdefer free(path_copy) — Drop handles it
@@ -812,7 +806,7 @@ enum BlobResult {
     Err(CompressError),
 }
 
-pub struct BlobContext {
+pub(crate) struct BlobContext {
     store: RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
@@ -908,7 +902,7 @@ enum WriteData {
     Store(RefPtr<Store>),
 }
 
-pub struct WriteContext {
+pub(crate) struct WriteContext {
     data: WriteData,
     path: ZBox,
     compress: Compression,
@@ -1013,9 +1007,9 @@ enum FilesResult {
 
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
-pub struct FilesContext {
+pub(crate) struct FilesContext {
     store: RefPtr<Store>,
-    glob_patterns: Option<Vec<Box<[u8]>>>,
+    glob_patterns: Option<Vec<GlobPattern>>,
     result: FilesResult,
 }
 
@@ -1164,7 +1158,7 @@ pub(crate) type FilesTask = AsyncTask<FilesContext>;
 fn start_files_task(
     cx: &bun_jsc::JsThread<'_>,
     store: &RefPtr<Store>,
-    glob_patterns: Option<Vec<Box<[u8]>>>,
+    glob_patterns: Option<Vec<GlobPattern>>,
 ) -> JsResult<JSValue> {
     let store = store.clone();
     // errdefer store.deref() — Drop handles it
@@ -1255,26 +1249,41 @@ pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
     true
 }
 
+/// One pattern of the `glob` option.
+pub(crate) struct GlobPattern {
+    /// It started with `!`, which isn't part of `glob`.
+    is_negative: bool,
+    glob: glob::Prepared<Box<[u8]>>,
+}
+
+impl GlobPattern {
+    fn new(pattern: &[u8]) -> GlobPattern {
+        let positive = pattern.strip_prefix(b"!");
+        GlobPattern {
+            is_negative: positive.is_some(),
+            glob: glob::Prepared::new(positive.unwrap_or(pattern).into()),
+        }
+    }
+}
+
 /// Match a path against multiple glob patterns with support for negative patterns.
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], pathname: &[u8]) -> bool {
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
 
     for pattern in patterns {
-        // Check if it's a negative pattern
-        if !pattern.is_empty() && pattern[0] == b'!' {
+        if pattern.is_negative {
             // Negative pattern - if it matches, exclude the file
-            let neg_pattern = &pattern[1..];
-            if !neg_pattern.is_empty() && glob::r#match(neg_pattern, pathname).matches() {
+            if !pattern.glob.pattern().is_empty() && pattern.glob.r#match(pathname).matches() {
                 return false;
             }
         } else {
             // Positive pattern - at least one must match
             has_positive_patterns = true;
-            if glob::r#match(pattern, pathname).matches() {
+            if pattern.glob.r#match(pathname).matches() {
                 matches_positive = true;
             }
         }
@@ -1290,7 +1299,7 @@ pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bo
 fn extract_to_disk_filtered(
     file_buffer: &[u8],
     root: &[u8],
-    glob_patterns: Option<&[Box<[u8]>]>,
+    glob_patterns: Option<&[GlobPattern]>,
 ) -> crate::Result<u32> {
     use libarchive::lib;
     let archive = lib::ReadArchive::new();

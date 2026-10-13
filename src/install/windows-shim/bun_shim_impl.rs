@@ -35,7 +35,7 @@
 //! - https://github.com/ScoopInstaller/Shim/blob/master/src/shim.cs
 //!
 //! This file is compiled twice: into bun.exe (for the bunx fast paths below) and as
-//! the standalone `bun_shim_impl.exe` PE (see `main.rs` / the `shim_standalone`
+//! the standalone `bun-shim-impl.exe` PE (see `main.rs` / the `shim_standalone`
 //! feature), which is then `include_bytes!`-embedded into Bun by `BinLinkingShim.rs`.
 //! When the encoding changes, `BinLinkingShim::VersionFlag::CURRENT` should be bumped.
 //!
@@ -71,7 +71,7 @@ use super::_bin_linking_shim::Flags;
 const DBG: bool = cfg!(debug_assertions);
 
 /// True when this module IS the binary root (the standalone
-/// `bun_shim_impl.exe`), false when compiled into bun.exe.
+/// `bun-shim-impl.exe`), false when compiled into bun.exe.
 const IS_STANDALONE: bool = cfg!(feature = "shim_standalone");
 
 #[cfg(not(feature = "shim_standalone"))]
@@ -1629,7 +1629,7 @@ impl BunCtx for &FromBunRunContext {
 }
 
 /// This is called from run_command.rs in bun.exe which allows us to skip the CreateProcessW
-/// call to create bun_shim_impl.exe. Instead we invoke the logic it has from an open file handle.
+/// call to create bun-shim-impl.exe. Instead we invoke the logic it has from an open file handle.
 ///
 /// This saves ~5-12ms depending on the machine.
 ///
@@ -1716,7 +1716,7 @@ pub enum ReadWithoutLaunchResult {
 
 /// Given the path and handle to a .bunx file, do everything needed to execute it,
 /// *except* for spawning it. This is used by the Bun shell to skip spawning the
-/// bun_shim_impl.exe executable. The returned command line is fed into the shell's
+/// bun-shim-impl.exe executable. The returned command line is fed into the shell's
 /// method for launching a process.
 ///
 /// The cost of spawning is about 5-12ms, and the unicode conversions are way
@@ -1732,7 +1732,7 @@ pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchRes
     }
 }
 
-/// Main function for `bun_shim_impl.exe`
+/// Main function for `bun-shim-impl.exe`
 #[cfg(feature = "shim_standalone")]
 #[inline]
 pub(crate) fn main() -> ! {

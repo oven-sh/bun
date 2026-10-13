@@ -1638,7 +1638,10 @@ impl NoUselessAssignment {
                         })
                     })
             };
-        'variables: for (variable, assignments) in target.assignments {
+        let by_variable = |it: &(Binding<'a>, _)| (it.0.symbol.key(), it.0.class.is_some());
+        'variables: for (variable, assignments) in
+            utils::sort::in_order_of(target.assignments, by_variable)
+        {
             let Some(mut assignments) = assignments else {
                 continue;
             };
@@ -1905,12 +1908,14 @@ impl Rule for NoUselessAssignment {
                 }
             }
         }
+        let as_entered = |it: &&Node<'_>| (it.span().start, std::cmp::Reverse(it.span().end));
         let roots = std::mem::take(&mut cx.state.roots);
-        for &root in &roots {
+        for &root in utils::sort::in_order_of(&roots, as_entered) {
             self.check_code_path(root, cx);
         }
         cx.state.is_only_checked = true;
-        for root in std::mem::take(&mut cx.state.all_roots).difference(&roots) {
+        let all_roots = std::mem::take(&mut cx.state.all_roots);
+        for root in utils::sort::in_order_of(all_roots.difference(&roots), as_entered) {
             self.check_code_path(*root, cx);
         }
     }

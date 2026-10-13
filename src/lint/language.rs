@@ -86,6 +86,78 @@ impl InferGlobals {
     }
 }
 
+/// What `$env` and `globals` of `languageOptions` make: the fields of [`LanguageOptions`] about them. Most of the configurations
+/// of a run have the same, and `all` is long.
+#[derive(Clone, Debug)]
+pub(crate) struct GlobalsOfOptions {
+    all: Arc<Vec<(Box<[u8]>, Global)>>,
+    written: Vec<Box<[u8]>>,
+    env_behind_off: Vec<(Box<[u8]>, Global)>,
+    envs: Vec<Box<[u8]>>,
+    own: Vec<(Box<[u8]>, Global)>,
+}
+
+impl GlobalsOfOptions {
+    /// `whose`: whose environments `$env` names.
+    pub(crate) fn new(language_options: &Json, whose: Tables) -> GlobalsOfOptions {
+        let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
+        let mut written_globals: Vec<Box<[u8]>> = Vec::new();
+        let mut envs: Vec<Box<[u8]>> = Vec::new();
+        let mut own_globals: Vec<(Box<[u8]>, Global)> = Vec::new();
+        // `env` of an `.eslintrc` or an `.oxlintrc.json`.
+        for (name, is_enabled) in language_options
+            .get(b"$env")
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+        {
+            // oxlint has an `es6` of its own.
+            let name: &[u8] = match whose {
+                Tables::Today | Tables::Eslint8 if name == b"es6" => b"es2015",
+                _ => name,
+            };
+            if is_enabled.as_bool() == Some(true) {
+                envs.push(name.into());
+                let variables = environment(name, whose).into_iter().flatten();
+                globals.extend(variables.map(|(name, setting)| (name.into(), setting)));
+            }
+        }
+        for (name, value) in language_options
+            .get(b"globals")
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+        {
+            if let Some(value) = Global::of_json(value) {
+                globals.push((name[..].into(), value));
+                own_globals.push((name[..].into(), value));
+                if value != Global::Off {
+                    written_globals.push(name[..].into());
+                }
+            }
+        }
+        crate::utils::sort::sort_unstable(&mut written_globals);
+        crate::utils::sort::sort_unstable(&mut envs);
+        crate::utils::sort::sort_by(&mut own_globals, |a, b| a.0.cmp(&b.0));
+        // The last of two entries with the same name counts.
+        globals.reverse();
+        crate::utils::sort::sort_by(&mut globals, |a, b| a.0.cmp(&b.0));
+        let mut env_behind_off: Vec<(Box<[u8]>, Global)> = Vec::new();
+        globals.dedup_by(|dropped, kept| {
+            let is_same = dropped.0 == kept.0;
+            if is_same && whose == Tables::Oxlint && kept.1 == Global::Off {
+                env_behind_off.push(dropped.clone());
+            }
+            is_same
+        });
+        GlobalsOfOptions {
+            all: Arc::new(globals),
+            written: written_globals,
+            env_behind_off,
+            envs,
+            own: own_globals,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LanguageOptions {
     /// The year: 2015, 2016, .. For ES3 and ES5, 3 and 5.
@@ -93,7 +165,7 @@ pub struct LanguageOptions {
     pub source_type: SourceType,
     /// `languageOptions.globals`. Sorted by name. What the ECMAScript version defines is not
     /// listed here.
-    pub globals: Vec<(Box<[u8]>, Global)>,
+    pub globals: Arc<Vec<(Box<[u8]>, Global)>>,
     /// The names that `globals` itself turns on, without those of an `env`. Sorted.
     pub written_globals: Vec<Box<[u8]>>,
     /// With an oxlint config: what an `env` says about each variable that `globals` turns off. See
@@ -297,6 +369,16 @@ impl LanguageOptions {
         settings: Arc<Json>,
         whose: Tables,
     ) -> LanguageOptions {
+        let globals = GlobalsOfOptions::new(language_options, whose);
+        Self::from_json_with(language_options, settings, globals)
+    }
+
+    /// The same. `globals`: [`GlobalsOfOptions::new`] of `language_options`, for who has made it before.
+    pub(crate) fn from_json_with(
+        language_options: &Json,
+        settings: Arc<Json>,
+        globals: GlobalsOfOptions,
+    ) -> LanguageOptions {
         let parser_options = language_options
             .get(b"parserOptions")
             .cloned()
@@ -322,65 +404,17 @@ impl LanguageOptions {
         let is_babel = written == Some(&b"@babel/eslint-parser"[..]);
         let source_type =
             source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
-        let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
-        let mut written_globals: Vec<Box<[u8]>> = Vec::new();
-        let mut envs: Vec<Box<[u8]>> = Vec::new();
-        let mut own_globals: Vec<(Box<[u8]>, Global)> = Vec::new();
-        // `env` of an `.eslintrc` or an `.oxlintrc.json`.
-        for (name, is_enabled) in language_options
-            .get(b"$env")
-            .and_then(Json::as_object)
-            .unwrap_or_default()
-        {
-            // oxlint has an `es6` of its own.
-            let name: &[u8] = match whose {
-                Tables::Today | Tables::Eslint8 if name == b"es6" => b"es2015",
-                _ => name,
-            };
-            if is_enabled.as_bool() == Some(true) {
-                envs.push(name.into());
-                let variables = environment(name, whose).into_iter().flatten();
-                globals.extend(variables.map(|(name, setting)| (name.into(), setting)));
-            }
-        }
-        for (name, value) in language_options
-            .get(b"globals")
-            .and_then(Json::as_object)
-            .unwrap_or_default()
-        {
-            if let Some(value) = Global::of_json(value) {
-                globals.push((name[..].into(), value));
-                own_globals.push((name[..].into(), value));
-                if value != Global::Off {
-                    written_globals.push(name[..].into());
-                }
-            }
-        }
-        crate::utils::sort::sort_unstable(&mut written_globals);
-        crate::utils::sort::sort_unstable(&mut envs);
-        crate::utils::sort::sort_by(&mut own_globals, |a, b| a.0.cmp(&b.0));
-        // The last of two entries with the same name counts.
-        globals.reverse();
-        crate::utils::sort::sort_by(&mut globals, |a, b| a.0.cmp(&b.0));
-        let mut env_behind_off: Vec<(Box<[u8]>, Global)> = Vec::new();
-        globals.dedup_by(|dropped, kept| {
-            let is_same = dropped.0 == kept.0;
-            if is_same && whose == Tables::Oxlint && kept.1 == Global::Off {
-                env_behind_off.push(dropped.clone());
-            }
-            is_same
-        });
         LanguageOptions {
             ecma_version: match language_options.get(b"ecmaVersion") {
                 None => Self::LATEST_ECMA_VERSION,
                 version => Self::normalize_ecma_version(version),
             },
             source_type,
-            globals,
-            written_globals,
-            env_behind_off,
-            envs,
-            own_globals,
+            globals: globals.all,
+            written_globals: globals.written,
+            env_behind_off: globals.env_behind_off,
+            envs: globals.envs,
+            own_globals: globals.own,
             parser,
             is_babel,
             // ESLint turns it off for espree in a module. Babel's parser passes over it there.
@@ -501,7 +535,7 @@ impl Default for LanguageOptions {
         LanguageOptions {
             ecma_version: Self::LATEST_ECMA_VERSION,
             source_type: SourceType::Module,
-            globals: Vec::new(),
+            globals: Arc::default(),
             written_globals: Vec::new(),
             env_behind_off: Vec::new(),
             envs: Vec::new(),

@@ -359,7 +359,7 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
             }
         }
 
-        for info in infos.values() {
+        for (_, info) in utils::sort::in_order_of(&infos, |it| it.0.span().start) {
             for (name, e) in &info.unnecessary_assignments {
                 if !info.assigned_before_constructor.contains(name) {
                     let report = cx.report(*e, UNNECESSARY_ASSIGN);

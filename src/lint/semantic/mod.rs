@@ -1178,6 +1178,15 @@ impl<'a> Scope<'a> {
         )
     }
 
+    /// The same references, nearly in the order of the source: the names of a pattern come before its defaults. For who does
+    /// not go by ESLint's order, which costs a pass over all references of the file the first time it is asked.
+    pub fn references_with_names_of_patterns_first(
+        self,
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        let in_it = self.file.reference_list().in_scope_as_visited(self.id.0);
+        Reference::all_at(self.file, in_it)
+    }
+
     /// The references in it, and in the scopes inside it, to what is declared outside it or
     /// nowhere: ESLint's `scope.through`. Scope by scope, not in source order.
     pub fn through(self) -> impl Iterator<Item = Reference<'a>> + 'a {

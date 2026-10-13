@@ -471,4 +471,281 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     const files = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "a.jsx": '<a className="one" b="c d" />;\n' };
     expect(await format(files, ["a.jsx"])).toMatchObject({ stderr: "", exitCode: 0 });
   });
+
+  // What is expected is what Prettier 3.9.9 does with prettier-plugin-tailwindcss 0.8.1 and tailwindcss 4.3.3.
+  describe("prettier-plugin-tailwindcss in a Prettier config", () => {
+    const plugin = "prettier-plugin-tailwindcss";
+    /** The plugin as far as a configuration can look at it. Nothing of it runs. */
+    const installed = {
+      [`node_modules/${plugin}/package.json`]: JSON.stringify({ name: plugin, type: "module", exports: "./index.mjs" }),
+      [`node_modules/${plugin}/index.mjs`]:
+        'export const options = { tailwindConfig: { type: "string" } };\nexport const parsers = {};\n',
+    };
+    const project = { ...version4, ...installed };
+    const config = (options: object) => ({ ".prettierrc": JSON.stringify({ plugins: [plugin], ...options }) });
+    const shared = (main: string, text: string) => ({
+      "node_modules/@acme/config/package.json": JSON.stringify({ name: "@acme/config", main }),
+      [`node_modules/@acme/config/${main}`]: text,
+    });
+
+    test.each<[string, Record<string, string>, string[]?]>([
+      ["its name", config({})],
+      ["a path", { ".prettierrc": `{ "plugins": ["./node_modules/${plugin}/index.mjs"] }` }],
+      ["require.resolve()", { "prettier.config.cjs": `module.exports = { plugins: [require.resolve("${plugin}")] };` }],
+      [
+        "import.meta.resolve()",
+        { "prettier.config.mjs": `export default { plugins: [import.meta.resolve("${plugin}")] };` },
+      ],
+      ["a URL", { "prettier.config.mjs": `export default { plugins: [new URL(import.meta.resolve("${plugin}"))] };` }],
+      ["the module", { "prettier.config.mjs": `import * as it from "${plugin}";\nexport default { plugins: [it] };` }],
+      ["import()", { "prettier.config.mjs": `export default { plugins: [await import("${plugin}")] };` }],
+      ["require()", { "prettier.config.cjs": `module.exports = { plugins: [require("${plugin}")] };` }],
+      [
+        "an override",
+        { ".prettierrc": `{ "overrides": [{ "files": "*.jsx", "options": { "plugins": ["${plugin}"] } }] }` },
+      ],
+      ["--plugin", {}, ["--plugin", plugin]],
+      ["--plugin beside a config", { ".prettierrc": "{}" }, [`--plugin=${plugin}`]],
+      ["package.json", { "package.json": `{ "prettier": { "plugins": ["${plugin}"] } }` }],
+      ["YAML", { ".prettierrc.yaml": `plugins:\n  - ${plugin}\n` }],
+      ["TOML", { ".prettierrc.toml": `plugins = ["${plugin}"]\n` }],
+      [
+        "a shared config",
+        { "package.json": '{ "prettier": "@acme/config" }', ...shared("a.json", `{ "plugins": ["${plugin}"] }`) },
+      ],
+      [
+        "a shared config in JavaScript",
+        {
+          ".prettierrc": '"@acme/config"',
+          ...shared("a.js", `module.exports = { plugins: [require.resolve("${plugin}")] };`),
+        },
+      ],
+    ])("is named by %s", async (_, files, flags = []) => {
+      const result = await format({ ...project, ...files, "a.jsx": input }, ["a.jsx"], flags);
+      expect(result).toMatchObject({ stderr: "", files: [sorted], exitCode: 0 });
+    });
+
+    test("counts for the files whose list of plugins has it", async () => {
+      const overrides = [
+        { files: "off/**", options: { plugins: [] } },
+        { files: "*.tsx", options: { tailwindPreserveDuplicates: true } },
+      ];
+      const twice = '<a className="p-4 flex p-4" />;\n';
+      const files = { ...config({ overrides }), "a.jsx": input, "off/a.jsx": input, "a.tsx": twice, "b.jsx": twice };
+      const result = await format({ ...project, ...files }, ["a.jsx", "off/a.jsx", "a.tsx", "b.jsx"]);
+      expect(result).toMatchObject({
+        stderr: "",
+        files: [sorted, input, '<a className="flex p-4 p-4" />;\n', '<a className="flex p-4" />;\n'],
+        exitCode: 0,
+      });
+    });
+
+    test.each<[object, string, string]>([
+      // No function takes classes unless the config says so.
+      [{}, 'cn("p-4 flex");\nclsx("p-4 flex");\ntwMerge("p-4 flex");\ntw`p-4 flex`;\n', ""],
+      [
+        { tailwindFunctions: ["cn"] },
+        'cn("p-4 flex");\nclsx("p-4 flex");\ncn`p-4 flex`;\n',
+        'cn("flex p-4");\nclsx("p-4 flex");\ncn`flex p-4`;\n',
+      ],
+      [
+        { tailwindFunctions: ["cn"], overrides: [{ files: "*.jsx", options: { tailwindFunctions: ["tw"] } }] },
+        'cn("p-4 flex");\ntw("p-4 flex");\n',
+        'cn("p-4 flex");\ntw("flex p-4");\n',
+      ],
+      [
+        { tailwindAttributes: ["mine"] },
+        '<a mine="p-4 flex" other="p-4 flex" class="p-4 flex" />;\n',
+        '<a mine="flex p-4" other="p-4 flex" class="flex p-4" />;\n',
+      ],
+      [{}, '<a className="  p-4   flex  p-4 x x" />;\n', '<a className="x x flex p-4" />;\n'],
+      [
+        { tailwindPreserveWhitespace: true },
+        '<a className="  p-4   flex  " />;\n',
+        '<a className="  flex   p-4  " />;\n',
+      ],
+      [{ tailwindPreserveDuplicates: true }, '<a className="p-4 flex p-4" />;\n', '<a className="flex p-4 p-4" />;\n'],
+    ])("has its options and its defaults: %j", async (options, before, after) => {
+      const result = await format({ ...project, ...config(options), "a.jsx": before }, ["a.jsx"]);
+      expect(result).toMatchObject({ stderr: "", files: [after || before], exitCode: 0 });
+    });
+
+    // The plugin says the same, behind the directory of the config and without the `[warn]`.
+    const deprecated = (name: string) =>
+      `[warn] Deprecated: Use the \`tailwindStylesheet\` option for v4 projects instead of \`${name}\`.\n`;
+    const both =
+      "[warn] You have specified a Tailwind CSS stylesheet and a Tailwind CSS config at the same time. Use stylesheetPath unless you are using v3. Preferring the stylesheet.\n";
+    test.each<[object, string]>([
+      [{ tailwindStylesheet: "./css/app.css" }, ""],
+      [{ tailwindStylesheet: "css/app.css" }, ""],
+      [{ tailwindEntryPoint: "./css/app.css" }, deprecated("tailwindEntryPoint")],
+      [{ tailwindConfig: "./css/app.css" }, deprecated("tailwindConfig")],
+      [{ tailwindStylesheet: "./css/app.css", tailwindEntryPoint: "./none.css", tailwindConfig: "./none.js" }, both],
+      [{ overrides: [{ files: "src/**", options: { tailwindStylesheet: "./css/app.css" } }] }, ""],
+    ])("a path is relative to the config: %j", async (options, stderr) => {
+      const files = { ...config(options), "css/app.css": "/* reversed */\n", "src/a.jsx": sorted };
+      using dir = tempDir("bun-format-tailwind", { ...project, ...files });
+      const result = await formatIn(join(String(dir), "src"), ["a.jsx"], ["a.jsx"]);
+      expect(result).toMatchObject({ stderr, files: [reversed], exitCode: 0 });
+    });
+
+    test("a path is relative to the working directory if the config is the one that --config names", async () => {
+      const files = {
+        "config/.prettierrc": config({ tailwindStylesheet: "./app.css" })[".prettierrc"],
+        "a.jsx": sorted,
+      };
+      const flags = ["--config", "config/.prettierrc"];
+      const beside = await format({ ...project, ...files, "app.css": "/* reversed */\n" }, ["a.jsx"], flags);
+      expect(beside).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+      const elsewhere = await format({ ...project, ...files, "config/app.css": "/* reversed */\n" }, ["a.jsx"], flags);
+      expect(elsewhere).toMatchObject({ files: [sorted], exitCode: 2 });
+      expect(elsewhere.stderr).toContain("app.css");
+    });
+
+    test("tailwindConfig is what Tailwind CSS 3 is loaded with", async () => {
+      const files = { ...version3, ...installed, ...config({ tailwindConfig: "./other.js" }), "src/a.jsx": sorted };
+      const result = await format({ ...files, "other.js": "module.exports = { reversed: true };\n" }, ["src/a.jsx"]);
+      expect(result).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+    });
+
+    test("tailwindPackageName is what Tailwind CSS is called", async () => {
+      const renamed = Object.fromEntries(
+        Object.entries(version4).map(([name, text]) => [name.replace("/tailwindcss/", "/@acme/tw/"), text]),
+      );
+      const files = { ...renamed, ...installed, ...config({ tailwindPackageName: "@acme/tw" }), "a.jsx": input };
+      expect(await format(files, ["a.jsx"])).toMatchObject({ stderr: "", files: [sorted], exitCode: 0 });
+    });
+
+    test.each([
+      [
+        { tailwindFunctions: "cn" },
+        'Invalid tailwindFunctions value. Expected an array of a string, but received "cn".',
+      ],
+      [
+        { tailwindAttributes: [1] },
+        "Invalid tailwindAttributes value. Expected an array of a string, but received [1].",
+      ],
+      [
+        { tailwindPreserveWhitespace: "yes" },
+        'Invalid tailwindPreserveWhitespace value. Expected true or false, but received "yes".',
+      ],
+      [{ tailwindStylesheet: 1 }, "Invalid tailwindStylesheet value. Expected a string, but received 1."],
+    ])("a value of the wrong type is refused: %j", async (options, refusal) => {
+      const result = await format({ ...project, ...config(options), "a.jsx": input }, ["a.jsx"]);
+      expect(result.stderr).toBe(`[error] ${refusal}\n`);
+      expect(result.files).toEqual([input]);
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    test("without it its options are unknown, and with it an option that it does not have is", async () => {
+      const options = { tailwindFunctions: ["cn"], tailwindConfig: "./x.js", tailwindPreserveWhitespace: true };
+      const without = await format({ ...project, ".prettierrc": JSON.stringify(options), "a.jsx": input }, ["a.jsx"]);
+      expect(without).toMatchObject({
+        stderr:
+          '[warn] Ignored unknown option { tailwindFunctions: ["cn"] }.\n' +
+          '[warn] Ignored unknown option { tailwindConfig: "./x.js" }.\n' +
+          "[warn] Ignored unknown option { tailwindPreserveWhitespace: true }.\n",
+        files: [input],
+        exitCode: 0,
+      });
+      const unknown = await format({ ...project, ...config({ tailwindOther: 1 }), "a.jsx": input }, ["a.jsx"]);
+      expect(unknown).toMatchObject({
+        stderr: "[warn] Ignored unknown option { tailwindOther: 1 }.\n",
+        files: [sorted],
+        exitCode: 0,
+      });
+    });
+
+    test("another plugin beside it is still refused, by its name", async () => {
+      const files = { ".prettierrc": JSON.stringify({ plugins: [plugin, "prettier-plugin-other"] }), "a.jsx": input };
+      const result = await format({ ...project, ...files }, ["a.jsx"], ["--log-level=log", "--check"]);
+      expect(result.stderr).toContain("plugins that bun fmt does not include: prettier-plugin-other\n");
+      // Nothing is said about files that have not been looked at.
+      expect(result.stdout).toBe("Checking formatting...\n");
+      expect(result.files).toEqual([input]);
+      expect(result.exitCode).toBe(2);
+    });
+
+    describe("the Tailwind CSS that it brings along", () => {
+      /** Its `createSorter`, which knows what is in order.json. A file with `reversed` in it turns the order around. */
+      const withSorter = {
+        ...installed,
+        [`node_modules/${plugin}/package.json`]: JSON.stringify({
+          name: plugin,
+          type: "module",
+          exports: { ".": "./index.mjs", "./sorter": "./sorter.mjs" },
+        }),
+        [`node_modules/${plugin}/sorter.mjs`]: `import { readFileSync } from "node:fs";
+const order = ${JSON.stringify(order)};
+export async function createSorter({ configPath, stylesheetPath }) {
+  const files = [configPath, stylesheetPath].filter(Boolean).map(it => readFileSync(it, "utf8"));
+  const sign = files.join().includes("reversed") ? -1 : 1;
+  const at = name => (order.includes(name) ? sign * order.indexOf(name) : -Infinity);
+  const sortClassLists = lists =>
+    lists.map(list => list.toSorted((a, z) => at(a) - at(z)).filter((it, i, all) => !order.includes(it) || all.indexOf(it) === i));
+  return { sortClassLists };
+}
+`,
+      };
+      const flipped = "module.exports = { reversed: true };\n";
+
+      test.each<[string, Record<string, string>, string]>([
+        ["there is no tailwindcss", config({}), sorted],
+        [
+          "there is no tailwindcss, with the nearest tailwind.config.js",
+          { ...config({}), "tailwind.config.js": flipped },
+          reversed,
+        ],
+        [
+          "there is no tailwindcss, with a style sheet",
+          { ...config({ tailwindStylesheet: "a.css" }), "a.css": "/* reversed */" },
+          reversed,
+        ],
+        [
+          "tailwindConfig is set and version 4 is installed",
+          { ...version4, ...config({ tailwindConfig: "a.js" }), "a.js": flipped },
+          reversed,
+        ],
+        [
+          "tailwindStylesheet is set and version 3 is installed",
+          { ...version3, ...config({ tailwindStylesheet: "a.css" }), "a.css": "/* reversed */" },
+          reversed,
+        ],
+      ])("is asked if %s", async (_, files, expected) => {
+        const before = '<a className="flex x p-4 m-2 x flex" />;\n';
+        const result = await format({ ...withSorter, ...files, "src/a.jsx": before }, ["src/a.jsx"]);
+        expect(result).toMatchObject({ stderr: "", files: [expected.replace('"', '"x x ')], exitCode: 0 });
+      });
+
+      test.each<[Record<string, string>, string[]]>([
+        [config({}), ["the tailwindcss package was not found from ", "  Run bun add -d tailwindcss"]],
+        [
+          { ...version4, ...config({ tailwindConfig: "a.js" }), "a.js": flipped },
+          [
+            "tailwindConfig is for Tailwind CSS 3, and another version is in ",
+            `  Run bun add -d ${plugin}, which brings its own`,
+          ],
+        ],
+        [
+          { ...version3, ...config({ tailwindStylesheet: "a.css" }), "a.css": "" },
+          [
+            "tailwindStylesheet is for Tailwind CSS 4, and another version is in ",
+            `  Run bun add -d ${plugin}, which brings its own`,
+          ],
+        ],
+      ])("has to be installed for that: %#", async (files, said) => {
+        const result = await format({ ...files, "a.jsx": input }, ["a.jsx"]);
+        for (const line of said)
+          expect(result.stderr).toContain(`[error] ${line.startsWith(" ") ? "" : "sortTailwindcss: "}${line}`);
+        expect(result.files).toEqual([input]);
+        expect(result.exitCode).toBe(2);
+      });
+    });
+
+    test("a flag or [fmt] counts for more", async () => {
+      const files = { ...config({}), "bunfig.toml": '[fmt.sortTailwindcss]\nfunctions = ["mine"]\n' };
+      const result = await format({ ...project, ...files, "a.jsx": 'mine("p-4 flex");\n' }, ["a.jsx"]);
+      expect(result).toMatchObject({ stderr: "", files: ['mine("flex p-4");\n'], exitCode: 0 });
+    });
+  });
 });

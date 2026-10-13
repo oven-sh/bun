@@ -537,6 +537,10 @@ pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         return Vec::new();
     }
     let mut all: Vec<Found<'a>> = Vec::new();
+    #[expect(
+        clippy::iter_over_hash_type,
+        reason = "what is found is put in the order of the text below"
+    )]
     for name in candidates(file) {
         for symbol in file.symbols_named(name) {
             let scope = symbol.scope();

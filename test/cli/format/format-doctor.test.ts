@@ -126,12 +126,30 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
+  test("the plugin that sorts classes is built in", async () => {
+    const { stdout, exitCode } = await doctor({
+      "package.json": dependencies("prettier", "prettier-plugin-tailwindcss", "tailwindcss"),
+      ".prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"], tailwindFunctions: ["cn"] }),
+      "a.js": ugly,
+    });
+    expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+
+    3 files are formatted natively
+
+Built-in plugins: prettier-plugin-tailwindcss
+
+You can remove: prettier, prettier-plugin-tailwindcss
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+    expect(exitCode).toBe(0);
+  });
+
   test("lists unsupported plugins and plugins that aren't installed", async () => {
     const project = {
       ...installed("prettier"),
-      "package.json": dependencies("prettier", "prettier-plugin-tailwindcss", "prettier-plugin-astro"),
+      "package.json": dependencies("prettier", "prettier-plugin-css-order", "prettier-plugin-astro"),
       ".prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-astro"] }),
-      "styled/.prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"] }),
+      "styled/.prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-css-order"] }),
       "styled/a.js": ugly,
       "b.astro": "<p>b</p>\n",
     };
@@ -143,14 +161,13 @@ Also styled/.prettierrc.json
     1 file cannot be formatted: 1 *.astro
     2 files are skipped because a plugin is not supported
         Use --allow-unsupported to format them without it
-        Or replace prettier-plugin-tailwindcss with [fmt.sortTailwindcss] in bunfig.toml
 
 Plugins that use your installed Prettier: prettier-plugin-astro
-Plugins that are not supported: prettier-plugin-tailwindcss
+Plugins that are not supported: prettier-plugin-css-order
 Not installed: prettier-plugin-astro
 
 Still needed:   prettier, prettier-plugin-astro (some files go to them)
-                prettier-plugin-tailwindcss (the skipped files need it)
+                prettier-plugin-css-order (the skipped files need it)
 `);
     const { config, files, plugins, packages } = JSON.parse(stdout);
     expect(config.nested).toEqual(["styled/.prettierrc.json"]);
@@ -158,7 +175,7 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
     expect(plugins).toEqual({
       built_in: [],
       by_prettier: ["prettier-plugin-astro"],
-      not_supported: ["prettier-plugin-tailwindcss"],
+      not_supported: ["prettier-plugin-css-order"],
       not_installed: ["prettier-plugin-astro"],
     });
     expect(packages).toEqual({
@@ -166,7 +183,7 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
       needed: [
         { name: "prettier", reason: "files", by: null },
         { name: "prettier-plugin-astro", reason: "files", by: null },
-        { name: "prettier-plugin-tailwindcss", reason: "skipped_files", by: null },
+        { name: "prettier-plugin-css-order", reason: "skipped_files", by: null },
       ],
       not_checked: ["other tools' configs", "CI files", "Git hooks"],
     });
@@ -175,8 +192,8 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
 
   test("Prettier is not removable while files are skipped because of a plugin", async () => {
     const { stdout, exitCode } = await doctor({
-      "package.json": dependencies("prettier", "prettier-plugin-tailwindcss", "prettier-plugin-other"),
-      ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"] }),
+      "package.json": dependencies("prettier", "prettier-plugin-css-order", "prettier-plugin-other"),
+      ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-css-order"] }),
       "a.js": ugly,
     });
     expect(stdout).toStartWith(`Using .prettierrc (Prettier config)
@@ -184,12 +201,11 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
     0 files are formatted natively
     3 files are skipped because a plugin is not supported
         Use --allow-unsupported to format them without it
-        Or replace prettier-plugin-tailwindcss with [fmt.sortTailwindcss] in bunfig.toml
 
-Plugins that are not supported: prettier-plugin-tailwindcss
+Plugins that are not supported: prettier-plugin-css-order
 
 You can remove: prettier-plugin-other
-Still needed:   prettier, prettier-plugin-tailwindcss (the skipped files need them)
+Still needed:   prettier, prettier-plugin-css-order (the skipped files need them)
 Not checked:    other tools' configs, CI files, Git hooks
 `);
     expect(exitCode).toBe(0);

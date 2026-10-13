@@ -1642,6 +1642,15 @@ impl References {
         Self::group(by_scope, starts, first as usize, last as usize)
     }
 
+    /// The same in the order of `visiting_order`, whatever else has been asked.
+    #[inline]
+    pub(crate) fn in_scope_as_visited(&self, scope: u32) -> &[u32] {
+        let (by_scope, starts) = self
+            .by_scope_in_some_order
+            .get_or_init(|| self.group_by_scope(&self.visiting_order));
+        Self::group(by_scope, starts, scope as usize, scope as usize)
+    }
+
     /// The first reference that is written at `pos`.
     pub(crate) fn at(&self, pos: u32) -> Option<&RawReference> {
         self.all

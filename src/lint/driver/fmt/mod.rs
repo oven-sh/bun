@@ -860,6 +860,8 @@ struct Run<'r> {
     modules: Option<&'r Modules>,
     /// [`Configs::is_native`], once that's known. If true, messages use Bun's own wording.
     is_native: bool,
+    /// Some of the files that were found have not been looked at, so nothing can be said about all of them.
+    has_left_files: bool,
 }
 
 /// What the file at `path`, which has `scope`, is to the tool that the run stands in for.
@@ -929,7 +931,9 @@ impl Run<'_> {
         } else if self.options.list_different {
             return;
         } else if self.options.check && different == 0 {
-            self.log(b"All matched files use the correct format.");
+            if !self.has_left_files {
+                self.log(b"All matched files use the correct format.");
+            }
         } else if self.options.check {
             self.log(b"");
             let text = format!(
@@ -968,7 +972,8 @@ impl Run<'_> {
             let _ = writeln!(out, "Could not check {failed} {}.", files(failed));
         }
         // If not every file is formatted, the reason has already been printed.
-        if different + failed > 0 || self.out.exit_code != 0 || level < LogLevel::Log {
+        let is_all = different + failed == 0 && self.out.exit_code == 0 && !self.has_left_files;
+        if !is_all || level < LogLevel::Log {
             return;
         }
         match unchanged {
@@ -1747,6 +1752,10 @@ impl Run<'_> {
                 format!("{n} files")
             }
         };
+        // Why is said at the end.
+        self.has_left_files = left_for_plugins.0 > 0
+            || !others.is_empty()
+            || (classes_are_unknown.is_some() && !options.allow_unsupported);
         // oxfmt has no `--debug-check`, so there it is as without a config.
         if is_oxfmt && (options.check || !options.debug_check) {
             self.sum_up_as_oxfmt([different, unchanged, failed], pool.threads());
@@ -1764,7 +1773,9 @@ impl Run<'_> {
                     .as_bytes(),
                 );
             } else if different == 0 {
-                self.log(b"All matched files use Prettier code style!");
+                if !self.has_left_files {
+                    self.log(b"All matched files use Prettier code style!");
+                }
             } else if only_looks {
                 self.warn(
                     format!(
@@ -2050,6 +2061,7 @@ fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules
         began: Instant::now(),
         modules,
         is_native: false,
+        has_left_files: false,
     };
     run.execute()
 }

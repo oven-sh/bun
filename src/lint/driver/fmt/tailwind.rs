@@ -21,11 +21,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 /// Which Tailwind is asked: the package in the directory `root`, loaded with one of these files.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Which {
     root: Vec<u8>,
     config: Option<Vec<u8>>,
     stylesheet: Option<Vec<u8>>,
+    /// `root` is `prettier-plugin-tailwindcss`, and the Tailwind that it brings along is asked.
+    is_bundled: bool,
 }
 
 impl Which {
@@ -35,6 +37,7 @@ impl Which {
             (b"root".to_vec(), Json::String(self.root.clone())),
             (b"config".to_vec(), path(&self.config)),
             (b"stylesheet".to_vec(), path(&self.stylesheet)),
+            (b"isBundled".to_vec(), Json::Bool(self.is_bundled)),
         ]
     }
 
@@ -50,21 +53,23 @@ impl Which {
 struct Found {
     /// The directory of the package `tailwindcss`.
     root: Vec<u8>,
-    /// For Tailwind CSS 3: the nearest `tailwind.config.*`.
+    is_version_4: bool,
+    /// Unless it is version 4: the nearest `tailwind.config.*`.
     config: Option<Vec<u8>>,
 }
 
-fn find(directory: &[u8]) -> Option<Found> {
+/// `package`: what Tailwind CSS is called.
+fn find(directory: &[u8], package: &[u8]) -> Option<Found> {
     // Only another package of the workspace may depend on it. pnpm and Bun's isolated linker still have one place for all
     // packages of an installation.
     let places: [&[u8]; 3] = [
-        b"node_modules/tailwindcss",
-        b"node_modules/.pnpm/node_modules/tailwindcss",
-        b"node_modules/.bun/node_modules/tailwindcss",
+        b"node_modules/",
+        b"node_modules/.pnpm/node_modules/",
+        b"node_modules/.bun/node_modules/",
     ];
     let root = places.iter().find_map(|place| {
         paths::ancestors(directory)
-            .map(|it| paths::join(it, place))
+            .map(|it| paths::join(it, &[place, package].concat()))
             .find(|it| fs::is_file(&paths::join(it, b"package.json")))
     })?;
     let names: [&[u8]; 4] = [
@@ -73,13 +78,18 @@ fn find(directory: &[u8]) -> Option<Found> {
         b"tailwind.config.mjs",
         b"tailwind.config.ts",
     ];
-    let config = match fs::is_file(&paths::join(&root, b"theme.css")) {
+    let is_version_4 = fs::is_file(&paths::join(&root, b"theme.css"));
+    let config = match is_version_4 {
         true => None,
         false => paths::ancestors(directory)
             .flat_map(|it| names.map(|name| paths::join(it, name)))
             .find(|it| fs::is_file(it)),
     };
-    Some(Found { root, config })
+    Some(Found {
+        root,
+        is_version_4,
+        config,
+    })
 }
 
 /// The version of the package `name` that is loaded from `directory`.
@@ -120,10 +130,10 @@ fn key_of(class: &[u8]) -> Cow<'_, [u8]> {
 
 #[derive(Default)]
 struct Known {
+    /// For a package of another name than `tailwindcss`, that is behind the directory, and a NUL.
     by_directory: FxHashMap<Vec<u8>, Option<Found>>,
     groups: FxHashMap<Which, Group>,
-    /// The first, in the order of their names, of the directories with files that have classes from which there is no
-    /// Tailwind to be found.
+    /// Why there is no Tailwind for files that have classes: the first in the order of the texts, which end with a directory.
     without_package: Option<Vec<u8>>,
 }
 
@@ -136,7 +146,7 @@ pub(crate) struct Classes {
 /// [`Classes`], for the files of a directory.
 struct OfGroup {
     classes: Arc<Classes>,
-    /// `Err`: the directory. There is no Tailwind for it.
+    /// `Err`: why there is no Tailwind for it.
     which: Result<Which, Vec<u8>>,
 }
 
@@ -154,13 +164,9 @@ impl Orders for OfGroup {
         let mut known = self.classes.known.lock();
         let which = match &self.which {
             Ok(which) => which,
-            Err(directory) => {
-                if known
-                    .without_package
-                    .as_ref()
-                    .is_none_or(|it| directory < it)
-                {
-                    known.without_package = Some(directory.clone());
+            Err(why) => {
+                if known.without_package.as_ref().is_none_or(|it| why < it) {
+                    known.without_package = Some(why.clone());
                 }
                 return None;
             }
@@ -238,15 +244,86 @@ const FUNCTIONS: [&[u8]; 9] = [
     b"tv",
 ];
 
-/// Resolves `sortTailwindcss` for a file in `directory`. `value` is the option as JSON, and it isn't `false`. `of_config` is
-/// the directory of the oxfmt config that sets it, or `None` if `[fmt]` or the flag sets it.
+/// What turns the sorting on.
+#[derive(Clone, Copy)]
+pub(crate) enum SetBy<'a> {
+    /// `[fmt]` or the flag. Paths are relative to the working directory.
+    Bun,
+    /// An oxfmt config in this directory, which paths are relative to.
+    Oxfmt(&'a [u8]),
+    /// `prettier-plugin-tailwindcss` in a Prettier config. Paths are relative to this directory.
+    Plugin(&'a [u8]),
+}
+
+const PLUGIN: &[u8] = b"prettier-plugin-tailwindcss";
+
+/// The options of `prettier-plugin-tailwindcss` and what they are called in `sortTailwindcss`: four strings, two lists of
+/// strings, two that are on or off.
+const OPTIONS_OF_PLUGIN: [(&[u8], &[u8]); 8] = [
+    (b"tailwindConfig", b"config"),
+    (b"tailwindStylesheet", b"stylesheet"),
+    (b"tailwindEntryPoint", b"entryPoint"),
+    (b"tailwindPackageName", b"packageName"),
+    (b"tailwindFunctions", b"functions"),
+    (b"tailwindAttributes", b"attributes"),
+    (b"tailwindPreserveWhitespace", b"preserveWhitespace"),
+    (b"tailwindPreserveDuplicates", b"preserveDuplicates"),
+];
+
+/// `name`, which a Prettier config sets to `value`, which is JSON, as an entry of `sortTailwindcss`. `None`: it is no option
+/// of the plugin. `Err`: what Prettier says about a value of the wrong type.
+pub(crate) fn option_of_plugin(
+    name: &[u8],
+    value: &[u8],
+) -> Option<Result<(Vec<u8>, Json), Vec<u8>>> {
+    let at = OPTIONS_OF_PLUGIN.iter().position(|it| it.0 == name)?;
+    let value = bun_lint::json::parse(value)?;
+    let is_string = |it: &Json| matches!(it, Json::String(_));
+    let (is_right, expected): (bool, &[u8]) = match at {
+        0..4 => (is_string(&value), b"a string"),
+        4..6 => (
+            value.as_array().is_some_and(|it| it.iter().all(is_string)),
+            b"an array of a string",
+        ),
+        _ => (matches!(value, Json::Bool(_)), b"true or false"),
+    };
+    if is_right {
+        return Some(Ok((OPTIONS_OF_PLUGIN[at].1.to_vec(), value)));
+    }
+    let mut refusal = [b"Invalid ", name, b" value. Expected ", expected].concat();
+    refusal.extend_from_slice(b", but received ");
+    super::config::write_as_shown(&mut refusal, &value);
+    refusal.push(b'.');
+    Some(Err(refusal))
+}
+
+/// What the plugin says about its options, which are `entries` of `sortTailwindcss`.
+pub(crate) fn warning_of_plugin(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
+    let get = |key: &[u8]| entries.iter().find(|it| it.0 == key)?.1.as_str();
+    let is_sheet = |path: &&[u8]| path.ends_with(b".css");
+    let old: &[u8] = match (get(b"stylesheet"), get(b"entryPoint"), get(b"config")) {
+        (Some(_), _, Some(config)) | (_, Some(_), Some(config)) if !is_sheet(&config) => {
+            return Some(b"You have specified a Tailwind CSS stylesheet and a Tailwind CSS config at the same time. Use stylesheetPath unless you are using v3. Preferring the stylesheet.".to_vec());
+        }
+        (None, Some(_), _) => b"tailwindEntryPoint",
+        (None, None, Some(config)) if is_sheet(&config) => b"tailwindConfig",
+        _ => return None,
+    };
+    let start = b"Deprecated: Use the `tailwindStylesheet` option for v4 projects instead of `";
+    Some([&start[..], old, b"`."].concat())
+}
+
+/// Resolves `sortTailwindcss` for a file in `directory`. `value` is the option as JSON, and it isn't `false`.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
     environment: &Environment,
     value: &[u8],
-    (of_config, directory): (Option<&[u8]>, &[u8]),
+    (set_by, directory): (SetBy, &[u8]),
 ) -> Tailwind {
-    let base = of_config.unwrap_or(&environment.cwd);
+    let base = match set_by {
+        SetBy::Bun => &environment.cwd,
+        SetBy::Oxfmt(base) | SetBy::Plugin(base) => base,
+    };
     // `true` has no keys.
     let json = bun_lint::json::parse(value);
     let get = |key: &[u8]| json.as_ref()?.get(key);
@@ -260,14 +337,21 @@ pub(crate) fn for_file(
         Some(paths::resolve(base, &paths::from_native(path)))
     };
     let is_on = |key: &[u8]| get(key).and_then(Json::as_bool) == Some(true);
-    let mut known = classes.known.lock();
-    if !known.by_directory.contains_key(directory) {
-        known
-            .by_directory
-            .insert(directory.to_vec(), find(directory));
-    }
-    let found = known.by_directory.get(directory).cloned().flatten();
-    drop(known);
+    let find = |package: &[u8]| {
+        let key = match package {
+            b"tailwindcss" => Cow::Borrowed(directory),
+            _ => Cow::Owned([directory, b"\0", package].concat()),
+        };
+        let mut known = classes.known.lock();
+        if !known.by_directory.contains_key(&key[..]) {
+            known
+                .by_directory
+                .insert(key.to_vec(), find(directory, package));
+        }
+        known.by_directory.get(&key[..]).cloned().flatten()
+    };
+    let package = (get(b"packageName").and_then(Json::as_str)).unwrap_or(b"tailwindcss");
+    let found = find(package);
     // The plugin's `getTailwindConfig`.
     let (sheets, config): (Vec<_>, Vec<_>) =
         (path_at(b"config").into_iter()).partition(|it| it.ends_with(b".css"));
@@ -275,28 +359,71 @@ pub(crate) fn for_file(
         .or_else(|| path_at(b"entryPoint"))
         .or_else(|| sheets.into_iter().next());
     let config = config.into_iter().next();
-    let which = found.map(|found| Which {
-        root: found.root,
-        config: config.or_else(|| found.config.filter(|_| stylesheet.is_none())),
-        stylesheet,
-    });
+    let follows_plugin = matches!(set_by, SetBy::Plugin(_));
+    // The plugin brings versions 3 and 4 along, for a project without the package and for an option of the other version.
+    let of_other_version: Option<&[u8]> = match &found {
+        Some(found) if found.is_version_4 && config.is_some() && stylesheet.is_none() => {
+            Some(b"tailwindConfig is for Tailwind CSS 3")
+        }
+        Some(found) if !found.is_version_4 && stylesheet.is_some() => {
+            Some(b"tailwindStylesheet is for Tailwind CSS 4")
+        }
+        _ => None,
+    };
+    let bundled = match follows_plugin && (found.is_none() || of_other_version.is_some()) {
+        true => find(PLUGIN),
+        false => None,
+    };
+    let is_bundled = bundled.is_some();
+    let which = match (bundled.or(found), of_other_version) {
+        (Some(found), Some(option)) if follows_plugin && !is_bundled => Err([
+            option,
+            b", and another version is in ",
+            &found.root,
+            b"\n  Run bun add -d prettier-plugin-tailwindcss, which brings its own",
+        ]
+        .concat()),
+        (Some(found), _) => Ok(Which {
+            root: found.root,
+            config: config.or_else(|| found.config.filter(|_| stylesheet.is_none())),
+            stylesheet,
+            is_bundled,
+        }),
+        (None, _) => Err([
+            b"the ",
+            package,
+            b" package was not found from ",
+            directory,
+            b"\n  Run bun add -d ",
+            package,
+        ]
+        .concat()),
+    };
     Tailwind {
-        functions: Names::new(match (of_config, get(b"functions")) {
-            (None, None) => FUNCTIONS.map(<[u8]>::to_vec).to_vec(),
+        functions: Names::new(match (set_by, get(b"functions")) {
+            (SetBy::Bun, None) => FUNCTIONS.map(<[u8]>::to_vec).to_vec(),
             _ => names(b"functions"),
         }),
         attributes: Names::new(names(b"attributes")),
         preserves_whitespace: is_on(b"preserveWhitespace"),
         preserves_duplicates: is_on(b"preserveDuplicates"),
+        follows_plugin,
         orders: Box::new(OfGroup {
             classes: Arc::clone(classes),
-            which: which.ok_or_else(|| directory.to_vec()),
+            which,
         }),
         has_missed: AtomicBool::new(false),
     }
 }
 
 impl Classes {
+    /// Whether there are files for which the Tailwind that the plugin brings along is asked.
+    pub(crate) fn asks_plugin(&self) -> bool {
+        let known = self.known.lock();
+        let mut found = known.by_directory.iter().filter(|it| it.1.is_some());
+        found.any(|it| it.0.ends_with(PLUGIN))
+    }
+
     /// Whether the package has been looked for from the directory of `path`, in vain.
     pub(crate) fn has_no_package_for(&self, path: &[u8]) -> bool {
         let known = self.known.lock();
@@ -307,26 +434,19 @@ impl Classes {
     /// asked. What it says about the others is known all the same.
     pub(crate) fn ask(&self, environment: &Environment) -> Result<(), Vec<u8>> {
         let fail = |why: &[u8]| [b"sortTailwindcss: ", why].concat();
-        let needs_package = |directory: &[u8]| {
-            fail(
-                &[
-                    &b"the tailwindcss package was not found from "[..],
-                    directory,
-                    b"\n  Run bun add -d tailwindcss",
-                ]
-                .concat(),
-            )
-        };
         let mut known = self.known.lock();
-        let without_package = known.without_package.as_deref().map(needs_package);
+        let without_package = known.without_package.as_deref().map(fail);
         if !known.groups.values().any(|it| !it.missing.is_empty()) {
             return without_package.map_or(Ok(()), Err);
         }
         // The ranks are among all classes that are asked about, so those that are known are asked about again.
-        let asked: Vec<Which> = known.groups.keys().cloned().collect();
-        let groups = known.groups.iter().map(|(which, group)| {
-            let mut classes: Vec<&[u8]> = (group.known.keys())
-                .chain(&group.missing)
+        // In an order that is the same on every machine.
+        let mut asked: Vec<Which> = known.groups.keys().cloned().collect();
+        bun_collections::index_sort::sort_slice(&mut asked[..]);
+        let groups = asked.iter().map(|which| {
+            let group = known.groups.get(which);
+            let mut classes: Vec<&[u8]> = (group.into_iter())
+                .flat_map(|it| it.known.keys().chain(&it.missing))
                 .map(|it| &it[..])
                 .collect();
             bun_collections::index_sort::sort_slice(&mut classes[..]);
@@ -353,19 +473,24 @@ impl Classes {
     }
 }
 
-/// Takes `sortTailwindcss` from `options`, which are for a file of this kind, if oxfmt does not sort in that language.
+/// Takes `sortTailwindcss` from `options`, which are for a file of this kind, if oxfmt does not sort in that language. The
+/// plugin of Prettier sorts in LWC too.
 pub(crate) fn only_where_sorted(options: &mut FormatOptions, kind: Option<Kind>) {
     use bun_format::html::Parser;
-    let is_sorted = matches!(
-        kind,
-        None | Some(
+    let is_sorted = match kind {
+        None
+        | Some(
             Kind::Script
-                | Kind::Css(_)
-                | Kind::Markdown
-                | Kind::Handlebars
-                | Kind::Html(Parser::Html | Parser::Vue | Parser::Angular)
-        )
-    );
+            | Kind::Css(_)
+            | Kind::Markdown
+            | Kind::Handlebars
+            | Kind::Html(Parser::Html | Parser::Vue | Parser::Angular),
+        ) => true,
+        Some(Kind::Html(Parser::Lwc)) => {
+            (options.tailwind.as_deref()).is_some_and(|it| it.follows_plugin)
+        }
+        Some(_) => false,
+    };
     if !is_sorted {
         options.tailwind = None;
     }

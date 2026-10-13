@@ -24,8 +24,8 @@
 
 use bun_collections::smallvec::SmallVec;
 use bun_core::{Once, strings};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
-use std::sync::{Arc, OnceLock};
 
 /// Result of [`match`](r#match). Two independent bits: whether the path matched
 /// (after applying any leading `!` negation), and whether the pattern was negated.
@@ -192,7 +192,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 /// Use `match_on::<false>` for text that isn't a file path and for paths already normalized to `/`.
 #[inline]
 pub fn match_on<const WINDOWS: bool>(glob: &[u8], path: &[u8]) -> MatchResult {
-    match_from_first_byte::<WINDOWS>(glob, None, path, Dots::Match)
+    match_from_first_byte(glob, None, path, Mode::new::<WINDOWS>(Dots::Match))
 }
 
 /// How wildcards treat path segments that start with `.`.
@@ -215,16 +215,16 @@ pub fn match_prepared<const WINDOWS: bool>(
     path: &[u8],
     dots: Dots,
 ) -> MatchResult {
-    match_from_first_byte::<WINDOWS>(glob, Some(shape), path, dots)
+    match_from_first_byte(glob, Some(shape), path, Mode::new::<WINDOWS>(dots))
 }
 
 /// This is at the call site. Most paths that a pattern is asked about differ from it in the first byte.
 #[inline(always)]
-fn match_from_first_byte<const WINDOWS: bool>(
+fn match_from_first_byte(
     glob: &[u8],
     shape: Option<&Shape>,
     path: &[u8],
-    dots: Dots,
+    mode: Mode,
 ) -> MatchResult {
     let Some(&first) = glob.first() else {
         return MatchResult {
@@ -241,18 +241,12 @@ fn match_from_first_byte<const WINDOWS: bool>(
         let uses = shape.uses.load(Ordering::Relaxed);
         // From now on a `Walk` decides.
         if uses == Shape::WALKS {
-            return match WINDOWS {
-                true => match_warm_for_windows(glob, shape, path, dots),
-                false => match_warm_for_posix(glob, shape, path, dots),
-            };
+            return match_warm(glob, shape, path, mode);
         }
         shape.count(glob, uses);
     }
     match first {
-        _ if is_plain => match WINDOWS {
-            true => match_literal_for_windows(glob, shape, path, dots),
-            false => match_literal_for_posix(glob, shape, path, dots),
-        },
+        _ if is_plain => match_literal(glob, shape, path, mode),
         // An escaped character that stands for itself is as good as a literal.
         b'\\'
             if glob.get(1).is_some_and(|it| {
@@ -262,126 +256,62 @@ fn match_from_first_byte<const WINDOWS: bool>(
         {
             MatchResult::NO
         }
-        b'!' => match WINDOWS {
-            true => match_negated_for_windows(glob, shape, path, dots),
-            false => match_negated_for_posix(glob, shape, path, dots),
+        // At least one character.
+        b'*' | b'?' if mode.dots == Dots::Match && matches!(glob, b"*?" | b"?*") => MatchResult {
+            matches: !path.is_empty() && is_one_segment(path, mode),
+            negated: false,
         },
-        b'\\' | b'?' | b'[' | 0x80.. => match WINDOWS {
-            true => match_escapes_for_windows(glob, shape, path, Start::of(dots)),
-            false => match_escapes_for_posix(glob, shape, path, Start::of(dots)),
-        },
-        b'{' if dots == Dots::Match && glob.ends_with(b"*}") => match WINDOWS {
-            true => match_braces_for_windows(glob, shape, path),
-            false => match_braces_for_posix(glob, shape, path),
-        },
-        _ => match WINDOWS {
-            true => match_for_windows(glob, shape, path, Start::of(dots), None),
-            false => match_for_posix(glob, shape, path, Start::of(dots), None),
-        },
+        b'!' => match_negated(glob, shape, path, mode),
+        b'\\' | b'?' | b'[' | 0x80.. => match_escapes_at_start(glob, shape, path, mode),
+        b'{' if mode.dots == Dots::Match && glob.ends_with(b"*}") => {
+            match_braces(glob, shape, path, mode)
+        }
+        _ => match_more(glob, shape, path, Start::of(mode), None),
     }
 }
 
-// None of these is generic, so that the binary has them once per platform and not once per crate that calls them.
-#[inline(never)]
-fn match_literal_for_posix(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
+/// How a match is asked for. The platform is a value and not a type parameter, so that a build for Windows has everything once.
+/// Elsewhere nothing asks for it, so it isn't there, and asking for it doesn't compile.
+#[derive(Copy, Clone)]
+struct Mode {
     dots: Dots,
-) -> MatchResult {
-    match_literal::<false>(glob, shape, path, dots)
+    #[cfg(any(windows, debug_assertions))]
+    is_windows: bool,
+}
+
+impl Mode {
+    #[inline(always)]
+    fn new<const WINDOWS: bool>(dots: Dots) -> Mode {
+        const { assert!(!WINDOWS || cfg!(any(windows, debug_assertions))) }
+        Mode::on(dots, WINDOWS)
+    }
+
+    #[inline(always)]
+    fn on(dots: Dots, is_windows: bool) -> Mode {
+        _ = is_windows;
+        Mode {
+            dots,
+            #[cfg(any(windows, debug_assertions))]
+            is_windows,
+        }
+    }
+
+    #[cfg(any(windows, debug_assertions))]
+    #[inline(always)]
+    fn is_windows(self) -> bool {
+        self.is_windows
+    }
+
+    #[cfg(not(any(windows, debug_assertions)))]
+    #[inline(always)]
+    fn is_windows(self) -> bool {
+        false
+    }
 }
 
 #[inline(never)]
-fn match_literal_for_windows(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-    dots: Dots,
-) -> MatchResult {
-    match_literal::<true>(glob, shape, path, dots)
-}
-
-#[inline(never)]
-fn match_escapes_for_posix(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-    start: Start,
-) -> MatchResult {
-    match_escapes::<false>(glob, shape, path, start)
-}
-
-#[inline(never)]
-fn match_escapes_for_windows(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-    start: Start,
-) -> MatchResult {
-    match_escapes::<true>(glob, shape, path, start)
-}
-
-#[inline(never)]
-fn match_negated_for_posix(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-    dots: Dots,
-) -> MatchResult {
-    match_negated::<false>(glob, shape, path, dots)
-}
-
-#[inline(never)]
-fn match_negated_for_windows(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-    dots: Dots,
-) -> MatchResult {
-    match_negated::<true>(glob, shape, path, dots)
-}
-
-#[inline(never)]
-fn match_braces_for_posix(glob: &[u8], shape: Option<&Shape>, path: &[u8]) -> MatchResult {
-    match_braces::<false>(glob, shape, path)
-}
-
-#[inline(never)]
-fn match_braces_for_windows(glob: &[u8], shape: Option<&Shape>, path: &[u8]) -> MatchResult {
-    match_braces::<true>(glob, shape, path)
-}
-
-#[inline(never)]
-fn match_warm_for_posix(glob: &[u8], shape: &Shape, path: &[u8], dots: Dots) -> MatchResult {
-    match_warm::<false>(glob, shape, path, dots)
-}
-
-#[inline(never)]
-fn match_warm_for_windows(glob: &[u8], shape: &Shape, path: &[u8], dots: Dots) -> MatchResult {
-    match_warm::<true>(glob, shape, path, dots)
-}
-
-#[inline(never)]
-fn match_for_posix(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-    start: Start,
-    resumed: Option<&mut State>,
-) -> MatchResult {
-    match_more::<false>(glob, shape, path, start, resumed)
-}
-
-#[inline(never)]
-fn match_for_windows(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-    start: Start,
-    resumed: Option<&mut State>,
-) -> MatchResult {
-    match_more::<true>(glob, shape, path, start, resumed)
+fn is_one_segment(path: &[u8], mode: Mode) -> bool {
+    !path.iter().any(|it| is_separator(*it, mode.is_windows()))
 }
 
 /// Where the loop starts.
@@ -393,35 +323,31 @@ struct Start {
     glob_index: u32,
     path_index: u32,
     seen: Seen,
-    dots: Dots,
+    mode: Mode,
 }
 
 impl Start {
     #[inline(always)]
-    fn of(dots: Dots) -> Start {
+    fn of(mode: Mode) -> Start {
         Start {
             glob_start: 0,
             glob_index: 0,
             path_index: 0,
             seen: Seen::OnlyRegular,
-            dots,
+            mode,
         }
     }
 }
 
 /// Takes the literal bytes that the pattern starts with. They need nothing of what follows.
-#[inline(always)]
-fn match_literal<const WINDOWS: bool>(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-    dots: Dots,
-) -> MatchResult {
+#[inline(never)]
+fn match_literal(glob: &[u8], shape: Option<&Shape>, path: &[u8], mode: Mode) -> MatchResult {
+    let is_windows = mode.is_windows();
     let mut taken = 0;
     while let Some(&wanted) = glob.get(taken) {
         let is_same = match path.get(taken) {
             Some(&found) if IS_PLAIN[wanted as usize] => found == wanted,
-            Some(&found) if wanted == b'/' => is_separator::<WINDOWS>(found),
+            Some(&found) if wanted == b'/' => is_separator(found, is_windows),
             None if IS_PLAIN[wanted as usize] || wanted == b'/' => false,
             _ => break,
         };
@@ -439,31 +365,25 @@ fn match_literal<const WINDOWS: bool>(
     let start = Start {
         glob_index: taken as u32,
         path_index: taken as u32,
-        ..Start::of(dots)
+        ..Start::of(mode)
     };
-    match (matches!(glob[taken], b'\\' | b'?' | b'[' | 0x80..), WINDOWS) {
-        (true, true) => match_escapes_for_windows(glob, shape, path, start),
-        (true, false) => match_escapes_for_posix(glob, shape, path, start),
-        (false, true) => match_for_windows(glob, shape, path, start, None),
-        (false, false) => match_for_posix(glob, shape, path, start, None),
+    match matches!(glob[taken], b'\\' | b'?' | b'[' | 0x80..) {
+        true => match_escapes(glob, shape, path, start),
+        false => match_more(glob, shape, path, start, None),
     }
 }
 
 /// [`match_literal`] for a pattern that starts with `!`.
-#[inline(always)]
-fn match_negated<const WINDOWS: bool>(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-    dots: Dots,
-) -> MatchResult {
+#[inline(never)]
+fn match_negated(glob: &[u8], shape: Option<&Shape>, path: &[u8], mode: Mode) -> MatchResult {
+    let is_windows = mode.is_windows();
     let glob_start = negations(glob);
     let negated = glob_start % 2 == 1;
     let mut taken = 0;
     while let Some(&wanted) = glob.get(glob_start + taken) {
         let is_same = match path.get(taken) {
             Some(&found) if IS_PLAIN[wanted as usize] => found == wanted,
-            Some(&found) if wanted == b'/' => is_separator::<WINDOWS>(found),
+            Some(&found) if wanted == b'/' => is_separator(found, is_windows),
             None if IS_PLAIN[wanted as usize] || wanted == b'/' => false,
             _ => break,
         };
@@ -485,34 +405,28 @@ fn match_negated<const WINDOWS: bool>(
         glob_start: glob_start as u32,
         glob_index: (glob_start + taken) as u32,
         path_index: taken as u32,
-        ..Start::of(dots)
+        ..Start::of(mode)
     };
-    match (matches!(next, b'\\' | b'?' | b'[' | 0x80..), WINDOWS) {
-        (true, true) => match_escapes_for_windows(glob, shape, path, start),
-        (true, false) => match_escapes_for_posix(glob, shape, path, start),
-        (false, true) => match_for_windows(glob, shape, path, start, None),
-        (false, false) => match_for_posix(glob, shape, path, start, None),
+    match matches!(next, b'\\' | b'?' | b'[' | 0x80..) {
+        true => match_escapes(glob, shape, path, start),
+        false => match_more(glob, shape, path, start, None),
     }
 }
 
 /// The pattern is like `{src/**,lib/**}`. If it's short, each alternative is matched as a pattern of its own.
-#[inline(always)]
-fn match_braces<const WINDOWS: bool>(
-    glob: &[u8],
-    shape: Option<&Shape>,
-    path: &[u8],
-) -> MatchResult {
+#[inline(never)]
+fn match_braces(glob: &[u8], shape: Option<&Shape>, path: &[u8], mode: Mode) -> MatchResult {
+    let is_windows = mode.is_windows();
     let text = Text {
         path,
         path_index: 0,
         is_committed: true,
-        is_windows: WINDOWS,
-        matches: |pattern, text| match_on::<WINDOWS>(pattern, text).matches(),
+        is_windows,
     };
-    let written = match_written_out(glob, 0, &text);
+    let written = match_written_out(glob, 0, &text, &mut { Layout::NONE });
     #[cfg(debug_assertions)]
     if let Some(written) = written {
-        written.check(glob, 0, path, WINDOWS);
+        written.check(glob, 0, path, is_windows);
     }
     let start = match written {
         Some(Written::Rest(matches)) => {
@@ -526,28 +440,41 @@ fn match_braces<const WINDOWS: bool>(
             glob_index,
             path_index,
             seen: Seen::Choice,
-            ..Start::of(Dots::Match)
+            ..Start::of(mode)
         },
-        None => Start::of(Dots::Match),
+        None => Start::of(mode),
     };
-    match WINDOWS {
-        true => match_for_windows(glob, shape, path, start, None),
-        false => match_for_posix(glob, shape, path, start, None),
-    }
+    match_more(glob, shape, path, start, None)
 }
 
 /// The same for a pattern that starts with `!`, or has other tokens among those bytes that take one character whatever follows:
 /// escapes, `?` and classes.
+#[inline(never)]
+fn match_escapes(glob: &[u8], shape: Option<&Shape>, path: &[u8], start: Start) -> MatchResult {
+    match_escapes_from::<false>(glob, shape, path, start)
+}
+
+/// The same from the start of the pattern, which saves a little.
+#[inline(never)]
+fn match_escapes_at_start(
+    glob: &[u8],
+    shape: Option<&Shape>,
+    path: &[u8],
+    mode: Mode,
+) -> MatchResult {
+    match_escapes_from::<true>(glob, shape, path, Start::of(mode))
+}
+
 #[inline(always)]
-fn match_escapes<const WINDOWS: bool>(
+fn match_escapes_from<const IS_AT_START: bool>(
     glob: &[u8],
     shape: Option<&Shape>,
     path: &[u8],
     start: Start,
 ) -> MatchResult {
-    let dots = start.dots;
+    let (dots, is_windows) = (start.mode.dots, start.mode.is_windows());
     let glob_start = match glob[0] {
-        b'!' => negations(glob),
+        b'!' if !IS_AT_START => negations(glob),
         _ => 0,
     };
     let negated = glob_start % 2 == 1;
@@ -556,12 +483,13 @@ fn match_escapes<const WINDOWS: bool>(
         start.path_index as usize,
     );
     let mut seen = Seen::OnlyRegular;
+    let mut first_class = usize::MAX;
     while let Some(&wanted) = glob.get(index) {
         let found = path.get(path_index).copied();
         let is_same = if IS_PLAIN[wanted as usize] {
             found == Some(wanted)
         } else if wanted == b'/' {
-            found.is_some_and(is_separator::<WINDOWS>)
+            found.is_some_and(|it| is_separator(it, is_windows))
         } else if wanted >= 128 {
             // The loop compares as many bytes as the first one announces. That's the same unless they go on into something else.
             let len = usize::from(strings::wtf8_byte_sequence_length(wanted));
@@ -589,14 +517,12 @@ fn match_escapes<const WINDOWS: bool>(
         } else if dots != Dots::Match || found.is_some_and(|it| it >= 128) {
             break;
         } else if wanted == b'?' && glob.get(index + 1) != Some(&b'(') {
-            found.is_some_and(|it| !is_separator::<WINDOWS>(it))
+            found.is_some_and(|it| !is_separator(it, is_windows))
         } else if wanted == b'['
-            && let Some((has, close, is_regular)) = ascii_class(glob, index, found.unwrap_or(0))
+            && let Some((has, close, _)) = ascii_class::<false>(glob, index, found.unwrap_or(0))
         {
+            first_class = first_class.min(index);
             index = close;
-            if !is_regular {
-                seen = Seen::Odd;
-            }
             has && found.is_some()
         } else {
             break;
@@ -616,23 +542,27 @@ fn match_escapes<const WINDOWS: bool>(
             negated,
         };
     }
+    if first_class != usize::MAX && !has_regular_classes(&glob[first_class..index]) {
+        seen = Seen::Odd;
+    }
     let start = Start {
         glob_start: glob_start as u32,
         glob_index: index as u32,
         path_index: path_index as u32,
         seen,
-        dots,
+        mode: start.mode,
     };
-    match WINDOWS {
-        true => match_for_windows(glob, shape, path, start, None),
-        false => match_for_posix(glob, shape, path, start, None),
-    }
+    match_more(glob, shape, path, start, None)
 }
 
 /// [`match_class`] for an ASCII character and a class that has neither escapes nor characters that aren't ASCII.
 /// Returns the result, the index of the `]`, and whether a regular pattern may have the class. Returns `None` for any other class.
 #[inline(always)]
-fn ascii_class(glob: &[u8], open: usize, c: u8) -> Option<(bool, usize, bool)> {
+fn ascii_class<const ASKS_IF_REGULAR: bool>(
+    glob: &[u8],
+    open: usize,
+    c: u8,
+) -> Option<(bool, usize, bool)> {
     let mut at = open + 1;
     let negated = matches!(glob.get(at), Some(b'^' | b'!'));
     at += usize::from(negated);
@@ -655,14 +585,35 @@ fn ascii_class(glob: &[u8], open: usize, c: u8) -> Option<(bool, usize, bool)> {
                 return None;
             }
             has |= low <= c && c <= high;
-            is_regular &= !(low <= b'/' && b'/' <= high) && !(low <= b'\\' && b'\\' <= high);
+            if ASKS_IF_REGULAR {
+                is_regular &= !(low <= b'/' && b'/' <= high) && !(low <= b'\\' && b'\\' <= high);
+            }
             at += 3;
         } else {
             has |= low == c;
-            is_regular &= low != b'/';
+            if ASKS_IF_REGULAR {
+                is_regular &= low != b'/';
+            }
             at += 1;
         }
     }
+}
+
+/// `tokens` are tokens that [`match_escapes`] has taken. Returns whether a regular pattern may have the classes among them.
+#[inline(never)]
+fn has_regular_classes(tokens: &[u8]) -> bool {
+    let mut at = 0;
+    while let Some(&ch) = tokens.get(at) {
+        at = match ch {
+            b'\\' => at + 2,
+            b'[' => match ascii_class::<true>(tokens, at, 0) {
+                Some((_, close, true)) => close + 1,
+                _ => return false,
+            },
+            _ => at + 1,
+        };
+    }
+    true
 }
 
 /// Result of [`Cache::answer`].
@@ -676,13 +627,9 @@ enum Answer {
 }
 
 /// Matches a pattern that has been matched often. This is where such a pattern spends its time.
-#[inline(always)]
-fn match_warm<const WINDOWS: bool>(
-    glob: &[u8],
-    shape: &Shape,
-    path: &[u8],
-    dots: Dots,
-) -> MatchResult {
+#[inline(never)]
+fn match_warm(glob: &[u8], shape: &Shape, path: &[u8], mode: Mode) -> MatchResult {
+    let (dots, is_windows) = (mode.dots, mode.is_windows());
     let parsed = shape.parsed(glob);
     let negated = parsed.top % 2 == 1;
     let found = |matched: bool| MatchResult {
@@ -690,11 +637,14 @@ fn match_warm<const WINDOWS: bool>(
         negated,
     };
     let mut is_ascii = true;
-    let Some(first) = parsed.take_front(glob, parsed.top, path, WINDOWS) else {
+    let Some(first) = parsed.take_front(glob, parsed.top, path, is_windows) else {
         return found(false);
     };
     if dots == Dots::Match
-        && let Some(cache) = parsed.program.get().and_then(|it| it.warm_cache(WINDOWS))
+        && let Some(cache) = parsed
+            .program
+            .get()
+            .and_then(|it| it.warm_cache(is_windows))
     {
         match cache.answer(&path[first as usize..]) {
             Answer::Yes => return found(true),
@@ -704,7 +654,7 @@ fn match_warm<const WINDOWS: bool>(
         }
     }
     let walked = match is_ascii || path.len() >= Program::IS_LONG {
-        true => match_at_once(glob, parsed.top, Some(shape), path, dots, WINDOWS),
+        true => match_at_once(glob, parsed.top, Some(shape), path, dots, is_windows),
         false => None,
     };
     match walked {
@@ -714,28 +664,24 @@ fn match_warm<const WINDOWS: bool>(
             let start = Start {
                 glob_start: parsed.top,
                 glob_index: parsed.top,
-                ..Start::of(dots)
+                ..Start::of(mode)
             };
-            match WINDOWS {
-                true => match_for_windows(glob, Some(shape), path, start, None),
-                false => match_for_posix(glob, Some(shape), path, start, None),
-            }
+            match_more(glob, Some(shape), path, start, None)
         }
     }
 }
 
 /// With `resumed`, only runs the loop from that state on, and leaves the state and the outcome there. See [`match_slowly`].
-#[inline(always)]
-fn match_more<const WINDOWS: bool>(
+#[inline(never)]
+fn match_more(
     glob: &[u8],
     shape: Option<&Shape>,
     path: &[u8],
     start: Start,
     resumed: Option<&mut State>,
 ) -> MatchResult {
-    let Start {
-        glob_start, dots, ..
-    } = start;
+    let glob_start = start.glob_start;
+    let (dots, is_windows) = (start.mode.dots, start.mode.is_windows());
     let negated = glob_start % 2 == 1;
     let found = |matched: bool| MatchResult {
         matches: matched != negated,
@@ -746,13 +692,14 @@ fn match_more<const WINDOWS: bool>(
         Some(it) => state = **it,
         None => {
             if path.len() >= Program::IS_LONG
-                && let Some(matched) = match_at_once(glob, glob_start, shape, path, dots, WINDOWS)
+                && let Some(matched) =
+                    match_at_once(glob, glob_start, shape, path, dots, is_windows)
             {
                 return found(matched);
             }
         }
     }
-    let outcome = run::<false>(glob, glob_start, path, dots, &mut state, WINDOWS);
+    let outcome = run::<false>(glob, glob_start, path, dots, &mut state, is_windows);
     if let Some(it) = resumed {
         state.outcome = outcome;
         *it = state;
@@ -769,19 +716,13 @@ fn match_more<const WINDOWS: bool>(
                     || path.len() >= Program::IS_LONG
                     || it.known.get().is_some()
             };
-            let resume: Resume = match WINDOWS {
-                true => match_for_windows,
-                false => match_for_posix,
-            };
-            let shape = shape.filter(keeps);
             match_slowly(
                 glob,
                 glob_start,
-                shape,
+                shape.filter(keeps),
                 path,
-                dots,
+                start.mode,
                 state,
-                (WINDOWS, resume),
             )
         }
     };
@@ -792,7 +733,8 @@ fn match_more<const WINDOWS: bool>(
         parsed.read(glob);
         debug_assert!(
             !parsed.is_regular
-                || matched == match_groups(glob, glob_start, path, &parsed, dots, false, WINDOWS),
+                || matched
+                    == match_groups(glob, glob_start, path, &parsed, dots, false, is_windows),
             "the loop and the walk differ"
         );
     }
@@ -812,8 +754,7 @@ fn match_at_once(
 ) -> Option<bool> {
     let mut groups = Groups::new(shape);
     let parsed = groups.parsed(glob);
-    // A `Cache` has no steps for bytes that aren't ASCII. On those the loop is faster, if it can decide.
-    let walks = parsed.may_walk() && (path.len() >= Program::IS_LONG || path.is_ascii());
+    let walks = parsed.may_walk();
     walks.then(|| {
         match_groups(
             glob,
@@ -827,9 +768,6 @@ fn match_at_once(
     })
 }
 
-/// [`match_for_posix`] or [`match_for_windows`].
-type Resume = fn(&[u8], Option<&Shape>, &[u8], Start, Option<&mut State>) -> MatchResult;
-
 /// Goes on where the loop has stopped. What's found out about the pattern is kept in `shape`.
 #[cold]
 #[inline(never)]
@@ -838,15 +776,15 @@ fn match_slowly(
     glob_start: u32,
     shape: Option<&Shape>,
     path: &[u8],
-    dots: Dots,
+    mode: Mode,
     mut state: State,
-    (is_windows, resume): (bool, Resume),
 ) -> bool {
+    let (dots, is_windows) = (mode.dots, mode.is_windows());
     let mut groups = Groups::new(shape);
     let mut is_strict = false;
     let start = Start {
         glob_start,
-        ..Start::of(dots)
+        ..Start::of(mode)
     };
     loop {
         let goes_on = match state.outcome {
@@ -916,7 +854,7 @@ fn match_slowly(
             true => {
                 state.outcome = run_strictly(glob, glob_start, path, dots, &mut state, is_windows)
             }
-            false => _ = resume(glob, None, path, start, Some(&mut state)),
+            false => _ = match_more(glob, None, path, start, Some(&mut state)),
         }
     }
     let is_kept = groups.prepared.is_some();
@@ -1229,10 +1167,23 @@ fn run<const STRICT: bool>(
                     && state.path_index > 0
                     && (state.path_index as usize) < path.len()
                     && let Some(&wanted) = glob.get(state.glob_index as usize + 3)
-                    && !matches!(wanted, b'{' | b'@' | b'+')
                 {
                     let is_literal = IS_PLAIN[wanted as usize] || wanted >= 128;
                     let mut start = state.path_index as usize;
+                    let mut can_start = true;
+                    if matches!(wanted, b'{' | b'@' | b'+') {
+                        let skipped = skip_to_start(
+                            glob,
+                            state.glob_index + 3,
+                            path,
+                            state.path_index,
+                            true,
+                            &mut kept.firsts,
+                            is_windows,
+                        );
+                        start = skipped.path_index as usize;
+                        can_start = skipped.can_start;
+                    }
                     let next = loop {
                         let mut end = start;
                         while let Some(&found) = path.get(end)
@@ -1249,6 +1200,9 @@ fn run<const STRICT: bool>(
                     state.path_index = start as u32;
                     state.globstar.path_index = next as u32;
                     state.wildcard = state.globstar;
+                    if !can_start {
+                        break 'fallthrough;
+                    }
                     continue 'main_loop;
                 }
                 // `**` can still match nothing, so it's handled below.
@@ -1269,6 +1223,7 @@ fn run<const STRICT: bool>(
                         {
                             if !STRICT
                                 && state.seen != Seen::Odd
+                                && !(kept.layout.open == state.glob_index && kept.layout.has_star)
                                 && let Some(taken) = take_plain_choice(
                                     glob,
                                     state.glob_index,
@@ -1307,15 +1262,8 @@ fn run<const STRICT: bool>(
                                         path_index: state.path_index as usize,
                                         is_committed: state.wildcard.path_index == 0,
                                         is_windows,
-                                        matches: match is_windows {
-                                            true => |pattern, text| {
-                                                match_on::<true>(pattern, text).matches()
-                                            },
-                                            false => |pattern, text| {
-                                                match_on::<false>(pattern, text).matches()
-                                            },
-                                        },
                                     },
+                                    &mut kept.layout,
                                 )
                             {
                                 #[cfg(debug_assertions)]
@@ -1556,12 +1504,24 @@ fn run<const STRICT: bool>(
                             if (state.path_index as usize) < path.len() {
                                 // source unicode char to match against the target + its byte length in `path`
                                 let (c, len) = decode_rune_at(path, state.path_index as usize);
-                                let class = match kept.class_at(glob, state.glob_index) {
-                                    Some(class) => Some((class.has(c), class.end)),
-                                    None => class_has_at(glob, state.glob_index, c),
+                                // The first time, it isn't worth it to keep anything.
+                                let (class, is_regular) = if kept.class_seen_at != state.glob_index
+                                    && c < 128
+                                    && let Some((has, close, is_regular)) = ascii_class::<true>(
+                                        glob,
+                                        state.glob_index as usize,
+                                        c as u8,
+                                    ) {
+                                    kept.class_seen_at = state.glob_index;
+                                    (Some((has, close as u32 + 1)), is_regular)
+                                } else {
+                                    let class = match kept.class_at(glob, state.glob_index) {
+                                        Some(class) => Some((class.has(c), class.end)),
+                                        None => class_has_at(glob, state.glob_index, c),
+                                    };
+                                    let is_kept = kept.class_index == state.glob_index;
+                                    (class, is_kept && kept.is_regular_class)
                                 };
-                                let is_regular =
-                                    kept.class_index == state.glob_index && kept.is_regular_class;
                                 let Some((has, end)) = class else {
                                     // An unclosed `[` is literal.
                                     see_odd_token!();
@@ -1723,9 +1683,9 @@ fn class_has_at(glob: &[u8], open: u32, c: u32) -> Option<(bool, u32)> {
 }
 
 /// [`match_class`] for callers outside the loop.
-#[inline(never)]
+#[inline]
 fn class_has(glob: &[u8], open: u32, c: u32) -> Option<bool> {
-    match_class(glob, open, c).map(|it| it.0)
+    class_has_at(glob, open, c).map(|it| it.0)
 }
 
 /// Counts the leading `!`s that negate the result.
@@ -1973,8 +1933,6 @@ struct Text<'a> {
     /// The loop has no `*` or `**` to go back to.
     is_committed: bool,
     is_windows: bool,
-    /// [`match_on`] for the platform.
-    matches: fn(&[u8], &[u8]) -> bool,
 }
 
 /// Result of [`match_written_out`].
@@ -2017,71 +1975,142 @@ impl Written {
     }
 }
 
+/// What [`match_written_out`] has to know about the pattern. The loop keeps this for the last group that it has asked about.
+#[derive(Copy, Clone)]
+struct Layout {
+    /// Index of the group.
+    open: u32,
+    /// Index of its `}`, or 0 if it can't be written out.
+    close: u32,
+    /// Where its alternatives end, and how many there are besides the last one.
+    commas: [u32; 4],
+    count: u8,
+    /// Index where what's written out ends.
+    end: u32,
+    /// That's the end of the pattern, because the group has a `/` or a `**`.
+    is_rest: bool,
+    has_globstar: bool,
+    /// The group has a `*`, so it's no [`Choice`].
+    has_star: bool,
+}
+
+impl Layout {
+    const NONE: Layout = Layout {
+        open: u32::MAX,
+        close: 0,
+        commas: [0; 4],
+        count: 0,
+        end: 0,
+        is_rest: false,
+        has_globstar: false,
+        has_star: false,
+    };
+
+    #[inline(always)]
+    fn read(glob: &[u8], open: usize) -> Option<Layout> {
+        if glob[open] != b'{' {
+            return None;
+        }
+        let mut commas = [0; 4];
+        let (mut count, mut close) = (0, 0);
+        // How many groups are open, which of those have had a `,`, and how many groups there have been.
+        let (mut depth, mut has_comma, mut groups) = (1, 0_u32, 1);
+        let (mut is_rest, mut has_globstar, mut has_star) = (false, false, false);
+        let mut end = open + 1;
+        while let Some(&ch) = glob.get(end) {
+            match ch {
+                _ if IS_TEXT[ch as usize] => {}
+                // The loop compares as many bytes as the first one announces. They must not go on into something else.
+                0x80.. => {
+                    let len = usize::from(strings::wtf8_byte_sequence_length(ch));
+                    if glob.get(end..end + len)?.iter().any(u8::is_ascii) {
+                        return None;
+                    }
+                    end += len - 1;
+                }
+                b'/' if depth == 0 && !is_rest => break,
+                b'/' => is_rest = true,
+                b',' if depth > 0 => {
+                    has_comma |= 1 << depth;
+                    if close == 0 && depth == 1 {
+                        *commas[..3].get_mut(count)? = end as u32;
+                        count += 1;
+                    }
+                }
+                b'{' if groups < 3 => {
+                    groups += 1;
+                    depth += 1;
+                    has_comma &= !(1 << depth);
+                }
+                // With one alternative it may be a sequence like `{1..3}`.
+                b'}' if has_comma & 1 << depth != 0 => {
+                    depth -= 1;
+                    if close == 0 && depth == 0 {
+                        close = end;
+                    }
+                }
+                b'*' => {
+                    has_star |= close == 0;
+                    if glob.get(end + 1) == Some(&b'*') {
+                        (is_rest, has_globstar) = (true, true);
+                        end += 1;
+                    }
+                }
+                b'?' => {}
+                b'[' => {
+                    let (after, may_be_separator) = class_shape(glob, end)?;
+                    if may_be_separator || glob[end + 1] == b'(' {
+                        return None;
+                    }
+                    end = after - 1;
+                }
+                _ => return None,
+            }
+            end += 1;
+        }
+        // A `**` right after the group is never a whole segment.
+        if depth > 0 || glob[close + 1..].starts_with(b"**") {
+            return None;
+        }
+        commas[count] = close as u32;
+        Some(Layout {
+            open: open as u32,
+            close: close as u32,
+            commas,
+            count: count as u8,
+            end: end as u32,
+            is_rest,
+            has_globstar,
+            has_star,
+        })
+    }
+}
+
 /// Matches without a [`Program`]: writes the pattern out once for each alternative of the group at `open`, and matches that.
 /// It writes out the segment that the group is in, which has to be a [`Segment`]. If the group has a `/` or a `**`, it's the rest of
 /// the pattern. Returns `None` unless that is short and has few groups and alternatives, which makes this the cheaper way.
 #[inline(never)]
-fn match_written_out(glob: &[u8], open: usize, text: &Text<'_>) -> Option<Written> {
-    if glob[open] != b'{' {
-        return None;
+fn match_written_out(
+    glob: &[u8],
+    open: usize,
+    text: &Text<'_>,
+    layout: &mut Layout,
+) -> Option<Written> {
+    if layout.open != open as u32 {
+        *layout = Layout::read(glob, open).unwrap_or(Layout {
+            open: open as u32,
+            ..Layout::NONE
+        });
     }
-    // Where the alternatives but the last one end, and where that one does.
-    let mut commas = [0; 4];
-    let (mut count, mut close) = (0, 0);
-    // How many groups are open, which of those have had a `,`, and how many groups there have been.
-    let (mut depth, mut has_comma, mut groups) = (1, 0_u32, 1);
-    let (mut is_rest, mut has_globstar) = (false, false);
-    let mut end = open + 1;
-    while let Some(&ch) = glob.get(end) {
-        match ch {
-            _ if IS_TEXT[ch as usize] => {}
-            // The loop compares as many bytes as the first one announces. They must not go on into something else.
-            0x80.. => {
-                let len = usize::from(strings::wtf8_byte_sequence_length(ch));
-                if glob.get(end..end + len)?.iter().any(u8::is_ascii) {
-                    return None;
-                }
-                end += len - 1;
-            }
-            b'/' if depth == 0 && !is_rest => break,
-            b'/' => is_rest = true,
-            b',' if depth > 0 => {
-                has_comma |= 1 << depth;
-                if close == 0 && depth == 1 {
-                    *commas[..3].get_mut(count)? = end;
-                    count += 1;
-                }
-            }
-            b'{' if groups < 3 => {
-                groups += 1;
-                depth += 1;
-                has_comma &= !(1 << depth);
-            }
-            // With one alternative it may be a sequence like `{1..3}`.
-            b'}' if has_comma & 1 << depth != 0 => {
-                depth -= 1;
-                if close == 0 && depth == 0 {
-                    close = end;
-                }
-            }
-            b'*' if glob.get(end + 1) == Some(&b'*') => {
-                (is_rest, has_globstar) = (true, true);
-                end += 1;
-            }
-            b'*' | b'?' => {}
-            b'[' => {
-                let (after, may_be_separator) = class_shape(glob, end)?;
-                if may_be_separator || glob[end + 1] == b'(' {
-                    return None;
-                }
-                end = after - 1;
-            }
-            _ => return None,
-        }
-        end += 1;
-    }
-    // A `**` right after the group is never a whole segment.
-    if depth > 0 || is_rest && !text.is_committed || glob[close + 1..].starts_with(b"**") {
+    let Layout {
+        commas,
+        count,
+        is_rest,
+        has_globstar,
+        ..
+    } = *layout;
+    let (close, end) = (layout.close as usize, layout.end as usize);
+    if close == 0 || is_rest && !text.is_committed {
         return None;
     }
     // The segment of the path that the loop is in.
@@ -2122,16 +2151,24 @@ fn match_written_out(glob: &[u8], open: usize, text: &Text<'_>) -> Option<Writte
     if is_written {
         written[seam..].copy_from_slice(after);
     }
-    commas[count] = close;
     let mut from = open + 1;
-    for &to in &commas[..=count] {
-        let alternative = &glob[from..to];
-        from = to + 1;
+    for &to in &commas[..=usize::from(count)] {
+        let alternative = &glob[from..to as usize];
+        from = to as usize + 1;
         // Most alternatives start with a literal that the path doesn't go on with.
         if before.is_empty()
             && let Some(first) = alternative.first()
             && IS_PLAIN[*first as usize]
             && path.first() != Some(first)
+        {
+            continue;
+        }
+        // Or end with one that the path doesn't end with.
+        if after.is_empty()
+            && let Some(last) = alternative.last()
+            && IS_TEXT[*last as usize]
+            && *last != b']'
+            && path.last() != Some(last)
         {
             continue;
         }
@@ -2159,7 +2196,8 @@ fn match_written_out(glob: &[u8], open: usize, text: &Text<'_>) -> Option<Writte
         {
             return None;
         }
-        if (text.matches)(pattern, path) {
+        let mode = Mode::on(Dots::Match, text.is_windows);
+        if match_from_first_byte(pattern, None, path, mode).matches {
             return Some(found(true));
         }
     }
@@ -2202,8 +2240,6 @@ fn may_end_with(pattern: &[u8], text: &[u8]) -> bool {
 struct Firsts {
     /// Index of the group.
     index: u32,
-    /// It's a `{a,b}` or `@(a|b)` of plain literals.
-    is_literal: bool,
     /// The first byte of each alternative, and how many there are. 0 if there are too many, or if one is empty.
     count: u8,
     bytes: [u8; 8],
@@ -2214,7 +2250,6 @@ struct Firsts {
 impl Firsts {
     const NONE: Firsts = Firsts {
         index: u32::MAX,
-        is_literal: false,
         count: 0,
         bytes: [0; 8],
         longest_at_end: None,
@@ -2267,7 +2302,6 @@ impl Firsts {
         if start == first {
             return;
         }
-        self.is_literal = true;
         if has_firsts {
             self.count = count as u8;
         }
@@ -2474,6 +2508,9 @@ impl AsciiClass {
 /// What the loop keeps about the tokens that it has looked at last, because it often comes back to them.
 struct Kept {
     firsts: Firsts,
+    layout: Layout,
+    /// Index of the last class that the loop has been at.
+    class_seen_at: u32,
     /// Index of `class`.
     class_index: u32,
     class: AsciiClass,
@@ -2484,6 +2521,8 @@ struct Kept {
 impl Kept {
     const NOTHING: Kept = Kept {
         firsts: Firsts::NONE,
+        layout: Layout::NONE,
+        class_seen_at: u32::MAX,
         class_index: u32::MAX,
         class: AsciiClass {
             members: 0,
@@ -2747,9 +2786,9 @@ pub struct Shape {
 }
 
 struct Known {
-    parsed: OnceLock<Parsed>,
+    parsed: Once<Parsed>,
     /// See [`Groups::segment_at`].
-    segment: OnceLock<Option<Box<Segment>>>,
+    segment: Once<Option<Box<Segment>>>,
 }
 
 impl Shape {
@@ -2772,8 +2811,8 @@ impl Shape {
     fn known(&self) -> &Known {
         self.known.get_or_init(|| {
             Arc::new(Known {
-                parsed: OnceLock::new(),
-                segment: OnceLock::new(),
+                parsed: Once::new(),
+                segment: Once::new(),
             })
         })
     }
@@ -2912,12 +2951,10 @@ fn take_plain_choice(
     let is_optional = glob[open as usize] == b'?';
     let is_separator = |it: u8| it == b'/' || is_windows && it == b'\\';
     let rest = &path[path_index as usize..];
-    // The lengths of the alternatives that `rest` starts with. `?(a)` has an empty one.
-    let mut lens = [0; 4];
-    let mut count = usize::from(is_optional);
-    let (mut has_one_length, mut has_slash) = (!is_optional, false);
-    let mut shortest = if is_optional { 0 } else { usize::MAX };
-    let mut first_end = 0;
+    // The lengths of the alternatives that `rest` starts with, one bit for each. `?(a)` has an empty one.
+    let mut lens = u64::from(is_optional);
+    let mut has_slash = false;
+    let (mut shortest, mut longest) = (if is_optional { 0 } else { usize::MAX }, 0);
     // Where the alternative being read starts.
     let mut start = first;
     let mut at = first;
@@ -2933,14 +2970,10 @@ fn take_plain_choice(
         loop {
             let ch = *glob.get(at)?;
             if ch == separator || ch == closer {
-                if first_end == 0 {
-                    first_end = at;
-                }
-                has_one_length &= at - start == first_end - first;
                 shortest = shortest.min(at - start);
+                longest = longest.max(at - start);
                 if is_start {
-                    *lens.get_mut(count)? = at - start;
-                    count += 1;
+                    lens |= 1_u64.checked_shl((at - start) as u32)?;
                 }
                 at += 1;
                 if ch == closer {
@@ -2976,20 +3009,20 @@ fn take_plain_choice(
     if !is_optional && start == first {
         return None;
     }
-    let (lens, after) = (&lens[..count], at);
+    let after = at;
     let mut taken = None;
     match glob.get(after) {
         None => {
-            for &len in lens {
-                if len == rest.len() {
-                    taken = Some(len);
-                }
+            if rest.len() < 64 && lens >> rest.len() & 1 == 1 {
+                taken = Some(rest.len());
             }
         }
         Some(b'/') => {
-            for &len in lens {
+            while lens != 0 {
+                let len = lens.trailing_zeros() as usize;
+                lens &= lens - 1;
                 if rest.get(len).is_none_or(|it| is_separator(*it)) {
-                    if taken.is_some_and(|it| it != len) {
+                    if taken.is_some() {
                         return None;
                     }
                     taken = Some(len);
@@ -2998,11 +3031,11 @@ fn take_plain_choice(
         }
         // What looks for the start of a segment of the pattern later on must not find that `/`.
         Some(_) if has_slash => return None,
-        Some(_) if has_one_length && first_end > first => taken = lens.first().copied(),
+        Some(_) if shortest == longest && shortest > 0 => taken = (lens != 0).then_some(shortest),
         Some(_) if pending == Pending::Star => return None,
         Some(b'*') if !matches!(glob.get(after + 1), Some(b'*' | b'(')) => {
             // The `*` makes up for what a shorter alternative leaves.
-            taken = lens.iter().copied().min();
+            taken = (lens != 0).then(|| lens.trailing_zeros() as usize);
             // After a `*`, an alternative that starts further to the right may end further to the left.
             if pending == Pending::StarBefore
                 && let Some(len) = taken
@@ -3013,11 +3046,13 @@ fn take_plain_choice(
         }
         Some(_) if pending == Pending::StarBefore => return None,
         Some(_) => {
-            for &len in lens {
+            while lens != 0 {
+                let len = lens.trailing_zeros() as usize;
+                lens &= lens - 1;
                 let mut index = 0;
                 let fits = loop {
                     match glob.get(after + index) {
-                        Some(wanted) if IS_PLAIN[*wanted as usize] => {
+                        Some(wanted) if IS_PLAIN[*wanted as usize] || *wanted >= 128 => {
                             if rest.get(len + index) != Some(wanted) {
                                 break false;
                             }
@@ -3027,7 +3062,7 @@ fn take_plain_choice(
                     }
                 };
                 if fits {
-                    if taken.is_some_and(|it| it != len) {
+                    if taken.is_some() {
                         return None;
                     }
                     taken = Some(len);
@@ -3100,7 +3135,7 @@ fn take_fixed_choice(
                 b'/' => has_slash = true,
                 b'?' if glob.get(at) == Some(&b'(') => return None,
                 b'[' => {
-                    let (_, close, is_regular) = ascii_class(glob, at - 1, 0)?;
+                    let (_, close, is_regular) = ascii_class::<true>(glob, at - 1, 0)?;
                     if !is_regular {
                         return None;
                     }
@@ -3119,7 +3154,7 @@ fn take_fixed_choice(
                     b'/' => is_separator(found),
                     b'?' | b'[' if found >= 128 => return None,
                     b'?' => !is_separator(found),
-                    b'[' => ascii_class(glob, at - 1, found)?.0,
+                    b'[' => ascii_class::<false>(glob, at - 1, found)?.0,
                     _ => found == ch,
                 };
                 if is_same {
@@ -3211,7 +3246,7 @@ fn take_fixed_choice(
                 let mut index = 0;
                 let fits = loop {
                     match glob.get(after + index) {
-                        Some(wanted) if IS_PLAIN[*wanted as usize] => {
+                        Some(wanted) if IS_PLAIN[*wanted as usize] || *wanted >= 128 => {
                             if rest.get(len + index) != Some(wanted) {
                                 break false;
                             }
@@ -3319,8 +3354,6 @@ struct Parsed {
     is_matched_often: bool,
     /// Number of `*`, `**`, `?` and classes, up to 2.
     wildcards: u8,
-    /// A [`Cache`] has no steps for bytes that aren't ASCII.
-    is_ascii: bool,
     /// All it has besides literal bytes is a `*` or `**` at the end, which the loop doesn't have to look at the path for.
     is_decided_at_once: bool,
     /// Index after the leading `!`s.
@@ -3331,7 +3364,7 @@ struct Parsed {
     /// Index in `alternatives` of the group that starts there, if one does.
     first_group: u32,
     /// Made when it's first needed.
-    program: OnceLock<Box<Program>>,
+    program: Once<Box<Program>>,
 }
 
 /// A group that [`Parsed::read`] hasn't seen the end of.
@@ -3372,19 +3405,17 @@ impl Parsed {
             is_one_segment: false,
             is_matched_often: false,
             wildcards: 0,
-            is_ascii: true,
             is_decided_at_once: false,
             top: 0,
             front_end: 0,
             first_group: u32::MAX,
-            program: OnceLock::new(),
+            program: Once::new(),
         }
     }
 
     /// Returns true if a [`Walk`] gives the same answers as the loop, and is faster once it has a [`Cache`].
     fn may_walk(&self) -> bool {
         self.is_regular
-            && self.is_ascii
             && !self.is_decided_at_once
             && (self.has_group || self.has_choice || self.wildcards >= 1)
     }
@@ -3572,7 +3603,6 @@ impl Parsed {
         self.is_one_segment = is_one_segment;
         self.has_choice = has_choice;
         self.wildcards = wildcards.min(2) as u8;
-        self.is_ascii = glob.is_ascii();
         let first = strings::index_of_any(glob, b"*?[");
         self.is_decided_at_once = !has_group
             && !has_choice
@@ -3742,8 +3772,8 @@ fn take_choice(
 
 /// Returns true if `c` is a path separator.
 #[inline(always)]
-fn is_separator<const WINDOWS: bool>(c: u8) -> bool {
-    c == b'/' || WINDOWS && c == b'\\'
+fn is_separator(c: u8, is_windows: bool) -> bool {
+    c == b'/' || is_windows && c == b'\\'
 }
 
 #[inline(always)]
@@ -3937,7 +3967,7 @@ struct Program {
     /// How many walks it has been through without a cache.
     walks: AtomicU8,
     /// A small cache, and a large one for when that is full.
-    caches: [OnceLock<Option<Box<Cache>>>; 2],
+    caches: [Once<Option<Box<Cache>>>; 2],
 }
 
 /// A group that [`Program::read`] hasn't seen the end of.
@@ -4123,7 +4153,7 @@ impl Program {
             sequences: Vec::new(),
             start: 0,
             walks: AtomicU8::new(0),
-            caches: [OnceLock::new(), OnceLock::new()],
+            caches: [Once::new(), Once::new()],
         }
     }
 
@@ -4506,7 +4536,7 @@ impl Program {
             self.walks.store(walks + 1, Ordering::Relaxed);
             return None;
         }
-        // Few patterns get to more than 40 states on the paths of a real tree. A small cache is about 3 KB, a large one 30.
+        // Few patterns get to more than 40 states on the paths of a real tree. A small cache is about 4 KB, a large one 35.
         let states = if is_large { 320 } else { 40 };
         Some(
             self.caches[usize::from(is_large)]
@@ -4942,12 +4972,10 @@ impl<S: Set> Walk<S> {
                     *set |= globstars & masks.trailing_skips;
                 }
             }
-            // After a byte that isn't ASCII, a character that starts further ahead may still go on with an earlier set.
-            let sets = if byte.is_some_and(|it| it >= 128) {
-                4
-            } else {
-                1
-            };
+            // No character goes on over a byte that starts one. Inside one, a character that starts further ahead may still go on
+            // with an earlier set.
+            let starts_character = !matches!(byte, Some(0x80..=0xBF));
+            let sets = if starts_character { 1 } else { 4 };
             if walk.sets[..sets]
                 .iter()
                 .all(|it| it.words().iter().all(|it| *it == 0))
@@ -4959,7 +4987,8 @@ impl<S: Set> Walk<S> {
             }
             if let Some(it) = cache
                 && (walk.index == on.first
-                    || on.path[walk.index - 1] < 128 && !on.is_closed_at(walk.index - 1))
+                    || (on.path[walk.index - 1] < 128 || it.has_characters && starts_character)
+                        && !on.is_closed_at(walk.index - 1))
             {
                 match it.state_of(walk.sets[0].words()) {
                     Some(state) => return Ok((state, walk.index)),
@@ -4975,16 +5004,23 @@ impl<S: Set> Walk<S> {
 /// set for an index follows from that byte and the set for the next index, so each such step is worked out once per pattern.
 /// After that it's one lookup.
 ///
+/// The same holds for a well-formed character of several bytes and the set for the index after it. Its last bytes lead through
+/// states that stand for no set, only for the state and the bytes that they come from.
+///
 /// Threads share it without a lock. Each entry of `steps` is complete in itself, and a state is never changed or removed.
 /// Two threads may add the same set as two states, which does no harm. When `states` is full, new steps are worked out each time.
 struct Cache {
     is_windows: bool,
+    /// It has steps for characters that aren't ASCII.
+    has_characters: bool,
     /// For each byte, where its entry is in the part of `steps` that belongs to a state.
     columns: [u8; 256],
     /// For each state: whether the pattern matches if the path starts here (`NO`, `YES`), then one entry per column:
     /// the state before that byte. A state is written as the index of its first column. 0 means not known yet.
+    /// For a state inside a character, the first entry is `INSIDE` plus 4 times the state after the character plus the number of
+    /// bytes between the two.
     steps: Box<[AtomicU32]>,
-    states: Box<[OnceLock<SmallVec<[u64; 2]>>]>,
+    states: Box<[Once<SmallVec<[u64; 2]>>]>,
     /// Number of states that are taken.
     taken: AtomicU32,
     is_full: AtomicBool,
@@ -4998,6 +5034,7 @@ impl Cache {
     const UNKNOWN: u32 = 0;
     const NO: u32 = 1;
     const YES: u32 = 2;
+    const INSIDE: u32 = 3;
     /// The state of the empty set, which is added first.
     const NOTHING: u32 = 1;
     /// Column of the bytes that always need a `Walk`. Its entries stay `UNKNOWN`.
@@ -5009,48 +5046,78 @@ impl Cache {
         if !program.sequences.is_empty() || program.masks.len() > 4 {
             return None;
         }
+        let on = program.on(glob, b"", 0, is_windows, Dots::Match);
+        // All characters that aren't ASCII are alike to a class or an escape that has none of them.
+        let has_characters = on.pattern.iter().enumerate().all(|(node, _)| {
+            let (masks, bit) = (&program.masks[node / 64], 1 << (node % 64));
+            let end = match () {
+                _ if masks.classes & bit != 0 => class_end(on.pattern, node).unwrap_or(node),
+                _ if masks.escapes & bit != 0 => (node + 2).min(on.pattern.len()),
+                _ => node,
+            };
+            on.pattern[node..end].is_ascii()
+        });
         // Bytes that no node tells apart share a column.
         let mut columns = [Cache::NOT_ASCII; 256];
         columns[..128].fill(1);
         let mut count = 2_u8;
+        // These ranges are all that it takes to tell whether a sequence of bytes is well-formed.
+        for range in [
+            0x80..=0x8F,
+            0x90..=0x9F,
+            0xA0..=0xBF,
+            0xC2..=0xDF,
+            0xE0..=0xE0,
+            0xE1..=0xEC,
+            0xED..=0xED,
+            0xEE..=0xEF,
+            0xF0..=0xF0,
+            0xF1..=0xF3,
+            0xF4..=0xF4,
+        ] {
+            if has_characters {
+                columns[range].fill(count);
+                count += 1;
+            }
+        }
         let mut split = |is_member: &dyn Fn(u8) -> bool| {
             // For each column, the new column of its members.
-            let mut moved = [0_u8; 130];
-            let mut has_others = [false; 130];
-            for byte in 0..128_u8 {
+            let mut moved = [0_u8; 256];
+            let mut has_others = [false; 256];
+            for byte in 0..=255_u8 {
                 has_others[columns[byte as usize] as usize] |= !is_member(byte);
             }
-            for byte in (0..128_u8).filter(|it| is_member(*it)) {
+            for byte in 0..=255_u8 {
                 let column = columns[byte as usize] as usize;
-                if has_others[column] {
+                if column != usize::from(Cache::NOT_ASCII) && has_others[column] && is_member(byte)
+                {
                     if moved[column] == 0 {
                         moved[column] = count;
-                        count += 1;
+                        count = count.checked_add(1)?;
                     }
                     columns[byte as usize] = moved[column];
                 }
             }
+            Some(())
         };
-        split(&|byte| byte == b'/' || is_windows && byte == b'\\');
-        let mut seen = [false; 128];
-        let on = program.on(glob, b"", 0, is_windows, Dots::Match);
+        split(&|byte| byte == b'/' || is_windows && byte == b'\\')?;
+        let mut seen = [false; 256];
         for (node, &wanted) in on.pattern.iter().enumerate() {
             let (masks, bit) = (&program.masks[node / 64], 1 << (node % 64));
             if (masks.classes | masks.escapes) & bit != 0 {
-                split(&|byte| on.takes(node, byte, u32::from(byte)));
-            } else if masks.bytes & bit != 0
-                && wanted < 128
-                && !std::mem::replace(&mut seen[wanted as usize], true)
+                split(&|byte| byte < 128 && on.takes(node, byte, u32::from(byte)))?;
+            } else if masks.bytes & bit != 0 && !std::mem::replace(&mut seen[wanted as usize], true)
             {
-                split(&|byte| byte == wanted);
+                split(&|byte| byte == wanted)?;
             }
         }
         let stride = u32::from(count) + 1;
         let mut cache = Box::new(Cache {
             is_windows,
+            has_characters,
             columns,
             steps: (0..states * stride).map(|_| AtomicU32::new(0)).collect(),
-            states: (0..states).map(|_| OnceLock::new()).collect(),
+            states: (0..states).map(|_| Once::new()).collect(),
             taken: AtomicU32::new(0),
             is_full: AtomicBool::new(false),
             stride,
@@ -5065,7 +5132,7 @@ impl Cache {
     fn state_of(&self, set: &[u64]) -> Option<u32> {
         let name = |index: usize| index as u32 * self.stride + 1;
         let taken = (self.states.len()).min(self.taken.load(Ordering::Relaxed) as usize);
-        let is_set = |it: &OnceLock<SmallVec<[u64; 2]>>| it.get().is_some_and(|it| **it == *set);
+        let is_set = |it: &Once<SmallVec<[u64; 2]>>| it.get().is_some_and(|it| **it == *set);
         if let Some(index) = self.states[..taken].iter().position(is_set) {
             return Some(name(index));
         }
@@ -5076,8 +5143,7 @@ impl Cache {
         let index = self.taken.fetch_add(1, Ordering::Relaxed) as usize;
         self.states
             .get(index)?
-            .set(SmallVec::from_slice(set))
-            .ok()?;
+            .get_or_init(|| SmallVec::from_slice(set));
         let answer = if set[0] & 1 != 0 {
             Cache::YES
         } else {
@@ -5098,15 +5164,15 @@ impl Cache {
             if state <= Cache::NOTHING {
                 return match state {
                     Cache::NOTHING => Answer::No,
-                    _ if *byte >= 128 => Answer::NotAscii,
+                    _ if *byte >= 128 && !self.has_characters => Answer::NotAscii,
                     _ => Answer::Unknown,
                 };
             }
         }
         match steps[state as usize - 1].load(Ordering::Relaxed) {
-            Cache::UNKNOWN => Answer::Unknown,
             Cache::YES => Answer::Yes,
-            _ => Answer::No,
+            Cache::NO => Answer::No,
+            _ => Answer::Unknown,
         }
     }
 
@@ -5139,7 +5205,7 @@ impl Cache {
                 index -= 1;
             }
             let answer = self.steps[state as usize - 1].load(Ordering::Relaxed);
-            if index == first && answer != Cache::UNKNOWN {
+            if index == first && matches!(answer, Cache::NO | Cache::YES) {
                 return answer == Cache::YES;
             }
         }
@@ -5171,6 +5237,7 @@ impl Cache {
                     && (byte == b'.' || index > 1 && path[index - 2] == b'.')
                     && on.is_closed_at(index - 1)
             {
+                (state, index) = self.after_character(state, index);
                 match self.leave(on, Some(state), index) {
                     Ok(found) => (state, index) = found,
                     Err(answer) => return answer,
@@ -5184,9 +5251,50 @@ impl Cache {
             index -= 1;
         }
         match self.steps[state as usize - 1].load(Ordering::Relaxed) {
-            Cache::UNKNOWN => on.walk(),
-            answer => answer == Cache::YES,
+            Cache::YES => true,
+            Cache::NO => false,
+            _ => on.walk(),
         }
+    }
+
+    /// For a state inside a character, returns the state and the index after the character.
+    fn after_character(&self, state: u32, index: usize) -> (u32, usize) {
+        match self.steps[state as usize - 1].load(Ordering::Relaxed) {
+            ..Cache::INSIDE => (state, index),
+            it => (
+                (it - Cache::INSIDE) / 4,
+                index + ((it - Cache::INSIDE) % 4) as usize,
+            ),
+        }
+    }
+
+    /// Remembers that `character` leads from the state `after` to the state `before`.
+    fn add_character(&self, after: u32, character: &[u8], before: u32) -> Option<()> {
+        let (first, others) = character.split_first()?;
+        let mut state = after;
+        for (count, byte) in others.iter().rev().enumerate() {
+            let step = &self.steps[state as usize + self.columns[*byte as usize] as usize];
+            state = match step.load(Ordering::Relaxed) {
+                Cache::UNKNOWN => {
+                    let index = self.taken.fetch_add(1, Ordering::Relaxed);
+                    if index as usize >= self.states.len() {
+                        self.is_full.store(true, Ordering::Relaxed);
+                        return None;
+                    }
+                    let inside = index * self.stride + 1;
+                    self.steps[inside as usize - 1].store(
+                        Cache::INSIDE + after * 4 + count as u32 + 1,
+                        Ordering::Relaxed,
+                    );
+                    step.store(inside, Ordering::Relaxed);
+                    inside
+                }
+                inside => inside,
+            };
+        }
+        self.steps[state as usize + self.columns[*first as usize] as usize]
+            .store(before, Ordering::Relaxed);
+        Some(())
     }
 
     /// Takes a step that isn't in `steps` from `state` at `index`, or from the end of the path.
@@ -5205,6 +5313,14 @@ impl Cache {
         if found.1 == index - 1 && byte < 128 && !on.is_closed_at(index - 1) {
             self.steps[state as usize + self.columns[byte as usize] as usize]
                 .store(found.0, Ordering::Relaxed);
+        }
+        let character = &on.path[found.1..index];
+        if byte >= 128
+            && self.has_characters
+            && on.dots == Dots::Match
+            && std::str::from_utf8(character).is_ok_and(|it| it.chars().count() == 1)
+        {
+            self.add_character(state, character, found.0);
         }
         Ok(found)
     }

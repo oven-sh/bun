@@ -334,7 +334,9 @@ impl Rule for Complexity {
         };
         Self::count(threshold, cx);
         // oxlint reports an initializer that is a function and the function at one place: the initializer first.
-        for (&member, &complexity) in &cx.state.of_fields {
+        for (&member, &complexity) in
+            utils::sort::in_order_of(&cx.state.of_fields, |it| it.0.span().start)
+        {
             self.report(Node::Member(member), complexity, cx);
         }
         let of_functions = &cx.state.of_functions;

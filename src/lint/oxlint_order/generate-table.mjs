@@ -41,7 +41,7 @@ const both = {
   "eslint/no-restricted-imports": "Once",
   "import/extensions": "Once",
   "jest/no-jasmine-globals": "Once",
-  "unicorn/prefer-number-properties": "Entering",
+  "unicorn/prefer-number-properties": "Once",
 };
 
 const kebab = module => module.split("::")[0].replaceAll("_", "-");
@@ -62,7 +62,8 @@ for (const [, plugin, module, body] of impls.matchAll(
     (kinds ? both[`${plugin}/${name}`] : "Last");
   if (!when) throw new Error(`${plugin}/${name} has several functions: see \`both\``);
   if (when === "Entering" && !kinds) throw new Error(`${plugin}/${name} is called with every node`);
-  rules.push({ plugin, name, when, kinds: when === "Entering" ? kinds : [] });
+  const isCalledWithNodes = when === "Entering" || `${plugin}/${name}` in both;
+  rules.push({ plugin, name, when, kinds: isCalledWithNodes ? kinds : [] });
 }
 
 // A rule has no number here: the table is sorted by the plugin and the name when it is read. That has to be oxlint's order.

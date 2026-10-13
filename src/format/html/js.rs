@@ -182,10 +182,10 @@ fn with_file(
     if !matches!(piece, Piece::Script(flavor) | Piece::Binding(flavor) if flavor.is_oxfmt()) {
         options.filepath.clone_from(&f.options().filepath);
     }
-    // The plugin that sorts classes takes over the parsers for programs and `__js_expression`, no other. Bindings are
-    // oxfmt's own, and it does not sort there.
+    // The plugin that sorts classes takes over the parsers for programs and `__js_expression`, no other. In oxfmt bindings
+    // are its own, and it does not sort there.
     let sorts_classes = match (piece, in_html.root) {
-        (Piece::Binding(_), _) => false,
+        (Piece::Binding(_), _) => (options.tailwind.as_deref()).is_some_and(|it| it.follows_plugin),
         (_, HtmlRoot::Program) => true,
         (_, HtmlRoot::JsExpression) => paths == [EXPRESSION_JSX],
         _ => false,

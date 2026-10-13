@@ -360,7 +360,8 @@ fn search(
                 Some(seen) if Arc::ptr_eq(&own, &directory.inherited) => seen,
                 _ => &own.config.see(&directory.path),
             };
-            let mut within = own.config.within(&directory.path, seen);
+            let within = own.config.within(&directory.path, seen);
+            let mut within = within.outside_of_react(!is_of_react);
             for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
                 let (mut real, mut is_loop) = (None, false);

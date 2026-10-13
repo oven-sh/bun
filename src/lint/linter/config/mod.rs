@@ -74,7 +74,7 @@ use super::resolved::{
 use super::schema;
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::language::{InferGlobals, LanguageOptions};
+use crate::language::{GlobalsOfOptions, InferGlobals, LanguageOptions};
 use crate::options::Json;
 use crate::paths;
 use crate::rule::{Meta, Plugin};
@@ -353,9 +353,9 @@ struct Heads {
     /// For each object, the number of its first element, and whether all of its elements are listed.
     objects: Vec<(u32, bool)>,
     /// For each extension that a pattern ends with, [packed](packed_extension): what can match a file that has it.
-    by_extension: Vec<(u64, Listed)>,
-    /// What can match a file with any other extension, or without one.
-    without_extension: Listed,
+    by_extension: Vec<(u64, OfExtension)>,
+    /// The same for a file with any other extension, or without one.
+    without_extension: OfExtension,
     /// A bit for each object that is [about directories](ConfigObject::is_about_directories).
     about_directories: Bits,
 }
@@ -374,6 +374,14 @@ fn has_bit(bits: &Bits, index: usize) -> bool {
 struct Listed {
     elements: Bits,
     objects: Bits,
+}
+
+/// What is known of the files with an extension.
+#[derive(Default)]
+struct OfExtension {
+    can_match: Listed,
+    /// One of these elements makes ESLint lint what it matches.
+    can_be_linted: bool,
 }
 
 /// What a path starts with that all of `patterns` match. One of them that says so is enough.
@@ -428,7 +436,11 @@ impl Heads {
                     found.objects[at / 64] |= 1 << (at % 64);
                 }
             }
-            found
+            let makes_linted = |it: &'o Vec<Pattern>| !it.iter().all(|it| it.is_universal);
+            OfExtension {
+                can_match: found,
+                can_be_linted: elements().any(|it| can_match(it) && makes_linted(it)),
+            }
         };
         let mut extensions: Vec<u64> = elements().flat_map(extensions_of).copied().collect();
         extensions.sort_unstable();
@@ -444,7 +456,7 @@ impl Heads {
     }
 
     /// What can match `path`, going by its extension.
-    fn of_extension(&self, path: &[u8]) -> &Listed {
+    fn of_extension(&self, path: &[u8]) -> &OfExtension {
         // A `/` in it is in no extension that is known.
         let extension = bun_core::strings::last_index_of_char(path, b'.')
             .and_then(|at| packed_extension(path.get(at + 1..)?));
@@ -563,6 +575,8 @@ pub struct Within<'c> {
     /// The objects that were merged last, and what they make.
     merged: Option<(Indices, Arc<ResolvedConfig>)>,
     said: Said,
+    /// [`Within::outside_of_react`]
+    is_outside_of_react: bool,
 }
 
 /// For objects that are [about directories](ConfigObject::is_about_directories), by their index: whether it is for the files of
@@ -594,6 +608,13 @@ impl Entry<'_> {
 }
 
 impl Within<'_> {
+    /// `is_it`: the directory is of a project that doesn't use React, so [`Within::get`] is to leave out what is for React
+    /// alone. It saves making the configuration with that: see [`ResolvedConfig::outside_of_react`].
+    pub fn outside_of_react(mut self, is_it: bool) -> Self {
+        self.is_outside_of_react = is_it && self.config.objects.iter().any(|it| it.is_for_react);
+        self
+    }
+
     /// The entry at `path`, and what the patterns see of it, which has a slash behind it for a directory. `None`: see
     /// [`BeforeName`].
     fn see<'w>(
@@ -679,9 +700,18 @@ impl Within<'_> {
             }
             config.matching(path, &parts, Some(&entry), must_match)
         };
-        let Some(matching) = matching else {
+        let Some(mut matching) = matching else {
             return FileConfig::Unconfigured;
         };
+        if self.is_outside_of_react {
+            let is_for_react = |index: u32| {
+                config
+                    .objects
+                    .get(index as usize)
+                    .is_some_and(|it| it.is_for_react)
+            };
+            matching.retain(|index| !is_for_react(*index));
+        }
         // Most files of a directory have the same.
         let merged = match self.merged.take().filter(|it| it.0 == matching) {
             Some(merged) => merged,
@@ -947,6 +977,7 @@ impl Config {
             relative: seen.before_name.clone().unwrap_or_default(),
             merged: None,
             said: Said::default(),
+            is_outside_of_react: false,
         }
     }
 
@@ -1048,7 +1079,11 @@ impl Config {
         let mut matching = Indices::new();
         let mut is_matched = false;
         let listed = self.heads.of(parts.path());
-        let by_extension = self.heads.of_extension(parts.path());
+        let of_extension = self.heads.of_extension(parts.path());
+        if must_match && !of_extension.can_be_linted {
+            return None;
+        }
+        let by_extension = &of_extension.can_match;
         for (index, object) in self.objects.iter().enumerate() {
             if !has_bit(&by_extension.objects, index)
                 || (listed.as_ref()).is_some_and(|found| !self.heads.allows_object(found, index))
@@ -1324,7 +1359,9 @@ impl Config {
         // oxlint has no such setting.
         config.has_unknown_resolver =
             !self.prefers_typescript_rules && flat::names_unknown_resolver(&settings);
-        config.language = LanguageOptions::from_json_for(&language_options, settings, whose);
+        let make = || GlobalsOfOptions::new(&language_options, whose);
+        let globals = self.cache.globals(&language_options, make);
+        config.language = LanguageOptions::from_json_with(&language_options, settings, globals);
         // oxlint has no `parser`.
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;

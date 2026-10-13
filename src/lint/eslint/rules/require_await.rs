@@ -111,6 +111,7 @@ fn report<'a>(func: Func<'a>, cx: &Cx<'a, RequireAwait>) {
         false => ast_utils::get_function_head_loc(func),
     };
     cx.report(place, MISSING_AWAIT)
+        .called_with(func)
         .data("name", name)
         .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| {
             let file = fixer.file();

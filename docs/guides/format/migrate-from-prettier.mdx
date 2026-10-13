@@ -92,30 +92,12 @@ Bun reads everything Prettier reads:
 
 ---
 
-Bun doesn't load Prettier plugins. The three that sort imports are built in, with all their options:
+Bun doesn't load Prettier plugins. These are built in, with all their options, so leave them in `plugins`:
 
+- `prettier-plugin-tailwindcss`
 - `@trivago/prettier-plugin-sort-imports`
 - `@ianvs/prettier-plugin-sort-imports`
 - `prettier-plugin-organize-imports`
-
----
-
-If you use `prettier-plugin-tailwindcss`, take it out of `.prettierrc` and turn on Bun's own [class sorting](/runtime/format#sort-tailwind-css-classes).
-
-```json .prettierrc icon="file-json"
-{
-  "plugins": ["prettier-plugin-tailwindcss"], // [!code --]
-  "tailwindFunctions": ["tw"], // [!code --]
-  "semi": false
-}
-```
-
-```toml bunfig.toml icon="settings"
-[fmt.sortTailwindcss]
-functions = ["tw"]
-```
-
-The order of the classes is the same. A few edge cases differ, like a class string inside a nested function call, so expect a small diff the first time.
 
 ---
 

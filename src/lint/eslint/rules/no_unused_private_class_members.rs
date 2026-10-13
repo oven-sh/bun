@@ -1,5 +1,5 @@
-use bun_core::strings;
 use super::no_unused_vars::is_pure;
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashMap;
@@ -7,8 +7,10 @@ use rustc_hash::FxHashMap;
 /// Disallow unused private class members.
 pub struct NoUnusedPrivateClassMembers;
 
-const UNUSED_PRIVATE_CLASS_MEMBER: Message =
-    Message::new("unusedPrivateClassMember", "'{{classMemberName}}' is defined but never used.");
+const UNUSED_PRIVATE_CLASS_MEMBER: Message = Message::new(
+    "unusedPrivateClassMember",
+    "'{{classMemberName}}' is defined but never used.",
+);
 const REMOVE_UNUSED_PRIVATE_CLASS_MEMBER: Message = Message::new(
     "removeUnusedPrivateClassMember",
     "Remove unused private class member '{{classMemberName}}'.",
@@ -55,7 +57,12 @@ fn is_value_context(e: Expr<'_>) -> bool {
             Node::Stmt(statement) => {
                 return matches!(
                     statement.tag(),
-                    StmtTag::Return | StmtTag::If | StmtTag::Switch | StmtTag::Throw | StmtTag::While | StmtTag::DoWhile
+                    StmtTag::Return
+                        | StmtTag::If
+                        | StmtTag::Switch
+                        | StmtTag::Throw
+                        | StmtTag::While
+                        | StmtTag::DoWhile
                 );
             }
             Node::Case(_) | Node::VarDecl(_) => return true,
@@ -90,11 +97,21 @@ fn is_value_context(e: Expr<'_>) -> bool {
             ExprKind::TaggedTemplate(call) => return call.callee() != child,
             ExprKind::Dot { .. } => return !parent.is_private_member(),
             ExprKind::Array(_) => return !parent.is_assignment_target(),
-            ExprKind::Spread(_) => return !parent.is_assignment_target() && parent.jsx_container_span().is_none(),
+            ExprKind::Spread(_) => {
+                return !parent.is_assignment_target() && parent.jsx_container_span().is_none();
+            }
             ExprKind::Jsx(_) => return child.jsx_container_span().is_some(),
-            ExprKind::Assign { value, .. } => return value == child && !parent.is_assignment_target(),
-            ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. }
-            | ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. }
+            ExprKind::Assign { value, .. } => {
+                return value == child && !parent.is_assignment_target();
+            }
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                ..
+            }
+            | ExprKind::Unary {
+                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                ..
+            }
             | ExprKind::Cond { .. }
             | ExprKind::As { .. }
             | ExprKind::AsConst(_)
@@ -102,7 +119,11 @@ fn is_value_context(e: Expr<'_>) -> bool {
             | ExprKind::NonNull(_)
             | ExprKind::Instantiation { .. } => {}
             // `#x in e`
-            ExprKind::Binary { op: BinOp::In, left, .. } if left.tag() == ExprTag::PrivateIdentifier => return false,
+            ExprKind::Binary {
+                op: BinOp::In,
+                left,
+                ..
+            } if left.tag() == ExprTag::PrivateIdentifier => return false,
             ExprKind::Binary { .. } | ExprKind::Unary { .. } => return true,
             _ => return false,
         }
@@ -113,7 +134,14 @@ fn is_value_context(e: Expr<'_>) -> bool {
 /// oxlint's `is_read`, of an `a.#x`.
 fn is_read_for_oxlint(access: Expr<'_>) -> bool {
     let is_cast = |e: Expr| {
-        matches!(e.tag(), ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation)
+        matches!(
+            e.tag(),
+            ExprTag::As
+                | ExprTag::AsConst
+                | ExprTag::Satisfies
+                | ExprTag::NonNull
+                | ExprTag::Instantiation
+        )
     };
     let mut top = access;
     while !top.is_chain_root()
@@ -130,11 +158,17 @@ fn is_read_for_oxlint(access: Expr<'_>) -> bool {
     match top.parent() {
         Node::Expr(parent) => match parent.kind() {
             // `a = this.#x += 1`
-            ExprKind::Assign { op: Some(_), target, .. } => {
-                target == top && !parent.is_assignment_target() && is_value_context(parent)
-            }
+            ExprKind::Assign {
+                op: Some(_),
+                target,
+                ..
+            } => target == top && !parent.is_assignment_target() && is_value_context(parent),
             ExprKind::Cond { test, .. } => is_bare && test == top,
-            ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, .. } => left == top,
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                left,
+                ..
+            } => left == top,
             _ => false,
         },
         Node::Stmt(statement) => match statement.kind() {
@@ -160,7 +194,11 @@ fn is_in_expression_statement(e: Expr<'_>) -> bool {
 fn is_write_only(access: Expr<'_>) -> bool {
     if let Node::Expr(parent) = access.parent() {
         match parent.kind() {
-            ExprKind::Assign { op: Some(_), target, .. } if target == access => {
+            ExprKind::Assign {
+                op: Some(_),
+                target,
+                ..
+            } if target == access => {
                 return is_in_expression_statement(parent);
             }
             ExprKind::Unary {
@@ -182,7 +220,8 @@ fn get_member_removal_range<'a>(file: &'a File<'a>, member: Member<'a>) -> Optio
         before.is_some_and(|before| file.line_of(before.end()) != file.line_of(at.start))
     };
     let previous_token = file.token_before(node)?;
-    let shares_line_with_another_token = file.line_of(previous_token.end()) == file.line_of(node.start)
+    let shares_line_with_another_token = file.line_of(previous_token.end())
+        == file.line_of(node.start)
         || file.line_of(file.token_after(node)?.start()) == file.line_of(node.end);
 
     // The first of the comments on the lines directly before the member.
@@ -190,7 +229,8 @@ fn get_member_removal_range<'a>(file: &'a File<'a>, member: Member<'a>) -> Optio
     let mut next = node;
     for comment in file.comments_before(node).rev() {
         let comment = comment.span();
-        if !starts_on_own_line(comment) || file.line_of(next.start) - file.line_of(comment.end) > 1 {
+        if !starts_on_own_line(comment) || file.line_of(next.start) - file.line_of(comment.end) > 1
+        {
             break;
         }
         first_leading_comment = Some(comment);
@@ -205,16 +245,26 @@ fn get_member_removal_range<'a>(file: &'a File<'a>, member: Member<'a>) -> Optio
             .map_or(node, Token::span),
     };
 
-    let next_token = file.tokens_after(last_item_to_remove).with_comments().next()?;
-    let next_token_starts_on_new_line = file.line_of(next_token.start()) > file.line_of(last_item_to_remove.end);
+    let next_token = file
+        .tokens_after(last_item_to_remove)
+        .with_comments()
+        .next()?;
+    let next_token_starts_on_new_line =
+        file.line_of(next_token.start()) > file.line_of(last_item_to_remove.end);
     let (mut start, mut end) = (node.start, last_item_to_remove.end);
     if let Some(first) = first_leading_comment.filter(|_| !shares_line_with_another_token) {
         (start, end) = match next_token_starts_on_new_line {
-            true => (line_start_index(first.start), line_start_index(next_token.start())),
+            true => (
+                line_start_index(first.start),
+                line_start_index(next_token.start()),
+            ),
             false => (first.start, next_token.start()),
         };
     } else if starts_on_own_line(node) && next_token_starts_on_new_line {
-        (start, end) = (line_start_index(node.start), line_start_index(next_token.start()));
+        (start, end) = (
+            line_start_index(node.start),
+            line_start_index(next_token.start()),
+        );
     } else if file.line_of(previous_token.end()) == file.line_of(node.start) {
         start = previous_token.end();
     } else if !next_token_starts_on_new_line {
@@ -240,7 +290,8 @@ impl NoUnusedPrivateClassMembers {
         if cx.language().is_oxlint {
             // A method without a body is none, nor is an `accessor`.
             let is_element = |member: &Member<'a>| {
-                !member.flags().contains(Flags::ACCESSOR) && member.func().is_none_or(Func::has_body)
+                !member.flags().contains(Flags::ACCESSOR)
+                    && member.func().is_none_or(Func::has_body)
             };
             for member in class.members().iter().filter(is_element) {
                 if let Some(KeyKind::Private(name)) = member.key().map(Key::kind) {
@@ -277,7 +328,10 @@ impl NoUnusedPrivateClassMembers {
                 cx.state.usages.push((Node::Expr(e), name));
             }
         }
-        for e in file.exprs_of_kind(ExprTag::Dot).filter(|it| it.is_private_member()) {
+        for e in file
+            .exprs_of_kind(ExprTag::Dot)
+            .filter(|it| it.is_private_member())
+        {
             if let Some(name) = e.member_name() {
                 cx.state.usages.push((Node::Expr(e), name.name()));
             }
@@ -291,7 +345,9 @@ impl NoUnusedPrivateClassMembers {
             return;
         }
         self.collect_usages(cx);
-        let State { declared, usages, .. } = std::mem::take(&mut cx.state);
+        let State {
+            declared, usages, ..
+        } = std::mem::take(&mut cx.state);
         let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
         // What is referred to, and whether it is read.
         let mut referenced: FxHashMap<(Class<'a>, Name<'a>), bool> = FxHashMap::default();
@@ -348,7 +404,11 @@ impl Rule for NoUnusedPrivateClassMembers {
             return;
         }
         self.collect_usages(cx);
-        let State { mut members, usages, .. } = std::mem::take(&mut cx.state);
+        let State {
+            mut members,
+            usages,
+            ..
+        } = std::mem::take(&mut cx.state);
         // The class whose body a node is in.
         let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
         for (usage, name) in usages {
@@ -365,7 +425,9 @@ impl Rule for NoUnusedPrivateClassMembers {
                 inner = Node::Class(class);
             }
         }
-        for ((_, name), member) in &members {
+        for ((_, name), member) in
+            utils::sort::in_order_of(&members, |it| it.1.declared.span().start)
+        {
             let (declared, has_reference) = (member.declared, member.has_reference);
             let Some(key) = declared.key().filter(|_| !member.is_used) else {
                 continue;

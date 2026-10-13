@@ -8,6 +8,7 @@
 //! `.editorconfig` counts, and which files are ignored (`files.rs`).
 
 use super::cli::{Options, Precedence};
+use super::tailwind::SetBy;
 use super::{editorconfig, tailwind};
 use crate::configs::NAMES_OF_VITE;
 use crate::gitignore::{self, Chain};
@@ -155,6 +156,8 @@ struct Override {
 struct Plugins {
     /// One of them is not built in: its options are not known here.
     names_others: bool,
+    /// One of them is `prettier-plugin-tailwindcss`.
+    sorts_classes: bool,
     /// Those that may print what this formatter formats in another way.
     missing: Vec<Vec<u8>>,
     /// How the names of the files end that they add to what Prettier reads.
@@ -219,14 +222,31 @@ fn patterns_of<'t>(all: impl Iterator<Item = &'t [u8]>, is_oxfmt: bool) -> Vec<P
     all.map(pattern).collect()
 }
 
-/// What the plugins that sort imports do is built in.
+const PLUGIN_FOR_CLASSES: &[u8] = b"prettier-plugin-tailwindcss";
+
+/// What the plugins that sort imports and classes do is built in.
 pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
     let name = package_of(name);
-    name.ends_with(b"/prettier-plugin-sort-imports") || name == b"prettier-plugin-organize-imports"
+    name.ends_with(b"/prettier-plugin-sort-imports")
+        || name == b"prettier-plugin-organize-imports"
+        || name == PLUGIN_FOR_CLASSES
+}
+
+/// What an element of `plugins` names. One that is no string is a module that a configuration in JavaScript has imported:
+/// the plugin that sorts classes is known by its options.
+fn name_of(plugin: &Json) -> Option<&[u8]> {
+    let is_for_classes = || plugin.get(b"options")?.get(b"tailwindConfig");
+    plugin
+        .as_str()
+        .or_else(|| is_for_classes().map(|_| PLUGIN_FOR_CLASSES))
+}
+
+fn is_plugin_for_classes(name: &[u8]) -> bool {
+    package_of(name) == PLUGIN_FOR_CLASSES
 }
 
 fn is_built_in(plugin: &Json) -> bool {
-    plugin.as_str().is_some_and(is_built_in_plugin)
+    name_of(plugin).is_some_and(is_built_in_plugin)
 }
 
 /// Plugins that add a language to Prettier and leave the others as they are, with how the names of its files end.
@@ -278,7 +298,7 @@ pub(super) fn is_missing_plugin(name: &[u8]) -> bool {
 }
 
 /// `value` as Prettier shows it in a warning: `["a", 1]`, `{ a: true }`.
-fn write_as_shown(out: &mut Vec<u8>, value: &Json) {
+pub(super) fn write_as_shown(out: &mut Vec<u8>, value: &Json) {
     let separate = |out: &mut Vec<u8>, index: usize| {
         if index > 0 {
             out.extend_from_slice(b", ");
@@ -345,6 +365,14 @@ fn settings(json: &Json, is_oxfmt: bool) -> Settings {
     for (name, value) in json.as_object().unwrap_or_default() {
         let is_option = OPTIONS.contains(&&name[..]);
         let text = match value {
+            // As JSON, a string too: the plugin that sorts classes refuses a value of the wrong type.
+            Json::Bool(_) | Json::Number(_) | Json::String(_)
+                if !is_oxfmt && name.starts_with(b"tailwind") =>
+            {
+                let mut text = Vec::new();
+                write_json(&mut text, value);
+                text
+            }
             Json::String(text) if is_option && !OPTIONS_WITH_STRINGS.contains(&&name[..]) => {
                 [b"\"", &text[..], b"\""].concat()
             }
@@ -735,14 +763,15 @@ impl Plugins {
         let plugins = json.get(b"plugins")?.as_array()?;
         Some(Plugins {
             names_others: !plugins.iter().all(is_built_in),
-            // One that is not a name is an object that a configuration in JavaScript has imported.
+            sorts_classes: (plugins.iter().filter_map(name_of)).any(is_plugin_for_classes),
             missing: (plugins.iter())
-                .map(|it| it.as_str().unwrap_or(b"(an object)"))
+                .map(|it| name_of(it).unwrap_or(b"(an object)"))
                 .filter(|it| is_missing_plugin(it))
                 .map(<[u8]>::to_vec)
                 .collect(),
             packages: (plugins.iter().filter_map(Json::as_str))
                 .filter(|it| !it.starts_with(b".") && !it.starts_with(b"/"))
+                .filter(|it| !it.starts_with(b"file:"))
                 .map(<[u8]>::to_vec)
                 .collect(),
             endings: (plugins.iter())
@@ -1513,6 +1542,12 @@ impl<'c> Configs<'c> {
             || !(self.options.plugins.iter()).all(|it| is_built_in_plugin(it))
     }
 
+    /// Whether the config or `--plugin` names `prettier-plugin-tailwindcss` for the file at `path`, which has `scope`.
+    fn names_plugin_for_classes(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
+        (self.plugins_for(scope, path)).is_some_and(|it| it.sorts_classes)
+            || (self.options.plugins.iter()).any(|it| is_plugin_for_classes(it))
+    }
+
     /// See [`Plugins::endings`], for the file at `path`, which has `scope`.
     fn endings_of_plugins<'s>(
         &'s self,
@@ -1706,7 +1741,18 @@ impl<'c> Configs<'c> {
         // Prettier knows the options of the plugins that it has loaded.
         let knows_all_options = !is_oxfmt && !self.names_other_plugins(scope, path);
         let mut unknown: Vec<(&[u8], &[u8])> = Vec::new();
+        // `sortTailwindcss` as the options of the plugin have it.
+        let mut of_plugin =
+            (!is_oxfmt && self.names_plugin_for_classes(scope, path)).then(Vec::new);
         for (name, value) in all {
+            if let Some(entries) = &mut of_plugin
+                && let Some(entry) = tailwind::option_of_plugin(name, value)
+            {
+                let entry = entry.map_err(Fatal)?;
+                entries.retain(|it: &(Vec<u8>, Json)| it.0 != entry.0);
+                entries.push(entry);
+                continue;
+            }
             match name {
                 SORT_IMPORTS_OF_BUN => _ = sort.set(name, value),
                 // An override of oxfmt changes the keys that it has. `experimentalSortImports` is the old name.
@@ -1774,7 +1820,8 @@ impl<'c> Configs<'c> {
         }
         for (name, value) in sort.of_plugins_not_named().chain(unknown) {
             // A string and what else there is in JSON are told apart by their looks here.
-            let json = json::parse(value).filter(|it| !matches!(it, Json::String(_)));
+            let is_json = name.starts_with(b"tailwind");
+            let json = json::parse(value).filter(|it| is_json || !matches!(it, Json::String(_)));
             let mut shown = Vec::new();
             write_as_shown(
                 &mut shown,
@@ -1788,10 +1835,26 @@ impl<'c> Configs<'c> {
             }
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
-        if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
-            // Paths in an oxfmt config are relative to that file. Paths in `[fmt]` are relative to the working directory.
-            let of_config = (config.filter(|it| it.is_oxfmt)).map(|it| paths::dirname(&it.path));
-            let places = (of_config, directory);
+        // A flag or `[fmt]` counts for more than the plugin.
+        let (value, set_by) = match (sort_tailwindcss, of_plugin, config) {
+            (Some(value), _, Some(config)) if config.is_oxfmt => {
+                (value, SetBy::Oxfmt(paths::dirname(&config.path)))
+            }
+            (Some(value), ..) => (value, SetBy::Bun),
+            (None, Some(entries), _) => {
+                if let Some(warning) = tailwind::warning_of_plugin(&entries) {
+                    self.warn(&[&warning]);
+                }
+                let mut value = Vec::new();
+                write_json(&mut value, &Json::Object(entries));
+                // Not the file that `--config` names.
+                let found = scope.config.as_ref().map(|it| paths::dirname(&it.path));
+                (value, SetBy::Plugin(found.unwrap_or(&self.environment.cwd)))
+            }
+            (None, None, _) => (b"false".to_vec(), SetBy::Bun),
+        };
+        if value != b"false" {
+            let places = (set_by, directory);
             let tailwind = tailwind::for_file(&self.classes, self.environment, &value, places);
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }

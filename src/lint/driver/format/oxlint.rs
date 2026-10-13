@@ -6,7 +6,6 @@ use bun_lint::linter::{LintMessage, RuleId, parse_rule_id};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::source::LineStarts;
-use bun_sema::util::FxHashMap;
 use std::cell::OnceCell;
 
 /// What oxlint says about a run.
@@ -30,49 +29,6 @@ pub(super) fn code(message: &LintMessage) -> Option<Vec<u8>> {
     let id = rule.to_vec();
     let (plugin, name) = parse_rule_id(&id);
     Some([scope_of(rule, plugin), b"(", name, b")"].concat())
-}
-
-/// [`code`], made once for each rule that is built in.
-#[derive(Default)]
-pub(super) struct Codes {
-    /// One after the other.
-    text: Vec<u8>,
-    /// By where the rule is: from where to where its code is in `text`.
-    places: FxHashMap<usize, (u32, u32)>,
-}
-
-impl Codes {
-    /// Writes `before` and the code of `message`, if it has one.
-    pub(super) fn write(&mut self, out: &mut Vec<u8>, before: &[u8], message: &LintMessage) {
-        let made;
-        let code = match &message.rule_id {
-            Some(RuleId::Known(meta)) => {
-                let rule = std::ptr::from_ref(*meta).addr();
-                let (start, end) = match self.places.get(&rule) {
-                    Some(place) => *place,
-                    None => {
-                        let start = self.text.len() as u32;
-                        self.text.extend(code(message).unwrap_or_default());
-                        let place = (start, self.text.len() as u32);
-                        self.places.insert(rule, place);
-                        place
-                    }
-                };
-                self.text
-                    .get(start as usize..end as usize)
-                    .unwrap_or_default()
-            }
-            _ => match code(message) {
-                Some(code) => {
-                    made = code;
-                    &made[..]
-                }
-                None => return,
-            },
-        };
-        out.extend_from_slice(before);
-        out.extend_from_slice(code);
-    }
 }
 
 /// [`scope`] for the prefix of `rule`. A plugin in JavaScript is called what it is called.

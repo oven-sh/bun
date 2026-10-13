@@ -132,8 +132,10 @@ impl ByPath {
             return None;
         }
         let folded = self.folded.get_or_init(|| {
-            let exact = self.exact.iter();
-            exact
+            // Of two that differ in case alone, the first counts.
+            let exact =
+                bun_lint::utils::sort::in_order_of(&self.exact, |it| std::cmp::Reverse(*it.1));
+            (exact.into_iter())
                 .map(|(path, &at)| (to_file_name_lower_case(path), at))
                 .collect()
         });

@@ -17,6 +17,7 @@
 //! resolved as Node.js resolves them, after `paths`: [`AsRequire::as_import`].
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 use bun_core::strings;
 use bun_glob::{BunGlobWalker, Pattern};

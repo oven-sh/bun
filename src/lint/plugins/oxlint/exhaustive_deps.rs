@@ -6,9 +6,10 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::codegen::{Codegen, print_expression};
-use rustc_hash::{FxHashMap, FxHashSet};
+use bun_lint_oxlint::hash_order::HashOrder;
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 
 const MISSING_CALLBACK: Message =
     Message::new("", "React hook {{hook}} requires an effect callback.");
@@ -383,19 +384,24 @@ fn order_in_table<'d, 'a>(
     inserted: &mut dyn Iterator<Item = (&'d Dependency<'a>, u32)>,
     symbols: &[(u32, u32)],
 ) -> Vec<u32> {
-    let mut table: FxHashSet<Hashed> = FxHashSet::default();
+    let (mut seen, mut table): (FxHashSet<Hashed>, HashOrder<u32>) =
+        (FxHashSet::default(), HashOrder::new());
     for (dependency, at) in inserted {
         let place = dependency.symbol.and_then(place_of_symbol);
-        table.insert(Hashed {
+        let hashed = Hashed {
             dependency,
             // oxc keeps the number so that `u32::MAX` is 0.
             symbol: place
                 .and_then(|it| symbols.binary_search(&it).ok())
                 .map(|it| it as u32 ^ u32::MAX),
-            at,
-        });
+        };
+        let hash = FxBuildHasher.hash_one(&hashed);
+        match seen.insert(hashed) {
+            true => table.insert(hash, at),
+            false => table.insert_again(),
+        }
     }
-    table.iter().map(|it| it.at).collect()
+    table.iter().collect()
 }
 
 /// Of `candidates`, which are positions in `declared`, the one that oxlint comes to first: it has them in a hash table.
@@ -427,7 +433,6 @@ struct Hashed<'d, 'a> {
     dependency: &'d Dependency<'a>,
     /// oxc's `SymbolId`
     symbol: Option<u32>,
-    at: u32,
 }
 
 /// As a `str` is hashed.

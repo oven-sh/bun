@@ -13,12 +13,18 @@ use std::collections::BinaryHeap;
 /// Enforces the Rules of Hooks.
 pub struct RulesOfHooks;
 
-pub(crate) const TRY_CATCH: Message = Message::new("", "React Hook \"{{hook}}\" cannot be called in a try/catch block.");
+pub(crate) const TRY_CATCH: Message = Message::new(
+    "",
+    "React Hook \"{{hook}}\" cannot be called in a try/catch block.",
+);
 pub(crate) const LOOP: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" may be executed more than once. Possibly because it is called in a loop. React Hooks must be called in the exact same order in every component render.",
 );
-const ASYNC: Message = Message::new("", "React Hook \"{{hook}}\" cannot be called in an async function.");
+const ASYNC: Message = Message::new(
+    "",
+    "React Hook \"{{hook}}\" cannot be called in an async function.",
+);
 const CONDITIONAL: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" is called conditionally. React Hooks must be called in the exact same order in every component render.{{hint}}",
@@ -65,7 +71,9 @@ fn starts_with_uppercase(name: Name) -> bool {
 fn is_hook(e: Expr) -> bool {
     match e.kind() {
         ExprKind::Ident(name) => is_hook_name(name.bytes()),
-        ExprKind::Dot { obj, name, .. } => is_hook_name(name.bytes()) && obj.as_ident().is_some_and(starts_with_uppercase),
+        ExprKind::Dot { obj, name, .. } => {
+            is_hook_name(name.bytes()) && obj.as_ident().is_some_and(starts_with_uppercase)
+        }
         _ => false,
     }
 }
@@ -73,8 +81,12 @@ fn is_hook(e: Expr) -> bool {
 /// Whether `callee` is a `use` that the file declares itself, other than by importing it from React. Playwright passes a function
 /// with that name to every fixture: `async ({ page }, use) => { await use(page); }`.
 fn is_use_of_the_file(callee: Expr) -> bool {
-    let is_from_react = |it| matches!(it, Declaration::ImportSpec(spec) if spec.import().spec().is("react"));
-    callee.is_ident("use") && callee.symbol().is_some_and(|symbol| !symbol.declarations().any(is_from_react))
+    let is_from_react =
+        |it| matches!(it, Declaration::ImportSpec(spec) if spec.import().spec().is("react"));
+    callee.is_ident("use")
+        && callee
+            .symbol()
+            .is_some_and(|symbol| !symbol.declarations().any(is_from_react))
 }
 
 /// [`is_hook`], minus what only has the name of a hook. With an ESLint or oxlint config the name alone decides, as in the plugin.
@@ -104,7 +116,8 @@ fn is_forward_ref_or_memo_callback(e: Expr) -> bool {
     match e.parent() {
         Node::Expr(parent) if !e.is_chain_root() => match parent.kind() {
             ExprKind::Call(call) | ExprKind::New(call) => {
-                is_react_function(call.callee(), "forwardRef") || is_react_function(call.callee(), "memo")
+                is_react_function(call.callee(), "forwardRef")
+                    || is_react_function(call.callee(), "memo")
             }
             _ => false,
         },
@@ -139,7 +152,9 @@ impl<'a> FunctionName<'a> {
     /// `isComponentName(name) || isHook(name)`
     fn is_component_or_hook(self) -> bool {
         match self {
-            FunctionName::Ident(name, _) => starts_with_uppercase(name) || is_hook_name(name.bytes()),
+            FunctionName::Ident(name, _) => {
+                starts_with_uppercase(name) || is_hook_name(name.bytes())
+            }
             FunctionName::Expr(e) => match e.kind() {
                 ExprKind::Ident(name) => starts_with_uppercase(name) || is_hook_name(name.bytes()),
                 _ => is_hook(e),
@@ -160,7 +175,10 @@ fn get_function_name(func: Func) -> Option<FunctionName> {
         return None;
     };
     match e.parent() {
-        Node::VarDecl(declarator) => Some(FunctionName::of_pattern(declarator.pat(), declarator.binding_span())),
+        Node::VarDecl(declarator) => Some(FunctionName::of_pattern(
+            declarator.pat(),
+            declarator.binding_span(),
+        )),
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Assign {
                 op: None,
@@ -173,13 +191,19 @@ fn get_function_name(func: Func) -> Option<FunctionName> {
             let key = prop.key()?;
             match key.kind() {
                 KeyKind::Ident(name) => Some(FunctionName::Ident(name, key.span(e.file()))),
-                KeyKind::String(_) | KeyKind::Number(_) => Some(FunctionName::Other(key.span(e.file()))),
+                KeyKind::String(_) | KeyKind::Number(_) => {
+                    Some(FunctionName::Other(key.span(e.file())))
+                }
                 _ => None,
             }
         }
         Node::Param(param) => Some(FunctionName::of_pattern(param.pat(), param.binding_span())),
-        Node::PatElem(element) => element.pat().map(|pat| FunctionName::of_pattern(pat, pat.span())),
-        Node::PatProp(prop) if prop.default() == Some(e) => Some(FunctionName::of_pattern(prop.value(), prop.value().span())),
+        Node::PatElem(element) => element
+            .pat()
+            .map(|pat| FunctionName::of_pattern(pat, pat.span())),
+        Node::PatProp(prop) if prop.default() == Some(e) => {
+            Some(FunctionName::of_pattern(prop.value(), prop.value().span()))
+        }
         _ => None,
     }
 }
@@ -203,14 +227,17 @@ pub(crate) struct Ranges {
 
 impl Ranges {
     pub(crate) fn new(ranges: impl Iterator<Item = Span>) -> Ranges {
-        let (mut starts, mut ends): (Vec<u32>, Vec<u32>) = ranges.map(|it| (it.start, it.end)).unzip();
+        let (mut starts, mut ends): (Vec<u32>, Vec<u32>) =
+            ranges.map(|it| (it.start, it.end)).unzip();
         starts.sort_unstable();
         ends.sort_unstable();
         Ranges { starts, ends }
     }
 
     pub(crate) fn count_around(&self, at: u32) -> usize {
-        self.starts.partition_point(|it| *it <= at).saturating_sub(self.ends.partition_point(|it| *it <= at))
+        self.starts
+            .partition_point(|it| *it <= at)
+            .saturating_sub(self.ends.partition_point(|it| *it <= at))
     }
 
     pub(crate) fn contains(&self, at: u32) -> bool {
@@ -237,11 +264,13 @@ pub(crate) struct Memo<'a> {
 
 impl<'a> Memo<'a> {
     pub(crate) fn do_while_loops(&self, file: &'a File<'a>) -> &Ranges {
-        self.do_while_loops.get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::DoWhile).map(Stmt::span)))
+        self.do_while_loops
+            .get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::DoWhile).map(Stmt::span)))
     }
 
     pub(crate) fn try_statements(&self, file: &'a File<'a>) -> &Ranges {
-        self.try_statements.get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::Try).map(Stmt::span)))
+        self.try_statements
+            .get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::Try).map(Stmt::span)))
     }
 
     fn is_inside_do_while_loop(&self, e: Expr<'a>) -> bool {
@@ -260,12 +289,17 @@ impl<'a> Memo<'a> {
             if !strings::contains(file.text(), SUPPRESSION) {
                 return Vec::new();
             }
-            let comments = file.comments().filter(|it| strings::contains(it.value(), SUPPRESSION));
+            let comments = file
+                .comments()
+                .filter(|it| strings::contains(it.value(), SUPPRESSION));
             let mut lines: Vec<u32> = comments.map(|it| file.line_of(it.end()) + 1).collect();
             lines.sort_unstable();
             lines
         });
-        !lines.is_empty() && lines.binary_search(&file.line_of(hook.span().start)).is_ok()
+        !lines.is_empty()
+            && lines
+                .binary_search(&file.line_of(hook.span().start))
+                .is_ok()
     }
 }
 
@@ -273,7 +307,11 @@ impl<'a> Memo<'a> {
 fn name_without_react_namespace(callee: Expr) -> Option<Name> {
     match callee.kind() {
         ExprKind::Ident(name) => Some(name),
-        ExprKind::Dot { obj, name, .. } if obj.is_ident("React") && !name.bytes().starts_with(b"#") => Some(name.name()),
+        ExprKind::Dot { obj, name, .. }
+            if obj.is_ident("React") && !name.bytes().starts_with(b"#") =>
+        {
+            Some(name.name())
+        }
         _ => None,
     }
 }
@@ -306,7 +344,8 @@ impl Count {
 
     fn times(self, other: Count) -> Count {
         Count {
-            residue: (u128::from(self.residue) * u128::from(other.residue) % u128::from(Count::MODULUS)) as u64,
+            residue: (u128::from(self.residue) * u128::from(other.residue)
+                % u128::from(Count::MODULUS)) as u64,
             is_zero: self.is_zero || other.is_zero,
         }
     }
@@ -360,7 +399,12 @@ struct ZeroGroup {
 impl Zeros {
     fn find(&mut self, group: usize) -> usize {
         let mut root = group;
-        while let Some(parent) = self.groups.get(root).map(|it| it.parent).filter(|it| *it != root) {
+        while let Some(parent) = self
+            .groups
+            .get(root)
+            .map(|it| it.parent)
+            .filter(|it| *it != root)
+        {
             root = parent;
         }
         let mut at = group;
@@ -374,7 +418,10 @@ impl Zeros {
     fn get(&mut self, segment: u32) -> Option<(usize, usize)> {
         let group = *self.group_of.get(&segment)?;
         let root = self.find(group);
-        self.groups.get(root).filter(|it| it.is_valid).map(|it| (it.cyclic_from, it.owner))
+        self.groups
+            .get(root)
+            .filter(|it| it.is_valid)
+            .map(|it| (it.cyclic_from, it.owner))
     }
 
     /// Makes a group for `segment`, which takes over the groups `owned`.
@@ -417,8 +464,13 @@ impl<'a> Paths<'a> {
             Direction::FromStart => segment.prev_segments(),
             Direction::ToEnd => segment.next_segments(),
         };
-        if let Some(outer) = self.outer.filter(|outer| outer.code_path() == segment.code_path()) {
-            all.retain(|it| it.id() <= outer.id() && (direction == Direction::FromStart || segment != outer));
+        if let Some(outer) = self
+            .outer
+            .filter(|outer| outer.code_path() == segment.code_path())
+        {
+            all.retain(|it| {
+                it.id() <= outer.id() && (direction == Direction::FromStart || segment != outer)
+            });
         }
         all
     }
@@ -467,11 +519,19 @@ impl<'a> Paths<'a> {
                     returned = Count::ZERO;
                 } else {
                     let is_thrown = self.thrown.contains(&segment.id());
-                    let neighbors = if is_thrown { Segments::new() } else { self.neighbors(segment, direction) };
+                    let neighbors = if is_thrown {
+                        Segments::new()
+                    } else {
+                        self.neighbors(segment, direction)
+                    };
                     positions.insert(segment.id(), stack.len());
                     stack.push(Frame {
                         segment,
-                        sum: if is_thrown || !neighbors.is_empty() { Count::ZERO } else { Count::ONE },
+                        sum: if is_thrown || !neighbors.is_empty() {
+                            Count::ZERO
+                        } else {
+                            Count::ONE
+                        },
                         neighbors,
                         next: 0,
                         cyclic_from: usize::MAX,
@@ -512,7 +572,8 @@ impl<'a> Paths<'a> {
                         self.from_start.remove(&segment.id());
                         match top.met.peek() {
                             Some(&owner) => {
-                                let group = zeros.add(segment.id(), top.cyclic_from, owner, &top.owned);
+                                let group =
+                                    zeros.add(segment.id(), top.cyclic_from, owner, &top.owned);
                                 if let Some(frame) = stack.get_mut(owner) {
                                     frame.owned.push(group);
                                 }
@@ -575,7 +636,11 @@ impl<'a> Paths<'a> {
                 entering = Some(prev);
                 continue;
             }
-            let length = if top.prev.is_empty() { 1 } else { top.length.saturating_add(1) };
+            let length = if top.prev.is_empty() {
+                1
+            } else {
+                top.length.saturating_add(1)
+            };
             self.shortest.insert(top.segment.id(), Some(length));
             stack.pop();
             if stack.is_empty() {
@@ -605,27 +670,42 @@ fn why_conditional<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<String> {
     for outer in inner.ancestors().take_while(|it| *it != Node::Func(func)) {
         let decides = match outer {
             Node::Case(_) => true,
-            Node::Stmt(it) => it.as_if().is_some_and(|(test, ..)| Node::Expr(test) != inner),
+            Node::Stmt(it) => it
+                .as_if()
+                .is_some_and(|(test, ..)| Node::Expr(test) != inner),
             Node::Expr(it) => match it.kind() {
                 ExprKind::Cond { test, .. } => Node::Expr(test) != inner,
-                ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, right, .. } => Node::Expr(right) == inner,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    right,
+                    ..
+                } => Node::Expr(right) == inner,
                 _ => false,
             },
             _ => false,
         };
         if decides {
             let line = file.line_of(outer.span().start);
-            return Some(format!("Whether it is called depends on the condition on line {line}."));
+            return Some(format!(
+                "Whether it is called depends on the condition on line {line}."
+            ));
         }
         inner = outer;
     }
-    let early = func.returns().filter(|it| it.span().end <= hook.span().start).min_by_key(|it| it.span().start)?;
+    let early = func
+        .returns()
+        .filter(|it| it.span().end <= hook.span().start)
+        .min_by_key(|it| it.span().start)?;
     let line = file.line_of(early.span().start);
-    Some(format!("The return on line {line} can end the render before it is called."))
+    Some(format!(
+        "The return on line {line} can end the render before it is called."
+    ))
 }
 
 impl Rule for RulesOfHooks {
-    const META: Meta = Meta::plugin(Plugin::ReactHooks, "rules-of-hooks", Kind::Problem).recommended().hints();
+    const META: Meta = Meta::plugin(Plugin::ReactHooks, "rules-of-hooks", Kind::Problem)
+        .recommended()
+        .hints();
     const ON: On = On::new().finish();
     type State<'a> = State<'a>;
 
@@ -638,14 +718,22 @@ impl Rule for RulesOfHooks {
         // A file has many times as many calls as names.
         let mut is_name_of_hook = ByName::default();
         let may_call_a_hook = file.mentions_name_of_hook();
-        for e in file.exprs_of_kind(ExprTag::Call).filter(|_| may_call_a_hook) {
+        for e in file
+            .exprs_of_kind(ExprTag::Call)
+            .filter(|_| may_call_a_hook)
+        {
             let Some(callee) = e.as_call().map(Call::callee) else {
                 continue;
             };
-            let Some(name) = callee.as_ident().or_else(|| callee.member_name().map(|it| it.name())) else {
+            let Some(name) = callee
+                .as_ident()
+                .or_else(|| callee.member_name().map(|it| it.name()))
+            else {
                 continue;
             };
-            if is_name_of_hook.get_or_insert_with(name, || is_hook_name(name.bytes())) && calls_hook(callee) {
+            if is_name_of_hook.get_or_insert_with(name, || is_hook_name(name.bytes()))
+                && calls_hook(callee)
+            {
                 state.calls.push(e);
             }
         }
@@ -700,9 +788,13 @@ fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<
                     | ExprKind::Spread(_)
                     | ExprKind::Unary { .. }
                     | ExprKind::Await(_) => !parent.is_assignment_target(),
-                    ExprKind::Binary { op, left, .. } => !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || left == child,
+                    ExprKind::Binary { op, left, .. } => {
+                        !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || left == child
+                    }
                     ExprKind::Cond { test, .. } => test == child,
-                    ExprKind::Assign { op: None, value, .. } => value == child && !parent.is_assignment_target(),
+                    ExprKind::Assign {
+                        op: None, value, ..
+                    } => value == child && !parent.is_assignment_target(),
                     _ => false,
                 };
                 if !is_always_evaluated {
@@ -710,11 +802,18 @@ fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<
                 }
                 child = parent;
             }
-            Node::VarDecl(declarator) if declarator.init() == Some(child) => match declarator.parent() {
-                Node::Stmt(statement) if !statement.is_wrapper() => break statement,
-                _ => return None,
-            },
-            Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Expr | StmtTag::Return) && !statement.is_wrapper() => break statement,
+            Node::VarDecl(declarator) if declarator.init() == Some(child) => {
+                match declarator.parent() {
+                    Node::Stmt(statement) if !statement.is_wrapper() => break statement,
+                    _ => return None,
+                }
+            }
+            Node::Stmt(statement)
+                if matches!(statement.tag(), StmtTag::Expr | StmtTag::Return)
+                    && !statement.is_wrapper() =>
+            {
+                break statement;
+            }
             // The body of an arrow function.
             Node::Func(func) => {
                 return Some(AtTheTop {
@@ -744,13 +843,17 @@ fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<
 fn roots_if_always_called<'a>(file: &'a File<'a>, calls: &[Expr<'a>]) -> Option<Vec<Node<'a>>> {
     const STEPS_FOR_EACH: usize = 32;
     let mut steps = STEPS_FOR_EACH * (calls.len() + 8);
-    let calls: Vec<AtTheTop<'a>> = calls.iter().map(|it| at_the_top_of_its_code_path(*it, &mut steps)).collect::<Option<_>>()?;
+    let calls: Vec<AtTheTop<'a>> = calls
+        .iter()
+        .map(|it| at_the_top_of_its_code_path(*it, &mut steps))
+        .collect::<Option<_>>()?;
     // For each code path, where the last of the statements starts.
     let mut last: FxHashMap<Node<'a>, u32> = FxHashMap::default();
     for call in &calls {
         let last = last.entry(call.root).or_insert(0);
         *last = call.before.end.max(*last);
     }
+    #[expect(clippy::iter_over_hash_type, reason = "whether any of them is so")]
     for (root, before) in &last {
         if let Node::Func(func) = root
             && func.returns().any(|it| it.span().start < *before)
@@ -759,8 +862,16 @@ fn roots_if_always_called<'a>(file: &'a File<'a>, calls: &[Expr<'a>]) -> Option<
         }
     }
     let before = Ranges::new(calls.iter().map(|it| it.before));
-    let ends_or_repeats = [StmtTag::Throw, StmtTag::For, StmtTag::While, StmtTag::DoWhile];
-    let earlier = ends_or_repeats.into_iter().flat_map(|tag| file.stmts_of_kind(tag)).filter(|it| before.contains(it.span().start));
+    let ends_or_repeats = [
+        StmtTag::Throw,
+        StmtTag::For,
+        StmtTag::While,
+        StmtTag::DoWhile,
+    ];
+    let earlier = ends_or_repeats
+        .into_iter()
+        .flat_map(|tag| file.stmts_of_kind(tag))
+        .filter(|it| before.contains(it.span().start));
     for statement in earlier {
         steps += STEPS_FOR_EACH;
         let mut around = Node::Stmt(statement).ancestors();
@@ -771,7 +882,10 @@ fn roots_if_always_called<'a>(file: &'a File<'a>, calls: &[Expr<'a>]) -> Option<
                 root => break root,
             }
         };
-        if root.and_then(|root| last.get(&root)).is_some_and(|before| statement.span().start < *before) {
+        if root
+            .and_then(|root| last.get(&root))
+            .is_some_and(|before| statement.span().start < *before)
+        {
             return None;
         }
     }
@@ -832,27 +946,40 @@ impl RulesOfHooks {
         // The routes, how many lead from the start to the end, and the length of the shortest.
         let mut analyzed = code_path.map(|code_path| {
             let mut paths = Paths {
-                thrown: code_path.thrown_segments().iter().map(|it| it.id()).collect(),
+                thrown: code_path
+                    .thrown_segments()
+                    .iter()
+                    .map(|it| it.id())
+                    .collect(),
                 cyclic: FxHashSet::default(),
                 from_start: FxHashMap::default(),
                 to_end: FxHashMap::default(),
                 shortest: FxHashMap::default(),
-                outer: hooks.iter().find_map(|it| it.0.filter(|segment| segment.code_path() != code_path)),
+                outer: hooks
+                    .iter()
+                    .find_map(|it| it.0.filter(|segment| segment.code_path() != code_path)),
             };
-            let all_paths_from_start_to_end = paths.count(code_path.initial_segment(), Direction::ToEnd);
+            let all_paths_from_start_to_end =
+                paths.count(code_path.initial_segment(), Direction::ToEnd);
             let mut shortest_final_path_length = INFINITY;
             for segment in code_path.final_segments() {
                 if segment.is_reachable() {
-                    shortest_final_path_length = shortest_final_path_length.min(paths.shortest_path_length_to_start(segment));
+                    shortest_final_path_length = shortest_final_path_length
+                        .min(paths.shortest_path_length_to_start(segment));
                 }
             }
-            (paths, all_paths_from_start_to_end, shortest_final_path_length)
+            (
+                paths,
+                all_paths_from_start_to_end,
+                shortest_final_path_length,
+            )
         });
 
         let func = node.as_func();
         let function_name = func.and_then(get_function_name);
         let follows_oxlint = oxlint::is_followed(cx.file());
-        let is_somewhere_inside_component_or_hook = !follows_oxlint && is_inside_component_or_hook(node, &mut memo.inside_component_or_hook);
+        let is_somewhere_inside_component_or_hook = !follows_oxlint
+            && is_inside_component_or_hook(node, &mut memo.inside_component_or_hook);
         let function_expr = match (node, func.map(Func::owner)) {
             (Node::Expr(e), _) | (_, Some(Node::Expr(e))) => Some(e),
             _ => None,
@@ -864,7 +991,9 @@ impl RulesOfHooks {
         // It is the value of a method or of a property of a class.
         let is_in_class = match (func.map(Func::owner), function_expr.map(Expr::parent)) {
             (Some(Node::Member(member)), _) => member.kind() != MemberKind::StaticBlock,
-            (_, Some(Node::Member(member))) => member.init() == function_expr && !member.flags().contains(Flags::ACCESSOR),
+            (_, Some(Node::Member(member))) => {
+                member.init() == function_expr && !member.flags().contains(Flags::ACCESSOR)
+            }
             _ => false,
         };
 
@@ -875,16 +1004,20 @@ impl RulesOfHooks {
                 is_cyclic: false,
                 is_conditional: false,
             };
-            if let Some((paths, all_paths_from_start_to_end, shortest_final_path_length)) = &mut analyzed {
+            if let Some((paths, all_paths_from_start_to_end, shortest_final_path_length)) =
+                &mut analyzed
+            {
                 flow.is_reachable = false;
                 if let Some(segment) = segment.filter(|it| it.is_reachable()) {
                     let length = paths.shortest_path_length_to_start(segment);
-                    possibly_has_early_return = match paths.neighbors(segment, Direction::ToEnd).is_empty() {
-                        true => *shortest_final_path_length <= length,
-                        false => *shortest_final_path_length < length,
-                    };
-                    let paths_from_start_to_end =
-                        paths.count(segment, Direction::FromStart).times(paths.count(segment, Direction::ToEnd));
+                    possibly_has_early_return =
+                        match paths.neighbors(segment, Direction::ToEnd).is_empty() {
+                            true => *shortest_final_path_length <= length,
+                            false => *shortest_final_path_length < length,
+                        };
+                    let paths_from_start_to_end = paths
+                        .count(segment, Direction::FromStart)
+                        .times(paths.count(segment, Direction::ToEnd));
                     flow = Flow {
                         is_reachable: true,
                         is_cyclic: paths.cyclic.contains(&segment.id()),
@@ -942,8 +1075,13 @@ impl RulesOfHooks {
                 };
                 report(message)
                     .data("hint", hint)
-                    .data("function", function_name.map_or(&b""[..], |it| cx.slice(it.span())))
-                    .hint_with(|| why_conditional(hook, func?).filter(|_| message.text == CONDITIONAL.text));
+                    .data(
+                        "function",
+                        function_name.map_or(&b""[..], |it| cx.slice(it.span())),
+                    )
+                    .hint_with(|| {
+                        why_conditional(hook, func?).filter(|_| message.text == CONDITIONAL.text)
+                    });
             }
         }
     }
@@ -969,7 +1107,9 @@ impl RulesOfHooks {
             };
             let is_effect_event = name.is("useEffectEvent");
             let is_effect = name.is_any(&["useEffect", "useLayoutEffect", "useInsertionEffect"])
-                || additional_effect_hooks.as_ref().is_some_and(|it| it.test(name.bytes()));
+                || additional_effect_hooks
+                    .as_ref()
+                    .is_some_and(|it| it.test(name.bytes()));
             if (is_effect || is_effect_event) && !call.args().is_empty() {
                 effects.push(e.span());
             }
@@ -978,7 +1118,8 @@ impl RulesOfHooks {
             }
             let parent = e.parent();
             let is_expression_statement = matches!(parent, Node::Stmt(stmt) if stmt.tag() == StmtTag::Expr && !stmt.is_wrapper());
-            if e.is_chain_root() || !(matches!(parent, Node::VarDecl(_)) || is_expression_statement) {
+            if e.is_chain_root() || !(matches!(parent, Node::VarDecl(_)) || is_expression_statement)
+            {
                 cx.report(e, EFFECT_EVENT_PASSED_DOWN);
             }
             // `recordAllUseEffectEventFunctions`
@@ -987,7 +1128,9 @@ impl RulesOfHooks {
                 && call.callee().tag() == ExprTag::Ident
                 && declarator.pat().tag() == PatTag::Ident
                 && let Some(symbol) = declarator.pat().symbol()
-                && let Some(declaring) = symbol.references().find(|it| it.span() == declarator.pat().span())
+                && let Some(declaring) = symbol
+                    .references()
+                    .find(|it| it.span() == declarator.pat().span())
                 && let Node::Func(func) = declaring.scope().node()
                 && matches!(func.kind(), FnKind::Decl | FnKind::Arrow)
                 && is_inside_component_or_hook(Node::Func(func), &mut inside_component_or_hook)
@@ -1007,12 +1150,23 @@ impl RulesOfHooks {
             };
             // The call that was entered last, if the walk has not left it.
             let entered = effects.partition_point(|it| it.start <= e.span().start);
-            if entered.checked_sub(1).and_then(|at| effects.get(at)).is_some_and(|it| it.contains(e.span())) {
+            if entered
+                .checked_sub(1)
+                .and_then(|at| effects.get(at))
+                .is_some_and(|it| it.contains(e.span()))
+            {
                 continue;
             }
-            let is_called = matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call);
-            let hint = if is_called { "" } else { " It cannot be assigned to a variable or passed down." };
-            cx.report(e, EFFECT_EVENT_FUNCTION).data("function", e.text()).data("hint", hint);
+            let is_called =
+                matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call);
+            let hint = if is_called {
+                ""
+            } else {
+                " It cannot be assigned to a variable or passed down."
+            };
+            cx.report(e, EFFECT_EVENT_FUNCTION)
+                .data("function", e.text())
+                .data("hint", hint);
         }
     }
 }

@@ -99,6 +99,18 @@ pub(crate) enum Fixes {
     Disabled,
 }
 
+/// Which rules run.
+#[derive(Copy, Clone, Default)]
+enum Which<'h> {
+    /// Those of the configuration.
+    #[default]
+    All,
+    /// It is only to be known whether it can be parsed.
+    None,
+    /// [`Context::with_help`]
+    WithHelp(&'h RuleFilter<'h>),
+}
+
 /// How a text is linted, if not like a file.
 #[derive(Copy, Clone, Default)]
 struct How<'h> {
@@ -111,12 +123,7 @@ struct How<'h> {
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
     /// [`File::is_later_script`]
     is_later_script: bool,
-    /// It is only to be known whether it can be parsed.
-    without_rules: bool,
-    /// [`Context::with_help`]
-    with_help: bool,
-    /// Which rules run.
-    only: Option<&'h RuleFilter<'h>>,
+    rules: Which<'h>,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -305,8 +312,7 @@ impl Context<'_, '_> {
         }
         let is_asked_about = |id: &RuleId, _: Severity| only.is_none_or(|only| only.contains(&id));
         let how = How {
-            with_help: true,
-            only: Some(&is_asked_about),
+            rules: Which::WithHelp(&is_asked_about),
             ..How::default()
         };
         self.verify_as(&path, text, &linted.config, &how).messages
@@ -315,7 +321,7 @@ impl Context<'_, '_> {
     /// Whether `text` can be parsed as the file at `path`.
     pub(crate) fn parses(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> bool {
         let how = How {
-            without_rules: true,
+            rules: Which::None,
             ..How::default()
         };
         let result = match Framework::of(path).filter(|_| config.language.is_oxlint) {
@@ -552,7 +558,8 @@ impl Context<'_, '_> {
         let options = self.lint_options();
         // Help on demand lints the text a second time. That only works for a file that's linted in one piece.
         let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();
-        let waits_for_demand = self.help_on_demand && is_whole && !as_what.with_help;
+        let is_for_help = matches!(as_what.rules, Which::WithHelp(_));
+        let waits_for_demand = self.help_on_demand && is_whole && !is_for_help;
         let options = LintOptions {
             again: as_what.again,
             wants_fixes: match as_what.fixes {
@@ -568,14 +575,14 @@ impl Context<'_, '_> {
             wants_messages: options.wants_messages || as_what.physical_path_len.is_some(),
             wants_places: options.wants_places || as_what.physical_path_len.is_some(),
             // JavaScript rules have no help, so there's no reason to run them again.
-            js_plugins: options.js_plugins.filter(|_| !as_what.with_help),
+            js_plugins: options.js_plugins.filter(|_| !is_for_help),
             parse_again: Some(parse_again),
             physical_path_len: as_what.physical_path_len,
-            rule_filter: match as_what.without_rules {
-                true => Some(&no_rule),
-                false => (as_what.script.map(|it| it.1))
-                    .or(as_what.only)
-                    .or(options.rule_filter),
+            rule_filter: match (as_what.rules, as_what.script) {
+                (Which::None, _) => Some(&no_rule),
+                (_, Some(script)) => Some(script.1),
+                (Which::WithHelp(only), None) => Some(only),
+                (Which::All, None) => options.rule_filter,
             },
             ..options
         };

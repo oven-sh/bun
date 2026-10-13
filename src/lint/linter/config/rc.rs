@@ -25,8 +25,9 @@ use crate::options::Json;
 use crate::paths;
 use crate::rule::{Meta, Plugin};
 use bun_core::strings;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::borrow::Cow;
+use std::hash::BuildHasher;
 use std::sync::{Arc, LazyLock};
 
 /// Whether `word` is one of the words of `list`, which have spaces between them.
@@ -330,21 +331,31 @@ fn written_rules(json: &Json) -> Vec<Written> {
 }
 
 /// oxlint's `Oxlintrc::merge`, of the rules: those of `extended` that `own` does not name are added, and all of them come out
-/// in the order of its hash table. The same hashes in the same table give the same order.
+/// in the order of its hash table, as that is on x86-64.
 fn merged(own: Vec<Written>, extended: Vec<Written>) -> Vec<Written> {
     fn text(it: &[u8]) -> &str {
         std::str::from_utf8(it).unwrap_or_default()
     }
     let mut all: Vec<Option<Written>> = own.into_iter().chain(extended).map(Some).collect();
-    let mut table: FxHashMap<(&str, &str), (usize, bool)> = FxHashMap::default();
+    // The first of each name, in the order in which they get into the table, and the hashes of the names.
+    let mut firsts: Vec<(usize, bool)> = Vec::new();
+    let mut hashes: Vec<u32> = Vec::new();
+    let mut places: FxHashMap<(&str, &str), usize> = FxHashMap::default();
     for (at, it) in all.iter().flatten().enumerate() {
-        table
-            .entry((text(&it.plugin), text(&it.name)))
-            .and_modify(|first| first.1 = true)
-            .or_insert((at, it.is_kept));
+        let name = (text(&it.plugin), text(&it.name));
+        match places.get(&name).and_then(|place| firsts.get_mut(*place)) {
+            Some(first) => first.1 = true,
+            None => {
+                places.insert(name, firsts.len());
+                hashes.push(FxBuildHasher.hash_one(name) as u32);
+                firsts.push((at, it.is_kept));
+            }
+        }
     }
-    let mut order = Vec::with_capacity(table.len());
-    order.extend(table.into_values());
+    let order = crate::semantic::order_in_table(&hashes, 0);
+    let order: Vec<(usize, bool)> = (order.iter())
+        .filter_map(|place| firsts.get(*place as usize).copied())
+        .collect();
     let in_order = order.iter().filter_map(|&(at, is_kept)| {
         let it = all.get_mut(at)?.take()?;
         Some(Written { is_kept, ..it })
@@ -566,7 +577,9 @@ impl Rc<'_, '_> {
             let known = last.entry(oxlint_rule_key(&it.id)).or_default();
             *known = (at, known.1 + 1 + usize::from(it.is_kept));
         }
-        let later = (last.into_values().filter(|it| it.1 > 1)).filter_map(|it| rules.get(it.0));
+        let later = last.into_values().filter(|it| it.1 > 1);
+        let later = crate::utils::sort::in_order_of(later, |it| it.0);
+        let later = later.iter().filter_map(|it| rules.get(it.0));
         let later: Vec<_> = later
             .map(|it| (it.id.clone(), it.setting.clone()))
             .collect();

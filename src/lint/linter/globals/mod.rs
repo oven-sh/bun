@@ -188,7 +188,7 @@ pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, 
         add(tables::COMMONJS.0, tables::COMMONJS.1);
     }
     let defined = all.len();
-    for (name, setting) in &language.globals {
+    for (name, setting) in language.globals.iter() {
         match all.iter_mut().take(defined).find(|it| *it.0 == **name) {
             Some(existing) => existing.1 = *setting,
             None => all.push((Cow::Owned(name.to_vec()), *setting)),
@@ -236,7 +236,7 @@ impl ConfigGlobals {
         }
         settings.extend(
             (language.env_behind_off.iter().rev())
-                .chain(&language.globals)
+                .chain(language.globals.iter())
                 .map(|(name, setting)| (Cow::Owned(name.to_vec()), *setting)),
         );
         // Of two with the same name, the later one counts.

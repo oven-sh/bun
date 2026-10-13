@@ -408,7 +408,7 @@ pub(crate) mod valid_expect_in_promise {
         };
         let (mut pending_promises, mut return_found) = (PendingPromises::default(), false);
         process_statements(statements, &mut pending_promises, &mut return_found, ctx);
-        for span in pending_promises.values() {
+        for span in utils::sort::in_order_of(pending_promises.values(), |it| it.start) {
             ctx.report(*span, EXPECT_IN_UNHANDLED_PROMISE);
         }
     }

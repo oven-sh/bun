@@ -46,6 +46,10 @@ impl Names {
         all
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty() && self.patterns.is_empty()
+    }
+
     /// Those that are no patterns.
     pub fn names(&self) -> &[Vec<u8>] {
         &self.names
@@ -75,6 +79,8 @@ pub struct Tailwind {
     pub attributes: Names,
     pub preserves_whitespace: bool,
     pub preserves_duplicates: bool,
+    /// `prettier-plugin-tailwindcss` in a Prettier config has turned it on: where oxfmt has rules of its own, the plugin's count.
+    pub follows_plugin: bool,
     pub orders: Box<dyn Orders>,
     /// See [`Tailwind::has_missed`].
     pub has_missed: AtomicBool,

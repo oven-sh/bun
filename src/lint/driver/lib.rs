@@ -8,6 +8,7 @@
 //! - [`fmt`]: the same for `bun fmt`.
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 // For what a flag like `--doctor`, `--rules` or `--init` runs once: `#[optimize(size)]` roughly halves it, and how fast it is
 // doesn't matter. Nothing that runs for each file has it.
 #![feature(optimize_attribute)]

@@ -131,7 +131,10 @@ pub(super) fn report(
             {
                 Some(Need::SkippedFiles)
             } else if let Some(file) = &file {
-                (loaded.iter().any(|it| it == name)).then(|| Need::Configuration(file.clone()))
+                let is_asked =
+                    name == b"prettier-plugin-tailwindcss" && configs.classes.asks_plugin();
+                (is_asked || loaded.iter().any(|it| it == name))
+                    .then(|| Need::Configuration(file.clone()))
             } else {
                 (is_oxfmt && matches!(name, b"oxfmt" | b"vite-plus")).then_some(Need::Defaults)
             }
@@ -246,11 +249,6 @@ pub(super) fn report(
         write_count(&mut out, colors, files.left_for_plugins, &what);
         let hint = "Use --allow-unsupported to format them without it";
         pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
-        if is_not_supported(b"prettier-plugin-tailwindcss") {
-            let hint =
-                "Or replace prettier-plugin-tailwindcss with [fmt.sortTailwindcss] in bunfig.toml";
-            pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
-        }
     }
     let rows: [(&str, &[Vec<u8>]); 5] = [
         ("Built-in plugins:", &plugins.built_in),

@@ -896,7 +896,10 @@ pub(crate) mod no_identical_title {
         // between `it('a')` and `test('a')` then keeps these two apart. It starts from the order of its list, and the sort is not
         // stable for more than 20: the same sort of as large elements in the same order does the same.
         let mut order = None;
-        for calls in title_to_calls.values_mut().filter(|it| it.len() > 1) {
+        let several = title_to_calls.values_mut().filter(|it| it.len() > 1);
+        let first =
+            |it: &&mut SmallVec<[Titled<'a>; 1]>| it.first().map(|it| it.argument.span().start);
+        for calls in utils::sort::in_order_of(several, first) {
             let order = order.get_or_insert_with(|| OxlintOrder::new(ctx.file));
             utils::sort::sort_by_cached_key(calls, |it| order.key(it.possible_jest_node));
             let mut kind_and_spans: Vec<(Span, bool, u32)> = calls

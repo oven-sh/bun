@@ -201,13 +201,7 @@ describe("emitBindgen", () => {
       const typesDir = resolve(String(dir), "types");
       const sources = /--sources=[^\s'"]+/.exec(n.toString().replaceAll("$:", ":"))![0];
       expect(
-        await bunRun([
-          "run",
-          script,
-          sources,
-          `--codegen-path=${cfg.codegenDir}`,
-          `--types-path=${typesDir}`,
-        ]),
+        await bunRun(["run", script, sources, `--codegen-path=${cfg.codegenDir}`, `--types-path=${typesDir}`]),
       ).toSpawn("");
 
       const written = readdirSync(cfg.codegenDir).sort();

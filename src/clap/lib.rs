@@ -368,6 +368,10 @@ impl Default for Help {
 #[derive(Default)]
 pub struct ParseOptions<'a> {
     pub diagnostic: Option<&'a mut Diagnostic>,
+    /// A trial parse must not print warnings before its caller selects a table.
+    pub suppress_warnings: bool,
+    /// Optional boolean values may also be separate `true` or `false` tokens.
+    pub optional_booleans: &'static [&'static [u8]],
     pub stop_after_positional_at: usize,
     /// Whole-token rewrites applied only where a token is being classified as a
     /// flag, never to an option's value or a `--` target. Node keeps its own
@@ -457,6 +461,8 @@ pub fn parse<Id: 'static>(
         &mut iter,
         ParseOptions {
             diagnostic: opt.diagnostic,
+            suppress_warnings: opt.suppress_warnings,
+            optional_booleans: opt.optional_booleans,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
@@ -478,6 +484,8 @@ pub fn parse_with_table<Id: 'static>(
         &mut iter,
         ParseOptions {
             diagnostic: opt.diagnostic,
+            suppress_warnings: opt.suppress_warnings,
+            optional_booleans: opt.optional_booleans,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,

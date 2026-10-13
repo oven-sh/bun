@@ -541,6 +541,8 @@ impl<Id> ComptimeClap<Id> {
             params: table.converted,
             iter,
             diagnostic: opt.diagnostic,
+            suppress_warnings: opt.suppress_warnings,
+            optional_booleans: opt.optional_booleans,
             state: streaming::State::Normal,
             positional: None,
             short_aliases: opt.short_aliases,

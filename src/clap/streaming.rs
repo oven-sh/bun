@@ -62,6 +62,8 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) state: State<'a>,
     pub(crate) positional: Option<&'p clap::Param<Id>>,
     pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
+    pub(crate) suppress_warnings: bool,
+    pub(crate) optional_booleans: &'static [&'static [u8]],
     pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
     pub(crate) unknown_long_flags_are_positional: bool,
 }
@@ -127,7 +129,19 @@ where
 
                         return Ok(Some(Arg {
                             param,
-                            value: maybe_value,
+                            value: maybe_value.or_else(|| {
+                                if self.optional_booleans.contains(&name)
+                                    && self
+                                        .iter
+                                        .remain()
+                                        .first()
+                                        .is_some_and(|value| matches!(*value, b"true" | b"false"))
+                                {
+                                    self.iter.next()
+                                } else {
+                                    None
+                                }
+                            }),
                         }));
                     }
 
@@ -158,7 +172,8 @@ where
                 // unrecognized command
                 // if flag else arg
                 if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
-                    if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
+                    if !self.suppress_warnings && WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed)
+                    {
                         bun_core::warn!(
                             "unrecognized flag: {}{}\n",
                             if arg_info.kind == ArgKind::Long {
@@ -175,7 +190,7 @@ where
                     return self.next();
                 }
 
-                if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
+                if !self.suppress_warnings && WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
                     bun_core::warn!("unrecognized argument: {}\n", bstr::BStr::new(name));
                     Output::flush();
                 }
@@ -382,6 +397,8 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
+            suppress_warnings: false,
+            optional_booleans: &[],
             short_aliases: &[],
             unknown_long_flags_are_positional: false,
             params,
@@ -416,6 +433,8 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
+            suppress_warnings: false,
+            optional_booleans: &[],
             short_aliases: &[],
             unknown_long_flags_are_positional: false,
             params,
@@ -889,6 +908,8 @@ mod tests {
         let args: &[&[u8]] = &[b"--q", b"x", b"--aa", b"--q=1", b"--", b"--aa"];
         let mut iter = args::SliceIterator { remain: args };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
+            suppress_warnings: false,
+            optional_booleans: &[],
             short_aliases: &[],
             unknown_long_flags_are_positional: true,
             params: &params,

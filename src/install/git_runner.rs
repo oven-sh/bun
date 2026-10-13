@@ -56,67 +56,21 @@ impl PackageManager {
 
 /// The command the running child is.
 enum Step {
+    /// `git fetch` in this cached bare repository (clone task).
+    Fetch(bun_sys::Dir),
     /// `git clone --bare <url> <tmp>` (clone task).
     Clone,
-    /// `git ls-remote origin <names>` (commit task).
-    LsRemote,
-    /// `git log -1 <rev>` (commit task).
-    Log(Lookup),
-    /// `git fetch origin <ref>`, then `git log -1` of this (commit task).
-    FetchRev(Vec<u8>),
-    /// `git cat-file -e <resolved>` in the bare repository (checkout task).
-    HasCommit,
-    /// `git fetch origin <resolved>` in the bare repository (checkout task).
-    FetchCommit,
-    /// `git fetch origin`, for a server that hands out no commit by its id (checkout task).
-    FetchDefault,
+    /// `git log -1 <committish>` (commit task).
+    Log,
     /// `git clone --no-checkout <bare repository> <tmp>` (checkout task).
     CheckoutClone,
     /// `git checkout <resolved>` in `<tmp>` (checkout task).
     Checkout,
 }
 
-struct Lookup {
-    /// A commit id or the committish. Empty: HEAD.
-    rev: Vec<u8>,
-    /// What to fetch if `rev` is not here. Empty: what a plain `git fetch` brings.
-    or_fetch: Option<Vec<u8>>,
-}
-
-/// The refs `committish` can name upstream. The first wins, as in git. `^{}`: the commit of an annotated tag.
-fn upstream_names(committish: &[u8]) -> Vec<Vec<u8>> {
-    let name = |prefix: &[u8], suffix: &[u8]| [prefix, committish, suffix].concat();
-    if committish.is_empty() {
-        vec![b"HEAD".to_vec()]
-    } else if committish.starts_with(b"refs/") {
-        vec![name(b"", b"^{}"), name(b"", b"")]
-    } else {
-        vec![
-            name(b"refs/tags/", b"^{}"),
-            name(b"refs/tags/", b""),
-            name(b"refs/heads/", b""),
-        ]
-    }
-}
-
-/// `(commit, ref)` of the first of `names` among the `<id>\t<ref>` lines of `git ls-remote`.
-fn find_upstream<'a>(stdout: &'a [u8], names: &'a [Vec<u8>]) -> Option<(&'a [u8], &'a [u8])> {
-    names.iter().find_map(|name| {
-        strings::split(stdout, b"\n").find_map(|line| {
-            let (id, line_name) = strings::split_once_char(line, b'\t')?;
-            (line_name == name.as_slice() && is_commit_id(id))
-                .then_some((id, name.strip_suffix(b"^{}").unwrap_or(name)))
-        })
-    })
-}
-
-fn is_commit_id(id: &[u8]) -> bool {
-    matches!(id.len(), 40 | 64) && id.iter().all(u8::is_ascii_hexdigit)
-}
-
 /// The filesystem tail of a clone or checkout task; `Task::callback` runs it on a pool worker.
 pub(crate) enum Finalize {
-    /// The bare repository exists (a cache hit).
+    /// The bare repository exists (a cache hit, or `git fetch` refreshed it).
     Repo(Fd),
     /// A fresh bare clone, to move into the cache.
     PublishRepo(CacheStaging),
@@ -579,17 +533,41 @@ impl GitSubprocess {
             }
         });
 
+        let offline = this.manager().options.offline
+            == crate::package_manager_real::options::OfflineMode::Offline;
         let folder_name = bare_repo_folder_name(this.task().id);
         match bun_sys::Dir::borrow(&this.cache_dir)
             .open_dir_z(&bun_core::ZBox::from_bytes(&folder_name))
         {
-            // The tasks that need a commit it lacks fetch that commit.
             Ok(dir) => {
-                Self::finish_on_pool(this, Finalize::Repo(dir.into_raw()));
-                Ok(())
+                // --prefer-offline still fetches: a stale clone may lack the pinned commit.
+                if offline {
+                    Self::finish_on_pool(this, Finalize::Repo(dir.into_raw()));
+                    return Ok(());
+                }
+                let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                    &this.manager().cache_directory_path,
+                    &[&folder_name],
+                )
+                .to_vec();
+                this.step.set(Step::Fetch(dir));
+                // A bare clone has no fetch refspec; --prune clears refs renamed upstream.
+                Self::spawn(
+                    this,
+                    &[
+                        b"-C",
+                        &path,
+                        b"fetch",
+                        b"--quiet",
+                        b"--prune",
+                        b"origin",
+                        b"+refs/heads/*:refs/heads/*",
+                        b"+refs/tags/*:refs/tags/*",
+                    ],
+                )
             }
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
-                if this.is_offline() {
+                if offline {
                     this.log_failure(format_args!(
                         "--offline: git repository for \"{}\" is not in the cache",
                         for_terminal(BStr::new(&this.name))
@@ -602,19 +580,6 @@ impl GitSubprocess {
                 Self::spawn_clone(this)
             }
             Err(err) => Err(err.into()),
-        }
-    }
-
-    fn is_offline(&self) -> bool {
-        self.manager().options.offline == crate::package_manager_real::options::OfflineMode::Offline
-    }
-
-    /// The next command of a task whose last one has exited. May free `this`.
-    fn then(this: ThisPtr<Self>, step: Step, args: &[&[u8]]) {
-        this.step.set(step);
-        this.reset_polls();
-        if let Err(err) = Self::spawn(this, args) {
-            Self::fail(this, err);
         }
     }
 
@@ -634,7 +599,7 @@ impl GitSubprocess {
                 b"core.longpaths=true",
                 b"--quiet",
                 b"--bare",
-                // Later commands name "origin". Not `-o origin`: git before 2.39 refuses it with --bare.
+                // The refresh fetches "origin" by name. Not `-o origin`: git before 2.39 refuses it with --bare.
                 b"-c",
                 b"clone.defaultRemoteName=origin",
                 b"--",
@@ -650,42 +615,28 @@ impl GitSubprocess {
     fn begin_commit(this: ThisPtr<Self>) -> Result<(), Error> {
         let req = this.task().request_git_commit();
         let committish = req.committish.slice().to_vec();
-        if !req.asks_upstream || this.is_offline() {
-            let lookup = Lookup {
-                rev: committish,
-                or_fetch: None,
-            };
-            return Self::spawn_log(this, lookup);
-        }
-        // A clone's refs are never written again: as files, upstream's `Dev` and `dev` are one on some disks.
-        let path = this.commit_repo_path();
-        let names = upstream_names(&committish);
-        let mut args: Vec<&[u8]> = vec![b"-C", &path, b"ls-remote", b"origin"];
-        args.extend(names.iter().map(Vec::as_slice));
-        this.step.set(Step::LsRemote);
-        Self::spawn(this, &args)
-    }
-
-    fn commit_repo_path(&self) -> Vec<u8> {
-        Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            &self.manager().cache_directory_path,
-            &[&bare_repo_folder_name(
-                self.task().request_git_commit().clone_id,
-            )],
+        let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+            &this.manager().cache_directory_path,
+            &[&bare_repo_folder_name(req.clone_id)],
         )
-        .to_vec()
-    }
-
-    /// May free `this` on `Ok`.
-    fn spawn_log(this: ThisPtr<Self>, lookup: Lookup) -> Result<(), Error> {
-        let path = this.commit_repo_path();
-        let rev = lookup.rev.clone();
-        let mut args: Vec<&[u8]> = vec![b"-C", &path, b"log", b"--format=%H", b"-1"];
-        if !rev.is_empty() {
-            args.extend_from_slice(&[b"--end-of-options", &rev]);
+        .to_vec();
+        this.step.set(Step::Log);
+        if committish.is_empty() {
+            Self::spawn(this, &[b"-C", &path, b"log", b"--format=%H", b"-1"])
+        } else {
+            Self::spawn(
+                this,
+                &[
+                    b"-C",
+                    &path,
+                    b"log",
+                    b"--format=%H",
+                    b"-1",
+                    b"--end-of-options",
+                    &committish,
+                ],
+            )
         }
-        this.step.set(Step::Log(lookup));
-        Self::spawn(this, &args)
     }
 
     // ── checkout ────────────────────────────────────────────────────────────
@@ -693,7 +644,9 @@ impl GitSubprocess {
     /// May free `this` on `Ok`.
     fn begin_checkout(this: ThisPtr<Self>) -> Result<(), Error> {
         bun_analytics::features::git_dependencies.fetch_add(1, Ordering::Relaxed);
-        let resolved = this.task().request_git_checkout().resolved.slice().to_vec();
+        let req = this.task().request_git_checkout();
+        let repo_dir = req.repo_dir;
+        let resolved = req.resolved.slice().to_vec();
         if !is_safe_resolved_tag(&resolved) {
             this.log_failure(format_args!(
                 "invalid git commit \"{}\" for \"{}\"",
@@ -715,23 +668,8 @@ impl GitSubprocess {
             Err(err) => return Err(err.into()),
         }
 
-        if !this.task().request_git_checkout().asks_upstream || this.is_offline() {
-            return Self::spawn_checkout_clone(this);
-        }
-        let repo_path = this.checkout_repo_path()?;
-        this.step.set(Step::HasCommit);
-        let commit = [resolved.as_slice(), b"^{commit}"].concat();
-        Self::spawn(this, &[b"-C", &repo_path, b"cat-file", b"-e", &commit])
-    }
-
-    fn checkout_repo_path(&self) -> Result<Vec<u8>, Error> {
-        let mut buf = Path::path_buffer_pool::get();
-        Ok(bun_sys::get_fd_path(self.task().request_git_checkout().repo_dir, &mut buf)?.to_vec())
-    }
-
-    /// May free `this` on `Ok`.
-    fn spawn_checkout_clone(this: ThisPtr<Self>) -> Result<(), Error> {
-        let repo_path = this.checkout_repo_path()?;
+        let mut repo_path_buf = Path::path_buffer_pool::get();
+        let repo_path = bun_sys::get_fd_path(repo_dir, &mut repo_path_buf)?.to_vec();
         let tmp_path = this.new_staging()?;
         this.step.set(Step::CheckoutClone);
         Self::spawn(
@@ -937,23 +875,21 @@ impl GitSubprocess {
                 && strings::contains(stderr, b"not")
                 && strings::contains(stderr, b"found"))
                 || strings::contains(stderr, b"does not exist"));
-        // Another command follows, and says what is wrong if it fails too.
-        let has_fallback = matches!(
-            step,
-            Step::Log(Lookup {
-                or_fetch: Some(_),
-                ..
-            }) | Step::HasCommit
-                | Step::FetchCommit
-        );
-        if !ok && !not_found && !has_fallback {
+        if !ok && !not_found {
             this.report_failure(status, stderr);
         }
         let name = for_terminal(BStr::new(&this.name));
         match step {
+            Step::Fetch(dir) => {
+                if ok {
+                    Self::finish_on_pool(this, Finalize::Repo(dir.into_raw()));
+                } else {
+                    this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
+                    Self::fail(this, Error::InstallFailed);
+                }
+            }
             Step::Clone => {
                 if ok {
-                    this.task().request_git_clone().is_fresh.set(true);
                     let staging = this.staging.take().expect("clone has a staging folder");
                     Self::finish_on_pool(this, Finalize::PublishRepo(staging));
                 } else if !not_found && !this.urls.get().is_empty() {
@@ -978,91 +914,13 @@ impl GitSubprocess {
                     );
                 }
             }
-            Step::LsRemote => {
-                if !ok {
-                    this.log_failure(format_args!("\"git ls-remote\" for \"{}\" failed", name));
-                    return Self::fail(this, Error::InstallFailed);
-                }
-                let committish = this.task().request_git_commit().committish.slice().to_vec();
-                let lookup = match find_upstream(stdout, &upstream_names(&committish)) {
-                    Some((id, name)) => Lookup {
-                        rev: id.to_vec(),
-                        or_fetch: Some(name.to_vec()),
-                    },
-                    // A commit id, or an expression like `main~1`.
-                    None => Lookup {
-                        or_fetch: Some(if is_commit_id(&committish) {
-                            committish.clone()
-                        } else {
-                            Vec::new()
-                        }),
-                        rev: committish,
-                    },
-                };
-                this.reset_polls();
-                if let Err(err) = Self::spawn_log(this, lookup) {
-                    Self::fail(this, err);
-                }
-            }
-            Step::Log(lookup) => match lookup.or_fetch {
-                _ if ok => {
-                    Self::finish_commit(this, Ok(strings::trim(stdout, b" \t\r\n").to_vec()));
-                }
-                Some(what) => {
-                    let path = this.commit_repo_path();
-                    let mut args: Vec<&[u8]> =
-                        vec![b"-C", &path, b"fetch", b"--quiet", b"--no-tags", b"origin"];
-                    if !what.is_empty() {
-                        args.push(&what);
-                    }
-                    Self::then(this, Step::FetchRev(lookup.rev), &args);
-                }
-                None => Self::fail(this, Error::InstallFailed),
-            },
-            Step::FetchRev(rev) => {
-                if !ok {
-                    this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
-                    return Self::fail(this, Error::InstallFailed);
-                }
-                this.reset_polls();
-                let lookup = Lookup {
-                    rev,
-                    or_fetch: None,
-                };
-                if let Err(err) = Self::spawn_log(this, lookup) {
-                    Self::fail(this, err);
-                }
-            }
-            Step::HasCommit | Step::FetchCommit | Step::FetchDefault if ok => {
-                this.reset_polls();
-                if let Err(err) = Self::spawn_checkout_clone(this) {
-                    Self::fail(this, err);
-                }
-            }
-            missing @ (Step::HasCommit | Step::FetchCommit) => {
-                let repo_path = match this.checkout_repo_path() {
-                    Ok(repo_path) => repo_path,
-                    Err(err) => return Self::fail(this, err),
-                };
-                let resolved = this.task().request_git_checkout().resolved.slice().to_vec();
-                let mut args: Vec<&[u8]> = vec![
-                    b"-C",
-                    &repo_path,
-                    b"fetch",
-                    b"--quiet",
-                    b"--no-tags",
-                    b"origin",
-                ];
-                if matches!(missing, Step::HasCommit) {
-                    args.push(&resolved);
-                    Self::then(this, Step::FetchCommit, &args);
+            Step::Log => {
+                let result = if ok {
+                    Ok(strings::trim(stdout, b" \t\r\n").to_vec())
                 } else {
-                    Self::then(this, Step::FetchDefault, &args);
-                }
-            }
-            Step::FetchDefault => {
-                this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
-                Self::fail(this, Error::InstallFailed);
+                    Err(Error::InstallFailed)
+                };
+                Self::finish_commit(this, result);
             }
             Step::CheckoutClone => {
                 if ok {

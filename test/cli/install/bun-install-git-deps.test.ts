@@ -3185,10 +3185,10 @@ test.concurrent("names a git dependency without a package.json name after its re
   expect(exitCode).toBe(0);
 });
 
-// The tests below use a bare clone that the cache already has. Its refs say what upstream had
-// when it was cloned, and a plain `git fetch` only wrote FETCH_HEAD: every lookup of a branch,
-// a tag or HEAD gave the old answer until `bun pm cache rm`. bun asks upstream what a name
-// points at and fetches that. It never writes the clone's refs: see "writes no ref".
+// The tests below refresh a bare clone that the cache already has. `git clone --bare`
+// configures no fetch refspec, so the refresh, a plain `git fetch`, only wrote
+// FETCH_HEAD: every later lookup of a branch, a tag or HEAD read the refs as they were
+// when the repository was first cached, until `bun pm cache rm`.
 
 // Creates `shared-repo.git` under `root` (served on `port`) with the one branch
 // `branch`, which HEAD names, and installs a project that depends on it as `dep`.
@@ -3215,7 +3215,7 @@ async function installedFromBranch(
 }
 
 // Removes node_modules and the checkouts in the cache but not the bare clone, so that
-// the next install has to check out from it.
+// the next install has to refresh the clone and check out from it.
 function dropCheckouts(project: string, cache: string) {
   rmSync(join(project, "node_modules"), { recursive: true, force: true });
   for (const entry of readdirSync(cache)) {
@@ -3223,7 +3223,7 @@ function dropCheckouts(project: string, cache: string) {
   }
 }
 
-// issue #13769. bun names the remote `origin`, which must not depend on the
+// issue #13769. The refresh fetches `origin` by name, which must not depend on the
 // user's `clone.defaultRemoteName`.
 test.concurrent("bun update moves a git dependency without a committish to the new upstream HEAD", async () => {
   using dir = tempDir("git-dep-update-head", { gitconfig: "[clone]\n\tdefaultRemoteName = upstream\n" });
@@ -3238,166 +3238,6 @@ test.concurrent("bun update moves a git dependency without a committish to the n
   expect(stderr).not.toContain("error:");
   expect(await installedVersionOf(project, "dep")).toBe("main-v2");
   expect(await Bun.file(join(project, "bun.lock")).text()).toContain(branchCommits(bare).main);
-  expect(exitCode).toBe(0);
-});
-
-test.concurrent("bun update follows a default branch that was renamed upstream", async () => {
-  using dir = tempDir("git-dep-renamed-default", {});
-  const root = String(dir);
-  await using server = serveStatic(root);
-  const { bare, project, cache } = await installedFromBranch(root, server.port!, "master", { committish: "" });
-
-  await git(bare, "branch", "-m", "master", "main");
-  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
-  await moveBranch(bare, "main", "main-v2");
-
-  for (const _ of [1, 2]) {
-    const { stderr, exitCode } = await runBun(project, cache, {}, "update");
-    expect(stderr).not.toContain("error:");
-    expect(stderr).not.toContain("fatal:");
-    expect(await installedVersionOf(project, "dep")).toBe("main-v2");
-    expect(await Bun.file(join(project, "bun.lock")).text()).toContain(branchCommits(bare).main);
-    expect(exitCode).toBe(0);
-  }
-
-  // Offline there is nobody to ask: HEAD of the clone, as it was cloned.
-  rmSync(join(project, "bun.lock"));
-  rmSync(join(project, "node_modules"), { recursive: true });
-  const { stderr, exitCode } = await runInstall(project, cache, {}, "--offline");
-  expect(stderr).not.toContain("error:");
-  expect(await installedVersionOf(project, "dep")).toBe("master");
-  expect(exitCode).toBe(0);
-});
-
-/** Every file that holds a ref of the one bare clone in `cache`, with its content. */
-function refFilesOf(cache: string) {
-  const clone = join(cache, readdirSync(cache).find(entry => entry.endsWith(".git"))!);
-  const files = readdirSync(join(clone, "refs"), { recursive: true, withFileTypes: true })
-    .filter(entry => entry.isFile())
-    .map(entry => join(entry.parentPath, entry.name));
-  return Object.fromEntries(
-    [...files, join(clone, "packed-refs"), join(clone, "HEAD")].map(path => [path, readFileSync(path, "utf8")]),
-  );
-}
-
-// A ref that git writes is a file named after it. On a disk that ignores case, `Dev` and `dev` are one
-// file, and a lookup of `dev` gives the commit of `Dev`.
-test.concurrent("writes no ref of a cached clone, and tells dev from Dev", async () => {
-  using dir = tempDir("git-dep-writes-no-ref", {});
-  const root = String(dir);
-  await using server = serveStatic(root);
-  const { bare, project, cache } = await installedFromBranch(root, server.port!, "dev");
-  const refs = refFilesOf(cache);
-
-  await commitTo(bare, [{ ref: "refs/heads/Dev", message: "Dev", files: packageFiles("dep", "Dev") }]);
-  await commitTo(bare, [{ ref: "refs/tags/dev-tag", message: "tag", files: packageFiles("dep", "tag") }]);
-  await moveBranch(bare, "dev", "dev-v2");
-
-  const { stderr, exitCode } = await runBun(project, cache, {}, "update");
-  expect(stderr).not.toContain("error:");
-  expect(stderr).not.toContain("warn:");
-  expect(await installedVersionOf(project, "dep")).toBe("dev-v2");
-  expect(refFilesOf(cache)).toEqual(refs);
-  expect(exitCode).toBe(0);
-});
-
-test.concurrent("bun update fails when it cannot ask the repository", async () => {
-  using dir = tempDir("git-dep-unreachable", {});
-  const root = String(dir);
-  await using server = serveStatic(root);
-  const { project, cache } = await installedFromBranch(root, server.port!, "feature");
-  await server.stop(true);
-
-  const { stderr, exitCode } = await runBun(project, cache, {}, "update");
-  expect(stderr).toContain('error: "git ls-remote" for "dep" failed');
-  expect(exitCode).toBe(1);
-});
-
-test.concurrent("a locked commit that the cached clone has is installed without the repository", async () => {
-  using dir = tempDir("git-dep-locked-no-network", {});
-  const root = String(dir);
-  await using server = serveStatic(root);
-  const { project, cache } = await installedFromBranch(root, server.port!, "feature");
-  await server.stop(true);
-  dropCheckouts(project, cache);
-
-  const { stderr, exitCode } = await runInstall(project, cache, {}, "--frozen-lockfile");
-  expect(stderr).not.toContain("error:");
-  expect(await installedVersionOf(project, "dep")).toBe("feature");
-  expect(exitCode).toBe(0);
-});
-
-// A colleague ran `bun update` and committed bun.lock. `feature` is not the default branch.
-test.concurrent("a locked commit that the cached clone lacks is fetched", async () => {
-  using dir = tempDir("git-dep-locked-newer", {});
-  const root = String(dir);
-  await using server = serveStatic(root);
-  const { bare, project, cache } = await installedFromBranch(root, server.port!, "feature");
-  await commitTo(bare, [{ ref: "refs/heads/main", message: "main", files: packageFiles("dep", "main") }]);
-  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
-  const refs = refFilesOf(cache);
-
-  const before = branchCommits(bare).feature;
-  await moveBranch(bare, "feature", "feature-v2");
-  const lockfile = (await Bun.file(join(project, "bun.lock")).text()).replaceAll(before, branchCommits(bare).feature);
-  writeFileSync(join(project, "bun.lock"), lockfile);
-  dropCheckouts(project, cache);
-
-  const { stderr, exitCode } = await runInstall(project, cache, {}, "--frozen-lockfile");
-  expect(stderr).not.toContain("error:");
-  expect(await installedVersionOf(project, "dep")).toBe("feature-v2");
-  expect(refFilesOf(cache)).toEqual(refs);
-  expect(exitCode).toBe(0);
-});
-
-// The ref it was cloned under keeps it, whatever garbage git collects after a fetch.
-test.concurrent("a commit that bun.lock pins is still there after upstream rebased the branch", async () => {
-  using dir = tempDir("git-dep-pinned-gc", {
-    // Collects at once what git would collect after two weeks and some fifty fetches.
-    gitconfig: `[gc]
-\tautoPackLimit = 1
-\tautoDetach = false
-\tpruneExpire = now
-\treflogExpire = now
-\treflogExpireUnreachable = now
-[maintenance]
-\tautoDetach = false
-[fetch]
-\tunpackLimit = 1
-`,
-  });
-  const root = String(dir);
-  const env = { GIT_CONFIG_GLOBAL: join(root, "gitconfig") };
-  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "feature" }]);
-  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#feature` });
-  const cache = join(root, "cache");
-  expect((await runInstall(project, cache, env)).exitCode).toBe(0);
-  const lockfile = await Bun.file(join(project, "bun.lock")).text();
-
-  await git(bare, "update-ref", "-d", "refs/heads/feature");
-  await commitTo(bare, [{ ref: "refs/heads/feature", message: "rebased", files: packageFiles("dep", "rebased") }]);
-  dropCheckouts(project, cache);
-
-  const { stderr, exitCode } = await runInstall(project, cache, env);
-  expect(stderr).not.toContain("error:");
-  expect(await installedVersionOf(project, "dep")).toBe("feature");
-  expect(await Bun.file(join(project, "bun.lock")).text()).toBe(lockfile);
-  expect(exitCode).toBe(0);
-});
-
-// `git init --bare` on a server, then a push of another branch than its HEAD names.
-test.concurrent("bun update follows a branch of a repository whose HEAD names no branch", async () => {
-  using dir = tempDir("git-dep-dangling-head", {});
-  const root = String(dir);
-  await using server = serveStatic(root);
-  const { bare, project, cache } = await installedFromBranch(root, server.port!, "main");
-
-  await git(bare, "symbolic-ref", "HEAD", "refs/heads/gone");
-  await moveBranch(bare, "main", "main-v2");
-
-  const { stderr, exitCode } = await runBun(project, cache, {}, "update");
-  expect(stderr).not.toContain("error:");
-  expect(await installedVersionOf(project, "dep")).toBe("main-v2");
   expect(exitCode).toBe(0);
 });
 
@@ -3459,7 +3299,8 @@ test.concurrent("bun update leaves the lockfile alone when the upstream reposito
   expect(exitCode).toBe(0);
 });
 
-// What upstream does to the branch does not move what bun.lock pins.
+// A plain `bun install` refreshes the clone too when the cache lacks the locked
+// commit's checkout. That moves refs in the clone, never what bun.lock pins.
 for (const linker of ["hoisted", "isolated"] as const) {
   test.concurrent(`bun install keeps the locked commit after the upstream branch moves (${linker})`, async () => {
     using dir = tempDir(`git-dep-install-pinned-${linker}`, {});

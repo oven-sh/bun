@@ -572,8 +572,6 @@ pub struct ExtractRequest<'a> {
 pub struct GitCloneRequest {
     pub(crate) name: StringOrTinyString,
     pub(crate) url: StringOrTinyString,
-    /// Cloned by this task, not found in the cache.
-    pub(crate) is_fresh: core::cell::Cell<bool>,
 }
 
 pub struct GitCommitRequest {
@@ -582,8 +580,6 @@ pub struct GitCommitRequest {
     pub(crate) name: StringOrTinyString,
     pub(crate) url: StringOrTinyString,
     pub(crate) committish: StringOrTinyString,
-    /// The clone is from an earlier run, so its refs say what upstream had then.
-    pub(crate) asks_upstream: bool,
 }
 
 pub struct GitCheckoutRequest {
@@ -593,8 +589,6 @@ pub struct GitCheckoutRequest {
     pub(crate) url: StringOrTinyString,
     pub(crate) resolved: StringOrTinyString,
     pub(crate) resolution: Resolution,
-    /// The clone is from an earlier run, so it may lack a commit that upstream has.
-    pub(crate) asks_upstream: bool,
 }
 
 pub struct LocalTarballRequest {

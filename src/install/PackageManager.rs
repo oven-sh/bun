@@ -362,8 +362,6 @@ pub struct PackageManager {
     pub manifests: PackageManifestMap,
     pub(crate) folders: FolderResolutionMap,
     pub(crate) git_repositories: RepositoryMap,
-    /// Those of `git_repositories` that this run cloned.
-    pub(crate) fresh_git_clones: Vec<Task::Id>,
     pub(crate) git_commits: GitCommitMap,
     /// Git tasks queued by `enqueue_git_task` and not yet started.
     pub(crate) git_tasks: VecDeque<NonNull<Task::Task<'static>>>,
@@ -1500,7 +1498,6 @@ fn allocate_package_manager(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
-        wr!(fresh_git_clones, Vec::new());
         wr!(git_commits, GitCommitMap::default());
         wr!(git_tasks, VecDeque::new());
         wr!(running_git_tasks, AtomicU32::new(0));

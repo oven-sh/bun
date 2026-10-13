@@ -1309,7 +1309,7 @@ module.exports = {
     test("another plugin can't take the name of one that is built in there", async () => {
       const plugins = `[{ name = "react", specifier = "demo" }]`;
       const { stdout, stderr, exitCode } = await lint({ ...project, ...config, ...bunfig(plugins, {}) }, ["src"]);
-      expect(stderr).toContain(`error: The plugin "react" is built in\n`);
+      expect(stderr).toContain(`error: The plugin "react" needs another name\n`);
       expect(stderr).toEndWith("\n    at bunfig.toml:2:12");
       expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
     });
@@ -1355,7 +1355,16 @@ module.exports = {
               const [prefix, name] = ruleId.split("/");
               const message = typeof plugins[prefix]?.rules[name]?.create === "function" ? "has it" : "does not have it";
               return { ruleId, severity: 2, message, line: 1, column: 1 };
-            });
+            }).concat(
+              // What a comment in the file can ask for: all of the plugin, not only the rules that are on.
+              Object.entries(plugins).map(([prefix, plugin]) => ({
+                ruleId: null,
+                severity: 1,
+                message: prefix + " is " + plugin.meta?.name + " with " + Object.keys(plugin.rules ?? {}).length + " listed",
+                line: 1,
+                column: 1,
+              })),
+            );
           }
           getSuppressedMessages() {
             return [];
@@ -1379,6 +1388,7 @@ module.exports = {
       expect(stderr).not.toContain("error:");
       expect(stdout).toContain("has it [Error/demo/no-foo]");
       expect(stdout).not.toContain("does not have it");
+      expect(stdout).toContain("demo is eslint-plugin-demo with ");
     });
   });
 
@@ -1407,6 +1417,34 @@ module.exports = {
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
   });
 
+  test("a built-in plugin's name turns it on, as `plugins` in an .oxlintrc.json or an .eslintrc.json does", async () => {
+    const files = { ...project, "src/a.js": "export const a = [1].map(x => <b>{x}</b>);\n" };
+    const react = bunfig(`["react"]`, { "react/jsx-key": "error" });
+    const [oxlint, without, eslintrc] = await Promise.all([
+      found({ ...files, ...react, ".oxlintrc.json": "{}" }),
+      found({ ...files, ".oxlintrc.json": `{ "rules": { "react/jsx-key": "error" } }` }),
+      found({
+        ...files,
+        ...react,
+        ...packaged("eslint-plugin-react", "react"),
+        ".eslintrc.json": `{ "root": true, "parserOptions": { "sourceType": "module", "ecmaVersion": 2022, "ecmaFeatures": { "jsx": true } } }`,
+      }),
+    ]);
+    expect(oxlint.found).toEqual(["1:22 react(jsx-key)"]);
+    // The control: that is what the plugin is needed for.
+    expect(without.found).toEqual([]);
+    expect(eslintrc).toEqual({ found: ["1:31 react/jsx-key"], stderr: "", exitCode: 1 });
+  });
+
+  test("another plugin can't take a built-in plugin's name next to an .oxlintrc.json", async () => {
+    const plugins = `[{ name = "react", specifier = "demo" }]`;
+    const { stderr, exitCode } = await lint({ ...project, ...bunfig(plugins, {}), ".oxlintrc.json": "{}" }, ["src"]);
+    expect(stderr).toContain(
+      `error: The plugin "react" needs another name\n  That one is a built-in plugin's: { name = "react-js", specifier = "eslint-plugin-demo" }\n`,
+    );
+    expect(exitCode).toBe(2);
+  });
+
   test("a name that oxlint keeps for rules that bun lint doesn't have", async () => {
     const files = { ...project, ...packaged("eslint-plugin-jsdoc", "jsdoc"), ".oxlintrc.json": "{}" };
     const refused = await lint({ ...files, ...bunfig(`["jsdoc"]`, {}) }, ["src"]);
@@ -1423,6 +1461,25 @@ module.exports = {
   test("a rule that is off doesn't have its options checked", async () => {
     const rules = { "demo/no-foo": ["off", { nam: "x" }] };
     expect((await found({ ...project, ...bunfig(`["demo"]`, rules) })).found).toEqual(["3:1 no-debugger"]);
+  });
+
+  test("the same package in a bunfig.toml elsewhere and by --plugin counts once", async () => {
+    using dir = tempDir("bun-lint", {
+      ...project,
+      "config/bunfig.toml": `[lint]\nplugins = ["demo"]\n[lint.rules]\n"demo/no-foo" = "warn"\n`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--config=config/bunfig.toml", "lint", "-f", "unix", "--plugin", "demo", "src"],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("[Warning/demo/no-foo]");
+    expect(exitCode).toBe(1);
   });
 
   test("a path is relative to the bunfig.toml that has it", async () => {

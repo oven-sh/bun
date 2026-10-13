@@ -71,7 +71,7 @@ The printer for style sheets returns no documents. It writes operations (text, l
 - `Message` is one enum for all languages. A text says what is wrong at the place that the offset points to, in our words: for something that is not closed, the place is where it was opened.
 - A parser that knows where it stands when it gives up needs no more than that: JSON's keeps its unit error, and the message is made from the state afterwards.
 - Words that are made at run time do not fit: TOML's are those of Bun's own parser, which the driver asks a second time (`toml::syntax_error`), only for a file that has been refused.
-- Line, column (UTF-16 code units, as Prettier counts) and frame are the driver's: `syntax_error_in_words` in `src/lint/driver/fmt/mod.rs`, with `bun_lint::utils::code_frame`.
+- Line and column (UTF-16 code units) are the driver's: `Problem::at` in `src/lint/driver/fmt/mod.rs`. It prints the error the way Bun prints every error.
 - `FormatError::SyntaxError`, without a place, is for scripts: the driver has the parser's diagnostics.
 - `format.test.ts` has a row for each language and kind of refusal.
 

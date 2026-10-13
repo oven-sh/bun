@@ -170,9 +170,6 @@ async function locatedPlugin(location, prefix) {
   if (location.rules !== undefined) {
     return { rules: Object.fromEntries(Object.entries(location.rules).map(([name, file]) => [name, require(file)])) };
   }
-  // `plugins` in bunfig.toml, and `--plugin`.
-  if (location.specifier !== undefined)
-    return (await findPlugin([location.directory, location.specifier, prefix])).plugin;
   if (location.module !== undefined) {
     // As `require.cache` has it, which is where it was found.
     let found;

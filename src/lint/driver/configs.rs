@@ -1013,22 +1013,12 @@ impl<'l> Loader<'l> {
         }
         if !options.plugin.is_empty() {
             // The others are `named_plugins`. By the name of the package, which is how the rules here know that it is theirs.
-            let aliased = |at: usize| {
-                options
-                    .plugins_of_bunfig
-                    .get(at)
-                    .is_some_and(|it| it.alias.is_some())
-            };
-            let plugins = (options.plugin.iter().enumerate())
-                .filter(|it| !aliased(it.0))
-                .map(|(_, name)| {
-                    (
-                        plugin_shorthand(name),
-                        plugin_longhand(name).unwrap_or_else(|| name.clone()),
-                    )
-                })
-                .filter(|it| Plugin::is_native_under_eslint(&it.0))
-                .map(|(short, long)| (short, Json::String(long)));
+            let plugins = self
+                .built_in_plugins(Plugin::is_native_under_eslint)
+                .map(|name| {
+                    let long = plugin_longhand(name).unwrap_or_else(|| name.clone());
+                    (plugin_shorthand(name), Json::String(long))
+                });
             first.push((b"plugins", Json::Object(plugins.collect())));
         }
         let mut all = vec![object(first)];
@@ -1232,7 +1222,13 @@ impl<'l> Loader<'l> {
                 );
             }
             apply_filters(entries, &options.filters, &inherited);
-            if !options.plugins.is_empty() {
+            let has_rules = |name: &[u8]| Plugin::spelled(name).any(|it| !it.has_no_rules());
+            let turned_on = self
+                .built_in_plugins(has_rules)
+                .map(|it| (plugin_shorthand(it), true));
+            let of_flags = options.plugins.iter().map(|it| (it.0.to_vec(), it.1));
+            let switches: Vec<(Vec<u8>, bool)> = of_flags.chain(turned_on).collect();
+            if !switches.is_empty() {
                 let mut plugins: Vec<Json> = match entries.iter().find(|it| it.0 == b"plugins") {
                     Some((_, Json::Array(plugins))) => plugins.clone(),
                     _ => [&b"unicorn"[..], b"typescript", b"oxc"]
@@ -1240,12 +1236,12 @@ impl<'l> Loader<'l> {
                         .map(|it| Json::String(it.to_vec()))
                         .collect(),
                 };
-                for (name, is_on) in &options.plugins {
+                for (name, is_on) in &switches {
                     plugins.retain(|it| {
                         it.as_str().map(plugin_of_oxlint) != Some(plugin_of_oxlint(name))
                     });
                     if *is_on {
-                        plugins.push(Json::String(name.to_vec()));
+                        plugins.push(Json::String(name.clone()));
                     }
                 }
                 entries.retain(|it| it.0 != b"plugins");
@@ -1281,7 +1277,7 @@ impl<'l> Loader<'l> {
                     (b"name", Json::String(plugin.name.to_vec())),
                     (
                         b"specifier",
-                        location.get(b"specifier").cloned().unwrap_or(Json::Null),
+                        location.get(b"module").cloned().unwrap_or(Json::Null),
                     ),
                 ])
             });
@@ -1294,7 +1290,7 @@ impl<'l> Loader<'l> {
         let mut load_plugin = |directory: &[u8], specifier: &[u8], alias: Option<&[u8]>| {
             let is_it = |it: &&NamedPlugin| {
                 alias == Some(&it.0.name[..])
-                    && it.1.get(b"specifier").and_then(Json::as_str) == Some(specifier)
+                    && it.1.get(b"module").and_then(Json::as_str) == Some(specifier)
             };
             if let Some(known) = named.iter().find(is_it) {
                 return Ok(Arc::clone(&known.0));
@@ -1357,14 +1353,15 @@ impl<'l> Loader<'l> {
             let long = plugin_longhand(specifier).filter(|_| !is_path);
             let package = long.as_deref().unwrap_or(specifier);
             let built_in = |name: &[u8]| {
-                let has_rules = Plugin::spelled(name).any(|it| !it.has_no_rules());
+                let why: &[u8] = match flavor {
+                    Flavor::BuiltIn => b"\" is built in\n  Its rules work without it, so remove it from plugins\n  To run the package as well, give it another name: { name = \"",
+                    Flavor::Oxlint if Plugin::spelled(name).all(|it| it.has_no_rules()) => b"\" needs another name\n  oxlint keeps that one for its own rules, which bun lint doesn't have: { name = \"",
+                    _ => b"\" needs another name\n  That one is a built-in plugin's: { name = \"",
+                };
                 let parts: [&[u8]; 7] = [
                     b"The plugin \"",
                     name,
-                    match has_rules {
-                        true => b"\" is built in\n  Its rules work without it, so remove it from plugins\n  To run the package as well, give it another name: { name = \"",
-                        false => b"\" needs another name\n  oxlint keeps that one for its own rules, which bun lint doesn't have: { name = \"",
-                    },
+                    why,
                     name,
                     b"-js\", specifier = \"",
                     package,
@@ -1376,10 +1373,14 @@ impl<'l> Loader<'l> {
             // By its name, before anything is looked for: `plugins = ["react"]` is what turns it on in oxlint.
             let short = plugin_shorthand(specifier);
             if !is_path && is_built_in(alias.unwrap_or(&short)) {
+                let has_rules = Plugin::spelled(&short).any(|it| !it.has_no_rules());
                 match (flavor, alias) {
-                    // `override_config` declares it, as if the file had it.
-                    (Flavor::Eslint, None) => continue,
-                    _ => return Err(built_in(alias.unwrap_or(&short))),
+                    (Flavor::BuiltIn, _) | (_, Some(_)) => {
+                        return Err(built_in(alias.unwrap_or(&short)));
+                    }
+                    (Flavor::Oxlint, None) if !has_rules => return Err(built_in(&short)),
+                    // It turns the plugin on, as in the file: see `built_in_plugins`.
+                    _ => continue,
                 }
             }
             // A path in bunfig.toml is relative to that file.
@@ -1422,14 +1423,12 @@ impl<'l> Loader<'l> {
             if is_built_in(&plugin.name) {
                 return Err(built_in(&plugin.name));
             }
-            let mut location = vec![
-                (&b"directory"[..], Json::String(directory.to_vec())),
-                (b"specifier", Json::String(found_as.to_vec())),
-            ];
-            if let Some(file) = &plugin.file {
-                location.push((b"module", Json::String(file.to_vec())));
-            }
-            let location = object(location);
+            // As for a plugin that a configuration file has imported.
+            let file = plugin.file.as_deref().unwrap_or(found_as);
+            let location = object(vec![
+                (b"module", Json::String(file.to_vec())),
+                (b"export", strings_of(&[b"default".to_vec()])),
+            ]);
             match plugins.iter().find(|it| it.0.name == plugin.name) {
                 None => plugins.push((plugin, location)),
                 // Named twice, by `--plugin` too.
@@ -1451,6 +1450,24 @@ impl<'l> Loader<'l> {
         Ok(plugins)
     }
 
+    /// The entries of `plugins` in bunfig.toml and of `--plugin` that `is_built_in` holds for, by their short names: they are not
+    /// loaded. With a configuration file they say what `plugins` in the file says.
+    fn built_in_plugins(
+        &self,
+        is_built_in: impl Fn(&[u8]) -> bool,
+    ) -> impl Iterator<Item = &Vec<u8>> {
+        let options = self.options;
+        let aliased = |at: usize| {
+            options
+                .plugins_of_bunfig
+                .get(at)
+                .is_some_and(|it| it.alias.is_some())
+        };
+        (options.plugin.iter().enumerate())
+            .filter(move |it| !aliased(it.0) && is_built_in(&plugin_shorthand(it.1)))
+            .map(|it| it.1)
+    }
+
     /// The object that has `named`, for a configuration of ESLint: there a rule is of a plugin that an object has.
     fn object_of_named(named: &[NamedPlugin]) -> Option<Json> {
         let entries = |of: &dyn Fn(&NamedPlugin) -> Json| {
@@ -1465,7 +1482,7 @@ impl<'l> Loader<'l> {
             object(vec![
                 (
                     b"plugins",
-                    entries(&|it| it.1.get(b"specifier").cloned().unwrap_or(Json::Null)),
+                    entries(&|it| it.1.get(b"module").cloned().unwrap_or(Json::Null)),
                 ),
                 (b"$jsPlugins", entries(&|it| it.1.clone())),
             ])
@@ -2056,10 +2073,13 @@ impl<'l> Loader<'l> {
             let parser_options = Json::Object(options.parser_options.clone());
             entries.push((b"parserOptions", parser_options));
         }
-        // Those of bunfig.toml are `named_plugins`.
-        let of_flag = &options.plugin[options.plugins_of_bunfig.len()..];
-        if !of_flag.is_empty() {
-            entries.push((b"plugins", strings_of(of_flag)));
+        // The others of bunfig.toml are `named_plugins`.
+        let count = options.plugins_of_bunfig.len();
+        let of_bunfig = self.built_in_plugins(Plugin::is_native_under_eslint);
+        let of_bunfig = of_bunfig.filter(|it| options.plugin[..count].contains(it));
+        let names: Vec<Vec<u8>> = of_bunfig.chain(&options.plugin[count..]).cloned().collect();
+        if !names.is_empty() {
+            entries.push((b"plugins", strings_of(&names)));
         }
         if !options.settings.is_empty() {
             entries.push((b"settings", Json::Object(options.settings.clone())));

@@ -14,8 +14,8 @@ use crate::rule::{Kind, Plugin, minor_of};
 use crate::runner::RuleEntry;
 use std::sync::Arc;
 
-/// A JavaScript plugin that is loaded already, and what `$jsPlugins` would have for it. These come from `plugins` in bunfig.toml
-/// and from `--plugin`.
+/// A JavaScript plugin that is loaded already, and what `$jsPlugins` would have for it: `{ module, export }`. These come from
+/// `plugins` in bunfig.toml and from `--plugin`.
 pub type NamedPlugin = (Arc<js_plugin::Plugin>, Json);
 
 /// Why a configuration cannot be used. The text is ESLint's where ESLint has one.
@@ -677,16 +677,10 @@ impl Reader<'_> {
             // ESLint's `Cannot redefine plugin`, for one of the file and a `NamedPlugin`. Those come first.
             let mut named = self.js_locations.iter().take(self.named);
             // The file can have imported the same package. Then it is one plugin, for ESLint too.
-            let exported = location.get(b"export").and_then(Json::as_array);
             let is_default = |it: &Json| it.as_str() == Some(b"default");
+            let exported = location.get(b"export").and_then(Json::as_array);
             let is_whole = exported.is_some_and(|it| it.len() <= 1 && it.iter().all(is_default));
-            let is_same = |it: &Json| {
-                *it == *location
-                    || is_whole
-                        && it
-                            .get(b"module")
-                            .is_some_and(|it| Some(it) == location.get(b"module"))
-            };
+            let is_same = |it: &Json| is_whole && it.get(b"module") == location.get(b"module");
             if named.any(|it| *it.0 == prefix[..] && !is_same(&it.1)) {
                 return Err(ConfigError::new(&[
                     b"The plugin \"",

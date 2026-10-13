@@ -17,6 +17,8 @@ pub(crate) struct FromParser<'p> {
     pub(crate) is_nested_too_deeply: bool,
     /// Where the last error is, if it is that only TypeScript has what is there.
     pub(crate) typescript_at: Option<usize>,
+    /// Where the last expression has been ended before an `as`, a `satisfies` or a `!`.
+    pub(crate) stopped_at: Option<usize>,
 }
 
 fn kind_of(e: Expr<'_>) -> ExpressionKind {
@@ -222,7 +224,10 @@ impl FromParser<'_> {
             }
             // Once more, with nothing to see of it.
             match (stops_at, typescript_at) {
-                (Some(it), _) => until = at + it as usize,
+                (Some(it), _) => {
+                    until = at + it as usize;
+                    self.stopped_at = Some(until);
+                }
                 (None, Some(it)) => {
                     self.typescript_at = Some(it);
                     return Err(it);

@@ -73,12 +73,24 @@ impl<'p> Parsers<'p> {
                 is_typescript: false,
                 is_nested_too_deeply: false,
                 typescript_at: None,
+                stopped_at: None,
             };
             let parsed = parser::parse(text, &mut js);
-            tree = parsed.map_err(|error| match js.typescript_at == Some(error.1 as usize) {
-                _ if js.is_nested_too_deeply => None,
-                true => Some(SyntaxError(Message::TypeScriptInJavaScript, error.1)),
-                false => Some(error),
+            tree = parsed.map_err(|error| {
+                // What was expected is not there because of the `as`: `{a as b}`, `{(a as b)}`.
+                let word = js.stopped_at.and_then(|it| {
+                    let between = text.get(it..error.1 as usize)?;
+                    let blanks = text[it..].len() - text[it..].trim_ascii_start().len();
+                    between.trim_ascii().is_empty().then_some(it + blanks)
+                });
+                let typescript_at = (js.typescript_at)
+                    .filter(|&it| it == error.1 as usize)
+                    .or(word);
+                match typescript_at {
+                    _ if js.is_nested_too_deeply => None,
+                    Some(at) => Some(SyntaxError(Message::TypeScriptInJavaScript, at as u32)),
+                    None => Some(error),
+                }
             });
         });
         tree

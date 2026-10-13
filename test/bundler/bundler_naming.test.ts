@@ -429,7 +429,7 @@ describe("bundler", () => {
       run: { file: "/out/node_modules/@scope/pkg/index.js", stdout: "1" },
     });
   }
-  // Named from the entry points as typed: [dir] is from the working directory.
+  // Named from the entry points as typed: [dir] is from the directory that they share.
   itBundled("naming/PluginEntryPointsWithoutTheirDirectory", {
     files: {},
     entryPointsRaw: ["routes/home.js", "routes/admin/users.js"],
@@ -441,8 +441,8 @@ describe("bundler", () => {
       }));
     },
     run: [
-      { file: "/out/routes/home.js", stdout: "routes/home.js" },
-      { file: "/out/routes/admin/users.js", stdout: "routes/admin/users.js" },
+      { file: "/out/home.js", stdout: "routes/home.js" },
+      { file: "/out/admin/users.js", stdout: "routes/admin/users.js" },
     ],
   });
 });

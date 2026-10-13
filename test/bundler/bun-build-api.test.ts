@@ -772,8 +772,9 @@ describe("Bun.build", () => {
       });
     });
 
-    test("a name that a plugin resolves is built from the working directory", async () => {
-      // The output is named from the entry point as typed, as it is with root: ".".
+    test("a name that a plugin resolves is built from the directory of that name", async () => {
+      // The output is named from the entry point as typed. When a plugin was asked for every entry
+      // point, the root is the directory that the names share, also when it does not exist.
       const result = await buildInChild(
         scopedPackage,
         `
@@ -795,9 +796,7 @@ describe("Bun.build", () => {
             symlinkSync("loop", "loop");
             const long = Buffer.alloc(300, "a").toString();
             result.symlinkLoop = await paths({ entrypoints: ["loop/routes.js"], plugins: [routes] });
-            result.longComponent = (await paths({ entrypoints: [long + "/routes.js"], plugins: [routes] })).map(path =>
-              path.replace(long, "<300 bytes>"),
-            );
+            result.longComponent = await paths({ entrypoints: [long + "/routes.js"], plugins: [routes] });
           }
           // Unchanged: the root is ./routes when that directory is there.
           mkdirSync("routes");
@@ -807,14 +806,14 @@ describe("Bun.build", () => {
       );
 
       expect(result).toEqual({
-        one: twice("routes/home.js"),
-        two: ["routes/home.js", "routes/admin/users.js"],
-        eight: [0, 1, 2, 3, 4, 5, 6, 7].map(i => `routes/p${i}.js`),
+        one: [["./home.js"], ["routes/home.js"]],
+        two: ["./home.js", "admin/users.js"],
+        eight: [0, 1, 2, 3, 4, 5, 6, 7].map(i => `./p${i}.js`),
         nine: [0, 1, 2, 3, 4, 5, 6, 7, 8].map(i => `routes/p${i}.js`),
-        declined: ["@scope/pkg.js"],
+        declined: ["./pkg.js"],
         ...(!isWindows && {
-          symlinkLoop: ["loop/routes.js"],
-          longComponent: ["<300 bytes>/routes.js"],
+          symlinkLoop: ["./routes.js"],
+          longComponent: ["./routes.js"],
         }),
         oneBesideDirectory: ["./home.js"],
       });
@@ -846,6 +845,100 @@ describe("Bun.build", () => {
         expect.stringMatching(/(^|\/)virtual\/routes\.js$/),
       ]);
       expect(withFiles[1]).toEqual(withFiles[0]);
+    });
+
+    test("what a plugin entry point imports has the same name with and without the directory", async () => {
+      const result = await buildInChild(
+        {
+          "pages/index.html": "<!doctype html><html><body><h1>hi</h1></body></html>",
+          "assets/logo.svg": "<svg></svg>",
+        },
+        `
+          import { mkdirSync } from "node:fs";
+          import { join } from "node:path";
+          const imports = file => ({
+            name: "imports",
+            setup(build) {
+              build.onResolve({ filter: /^routes/ }, args => ({ path: args.path, namespace: "routes" }));
+              build.onLoad({ filter: /.*/, namespace: "routes" }, () => ({
+                contents: "import it from " + JSON.stringify(join(cwd, file)) + "; console.log(it);",
+                loader: "js",
+              }));
+            },
+          });
+          // The server entry point holds a manifest of the page, with the "input" of each file.
+          const page = async () => {
+            const { outputs } = await Bun.build({
+              entrypoints: ["routes/server.js"],
+              target: "bun",
+              plugins: [imports("pages/index.html")],
+            });
+            const server = await outputs.find(output => output.path.endsWith("server.js")).text();
+            return {
+              outputs: outputs.map(output => output.path.replaceAll("\\\\", "/").replace(/chunk-[a-z0-9]+/, "chunk-[hash]")),
+              inputs: [...new Set(server.match(/\\\\"input\\\\":\\\\"[^"\\\\]*\\\\"/g))].map(pair => pair.replaceAll("\\\\", "")),
+            };
+          };
+          const asset = () =>
+            paths({
+              entrypoints: ["routes/home.js"],
+              naming: { asset: "[dir]/[name].[ext]" },
+              plugins: [imports("assets/logo.svg")],
+            });
+          const result = { page: [await page()], asset: [await asset()] };
+          mkdirSync("routes");
+          result.page.push(await page());
+          result.asset.push(await asset());
+          console.log(JSON.stringify(result));
+        `,
+      );
+
+      const page = {
+        outputs: ["./server.js", "./chunk-[hash].js", "_.._/pages/index.html"],
+        inputs: ['"input":"../pages/index.html"'],
+      };
+      expect(result).toEqual({
+        page: [page, page],
+        asset: twice("./home.js", "./_.._/assets/logo.svg"),
+      });
+    });
+
+    test("a directory that a plugin creates while it resolves is the root in that build and in the next", async () => {
+      const result = await buildInChild(
+        {},
+        `
+          import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+          import { dirname, join } from "node:path";
+          // Writes the file that it resolves to, as a code generator does.
+          const creates = {
+            name: "creates",
+            setup(build) {
+              build.onResolve({ filter: /^(generated|linked)/ }, args => {
+                if (args.path.startsWith("linked") && !existsSync("linked")) {
+                  mkdirSync("real");
+                  symlinkSync("real", "linked");
+                }
+                mkdirSync(dirname(args.path), { recursive: true });
+                writeFileSync(args.path, "console.log(1)");
+                return { path: join(cwd, args.path) };
+              });
+            },
+          };
+          const twoRuns = async entrypoint => {
+            const config = { entrypoints: [entrypoint], plugins: [creates] };
+            return [await paths(config), await paths(config)];
+          };
+          const result = { created: await twoRuns("generated/routes/home.js") };
+          // The directory is reached through a symbolic link.
+          if (process.platform !== "win32") result.linked = await twoRuns("linked/routes/home.js");
+          console.log(JSON.stringify(result));
+        `,
+      );
+
+      expect(result).toEqual({
+        created: twice("./home.js"),
+        ...(!isWindows && { linked: twice("./home.js") }),
+      });
     });
 
     test("a name that resolves to a file is built from the working directory", async () => {
@@ -912,7 +1005,7 @@ describe("Bun.build", () => {
         dataUrl: ["data:text/javascript,console.js"],
         chdirDuringBuild: twice("node_modules/@scope/pkg/index.js"),
         pkgAndOther: ["node_modules/@scope/pkg/index.js", "@scope/other.js"],
-        pkgAndAlias: ["@scope/alias.js"],
+        pkgAndAlias: ["./alias.js"],
         besideDirectory: [
           ["_.._/node_modules/@scope/pkg/index.js"],
           ["_.._/node_modules/@scope/pkg/index.js", "./other.js"],

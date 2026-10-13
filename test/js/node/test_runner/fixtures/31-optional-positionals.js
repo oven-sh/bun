@@ -28,7 +28,8 @@ function runsAnonymous(id, testName = "<anonymous>") {
   };
 }
 const never = id => () => ran.push(`MUST NOT RUN: ${id}`);
-const options = { timeout: 60_000 };
+// An options object that changes nothing: it only has to be taken as the options.
+const options = { skip: false };
 
 // The name is not a string, a function or an object: the next slots are read as usual.
 const names = { undefined: undefined, null: null, number: 42, zero: 0, boolean: true, symbol: Symbol("s"), bigint: 1n };
@@ -59,12 +60,10 @@ test("", undefined, runs('test("", undefined, fn)'));
 test("", { skip: true }, never('test("", { skip: true }, fn)'));
 
 // Suites take the same path: when the callback is dropped, no child is ever declared.
-expected.push("describe(42, fn)");
-describe(42, function numberSuite() {
-  it("child", t => {
-    ran.push("describe(42, fn)");
-    assert.strictEqual(t.fullName, "numberSuite > child");
-  });
+const suiteNames = [];
+describe(42, function numberSuite(s) {
+  suiteNames.push(s.name);
+  it("child", runs("describe(42, fn)", "child"));
 });
 suite(undefined, () => {
   it("child", runs("suite(undefined, fn)", "child"));
@@ -148,7 +147,8 @@ describe("no function", () => {
 // In a hook, because a hook does not go through the parser under test: nothing can drop this check.
 after(() => {
   console.log(`functions run: ${ran.length} of ${expected.length}`);
-  assert.deepStrictEqual(ran.toSorted(), expected.toSorted());
+  assert.deepStrictEqual([...ran].sort(), [...expected].sort());
+  assert.deepStrictEqual(suiteNames, ["numberSuite"]);
   const anonymous = new Array(8).fill("<anonymous>");
   assert.deepStrictEqual(withoutFunction, [
     ...anonymous,

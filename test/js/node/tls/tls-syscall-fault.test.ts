@@ -163,6 +163,52 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     });
   });
 
+  // Such an errno says nothing about the peer, which can still be sending.
+  test("send → an errno that names no dead peer does not cut off a peer that goes on sending", async () => {
+    await using streaming = tls.createServer({ key: certs.key, cert: certs.cert, allowHalfOpen: true });
+    await once(streaming.listen(0, "127.0.0.1"), "listening");
+    const accepted = once(streaming, "secureConnection") as Promise<[tls.TLSSocket]>;
+    const handshake = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let received = "";
+    let arrived = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: (streaming.address() as AddressInfo).port,
+      tls: { ca: certs.cert },
+      socket: {
+        handshake: () => handshake.resolve(),
+        data(_socket, chunk) {
+          received += chunk;
+          arrived.resolve();
+        },
+        close: () => closed.resolve(),
+      },
+    });
+    const [[peer]] = await Promise.all([accepted, handshake.promise]);
+    peer.on("error", () => {});
+    // Then the socket has had time to close for an empty queue.
+    const read = async () => {
+      await Promise.race([arrived.promise, closed.promise]);
+      arrived = Promise.withResolvers<void>();
+      for (let turn = 0; turn < 3; turn++) await new Promise(setImmediate);
+    };
+    // Input is queued when the last retry fails, or the socket closes there and then.
+    socket.pause();
+    await new Promise<void>(resolve => peer.write("a,", () => resolve()));
+    fault.set({ syscall: "send", action: "errno", errno: "EINVAL", repeat: -1, fd: (socket as any).fd });
+    for (let attempt = 0; attempt < 33; attempt++) socket.write("x");
+    socket.resume();
+    await read();
+    for (const chunk of ["b,", "c,"]) {
+      peer.write(chunk);
+      await read();
+    }
+    peer.end("d");
+    await closed.promise;
+    expect(received).toBe("a,b,c,d");
+  });
+
   // The write was reported as done with its tail still in userspace, so only the close can carry the error.
   test.each([
     ["closes with the error", false],
@@ -190,14 +236,16 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
   // The engine takes 128 KB of a write at a time. The rest waits as plaintext, and the write is still pending.
   describe.each(["client", "server"] as const)("send → ECONNRESET for the rest of the %s's write", side => {
     test.each([
-      ["fails the write", false],
-      ["first delivers what the peer sent before", true],
-    ])("%s", async (_name, peerWroteFirst) => {
+      ["fails the write", false, false],
+      ["first delivers what the peer sent before, and the peer answers the FIN", true, true],
+      ["first delivers what the peer sent before, and the peer stays silent", true, false],
+    ])("%s", async (_name, peerWroteFirst, peerAnswers) => {
       using p = await connectedTLSPair();
       const [writer, peer] = side === "client" ? [p.client, p.serverSock] : [p.serverSock, p.client];
       const seen = observe(writer);
       const received = collect(writer);
-      // Only the sends fail here, and the peer does not read up to the FIN: nothing but the writer itself ends its reads.
+      // Only the sends fail here. A peer that does not read up to the FIN leaves it to the writer to end its reads.
+      if (peerAnswers) peer.resume();
       if (peerWroteFirst) {
         writer.pause();
         await new Promise<void>(resolve => peer.write("late", () => resolve()));

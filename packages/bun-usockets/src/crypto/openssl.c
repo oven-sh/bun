@@ -2779,8 +2779,9 @@ restart:
   ssl_flush_pending_events(s);
   if (ssl_gone(s)) return NULL;
 
-  /* The kernel need not report an end behind what the peer sent: the writable event looks again, once the owner has had this read. */
-  if (s->ssl_send_rejected) us_internal_rearm_writable(s);
+  /* The kernel named a dead peer, and need not report an end behind what that peer sent: the writable event looks again,
+   * once the owner has had this read. After the errno that the retries gave up on, the peer can still be sending. */
+  if (s->ssl_send_rejected && !s->unclassified_send_failures) us_internal_rearm_writable(s);
 
   return s;
 }

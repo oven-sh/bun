@@ -343,6 +343,7 @@ pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
     pub(crate) const BUILD: usize = 0;
+    pub(crate) const SKIPPED: usize = 2;
 }
 
 pub struct Group {
@@ -531,7 +532,7 @@ impl Group {
         tail.and_range(range)
     }
 
-    pub(crate) fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    pub fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if self.tail.is_none() && self.head.tail.is_none() && !self.head.head.range.has_left() {
             self.head.head.range = *range;
             return Ok(());
@@ -566,6 +567,12 @@ impl Group {
         self.head.next.is_none()
             && self.head.head.next.is_none()
             && !self.head.head.range.has_left()
+    }
+
+    /// True when `parse` passed over a part of the input that is not a comparator (`>=1 && <2`, `1.2.3.4`, `latest`).
+    /// npm refuses such a range.
+    pub fn has_skipped(&self) -> bool {
+        self.flags.is_set(Flags::SKIPPED)
     }
 
     /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators.
@@ -827,6 +834,22 @@ impl Token {
     }
 }
 
+impl Range {
+    /// `^version`
+    pub fn caret(version: Version) -> Range {
+        Token {
+            tag: TokenTag::Caret,
+            wildcard: Wildcard::None,
+        }
+        .to_range(&version::Partial {
+            major: Some(version.major),
+            minor: Some(version.minor),
+            patch: Some(version.patch),
+            tag: version.tag,
+        })
+    }
+}
+
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
@@ -940,11 +963,15 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     i += 1;
                 }
                 skip_round = true;
+                list.flags.set(Flags::SKIPPED);
             }
         }
 
         if !skip_round {
             let parse_result = Version::parse(sliced.sub(&input[i..]));
+            if !parse_result.valid {
+                list.flags.set(Flags::SKIPPED);
+            }
             let version = parse_result.version.min();
             if version.tag.has_build() {
                 list.flags.set(Flags::BUILD);
@@ -997,6 +1024,9 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
             if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
+                if !second_parsed.valid {
+                    list.flags.set(Flags::SKIPPED);
+                }
                 let mut second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
                     list.flags.set(Flags::BUILD);
@@ -1090,6 +1120,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 // foo/bar@1.2.3@--canary.24) as well as a dangling "-" after a skipped
                 // tag, like "1 || - foo".
                 token.wildcard = Wildcard::None;
+                list.flags.set(Flags::SKIPPED);
                 continue;
             } else if count == 0 && token.tag == TokenTag::Version {
                 match parse_result.wildcard {
@@ -1115,4 +1146,48 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     }
 
     Ok(list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+    use crate::SlicedString;
+
+    #[test]
+    fn has_skipped() {
+        let cases = [
+            ("", false),
+            ("*", false),
+            (">=16", false),
+            (">= 16.x", false),
+            ("^18 || >=20", false),
+            ("16 - 18", false),
+            ("v16", false),
+            (">=v16.0.0", false),
+            ("~>16", false),
+            ("1.2.3-rc.1+build", false),
+            ("foo-bar", true),
+            ("latest", true),
+            ("lts/*", true),
+            (">=14 && <17", true),
+            (">=16, <18", true),
+            (">=16 npm", true),
+            ("16.0.0.0", true),
+            ("16-18", true),
+            (">=", true),
+            (">=1.2.3<2.0.0", true),
+            ("-18", true),
+            ("-x", true),
+            ("16 || -18", true),
+            ("16 || - 18.0.0", true),
+            ("01.2.3", false),    // npm refuses it
+            ("1.0.0rc1", false),  // npm refuses it
+            ("^16 | ^18", false), // npm refuses it
+        ];
+        for (text, expected) in cases {
+            let bytes = text.as_bytes();
+            let group = parse(bytes, SlicedString::init(bytes, bytes)).unwrap();
+            assert_eq!(group.has_skipped(), expected, "{text:?}");
+        }
+    }
 }

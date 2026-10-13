@@ -78,6 +78,13 @@ pub fn detect_and_load_other_lockfile<'a>(
         let migrate_result = match yarn::migrate_yarn_lockfile(this, manager, log, &data, dir) {
             Ok(r) => r,
             Err(e) => {
+                // The reasons are in `log`. Left there, they would fail the
+                // install that resolves from package.json instead.
+                if !manager.options.log_level.is_silent() && log.has_errors() {
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    Output::flush();
+                }
+                log.reset();
                 return LoadResult::Err(LoadResultErr {
                     step: LoadStep::Migrating,
                     value: e,

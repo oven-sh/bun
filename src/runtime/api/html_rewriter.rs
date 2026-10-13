@@ -1250,9 +1250,7 @@ impl RewriterPipe {
             if this.feed(bytes) {
                 this.end_rewrite();
             }
-            // `blob::Any` has no `Drop`; release the WTFStringImpl/Blob `+1`
-            // transferred by `use_as_any_blob`. A suspended lol-html has
-            // already copied the unconsumed tail into its arena.
+            // A suspended lol-html has already copied the unconsumed tail into its arena.
             any_blob.detach();
             return;
         };

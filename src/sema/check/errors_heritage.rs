@@ -269,9 +269,9 @@ impl Checker<'_, '_> {
     /// `getTypeWithoutSignatures` of a type that is not an intersection.
     fn type_without_signatures(&mut self, ty: TypeId) -> TypeId {
         let has_signatures = self.flags(ty) & tf::OBJECT != 0
-            && self.members(ty).is_some_and(|resolved| {
-                !(resolved.shape().call.is_empty() && resolved.shape().construct.is_empty())
-            });
+            && self
+                .members(ty)
+                .is_some_and(|resolved| resolved.has_signatures());
         if has_signatures {
             self.type_of_properties(ty)
         } else {
@@ -910,10 +910,10 @@ impl Checker<'_, '_> {
         let Some(members) = self.members(ty) else {
             return;
         };
-        if members.shape().index.is_empty() {
+        if self.structured(members).index_infos().is_empty() {
             return;
         }
-        let infos: Vec<IndexInfo> = (members.shape().index.iter())
+        let infos: Vec<IndexInfo> = (self.structured(members).index_infos().iter())
             .map(|i| IndexInfo {
                 value: self.instantiate(i.value, members.mapper),
                 ..*i
@@ -972,6 +972,7 @@ impl Checker<'_, '_> {
                     flags,
                     source: PropSource::Symbol(self.symbol_of_member(f, m)),
                     mapper: MapperId::IDENTITY,
+                    name_type: TypeId::UNRESOLVED,
                 };
                 let prop_type = self.type_of_prop_as_read(&prop, members.mapper);
                 self.check_index_constraint_for_property(&cx, &prop, Some(name_type), prop_type);
@@ -1023,9 +1024,11 @@ impl Checker<'_, '_> {
             if error_node.is_none()
                 && let Some((interface, sym)) = cx.interface
                 && !self.base_types(sym).iter().any(|&base| {
-                    self.prop_ref(base, prop.name).is_some()
-                        && (self.members(base))
-                            .is_some_and(|m| m.shape().index.iter().any(|i| i.key == info.key))
+                    // `getPropertyOfObjectType` finds nothing in an intersection.
+                    self.is_object_type(base)
+                        && self.prop_ref(base, prop.name).is_some()
+                        && (self.structured_members(base))
+                            .is_some_and(|m| m.index_infos().iter().any(|i| i.key == info.key))
                 })
             {
                 error_node = Some((cx.file, interface));
@@ -1082,8 +1085,8 @@ impl Checker<'_, '_> {
             if error_node.is_none()
                 && let Some((interface, sym)) = cx.interface
                 && !self.base_types(sym).iter().any(|&base| {
-                    self.members(base).is_some_and(|m| {
-                        let index = &m.shape().index;
+                    self.structured_members(base).is_some_and(|m| {
+                        let index = m.index_infos();
                         index.iter().any(|i| i.key == check.key)
                             && index.iter().any(|i| i.key == info.key)
                     })

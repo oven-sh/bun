@@ -30,6 +30,8 @@ impl Files<'_> {
             roots_end: self.roots_end,
             root_of_start: self.root_of_start,
             explained_in_diagnostics: explained_in_diagnostics.into(),
+            top_elements_in_configuration: Default::default(),
+            file_spec_by_path: Default::default(),
         };
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, host, self.options);

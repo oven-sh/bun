@@ -193,6 +193,10 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(level) = level else {
             return ty;
         };
+        // `checkExpressionEx` restores `currentNode` after this function returns.
+        let around = self
+            .instantiating_generic_argument
+            .replace((file, e, self.stack.len()));
         let instantiated = self.with_inference_context(level, |c, n| {
             let returns_plain_function = n.sig.is_some_and(|sig| {
                 let returned = c.sig_return(sig);
@@ -200,11 +204,23 @@ impl<'p, 's> Checker<'p, 's> {
                     .is_some_and(|(s, _)| c.sig_type_params(s).is_empty())
             });
             if returns_plain_function
-                && let Some(unique) = c.unique_type_params(&n.inferred_type_params, &type_params)
+                && let Some(unique) = c.unique_type_params(
+                    &n.inferred_type_params,
+                    &type_params,
+                    ((file.0 as usize) << 32) | e.0 as usize,
+                )
             {
                 let instantiated = if unique[..] == type_params[..] {
                     signature
                 } else {
+                    // Each call of `getUniqueTypeParameters` makes new type parameters, whose
+                    // constraints are not resolved yet.
+                    for (renamed, declared) in unique.iter().zip(&type_params) {
+                        if renamed != declared {
+                            c.unresolved_renamed_params.insert(*renamed);
+                        }
+                    }
+                    c.restrictive_instantiations_kept.clear();
                     c.with_own_type_params(signature, &type_params, &unique)
                 };
                 if c.adopt_generic_argument(n, instantiated, contextual_signature) {
@@ -232,6 +248,7 @@ impl<'p, 's> Checker<'p, 's> {
                 c.is_assignable(s, t)
             })
         });
+        self.instantiating_generic_argument = around;
         match instantiated {
             Some(instantiated) => self.type_of_signature(instantiated, construct),
             None => ty,
@@ -561,10 +578,12 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         is_rechecked: bool,
     ) -> Option<TypeId> {
-        let first = self
-            .stack
-            .iter()
-            .rposition(|&q| q == Query::Expr(file, e))?;
+        let q = Query::Expr(file, e);
+        // FOR SPEED, as in `enter`: the stack is searched only if a query of its class is on it.
+        if self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] == 0 {
+            return None;
+        }
+        let first = self.stack.iter().rposition(|&it| it == q)?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         let is_checked_once = !is_rechecked && self.is_rechecking();
         // Hides the first visit from `enter`, which still fails when time, native stack or query
@@ -714,15 +733,18 @@ impl<'p, 's> Checker<'p, 's> {
         // of the literal. Without type variables there, or in a contextual type pushed for a part
         // along the way, no `const` type variable can be the contextual type further in.
         let (mut top, mut highest, mut may_be_expected) = (e, ExprId::NONE, false);
+        let is_pushed_with_type_variables = |info: &&ContextualInfo| {
+            info.file == file && info.t.is_some_and(|t| self.has_type_variables(t))
+        };
+        let pushed_with_type_variables: SmallVec<[ExprId; 4]> = (self.contextual.iter())
+            .filter(is_pushed_with_type_variables)
+            .map(|info| info.node)
+            .collect();
         loop {
             // `isValidConstAssertionArgument`: the contextual type is requested for nothing else.
             if self.is_valid_const_assertion_argument(file, top) {
                 highest = top;
-                may_be_expected |= self.contextual.iter().any(|info| {
-                    info.file == file
-                        && info.node == top
-                        && info.t.is_some_and(|t| self.has_type_variables(t))
-                });
+                may_be_expected |= pushed_with_type_variables.contains(&top);
             }
             top = match self.const_context_parent(file, top) {
                 ControlFlow::Continue(outer) => outer,
@@ -1652,7 +1674,6 @@ impl<'p, 's> Checker<'p, 's> {
                     return (TypeId::SILENT_NEVER, false);
                 }
                 let resolved = self.resolved_signature(file, e);
-                self.resolved_signatures.insert((file, e));
                 let resolved = self.with_return_type(resolved);
                 let call = &hir[c];
                 let stops = match call.chain {
@@ -1992,6 +2013,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags: PropFlags::empty(),
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             };
             let wrapper = self.synth(Shape {
                 props: vec_from_iter_in([default], self.arena),
@@ -2391,7 +2413,7 @@ impl<'p, 's> Checker<'p, 's> {
             && hir[class].extends.is_some()
             && !self.class_declaration_extends_null(self.class_sym(file, class))
             && flow.is_some()
-            && !self.is_post_super(file, flow, false, &mut Vec::new())
+            && !self.is_post_super(file, flow, &mut Vec::new())
         {
             self.error_at(self.place_of_token(file, hir[e].pos), code, &[]);
         }
@@ -2521,10 +2543,11 @@ impl<'p, 's> Checker<'p, 's> {
                         return Some(this);
                     }
                 }
-                if let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner
-                    && let Some(this) = self.contextual_this_parameter_type(file, func, owner)
-                {
-                    return Some(this);
+                if let FnOwner::Expr(owner) = self.bound(file).fns[func.idx()].owner {
+                    let this = self.contextual_this_parameter_type_at(file, func, owner, node);
+                    if this.is_some() {
+                        return this;
+                    }
                 }
             }
         }
@@ -2690,6 +2713,18 @@ impl<'p, 's> Checker<'p, 's> {
         func: FnId,
         owner: ExprId,
     ) -> Option<TypeId> {
+        self.contextual_this_parameter_type_at(file, func, owner, Node::NONE)
+    }
+
+    /// The same, requested by `tryGetThisTypeAtEx` for the `this` expression `node`: `checkExpressionCached(containingLiteral)`
+    /// answers a `this` in the signature of `func` and a `this` in its body with the types of different calls.
+    fn contextual_this_parameter_type_at(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        owner: ExprId,
+        node: Node,
+    ) -> Option<TypeId> {
         let is_context_sensitive = self.is_context_sensitive_function_or_method(file, func, owner);
         // `getThisTypeOfDeclaration`: the `this` type assigned by `assignContextualParameterTypes`.
         if is_context_sensitive
@@ -2779,7 +2814,9 @@ impl<'p, 's> Checker<'p, 's> {
                 // literal.
                 let this = match context {
                     Some(context) => self.non_nullable(context),
-                    None => self.check_containing_object_literal_cached(file, containing, func),
+                    None => {
+                        self.check_containing_object_literal_cached(file, containing, func, node)
+                    }
                 };
                 return Some(self.widened(this));
             }
@@ -2810,13 +2847,53 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `checkExpressionCached(containingLiteral)` in `getContextualThisParameterType(func)`. It has no re-entrancy guard, and of
-    /// nested calls the outermost one assigns `links.resolvedType` last.
+    /// nested calls the outermost one assigns `links.resolvedType` last. `node`: the `this` expression it is requested for, if any.
     fn check_containing_object_literal_cached(
         &mut self,
         file: FileId,
         literal: ExprId,
         func: FnId,
+        node: Node,
     ) -> TypeId {
+        /// Whether `node` is the `this` of a type query that `checkSignatureDeclaration(func)` checks. A body is checked deferred.
+        fn is_type_query_in_signature(hir: &hir::File, mut node: Node, func: FnId) -> bool {
+            if node.is_none() || !hir.is_in_type_query(node) {
+                return false;
+            }
+            loop {
+                let parent = hir.parent(node);
+                if parent.is_none() {
+                    return false;
+                }
+                if hir.kind(parent).is_function_like() {
+                    if hir.body(parent) == node {
+                        return false;
+                    }
+                    if hir.function_of(parent) == func {
+                        return true;
+                    }
+                }
+                node = parent;
+            }
+        }
+        /// Whether there is one under `node` whose `this` container is `func`.
+        fn has_type_query_of_this(hir: &hir::File, node: Node, func: FnId) -> bool {
+            let body = if hir.kind(node).is_function_like() {
+                hir.body(node)
+            } else {
+                Node::NONE
+            };
+            hir.for_each_child(node, &mut |child| {
+                child != body
+                    && match hir.data(child) {
+                        NodeData::Expr(e) if matches!(hir[e].kind, ExprKind::This) => {
+                            let container = hir.get_this_container(child, false, false);
+                            hir.is_in_type_query(child) && hir.function_of(container) == func
+                        }
+                        _ => has_type_query_of_this(hir, child, func),
+                    }
+            })
+        }
         let ty = self.type_of_expr(file, literal);
         let TypeData::Anon {
             origin:
@@ -2839,12 +2916,23 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         };
         // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` ends with `checkSignatureDeclaration`. An accessor is deferred.
+        // It requests the type of an unannotated `this` parameter (`assignNonContextualParameterTypes`), and without a `this`
+        // parameter that of a type query of `this` in a parameter, the return type or a type parameter.
         let is_typed_with_literal = |f: FnId| {
             matches!(hir[f].kind, FnKind::Method | FnKind::Expr)
-                && hir[f].this_param.is_some()
-                && hir[f].this_ty(hir).is_none()
+                && if hir[f].this_param.is_some() {
+                    hir[f].this_ty(hir).is_none()
+                } else {
+                    has_type_query_of_this(hir, hir.node(f), f)
+                }
         };
-        let created_by = if is_typed_with_literal(func) {
+        let is_requested_by_signature = matches!(hir[func].kind, FnKind::Method | FnKind::Expr)
+            && if hir[func].this_param.is_some() {
+                hir[func].this_ty(hir).is_none()
+            } else {
+                is_type_query_in_signature(hir, node, func)
+            };
+        let created_by = if is_requested_by_signature {
             ObjectLiteralCheck::ForThisParameter(func)
         } else if self.is_object_literal_cached_for_parent(file, literal) {
             return ty;
@@ -3440,7 +3528,8 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(element) = self.index_type_of_type(target, TypeId::NUMBER) {
             return element;
         }
-        self.iterated_type_if_any(target, false)
+        let usage = super::symbols::IterationUse::DestructuringInFlow;
+        self.iterated_type_or_element_type(usage, target, TypeId::UNDEFINED, None)
             .unwrap_or(TypeId::UNKNOWN)
     }
 
@@ -3587,9 +3676,13 @@ impl<'p, 's> Checker<'p, 's> {
                 let spread = self.type_of_expr(file, prop.value);
                 let spread = self.reduced(spread);
                 // 2698 and `spread = c.errorType`. `check_spread` reports it, but not for a target
-                // that is destructured: the walk does not check that one as an expression.
+                // that is destructured: the walk does not check that one as an expression. Nor
+                // where only `CheckModeInferential` gives the reference such a type:
+                // `getNarrowableTypeForReference` substitutes no constraints then.
                 if !self.is_valid_spread_type(spread) {
-                    if self.is_definite_assignment_target(file, e)
+                    if self.check_mode().contains(CheckMode::INFERENTIAL) {
+                        self.report_spread_in_inference(file, e, p);
+                    } else if self.is_definite_assignment_target(file, e)
                         && self.is_target_of_assignment_in_progress(file, e)
                     {
                         self.error(file, p, 2698, &[]);
@@ -3624,6 +3717,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags: flags | written,
                 source,
                 mapper: literal_mapper,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         self.check_spread_overrides(file, props);
@@ -3811,6 +3905,10 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_context_checked(file, e, func) {
             return;
         }
+        // `links.flags |= NodeCheckFlagsContextChecked`, before anything else is read. The entry has
+        // `getContextualSignature` until the signature for `assignContextualParameterTypes` exists.
+        let checking = self.context_checking.len();
+        (self.context_checking).push(((file, func), (contextual_signature, false), 0));
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         // `getSignaturesOfType(getTypeOfSymbol(..))`: `resolveAnonymousTypeMembers` begins with
@@ -3832,10 +3930,12 @@ impl<'p, 's> Checker<'p, 's> {
             if is_context_sensitive {
                 let read = self.types_assigned_from_contextual_signature(file, func, contextual);
                 let instantiated = level.and_then(|level| {
+                    if is_inferential && self.inference_contexts[level].context.is_some() {
+                        self.infer_from_annotated_parameters_and_return(
+                            file, func, contextual, level,
+                        );
+                    }
                     self.with_inference_context(level, |c, n| {
-                        if is_inferential {
-                            c.infer_from_annotated_parameters_and_return(file, func, contextual, n);
-                        }
                         c.instantiate_signature_in_inference_context(
                             n,
                             contextual,
@@ -3854,12 +3954,12 @@ impl<'p, 's> Checker<'p, 's> {
                 && self.sig_params(contextual).len()
                     > f.params.len() + usize::from(f.this_ty(hir).is_some())
                 && let Some(level) = level
+                && self.inference_contexts[level].context.is_some()
             {
-                self.with_inference_context(level, |c, n| {
-                    c.infer_from_annotated_parameters_and_return(file, func, contextual, n);
-                });
+                self.infer_from_annotated_parameters_and_return(file, func, contextual, level);
             }
         }
+        self.context_checking[checking].1 = assigned;
         // tsgo sets `NodeCheckFlagsContextChecked` whatever is in progress. A call that is resolved
         // again has the callee `any` if the callee is in a cycle, while the resolution that it
         // interrupts goes on with the type it computes itself:
@@ -3874,7 +3974,6 @@ impl<'p, 's> Checker<'p, 's> {
         let is_checked_again = (self.frames.last())
             .is_some_and(|frame| frame.tainted && (!frame.incomplete_flow || frame.drops_reported));
         let holds = is_argument_of_untyped_call || !is_checked_again;
-        self.context_checking.push(((file, func), assigned));
         // `assignContextualParameterTypes`, `assignNonContextualParameterTypes`
         if is_context_sensitive {
             // `assignContextualParameterTypes` leaves out a `this` parameter with an annotation. One
@@ -3884,16 +3983,18 @@ impl<'p, 's> Checker<'p, 's> {
                 self.type_of_this_parameter(file, func);
                 self.assigned_parameters.pop();
             }
-            for p in f.params.iter() {
+            for (i, p) in f.params.iter().enumerate() {
                 self.assigned_parameters.push(self.stack.len());
                 self.type_of_param(file, p);
                 self.assigned_parameters.pop();
+                self.context_checking[checking].2 = i + 1;
                 // `assignContextualParameterTypes` leaves out a parameter with an annotation.
                 if contextual_signature.is_none() || hir[p].ty.is_none() {
                     self.assign_binding_element_types(file, hir[p].pat);
                 }
             }
         }
+        self.context_checking[checking].2 = f.params.len();
         if contextual_signature.is_some()
             && f.ret.is_none()
             && (self.p.fn_return_types.get(&self.task, &(file, func))).is_none()
@@ -4007,6 +4108,24 @@ impl<'p, 's> Checker<'p, 's> {
                     || !self
                         .get_inference_context(file, e)
                         .is_some_and(|level| self.inference_contexts[level].context.is_some()))
+    }
+
+    /// `links.resolvedType == nil` for parameter `index` of `func`, a context sensitive function:
+    /// `assignParameterType` has not returned for it. Before the first check, for every parameter.
+    pub(super) fn is_parameter_type_unassigned(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        index: usize,
+    ) -> bool {
+        let mut checking = self.context_checking.iter();
+        match checking.rposition(|c| c.0 == (file, func)) {
+            Some(checking) => index >= self.context_checking[checking].2,
+            None => {
+                self.context_checked_under_taint(file, func).is_none()
+                    && (self.p.context_checked.get(&self.task, &(file, func))).is_none()
+            }
+        }
     }
 
     /// `NodeCheckFlagsContextChecked`, with the signature passed to
@@ -4735,11 +4854,8 @@ impl<'p, 's> Checker<'p, 's> {
                 self.union_reduced(&values)
             };
             infos.push(IndexInfo {
-                key,
-                value,
-                readonly,
-                declaration: None,
                 components: self.types().intern_components(&components),
+                ..IndexInfo::new(key, value, readonly)
             });
         }
         infos
@@ -4792,6 +4908,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags: flags | written,
                 source,
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         // FOR SPEED: in any other literal every member is the first declaration of its symbol. The binder adds a declaration to the
@@ -4892,7 +5009,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if !self.enter(Query::LiteralProp(file, p)) {
             // `getTypeOfAccessors`
-            return if self.found_cycle || self.is_getter_in_cycle(file, p) {
+            return if self.found_cycle {
                 TypeId::ERROR
             } else {
                 TypeId::UNRESOLVED
@@ -4905,9 +5022,9 @@ impl<'p, 's> Checker<'p, 's> {
             let stored = self.cycle_result();
             (self.p.literal_prop_types).rewrite(&self.task, (file, p), TypeId::ANY, stored);
             let hir = self.hir(file);
-            if let ExprKind::Fn(setter) = hir[hir[p].value].kind {
+            if let ExprKind::Fn(accessor) = hir[hir[p].value].kind {
                 let owner = Some(Query::LiteralProp(file, p));
-                self.report_circular_return_type(owner, file, setter);
+                self.report_circular_return_type(owner, file, accessor);
             }
             return TypeId::ANY;
         }
@@ -4920,17 +5037,6 @@ impl<'p, 's> Checker<'p, 's> {
                 ty
             }
         }
-    }
-
-    /// Whether `pushTypeResolution` of `getTypeOfAccessors` fails for the getter `p`, which is in
-    /// progress: `Query::Return` stands for that resolution.
-    fn is_getter_in_cycle(&self, file: FileId, p: PropId) -> bool {
-        let hir = self.hir(file);
-        hir[p].kind == PropKind::Getter
-            && hir[p].value.is_some()
-            && matches!(hir[hir[p].value].kind, ExprKind::Fn(getter)
-                if (self.stack.iter().rposition(|&q| q == Query::Return(file, getter)))
-                    .is_some_and(|at| self.frames[at].circular))
     }
 
     /// `checkPropertyAssignment`, `checkShorthandPropertyAssignment` and `checkObjectLiteralMethod`
@@ -5007,7 +5113,9 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     return TypeId::VOID;
                 }
-                self.return_type_of_fn(file, f)
+                // `getAnnotatedAccessorType` of the getter, then of the setter, then `getReturnTypeFromBody`, called directly:
+                // `getReturnTypeOfSignature` of the getter is another resolution, which a cycle through the property does not mark.
+                self.return_type_of_fn_uncached(file, f, CheckMode::empty())
             }
             PropKind::Setter => {
                 let ExprKind::Fn(f) = hir[prop.value].kind else {
@@ -5181,6 +5289,34 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// Whether `checkMode` of `e` has `CheckModeTypeOnly`. A recheck carries its mode. Otherwise
+    /// the node of `getTypeOfExpression` passes it down to `e` by `check_mode_passed_to`.
+    fn is_checked_type_only(&self, file: FileId, e: ExprId) -> bool {
+        if self.is_rechecking() {
+            return self.mode_of_recheck.contains(CheckMode::TYPE_ONLY);
+        }
+        let Some((root_file, root)) = self.type_only_node else {
+            return false;
+        };
+        if root_file != file {
+            return false;
+        }
+        let bound = self.bound(file);
+        let mut node = e;
+        while node != root {
+            let passed = self.check_mode_passed_to(file, node, CheckMode::TYPE_ONLY);
+            if !passed.contains(CheckMode::TYPE_ONLY) {
+                return false;
+            }
+            node = match bound.expr_parent[node.idx()] {
+                Parent::Expr(parent) => parent,
+                Parent::Prop(p) => bound.prop_owner[p.idx()],
+                _ => return false,
+            };
+        }
+        true
+    }
+
     /// `checkBinaryLikeExpression`, which checks the left operand and then the right, regardless of
     /// the operator. `e`: `errorNode`, which is `left op right` or `left op= right`.
     fn type_of_binary(
@@ -5209,10 +5345,13 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::BOOLEAN
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
-                // `CheckModeTypeOnly`: while a loop analysis is in progress the operand types may
-                // be narrower than the final ones.
+                // `checkMode&CheckModeTypeOnly == 0`: while a loop analysis is in progress the
+                // operand types may be narrower than the final ones. Outside one this check also
+                // stands for the later one in the normal mode, so it reports.
                 let (l, r) = self.check_operands(file, left, right);
-                if self.flow_loops.is_empty() {
+                let is_in_flow_loop = (self.flow_loops.last())
+                    .is_some_and(|pushed| self.is_flow_loop_visible(pushed.5));
+                if !(is_in_flow_loop && self.is_checked_type_only(file, e)) {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.

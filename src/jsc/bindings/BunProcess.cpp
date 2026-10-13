@@ -3030,16 +3030,17 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     // Note: files are always sync anyway.
     // forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];
 
-    // TODO: once console.* is wired up to write/read through the same buffering mechanism as FileSink for process.stdout, process.stderr, we can make this non-blocking for sockets on POSIX.
-    // Until then, we have to force it to be sync EVEN for sockets or else console.log() may flush at a different time than process.stdout.write.
+    // Turns off FileSink's coalescing of small writes. What a full pipe or socket refuses is still buffered; console.* flushes that first (m_stdioSinks).
     forceSync = true;
 #endif
-    JSValue sink = resultObject->getIndex(globalObject, 1);
-    RETURN_IF_EXCEPTION(scope, jsUndefined());
-    if (auto* sinkObject = sink.getObject())
-        uncheckedDowncast<Process>(processObject)->setStdioSink(vm, fd, sinkObject);
     if (forceSync) {
+        JSValue sink = resultObject->getIndex(globalObject, 1);
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
         Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
+#if !OS(WINDOWS)
+        if (auto* sinkObject = sink.getObject())
+            uncheckedDowncast<Process>(processObject)->m_stdioSinks[fd - 1].set(vm, processObject, sinkObject);
+#endif
     }
 
     JSValue stream = resultObject->getIndex(globalObject, 0);
@@ -3047,13 +3048,15 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     return stream;
 }
 
+#if !OS(WINDOWS)
 extern "C" JSC::EncodedJSValue Bun__Process__getStdioSink(JSC::JSGlobalObject* lexicalGlobalObject, int fd)
 {
+    ASSERT(fd == 1 || fd == 2);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (!globalObject->hasProcessObject())
-        return JSValue::encode({});
-    return JSValue::encode(globalObject->processObject()->stdioSink(fd));
+    JSObject* sink = globalObject->hasProcessObject() ? globalObject->processObject()->m_stdioSinks[fd - 1].get() : nullptr;
+    return JSValue::encode(sink ? JSValue(sink) : jsUndefined());
 }
+#endif
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
 {
@@ -3792,8 +3795,10 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
-    visitor.append(thisObject->m_stdioSinks[0]);
-    visitor.append(thisObject->m_stdioSinks[1]);
+#if !OS(WINDOWS)
+    for (auto& sink : thisObject->m_stdioSinks)
+        visitor.append(sink);
+#endif
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);

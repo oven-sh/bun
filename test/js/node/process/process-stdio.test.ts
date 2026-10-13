@@ -163,9 +163,9 @@ describe.concurrent("process-stdio", () => {
 
 // Like Node, process.stdout/stderr put O_NONBLOCK on fd 1/2 when they are pipes or sockets. The flag lives on the shared open
 // file description, so spawn clears it again for a child's fds 0-2 (libuv does the same), and the native console writer must
-// wait on EAGAIN instead of dropping the rest of the line.
+// wait on EAGAIN instead of dropping the rest of the line, and flush what the stream buffered before it writes.
 describe.concurrent.skipIf(isWindows)(
-  "O_NONBLOCK on process.stdout/stderr does not leak to children or truncate console output",
+  "process.stdout/stderr on a pipe or socket: O_NONBLOCK does not leak to children, console output is whole and in call order",
   () => {
     const probe = path.join(import.meta.dir, "fd-nonblock-fixture.js");
 
@@ -227,6 +227,17 @@ describe.concurrent.skipIf(isWindows)(
       expect(exitCode).toBe(0);
     }
 
+    async function signalReaderOnceFull(events: ReturnType<typeof jsonLines>) {
+      let readerPid: number | undefined, ret: boolean | undefined;
+      while (readerPid === undefined || ret === undefined) {
+        const v = await events.next();
+        if ("reader" in v) readerPid = v.reader;
+        if ("ret" in v) ret = v.ret;
+      }
+      expect(ret).toBe(false);
+      process.kill(readerPid, "SIGUSR1");
+    }
+
     // Real pipe(2) via sh, reader gated on SIGUSR1.
     async function expectDrainOverPipe(
       prelude: string,
@@ -241,14 +252,7 @@ describe.concurrent.skipIf(isWindows)(
         stderr: "pipe",
       });
       const events = jsonLines(proc.stderr);
-      let readerPid: number | undefined, ret: boolean | undefined;
-      while (readerPid === undefined || ret === undefined) {
-        const v = await events.next();
-        if ("reader" in v) readerPid = v.reader;
-        if ("ret" in v) ret = v.ret;
-      }
-      expect(ret).toBe(false);
-      process.kill(readerPid!, "SIGUSR1");
+      await signalReaderOnceFull(events);
       expect(await events.next()).toEqual(expectedDrain);
       const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
       expect(stdout.byteLength).toBe(expectedBytes);
@@ -372,53 +376,52 @@ describe.concurrent.skipIf(isWindows)(
       },
     );
 
-    // console.* writes synchronously while process.stdout/stderr queue what a full pipe refuses, so the console has to flush
-    // that queue first. Reports go to the other fd; nothing reads the fd under test until the first write() came back false.
-    const callOrderScript = (stream: "stdout" | "stderr", methods: string[]) => `
+    // Each console call and what it prints. Reports go to the other fd; nothing reads the fd under test until the first write() returned false.
+    const stdoutCalls = [
+      [`log("<log>")`, "<log>"],
+      [`info("<info>")`, "<info>"],
+      [`debug("<debug>")`, "<debug>"],
+    ] as const;
+    const stderrCalls = [
+      [`warn("<warn>")`, "<warn>"],
+      [`error("<error>")`, "<error>"],
+      [`assert(false)`, "Assertion failed"],
+    ] as const;
+    type Calls = typeof stdoutCalls | typeof stderrCalls;
+    const callOrderScript = (stream: "stdout" | "stderr", calls: Calls) => `
       const report = v => require("fs").writeSync(${stream === "stdout" ? 2 : 1}, JSON.stringify(v) + "\\n");
-      ${JSON.stringify(methods)}.forEach((method, i) => {
+      [${calls.map(([call]) => `() => console.${call}`).join(", ")}].forEach((call, i) => {
         const ret = process.${stream}.write(Buffer.alloc(1 << 20, String(i)));
         if (i === 0) report({ ret });
-        console[method]("<" + method + ">");
+        call();
       });`;
-    const inCallOrder = (methods: string[]) => methods.map((method, i) => `[${i}*${1 << 20}]<${method}>\n`).join("");
+    const inCallOrder = (calls: Calls) => calls.map(([, printed], i) => `[${i}*${1 << 20}]${printed}\n`).join("");
     const squash = (bytes: Uint8Array) =>
       Buffer.from(bytes)
         .toString()
         .replace(/(\d)\1+/g, m => `[${m[0]}*${m.length}]`);
 
-    async function signalReaderOnceFull(events: ReturnType<typeof jsonLines>) {
-      let readerPid: number | undefined, ret: boolean | undefined;
-      while (readerPid === undefined || ret === undefined) {
-        const v = await events.next();
-        if ("reader" in v) readerPid = v.reader;
-        if ("ret" in v) ret = v.ret;
-      }
-      expect(ret).toBe(false);
-      process.kill(readerPid, "SIGUSR1");
-    }
-
     test.each([
-      ["stdout", ["log", "info", "debug"], `"$0" -e "$1" | "$0" -e "$2"`],
-      ["stderr", ["warn", "error"], `{ "$0" -e "$1" 2>&1 >&3 | "$0" -e "$2"; } 3>&2`],
+      ["stdout", stdoutCalls, `"$0" -e "$1" | "$0" -e "$2"`],
+      ["stderr", stderrCalls, `{ "$0" -e "$1" 2>&1 >&3 | "$0" -e "$2"; } 3>&2`],
     ] as const)(
-      "console output on %s comes after what the stream queued on a full pipe",
-      async (stream, methods, pipeline) => {
+      "console output on %s comes after what the stream buffered on a full pipe",
+      async (stream, calls, pipeline) => {
         await using proc = spawn({
-          cmd: ["sh", "-c", pipeline, bunExe(), callOrderScript(stream, [...methods]), gatedReader],
+          cmd: ["sh", "-c", pipeline, bunExe(), callOrderScript(stream, calls), gatedReader],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",
         });
         await signalReaderOnceFull(jsonLines(proc.stderr));
         const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
-        expect(squash(stdout)).toBe(inCallOrder([...methods]));
+        expect(squash(stdout)).toBe(inCallOrder(calls));
         expect(exitCode).toBe(0);
       },
     );
 
-    // process.exit() drops what is still queued, so a callback that comes early loses the rest of the second write.
-    test("a write() after the console flushed the queue calls back once its own bytes are out", async () => {
+    // process.exit() drops what is still buffered, so a callback that comes early loses the rest of the second write.
+    test("a write() after the console flushed the stream calls back once its own bytes are out", async () => {
       const script = `
         require("fs").writeSync(2, JSON.stringify({ ret: process.stdout.write(Buffer.alloc(1 << 20, "0")) }) + "\\n");
         console.log("<log>");
@@ -435,11 +438,33 @@ describe.concurrent.skipIf(isWindows)(
       expect(exitCode).toBe(0);
     });
 
-    test("the reader going away while the console waits fails the queued write and the next one with EPIPE", async () => {
+    // The result without the console too. Nothing has entered the event loop around a 'beforeExit' listener, so settling the write could drain microtasks.
+    test("the callback of a write the console flushed runs after the JS that called the console, not inside it", async () => {
+      const script = `
+        const report = v => require("fs").writeSync(2, JSON.stringify(v) + "\\n");
+        process.once("beforeExit", () => {
+          report({ ret: process.stdout.write(Buffer.alloc(1 << 20, "0"), () => report("callback")) });
+          console.log("<log>");
+          report("after console.log");
+        });`;
+      await using proc = spawn({
+        cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), script, gatedReader],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const events = jsonLines(proc.stderr);
+      await signalReaderOnceFull(events);
+      expect([await events.next(), await events.next()]).toEqual(["after console.log", "callback"]);
+      expect(await proc.exited).toBe(0);
+    });
+
+    // The result without the console too: the flush leaves a reader that is gone for the event loop to report.
+    test("the reader going away while the console waits fails the buffered write and the next one with EPIPE", async () => {
       const script = `
         const report = v => require("fs").writeSync(2, JSON.stringify(v) + "\\n");
         process.stdout.on("error", () => {});
-        report({ ret: process.stdout.write(Buffer.alloc(1 << 20, "0"), e => report({ queued: e?.code ?? null })) });
+        report({ ret: process.stdout.write(Buffer.alloc(1 << 20, "0"), e => report({ buffered: e?.code ?? null })) });
         console.log("<log>");
         process.stdout.write("next", e => report({ next: e?.code ?? null }));`;
       const leavingReader = `process.on("SIGUSR1", () => process.exit(0));
@@ -453,13 +478,13 @@ describe.concurrent.skipIf(isWindows)(
       });
       const events = jsonLines(proc.stderr);
       await signalReaderOnceFull(events);
-      expect([await events.next(), await events.next()]).toEqual([{ queued: "EPIPE" }, { next: "EPIPE" }]);
+      expect([await events.next(), await events.next()]).toEqual([{ buffered: "EPIPE" }, { next: "EPIPE" }]);
       expect(await proc.exited).toBe(0);
     });
 
-    test("console.log comes after what process.stdout.write() queued on a full socket", async () => {
+    test("console output on stdout comes after what the stream buffered on a full socket", async () => {
       await using proc = spawn({
-        cmd: [bunExe(), "-e", callOrderScript("stdout", ["log", "info", "debug"])],
+        cmd: [bunExe(), "-e", callOrderScript("stdout", stdoutCalls)],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -467,7 +492,7 @@ describe.concurrent.skipIf(isWindows)(
       });
       expect(await jsonLines(proc.stderr).next()).toEqual({ ret: false });
       const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
-      expect(squash(stdout)).toBe(inCallOrder(["log", "info", "debug"]));
+      expect(squash(stdout)).toBe(inCallOrder(stdoutCalls));
       expect(exitCode).toBe(0);
     });
   },

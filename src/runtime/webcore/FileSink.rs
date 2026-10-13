@@ -212,34 +212,31 @@ impl FileSink {
 
 #[cfg(unix)]
 unsafe extern "C" {
-    /// The `FileSink` wrapper behind `process.stdout` (1) / `process.stderr` (2), or empty before that stream exists.
+    /// The `FileSink` wrapper behind `process.stdout` (1) / `process.stderr` (2), or `undefined` before that stream exists.
     safe fn Bun__Process__getStdioSink(global: &JSGlobalObject, fd: i32) -> JSValue;
 }
 
-/// `console.*` is about to write to `fd` (1 or 2): what `process.stdout` / `process.stderr` queued for it goes out first.
+/// `console.*` is about to write to `fd` (1 or 2): what `process.stdout` / `process.stderr` buffered for it goes out first.
 #[cfg(unix)]
 #[unsafe(no_mangle)]
 fn __bun_flush_stdio_sink(global: &JSGlobalObject, fd: Fd) {
-    let sink = Bun__Process__getStdioSink(global, fd.native());
-    if sink.is_empty() {
-        return;
-    }
-    let Some(sink) = JSSink::from_js(sink) else {
+    use bun_io::pipe_writer::PosixPipeWriter as _;
+
+    let Some(this_ptr) = JSSink::from_js(Bun__Process__getStdioSink(global, fd.native())) else {
         return;
     };
+    // `on_write` settles the buffered write; its callbacks run after the JS that called the console, not inside it.
+    let _entered = global.bun_vm().enter_event_loop_scope_without_checkpoint();
     // SAFETY: `from_js` returned the wrapper's live `m_ctx`, the sink's own allocation; `_guard` keeps it live.
     unsafe {
-        let this = &raw mut (*sink).sink;
+        let this = &raw mut (*this_ptr).sink;
         let _guard = RefPtr::init_ref(this);
-        while (*this).writer.get().has_pending_data() && !(*this).done.get() {
-            // A reader that is gone is left for the event loop to report, as it does without the console.
-            if !matches!(
-                sys::wait_for_writable((*this).writer.get().get_fd()),
-                Ok(true)
-            ) {
-                break;
-            }
-            FileSink::flush_buffered(this);
+        // What the event loop does once the fd is writable. A closed writer or a reader that is gone is left for it to report.
+        while (*this).writer.get().has_pending_data()
+            && (*this).writer.get().get_poll().is_some()
+            && sys::wait_for_writable((*this).writer.get().get_fd()).unwrap_or(false)
+        {
+            (*this).writer.with_mut(|w| w.on_poll(0, false));
         }
     }
 }
@@ -968,27 +965,18 @@ impl FileSink {
     pub(crate) unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            let _guard = RefPtr::init_ref(this);
-            let is_registered = FileSink::flush_buffered(this);
-            (*this)
-                .auto_flusher
-                .with_mut(|a| a.registered.set(is_registered));
-            is_registered
-        }
-    }
-
-    /// [`on_auto_flush`](Self::on_auto_flush) without the `AutoFlusher` bookkeeping, under its contract; the caller holds a ref across the call.
-    unsafe fn flush_buffered(this: *mut FileSink) -> bool {
-        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
-        unsafe {
             if !(*this).writer.get().has_pending_data() {
                 (*this).update_ref(false);
+                (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
             }
             // After `end()` the writable poll drains the tail and drops the ref.
             if (*this).done.get() {
+                (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
             }
+
+            let _guard = RefPtr::init_ref(this);
 
             let amount_buffered = (*this).writer.get().outgoing.size();
 
@@ -1012,6 +1000,7 @@ impl FileSink {
                     }
                     (*this).writer.with_mut(|w| w.end());
                     (*this).run_pending_later();
+                    (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                     return false;
                 }
                 WriteResult::Done(_) => {
@@ -1034,7 +1023,11 @@ impl FileSink {
                 }
             }
 
-            !(*this).writer.get().has_pending_data()
+            let is_registered = !(*this).writer.get().has_pending_data();
+            (*this)
+                .auto_flusher
+                .with_mut(|a| a.registered.set(is_registered));
+            is_registered
         }
     }
 
@@ -1759,12 +1752,7 @@ impl FlushPendingTask {
         // SAFETY: balances the `ref_()` taken in `run_pending_later()` when
         // this task was enqueued; `this` is live for at least that ref.
         let _guard = unsafe { RefPtr::from_raw(this) };
-        // SAFETY: `_guard` keeps `this` live.
-        let sink = unsafe { &*this };
-        // A `write()` has since joined the pending slot and backed up: `on_write` settles it once those bytes are out too.
-        let backed_up_again = sink.writer.get().has_pending_data()
-            && !matches!(sink.pending.get().result, streams::Writable::Err(_));
-        if had && !backed_up_again {
+        if had {
             // SAFETY: `this` is the canonical `*mut FileSink` recovered via
             // `from_field_ptr!` from the embedded `run_pending_later` task;
             // `_guard` keeps it live for the call.

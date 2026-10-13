@@ -36,8 +36,6 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Unknown> m_execArgv;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
-    // The FileSinks behind process.stdout and process.stderr: console.* flushes them before it writes to the same fd.
-    WriteBarrier<JSObject> m_stdioSinks[2];
 
     void installDefaultWarningListener(JSC::VM&);
 
@@ -49,9 +47,10 @@ public:
 
     DECLARE_EXPORT_INFO;
     bool m_reportOnUncaughtException = false;
-
-    JSObject* stdioSink(int fd) const { return m_stdioSinks[fd - 1].get(); }
-    void setStdioSink(JSC::VM& vm, int fd, JSObject* sink) { m_stdioSinks[fd - 1].set(vm, this, sink); }
+#if !OS(WINDOWS)
+    // The FileSinks behind process.stdout ([0]) and process.stderr ([1]): console.* flushes what they buffered before it writes.
+    WriteBarrier<JSObject> m_stdioSinks[2];
+#endif
 
     static void destroy(JSC::JSCell* cell)
     {

@@ -272,7 +272,7 @@ unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
 
 #[cfg(unix)]
 unsafe extern "Rust" {
-    /// `bun_runtime::webcore::FileSink`: what `process.stdout` / `process.stderr` queued for `fd` goes out before the console writes to it.
+    /// Defined in `bun_runtime::webcore::file_sink`. On Windows those sinks are `SyncFile`: every write blocks until it is out, so nothing is buffered.
     safe fn __bun_flush_stdio_sink(global: &JSGlobalObject, fd: bun_sys::Fd);
 }
 
@@ -415,6 +415,16 @@ fn message_with_type_and_level_(
     // time. We do this the slightly annoying way to avoid assigning a pointer.
     let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
         || message_type == MessageType::Assert;
+    // Before the lock: this waits for the reader of this thread's own sink, and other threads' console output need not wait with it.
+    #[cfg(unix)]
+    __bun_flush_stdio_sink(
+        global,
+        if use_stderr {
+            bun_sys::Fd::stderr()
+        } else {
+            bun_sys::Fd::stdout()
+        },
+    );
     let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
     if message_type == MessageType::Clear {
@@ -464,16 +474,6 @@ fn message_with_type_and_level_(
     };
     // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
     let writer: &mut dyn bun_io::Write = raw_writer;
-
-    #[cfg(unix)]
-    __bun_flush_stdio_sink(
-        global,
-        if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-            bun_sys::Fd::stderr()
-        } else {
-            bun_sys::Fd::stdout()
-        },
-    );
 
     // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
     // dep on the high tier). Dispatch through `RuntimeHooks` instead — the

@@ -32,15 +32,21 @@ impl FormatCommand {
 
     /// `args`: what follows `format`.
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
-        // `--debug-check-svelte <before> <after>`, for `test/cli/format/svelte/svelte.test.ts`.
+        // `--debug-check-svelte <before> <after> ..`, for `test/cli/format/svelte/svelte.test.ts`: a line for each pair.
         if HAS_TEST_RUNNER
-            && let [flag, before, after] = args
+            && let [flag, pairs @ ..] = args
             && flag.as_bytes() == b"--debug-check-svelte"
         {
             let read = |path: &ZStr| bun_format_conformance::read_file(path.as_bytes());
-            let is_same = matches!((read(before), read(after)), (Some(before), Some(after))
-                if bun_lint_driver::fmt::is_same_svelte_for_tests(&before, &after));
-            Global::exit(u32::from(!is_same));
+            for pair in pairs.chunks_exact(2) {
+                let is_same = matches!((read(pair[0]), read(pair[1])), (Some(before), Some(after))
+                    if bun_lint_driver::fmt::is_same_svelte_for_tests(&before, &after));
+                bun_format_conformance::output_line!(
+                    "{}",
+                    if is_same { "same" } else { "different" }
+                );
+            }
+            Global::exit(0);
         }
         if HAS_TEST_RUNNER
             && let [first, rest @ ..] = args

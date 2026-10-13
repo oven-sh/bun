@@ -909,6 +909,20 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await install();
   await checkInstall();
+
+  // A cache that was restored halfway holds the patched directory without the
+  // `.bun-tag-<hash>` marker that the patch task writes last (#33520). The first
+  // variant rebuilds it, and the other variants share that one rebuild.
+  const [patchedDir] = (await readdirSorted(cacheDir)).filter(
+    dir => dir.startsWith("peer-deps@1.0.0") && dir.includes("_patch_hash="),
+  );
+  for (const entry of await readdirSorted(join(cacheDir, patchedDir))) {
+    if (entry.startsWith(".bun-tag-")) await rm(join(cacheDir, patchedDir, entry));
+  }
+  await rm(join(cacheDir, patchedDir, "patched.txt"));
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await install();
+  await checkInstall();
 });
 
 test("adding, removing and re-adding a patch for an npm dependency", async () => {

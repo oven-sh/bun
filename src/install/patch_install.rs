@@ -16,16 +16,11 @@ use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPo
 use crate::package_install::PackageInstall;
 use crate::package_manager;
 use crate::{
-    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Package,
+    BuntagHashBuf, DependencyID, PackageID, PackageManager, buntaghashbuf_make, lockfile::Package,
     resolution::Resolution,
 };
 
 bun_output::declare_scope!(InstallPatch, visible);
-
-/// Length of the hex representation of `u64::MAX` (i.e. 16).
-const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
-const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
-type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
 // The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
 // `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
@@ -542,18 +537,9 @@ impl PatchTask {
             }
 
             // 5. Add bun tag
-            let bun_tag_prefix = bun_hash_tag;
-            let mut buntagbuf: BuntagHashBuf = [0; MAX_BUNTAG_HASH_BUF_LEN];
-            buntagbuf[..bun_tag_prefix.len()].copy_from_slice(bun_tag_prefix);
-            let hashlen = {
-                use std::io::Write as _;
-                let mut cursor = &mut buntagbuf[bun_tag_prefix.len()..];
-                let before = cursor.len();
-                write!(&mut cursor, "{:x}", patch.patch_hash).expect("unreachable");
-                before - cursor.len()
-            };
-            buntagbuf[bun_tag_prefix.len() + hashlen] = 0;
-            let buntag_zstr = ZStr::from_buf(&buntagbuf, bun_tag_prefix.len() + hashlen);
+            let mut buntagbuf = BuntagHashBuf::default();
+            let buntag_len = buntaghashbuf_make(&mut buntagbuf, patch.patch_hash).len();
+            let buntag_zstr = ZStr::from_buf(&buntagbuf, buntag_len);
             if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
                     format_args!(

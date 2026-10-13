@@ -5727,7 +5727,7 @@ pub mod bv2_impl {
             })
         }
 
-        /// With an outdir the metafile is written and the output is `Saved`. With no outdir it holds the bytes.
+        /// The output is `Saved` only after the metafile is written. With no outdir it holds the bytes.
         fn write_metafile_output(
             &mut self,
             output_files: &mut Vec<options::OutputFile>,
@@ -5738,40 +5738,36 @@ pub mod bv2_impl {
             // `do_compilation` keeps only the executable and its sourcemaps.
             let is_executable = self.transpiler.options.compile_mode.is_executable();
             let outdir: &[u8] = &self.linker.resolver().opts.output_dir;
-            let data = if outdir.is_empty() {
+            let (output_path, data) = if outdir.is_empty() {
                 if is_executable {
                     return Ok(());
                 }
-                crate::output_file::OptionsData::Buffer {
-                    data: content.into_owned().into_boxed_slice(),
-                }
+                let data = content.into_owned().into_boxed_slice();
+                (
+                    Box::<[u8]>::from(file_path),
+                    crate::output_file::OptionsData::Buffer { data },
+                )
             } else {
-                // Open the output directory and write the metafile relative to it,
-                // routed through `bun_sys::File`.
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let joined = bun_paths::resolve_path::join_string_buf::<
-                    bun_paths::resolve_path::platform::Auto,
-                >(&mut buf.0[..], &[outdir, file_path]);
-                // Create parent directories if needed (relative to outdir).
-                let parent = bun_paths::resolve_path::dirname::<
-                    bun_paths::resolve_path::platform::Loose,
-                >(joined);
-                if !parent.is_empty() {
-                    let _ = bun_sys::mkdir_recursive(parent);
+                let failed = |err: bun_sys::Error, path: &[u8]| {
+                    self.transpiler.log_mut().add_sys_error(
+                        &err,
+                        format_args!("writing metafile {}", bun_core::fmt::quote(path)),
+                    );
+                    Error::WriteFailed
+                };
+                let dest =
+                    metafile_disk_path(outdir, file_path).map_err(|err| failed(err, file_path))?;
+                bun_sys::File::make_open(
+                    &dest,
+                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                    0o664,
+                )
+                .and_then(|file| file.write_all(&content))
+                .map_err(|err| failed(err, &dest))?;
+                if is_executable {
+                    return Ok(());
                 }
-                let mut zbuf = bun_paths::path_buffer_pool::get();
-                let joined_z = bun_paths::resolve_path::z(joined, &mut zbuf);
-                match bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, &content) {
-                    Ok(()) => {}
-                    Err(err) => {
-                        bun_core::warn!(
-                            "Failed to write metafile to '{}': {}",
-                            bstr::BStr::new(file_path),
-                            err
-                        );
-                    }
-                }
-                crate::output_file::OptionsData::Saved(content.len())
+                (dest, crate::output_file::OptionsData::Saved(content.len()))
             };
 
             let is_json = output_kind == crate::options::OutputKind::MetafileJson;
@@ -5783,7 +5779,7 @@ pub mod bv2_impl {
                 } else {
                     b"metafile.md".as_slice()
                 }),
-                output_path: Box::<[u8]>::from(file_path),
+                output_path,
                 data,
                 output_kind,
                 is_executable: false,
@@ -5793,6 +5789,26 @@ pub mod bv2_impl {
             }));
             Ok(())
         }
+    }
+
+    /// `path.resolve(outdir, file_path)`. The artifact gets this path, so it names the file that was written.
+    fn metafile_disk_path(outdir: &[u8], file_path: &[u8]) -> bun_sys::Maybe<Box<[u8]>> {
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined: Option<Box<[u8]>> = if bun_paths::is_absolute(outdir) {
+            join_abs_string_buf_checked::<platform::Auto>(outdir, &mut buf.0[..], &[file_path])
+                .map(Box::from)
+        } else {
+            // Not `top_level_dir`: `process.chdir()` rewrites it in place on the JS thread.
+            let mut cwd = bun_paths::path_buffer_pool::get();
+            let cwd_len = bun_sys::getcwd(&mut cwd.0[..])?;
+            let parts = [outdir, file_path];
+            join_abs_string_buf_checked::<platform::Auto>(&cwd.0[..cwd_len], &mut buf.0[..], &parts)
+                .map(Box::from)
+        };
+        joined
+            .ok_or_else(|| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))
     }
 
     impl<'a> BundleV2<'a> {

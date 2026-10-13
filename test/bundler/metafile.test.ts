@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -870,22 +870,25 @@ describe("Bun.build metafile artifacts", () => {
     // Not outputs of any build below. An artifact must not read them.
     "meta.json": "a file that is not the metafile",
     "meta.md": "a file that is not the report",
-    // Prints the metafile artifacts of one build, then every file below the working directory.
+    // Runs the builds in argv[2]. Prints the metafile artifacts of each, then every file below the working directory.
     "build.js": /* js */ `
-      const { inPlugin, ...config } = JSON.parse(process.argv[2]);
-      const plugins = inPlugin ? [{ name: "config", setup: build => void Object.assign(build.config, inPlugin) }] : [];
-      const result = await Bun.build({ entrypoints: ["./entry.js"], plugins, ...config });
+      const builds = [];
+      for (const { inPlugin, ...config } of JSON.parse(process.argv[2])) {
+        const plugins = inPlugin ? [{ name: "config", setup: build => void Object.assign(build.config, inPlugin) }] : [];
+        const result = await Bun.build({ entrypoints: ["./entry.js"], plugins, ...config });
 
-      const artifacts = [];
-      for (const output of result.outputs) {
-        if (!output.kind.startsWith("metafile-")) continue;
-        artifacts.push({ kind: output.kind, path: output.path, size: output.size, text: await output.text() });
+        const artifacts = [];
+        for (const output of result.outputs) {
+          if (!output.kind.startsWith("metafile-")) continue;
+          const { kind, path, size } = output;
+          const onDisk = await Bun.file(path).text().catch(() => null);
+          artifacts.push({ kind, path, size, text: await output.text(), onDisk });
+        }
+        builds.push({ kinds: result.outputs.map(output => output.kind), artifacts, metafile: result.metafile });
       }
       const files = {};
       for (const name of new Bun.Glob("**").scanSync()) files[name.replaceAll("\\\\", "/")] = await Bun.file(name).text();
-      console.log(
-        JSON.stringify({ kinds: result.outputs.map(output => output.kind), artifacts, metafile: result.metafile, files }),
-      );
+      console.log(JSON.stringify({ builds, files }));
     `,
     // Reads one metafile artifact in every way a Blob can be read.
     "readers.js": /* js */ `
@@ -921,12 +924,34 @@ describe("Bun.build metafile artifacts", () => {
         }),
       );
     `,
+    // For each length in argv[2], builds into "out" with a metafile whose file has a path of that many bytes.
+    "long-path.js": /* js */ `
+      import { join } from "node:path";
+
+      const results = [];
+      for (const total of JSON.parse(process.argv[2])) {
+        let length = total - Buffer.byteLength(join(process.cwd(), "out", "m"));
+        const names = [];
+        for (; length > 200; length -= 201) names.push(Buffer.alloc(200, "d").toString());
+        names.push(Buffer.alloc(length + 1, "m").toString());
+
+        const result = await Bun.build({ entrypoints: ["./entry.js"], outdir: "out", metafile: join(...names), throw: false });
+        const artifact = result.outputs.find(output => output.kind === "metafile-json");
+        results.push({
+          success: result.success,
+          logs: result.logs.map(log => log.message.slice(0, 36)),
+          pathLength: artifact && Buffer.byteLength(artifact.path),
+          isMetafile: artifact && Bun.deepEquals(await artifact.json(), result.metafile),
+        });
+      }
+      console.log(JSON.stringify(results));
+    `,
   };
 
   /** Runs one of the scripts above with `cwd` as its working directory, and returns what it printed. */
-  async function run(cwd: string, script: "build.js" | "readers.js", config: object = {}) {
+  async function run(cwd: string, script: "build.js" | "readers.js" | "long-path.js", argument: unknown = null) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), script, JSON.stringify(config)],
+      cmd: [bunExe(), script, JSON.stringify(argument)],
       env: bunEnv,
       cwd,
       stdout: "pipe",
@@ -939,67 +964,54 @@ describe("Bun.build metafile artifacts", () => {
     return printed;
   }
 
-  type Built = {
-    kinds: string[];
-    artifacts: { kind: string; path: string; size: number; text: string }[];
-    metafile: Metafile;
-    files: Record<string, string>;
-  };
+  type Artifact = { kind: string; path: string; size: number; text: string; onDisk: string | null };
+  type Built = { kinds: string[]; artifacts: Artifact[]; metafile: Metafile };
 
-  /** The artifact at `path` holds the metafile of its own build. */
-  function expectGenerated({ artifacts, metafile }: Built, path: string) {
-    const { kind, size, text } = artifacts.find(artifact => artifact.path === path)!;
-    expect(size).toBe(Buffer.byteLength(text));
-    if (kind === "metafile-json") expect(JSON.parse(text)).toEqual(metafile);
-    else expect(text).toStartWith("# Bundle Analysis Report");
+  /** Each metafile artifact holds the metafile of its own build. They are last in `outputs`, the JSON first. */
+  function expectGenerated({ kinds, artifacts, metafile }: Built) {
+    expect(kinds).toEqual(["entry-point", ...artifacts.map(({ kind }) => kind)]);
+    expect(Object.keys(metafile)).toEqual(["inputs", "outputs"]);
+    for (const { kind, size, text } of artifacts) {
+      expect(size).toBe(Buffer.byteLength(text));
+      if (kind === "metafile-json") expect(JSON.parse(text)).toEqual(metafile);
+      else expect(text).toStartWith("# Bundle Analysis Report");
+    }
   }
 
   // A build with no outdir writes nothing, so a metafile artifact holds the bytes.
   describe("without an outdir", () => {
-    const json = { kind: "metafile-json", path: "meta.json" };
-    const markdown = { kind: "metafile-markdown", path: "meta.md" };
-
-    test.concurrent.each([
-      ["a string", { metafile: "meta.json" }, [json]],
-      ["{ json }", { metafile: { json: "meta.json" } }, [json]],
-      ["{ markdown }", { metafile: { markdown: "meta.md" } }, [markdown]],
-      ["{ json, markdown }", { metafile: { json: "meta.json", markdown: "meta.md" } }, [json, markdown]],
-      ["set by a plugin", { inPlugin: { metafile: { json: "meta.json", markdown: "meta.md" } } }, [json, markdown]],
-      [
-        // One HTML file that holds its script. The build has no other file to write.
-        "of a standalone HTML build",
-        {
-          entrypoints: ["./index.html"],
-          compile: true,
-          target: "browser",
-          metafile: { json: "meta.json", markdown: "meta.md" },
-        },
-        [json, markdown],
-      ],
-    ])("the artifacts hold the metafile of the build: %s", async (_, config, expected) => {
-      using dir = tempDir("metafile-no-outdir", files);
-      const built: Built = await run(String(dir), "build.js", config);
-
-      expect(built.artifacts.map(({ kind, path }) => ({ kind, path }))).toEqual(expected);
-      // Last in `outputs`, the JSON before the markdown.
-      expect(built.kinds.slice(-expected.length)).toEqual(expected.map(({ kind }) => kind));
-      for (const { path } of expected) expectGenerated(built, path);
-
-      expect(Object.keys(built.metafile)).toEqual(["inputs", "outputs"]);
-      // The build wrote nothing, and the other files are as they were.
-      expect(built.files).toEqual(files);
-    });
-
-    test.concurrent("an absolute path is not written either", async () => {
+    test.concurrent("the artifacts hold the metafile of the build", async () => {
       using dir = tempDir("metafile-no-outdir", files);
       using elsewhere = tempDir("metafile-no-outdir-absolute", {});
       const absolute = join(String(elsewhere), "meta.json");
-      const built: Built = await run(String(dir), "build.js", { metafile: absolute });
+      const json = { kind: "metafile-json", path: "meta.json" };
+      const markdown = { kind: "metafile-markdown", path: "meta.md" };
+      const both = { json: "meta.json", markdown: "meta.md" };
+      const cases: [config: object, artifacts: { kind: string; path: string }[]][] = [
+        [{ metafile: "meta.json" }, [json]],
+        [{ metafile: { json: "meta.json" } }, [json]],
+        [{ metafile: { markdown: "meta.md" } }, [markdown]],
+        [{ metafile: both }, [json, markdown]],
+        // Set by a plugin.
+        [{ inPlugin: { metafile: both } }, [json, markdown]],
+        // One HTML file that holds its script. The build has no other file to write.
+        [{ entrypoints: ["./index.html"], compile: true, target: "browser", metafile: both }, [json, markdown]],
+        // An absolute path is not written either.
+        [{ metafile: absolute }, [{ kind: "metafile-json", path: absolute }]],
+      ];
+      const printed = await run(
+        String(dir),
+        "build.js",
+        cases.map(([config]) => config),
+      );
+      const builds: Built[] = printed.builds;
 
-      expect(built.artifacts.map(({ kind, path }) => ({ kind, path }))).toEqual([
-        { kind: "metafile-json", path: absolute },
-      ]);
-      expectGenerated(built, absolute);
+      expect(builds.map(({ artifacts }) => artifacts.map(({ kind, path }) => ({ kind, path })))).toEqual(
+        cases.map(([, artifacts]) => artifacts),
+      );
+      builds.forEach(expectGenerated);
+      // No build wrote a file, and the other files are as they were.
+      expect(printed.files).toEqual(files);
       expect(readdirSync(String(elsewhere))).toEqual([]);
     });
 
@@ -1020,10 +1032,110 @@ describe("Bun.build metafile artifacts", () => {
       });
     });
   });
+
+  // A build with an outdir writes the metafile, and the artifact reads that file.
+  describe("with an outdir", () => {
+    test.concurrent("the metafile is written where its artifact says", async () => {
+      using dir = tempDir("metafile-outdir", files);
+      const cwd = String(dir);
+      const cases: [config: object, written: string[]][] = [
+        [{ outdir: "a", metafile: { json: "meta.json", markdown: "meta.md" } }, ["a/meta.json", "a/meta.md"]],
+        [{ outdir: "b", metafile: "x/y/meta.json" }, ["b/x/y/meta.json"]],
+        [{ outdir: "c", metafile: { markdown: "../above/meta.md" } }, ["above/meta.md"]],
+        // Both separators are separators in the path of an artifact.
+        [{ outdir: "d", metafile: "x\\meta.json" }, ["d/x/meta.json"]],
+        [{ outdir: join(cwd, "e"), metafile: "meta.json" }, ["e/meta.json"]],
+        // An absolute path does not go below the outdir.
+        [{ outdir: "f", metafile: join(cwd, "absolute", "meta.json") }, ["absolute/meta.json"]],
+        // A second build into "a". Its metafile is shorter, and it replaces the one of the first build.
+        [{ outdir: "a", metafile: "meta.json", entrypoints: ["./foo.js"] }, ["a/meta.json"]],
+      ];
+      const printed = await run(
+        cwd,
+        "build.js",
+        cases.map(([config]) => config),
+      );
+      const builds: Built[] = printed.builds;
+
+      expect(
+        builds.map(({ artifacts }) => artifacts.map(({ path }) => relative(cwd, path).replaceAll("\\", "/"))),
+      ).toEqual(cases.map(([, written]) => written));
+      builds.forEach(expectGenerated);
+      for (const { artifacts } of builds) {
+        for (const { text, onDisk } of artifacts) expect(onDisk).toBe(text);
+      }
+      expect(builds.at(-1)!.artifacts[0].size).toBeLessThan(builds[0].artifacts[0].size);
+
+      // The builds wrote the bundles and the metafiles, and nothing else.
+      const bundles = ["a/entry.js", "a/foo.js", "b/entry.js", "c/entry.js", "d/entry.js", "e/entry.js", "f/entry.js"];
+      expect(
+        Object.keys(printed.files)
+          .filter(name => !(name in files))
+          .sort(),
+      ).toEqual([...new Set([...bundles, ...cases.flatMap(([, written]) => written)])].sort());
+    });
+
+    // A metafile is an output like a chunk: when its write fails, the build fails.
+    test.each(["json", "markdown"] as const)("a %s metafile that cannot be written fails the build", async form => {
+      using dir = tempDir("metafile-outdir-blocked", {
+        "entry.js": `console.log("hi");`,
+        "out/taken": "a file, not a directory",
+      });
+      const path = join("taken", "meta");
+      const config: Bun.BuildConfig = {
+        entrypoints: [join(String(dir), "entry.js")],
+        outdir: join(String(dir), "out"),
+        metafile: form === "json" ? { json: path } : { markdown: path },
+      };
+      const failed = {
+        success: false,
+        outputs: [],
+        logs: [expect.stringContaining(`writing metafile ${JSON.stringify(join(String(dir), "out", path))}`)],
+      };
+      const report = ({ success, outputs, logs }: Bun.BuildOutput) => ({
+        success,
+        outputs,
+        logs: logs.map(log => log.message),
+      });
+
+      // A compile stops before it makes the executable.
+      expect(report(await Bun.build({ ...config, compile: true, throw: false }))).toEqual(failed);
+      expect(readdirSync(join(String(dir), "out"))).toEqual(["taken"]);
+
+      expect(report(await Bun.build({ ...config, throw: false }))).toEqual(failed);
+      const thrown = await Bun.build(config).then(
+        () => undefined,
+        error => error,
+      );
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect(thrown.errors.map((error: BuildMessage) => error.message)).toEqual(failed.logs);
+    });
+
+    describe("a path that is too long fails the build", () => {
+      const tooLong = { success: false, logs: ["File name too long: writing metafile"] };
+
+      // The unfixed build aborts here: the child prints nothing and a signal ends it.
+      test.concurrent("longer than every path buffer", async () => {
+        using dir = tempDir("metafile-outdir-long", files);
+        expect(await run(String(dir), "long-path.js", [100_000])).toEqual([tooLong]);
+      });
+
+      // PATH_MAX less the NUL. A path buffer on Windows is longer than any path that Windows makes.
+      const longest = isLinux ? 4095 : 1023;
+
+      test.concurrent.skipIf(isWindows)("one byte longer than the longest path", async () => {
+        using dir = tempDir("metafile-outdir-limit", files);
+        expect(await run(String(dir), "long-path.js", [longest, longest + 1])).toEqual([
+          { success: true, logs: [], pathLength: longest, isMetafile: true },
+          tooLong,
+        ]);
+      });
+    });
+  });
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {

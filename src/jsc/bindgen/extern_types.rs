@@ -50,6 +50,16 @@ pub struct ExternVector<T: Copy> {
     capacity: c_uint,
 }
 impl<T: Copy> ExternVector<T> {
+    /// The buffer becomes the `Vec`, where the global allocator is the one C++ used.
+    #[inline]
+    pub fn into_vec_unconverted(self) -> Vec<T> {
+        if !bun_alloc::USE_MIMALLOC || self.data.is_null() {
+            return self.into_vec(|item| item);
+        }
+        // SAFETY: a mimalloc buffer of `capacity` elements, `length` of them initialized; ownership was transferred.
+        unsafe { Vec::from_raw_parts(self.data, self.length as usize, self.capacity as usize) }
+    }
+
     /// Converts every element and frees the buffer.
     #[inline]
     pub fn into_vec<U>(self, mut convert: impl FnMut(T) -> U) -> Vec<U> {

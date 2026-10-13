@@ -773,7 +773,8 @@ export class ArrayType extends Type {
     return `Vec<${this.element.rustType(scope)}>`;
   }
   rustFromExtern(expr: string, scope: RustScope): string {
-    return `${expr}.into_vec(|value| ${this.element.rustFromExtern("value", scope)})`;
+    const element = this.element.rustFromExtern("value", scope);
+    return element === "value" ? `${expr}.into_vec_unconverted()` : `${expr}.into_vec(|value| ${element})`;
   }
   rustResultFieldType(scope: RustScope): string {
     return `Vec<${this.element.rustResultFieldType(scope)}>`;
@@ -822,6 +823,8 @@ export class EnumType extends NamedType {
   readonly spellings: readonly (readonly string[])[];
   /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
   firstEnumerationValueIndex = -1;
+  /** Reachable from a return type. Set by the generator. */
+  returned = false;
   constructor(values: readonly (string | readonly string[])[]) {
     super();
     assert(values.length > 0, "an enumeration has values");
@@ -898,6 +901,8 @@ export interface DictionaryOptions {
   fromJS?: boolean;
   /** An array is an object with none of the members, not an error. */
   allowArray?: boolean;
+  /** So is a value whose `typeof` is not "object": Node's `if (typeof options !== "object") options = null`. */
+  allowNonObject?: boolean;
 }
 
 export class DictionaryType extends NamedType {
@@ -929,6 +934,9 @@ export class DictionaryType extends NamedType {
   }
   get allowArray(): boolean {
     return !!this.options.allowArray;
+  }
+  get allowNonObject(): boolean {
+    return !!this.options.allowNonObject;
   }
   get idlType(): string {
     return `::WebCore::IDLDictionary<${this.cpp}>`;

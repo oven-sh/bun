@@ -1,9 +1,7 @@
 #pragma once
 #include "root.h"
 #include "Bindgen/Identifiers.h"
-#include "ObjectBindings.h"
 #include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/StructureInlines.h>
 
 namespace Bun::Bindgen {
 
@@ -18,19 +16,8 @@ public:
     {
     }
 
-    // May throw.
-    ALWAYS_INLINE JSC::JSValue get(unsigned index)
-    {
-        if (ownPropertiesAreTheWholeAnswer()) [[likely]] {
-            unsigned attributes = 0;
-            JSC::PropertyOffset offset = m_object->structure()->get(m_vm, m_memberNames[index], attributes);
-            if (offset == JSC::invalidOffset)
-                return JSC::jsUndefined();
-            if (!(attributes & (JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::CustomAccessorOrValue))) [[likely]]
-                return m_object->getDirect(offset);
-        }
-        return getIfPropertyExistsPrototypePollutionMitigation(m_vm, m_globalObject, m_object, m_memberNames[index]);
-    }
+    // May throw. Out of line: inlined, it is most of the size of every generated convertDictionary.
+    JSC::JSValue get(unsigned index);
 
 private:
     // The lookup below stops before Object.prototype. Asked per member: converting one can run JavaScript.

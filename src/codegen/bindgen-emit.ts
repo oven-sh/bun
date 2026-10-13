@@ -67,7 +67,8 @@ function walk(type: Type, visit: (type: Type) => void, seen = new Set<Type>()): 
 export function analyze(files: readonly SchemaFile[]): Tables {
   const tables: Tables = { memberNames: [], enumerationValues: [], objectStructures: [], classes: [] };
   const markAccepted = (type: Type) => walk(type, t => void (t instanceof DictionaryType && (t.accepted = true)));
-  const markReturned = (type: Type) => walk(type, t => void (t instanceof DictionaryType && (t.returned = true)));
+  const markReturned = (type: Type) =>
+    walk(type, t => void ((t instanceof DictionaryType || t instanceof EnumType) && (t.returned = true)));
   for (const file of files) {
     for (const type of file.types) {
       if (type instanceof DictionaryType && type.fromJS) markAccepted(type);
@@ -98,6 +99,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
   for (const file of files) {
     for (const type of file.types) {
       if (type instanceof EnumType) {
+        if (!type.returned) continue;
         type.firstEnumerationValueIndex = tables.enumerationValues.length;
         tables.enumerationValues.push(...type.spellings.map(([canonical]) => canonical));
       } else if (type instanceof DictionaryType) {
@@ -312,12 +314,17 @@ template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObje
     auto* globalObject = &lexicalGlobalObject;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto ctx = ::Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(type.userFacingName)} };
+    [[maybe_unused]] auto ctx = ::Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(type.userFacingName)} };
     auto* object = value.getObject();
-    if (!object) [[unlikely]] {
+${
+  type.allowNonObject
+    ? `    if (!object || object->isCallable())
+        return ${type.toCpp({})};`
+    : `    if (!object) [[unlikely]] {
         ctx.throwNotObject(lexicalGlobalObject, scope);
         return {};
-    }
+    }`
+}
 ${
   type.allowArray
     ? ""
@@ -805,13 +812,17 @@ function rustForEnum(type: EnumType): string {
 pub enum ${type.name} {
 ${type.variants.map((variant, i) => `    /// \`${JSON.stringify(type.spellings[i][0])}\`\n    ${variant} = ${i},`).join("\n")}
 }
-impl ${type.name} {
+${
+  type.returned
+    ? `impl ${type.name} {
     #[inline]
     pub fn to_js<'a>(self, heap: &bindgen::JsHeap<'a>) -> ${jsValueResult} {
         bindgen::to_js::enumeration_value(heap, ${type.firstEnumerationValueIndex} + self as u32)
     }
 }
-`;
+`
+    : ""
+}`;
 }
 
 function rustForUnion(type: UnionType, scope: RustScope): string {

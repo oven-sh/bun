@@ -128,9 +128,7 @@ function bound(binding) {
               : $bundleError("TODO: type");
     },
     uptime: binding.uptime,
-    userInfo: function userInfo(options) {
-      return binding.userInfo(typeof options === "object" ? options : undefined);
-    },
+    userInfo: binding.userInfo,
     version: binding.version,
     machine: function () {
       // TODO: linux arm64 should also return "aarch64" (Node/uname compat) —

@@ -369,6 +369,7 @@ it("native functions are not constructors", () => {
     "release",
     "setPriority",
     "totalmem",
+    "userInfo",
   ]) {
     expect(() => new os[name]()).toThrow(TypeError);
   }

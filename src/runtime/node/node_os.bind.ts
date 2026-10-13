@@ -24,7 +24,10 @@ export const release = b.fn({ returns: b.string });
 export const totalmem = b.fn({ returns: b.u64 });
 export const uptime = b.fn({ returns: b.f64, capability: "js", throws: true });
 
-export const UserInfoOptions = b.dictionary({ encoding: b.string.loose.utf8.default("") }, { allowArray: true });
+export const UserInfoOptions = b.dictionary(
+  { encoding: b.string.loose.utf8.default("") },
+  { allowArray: true, allowNonObject: true },
+);
 export const userInfo = b.fn({
   args: {
     options: UserInfoOptions.nullable.default({}),
@@ -32,6 +35,7 @@ export const userInfo = b.fn({
   returns: b.any,
   capability: "js",
   throws: true,
+  length: 1,
 });
 export const version = b.fn({ returns: b.string, throws: true });
 

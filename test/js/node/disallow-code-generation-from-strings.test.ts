@@ -718,7 +718,7 @@ describe.concurrent("=strict in a compiled executable", () => {
     });
   }
 
-  const compile = (cwd: string, entryPoints: string[], buildArgs: string[], execArgv: string) =>
+  const compile = (cwd: string, entryPoints: string[], buildArgs: readonly string[], execArgv: string) =>
     runBun(cwd, [
       "build",
       "--compile",
@@ -784,7 +784,7 @@ describe.concurrent("=strict in a compiled executable", () => {
       unhandled: [],
     };
     // The engine's option is set after it has read BUN_JSC_*.
-    for (const env of [{}, { BUN_JSC_disallowNonEmbeddedCode: "0" }]) {
+    for (const env of [{}, { BUN_JSC_disallowNonEmbeddedCode: "0" }] as Record<string, string>[]) {
       const { stdout, exitCode } = await runCompiled(cwd, [cwd], {
         ...transpilerCache,
         BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",

@@ -108,11 +108,15 @@ describe("__esModule is a getter", () => {
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "entry.mjs"],
-      env: bunEnv,
+      // A JS call from that lookup aborts only a build with assertions. A release build returns
+      // undefined from the call and hides it. This option makes every build abort.
+      env: { ...bunEnv, BUN_JSC_crashOnDisallowedVMEntry: "1", BUN_ENABLE_CRASH_REPORTING: "0" },
       cwd: String(dir),
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stderr).toBe("");
     expect(stdout).toBe(`{"defaultImport":"object","named":"named","getterCalls":0}\n`);
     expect(exitCode).toBe(0);
   });

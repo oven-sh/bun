@@ -1233,20 +1233,6 @@ impl<'a, 'o> Printer<'a, 'o> {
         {
             return self.print_as_written(id);
         }
-        // `<script lang="ts>`: to Svelte a value that starts with a quote has one at its end, and this is `t`.
-        if matches!(
-            self.tree[owner].kind,
-            Kind::Script { .. } | Kind::StyleSheet { .. }
-        ) {
-            let (start, end) = (self.tree[id].start, self.tree[id].end);
-            let written = Span { start, end }.of(self.text);
-            let value = strings::index_of_char_usize(written, b'=')
-                .map(|at| strings::trim_js_whitespace_start(&written[at + 1..]));
-            if matches!(value, Some([quote @ (b'"' | b'\''), rest @ ..]) if rest.last() != Some(quote))
-            {
-                return self.print_as_written(id);
-            }
-        }
         match self.tree[id].kind.clone() {
             Kind::Attribute { name, value } => {
                 if self.can_be_shorthand(name, &value) {
@@ -2035,6 +2021,39 @@ impl<'a, 'o> Printer<'a, 'o> {
         ])
     }
 
+    /// The markup is the last thing in the file. If it ends with what is white space to JavaScript and text to HTML, like a
+    /// no-break space, that is written as an entity: Svelte has `trimEnd()`. The plugin leaves it to that.
+    fn keep_text_at_end_of_file(&mut self) {
+        let root = self.tree.fragment;
+        let last = (self.tree.fragment(root).iter().rev())
+            .find(|&&it| !self.is_empty_text(it))
+            .copied();
+        let Some(Kind::Text { raw }) = last.map(|it| &mut self.tree[it].kind) else {
+            return;
+        };
+        let text = raw.trim_ascii_end();
+        let len = (1..=3).find(|&len| {
+            (text.len().checked_sub(len))
+                .is_some_and(|at| strings::js_whitespace_len(&text[at..]) == len)
+        });
+        let Some(at) = len.map(|len| text.len() - len) else {
+            return;
+        };
+        let entity = match std::str::from_utf8(&text[at..])
+            .ok()
+            .and_then(|it| it.chars().next())
+        {
+            Some('\u{A0}') => "&nbsp;".to_owned(),
+            Some(it) => format!("&#x{:X};", it as u32),
+            None => return,
+        };
+        let behind = raw[text.len()..].to_vec();
+        let raw = raw.to_mut();
+        raw.truncate(at);
+        raw.extend_from_slice(entity.as_bytes());
+        raw.extend_from_slice(&behind);
+    }
+
     /// The case `"Fragment"` of `print`.
     fn print_root_fragment(&mut self) -> Doc<'a> {
         let fragment = self.tree.fragment;
@@ -2224,6 +2243,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         let Some(order) = self.svelte.sort_order else {
             self.put_top_level_parts_back();
             self.merge_adjacent_texts();
+            self.keep_text_at_end_of_file();
             let result = self.print_root_fragment();
             return match self.options.insert_pragma && !has_pragma {
                 true => with_pragma(result),
@@ -2264,6 +2284,15 @@ impl<'a, 'o> Printer<'a, 'o> {
             options.push(self.with_region_end_trail(doc, trails[3]));
         }
         self.merge_adjacent_texts();
+        let is_there = |part: &Part| match part {
+            Part::Options => !options.is_empty(),
+            Part::Scripts => !scripts.is_empty(),
+            Part::Styles => !styles.is_empty(),
+            Part::Markup => true,
+        };
+        if order.iter().rfind(|it| is_there(it)) == Some(&Part::Markup) {
+            self.keep_text_at_end_of_file();
+        }
         let html = self.print_root_fragment();
         if !matches!(html, Doc::Token("")) {
             markup.push(html);

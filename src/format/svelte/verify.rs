@@ -47,8 +47,8 @@ enum Text {
 
 /// What is still to be read.
 enum Next {
-    /// `true`: it is in `<pre>`.
-    Node(Id, bool),
+    /// With what the text of the fragment is that it is in.
+    Node(Id, Text),
     /// One that is there or not, after a mark of its own.
     Fragment(Option<FragmentId>, Text),
     End,
@@ -247,6 +247,7 @@ impl Check<'_, '_> {
             all.to_mut().extend_from_slice(it);
             all
         });
+        let merged = with_white_space_decoded(merged);
         if how == Text::Preformatted {
             return self.reader.exact(&merged);
         }
@@ -302,7 +303,8 @@ impl Check<'_, '_> {
 
     /// Reads `id`, and says in `next` what is in it, the last first.
     #[optimize(size)]
-    fn enter(&mut self, id: Id, is_pre: bool, next: &mut Vec<Next>) {
+    fn enter(&mut self, id: Id, around: Text, next: &mut Vec<Next>) {
+        let is_pre = around == Text::Preformatted;
         let tree = self.tree;
         let node = &tree[id];
         let whole = Span {
@@ -315,7 +317,9 @@ impl Check<'_, '_> {
             false => Text::WordsWithEndsAroundThem,
         };
         match &node.kind {
-            Kind::Text { raw } => return self.reader.count(raw),
+            // The rest has been read with the fragment.
+            Kind::Text { raw } if around == Text::Code => return self.reader.count(raw),
+            Kind::Text { .. } => return,
             Kind::Comment { data } => {
                 self.comments += 1;
                 return self.reader.count(data);
@@ -340,9 +344,11 @@ impl Check<'_, '_> {
                     {
                         Text::Preformatted
                     }
+                    // One without an end tag goes on up to the end tag of what it is in, with the white space before that.
                     _ if is_regular
                         && !self.is_block_element(id)
-                        && self.sensitivity != HtmlWhitespaceSensitivity::Ignore =>
+                        && self.sensitivity != HtmlWhitespaceSensitivity::Ignore
+                        && has_end_tag(whole.of(self.text), element.name) =>
                     {
                         Text::WordsWithEnds
                     }
@@ -449,6 +455,48 @@ impl Check<'_, '_> {
     }
 }
 
+/// Whether `written`, an element with the name `name`, ends with `</name>`.
+#[optimize(size)]
+fn has_end_tag(written: &[u8], name: &[u8]) -> bool {
+    strings::last_index_of(written, b"</")
+        .and_then(|at| written[at + 2..].strip_prefix(name))
+        .is_some_and(|behind| strings::trim_js_whitespace(behind) == b">")
+}
+
+/// `text` with the characters in the place of `&nbsp;` and of `&#xA0;` and the like, if they are white space to JavaScript.
+#[optimize(size)]
+fn with_white_space_decoded(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
+    if !strings::contains_char(&text, b'&') {
+        return text;
+    }
+    let (mut out, mut rest) = (Vec::with_capacity(text.len()), &text[..]);
+    while let Some(at) = strings::index_of_char_usize(rest, b'&') {
+        out.extend_from_slice(&rest[..at]);
+        rest = &rest[at..];
+        let end = strings::index_of_char_usize(rest, b';').unwrap_or(0);
+        let decoded = match &rest[..end] {
+            b"&nbsp" => Some('\u{A0}'),
+            [b'&', b'#', b'x', digits @ ..] => (std::str::from_utf8(digits).ok())
+                .and_then(|it| u32::from_str_radix(it, 16).ok())
+                .and_then(char::from_u32),
+            _ => None,
+        };
+        let mut bytes = [0; 4];
+        match decoded.map(|it| it.encode_utf8(&mut bytes).as_bytes()) {
+            Some(it) if strings::js_whitespace_len(it) == it.len() && !it.is_empty() => {
+                out.extend_from_slice(it);
+                rest = &rest[end + 1..];
+            }
+            _ => {
+                out.push(b'&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.extend_from_slice(rest);
+    Cow::Owned(out)
+}
+
 #[optimize(size)]
 fn signature(
     text: &[u8],
@@ -468,11 +516,11 @@ fn signature(
     next.extend(
         ([tree.css, tree.instance, tree.module, tree.options].into_iter())
             .flatten()
-            .map(|id| Next::Node(id, false)),
+            .map(|id| Next::Node(id, Text::Words)),
     );
     while let Some(it) = next.pop() {
         match it {
-            Next::Node(id, is_pre) => check.enter(id, is_pre, &mut next),
+            Next::Node(id, around) => check.enter(id, around, &mut next),
             Next::End => check.reader.mark(0),
             Next::Fragment(None, _) => check.reader.mark(6),
             Next::Fragment(Some(fragment), how) => {
@@ -480,12 +528,11 @@ fn signature(
                 if how != Text::Code {
                     check.texts_of(fragment, how);
                 }
-                let is_pre = how == Text::Preformatted;
                 next.extend(
                     tree.fragment(fragment)
                         .iter()
                         .rev()
-                        .map(|&id| Next::Node(id, is_pre)),
+                        .map(|&id| Next::Node(id, how)),
                 );
             }
         }

@@ -999,6 +999,11 @@ impl<'a> Parser<'a, '_> {
                     self.index += len + 2;
                     (self.index - len - 1, self.index - 1)
                 }
+                // To Svelte this is a value without quotes that loses its ends all the same: `lang="ts>` is `t`. Where it ends
+                // depends on whether a quote follows anywhere in the component, so it cannot be moved.
+                None if matches!(rest, [b'"' | b'\'', ..]) => {
+                    return fail(Message::UnclosedString, self.index);
+                }
                 None => {
                     let mut len = 0;
                     while len < rest.len()
@@ -1011,11 +1016,7 @@ impl<'a> Parser<'a, '_> {
                         return fail(Message::ExpectedValue, self.index);
                     }
                     self.index += len;
-                    match rest[0] {
-                        // It counts as quoted all the same, and loses its ends.
-                        b'"' | b'\'' => (self.index - len.saturating_sub(2) - 1, self.index - 1),
-                        _ => (self.index - len, self.index),
-                    }
+                    (self.index - len, self.index)
                 }
             };
             value = Value::Parts(vec![self.add_text(text.0, text.1)]);

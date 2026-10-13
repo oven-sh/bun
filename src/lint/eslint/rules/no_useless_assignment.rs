@@ -100,7 +100,10 @@ fn is_identifier_used_between_assigned_and_equal_sign(
     })
 }
 
-fn get_code_path_start_scope<'a>(scope: Scope<'a>, code_path_start_scopes: &FxHashSet<Scope<'a>>) -> Option<Scope<'a>> {
+fn get_code_path_start_scope<'a>(
+    scope: Scope<'a>,
+    code_path_start_scopes: &FxHashSet<Scope<'a>>,
+) -> Option<Scope<'a>> {
     scope.chain().find(|it| code_path_start_scopes.contains(it))
 }
 
@@ -120,7 +123,11 @@ fn oxlint_declarator(variable: Symbol<'_>) -> Option<VarDecl<'_>> {
     let first @ Declaration::Var(name) = variable.declarations().next()? else {
         return None;
     };
-    if variable.declaration_kinds().contains(DeclarationKinds::CATCH_CLAUSE) && first.is_catch_parameter() {
+    if variable
+        .declaration_kinds()
+        .contains(DeclarationKinds::CATCH_CLAUSE)
+        && first.is_catch_parameter()
+    {
         return None;
     }
     match name.parent() {
@@ -138,12 +145,18 @@ fn oxlint_declarator(variable: Symbol<'_>) -> Option<VarDecl<'_>> {
 fn oxlint_passes_over(variable: Symbol) -> bool {
     variable.file().language().is_oxlint
         && oxlint_declarator(variable).is_none_or(|it| {
-            it.var_kind() == VarKind::Const || it.init().is_some_and(|it| it.tag() == ExprTag::Fn && !it.is_parenthesized())
+            it.var_kind() == VarKind::Const
+                || it
+                    .init()
+                    .is_some_and(|it| it.tag() == ExprTag::Fn && !it.is_parenthesized())
         })
 }
 
 /// For oxlint 1.87 a variable of any scope is exported if the module exports something under its name.
-fn oxlint_takes_for_exported<'a>(variable: Symbol<'a>, exported: &mut Option<FxHashMap<Name<'a>, Span>>) -> bool {
+fn oxlint_takes_for_exported<'a>(
+    variable: Symbol<'a>,
+    exported: &mut Option<FxHashMap<Name<'a>, Span>>,
+) -> bool {
     variable.file().language().is_oxlint
         && (exported.get_or_insert_with(|| ModuleRecord::new(variable.file()).exported_bindings))
             .contains_key(&variable.name())
@@ -153,7 +166,8 @@ fn oxlint_takes_for_exported<'a>(variable: Symbol<'a>, exported: &mut Option<FxH
 /// a declarator with an initializer.
 #[inline(never)]
 fn oxlint_does_not_see(variable: Symbol, at: u32) -> bool {
-    variable.file().language().is_oxlint && oxlint_declarator(variable).is_none_or(|it| !it.span().contains_offset(at))
+    variable.file().language().is_oxlint
+        && oxlint_declarator(variable).is_none_or(|it| !it.span().contains_offset(at))
 }
 
 /// Whether a variable of the scope of a module is exported, other than by `export default`.
@@ -195,18 +209,10 @@ impl<'a> Binding<'a> {
 
     /// What `reference`, which is one to `symbol`, refers to.
     fn of(symbol: Symbol<'a>, reference: Reference<'a>) -> Binding<'a> {
-        if !symbol
-            .declaration_kinds()
-            .contains(DeclarationKinds::CLASS_NAME)
-        {
-            return Binding::outer(symbol);
-        }
-        let class = reference.scope().chain().find_map(|it| match it.node() {
-            Node::Class(class) if class.symbol() == Some(symbol) => {
-                Some(class).filter(|it| matches!(it.owner(), Node::Stmt(_)))
-            }
+        let class = match symbol.variable_in(reference.scope()).kind() {
+            VariableKind::NameInClass { class, .. } => Some(class),
             _ => None,
-        });
+        };
         Binding { symbol, class }
     }
 
@@ -391,11 +397,7 @@ impl<'a, 'v> Variable<'a, 'v> {
 
     /// The first assignment in a segment that counts for `target`: `[x, y = (x = 1)] = z` does not
     /// count for the one in it.
-    fn first_assignment_in(
-        &self,
-        id: u32,
-        target: &Assignment<'a>,
-    ) -> Option<&'v Assignment<'a>> {
+    fn first_assignment_in(&self, id: u32, target: &Assignment<'a>) -> Option<&'v Assignment<'a>> {
         let assignments = self.assignments;
         let get = |it: &(u32, u32)| assignments.get(it.1 as usize);
         let from = self.in_segments.partition_point(|it| it.0 < id);
@@ -409,7 +411,11 @@ impl<'a, 'v> Variable<'a, 'v> {
 
     /// Walks forward from the end of `target`'s segments, through segments that don't assign to the variable, and returns
     /// whether the variable is read along the way. Calls `overwritten` with each assignment that ends a path.
-    fn is_read_later(&self, target: &Assignment<'a>, mut overwritten: impl FnMut(&Assignment<'a>)) -> bool {
+    fn is_read_later(
+        &self,
+        target: &Assignment<'a>,
+        mut overwritten: impl FnMut(&Assignment<'a>),
+    ) -> bool {
         let mut seen: FxHashSet<u32> = FxHashSet::default();
         let mut stack: SmallVec<[Segment<'a>; 16]> = target
             .segments
@@ -522,7 +528,9 @@ fn written_by<'a>(
     reference: Reference<'a>,
     writers: &mut AncestorMemo<'a, Writer<'a>>,
 ) -> Option<Written<'a>> {
-    let identifier = reference.expr().map_or_else(|| reference.node(), Node::Expr);
+    let identifier = reference
+        .expr()
+        .map_or_else(|| reference.node(), Node::Expr);
     // `let a = 1`
     if let Node::Pat(pat) = identifier
         && let Node::VarDecl(declarator) = pat.parent()
@@ -562,7 +570,10 @@ fn written_by<'a>(
 fn is_read_after_declaration<'a>(
     variable: Symbol<'a>,
     written: Reference<'a>,
-    (writers, evaluated_in): (&mut AncestorMemo<'a, Writer<'a>>, &mut AncestorMemo<'a, Option<Stmt<'a>>>),
+    (writers, evaluated_in): (
+        &mut AncestorMemo<'a, Writer<'a>>,
+        &mut AncestorMemo<'a, Option<Stmt<'a>>>,
+    ),
 ) -> bool {
     written.expr().is_none()
         && variable.declaration_count() == 1
@@ -709,7 +720,8 @@ impl<'a> Uses<'a> {
     }
 
     fn first_within(&self, span: Span) -> Option<Reference<'a>> {
-        self.first_from(span.start).filter(|it| start_of(it) < span.end)
+        self.first_from(span.start)
+            .filter(|it| start_of(it) < span.end)
     }
 
     /// Whether `written` and what it evaluates first are the only uses in `span`.
@@ -742,7 +754,10 @@ impl<'a> Uses<'a> {
         counts_in_type: &dyn Fn(u32) -> bool,
     ) -> Flow<'a> {
         let condition_around = |child: Node<'a>, parent: Node<'a>| match parent {
-            Node::Expr(it) => it.as_cond().filter(|it| Node::Expr(it.1) == child).map(|_| Some(it)),
+            Node::Expr(it) => it
+                .as_cond()
+                .filter(|it| Node::Expr(it.1) == child)
+                .map(|_| Some(it)),
             Node::Stmt(_) | Node::Func(_) | Node::Member(_) | Node::File(_) => Some(None),
             _ => None,
         };
@@ -764,12 +779,21 @@ impl<'a> Uses<'a> {
                 }
             }
             if next.is_read() {
-                let is_in_type = next.symbol().is_some_and(|it| is_type_only_reference(it, next));
-                return if is_in_type && !counts_in_type(start_of(&next)) { Flow::Unknown } else { Flow::Read };
+                let is_in_type = next
+                    .symbol()
+                    .is_some_and(|it| is_type_only_reference(it, next));
+                return if is_in_type && !counts_in_type(start_of(&next)) {
+                    Flow::Unknown
+                } else {
+                    Flow::Read
+                };
             }
             // `x = f(x)`
             let evaluated_first = written_by(next, &mut self.writers).and_then(|it| it.expression);
-            if evaluated_first.and_then(|it| self.first_within(it)).is_some_and(|it| it.is_read()) {
+            if evaluated_first
+                .and_then(|it| self.first_within(it))
+                .is_some_and(|it| it.is_read())
+            {
                 return Flow::Read;
             }
             match self.way_around(next.node(), floor) {
@@ -801,7 +825,9 @@ impl<'a> Uses<'a> {
                         if Node::Expr(no) == child {
                             return Some((no.span().end, floor));
                         }
-                    } else if Self::logical_operator(e).is_some() && e.right().map(Node::Expr) == Some(child) {
+                    } else if Self::logical_operator(e).is_some()
+                        && e.right().map(Node::Expr) == Some(child)
+                    {
                         return self.way_after_left_operand(e, floor);
                     }
                 }
@@ -831,7 +857,10 @@ impl<'a> Uses<'a> {
                     _ => return Some((decided.span().end, floor)),
                 },
                 Node::Stmt(it)
-                    if matches!(it.tag(), StmtTag::If | StmtTag::While | StmtTag::DoWhile | StmtTag::For) =>
+                    if matches!(
+                        it.tag(),
+                        StmtTag::If | StmtTag::While | StmtTag::DoWhile | StmtTag::For
+                    ) =>
                 {
                     return None;
                 }
@@ -852,9 +881,12 @@ impl<'a> Uses<'a> {
     fn declarations(&mut self, declarators: List<'a, VarDecl<'a>>) -> Flow<'a> {
         match (declarators.first(), declarators.last()) {
             // Not in the annotation of a declarator.
-            (Some(first), Some(last)) => self.part(None, (first.span().start, last.span().end), &|at| {
-                (declarators.around(at).and_then(VarDecl::init)).is_some_and(|it| it.span().contains_offset(at))
-            }),
+            (Some(first), Some(last)) => {
+                self.part(None, (first.span().start, last.span().end), &|at| {
+                    (declarators.around(at).and_then(VarDecl::init))
+                        .is_some_and(|it| it.span().contains_offset(at))
+                })
+            }
             _ => Flow::Through,
         }
     }
@@ -886,7 +918,8 @@ impl<'a> Uses<'a> {
                 previous.is_none_or(|it| it.span().start < offset || it.is_known_to_complete())
             };
             let next = self.first_from(offset).map(|it| start_of(&it));
-            let Some((statement, previous)) = next.and_then(|next| list.around_with_previous(next)) else {
+            let Some((statement, previous)) = next.and_then(|next| list.around_with_previous(next))
+            else {
                 let Some(last) = list.last().filter(|it| it.span().end > passed) else {
                     return Flow::Through;
                 };
@@ -1050,7 +1083,12 @@ impl<'a> Uses<'a> {
             }
             StmtKind::ExportNamed(_) | StmtKind::ImportEquals(_) => Flow::Read,
             // The same, or it is read where the class is defined.
-            StmtKind::Class(_) if self.within(statement.span()).iter().all(|it| !it.is_write()) => {
+            StmtKind::Class(_)
+                if self
+                    .within(statement.span())
+                    .iter()
+                    .all(|it| !it.is_write()) =>
+            {
                 Flow::Read
             }
             _ => Flow::Unknown,
@@ -1145,7 +1183,9 @@ impl<'a> Uses<'a> {
             StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
                 if !self.loops.contains(&a_loop) {
                     self.loops.push(a_loop);
-                    if self.first_within(left.span()).is_none() && self.statement(body) == Flow::Read {
+                    if self.first_within(left.span()).is_none()
+                        && self.statement(body) == Flow::Read
+                    {
                         return true;
                     }
                 }
@@ -1316,9 +1356,15 @@ impl<'a> Uses<'a> {
         let kind = statement.kind();
         // The part of the statement that it is in.
         let part = match kind {
-            StmtKind::Expr(_) | StmtKind::Var(_) | StmtKind::Return(_) | StmtKind::Throw(_) => statement.span(),
-            StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => test.span(),
-            StmtKind::Switch { expr, .. } | StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. }
+            StmtKind::Expr(_) | StmtKind::Var(_) | StmtKind::Return(_) | StmtKind::Throw(_) => {
+                statement.span()
+            }
+            StmtKind::If { test, .. }
+            | StmtKind::While { test, .. }
+            | StmtKind::DoWhile { test, .. } => test.span(),
+            StmtKind::Switch { expr, .. }
+            | StmtKind::ForIn { expr, .. }
+            | StmtKind::ForOf { expr, .. }
                 if expr.span().contains_offset(start_of(&written.identifier)) =>
             {
                 expr.span()
@@ -1346,7 +1392,11 @@ impl<'a> Uses<'a> {
         if !self.is_alone_in(written, written.node.span()) {
             return false;
         }
-        match self.part(Some(written.node), (written.node.span().end, part.end), &|_| false) {
+        match self.part(
+            Some(written.node),
+            (written.node.span().end, part.end),
+            &|_| false,
+        ) {
             Flow::Read => return true,
             Flow::Through => {}
             _ => return false,
@@ -1425,7 +1475,9 @@ impl NoUselessAssignment {
 
     /// Finds out whether the code path that `variable` is declared in has to be analyzed.
     fn check_binding<'a>(variable: Binding<'a>, cx: &mut Cx<'a, Self>) {
-        let State { uses, evaluated_in, .. } = &mut cx.state;
+        let State {
+            uses, evaluated_in, ..
+        } = &mut cx.state;
         let home = variable.scope().variable_scope();
         // In another code path than that of the variable.
         let is_elsewhere = |it: Reference<'a>| {
@@ -1441,17 +1493,25 @@ impl NoUselessAssignment {
             }
         }
         if let (1, None, Some(written)) = (writes, variable.class, written)
-            && is_read_after_declaration(variable.symbol, written, (&mut uses.writers, evaluated_in))
+            && is_read_after_declaration(
+                variable.symbol,
+                written,
+                (&mut uses.writers, evaluated_in),
+            )
         {
             return;
         }
         // What a function reads can be read at any time.
         if writes == 0
-            || (variable.symbol.references()).any(|it| it.is_read() && is_elsewhere(it) && variable.has(it))
+            || (variable.symbol.references())
+                .any(|it| it.is_read() && is_elsewhere(it) && variable.has(it))
         {
             return;
         }
-        uses.look_at(variable, variable.references().filter(|&it| !is_elsewhere(it)));
+        uses.look_at(
+            variable,
+            variable.references().filter(|&it| !is_elsewhere(it)),
+        );
         // Of the variable, once it is asked for.
         let mut scope = None;
         let mut at = 0;
@@ -1527,39 +1587,54 @@ impl NoUselessAssignment {
     fn verify<'a>(mut target: ScopeStack<'a>, cx: &mut Cx<'a, Self>) {
         // Each block ends where the last of those up to it ends: a block that starts before an
         // identifier is around it if one of these ends after it.
-        for blocks in [&mut target.try_statement_blocks, &mut target.finalized_blocks, &mut target.endless_loops] {
+        for blocks in [
+            &mut target.try_statement_blocks,
+            &mut target.finalized_blocks,
+            &mut target.endless_loops,
+        ] {
             let mut end = 0;
             for block in blocks {
                 end = end.max(block.end);
                 block.end = end;
             }
         }
-        let is_in_try_statement_block =
-            |identifier: Span| end_of_block_around(&target.try_statement_blocks, identifier).is_some();
+        let is_in_try_statement_block = |identifier: Span| {
+            end_of_block_around(&target.try_statement_blocks, identifier).is_some()
+        };
         // For oxlint every statement of a `try` block with a `finally` can be the last one that runs before what
         // follows the `try` statement, as if there were a `catch`: in `let a = 0; try { a = f(); } finally { g(); }
         // return a;` the 0 is used.
-        let oxlint_takes_for_used = |following: Option<&Assignment<'a>>, last_read: Option<&Span>| {
+        let oxlint_takes_for_used = |following: Option<&Assignment<'a>>,
+                                     last_read: Option<&Span>| {
             following
                 .and_then(|it| end_of_block_around(&target.finalized_blocks, it.identifier))
                 .is_some_and(|end| last_read.is_some_and(|it| it.start >= end))
         };
         // For oxlint every loop can end at its test, be that `true` or missing: in `let a = 0; while (true) { a = f(); if (a)
         // break; } return a;` the 0 is used.
-        let oxlint_takes_for_read_after_loop = |assignments: &[Assignment<'a>], index: usize, reads: &[Span]| {
-            let loop_around =
-                |index: usize| end_of_block_around(&target.endless_loops, assignments.get(index)?.identifier);
-            let Some(end) = loop_around(index + 1).filter(|&end| loop_around(index) != Some(end)) else {
-                return false;
+        let oxlint_takes_for_read_after_loop =
+            |assignments: &[Assignment<'a>], index: usize, reads: &[Span]| {
+                let loop_around = |index: usize| {
+                    end_of_block_around(&target.endless_loops, assignments.get(index)?.identifier)
+                };
+                let Some(end) =
+                    loop_around(index + 1).filter(|&end| loop_around(index) != Some(end))
+                else {
+                    return false;
+                };
+                let written =
+                    assignments.get(assignments.partition_point(|it| it.identifier.start < end));
+                reads
+                    .get(reads.partition_point(|it| it.start < end))
+                    .is_some_and(|read| {
+                        written.is_none_or(|written| {
+                            read.start < written.identifier.start
+                                || written
+                                    .expression
+                                    .is_some_and(|it| it.start <= read.start && read.end <= it.end)
+                        })
+                    })
             };
-            let written = assignments.get(assignments.partition_point(|it| it.identifier.start < end));
-            reads.get(reads.partition_point(|it| it.start < end)).is_some_and(|read| {
-                written.is_none_or(|written| {
-                    read.start < written.identifier.start
-                        || written.expression.is_some_and(|it| it.start <= read.start && read.end <= it.end)
-                })
-            })
-        };
         'variables: for (variable, assignments) in target.assignments {
             let Some(mut assignments) = assignments else {
                 continue;
@@ -1567,8 +1642,11 @@ impl NoUselessAssignment {
             let mut read_references: SmallVec<[Span; 8]> = SmallVec::new();
             for reference in variable.references().filter(|it| it.is_read()) {
                 // It can be called at any time.
-                let start = get_code_path_start_scope(reference.scope(), &cx.state.code_path_start_scopes);
-                if start != Some(target.scope) || is_in_decorator_of_parameter(reference, target.scope) {
+                let start =
+                    get_code_path_start_scope(reference.scope(), &cx.state.code_path_start_scopes);
+                if start != Some(target.scope)
+                    || is_in_decorator_of_parameter(reference, target.scope)
+                {
                     continue 'variables;
                 }
                 read_references.push(reference.span());
@@ -1581,8 +1659,7 @@ impl NoUselessAssignment {
                 utils::sort::sort_unstable_by_key(&mut read_references, |it| it.start);
             }
             utils::sort::sort_by_key(&mut assignments, |it| it.identifier.start);
-            let uses =
-                Variable::new(&assignments, &read_references, &cx.state.identifier_ranges);
+            let uses = Variable::new(&assignments, &read_references, &cx.state.identifier_ranges);
             let next = uses.next_assignments();
             for (index, (assignment, &next)) in assignments.iter().zip(&next).enumerate() {
                 let identifier = assignment.identifier;
@@ -1594,13 +1671,19 @@ impl NoUselessAssignment {
                     // Only a debug build gets here with a variable that was passed over. Types are not walked: of a name in
                     // one it is not known in which segment it is.
                     if cx.state.is_only_checked || !cx.state.unknown.contains(&variable) {
-                        debug_assert!(variable.references().any(|it| is_type_only_reference(variable.symbol, it)));
+                        debug_assert!(
+                            variable
+                                .references()
+                                .any(|it| is_type_only_reference(variable.symbol, it))
+                        );
                         continue 'variables;
                     }
                     // For oxlint a name that is declared is without its type.
                     let name = variable.symbol.name();
                     let end = match cx.language().is_oxlint {
-                        true => identifier.end.min(identifier.start + name.bytes().len() as u32),
+                        true => identifier
+                            .end
+                            .min(identifier.start + name.bytes().len() as u32),
                         false => identifier.end,
                     };
                     cx.report(Span::new(identifier.start, end), UNNECESSARY_ASSIGNMENT)
@@ -1628,7 +1711,8 @@ impl NoUselessAssignment {
                 let is_ignored = !cfg!(debug_assertions) && !state.unknown.contains(&variable)
                     || oxlint_passes_over(variable.symbol)
                     || oxlint_takes_for_exported(variable.symbol, &mut state.exported)
-                    || get_code_path_start_scope(scope, &state.code_path_start_scopes) != Some(top.scope)
+                    || get_code_path_start_scope(scope, &state.code_path_start_scopes)
+                        != Some(top.scope)
                     || variable.class.is_none() && variable.symbol.is_marked_used()
                     || scope.kind() == ScopeKind::Module && is_exported(variable.symbol);
                 entry.insert((!is_ignored).then(SmallVec::new))
@@ -1679,13 +1763,18 @@ impl NoUselessAssignment {
     /// a `while` or `for` statement.
     fn on_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.kind() {
-            StmtKind::While { test, .. } | StmtKind::For { test: Some(test), .. } if !ast_utils::is_literal(test) => {}
+            StmtKind::While { test, .. }
+            | StmtKind::For {
+                test: Some(test), ..
+            } if !ast_utils::is_literal(test) => {}
             StmtKind::While { .. } | StmtKind::For { .. } => {
                 if let Some(top) = cx.state.stack.last_mut() {
                     top.endless_loops.push(statement.span());
                 }
             }
-            StmtKind::Try { block, finalizer, .. } => {
+            StmtKind::Try {
+                block, finalizer, ..
+            } => {
                 let is_finalized = finalizer.is_some() && cx.language().is_oxlint;
                 if let Some(top) = cx.state.stack.last_mut() {
                     top.try_statement_blocks.push(block.span());
@@ -1737,12 +1826,20 @@ impl NoUselessAssignment {
                     };
                     // In the block of `catch (e)`, `var e = 1` gives the value to the parameter.
                     let written = match declarator.var_kind() {
-                        VarKind::Var => cx.file().reference_at(pat.span().start).and_then(Reference::symbol),
+                        VarKind::Var => cx
+                            .file()
+                            .reference_at(pat.span().start)
+                            .and_then(Reference::symbol),
                         _ => None,
                     };
-                    let variable = written.or_else(|| pat.symbol()).map(Binding::outer).filter(|it| {
-                        it.symbol.declaration_count() <= 1 || !oxlint_does_not_see(it.symbol, pat.span().start)
-                    });
+                    let variable =
+                        written
+                            .or_else(|| pat.symbol())
+                            .map(Binding::outer)
+                            .filter(|it| {
+                                it.symbol.declaration_count() <= 1
+                                    || !oxlint_does_not_see(it.symbol, pat.span().start)
+                            });
                     Self::add_assignment(variable, identifier, Some(init.span()), cx);
                 });
                 return;
@@ -1770,7 +1867,10 @@ impl NoUselessAssignment {
 }
 
 impl Rule for NoUselessAssignment {
-    const META: Meta = Meta::eslint("no-useless-assignment", Kind::Problem).recommended().reports_at_the_end().hints();
+    const META: Meta = Meta::eslint("no-useless-assignment", Kind::Problem)
+        .recommended()
+        .reports_at_the_end()
+        .hints();
     const ON: On = On::new().symbols().finish();
     type State<'a> = State<'a>;
 
@@ -1793,7 +1893,11 @@ impl Rule for NoUselessAssignment {
         // The `arguments` of a function is none of the symbols.
         if !cx.language().is_oxlint && cx.file().mentions("arguments") {
             for scope in cx.file().funcs().filter_map(Func::scope) {
-                if let Some(arguments) = scope.symbols().next().filter(|it| it.is_implicit_arguments()) {
+                if let Some(arguments) = scope
+                    .symbols()
+                    .next()
+                    .filter(|it| it.is_implicit_arguments())
+                {
                     self.check_variable(arguments, cx);
                 }
             }

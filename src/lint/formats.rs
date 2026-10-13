@@ -15,9 +15,9 @@ use std::sync::Arc;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Like {
     /// That of the `prettier` which `eslint-plugin-prettier` would load: `prettier/prettier`. It has to be a version whose
-    /// output `bun format` follows.
+    /// output `bun fmt` follows.
     InstalledPrettier,
-    /// That of `bun format`, whatever is installed: `bun/format`.
+    /// That of `bun fmt`, whatever is installed: `bun/format`.
     BunFormat,
 }
 
@@ -45,7 +45,7 @@ pub struct Request<'r> {
 /// Why the text would not be that of the package.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Reason {
-    /// The `prettier` that is installed is not of a version that `bun format` follows, or none is to be found.
+    /// The `prettier` that is installed is not of a version that `bun fmt` follows, or none is to be found.
     Version,
     /// `eslint-plugin-prettier` is of a version that decides otherwise what is formatted and how.
     VersionOfPlugin,
@@ -53,15 +53,15 @@ pub enum Reason {
     PluginNotFound,
     /// A plugin of Prettier that is not built in may print the file.
     Plugin,
-    /// `bun format` does not print the language itself.
+    /// `bun fmt` does not print the language itself.
     Language,
-    /// An option that `bun format` does not know.
+    /// An option that `bun fmt` does not know.
     Option,
     /// The configuration cannot be read.
     Configuration,
-    /// `bun format` finds a syntax error, whose words are not Prettier's.
+    /// `bun fmt` finds a syntax error, whose words are not Prettier's.
     SyntaxError,
-    /// `bun format` does not stand by what it has printed.
+    /// `bun fmt` does not stand by what it has printed.
     Refused,
     /// `sortTailwindcss`, and a class that Tailwind CSS has not been asked about.
     Classes,
@@ -73,18 +73,16 @@ impl Reason {
     /// Completes the sentence "the rule ran in JavaScript for 12 files because ..".
     pub fn text(self) -> &'static str {
         match self {
-            Reason::Version => {
-                "the installed prettier is not version 3.9, which bun format matches"
-            }
+            Reason::Version => "the installed prettier is not version 3.9, which bun fmt matches",
             Reason::VersionOfPlugin => "the installed eslint-plugin-prettier is not version 5",
             Reason::PluginNotFound => "eslint-plugin-prettier was not found",
-            Reason::Plugin => "the Prettier config uses a plugin that bun format does not include",
-            Reason::Language => "bun format does not support the language",
-            Reason::Option => "bun format does not support one of the options",
+            Reason::Plugin => "the Prettier config uses a plugin that bun fmt does not include",
+            Reason::Language => "bun fmt does not support the language",
+            Reason::Option => "bun fmt does not support one of the options",
             Reason::Configuration => "the Prettier config cannot be read",
-            Reason::SyntaxError => "bun format found a syntax error",
-            Reason::Refused => "bun format could not verify its output",
-            Reason::Classes => "only bun format can sort Tailwind CSS classes",
+            Reason::SyntaxError => "bun fmt found a syntax error",
+            Reason::Refused => "bun fmt could not verify its output",
+            Reason::Classes => "only bun fmt can sort Tailwind CSS classes",
             Reason::NoFormatter => "there is no formatter",
         }
     }

@@ -1978,6 +1978,8 @@ pub(super) fn write<'t, 'a>(
     configured: &'t ConfiguredGlobals,
     out: &mut Vec<u8>,
 ) {
+    // oxlint's own rules see the scopes of oxc.
+    let _scopes = file.with_scopes_of_eslint();
     let mut builder = Builder {
         tree: Tree::new(numbered),
         is_espree: Dialect::of(file) == Dialect::Espree,
@@ -2123,6 +2125,7 @@ pub(super) fn mark_used<'a>(file: &'a File<'a>, indices: impl Iterator<Item = u3
     if indices.peek().is_none() {
         return;
     }
+    let _scopes = file.with_scopes_of_eslint();
     let mut index = 0u32;
     for scope in file.scopes() {
         // It's counted, and it's no symbol.

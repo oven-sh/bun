@@ -14,9 +14,9 @@ deprecated: false
 
 This rule compares each file with what Prettier prints and reports every place where they differ. Formatting problems then show up next to your lint problems, in the terminal and in the editor.
 
-It's the rule from `eslint-plugin-prettier`, for projects with an ESLint config that loads that package. Bun has it built in. It compares the file with the output of `bun format`, which matches Prettier 3.9, so it never starts Prettier.
+It's the rule from `eslint-plugin-prettier`, for projects with an ESLint config that loads that package. Bun has it built in. It compares the file with the output of `bun fmt`, which matches Prettier 3.9, so it never starts Prettier.
 
-If Bun can't guarantee the same output as your Prettier, the package's rule runs in JavaScript with your installed Prettier, and a note says why. That happens, for example, with a Prettier version other than 3.9 or a Prettier plugin that `bun format` doesn't have.
+If Bun can't guarantee the same output as your Prettier, the package's rule runs in JavaScript with your installed Prettier, and a note says why. That happens, for example, with a Prettier version other than 3.9 or a Prettier plugin that `bun fmt` doesn't have.
 
 `--fix` formats the file.
 
@@ -55,7 +55,7 @@ Not reported:
 const user = { name: "Ada" };
 ```
 
-To change the style, use a `.prettierrc` or an `.editorconfig`. Prettier and `bun format` read them too.
+To change the style, use a `.prettierrc` or an `.editorconfig`. Prettier and `bun fmt` read them too.
 
 {/* file ".prettierrc" */}
 ```json .prettierrc
@@ -101,6 +101,6 @@ The second option is an object with these keys:
 
 ## When not to use it
 
-This rule needs `eslint-plugin-prettier` and Prettier in `node_modules`. Without them, use `bun/format`. It has the same options and messages, and it checks files against `bun format`.
+This rule needs `eslint-plugin-prettier` and Prettier in `node_modules`. Without them, use `bun/format`. It has the same options and messages, and it checks files against `bun fmt`.
 
-If `bun format --check` or `prettier --check` already runs in CI, this rule does the same work a second time.
+If `bun fmt --check` or `prettier --check` already runs in CI, this rule does the same work a second time.

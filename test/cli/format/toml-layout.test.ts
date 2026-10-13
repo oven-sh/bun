@@ -9,7 +9,7 @@ afterAll(endChildren);
 
 async function run(cwd: string, args: string[]) {
   await using proc = spawn({
-    cmd: [bunExe(), "format", "--log-level=warn", ...args],
+    cmd: [bunExe(), "fmt", "--log-level=warn", ...args],
     env: { ...bunEnv, NO_COLOR: "1" },
     cwd,
     stdout: "pipe",
@@ -477,7 +477,7 @@ describe("TOML layout", () => {
 
   test("respects trailingComma, useTabs and endOfLine in a multi-line table", async () => {
     using dir = tempDir("bun-format-toml", {
-      "bunfig.toml": `[format]\ntrailingComma = "none"\nuseTabs = true\nendOfLine = "crlf"\n`,
+      "bunfig.toml": `[fmt]\ntrailingComma = "none"\nuseTabs = true\nendOfLine = "crlf"\n`,
       "a.toml": `a = ["x", {\n  b = 1, # c\n  d = 2,\n}]\n`,
     });
     const result = await run(String(dir), ["a.toml"]);
@@ -486,33 +486,45 @@ describe("TOML layout", () => {
   });
 });
 
-describe.concurrent("a table with a comment that oxfmt joins", () => {
-  // oxfmt 0.72 joins these lines, which comments out the second entry.
+describe.concurrent("a table with a comment", () => {
+  // oxfmt 0.72 joins these lines, which comments out the second entry: `{ b = 1 # c, d = 2 },`.
   const commented = `a = ["x", {\n  b = 1, # c\n  d = 2,\n}]\n`;
-  const joined = `a = [\n  "x",\n  { b = 1 # c, d = 2 },\n]\n`;
+  const expanded = `a = [\n  "x",\n  {\n    b = 1, # c\n    d = 2,\n  },\n]\n`;
 
-  test("with an oxfmt config Bun writes what oxfmt writes", async () => {
-    using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": commented });
+  test("with an oxfmt config it has one entry per line", async () => {
+    using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": commented, "b.toml": expanded });
     const result = await run(String(dir), ["."]);
     expect(result.stderr).toBe("");
-    expect(readFileSync(join(String(dir), "a.toml"), "utf8")).toBe(joined);
+    expect(readFileSync(join(String(dir), "a.toml"), "utf8")).toBe(expanded);
+    expect(readFileSync(join(String(dir), "b.toml"), "utf8")).toBe(expanded);
     expect(result.exitCode).toBe(0);
   });
 
-  test.each([["--check"], ["--list-different"]])("%s says that it needs formatting", async flag => {
-    using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": commented });
-    const result = await run(String(dir), [flag, "."]);
+  // The table, what Bun makes of it, and what oxfmt 0.72 makes of it.
+  test.each([
+    ["a = { # c\n b = 1 }\n", "a = { # c\n  b = 1,\n}\n", "a = { # c b = 1 }\n"],
+    ["a = { b = 1 # c\n, d = 2 }\n", "a = {\n  b = 1, # c\n  d = 2,\n}\n", "a = { b = 1 # c, d = 2 }\n"],
+    ["a = { b = 1,\n # c\n d = 2 }\n", "a = {\n  b = 1,\n  # c\n  d = 2,\n}\n", "a = { b = 1 # c, d = 2 }\n"],
+    ["a = { b = 1, d = 2 # c\n }\n", "a = {\n  b = 1,\n  d = 2, # c\n}\n", "a = { b = 1, d = 2 # c }\n"],
+  ])("wherever the comment is: %j", async (before, after, ofOxfmt) => {
+    expect(after).not.toBe(ofOxfmt);
+    using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": before, "b.toml": after });
+    const checked = await run(String(dir), ["--debug-check", "."]);
+    expect(checked.stderr).toBe("");
+    expect(checked.exitCode).toBe(0);
+    const result = await run(String(dir), ["."]);
     expect(result.stderr).toBe("");
-    expect(readFileSync(join(String(dir), "a.toml"), "utf8")).toBe(commented);
-    expect(result.exitCode).toBe(1);
+    expect(readFileSync(join(String(dir), "a.toml"), "utf8")).toBe(after);
+    expect(readFileSync(join(String(dir), "b.toml"), "utf8")).toBe(after);
+    expect(result.exitCode).toBe(0);
   });
 
-  test("--debug-check reports it and writes nothing", async () => {
+  test("--debug-check has nothing to say about it", async () => {
     using dir = tempDir("bun-format-toml", { ".oxfmtrc.json": "{}\n", "a.toml": commented });
     const result = await run(String(dir), ["--debug-check", "."]);
-    expect(result.stderr).toContain("a.toml: formatting would change its contents.");
+    expect(result.stderr).toBe("");
     expect(readFileSync(join(String(dir), "a.toml"), "utf8")).toBe(commented);
-    expect(result.exitCode).toBe(2);
+    expect(result.exitCode).toBe(0);
   });
 
   test("without an oxfmt config the same file is already formatted", async () => {

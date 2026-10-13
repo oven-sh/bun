@@ -540,40 +540,14 @@ fn candidates<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
 /// A declaration: where its name is, the name, and the scope that it is declared in.
 type Found<'a> = (Span, Name<'a>, Declaration<'a>, Scope<'a>);
 
-/// The members of enums that are written as `["a"]`. To oxc that is the name `a`. Here such a member is no variable.
-fn computed_enum_members<'a>(file: &'a File<'a>) -> Vec<Found<'a>> {
-    let mut all = Vec::new();
-    let is_computed = |it: &hir::EnumMember| it.name_kind == hir::NameKind::ComputedString;
-    if !file.hir.enum_members.iter().any(is_computed) {
-        return all;
-    }
-    for it in file.stmts_of_kind(StmtTag::Enum) {
-        let StmtKind::Enum(declaration) = it.kind() else {
-            continue;
-        };
-        for member in declaration.members() {
-            if let Some(key) = member.key()
-                && let KeyKind::ComputedString(name) = key.kind()
-            {
-                let span = key.inner_span(file);
-                let scope = file.scope_at(span.start);
-                all.push((span, name, Declaration::EnumMember(member), scope));
-            }
-        }
-    }
-    all
-}
-
 /// "Identifier `a` has already been declared"
 pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     // Where no rule makes the variables of every file, the parser has looked out for a name that may be declared twice.
     if file.language().parser_tracks_names && !file.has_rare_syntax(rare::MAY_REDECLARE) {
         return Vec::new();
     }
-    let mut all: Vec<Found<'a>> = computed_enum_members(file);
-    let mut names = candidates(file);
-    names.extend(all.iter().map(|it| it.1));
-    for name in names {
+    let mut all: Vec<Found<'a>> = Vec::new();
+    for name in candidates(file) {
         for symbol in file.symbols_named(name) {
             let scope = symbol.scope();
             let named = symbol.declarations();

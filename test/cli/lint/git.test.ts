@@ -1,4 +1,4 @@
-// Tests for `--staged` and `--changed` in `bun lint` and `bun format`.
+// Tests for `--staged` and `--changed` in `bun lint` and `bun fmt`.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import {
@@ -82,12 +82,13 @@ async function selected(root: string, cwd: string, args: string[], more?: Env) {
   return names.map(it => relative(root, resolve(cwd, it)).replaceAll("\\", "/")).sort();
 }
 
-const commands = ["lint", "format"] as const;
-// Code that both `--fix` and `bun format` change, and what each turns it into.
+const commands = ["lint", "fmt"] as const;
+// Code that both `--fix` and `bun fmt` change, and what each turns it into.
 const before = "let a   = 1;\nexport { a };\n";
-const after = { lint: "const a   = 1;\nexport { a };\n", format: "let a = 1;\nexport { a };\n" };
-const done = { lint: "fixed", format: "formatted" };
-const writing = { lint: ["lint", "--fix", "--rule", "prefer-const: error"], format: ["format"] };
+const after = { lint: "const a   = 1;\nexport { a };\n", fmt: "let a = 1;\nexport { a };\n" };
+const done = { lint: "fixed", fmt: "formatted" };
+const verb = { lint: "lint", fmt: "format" };
+const writing = { lint: ["lint", "--fix", "--rule", "prefer-const: error"], fmt: ["fmt"] };
 const tidy = "export const a = 1;\n";
 
 describe.concurrent.each(commands)("bun %s", command => {
@@ -227,19 +228,19 @@ describe.concurrent.each(commands)("bun %s", command => {
     const { root } = repo;
     expect(await bun(root, [command, "--staged"])).toEqual({
       stdout: "",
-      stderr: `No staged files to ${command}\n`,
+      stderr: `No staged files to ${verb[command]}\n`,
       exitCode: 0,
     });
     expect(await bun(root, [command, "--changed"])).toEqual({
       stdout: "",
-      stderr: `No changed files to ${command}\n`,
+      stderr: `No changed files to ${verb[command]}\n`,
       exitCode: 0,
     });
     // A file is staged, but the argument names a different one.
     write(root, "b.js", before);
     await git(root, "add", "b.js");
     const { stderr, exitCode } = await bun(root, [command, "--staged", "a.js"]);
-    expect({ stderr, exitCode }).toEqual({ stderr: `No staged files to ${command}\n`, exitCode: 0 });
+    expect({ stderr, exitCode }).toEqual({ stderr: `No staged files to ${verb[command]}\n`, exitCode: 0 });
     expect(read(root, "a.js")).toBe(before);
   });
 
@@ -306,7 +307,7 @@ describe.concurrent.each(commands)("bun %s", command => {
       using repo = await repository({ "src/a.js": tidy, "src/partly.js": tidy, "b.js": tidy });
       const { root } = repo;
       using outside = tempDir("bun-lint-git-link", {});
-      // The link is above the repository. `bun format` doesn't take an argument that is itself a link, like Prettier.
+      // The link is above the repository. `bun fmt` doesn't take an argument that is itself a link, like Prettier.
       symlinkSync(join(root, ".."), join(String(outside), "link"));
       const link = join(realpathSync(String(outside)), "link", basename(root));
       for (const name of ["src/a.js", "src/partly.js"]) write(root, name, before);
@@ -402,7 +403,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(read(root, "sub/partly.js")).toBe(more);
 
     // A run that doesn't write files has nothing to reject.
-    const looking = command === "lint" ? ["lint", "--rule", "prefer-const: error"] : ["format", "--check"];
+    const looking = command === "lint" ? ["lint", "--rule", "prefer-const: error"] : ["fmt", "--check"];
     const three = await bun(root, [...looking, "--staged"]);
     expect(three.stderr).not.toContain("unstaged");
     expect(three.exitCode).toBe(1);
@@ -551,14 +552,14 @@ describe.concurrent("bun lint --staged --fix still reports the problems in a par
   });
 });
 
-test.concurrent("bun format --staged doesn't count a file it skips", async () => {
+test.concurrent("bun fmt --staged doesn't count a file it skips", async () => {
   using repo = await repository({ "partly.js": tidy, "whole.js": tidy, "tidy.js": tidy });
   const { root } = repo;
   for (const name of ["partly.js", "whole.js"]) write(root, name, before);
   write(root, "tidy.js", tidy + "\n" + tidy.replace("a", "b"));
   await git(root, "add", "-A");
   write(root, "partly.js", before + tidy.replace("a", "b"));
-  const { stdout, stderr, exitCode } = await bun(root, ["format", "--staged"]);
+  const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged"]);
   expect(stdout).toBe("whole.js\n");
   expect(stderr).toContain("Formatted 1 file, 1 unchanged ");
   expect(stderr).toContain("partly.js has both staged and unstaged changes, so it was not formatted\n");

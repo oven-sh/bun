@@ -13,7 +13,7 @@ async function doctor(files: Record<string, string>, args: string[] = []) {
   const list = () => (readdirSync(String(dir), { recursive: true }) as string[]).sort();
   const before = list();
   await using proc = spawn({
-    cmd: [bunExe(), "format", "--threads", "2", "--doctor", ...args],
+    cmd: [bunExe(), "fmt", "--threads", "2", "--doctor", ...args],
     env,
     cwd: String(dir),
     stdin: "ignore",
@@ -61,7 +61,7 @@ const prettier = {
   "src/d.svelte": "<p>d</p>\n",
 };
 
-describe.concurrent("bun format --doctor", () => {
+describe.concurrent("bun fmt --doctor", () => {
   test("with a .prettierrc", async () => {
     const { stdout, stderr, exitCode, isUntouched } = await doctor(prettier);
     expect(stderr).toBe("");
@@ -143,7 +143,7 @@ Also styled/.prettierrc.json
     1 file cannot be formatted: 1 *.astro
     2 files are skipped because a plugin is not supported
         Use --allow-unsupported to format them without it
-        Or replace prettier-plugin-tailwindcss with [format.sortTailwindcss] in bunfig.toml
+        Or replace prettier-plugin-tailwindcss with [fmt.sortTailwindcss] in bunfig.toml
 
 Plugins that use your installed Prettier: prettier-plugin-astro
 Plugins that are not supported: prettier-plugin-tailwindcss
@@ -184,7 +184,7 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
     0 files are formatted natively
     3 files are skipped because a plugin is not supported
         Use --allow-unsupported to format them without it
-        Or replace prettier-plugin-tailwindcss with [format.sortTailwindcss] in bunfig.toml
+        Or replace prettier-plugin-tailwindcss with [fmt.sortTailwindcss] in bunfig.toml
 
 Plugins that are not supported: prettier-plugin-tailwindcss
 
@@ -266,7 +266,7 @@ Not checked:    other tools' configs, CI files, Git hooks
       doctor(project({ scripts: { check: "prettier --check ." } })),
       doctor(project({ "lint-staged": { "*": "prettier --write" } })),
       doctor({ ...project({}), ...peer }),
-      doctor(project({ scripts: { check: "bun format --check", pretty: "prettierx ." } })),
+      doctor(project({ scripts: { check: "bun fmt --check", pretty: "prettierx ." } })),
     ]);
     expect(script.stdout).toEndWith(`\nStill needed:   prettier (the "check" script runs it)\n`);
     expect(staged.stdout).toEndWith(`\nStill needed:   prettier (lint-staged runs it)\n`);
@@ -300,7 +300,7 @@ Not checked:    other tools' configs, CI files, Git hooks
 
     1 file is formatted natively
 
-Run bun format --init to add a [format] section to bunfig.toml
+Run bun fmt --init to add a [fmt] section to bunfig.toml
 `);
     expect(isUntouched).toBe(true);
     expect(exitCode).toBe(0);
@@ -319,9 +319,9 @@ Run bun format --init to add a [format] section to bunfig.toml
     expect(exitCode).not.toBe(0);
   });
 
-  test("runs even if package.json has a `format` script", async () => {
+  test("runs even if package.json has a `fmt` script", async () => {
     const { stdout, exitCode } = await doctor({
-      "package.json": JSON.stringify({ scripts: { format: "echo the script" } }),
+      "package.json": JSON.stringify({ scripts: { fmt: "echo the script" } }),
       "a.js": ugly,
     });
     expect(stdout).toStartWith("No Prettier or oxfmt config found.");

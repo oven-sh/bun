@@ -1378,7 +1378,7 @@ pub fn check_provided_then<R>(
     provided: host::Provided,
     then: impl FnOnce(Report) -> R,
 ) -> R {
-    // Unless `bun lint` or `bun format` has one.
+    // Unless `bun lint` or `bun fmt` has one.
     use_a_pool_of_their_own("Bun Check");
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),

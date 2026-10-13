@@ -85,7 +85,7 @@ pub use eslintrc::{Eslint8, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions
 pub use flat::{ConfigError, LoadLocatedPlugin};
 use ignore_lines::IgnoreLines;
 use merge::RuleSetting;
-pub use rc::{LoadPlugin, oxlint_category, oxlint_runs_on, strings_of};
+pub use rc::{LoadPlugin, oxlint_category, oxlint_lacks, oxlint_runs_on, strings_of};
 pub(crate) use rc::{OxlintChanges, oxlint_changes};
 pub(crate) use rc::{is_rule_not_built_in, is_rule_of_oxlint};
 use rustc_hash::FxHashMap;
@@ -1194,8 +1194,7 @@ impl Config {
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;
         config.language.stands_alone = self.has_every_rule;
-        config.language.has_scopes_of_oxc =
-            self.prefers_typescript_rules && self.js_plugins.is_empty();
+        config.language.has_scopes_of_oxc = self.prefers_typescript_rules;
         config.language.eslint_8 = eslint_8;
         config.language.eslint_major = self.eslint_major;
         config.language.without_modules = self.without_modules;
@@ -1380,6 +1379,9 @@ impl Config {
                 it.severity != Severity::Off && it.entry.meta.name == "no-unused-vars"
             };
             config.language.parser_tracks_names = !config.rules.iter().any(makes_variables);
+            let lacking = (config.rules.iter())
+                .filter(|it| it.severity != Severity::Off && oxlint_lacks(it.reported_as()));
+            config.language.rules_that_oxlint_lacks = lacking.map(|it| it.entry.meta).collect();
         }
         // oxlint looks up the severity of a tsgolint report by the rule's bare name, and finds ESLint's rule first if it's on.
         if self.prefers_typescript_rules {

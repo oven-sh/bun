@@ -50,6 +50,18 @@ macro_rules! conversions {
             fn from(it: $handle<'a>) -> Node<'a> {
                 Node::$variant(it)
             }
+        }
+
+        impl Spanned for $handle<'_> {
+            #[inline]
+            fn span(&self) -> Span {
+                $handle::span(*self)
+            }
+
+            #[inline]
+            fn packed_node(&self) -> Option<Packed> {
+                Some(Packed { tag: Tag::$variant, id: self.id().0 })
+            }
         })*
 
         impl<'a> Node<'a> {
@@ -72,7 +84,7 @@ macro_rules! conversions {
 
             /// Which vector of the HIR it is in, and where.
             #[inline]
-            fn packed(self) -> Packed {
+            pub(crate) fn packed(self) -> Packed {
                 match self {
                     Node::File(_) => Packed::FILE,
                     $(Node::$variant(it) => Packed { tag: Tag::$variant, id: it.id().0 },)*
@@ -86,7 +98,7 @@ macro_rules! conversions {
 
         impl Packed {
             #[inline]
-            fn unpack<'a>(self, file: &'a File<'a>) -> Node<'a> {
+            pub(crate) fn unpack<'a>(self, file: &'a File<'a>) -> Node<'a> {
                 match self.tag {
                     Tag::File => Node::File(file),
                     $(Tag::$variant => Node::$variant(<$handle as super::Handle>::from_raw(file, self.id)),)*
@@ -106,7 +118,7 @@ impl<'a> From<&'a File<'a>> for Node<'a> {
 
 /// A [`Node`] without the reference to the file.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-struct Packed {
+pub struct Packed {
     tag: Tag,
     id: u32,
 }
@@ -141,6 +153,18 @@ impl Spanned for Node<'_> {
     #[inline]
     fn span(&self) -> Span {
         Node::span(*self)
+    }
+
+    #[inline]
+    fn packed_node(&self) -> Option<Packed> {
+        Some(self.packed())
+    }
+}
+
+impl Spanned for super::Modifier<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        super::Modifier::span(*self)
     }
 }
 

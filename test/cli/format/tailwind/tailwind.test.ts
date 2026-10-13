@@ -41,7 +41,7 @@ exports.createContext = config => {
 
 async function formatIn(cwd: string, names: string[], flags: string[] = ["."], stdin?: string) {
   await using proc = spawn({
-    cmd: [bunExe(), "format", "--log-level=warn", ...flags],
+    cmd: [bunExe(), "fmt", "--log-level=warn", ...flags],
     env: bunEnv,
     cwd,
     stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
@@ -95,7 +95,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     });
     const before = listed(String(dir));
     await using proc = spawn({
-      cmd: [bunExe(), "format", "--log-level=warn", "."],
+      cmd: [bunExe(), "fmt", "--log-level=warn", "."],
       env: { ...bunEnv, FILES_OF_THE_TEST: JSON.stringify(before) },
       cwd: String(dir),
       stdout: "pipe",
@@ -236,7 +236,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(Object.fromEntries(Object.keys(files).map(name => [name, read(name)]))).toEqual(expected);
 
     await using proc = spawn({
-      cmd: [bunExe(), "format", "--stdin-filepath", "a.jsx"],
+      cmd: [bunExe(), "fmt", "--stdin-filepath", "a.jsx"],
       env: bunEnv,
       cwd: String(dir),
       stdin: Buffer.from(files["latin1.jsx"], "latin1"),

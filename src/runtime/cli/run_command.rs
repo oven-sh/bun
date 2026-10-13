@@ -2773,6 +2773,9 @@ impl RunCommand {
                         "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
+                    if target_name == b"format" {
+                        pretty_errorln!("<r><d>note<r><d>:<r> The formatter is <b>bun fmt<r>");
+                    }
                 }
             }
             Global::exit(1);

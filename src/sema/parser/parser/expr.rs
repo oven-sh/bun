@@ -879,6 +879,50 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.suspends_outside_context()
     }
 
+    /// At an `await` at the top level of a file that nothing has made a module so far, before a token that cannot follow a
+    /// name: oxc reads a name all the same, and gives up. What comes later does not matter. Before any other token both readings
+    /// are possible, and `file_of` tries them.
+    #[cold]
+    #[inline(never)]
+    fn is_await_a_name_to_oxc(&mut self) -> bool {
+        if self.f.has_module_syntax || self.has_plain_top_level_await {
+            return false;
+        }
+        let follows_no_name = self.look_ahead(|p| {
+            p.next();
+            let is_on_line = !p.newline_before();
+            let follows_no_name = match p.token() {
+                T::Exclamation
+                | T::Tilde
+                | T::PlusPlus
+                | T::MinusMinus
+                | T::OpenBrace
+                | T::PrivateIdentifier
+                | T::DotDotDot
+                | T::At
+                | T::Of => true,
+                // `await () => 1`
+                T::OpenParen => {
+                    p.next();
+                    p.token() == T::CloseParen && p.peek() == T::EqualsGreaterThan
+                }
+                _ => false,
+            };
+            follows_no_name && is_on_line
+        });
+        follows_no_name && !self.is_module_so_far()
+    }
+
+    /// Whether something before the token has told oxc that the file is a module.
+    #[cold]
+    #[inline(never)]
+    fn is_module_so_far(&self) -> bool {
+        let is_import_meta = |it: &Expr| matches!(it.kind, ExprKind::ImportMeta);
+        self.f.has_module_syntax
+            || self.has_plain_top_level_await
+            || self.f.exprs.iter().any(is_import_meta)
+    }
+
     /// `parseSimpleUnaryExpression`
     fn simple_unary_expression(&mut self) -> ExprId {
         if self.is_too_deep() {
@@ -896,6 +940,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::LessThan if !self.options.is_jsx => return self.type_assertion(),
             T::LessThan if !self.is_ecmascript => return self.jsx_elements(true),
             T::Await if self.is_await_expression() => {
+                if self.has_context(ctx::TOP_LEVEL)
+                    && self.options.is_module_or_script
+                    && self.is_await_a_name_to_oxc()
+                {
+                    return self.update_expression();
+                }
                 let had_plain = self.has_plain_top_level_await;
                 self.note_await();
                 // Outside the context it is a name, but before a word or a literal.
@@ -2468,6 +2518,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // As in a computed name.
         if self.token() == T::Await && self.await_context_of_module() != 0 {
             (is_identifier, self.has_await_in_name) = (true, true);
+        }
+        // It is a name to oxc as long as it does not know that the file is a module.
+        if self.token() == T::Await
+            && self.has_context(ctx::TOP_LEVEL)
+            && self.options.is_module_or_script
+            && !self.is_module_so_far()
+        {
+            is_identifier = true;
         }
         let is_bigint = self.token() == T::BigInt;
         let name_end = self.lx.end;

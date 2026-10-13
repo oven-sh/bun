@@ -1,4 +1,4 @@
-// `prettier/prettier` is built in: it reports where a file differs from what `bun format` prints. It stands in for the rule of
+// `prettier/prettier` is built in: it reports where a file differs from what `bun fmt` prints. It stands in for the rule of
 // eslint-plugin-prettier only where that text is Prettier's, byte for byte. Elsewhere the rule of the package is asked.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -179,13 +179,13 @@ describe.concurrent("prettier/prettier", () => {
       "another minor version of prettier",
       installed("3.3.3"),
       {},
-      "the installed prettier is not version 3.9, which bun format matches",
+      "the installed prettier is not version 3.9, which bun fmt matches",
     ],
     [
       "another major version of prettier",
       installed("2.8.8"),
       {},
-      "the installed prettier is not version 3.9, which bun format matches",
+      "the installed prettier is not version 3.9, which bun fmt matches",
     ],
     [
       "no prettier",
@@ -194,7 +194,7 @@ describe.concurrent("prettier/prettier", () => {
           installed()["node_modules/eslint-plugin-prettier/package.json"],
       },
       {},
-      "the installed prettier is not version 3.9, which bun format matches",
+      "the installed prettier is not version 3.9, which bun fmt matches",
     ],
     [
       "another major version of the plugin",
@@ -206,7 +206,7 @@ describe.concurrent("prettier/prettier", () => {
       "a plugin of Prettier that is not built in",
       installed(),
       { ".prettierrc": `{ "plugins": ["prettier-plugin-of-theirs"] }` },
-      "the Prettier config uses a plugin that bun format does not include",
+      "the Prettier config uses a plugin that bun fmt does not include",
     ],
   ])("the rule of the package is asked: %s", async (_, packages, more, why) => {
     const files = { "a.js": "const a = {b:1}\n", ...packages, ...more, "eslint.config.mjs": config() };
@@ -228,7 +228,7 @@ describe.concurrent("prettier/prettier", () => {
     const [{ reports }, { stderr }] = await Promise.all([lint(files), run(files, "-f", "stylish")]);
     expect(reports).toEqual({ "a.js": ["theirs"], "b.js": expected["git.js"] });
     expect(stderr.split("\n")).toContain(
-      "note: prettier/prettier ran in JavaScript for 1 file because bun format found a syntax error",
+      "note: prettier/prettier ran in JavaScript for 1 file because bun fmt found a syntax error",
     );
   });
 
@@ -296,7 +296,7 @@ describe.concurrent("prettier/prettier", () => {
     );
   });
 
-  // It is `bun format`, which also leaves alone what `.gitignore` names. The comment in off.js is for the other rule.
+  // It is `bun fmt`, which also leaves alone what `.gitignore` names. The comment in off.js is for the other rule.
   test("bun/format reports the same, and nothing has to be installed", async () => {
     const own = (text: string) => text.replaceAll("prettier/prettier", "bun/format");
     const { "off.js": _, ...others } = files;
@@ -317,7 +317,7 @@ describe.concurrent("prettier/prettier", () => {
       "a.js": "a  ;\n",
     });
     expect(plugin.reports["a.js"]).toEqual(
-      unchecked("the Prettier config uses a plugin that bun format does not include"),
+      unchecked("the Prettier config uses a plugin that bun fmt does not include"),
     );
     expect(plugin.exitCode).toBe(1);
     const classes = await lint({
@@ -327,7 +327,7 @@ describe.concurrent("prettier/prettier", () => {
       "b.js": "b  ;\n",
       "off.js": '/* eslint-disable bun/format */\nhtml`<a class="p-4 flex"></a>`;\n',
     });
-    expect(classes.reports["a.js"]).toEqual(unchecked("only bun format can sort Tailwind CSS classes"));
+    expect(classes.reports["a.js"]).toEqual(unchecked("only bun fmt can sort Tailwind CSS classes"));
     expect(classes.reports["off.js"]).toEqual([]);
     expect(classes.reports["b.js"]).toEqual(['1:2-1:4 delete [1,3] "" Delete `··`']);
     expect(classes.exitCode).toBe(1);
@@ -361,16 +361,16 @@ describe.concurrent("prettier/prettier", () => {
       "--threads=1",
     );
     expect(stdout.split("\n").filter(it => it.includes("bun(format)"))).toEqual([
-      "a/a.js:1:1: This file was not checked because bun format does not support one of the options. [Error/bun(format)]",
+      "a/a.js:1:1: This file was not checked because bun fmt does not support one of the options. [Error/bun(format)]",
       "b/b.js:1:2: Delete `··` [Error/bun(format)]",
     ]);
   });
 
-  test("bun/format follows allowUnsupported of [format], as bun format does", async () => {
+  test("bun/format follows allowUnsupported of [fmt], as bun fmt does", async () => {
     const files = {
       ".oxlintrc.json": '{ "rules": { "bun/format": "error" } }',
       ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style"], "sortTailwindcss": true }',
-      "bunfig.toml": "[format]\nallowUnsupported = true\n",
+      "bunfig.toml": "[fmt]\nallowUnsupported = true\n",
       "a.js": "a  ;\n",
       "b.js": "b;\n",
     };
@@ -379,7 +379,7 @@ describe.concurrent("prettier/prettier", () => {
       "a.js:1:2: Delete `··` [Error/bun(format)]",
     ]);
     expect(exitCode).toBe(1);
-    // Without the package the classes stay as they are. With it only `bun format` knows where they go.
+    // Without the package the classes stay as they are. With it only `bun fmt` knows where they go.
     const classes = {
       ".oxlintrc.json": files[".oxlintrc.json"],
       ".oxfmtrc.json": '{ "sortTailwindcss": true }',
@@ -390,7 +390,7 @@ describe.concurrent("prettier/prettier", () => {
     const reportsOf = async (files: Record<string, string>) =>
       (await run(files, "-f", "unix")).stdout.split("\n").filter(it => it.includes("bun(format)"));
     expect(await reportsOf(classes)).toEqual(["a.js:1:31: Delete `··` [Error/bun(format)]"]);
-    const unchecked = "This file was not checked because only bun format can sort Tailwind CSS classes.";
+    const unchecked = "This file was not checked because only bun fmt can sort Tailwind CSS classes.";
     expect(await reportsOf({ ...classes, "node_modules/tailwindcss/package.json": "{}" })).toEqual([
       `a.js:1:1: ${unchecked} [Error/bun(format)]`,
       `b.js:1:1: ${unchecked} [Error/bun(format)]`,
@@ -413,7 +413,7 @@ describe.concurrent("prettier/prettier", () => {
     const [{ reports }, { stderr }] = await Promise.all([lint(files), run(files, "-f", "stylish")]);
     expect(reports).toEqual({ "a.js": ["theirs"] });
     expect(stderr.split("\n")).toContain(
-      "note: prettier/prettier ran in JavaScript for 1 file because bun format does not support one of the options",
+      "note: prettier/prettier ran in JavaScript for 1 file because bun fmt does not support one of the options",
     );
   });
 });

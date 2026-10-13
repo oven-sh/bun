@@ -657,7 +657,7 @@ pub(crate) mod help_command {
   <b><magenta>test<r>                           Run unit tests with Bun
   <b><magenta>check<r>                          Type check a TypeScript project
   <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
-  <b><magenta>format<r>                         Format JavaScript and TypeScript, like Prettier
+  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -1069,8 +1069,8 @@ pub(crate) mod command {
                 false => Tag::LintCommand,
             };
         }
-        if x == RootCommandMatcher::case(b"format") {
-            return match super::script_or_command::is_of_the_project(b"format") {
+        if x == RootCommandMatcher::case(b"fmt") {
+            return match super::script_or_command::is_of_the_project(b"fmt") {
                 true => Tag::AutoCommand,
                 false => Tag::FormatCommand,
             };
@@ -1632,7 +1632,7 @@ pub(crate) mod command {
         knows: fn(&[u8]) -> bool,
     ) -> Vec<&'static bun_core::ZStr> {
         let is_of_bun = |arg: &[u8]| match strings::split_once_char(arg, b'=') {
-            // `bun -c=bunfig.toml lint`. Without a value it's `--check` of `bun format`.
+            // `bun -c=bunfig.toml lint`. Without a value it's `--check` of `bun fmt`.
             Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
             None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
         };
@@ -1672,11 +1672,11 @@ pub(crate) mod command {
         // FormatCommand parses its own argv.
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"format", Tag::FormatCommand);
+        print_help_if_asked_before(&argv, b"fmt", Tag::FormatCommand);
         let knows = super::format_command::FormatCommand::has_flag;
         super::format_command::FormatCommand::exec(
             ctx,
-            &with_own_flags_before(&argv, b"format", knows),
+            &with_own_flags_before(&argv, b"fmt", knows),
         )
     }
 
@@ -2082,7 +2082,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }
 
-    /// Prints the flags for `bun lint --help` and `bun format --help`: the common ones, or with `all`, every flag by group.
+    /// Prints the flags for `bun lint --help` and `bun fmt --help`: the common ones, or with `all`, every flag by group.
     fn print_flags(help: &bun_lint_driver::cli::Help, all: bool) {
         if all {
             for group in help.groups {
@@ -2367,7 +2367,7 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r
             Tag::FormatCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun format<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
+<b>Usage<r>: <b><green>bun fmt<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
   Format JavaScript, TypeScript, CSS, HTML, JSON, YAML, Markdown and more.
 "
                 );
@@ -2375,17 +2375,17 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r
                 pretty!(
                     "
 <b>Examples:<r>
-  <b><green>bun format<r>
-  <b><green>bun format<r> <blue>src test/a.test.ts<r>
-  <b><green>bun format<r> <cyan>--check<r>
+  <b><green>bun fmt<r>
+  <b><green>bun fmt<r> <blue>src test/a.test.ts<r>
+  <b><green>bun fmt<r> <cyan>--check<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/runtime/format<r>
 "
                 );
                 if !show_all_flags {
-                    pretty!("See every flag with <b><green>bun format<r> <cyan>--help --all<r>\n");
+                    pretty!("See every flag with <b><green>bun fmt<r> <cyan>--help --all<r>\n");
                 }
-                print_note_about_script("format");
+                print_note_about_script("fmt");
                 Output::flush();
             }
             Tag::LintCommand => {

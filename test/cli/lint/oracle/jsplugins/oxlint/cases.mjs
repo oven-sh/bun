@@ -47,6 +47,33 @@ const typesAtTopLevel =
 const typesInModules =
   'import type { A } from "x"; import { type B, C } from "y"; import D = require("z"); import E = C.F; let a: A, b: B = C; D; E; export type { A }; export type T = 1; export interface I {} export enum G {} export namespace N {} export as namespace H;';
 
+// typescript-eslint's scope manager doesn't go into the type of a `catch` parameter.
+const catchTypes = inFunctions([
+  "try {} catch (a: (b: number) => void) { a; }",
+  "try {} catch (a: new (b: string) => c) { a; }",
+  "try {} catch (a: { m(b: number): void; (c: d): e; new (f: g): h }) {}",
+  "try {} catch (a: <B>(c: B) => B) {}",
+  "try {} catch (a: { [B in 'c']: B }) {}",
+  "try {} catch (a: b extends infer C ? C : d) {}",
+  "try {} catch ({ a, b: [c] }: (d: e) => f) { a; c; }",
+  "try {} catch (a: typeof b) { let c: (d: e) => f; }",
+  "try {} catch (a: B<C>) { a; }",
+]);
+
+// Of an import type it visits the type arguments only.
+const importTypeOptions = [
+  "export type A = import('./m', { with: { a: function (b: unknown) { return b; } } });",
+  "export type B = import('./m', { with: { a: class C { d(e) { return e; } } } });",
+  "export type D = import('./m', { with: { a: f } }).G<H>;",
+  "let i: typeof import('./m', { with: { a: j } });",
+  "export type K = import('./m', { with: { a: l as import('./n', { with: { b: o } }).P<Q> } }).R<S>;",
+  "function t(u: import('./m', { with: { a: v } }).W<X>) { u; }",
+].join("\n");
+
+// A key in brackets declares a variable if it's a string, and not if it's a template.
+const enumKeys =
+  "enum A { ['b'] = 1, c = b as any } enum D { [\"e\"] = 1, [`f`] = 2, 'g' = 3, h = e + f + g } enum I { ['j k'] = 1, [''] = 2, ['1'] = 3 } declare enum L { ['m'] = 1, n = m } const enum O { ['p'] = 1, q = p } namespace R { export enum S { ['t'] = 1, u = t } }";
+
 // What only resolves because oxlint goes by the name.
 const byName =
   "var a; let b: a; type T = 1; T; function f() { let c: d; return 2 as const; } var d; interface Array<U> {} let e: Array<number>; Array; let g = 1 as const; let h: Promise<void>; new Promise(() => {}); T = 2; Symbol; let i: Symbol;";
@@ -97,6 +124,9 @@ export const cases = Object.fromEntries([
   ...named("types-top-level", ["ts", "cts"], typesAtTopLevel),
   ...named("types-modules", ["ts", "mts"], typesInModules),
   ...named("export-assignment", ["ts", "cts"], "const a = 1; export = a;"),
+  ...named("catch-types", ["ts"], catchTypes),
+  ...named("import-type-options", ["ts"], importTypeOptions),
+  ...named("enum-keys", ["ts"], enumKeys),
   ...named("by-name", ["ts", "cts", "mts"], byName),
   ...named("values", ["js", "ts"], values),
   ...named(

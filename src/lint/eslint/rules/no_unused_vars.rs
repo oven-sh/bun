@@ -60,7 +60,10 @@ impl Pattern {
     fn new(options: Object, key: &str) -> Option<Pattern> {
         let source = options.str(key).filter(|source| !source.is_empty())?;
         if source == "^_" {
-            return Some(Pattern { regex: None, text: "/^_/u".to_string() });
+            return Some(Pattern {
+                regex: None,
+                text: "/^_/u".to_string(),
+            });
         }
         let regex = options.regex(key, "u")?;
         Some(Pattern {
@@ -78,7 +81,10 @@ impl Pattern {
 
     /// As it is in the configuration.
     pub fn source(&self) -> &str {
-        self.text.strip_prefix('/').and_then(|it| it.strip_suffix("/u")).unwrap_or(&self.text)
+        self.text
+            .strip_prefix('/')
+            .and_then(|it| it.strip_suffix("/u"))
+            .unwrap_or(&self.text)
     }
 }
 
@@ -92,39 +98,6 @@ pub enum VariableType {
 }
 
 // ───────────────────────────── variables ─────────────────────────────
-
-/// ESLint's `Variable`.
-#[derive(Copy, Clone)]
-enum Variable<'a> {
-    /// What the file declares.
-    Declared {
-        symbol: Symbol<'a>,
-        /// One of the declarations is a class.
-        is_class: bool,
-    },
-    /// What a `/* global name */` comment declares.
-    Global { file: &'a File<'a>, name: &'a [u8] },
-}
-
-/// Whether `scope` is in a class that `symbol` is the name of. There the name is a second variable
-/// in ESLint.
-fn is_in_class_named<'a>(symbol: Symbol<'a>, scope: Scope<'a>) -> bool {
-    scope.chain().any(|it| matches!(it.node(), Node::Class(class) if class.symbol() == Some(symbol)))
-}
-
-impl<'a> Variable<'a> {
-    fn references(self) -> impl Iterator<Item = Reference<'a>> + 'a {
-        let (declared, global) = match self {
-            Variable::Declared { symbol, is_class } => {
-                let is_outside =
-                    move |it: &Reference<'a>| !is_class || !is_in_class_named(symbol, it.scope());
-                (Some(symbol.references().filter(is_outside)), None)
-            }
-            Variable::Global { file, name } => (None, Some(file.unresolved_references_to(name))),
-        };
-        declared.into_iter().flatten().chain(global.into_iter().flatten())
-    }
-}
 
 /// The `VarDecl` that the pattern `pat` is part of.
 fn declarator(pat: Pat<'_>) -> Option<VarDecl<'_>> {
@@ -181,7 +154,7 @@ fn uses_explicit_resource_management(def: Declaration) -> bool {
 /// ESLint's `isSelfReference` with `getFunctionDefinitions`: `reference` is in a function that the
 /// variable is the name of, or is initialized with.
 fn is_self_reference<'a>(variable: Variable<'a>, reference: Reference<'a>) -> bool {
-    let Variable::Declared { symbol, .. } = variable else {
+    let Some(symbol) = variable.symbol() else {
         return false;
     };
     let function = |def: Declaration<'a>| match def {
@@ -189,12 +162,18 @@ fn is_self_reference<'a>(variable: Variable<'a>, reference: Reference<'a>) -> bo
         Declaration::Var(pat) => declarator(pat)?.init()?.as_fn()?.scope(),
         _ => None,
     };
-    symbol.declarations().filter_map(function).any(|scope| scope.contains(reference.scope()))
+    symbol
+        .declarations()
+        .filter_map(function)
+        .any(|scope| scope.contains(reference.scope()))
 }
 
 /// ESLint's `isForInOfRef`.
 fn is_for_in_of_ref(reference: Reference) -> bool {
-    let target = match reference.expr().map_or_else(|| reference.node(), Node::Expr) {
+    let target = match reference
+        .expr()
+        .map_or_else(|| reference.node(), Node::Expr)
+    {
         Node::Pat(pat) => match pat.parent() {
             Node::VarDecl(declaration) => declaration.parent().parent(),
             _ => return false,
@@ -248,10 +227,14 @@ fn is_plainly_used(symbol: Symbol) -> bool {
         return false;
     }
     // In the function that declares it, it is in no function that it is the name of.
-    let names_functions = kinds.intersects(DeclarationKinds::VARIABLE | DeclarationKinds::FUNCTION_NAME);
-    symbol.references().find(|it| it.is_read()).is_some_and(|read| {
-        !names_functions || read.scope().variable_scope() == symbol.scope().variable_scope()
-    })
+    let names_functions =
+        kinds.intersects(DeclarationKinds::VARIABLE | DeclarationKinds::FUNCTION_NAME);
+    symbol
+        .references()
+        .find(|it| it.is_read())
+        .is_some_and(|read| {
+            !names_functions || read.scope().variable_scope() == symbol.scope().variable_scope()
+        })
 }
 
 /// Whether ESLint has `func` as the `value` of a `Property` or a `MethodDefinition` whose `kind` is
@@ -495,7 +478,10 @@ impl<'a> Fixes<'a> {
         }
         match get_node_by_range_index(self.file, token.start()) {
             Node::Stmt(statement) => {
-                matches!(statement.kind(), StmtKind::Block(_) | StmtKind::Switch { .. })
+                matches!(
+                    statement.kind(),
+                    StmtKind::Block(_) | StmtKind::Switch { .. }
+                )
             }
             Node::Func(func) => {
                 func.kind() == FnKind::Decl
@@ -672,12 +658,16 @@ impl<'a> Fixes<'a> {
     fn rest_in_pattern(&self, node: Estree<'a>) -> Step<'a> {
         let span = node.span();
         match node.parent() {
-            Estree::Function(func) if param_count(func) == 1 => Step::Done(Some(self.fixer.remove(span))),
+            Estree::Function(func) if param_count(func) == 1 => {
+                Step::Done(Some(self.fixer.remove(span)))
+            }
             Estree::Function(_) => Step::Done(self.remove_with_previous(span)),
-            parent @ Estree::ArrayPattern(array) if has_single_element(array) => match parent.parent() {
-                Estree::ArrayPattern(_) => Step::NestedArrayVariable(parent),
-                _ => Step::Variables(parent),
-            },
+            parent @ Estree::ArrayPattern(array) if has_single_element(array) => {
+                match parent.parent() {
+                    Estree::ArrayPattern(_) => Step::NestedArrayVariable(parent),
+                    _ => Step::Variables(parent),
+                }
+            }
             Estree::ArrayPattern(_) => Step::Done(self.remove_with_previous(span)),
             _ => Step::Done(None),
         }
@@ -865,7 +855,10 @@ fn handle_fixes<'a>(
     id: Span,
 ) -> Option<Fix> {
     // Assignments would be left behind.
-    if variable.references().any(|it| it.is_write() && it.span().start != id.start) {
+    if variable
+        .references()
+        .any(|it| it.is_write() && it.span().start != id.start)
+    {
         return None;
     }
     let fixes = Fixes {
@@ -921,7 +914,9 @@ pub(crate) fn is_pure(e: Expr) -> bool {
                 op: UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof | UnOp::Void,
                 operand,
             } => rest.push(operand),
-            ExprKind::Binary { op, left, right } if !matches!(op, BinOp::In | BinOp::Instanceof) => {
+            ExprKind::Binary { op, left, right }
+                if !matches!(op, BinOp::In | BinOp::Instanceof) =>
+            {
                 rest.extend([left, right]);
             }
             ExprKind::Cond { test, yes, no } => rest.extend([test, yes, no]),
@@ -980,7 +975,9 @@ fn can_be_removed_unseen<'a>(symbol: Symbol<'a>, def: Declaration<'a>) -> bool {
             let mut evaluated = Vec::new();
             defines_purely(class, &mut evaluated) && evaluated.into_iter().all(is_pure)
         }
-        Declaration::ImportDefault(_) | Declaration::ImportNamespace(_) | Declaration::ImportSpec(_) => true,
+        Declaration::ImportDefault(_)
+        | Declaration::ImportNamespace(_)
+        | Declaration::ImportSpec(_) => true,
         _ => false,
     }
 }
@@ -1007,8 +1004,12 @@ impl NoUnusedVars {
     /// file, because it's the default there and [the hint](Self::hint) mentions it.
     pub fn unused_message_data(&self, kind: VariableType, file: &File) -> String {
         match self.description(kind) {
-            (_, Some(pattern)) if file.language().stands_alone && pattern.source() == "^_" => String::new(),
-            (description, Some(pattern)) => format!(". Allowed unused {description} must match {}", pattern.text),
+            (_, Some(pattern)) if file.language().stands_alone && pattern.source() == "^_" => {
+                String::new()
+            }
+            (description, Some(pattern)) => {
+                format!(". Allowed unused {description} must match {}", pattern.text)
+            }
             _ => String::new(),
         }
     }
@@ -1016,7 +1017,9 @@ impl NoUnusedVars {
     /// The `additional` of `getUsedIgnoredMessageData`.
     pub fn used_ignored_message_data(&self, kind: VariableType) -> String {
         match self.description(kind) {
-            (description, Some(pattern)) => format!(". Used {description} must not match {}", pattern.text),
+            (description, Some(pattern)) => {
+                format!(". Used {description} must not match {}", pattern.text)
+            }
             _ => String::new(),
         }
     }
@@ -1046,13 +1049,10 @@ impl NoUnusedVars {
         if !self.ignore_rest_siblings {
             return false;
         }
-        let is_defined_beside_rest = match variable {
-            Variable::Declared { symbol, .. } => symbol.declarations().any(|def| match def {
-                Declaration::Var(pat) | Declaration::Param(pat) => has_rest_sibling(Node::Pat(pat)),
-                _ => false,
-            }),
-            Variable::Global { .. } => false,
-        };
+        let is_defined_beside_rest = variable.declarations().any(|def| match def {
+            Declaration::Var(pat) | Declaration::Param(pat) => has_rest_sibling(Node::Pat(pat)),
+            _ => false,
+        });
         is_defined_beside_rest || variable.references().any(|it| has_rest_sibling(it.node()))
     }
 
@@ -1061,7 +1061,10 @@ impl NoUnusedVars {
         if !self.report_used_ignore_pattern && is_plainly_used(symbol) {
             return;
         }
-        let Some(def) = symbol.declarations().find(|it| !matches!(it, Declaration::Other)) else {
+        let Some(def) = symbol
+            .declarations()
+            .find(|it| !matches!(it, Declaration::Other))
+        else {
             return;
         };
         let mut kind = match def {
@@ -1083,10 +1086,7 @@ impl NoUnusedVars {
         if is_marked_as_used && !self.report_used_ignore_pattern {
             return;
         }
-        let variable = Variable::Declared {
-            symbol,
-            is_class: symbol.declarations().any(|it| matches!(it, Declaration::Class(_))),
-        };
+        let variable = symbol.variable_in(symbol.scope());
 
         if let Some(pattern) = &self.destructured_array_ignore_pattern
             && pattern.test(name)
@@ -1099,14 +1099,18 @@ impl NoUnusedVars {
 
         if self.ignore_class_with_static_init_block
             && let Declaration::Class(class) = def
-            && class.members().iter().any(|it| it.kind() == MemberKind::StaticBlock)
+            && class
+                .members()
+                .iter()
+                .any(|it| it.kind() == MemberKind::StaticBlock)
         {
             return;
         }
         let function = match def {
-            Declaration::Param(pat) => {
-                def.node().and_then(Node::as_func).or_else(|| Node::Pat(pat).enclosing_function())
-            }
+            Declaration::Param(pat) => def
+                .node()
+                .and_then(Node::as_func)
+                .or_else(|| Node::Pat(pat).enclosing_function()),
             _ => None,
         };
         match kind {
@@ -1121,7 +1125,11 @@ impl NoUnusedVars {
             }
             _ => {}
         }
-        if self.description(kind).1.is_some_and(|pattern| pattern.test(name)) {
+        if self
+            .description(kind)
+            .1
+            .is_some_and(|pattern| pattern.test(name))
+        {
             return self.report_if_used(cx, variable, is_marked_as_used, (name, def), kind);
         }
         if is_marked_as_used
@@ -1157,19 +1165,30 @@ impl NoUnusedVars {
         }
         cx.report(last_write.map_or(at, identifier_span), UNUSED_VAR)
             .data("varName", name)
-            .data("action", if is_assigned { "assigned a value" } else { "defined" })
+            .data(
+                "action",
+                if is_assigned {
+                    "assigned a value"
+                } else {
+                    "defined"
+                },
+            )
             .data("additional", self.unused_message_data(kind, cx.file()))
             .hint(self.hint(def, kind))
             .suggest_with(REMOVE_VAR, &[("varName", name.bytes())], |fixer| {
                 if !cx.language().stands_alone {
                     return handle_fixes(fixer, variable, def, at);
                 }
-                let fix = handle_fixes(fixer, variable, def, at).filter(|_| can_be_removed_unseen(symbol, def))?;
+                let fix = handle_fixes(fixer, variable, def, at)
+                    .filter(|_| can_be_removed_unseen(symbol, def))?;
                 if !fix.text.is_empty() {
                     return Some(fix);
                 }
                 // A statement that had its lines to itself takes them with it.
-                Some(Fix { span: Around::of(cx.text(), fix.span).without_leftovers(), ..fix })
+                Some(Fix {
+                    span: Around::of(cx.text(), fix.span).without_leftovers(),
+                    ..fix
+                })
             });
     }
 
@@ -1189,7 +1208,9 @@ impl NoUnusedVars {
             {
                 continue;
             }
-            let variable = Variable::Global { file, name };
+            let Some(variable) = file.global_variable(name) else {
+                continue;
+            };
             if is_used_variable(variable) || self.has_rest_spread_sibling(variable) {
                 continue;
             }
@@ -1204,11 +1225,17 @@ impl NoUnusedVars {
     pub fn hint(&self, def: Declaration, kind: VariableType) -> &'static str {
         match def {
             // If the handler throws, the caught error should be the `cause`, so don't suggest removing the parameter.
-            Declaration::Var(pat) if def.is_catch_parameter() && matches!(pat.parent(), Node::VarDecl(_)) => {
+            Declaration::Var(pat)
+                if def.is_catch_parameter() && matches!(pat.parent(), Node::VarDecl(_)) =>
+            {
                 let throws = matches!(pat.parent().parent(), Node::Stmt(it)
                     if matches!(it.kind(), StmtKind::Try { handler: Some(handler), .. }
                         if handler.as_block().is_some_and(|body| body.iter().any(|it| it.tag() == StmtTag::Throw))));
-                if throws { "" } else { "A catch needs no parameter. Remove it and its parentheses." }
+                if throws {
+                    ""
+                } else {
+                    "A catch needs no parameter. Remove it and its parentheses."
+                }
             }
             Declaration::Var(pat) | Declaration::Param(pat) if has_rest_sibling(Node::Pat(pat)) => {
                 "To leave a property out this way, turn on the option ignoreRestSiblings."
@@ -1217,7 +1244,11 @@ impl NoUnusedVars {
             | Declaration::ImportNamespace(_)
             | Declaration::ImportSpec(_)
             | Declaration::ImportEquals(_) => "",
-            _ if self.description(kind).1.is_some_and(|it| it.source() == "^_") => {
+            _ if self
+                .description(kind)
+                .1
+                .is_some_and(|it| it.source() == "^_") =>
+            {
                 "Remove it, or start its name with _ to keep it."
             }
             _ => "",
@@ -1226,8 +1257,9 @@ impl NoUnusedVars {
 }
 
 impl Rule for NoUnusedVars {
-    const META: Meta =
-        Meta::eslint("no-unused-vars", Kind::Problem).has_suggestions().recommended()
+    const META: Meta = Meta::eslint("no-unused-vars", Kind::Problem)
+        .has_suggestions()
+        .recommended()
         .reports_at_the_end()
         .hints();
     const ON: On = On::new().finish();

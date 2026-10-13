@@ -141,7 +141,7 @@ impl Input<'_, '_> {
     }
 
     /// Removes a whole comment. ESLint puts a space in its place, which leaves a line with only a space on it, or a space at the
-    /// end of a line, and `bun format --check` fails on both. With no config file, a comment that ends its line goes with the
+    /// end of a line, and `bun fmt --check` fails on both. With no config file, a comment that ends its line goes with the
     /// spaces around it, and with the line break too if nothing else is on the line.
     fn removal_of(&self, comment: Span) -> Fix {
         let around = Around::of(self.file.text(), comment);

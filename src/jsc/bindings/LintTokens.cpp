@@ -724,8 +724,11 @@ void lintReplaceCustomValue(VM& vm, LintHost* host, JSObject* object, PropertyNa
 namespace {
 
 // To a plugin `loc` is a plain data property, as with ESLint. It's computed when it's first read.
-EncodedJSValue computeLoc(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName name, LintLocShape::Kind kind)
+EncodedJSValue computeLoc(EncodedJSValue thisValue, PropertyName name, LintLocShape::Kind kind)
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(thisValue);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* token = asObject(JSValue::decode(thisValue));
@@ -736,19 +739,19 @@ EncodedJSValue computeLoc(JSGlobalObject* globalObject, EncodedJSValue thisValue
     return JSValue::encode(loc);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(lintEspreeTokenLoc, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(lintEspreeTokenLoc, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName name))
 {
-    return computeLoc(globalObject, thisValue, name, LintLocShape::EspreeToken);
+    return computeLoc(thisValue, name, LintLocShape::EspreeToken);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(lintEspreeOtherLoc, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(lintEspreeOtherLoc, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName name))
 {
-    return computeLoc(globalObject, thisValue, name, LintLocShape::EspreeOther);
+    return computeLoc(thisValue, name, LintLocShape::EspreeOther);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(lintTypeScriptLoc, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(lintTypeScriptLoc, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName name))
 {
-    return computeLoc(globalObject, thisValue, name, LintLocShape::TypeScript);
+    return computeLoc(thisValue, name, LintLocShape::TypeScript);
 }
 
 // oxlint's `get loc()`, which returns the same object each time.
@@ -1214,8 +1217,11 @@ EncodedJSValue listOfProgram(JSGlobalObject* globalObject, bool isComments)
 }
 
 // With ESLint the two are plain data properties. Like `loc` they're computed when they're first read.
-EncodedJSValue computeListOfProgram(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName name, bool isComments)
+EncodedJSValue computeListOfProgram(EncodedJSValue thisValue, PropertyName name, bool isComments)
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(thisValue);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     EncodedJSValue list = listOfProgram(globalObject, isComments);
@@ -1224,14 +1230,14 @@ EncodedJSValue computeListOfProgram(JSGlobalObject* globalObject, EncodedJSValue
     return list;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(lintProgramTokens, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(lintProgramTokens, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName name))
 {
-    return computeListOfProgram(globalObject, thisValue, name, false);
+    return computeListOfProgram(thisValue, name, false);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(lintProgramComments, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(lintProgramComments, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName name))
 {
-    return computeListOfProgram(globalObject, thisValue, name, true);
+    return computeListOfProgram(thisValue, name, true);
 }
 
 } // namespace

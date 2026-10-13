@@ -15,7 +15,7 @@ Bun ships with a fast, built-in code formatter. There's nothing to install and n
 ## Run the formatter
 
 ```bash terminal icon="terminal"
-bun format
+bun fmt
 ```
 
 ```txt
@@ -24,12 +24,12 @@ src/server.ts
 Formatted 2 files, 2 unchanged [3.47ms]
 ```
 
-`bun format` rewrites the files in the current directory that need it and prints their names. It skips `node_modules`, anything in your `.gitignore`, minified files (`*.min.js`, `*.min.css`) and lock files such as `package-lock.json`.
+`bun fmt` rewrites the files in the current directory that need it and prints their names. It skips `node_modules`, anything in your `.gitignore`, minified files (`*.min.js`, `*.min.css`) and lock files such as `package-lock.json`.
 
 To format specific files, pass paths or globs.
 
 ```bash terminal icon="terminal"
-bun format src "test/**/*.ts"
+bun fmt src "test/**/*.ts"
 ```
 
 Embedded code is formatted too: `<script>` and `<style>` in HTML and Vue, code blocks in Markdown, and `` css`...` ``, `` html`...` ``, and `` graphql`...` `` templates in JavaScript.
@@ -39,13 +39,13 @@ Embedded code is formatted too: `<script>` and `<style>` in HTML and Vue, code b
 `--check` lists the files that need formatting and writes nothing.
 
 ```bash terminal icon="terminal"
-bun format --check
+bun fmt --check
 ```
 
 ```txt
 src/index.ts
 src/server.ts
-2 files need formatting. Run bun format to fix them.
+2 files need formatting. Run bun fmt to fix them.
 ```
 
 The exit code is `1` if a file needs formatting, `0` if none do, and `2` if something went wrong, like a syntax error. That makes it the command for CI.
@@ -54,15 +54,15 @@ The exit code is `1` if a file needs formatting, `0` if none do, and `2` if some
 steps:
   - uses: actions/checkout@v4
   - uses: oven-sh/setup-bun@v2
-  - run: bun format --check
+  - run: bun fmt --check
 ```
 
 ## Options
 
-Options live in `bunfig.toml`. To create the section, run `bun format --init`.
+Options live in `bunfig.toml`. To create the section, run `bun fmt --init`.
 
 ```toml bunfig.toml icon="settings"
-[format]
+[fmt]
 printWidth = 100
 semi = false
 singleQuote = true
@@ -82,27 +82,27 @@ All of [Prettier's options](https://prettier.io/docs/options) work, under the sa
 ### Different options for some files
 
 ```toml bunfig.toml icon="settings"
-[[format.overrides]]
+[[fmt.overrides]]
 files = ["*.test.ts", "scripts/**"]
 options = { printWidth = 120 }
 ```
 
 ### `.editorconfig`
 
-`bun format` reads `indent_style`, `indent_size`, `tab_width`, `max_line_length`, and `end_of_line` from `.editorconfig`. `bunfig.toml` overrides them.
+`bun fmt` reads `indent_style`, `indent_size`, `tab_width`, `max_line_length`, and `end_of_line` from `.editorconfig`. `bunfig.toml` overrides them.
 
 ## Ignore files
 
 To skip more than `.gitignore` does, list the files in `bunfig.toml`. A `.prettierignore` file works too.
 
 ```toml bunfig.toml icon="settings"
-[format]
+[fmt]
 ignorePatterns = ["vendor/", "**/*.gen.ts"]
 ```
 
 ## Ignore code
 
-`bun format` uses Prettier's comment, so existing ones keep working. It applies to the next statement, element, or rule.
+`bun fmt` uses Prettier's comment, so existing ones keep working. It applies to the next statement, element, or rule.
 
 ```ts
 // prettier-ignore
@@ -118,7 +118,7 @@ In JSX it's `{/* prettier-ignore */}`, in CSS `/* prettier-ignore */`, in HTML a
 ## Sort imports
 
 ```toml bunfig.toml icon="settings"
-[format]
+[fmt]
 sortImports = true
 ```
 
@@ -148,7 +148,7 @@ import { a, b, c } from "./util";
 To pick your own groups, use a table. See [`format.sortImports`](/runtime/bunfig#format-sortimports).
 
 ```toml bunfig.toml icon="settings"
-[format.sortImports]
+[fmt.sortImports]
 groups = ["react", "builtin", "external", "internal", ["parent", "sibling", "index"]]
 customGroups = [{ groupName = "react", elementNamePattern = ["react", "react-dom/**"] }]
 ```
@@ -156,7 +156,7 @@ customGroups = [{ groupName = "react", elementNamePattern = ["react", "react-dom
 ## Sort Tailwind CSS classes
 
 ```toml bunfig.toml icon="settings"
-[format]
+[fmt]
 sortTailwindcss = true
 ```
 
@@ -170,7 +170,7 @@ Classes are sorted in Tailwind's recommended order, in `class` and `className` a
 To name your own functions or your stylesheet, use a table.
 
 ```toml bunfig.toml icon="settings"
-[format.sortTailwindcss]
+[fmt.sortTailwindcss]
 stylesheet = "./src/app.css"
 functions = ["clsx", "tw"]
 ```
@@ -178,7 +178,7 @@ functions = ["clsx", "tw"]
 ## Sort `package.json`
 
 ```toml bunfig.toml icon="settings"
-[format]
+[fmt]
 sortPackageJson = true
 ```
 
@@ -209,7 +209,7 @@ Keys go in the conventional order: `name`, `version`, `description`, and so on.
 ## Format JSDoc comments
 
 ```toml bunfig.toml icon="settings"
-[format]
+[fmt]
 jsdoc = true
 ```
 
@@ -234,16 +234,16 @@ jsdoc = true
 
 ## Standard input
 
-Pipe text through `bun format`. It prints the result and writes nothing. The path picks the language and the options. The file doesn't have to exist.
+Pipe text through `bun fmt`. It prints the result and writes nothing. The path picks the language and the options. The file doesn't have to exist.
 
 ```bash terminal icon="terminal"
-bun format --stdin-filepath src/index.ts < src/index.ts
+bun fmt --stdin-filepath src/index.ts < src/index.ts
 ```
 
 No path to give? Name the parser instead. Your config still applies, except for what goes by a file name: `overrides`, `.editorconfig`, and ignore files.
 
 ```bash terminal icon="terminal"
-bun run generate-types | bun format --parser typescript > types.ts
+bun run generate-types | bun fmt --parser typescript > types.ts
 ```
 
 ## Git hooks
@@ -252,7 +252,7 @@ bun run generate-types | bun format --parser typescript > types.ts
 
 ```sh .git/hooks/pre-commit icon="terminal"
 #!/bin/sh
-bun format --staged
+bun fmt --staged
 ```
 
 A file with both staged and unstaged changes isn't written, because staging it again would commit the rest. Bun names the file and exits with code `2`.
@@ -260,29 +260,29 @@ A file with both staged and unstaged changes isn't written, because staging it a
 `--changed` formats the files that differ from your default branch. Pass a ref to compare with something else.
 
 ```bash terminal icon="terminal"
-bun format --changed
-bun format --changed=origin/dev
+bun fmt --changed
+bun fmt --changed=origin/dev
 ```
 
 ## Migrate from Prettier or oxfmt
 
-Already have a `.prettierrc` or an `.oxfmtrc.json`? `bun format` reads it and prints what that tool prints. Change the script and you're done.
+Already have a `.prettierrc` or an `.oxfmtrc.json`? `bun fmt` reads it and prints what that tool prints. Change the script and you're done.
 
 ```json package.json icon="file-json"
 {
   "scripts": {
     "format": "prettier --write .", // [!code --]
-    "format": "bun format" // [!code ++]
+    "format": "bun fmt" // [!code ++]
   }
 }
 ```
 
-If `package.json` has a `format` script, `bun format` runs that script. Inside the script, `bun format` is the formatter.
+If `package.json` has a `fmt` script, `bun fmt` runs that script. Inside the script, `bun fmt` is the formatter.
 
 Svelte and Astro aren't built in. If your `.prettierrc` lists their plugin, Bun sends those files to your installed Prettier. To see which files those are, and which packages you can uninstall:
 
 ```bash terminal icon="terminal"
-bun format --doctor
+bun fmt --doctor
 ```
 
 See the guides: [Migrate from Prettier](/guides/format/migrate-from-prettier) and [Migrate from oxfmt](/guides/format/migrate-from-oxfmt).

@@ -114,7 +114,7 @@ describe.concurrent("bun lint --doctor", () => {
         eslint.config.js        1
     2 rules do not run
         1 is not supported: no-such-rule
-        1 is a formatting rule, use bun format: indent
+        1 is a formatting rule, use bun fmt: indent
 
 You can remove: eslint, eslint-plugin-never-imported
 Still needed:   eslint-plugin-first, eslint-plugin-second (their rules run in JavaScript)
@@ -239,7 +239,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(text.stdout).toContain(`
     8 rules do not run
         4 are not supported: no-such-rule, nor-any, nor-that, nor-this
-        4 are formatting rules, use bun format: comma-dangle, indent, quotes, ..
+        4 are formatting rules, use bun fmt: comma-dangle, indent, quotes, ..
 `);
     expect(JSON.parse(json.stdout).rules.not_run).toContainEqual({ rule: "semi", reason: "formatting" });
     expect(text.exitCode).toBe(0);

@@ -1,9 +1,9 @@
-//! Reads `[lint]` and `[format]` from bunfig.toml. A key sets the default for the flag with the same name: `maxWarnings`
+//! Reads `[lint]` and `[fmt]` from bunfig.toml. A key sets the default for the flag with the same name: `maxWarnings`
 //! for `--max-warnings`, `semi = false` for `--no-semi`. A section is turned into the same `Options` as a command line,
 //! through the same `Options::set`, and the command line is applied on top of it. So a key takes exactly what its flag
 //! takes: the value's type comes from the flag table, and the code that rejects a bad value for the flag rejects it here.
 //!
-//! A few keys can say more than a flag can: the tables and `overrides` in `[lint]`, and in `[format]` both `overrides` and
+//! A few keys can say more than a flag can: the tables and `overrides` in `[lint]`, and in `[fmt]` both `overrides` and
 //! the options of the features that a flag only turns on ([`FEATURES`]).
 //!
 //! Bun's bunfig.toml loader finds and parses the file, then calls into this module.
@@ -256,7 +256,7 @@ fn entries(section: &Expr) -> Result<Vec<(Key, &Expr)>, Refusal> {
 }
 
 const FORMAT: Table = Table {
-    section: "format",
+    section: "fmt",
     params: crate::fmt::cli::PARAMS,
     flags: &[
         b"disable-nested-config",
@@ -353,7 +353,7 @@ const FORMAT: Table = Table {
 const _: () = assert!(FORMAT.only_has_flags());
 const _: () = assert!(
     FORMAT.has_every_flag(),
-    "A flag of `bun format` is in none of the lists of `FORMAT`. If it describes the project it is a key of `[format]` in \
+    "A flag of `bun fmt` is in none of the lists of `FORMAT`. If it describes the project it is a key of `[fmt]` in \
      bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
 );
 
@@ -398,7 +398,7 @@ fn check_sort_imports(json: &[u8]) -> Result<(), Vec<u8>> {
     sort.compile().map(|_| ())
 }
 
-/// A `[format]` key that takes `true`, `false`, or a table of options.
+/// A `[fmt]` key that takes `true`, `false`, or a table of options.
 struct Feature {
     flag: &'static [u8],
     /// Its name in `Options::format`.
@@ -470,7 +470,7 @@ impl Feature {
         name.get(self.name.len() + 1..).unwrap_or_default()
     }
 
-    /// Applies the `value` that `[format]` has for this feature.
+    /// Applies the `value` that `[fmt]` has for this feature.
     fn set(&self, value: &Expr, options: &mut crate::fmt::cli::Options) -> Result<(), Refusal> {
         let table = match &value.data {
             Data::EBoolean(it) => {
@@ -484,7 +484,7 @@ impl Feature {
             let mut known = self.options.iter();
             let Some(&(name, takes)) = known.find(|it| self.key_of(it.0) == key.name) else {
                 let keys = self.options.iter().map(|it| self.key_of(it.0).to_vec());
-                return unknown_key(&key.name, key.at, &[b"format.", self.name].concat(), keys);
+                return unknown_key(&key.name, key.at, &[b"fmt.", self.name].concat(), keys);
             };
             takes.check(value)?;
             if matches!(self.table, As::Json(_)) {
@@ -521,9 +521,9 @@ impl Feature {
     }
 }
 
-/// What `[format]` of `file` says.
+/// What `[fmt]` of `file` says.
 pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> {
-    let Some(section) = file.get(b"format") else {
+    let Some(section) = file.get(b"fmt") else {
         return Ok(None);
     };
     let mut options = crate::fmt::cli::Options::default();
@@ -542,7 +542,7 @@ pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> 
     Ok(Some(options))
 }
 
-/// Applies `key = value` from `[format]` or from the `options` of an override.
+/// Applies `key = value` from `[fmt]` or from the `options` of an override.
 fn set_in_format(
     key: &Key,
     value: &Expr,
@@ -584,9 +584,9 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, Refusal> {
     }
 }
 
-/// Parses `[[format.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[format]` keys that affect output.
+/// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[fmt]` keys that affect output.
 fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
-    let items = tables_of(value, b"format")?;
+    let items = tables_of(value, b"fmt")?;
     // `parser` only makes sense for some files, so it's allowed here and not at the top level.
     let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
     let options_of = |table: &Expr| {
@@ -601,7 +601,7 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
             if !keys.any(|it| it == key.name) {
                 let keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
                 let keys = keys.chain([b"parser".to_vec()]);
-                return unknown_key(&key.name, key.at, b"format.overrides.options", keys);
+                return unknown_key(&key.name, key.at, b"fmt.overrides.options", keys);
             }
             set_in_format(&key, value, &mut options)?;
         }
@@ -617,7 +617,7 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
                 _ => {
                     let keys = [&b"files"[..], b"excludeFiles", b"options"];
                     let keys = keys.iter().map(|it| it.to_vec());
-                    return unknown_key(&key.name, key.at, b"format.overrides", keys);
+                    return unknown_key(&key.name, key.at, b"fmt.overrides", keys);
                 }
             }
         }
@@ -951,7 +951,7 @@ fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     entries(table)?.into_iter().map(one).collect()
 }
 
-/// What `[lint]` of `file` says, and `[format]`, which is for the rule that holds a file against what `bun format` prints.
+/// What `[lint]` of `file` says, and `[fmt]`, which is for the rule that holds a file against what `bun fmt` prints.
 pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
     let mut options = crate::cli::Options {
         of_bun_format: format(file)?.map(Box::new),

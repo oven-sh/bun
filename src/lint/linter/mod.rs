@@ -79,6 +79,7 @@ use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
+use crate::oxlint_order::Kinds;
 use crate::rule::{Meta, When};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::runner::{Enabled, Listeners, RuleEntry, each_bit};
@@ -201,6 +202,8 @@ struct Running<'r, S> {
     severity: Severity,
     /// [`Slot::when`]
     when: When,
+    /// [`Slot::kinds`]
+    kinds: Kinds,
     rule: RuleRef<'r, S>,
     /// [`ConfiguredRule::refusal`]
     refusal: Option<Cow<'r, [u8]>>,
@@ -393,12 +396,12 @@ impl<S: RuleSet> Linter<S> {
             };
             let number = instance.number();
             on.insert(number);
-            let (when, oxlint_number) = match config.language.is_oxlint {
+            let (when, oxlint_number, kinds) = match config.language.is_oxlint {
                 true => {
                     let order = crate::oxlint_order::of(rule.reported_as());
-                    (order.when, order.number)
+                    (order.when, order.number, order.kinds)
                 }
-                false => (rule.entry.meta.reports, 0),
+                false => (rule.entry.meta.reports, 0, Kinds::default()),
             };
             let at = at as u32;
             let severity = rule.severity;
@@ -406,6 +409,7 @@ impl<S: RuleSet> Linter<S> {
                 at,
                 number,
                 when,
+                kinds,
                 severity,
             };
             order.push((oxlint_number, slot, Arc::clone(instance)));
@@ -559,6 +563,7 @@ impl<S: RuleSet> Linter<S> {
                     configured: Some(rule),
                     severity: rule.severity,
                     when: slot.when,
+                    kinds: slot.kinds,
                     rule: RuleRef::Shared(instance),
                     refusal: self.refusal(rule).map(Cow::Borrowed),
                 });
@@ -867,28 +872,26 @@ impl<S: RuleSet> Linter<S> {
         // oxlint sorts nothing. It prints what its rules report in the order in which it runs them: `run_once` of each rule, then
         // the nodes in the order in which a walk enters them, each with the rules that are called with it, then the calls of
         // Jest, then what tsgolint reports. For each place in `order`, the how manyth it is then, from 1.
-        let mut ranks: Vec<u32> = Vec::new();
-        if follows_run {
-            let phase = |place: &u32| {
-                let at = order.get(*place as usize).map_or(0, |it| *it as usize);
-                let it = diagnostics.get(at)?;
-                let meta = ran(it.rule as usize).map(|it| it.reported_as());
-                Some(place_in_run(
-                    file,
-                    it,
-                    (when.get(it.rule as usize).copied(), meta),
-                    at,
-                ))
-            };
-            let mut by_run: Vec<u32> = (0..order.len() as u32).collect();
-            crate::utils::sort::sort_by_cached_key(&mut by_run, phase);
-            ranks.resize(order.len(), 0);
-            for (place, rank) in by_run.into_iter().zip(1..) {
-                if let Some(it) = ranks.get_mut(place as usize) {
-                    *it = rank;
-                }
+        let kinds_of = |rule: usize| match is_plain {
+            true => {
+                let slot = enabled
+                    .get(rule)
+                    .and_then(|it| prepared.order.get(it.place as usize));
+                slot.map(|it| it.kinds)
             }
-        }
+            false => running.get(rule).map(|it| it.kinds),
+        };
+        let ranks: Vec<u32> = match follows_run {
+            true => crate::oxlint_order::ranks(file, &diagnostics, &order, &|rule| {
+                let meta = ran(rule as usize)?.reported_as();
+                Some(crate::oxlint_order::Ran {
+                    when: *when.get(rule as usize)?,
+                    kinds: kinds_of(rule as usize)?,
+                    keeps_its_order: crate::oxlint_order::keeps_its_order(meta),
+                })
+            }),
+            false => Vec::new(),
+        };
         // What was reported before comes after: plugins in JavaScript run last, and what is run again runs first.
         let of_rules = ranks.len() as u32;
         for it in problems.iter_mut().skip(before_previous) {
@@ -899,7 +902,20 @@ impl<S: RuleSet> Linter<S> {
         let places = wants_places.then_some(&locator);
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());
-        for (place, at) in order.into_iter().enumerate() {
+        // Only the comments want them by their places. Without any they are made in the order in which they are printed.
+        let in_run_order = follows_run && !has_directives;
+        let mut by_run: Vec<u32> = vec![0; if in_run_order { order.len() } else { 0 }];
+        for (place, rank) in (0..).zip(&ranks) {
+            if let Some(it) = rank
+                .checked_sub(1)
+                .and_then(|it| by_run.get_mut(it as usize))
+            {
+                *it = place;
+            }
+        }
+        for step in 0..order.len() {
+            let place = by_run.get(step).map_or(step, |it| *it as usize);
+            let at = order.get(place).copied().unwrap_or(0);
             let Some(diagnostic) = diagnostics.get_mut(at as usize) else {
                 continue;
             };
@@ -1007,7 +1023,7 @@ impl<S: RuleSet> Linter<S> {
                 problems.retain(|it| !it.rule_id.as_ref().is_some_and(stands_for_js_rule));
             }
         }
-        if wants_places {
+        if wants_places && !in_run_order {
             LintMessage::sort(&mut problems);
         }
 
@@ -1072,7 +1088,10 @@ impl<S: RuleSet> Linter<S> {
             );
         }
 
-        if file.language().is_oxlint && (of_rules > 0 || of_js > 0 || has_directives) {
+        if file.language().is_oxlint
+            && (of_rules > 0 || of_js > 0 || has_directives)
+            && !problems.is_sorted_by_key(|it| it.reported)
+        {
             crate::utils::sort::sort_by_key(&mut problems, |it| it.reported);
         }
         if !has_directives {
@@ -1216,44 +1235,6 @@ fn is_thrown_error(problem: &LintMessage) -> bool {
     problem.is_fatal && problem.line == 0
 }
 
-/// Where in a run of oxlint it reports what a rule here has reported as the `at`th: less for what is earlier. The part of the run. In
-/// the first the rule. The node. The rule: they are in the order of oxlint's numbers. Then the order in which the rule here has
-/// reported, as far as that counts.
-fn place_in_run<'a>(
-    file: &'a File<'a>,
-    it: &Diagnostic,
-    (when, meta): (Option<When>, Option<&'static Meta>),
-    at: usize,
-) -> (u8, u32, (u32, std::cmp::Reverse<u32>, u32), u32, usize) {
-    use std::cmp::Reverse;
-    let rule = u32::from(it.rule);
-    let details = it.details.as_deref();
-    // What is about the file as a whole, at no place in it, is the first of its part.
-    let start = details.and_then(|it| it.start_position.as_ref());
-    let has_place = start.is_none_or(|it| it.line != 0);
-    let by_place = (u32::from(has_place), Reverse(0), 0);
-    match when {
-        Some(When::Once) if meta.is_some_and(crate::oxlint_order::keeps_its_order) => {
-            (0, rule, by_place, 0, at)
-        }
-        Some(When::Once) => (0, rule, by_place, 0, 0),
-        Some(When::AtTheEnd) => (2, 0, by_place, 0, 0),
-        Some(When::Last) => (3, 0, by_place, 0, 0),
-        _ if !has_place => (1, 0, (0, Reverse(u32::MAX), 0), 0, 0),
-        _ => {
-            let kinds = meta.map_or(&[][..], |it| crate::oxlint_order::of(it).kinds);
-            let label = details.and_then(|it| it.listened_on).unwrap_or(it.span);
-            (
-                1,
-                0,
-                crate::oxlint_order::place(file, kinds, label),
-                rule,
-                at,
-            )
-        }
-    }
-}
-
 /// Whether oxlint could only run the rule as a rule of a JavaScript plugin: it is one, or it's a native rule that oxlint doesn't have.
 fn stands_for_js_rule(id: &RuleId) -> bool {
     match id {
@@ -1352,7 +1333,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
     }
 
     /// The rule called `id`. If there is none, reports that, unless the plugin is one that the
-    /// configuration knows, or the rule is left to `bun format`. `is_turned_on`: by the comment, so that it is missed.
+    /// configuration knows, or the rule is left to `bun fmt`. `is_turned_on`: by the comment, so that it is missed.
     fn find(
         &mut self,
         comment: &ConfigComment,
@@ -1687,6 +1668,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 configured: existing,
                 severity,
                 when: entry.meta.reports,
+                kinds: Kinds::default(),
                 rule,
                 refusal,
             };

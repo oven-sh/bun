@@ -1,6 +1,6 @@
 // ------------- the project's own Prettier -------------
 //
-// `bun format` hands a file in a language that only a plugin of Prettier reads to the `prettier` that the project has installed.
+// `bun fmt` hands a file in a language that only a plugin of Prettier reads to the `prettier` that the project has installed.
 // Prettier reads the configuration file itself, so what it has for the plugin counts. The other side says which file that is.
 
 const FORMAT_WITH_PRETTIER = 30;

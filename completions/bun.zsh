@@ -869,14 +869,14 @@ _bun_lint_completion() {
         ret=0
 }
 
-_bun_format_completion() {
+_bun_fmt_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '*: :_files' \
         '--config[Use this config file instead of looking for one]:config:_files' \
         '--no-config[Do not look for a config file]' \
         '--no-editorconfig[Do not read .editorconfig]' \
-        '--init[Add a \[format\] section to bunfig.toml]' \
+        '--init[Add a \[fmt\] section to bunfig.toml]' \
         '--doctor[Show which files are formatted natively and which packages you can remove]' \
         '--print-width[The line length to wrap at (default\: 80)]:print-width' \
         '--tab-width[Spaces per indentation level (default\: 2)]:tab-width' \
@@ -1087,7 +1087,7 @@ _bun() {
             'audit\:"Check installed packages for vulnerabilities" '
             'check\:"Type check a TypeScript project" '
             'lint\:"Lint JavaScript and TypeScript" '
-            'format\:"Format code the way Prettier does" '
+            'fmt\:"Format code the way Prettier does" '
             'dedupe\:"Remove duplicate versions from the lockfile" '
             'prune\:"Remove packages that are not in the lockfile from node_modules" '
             'outdated\:"Display the latest versions of outdated dependencies" '
@@ -1183,8 +1183,8 @@ _bun() {
             _bun_lint_completion
 
             ;;
-        format)
-            _bun_format_completion
+        fmt)
+            _bun_fmt_completion
 
             ;;
         dedupe)
@@ -1294,8 +1294,8 @@ _bun() {
                     _bun_lint_completion
 
                     ;;
-                format)
-                    _bun_format_completion
+                fmt)
+                    _bun_fmt_completion
 
                     ;;
                 dedupe)

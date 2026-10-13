@@ -431,8 +431,8 @@ export const GuidesList = () => {
         items: [
           { title: "Migrate from ESLint to bun lint", href: "/guides/lint/migrate-from-eslint" },
           { title: "Migrate from oxlint to bun lint", href: "/guides/lint/migrate-from-oxlint" },
-          { title: "Migrate from Prettier to bun format", href: "/guides/format/migrate-from-prettier" },
-          { title: "Migrate from oxfmt to bun format", href: "/guides/format/migrate-from-oxfmt" },
+          { title: "Migrate from Prettier to bun fmt", href: "/guides/format/migrate-from-prettier" },
+          { title: "Migrate from oxfmt to bun fmt", href: "/guides/format/migrate-from-oxfmt" },
         ],
       },
       {

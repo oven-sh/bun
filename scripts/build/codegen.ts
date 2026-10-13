@@ -462,7 +462,7 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
  * Release builds embed these via `bun_zstd::embed_compressed!` and inflate on
  * first use instead of carrying the plain text in `.rodata`. Anything that runs
  * inside Bun (builtin modules, bake.server.js, FFI headers, …) stays as-is,
- * except text that only `bun lint`, `bun format` and `bun check` read.
+ * except text that only `bun lint`, `bun fmt` and `bun check` read.
  * Output: `<codegenDir>/compressed/<name>.zst`.
  */
 function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {

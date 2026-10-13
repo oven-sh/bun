@@ -71,7 +71,7 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) invalid_tsconfigs: &'c Guarded<crate::typed::InvalidTsconfigs>,
     /// Which file imports which, for the rules that are about several files.
     pub(crate) modules: &'c Graph<'m>,
-    /// `bun format`, for the rules that hold a file against its formatted text.
+    /// `bun fmt`, for the rules that hold a file against its formatted text.
     pub(crate) formatter: &'c dyn Formats,
     /// The globals of the programs of the files. `None`: no file of the run can ask.
     pub(crate) inferred: Option<&'c Inferred<'c>>,

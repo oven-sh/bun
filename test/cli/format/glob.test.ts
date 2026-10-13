@@ -10,7 +10,7 @@ const ugly = "if (a) {\nb( 1 )\n}\n";
 async function format(files: Record<string, string>, args: string[], stdin?: string) {
   using dir = tempDir("bun-format-glob", files);
   await using proc = spawn({
-    cmd: [bunExe(), "format", ...args],
+    cmd: [bunExe(), "fmt", ...args],
     env,
     cwd: String(dir),
     stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),

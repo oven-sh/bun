@@ -1470,12 +1470,17 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
         // Where a statement starts `let` declares, unless an operator follows: oxc wants a name. As the body of a statement it
         // is a name.
         (1434 | 1440, _)
-            if file.slice(label) == b"let" && !matches!(before(label), b")" | b"else" | b"do") =>
+            if file.slice(label) == b"let"
+                && !matches!(before(label), b")" | b"else" | b"do")
+                && file.hir.stmts.iter().any(|it| it.start == label.start) =>
         {
             SyntaxError::of_oxc(token_after(file, label), "Unexpected token")
         }
         (1131 | 1434 | 1440, _) => semicolon(label.end),
         (1209, _) => SyntaxError::of_oxc(label, "Invalid optional chain from new expression."),
+        (1109, _) if file.slice(label) == b"<!--" => {
+            SyntaxError::of_oxc(label, "HTML comments are not allowed in modules")
+        }
         (1359, _) if matches!(before(label), b"function" | b"*") => {
             expected(file, "Identifier", label)
         }
@@ -1540,7 +1545,8 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                 .help("Add an identifier after '?.'")
         }
         (1128, _) if file.slice(label) == b"export" => {
-            // It takes a modifier that a word follows, on the line unless it is `static`, and wants a declaration then.
+            // In TypeScript it takes a modifier that a word follows, on the line unless it is `static`, and wants a declaration
+            // then.
             let is_before_word = |it: Span| {
                 let next = token_after(file, it);
                 let between = file.slice(it.between(next));
@@ -1549,7 +1555,7 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                         || !bun_core::strings::contains_js_line_break(between))
             };
             let mut next = token_after(file, label);
-            while is_modifier(file.slice(next)) && is_before_word(next) {
+            while !file.is_javascript() && is_modifier(file.slice(next)) && is_before_word(next) {
                 next = token_after(file, next);
             }
             SyntaxError::of_oxc(next, "Unexpected token")
@@ -1745,9 +1751,12 @@ pub(super) fn errors<'a>(
     crate::utils::sort::sort_by_key(&mut all, SyntaxError::order);
     all.dedup_by(|a, b| a.at == b.at && a.order() == b.order() && a.message == b.message);
     if let Some(fatal) = all.iter().position(|it| it.of_oxc.stage == Stage::Fatal) {
-        // How far the parser has read.
+        // How far the parser has read. Where it misses something it has the next token, which the lexer may have an error in.
         let read = match all[fatal].end {
-            Diagnostic::NO_LENGTH | 0 => all[fatal].order(),
+            Diagnostic::NO_LENGTH | 0 => {
+                let next = skip_trivia(file.text(), all[fatal].order());
+                end_of_name(file.text(), next)
+            }
             end => all[fatal].order().max(end),
         };
         // What it says when it is through, it says all the same. All is about what it has read.

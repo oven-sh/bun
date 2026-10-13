@@ -1,4 +1,4 @@
-// Tests for messages that `bun lint` and `bun format` word themselves, each in the situation that triggers it. Messages
+// Tests for messages that `bun lint` and `bun fmt` word themselves, each in the situation that triggers it. Messages
 // that belong to a feature are tested with that feature. This file has the rest.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
@@ -112,37 +112,33 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
   });
 });
 
-describe.concurrent("bun format", () => {
+describe.concurrent("bun fmt", () => {
   test("a UTF-16 file", async () => {
-    const { stderr, exitCode } = await bun({ "a.js": Buffer.from("﻿a;\n", "utf16le") }, ["format", "a.js"]);
-    expect(stderr).toStartWith("error: a.js: SyntaxError: This file is UTF-16. bun format only reads UTF-8.\n");
+    const { stderr, exitCode } = await bun({ "a.js": Buffer.from("﻿a;\n", "utf16le") }, ["fmt", "a.js"]);
+    expect(stderr).toStartWith("error: a.js: SyntaxError: This file is UTF-16. bun fmt only reads UTF-8.\n");
     expect(exitCode).toBe(2);
   });
 
   test("--plugin with --allow-unsupported, and a recognized but unsupported flag", async () => {
     const [plugin, flag] = await Promise.all([
-      bun({ "a.js": "a;\n" }, ["format", "--plugin=prettier-plugin-x", "--allow-unsupported", "--check", "a.js"]),
-      bun({ "a.js": "a;\n" }, ["format", "--migrate=prettier"]),
+      bun({ "a.js": "a;\n" }, ["fmt", "--plugin=prettier-plugin-x", "--allow-unsupported", "--check", "a.js"]),
+      bun({ "a.js": "a;\n" }, ["fmt", "--migrate=prettier"]),
     ]);
-    expect(plugin.stderr).toContain("warn: --plugin has no effect because bun format does not load Prettier plugins");
+    expect(plugin.stderr).toContain("warn: --plugin has no effect because bun fmt does not load Prettier plugins");
     expect(plugin.exitCode).toBe(0);
-    expect(flag.stderr).toStartWith("error: bun format does not support --migrate\n");
+    expect(flag.stderr).toStartWith("error: bun fmt does not support --migrate\n");
     expect(flag.exitCode).toBe(2);
   });
 
   test("oxfmt options in a .prettierrc", async () => {
     const hint = "\n[error]   Use --allow-unsupported to make this a warning.";
     const [one, two, allowed] = await Promise.all([
-      bun({ ".prettierrc": `{ "sortTailwindcss": true }\n`, "a.js": "a;\n" }, ["format", "a.js"]),
+      bun({ ".prettierrc": `{ "sortTailwindcss": true }\n`, "a.js": "a;\n" }, ["fmt", "a.js"]),
       bun({ ".prettierrc": `{ "sortTailwindcss": true, "experimentalTailwindcss": true }\n`, "a.js": "a;\n" }, [
-        "format",
+        "fmt",
         "a.js",
       ]),
-      bun({ ".prettierrc": `{ "sortTailwindcss": true }\n`, "a.js": "a;\n" }, [
-        "format",
-        "--allow-unsupported",
-        "a.js",
-      ]),
+      bun({ ".prettierrc": `{ "sortTailwindcss": true }\n`, "a.js": "a;\n" }, ["fmt", "--allow-unsupported", "a.js"]),
     ]);
     expect(one.stderr).toEndWith(`[error] sortTailwindcss is not supported yet and has no effect${hint}`);
     expect(two.stderr).toEndWith(
@@ -161,7 +157,7 @@ describe.concurrent("bun format", () => {
     ["1", "it must be a boolean or an object"],
   ])("sortImports: %s", async (sortImports, message) => {
     const files = { ".oxfmtrc.json": `{ "sortImports": ${sortImports} }\n`, "a.js": "a;\n" };
-    const { stderr, exitCode } = await bun(files, ["format", "a.js"]);
+    const { stderr, exitCode } = await bun(files, ["fmt", "a.js"]);
     expect(stderr).toContain(`[error] Invalid \`sortImports\` configuration: ${message}\n`);
     expect(exitCode).toBe(2);
   });

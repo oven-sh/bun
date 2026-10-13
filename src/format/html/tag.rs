@@ -286,9 +286,6 @@ impl<'o> Tags<'_, '_, 'o> {
     /// `getNodeContent`
     pub(crate) fn node_content(self, id: Id) -> &'o [u8] {
         let node = &self.tree[id];
-        let Some(end_span) = node.end_span() else {
-            return b"";
-        };
         let mut start = node.start_span.end as usize;
         if self
             .tree
@@ -298,6 +295,15 @@ impl<'o> Tags<'_, '_, 'o> {
             start =
                 start.saturating_sub(self.len_of(|tags, out| tags.opening_tag_end_marker(id, out)));
         }
+        // Without an end tag, Prettier takes it to be empty: `<pre><b>a</b>` becomes `<pre>>`.
+        let Some(end_span) = node.end_span() else {
+            let (mut end, mut at) = (node.span.end, id);
+            while let Some(last) = self.tree.last_child(at) {
+                (end, at) = (end.max(self.tree[last].span.end), last);
+            }
+            let content = self.options.original_text.get(start..end as usize);
+            return content.unwrap_or_default();
+        };
         let mut end = end_span.start as usize;
         if self
             .tree

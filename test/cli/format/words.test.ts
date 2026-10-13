@@ -1,4 +1,4 @@
-// Tests for what `bun format` prints when there's no Prettier or oxfmt config.
+// Tests for what `bun fmt` prints when there's no Prettier or oxfmt config.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -14,7 +14,7 @@ const formatted = "a;\n";
 async function format(files: Record<string, string>, args: string[], more: Record<string, string> = {}) {
   using dir = tempDir("bun-format-words", files);
   await using proc = spawn({
-    cmd: [bunExe(), "format", ...args],
+    cmd: [bunExe(), "fmt", ...args],
     env: { ...env, ...more },
     cwd: String(dir),
     stdout: "pipe",
@@ -25,12 +25,12 @@ async function format(files: Record<string, string>, args: string[], more: Recor
   return { stdout, stderr: stderr.replace(/ \[\d+(\.\d+)?m?s\]/g, ""), exitCode, files: Object.fromEntries(after) };
 }
 
-describe.concurrent("bun format --check", () => {
+describe.concurrent("bun fmt --check", () => {
   test("lists the files that need formatting, writes nothing and exits with 1", async () => {
     const files = { "a.js": ugly, "b.js": formatted, "src/c.ts": ugly, "d.json": "{}\n" };
     expect(await format(files, ["--check"])).toEqual({
       stdout: "a.js\nsrc/c.ts\n",
-      stderr: "2 files need formatting. Run bun format to fix them.\n",
+      stderr: "2 files need formatting. Run bun fmt to fix them.\n",
       exitCode: 1,
       files,
     });
@@ -40,7 +40,7 @@ describe.concurrent("bun format --check", () => {
     const files = { "a.js": ugly, "b.js": formatted };
     expect(await format(files, ["--check"])).toEqual({
       stdout: "a.js\n",
-      stderr: "1 file needs formatting. Run bun format to fix it.\n",
+      stderr: "1 file needs formatting. Run bun fmt to fix it.\n",
       exitCode: 1,
       files,
     });
@@ -64,20 +64,20 @@ describe.concurrent("bun format --check", () => {
     expect(stderr).toStartWith("error: broken.js: SyntaxError: ");
     expect(stderr).toContain("\n> 1 | const = 1;\n");
     expect(stderr).not.toContain("[error]");
-    expect(stderr).toEndWith("\n1 file needs formatting. Run bun format to fix it.\nCould not check 1 file.\n");
+    expect(stderr).toEndWith("\n1 file needs formatting. Run bun fmt to fix it.\nCould not check 1 file.\n");
     expect(exitCode).toBe(2);
   });
 
-  test("[format] in bunfig.toml and an .editorconfig don't change the wording", async () => {
+  test("[fmt] in bunfig.toml and an .editorconfig don't change the wording", async () => {
     const files = {
       "a.js": "a;\n",
       "b.js": "if (a) {\n    b\n}\n",
-      "bunfig.toml": "[format]\nsemi = false\n",
+      "bunfig.toml": "[fmt]\nsemi = false\n",
       ".editorconfig": "[*]\nindent_size = 4\n",
     };
     expect(await format(files, ["--check", "a.js", "b.js"])).toMatchObject({
       stdout: "a.js\n",
-      stderr: "1 file needs formatting. Run bun format to fix it.\n",
+      stderr: "1 file needs formatting. Run bun fmt to fix it.\n",
       exitCode: 1,
     });
   });
@@ -91,7 +91,7 @@ describe.concurrent("bun format --check", () => {
     expect(error).toMatchObject({ stdout: "", stderr: "", exitCode: 1 });
     expect(warn).toMatchObject({
       stdout: "a.js\n",
-      stderr: "1 file needs formatting. Run bun format to fix it.\n",
+      stderr: "1 file needs formatting. Run bun fmt to fix it.\n",
       exitCode: 1,
     });
   });
@@ -119,7 +119,7 @@ describe.concurrent("bun format --check", () => {
     ]);
     expect(different).toMatchObject({
       stdout: "Checking formatting...\n",
-      stderr: "[warn] a.js\n[warn] b.js\n[warn] Code style issues found in 2 files. Run bun format to fix.\n",
+      stderr: "[warn] a.js\n[warn] b.js\n[warn] Code style issues found in 2 files. Run bun fmt to fix.\n",
       exitCode: 1,
     });
     expect(same).toMatchObject({
@@ -130,7 +130,7 @@ describe.concurrent("bun format --check", () => {
   });
 });
 
-describe.concurrent("bun format", () => {
+describe.concurrent("bun fmt", () => {
   test("errors start with Bun's `error:`, or Prettier's `[error]` with a .prettierrc", async () => {
     const [missing, ofPrettier] = await Promise.all([
       format({ "a.js": formatted }, ["nothing.js"]),
@@ -149,9 +149,9 @@ describe.concurrent("bun format", () => {
       format({ "a.js": formatted }, [...flags, "--allow-unsupported"]),
       format({ "a.js": formatted, ".prettierrc": "{}\n" }, flags),
     ]);
-    expect(refused.stderr).toStartWith("error: bun format does not include the plugin prettier-plugin-x\n");
+    expect(refused.stderr).toStartWith("error: bun fmt does not include the plugin prettier-plugin-x\n");
     expect(allowed.stderr).toStartWith("warn: --plugin has no effect ");
-    expect(ofPrettier.stderr).toStartWith("[error] bun format does not include the plugin prettier-plugin-x\n");
+    expect(ofPrettier.stderr).toStartWith("[error] bun fmt does not include the plugin prettier-plugin-x\n");
     expect([refused.exitCode, allowed.exitCode, ofPrettier.exitCode]).toEqual([2, 0, 2]);
   });
 

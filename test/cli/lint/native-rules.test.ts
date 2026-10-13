@@ -1033,9 +1033,9 @@ describe.concurrent("unknown rules", () => {
     ["foo/bar-baz", `Unknown rule "foo/bar-baz"`],
     ["perfectly-fine", `Unknown rule "perfectly-fine"`],
     // Rules that bun lint leaves out on purpose.
-    ["indent", `"indent" is a formatting rule\n  bun format does that`],
-    ["eslint/semi", `"eslint/semi" is a formatting rule\n  bun format does that`],
-    ["@stylistic/quotes", `"@stylistic/quotes" is a formatting rule\n  bun format does that`],
+    ["indent", `"indent" is a formatting rule\n  bun fmt does that`],
+    ["eslint/semi", `"eslint/semi" is a formatting rule\n  bun fmt does that`],
+    ["@stylistic/quotes", `"@stylistic/quotes" is a formatting rule\n  bun fmt does that`],
     ["jsdoc/require-param", `"jsdoc/require-param" is not supported\n  bun lint has no jsdoc rules`],
     ["vue/no-dupe-keys", `"vue/no-dupe-keys" is not supported\n  bun lint has no vue rules`],
   ];

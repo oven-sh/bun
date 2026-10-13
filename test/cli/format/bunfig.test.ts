@@ -1,4 +1,4 @@
-// Tests for the `[format]` keys that go beyond Prettier's options, and their flags: `sortImports`, `sortTailwindcss`,
+// Tests for the `[fmt]` keys that go beyond Prettier's options, and their flags: `sortImports`, `sortTailwindcss`,
 // `sortPackageJson`, `jsdoc`, `insertFinalNewline` and `overrides`. Also covers TOML, which needs no key.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -8,11 +8,11 @@ import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
 
-/** Runs `bun format` with `args` in a temp directory containing `files`, and reads the files back. */
+/** Runs `bun fmt` with `args` in a temp directory containing `files`, and reads the files back. */
 async function format(files: Record<string, string>, args: string[] = ["."]) {
   using dir = tempDir("bun-format-bunfig", files);
   await using proc = spawn({
-    cmd: [bunExe(), "format", "--log-level=warn", ...args],
+    cmd: [bunExe(), "fmt", "--log-level=warn", ...args],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -23,7 +23,7 @@ async function format(files: Record<string, string>, args: string[] = ["."]) {
   return { stdout, stderr, exitCode, files: Object.fromEntries(Object.keys(files).map(name => [name, read(name)])) };
 }
 
-const bunfig = (text: string) => ({ "bunfig.toml": `[format]\n${text}\n` });
+const bunfig = (text: string) => ({ "bunfig.toml": `[fmt]\n${text}\n` });
 
 /** 90 columns wide, so Prettier (80) wraps it and oxfmt (100) doesn't. */
 const wide = `const value = someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree, four);\n`;
@@ -95,7 +95,7 @@ import css from "./a.css";
     expect(off.files["a.ts"]).toBe(imports);
   });
 
-  const table = `[format.sortImports]
+  const table = `[fmt.sortImports]
 groups = ["ui", ["builtin", "external"], { newlinesBetween = false }, "internal", ["parent", "sibling", "index"], "unknown"]
 customGroups = [{ groupName = "ui", elementNamePattern = ["react", "@scope/**"] }]
 internalPattern = ["~/"]
@@ -169,9 +169,9 @@ import index from ".";
     ["sortImports = 1", "expected boolean or object but received number"],
     [
       "sortImports = { newlineBetween = false }",
-      `Unknown key "newlineBetween" in [format.sortImports]\n  Did you mean "newlinesBetween"?`,
+      `Unknown key "newlineBetween" in [fmt.sortImports]\n  Did you mean "newlinesBetween"?`,
     ],
-    ["sortImports = { importOrder = [] }", `Unknown key "importOrder" in [format.sortImports]\n`],
+    ["sortImports = { importOrder = [] }", `Unknown key "importOrder" in [fmt.sortImports]\n`],
     [`sortImports = { newlinesBetween = "no" }`, "expected boolean but received string"],
     [`sortImports = { groups = "builtin" }`, "expected array but received string"],
     ["sortImports = { internalPattern = [1] }", "expected string but received number"],
@@ -248,7 +248,7 @@ exports.__unstable__loadDesignSystem = async css => {
   test("takes options from a table and resolves paths from the working directory", async () => {
     const result = await format({
       ...tailwind,
-      "bunfig.toml": `[format.sortTailwindcss]
+      "bunfig.toml": `[fmt.sortTailwindcss]
 stylesheet = "./styles/app.css"
 functions = ["cn"]
 attributes = ["look"]
@@ -298,7 +298,7 @@ preserveDuplicates = true
     [`sortTailwindcss = "yes"`, "expected boolean or object but received string"],
     [
       "sortTailwindcss = { function = [] }",
-      `Unknown key "function" in [format.sortTailwindcss]\n  Did you mean "functions"?`,
+      `Unknown key "function" in [fmt.sortTailwindcss]\n  Did you mean "functions"?`,
     ],
     [`sortTailwindcss = { functions = "cn" }`, "expected array but received string"],
     ["sortTailwindcss = { attributes = [true] }", "expected string but received boolean"],
@@ -347,7 +347,7 @@ describe.concurrent("sortPackageJson", () => {
     ["sortPackageJson = []", "expected boolean or object but received array"],
     [
       "sortPackageJson = { sortScript = true }",
-      `Unknown key "sortScript" in [format.sortPackageJson]\n  Did you mean "sortScripts"?`,
+      `Unknown key "sortScript" in [fmt.sortPackageJson]\n  Did you mean "sortScripts"?`,
     ],
     [`sortPackageJson = { sortScripts = "all" }`, "expected boolean but received string"],
   ])("rejects %s with: %s", async (line, message) => {
@@ -404,7 +404,7 @@ export function add(a, b) {}
 
   test.each([
     [`jsdoc = "all"`, "expected boolean or object but received string"],
-    ["jsdoc = { capitalize = true }", `Unknown key "capitalize" in [format.jsdoc]\n`],
+    ["jsdoc = { capitalize = true }", `Unknown key "capitalize" in [fmt.jsdoc]\n`],
     ["jsdoc = { descriptionTag = 1 }", "expected boolean but received number"],
     [`jsdoc = { commentLineStrategy = "one" }`, "Invalid jsdoc.commentLineStrategy value: one."],
   ])("rejects %s with: %s", async (line, message) => {
@@ -450,7 +450,7 @@ describe.concurrent("TOML", () => {
   test("is formatted by default, including bunfig.toml", async () => {
     const result = await format({ ...bunfig("semi   = false"), "a.toml": input, "a.js": "a  ;\n" });
     expect(result.stderr).toBe("");
-    expect(result.files).toEqual({ "bunfig.toml": "[format]\nsemi = false\n", "a.toml": formatted, "a.js": "a\n" });
+    expect(result.files).toEqual({ "bunfig.toml": "[fmt]\nsemi = false\n", "a.toml": formatted, "a.js": "a\n" });
     expect(result.exitCode).toBe(0);
   });
 
@@ -491,7 +491,7 @@ describe.concurrent("TOML", () => {
       format({ ...bunfig("toml = true"), "a.toml": input }),
       format({ "a.toml": input }, ["--toml", "."]),
     ]);
-    expect(key.stderr).toContain(`nknown key "toml" in [format]`);
+    expect(key.stderr).toContain(`nknown key "toml" in [fmt]`);
     expect(flag.stderr).toContain("--toml");
     expect([key.exitCode, flag.exitCode]).toEqual([2, 2]);
     expect([key.files["a.toml"], flag.files["a.toml"]]).toEqual([input, input]);
@@ -505,10 +505,10 @@ describe.concurrent("overrides", () => {
     "src/b.test.js": `a("b");\n`,
     "src/skip.test.js": `a("b");\n`,
   };
-  const table = `[format]
+  const table = `[fmt]
 semi = false
 
-[[format.overrides]]
+[[fmt.overrides]]
 files = "*.test.js"
 excludeFiles = ["src/skip.*"]
 options = { singleQuote = true, semi = true }
@@ -532,7 +532,7 @@ options = { singleQuote = true, semi = true }
     const globs = `["+(a|b)/**", "f{1..3}.js"]`;
     /** Returns the files the override applied to. Those lose their semicolon. */
     const matched = async (patterns: string) => {
-      const bunfig = `[[format.overrides]]\n${patterns}\noptions = { semi = false }\n`;
+      const bunfig = `[[fmt.overrides]]\n${patterns}\noptions = { semi = false }\n`;
       const { files } = await format({ "bunfig.toml": bunfig, ...sources });
       return names.filter(name => files[name] === `a("b")\n`);
     };
@@ -560,7 +560,7 @@ options = { singleQuote = true, semi = true }
     };
     /** The files that lose their semicolon. */
     const matched = async (patterns: string) => {
-      const bunfig = `[[format.overrides]]\n${patterns}\noptions = { semi = false }\n`;
+      const bunfig = `[[fmt.overrides]]\n${patterns}\noptions = { semi = false }\n`;
       const { files } = await format({ "bunfig.toml": bunfig, ...sources });
       return Object.keys(sources).filter(name => files[name] === `a("b")\n`);
     };
@@ -570,7 +570,7 @@ options = { singleQuote = true, semi = true }
 
   test("later overrides win, and command-line flags win over all of them", async () => {
     const more = `${table}
-[[format.overrides]]
+[[fmt.overrides]]
 files = ["src/**"]
 options = { singleQuote = false, useTabs = true }
 `;
@@ -594,7 +594,7 @@ options = { singleQuote = false, useTabs = true }
 
   test("can set `parser`", async () => {
     const result = await format({
-      "bunfig.toml": `[[format.overrides]]\nfiles = ["*.rc", ".babelrc"]\noptions = { parser = "json5" }\n`,
+      "bunfig.toml": `[[fmt.overrides]]\nfiles = ["*.rc", ".babelrc"]\noptions = { parser = "json5" }\n`,
       "a.rc": `{"a":1}\n`,
       "a.other": `{"a":1}\n`,
     });
@@ -604,9 +604,9 @@ options = { singleQuote = false, useTabs = true }
 
   test("can turn on sortImports and insertFinalNewline for some files", async () => {
     const imports = `import b from "./b";\nimport a from "a";\n`;
-    const bunfig = `[[format.overrides]]
+    const bunfig = `[[fmt.overrides]]
 files = "src/**"
-[format.overrides.options]
+[fmt.overrides.options]
 sortImports = { newlinesBetween = false }
 insertFinalNewline = false
 `;
@@ -626,26 +626,20 @@ insertFinalNewline = false
   });
 
   test.each([
-    ["overrides = {}", `"overrides" is an array of tables\n  Write [[format.overrides]], with two brackets`],
+    ["overrides = {}", `"overrides" is an array of tables\n  Write [[fmt.overrides]], with two brackets`],
     ["overrides = 1", "expected array but received number"],
     ["overrides = [1]", "expected object but received number"],
     ["overrides = [{ options = { semi = false } }]", `an override needs "files"`],
     ["overrides = [{ files = 1 }]", "expected string or array but received number"],
     ["overrides = [{ files = [1] }]", "expected string but received number"],
     [`overrides = [{ files = "a[" }]`, "Invalid glob pattern `a[`"],
-    [`overrides = [{ file = "a" }]`, `Unknown key "file" in [format.overrides]\n  Did you mean "files"?`],
+    [`overrides = [{ file = "a" }]`, `Unknown key "file" in [fmt.overrides]\n  Did you mean "files"?`],
     [`overrides = [{ files = "a", options = { semi = 1 } }]`, "expected boolean but received number"],
     [`overrides = [{ files = "a", options = { printWidth = 1.5 } }]`, "Invalid printWidth value: 1.5."],
-    [
-      `overrides = [{ files = "a", options = { threads = 1 } }]`,
-      `Unknown key "threads" in [format.overrides.options]\n`,
-    ],
-    [`overrides = [{ files = "a", options = { toml = true } }]`, `Unknown key "toml" in [format.overrides.options]\n`],
-    [
-      `overrides = [{ files = "a", options = { check = true } }]`,
-      `Unknown key "check" in [format.overrides.options]\n`,
-    ],
-    [`overides = []`, `Unknown key "overides" in [format]\n  Did you mean "overrides"?`],
+    [`overrides = [{ files = "a", options = { threads = 1 } }]`, `Unknown key "threads" in [fmt.overrides.options]\n`],
+    [`overrides = [{ files = "a", options = { toml = true } }]`, `Unknown key "toml" in [fmt.overrides.options]\n`],
+    [`overrides = [{ files = "a", options = { check = true } }]`, `Unknown key "check" in [fmt.overrides.options]\n`],
+    [`overides = []`, `Unknown key "overides" in [fmt]\n  Did you mean "overrides"?`],
   ])("rejects %s with: %s", async (line, message) => {
     const result = await format({ ...bunfig(line), "a.js": "a  ;\n" });
     expect(result.stderr).toContain(message);

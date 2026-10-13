@@ -325,7 +325,7 @@ impl<'a> Tops<'a> {
 /// From how many expressions in each other on the outermost is noted.
 const LONG: usize = 16;
 
-/// The expressions that [`refusal_of_babel`] has a question about. Nothing else of `bun format` wants all expressions of a file by
+/// The expressions that [`refusal_of_babel`] has a question about. Nothing else of `bun fmt` wants all expressions of a file by
 /// kind, and to sort them all costs ten times what the checks cost.
 ///
 /// A check that asks for more of a kind than it did has to be given more HERE. `prettier-refusals.mjs` compares the two ways.

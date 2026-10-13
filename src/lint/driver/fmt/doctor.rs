@@ -1,4 +1,4 @@
-//! `bun format --doctor`. See [`crate::doctor`].
+//! `bun fmt --doctor`. See [`crate::doctor`].
 
 use super::config::{self, Configs, Flavor};
 use super::files::{Expanded, Target};
@@ -26,9 +26,9 @@ pub(super) struct Sorted<'s> {
     pub(super) formatted: &'s [(usize, &'s Target)],
     /// Sent to the project's own Prettier.
     pub(super) handed_over: &'s [(usize, &'s Target)],
-    /// Files in a language `bun format` doesn't support that can't go to Prettier either, as (extension, count) pairs.
+    /// Files in a language `bun fmt` doesn't support that can't go to Prettier either, as (extension, count) pairs.
     pub(super) others: &'s [(&'s [u8], usize)],
-    /// Number of files skipped because their config uses plugins that `bun format` doesn't include.
+    /// Number of files skipped because their config uses plugins that `bun fmt` doesn't include.
     pub(super) left_for_plugins: usize,
     /// Packages to install so that more files can be sent to Prettier.
     pub(super) not_installed: &'s [&'s [u8]],
@@ -245,7 +245,8 @@ pub(super) fn report(
         let hint = "Use --allow-unsupported to format them without it";
         pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
         if is_not_supported(b"prettier-plugin-tailwindcss") {
-            let hint = "Or replace prettier-plugin-tailwindcss with [format.sortTailwindcss] in bunfig.toml";
+            let hint =
+                "Or replace prettier-plugin-tailwindcss with [fmt.sortTailwindcss] in bunfig.toml";
             pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
         }
     }
@@ -273,9 +274,7 @@ pub(super) fn report(
     }
     packages.write(&mut out, colors);
     if file.is_none() && !is_oxfmt {
-        out.extend_from_slice(
-            b"\nRun bun format --init to add a [format] section to bunfig.toml\n",
-        );
+        out.extend_from_slice(b"\nRun bun fmt --init to add a [fmt] section to bunfig.toml\n");
     }
     write_notes(&mut out, colors, &notes);
     Ok(out)

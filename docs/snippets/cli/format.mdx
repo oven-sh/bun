@@ -1,7 +1,7 @@
 # CLI Usage
 
 ```bash
-bun format [flags] [files, directories, or globs]
+bun fmt [flags] [files, directories, or globs]
 ```
 
 ### Modes
@@ -19,7 +19,7 @@ bun format [flags] [files, directories, or globs]
 </ParamField>
 
 <ParamField path="--init" type="boolean">
-  Add a <code>[format]</code> section to <code>bunfig.toml</code>
+  Add a <code>[fmt]</code> section to <code>bunfig.toml</code>
 </ParamField>
 
 <ParamField path="--doctor" type="boolean">
@@ -98,4 +98,4 @@ All of [Prettier's options](https://prettier.io/docs/options) are flags too.
   Number of threads. Defaults to one per CPU core
 </ParamField>
 
-`bun format` also accepts the flags of Prettier and oxfmt. Run `bun format --help --all` to see them.
+`bun fmt` also accepts the flags of Prettier and oxfmt. Run `bun fmt --help --all` to see them.

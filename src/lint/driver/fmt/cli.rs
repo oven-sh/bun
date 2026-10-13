@@ -1,4 +1,4 @@
-//! The command line of `bun format`: that of Prettier, but that files are written unless a flag
+//! The command line of `bun fmt`: that of Prettier, but that files are written unless a flag
 //! says otherwise, and what `bun check` has (`--threads`, `--timing`, `--cwd`).
 
 use crate::args::{Argument, Group, Param, error};
@@ -10,9 +10,7 @@ const OPTIONS: &[Param] = &[
     clap::param!("--config <path>                 Use this config file instead of looking for one"),
     clap::param!("--no-config                     Do not look for a config file"),
     clap::param!("--no-editorconfig               Do not read <b>.editorconfig<r>"),
-    clap::param!(
-        "--init                          Add a <b>[format]<r> section to <b>bunfig.toml<r>"
-    ),
+    clap::param!("--init                          Add a <b>[fmt]<r> section to <b>bunfig.toml<r>"),
     clap::param!(
         "--doctor                        Show which files are formatted natively and which packages you can remove"
     ),
@@ -220,7 +218,7 @@ pub const HELP: Help = Help {
 
 const _: () = assert!(
     HELP.describes_every_flag(),
-    "A flag of `bun format` has no description, so `--help --all` leaves it out."
+    "A flag of `bun fmt` has no description, so `--help --all` leaves it out."
 );
 
 pub(crate) const PARAMS: &[Param] = clap::concat_params!(
@@ -255,7 +253,7 @@ pub enum LogLevel {
     Debug,
 }
 
-/// One entry of `[[format.overrides]]`.
+/// One entry of `[[fmt.overrides]]`.
 #[derive(Clone, Debug, Default)]
 pub struct Override {
     /// Globs matched against the path relative to the working directory. A glob without a slash matches the file name.
@@ -313,7 +311,7 @@ pub struct Options {
     pub allow_unsupported: bool,
     /// `--flavor oxfmt`, or `false`: `--flavor prettier`.
     pub is_like_oxfmt: Option<bool>,
-    /// Add `[format]` to bunfig.toml.
+    /// Add `[fmt]` to bunfig.toml.
     pub init: bool,
     /// Report what a run would do with this config, without formatting.
     pub doctor: bool,
@@ -324,7 +322,7 @@ pub struct Options {
     /// Prettier's options and Bun's extra features, by their config-file names. Values are JSON text, except that
     /// strings have no quotes.
     pub format: Vec<(&'static [u8], Vec<u8>)>,
-    /// Only `[format]` can set these.
+    /// Only `[fmt]` can set these.
     pub overrides: Vec<Override>,
     pub plugins: Vec<Vec<u8>>,
     pub color: Option<bool>,
@@ -438,7 +436,7 @@ impl Options {
         let text = value.unwrap_or_default();
         let owned = || Some(text.to_vec());
         if let Some(option) = option_of(name) {
-            // Already on, so keep it. `[format]` may have set a table of options for it.
+            // Already on, so keep it. `[fmt]` may have set a table of options for it.
             let is_on_already = |it: &(&[u8], Vec<u8>)| it.0 == option && it.1 != b"false";
             if value.is_none() && is_on && self.format.iter().any(is_on_already) {
                 return Ok(());
@@ -477,7 +475,7 @@ impl Options {
                 };
             }
             b"migrate" | b"lsp" => {
-                return error(&[b"bun format does not support --", name]);
+                return error(&[b"bun fmt does not support --", name]);
             }
             b"editorconfig" => self.editorconfig = is_on,
             b"config-precedence" => {
@@ -536,7 +534,7 @@ impl Options {
         Ok(())
     }
 
-    /// True for `bun format --parser x` with no paths. Like Prettier, that formats standard input, which has no file name
+    /// True for `bun fmt --parser x` with no paths. Like Prettier, that formats standard input, which has no file name
     /// then. An empty `--stdin-filepath` is no name either. It must never fall back to the working directory: one parser
     /// would rewrite every file there.
     pub(crate) fn formats_unnamed_stdin(&self) -> bool {

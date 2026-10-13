@@ -45,7 +45,7 @@ pub use decl::*;
 pub use expr::*;
 pub use list::{Iter as ListIter, List};
 pub use name::{Ident, Name};
-pub use node::{Ancestors, Node};
+pub use node::{Ancestors, Node, Packed};
 pub use pat::*;
 #[doc(hidden)]
 pub use reach::NOT_IN_TREE;
@@ -780,12 +780,6 @@ macro_rules! handle {
             #[inline]
             fn is_synthetic(self) -> bool {
                 self.file.has_synthetic_nodes() && self.starts_in_jsdoc()
-            }
-        }
-        impl crate::span::Spanned for $name<'_> {
-            #[inline]
-            fn span(&self) -> $crate::span::Span {
-                $name::span(*self)
             }
         }
     };

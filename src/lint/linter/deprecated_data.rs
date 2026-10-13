@@ -40,7 +40,7 @@ pub(super) const DEPRECATED: &[Deprecated] = &[
     ("react/jsx-sort-default-props", 90),
 ];
 
-/// Rules about code layout, sorted by name. Bun doesn't have them: `bun format` does their work.
+/// Rules about code layout, sorted by name. Bun doesn't have them: `bun fmt` does their work.
 pub(super) const FORMATTING: &[Deprecated] = &[
     ("array-bracket-newline", 9),
     ("array-bracket-spacing", 10),

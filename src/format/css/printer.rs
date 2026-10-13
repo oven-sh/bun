@@ -5,7 +5,7 @@ use super::media_query::{MediaKind, MediaNode};
 use super::memo::Memo;
 use super::misc::{
     adjust_numbers, adjust_strings, last_line_has_inline_comment, maybe_to_lower_case,
-    print_css_number, print_string, print_unit, quote_attribute_value,
+    print_css_number, print_string, print_unit, quote_attribute_value, to_lower_case,
 };
 use super::parse::{Context, CssNode, Params, Parsed, Value};
 use super::postcss::{Kind, Node, NodeId, Tree};
@@ -1635,7 +1635,7 @@ impl<'a> Printer<'a, '_> {
                     .iter()
                     .any(|it| value.eq_ignore_ascii_case(it.as_bytes()));
                 match (node.is_color && node.is_hex) || is_wide_keyword {
-                    true => self.sink.text(&text::to_lower_case(value)),
+                    true => self.sink.text(&to_lower_case(value)),
                     false => self.sink.text(value),
                 }
             }

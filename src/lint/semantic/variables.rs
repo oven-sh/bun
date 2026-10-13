@@ -6,6 +6,7 @@
 use super::scopes::{self, Block, NONE, ScopeTree};
 use super::{DeclarationKind, ScopeKind};
 use crate::ast::File;
+use crate::tokens::skip_trivia;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent};
 use bun_sema::hir::{self, FnKind, NameKind, PatKind, StmtKind, VarKind};
@@ -290,6 +291,12 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
             let m = hir.enum_members.get(m.idx())?;
             match m.name_kind {
                 NameKind::StringLiteral if m.name.is_some() => return Some((m.name, m.pos)),
+                // `["a"]`, which typescript-estree refuses. The name is the string. A template is a name for oxc alone.
+                NameKind::ComputedString if m.name.is_some() => {
+                    let pos = skip_trivia(file.text(), m.pos + 1);
+                    let is_string = matches!(file.text().get(pos as usize), Some(b'"' | b'\''));
+                    return (is_string || file.has_scopes_of_oxc()).then_some((m.name, pos));
+                }
                 NameKind::Identifier => (m.name, m.pos),
                 _ => return None,
             }
@@ -299,7 +306,7 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
             match m.name {
                 // `namespace A.B { }` declares nothing that a name can refer to.
                 hir::ModuleName::Ident(name)
-                    if file.language().has_scopes_of_oxc
+                    if file.has_scopes_of_oxc()
                         || !scopes::is_after_dot(file, m)
                             && scopes::after_dot(file, m).is_none() =>
                 {
@@ -329,7 +336,11 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
 
 /// Every declaration of a variable, and the position and the index of each, sorted.
 #[inline(never)]
-fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry>, Vec<u64>) {
+fn entries_in_order(
+    file: &File,
+    unvisited: &[(u32, u32)],
+    deep_patterns: &mut DeepPatterns,
+) -> (Vec<Entry>, Vec<u64>) {
     let (hir, bound) = (&file.hir, &file.bound);
     let room = hir.pats.len()
         + hir.fns.len() / 4
@@ -340,7 +351,9 @@ fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry
     // The position and the index of each entry.
     let mut in_order: Vec<u64> = Vec::with_capacity(room);
     let mut add_named = |decl: Decl, owner: u32, name: Atom, pos: u32| {
-        if !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos)) {
+        if !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos))
+            && !unvisited.iter().any(|it| (it.0..it.1).contains(&pos))
+        {
             in_order.push(u64::from(pos) << 32 | entries.len() as u64);
             entries.push(Entry {
                 scope: NONE,
@@ -483,7 +496,7 @@ fn assign_scopes<'a>(
     let mut entry_starts = vec![0u32; tree.scopes.len() + 1];
     let mut leaves_blocks = false;
     let mut cursor = tree.cursor();
-    let moves_functions = file.language().has_scopes_of_oxc
+    let moves_functions = file.has_scopes_of_oxc()
         && file.is_javascript()
         && crate::utils::oxlint::source_type(file) != crate::language::SourceType::Module;
     for &key in in_order {
@@ -597,7 +610,7 @@ impl Variables {
     pub(crate) fn new<'a>(file: &'a File<'a>, tree: &ScopeTree) -> Variables {
         let hir = &file.hir;
         let mut deep_patterns = DeepPatterns::default();
-        let (mut entries, in_order) = entries_in_order(file, &mut deep_patterns);
+        let (mut entries, in_order) = entries_in_order(file, &tree.unvisited, &mut deep_patterns);
         let scope_count = tree.scopes.len();
         let (mut entry_starts, has_names_that_leave_blocks) =
             assign_scopes(file, tree, &mut entries, &in_order);

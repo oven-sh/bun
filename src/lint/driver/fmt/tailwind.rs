@@ -224,7 +224,7 @@ impl Known {
     }
 }
 
-/// Default `functions` when `[format]` or the flag turns sorting on. These are the common class-name helpers. oxfmt and the
+/// Default `functions` when `[fmt]` or the flag turns sorting on. These are the common class-name helpers. oxfmt and the
 /// Prettier plugin default to an empty list.
 const FUNCTIONS: [&[u8]; 9] = [
     b"clsx",
@@ -239,7 +239,7 @@ const FUNCTIONS: [&[u8]; 9] = [
 ];
 
 /// Resolves `sortTailwindcss` for a file in `directory`. `value` is the option as JSON, and it isn't `false`. `of_config` is
-/// the directory of the oxfmt config that sets it, or `None` if `[format]` or the flag sets it.
+/// the directory of the oxfmt config that sets it, or `None` if `[fmt]` or the flag sets it.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
     environment: &Environment,

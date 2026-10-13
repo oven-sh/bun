@@ -1,4 +1,4 @@
-//! `--staged` and `--changed` for `bun lint` and `bun format`. Both get their list of files from git.
+//! `--staged` and `--changed` for `bun lint` and `bun fmt`. Both get their list of files from git.
 //!
 //! Git runs in the working directory and inherits this process's environment. In a hook, that environment tells git
 //! where the index is. These calls start no program that `git diff --name-only` wouldn't start itself: no pager, no

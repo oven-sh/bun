@@ -5344,6 +5344,58 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  // typescript-eslint's scope manager doesn't visit the type of a `catch` parameter or the options of an import type: for it there
+  // are no scopes, no variables and no references in them. oxc visits both. For both, `["a"]` in an enum declares `a`.
+  describe("what only one of the two scope analyses visits", () => {
+    const sources = {
+      "catch-type.ts": `type Shape = unknown;\nconst width = 1;\ntry {} catch (e: Shape) { e; }\ntry {} catch (e: typeof width) { e; }\ntry {} catch (e: typeof missing) { e; }\ntry {} catch (e: (width: number) => void) { e; }\nexport {};\n`,
+      "import-type.ts": `const kind = "a";\nexport type A = import("./m", { with: { k: kind } });\nexport type B = import("./m", { with: { k: function (left: unknown) { const right = 1; return missing; } } });\nexport type C = import("./m", { with: { k: function (kind: unknown) { return kind; } } });\nexport type D = import("./m", { with: { k: class kind {} } });\n`,
+    };
+    const rules = (prefix: string) => ({
+      [`${prefix}no-unused-vars`]: "error",
+      [`${prefix}no-shadow`]: "error",
+      "no-undef": "error",
+    });
+    const reported = async (files: Record<string, string>) => {
+      const names = Object.keys(files).filter(it => it.endsWith(".ts"));
+      const { stdout } = await lint(files, ["-f", "unix", ...names]);
+      const found = [...stdout.matchAll(/([\w-]+\.ts:\d+:\d+): .*?([\w-]+)\)?\]$/gm)];
+      return found.map(it => `${it[1]} ${it[2]}`).sort();
+    };
+
+    test("as ESLint 10.12.0 with typescript-eslint 8.71.1", async () => {
+      const configuration = `export default [{
+        files: ["**/*.ts"],
+        plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+        languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+        rules: ${JSON.stringify(rules("@typescript-eslint/"))},
+      }];`;
+      expect(await reported({ "eslint.config.mjs": configuration, ...sources })).toEqual([
+        "catch-type.ts:1:6 no-unused-vars",
+        "import-type.ts:1:7 no-unused-vars",
+      ]);
+    });
+
+    test("as oxlint 1.87", async () => {
+      const configuration = JSON.stringify({ categories: { correctness: "off" }, rules: rules("") });
+      const enums = {
+        "enum-shadows.ts": `const size = 1;\nenum E { ["size"] = 1, other = size as any }\nexport { E };\n`,
+        "enum-declares.ts": `enum E { ["size"] = 1, other = size as any }\nenum F { a = 1, other = size as any }\nexport { E, F };\n`,
+      };
+      expect(await reported({ ".oxlintrc.json": configuration, ...sources, ...enums })).toEqual([
+        "catch-type.ts:5:25 no-undef",
+        "enum-declares.ts:2:25 no-undef",
+        "enum-shadows.ts:1:7 no-unused-vars",
+        "enum-shadows.ts:2:11 no-shadow",
+        "import-type.ts:3:54 no-unused-vars",
+        "import-type.ts:3:77 no-unused-vars",
+        "import-type.ts:3:95 no-undef",
+        "import-type.ts:4:54 no-shadow",
+        "import-type.ts:5:50 no-shadow",
+      ]);
+    });
+  });
+
   // `namespace A.B { .. }` is one node, and what is between the braces is its body: a rule that looks at the statements beside a
   // statement says there what it says in `namespace B { .. }` and in `namespace A { export namespace B { .. } }`.
   describe("the statements of a namespace with dots in its name", () => {
@@ -9331,7 +9383,7 @@ describe.concurrent("a lint script in package.json", () => {
 });
 
 // What the linter takes from the process that it runs in. Where `bun lint` is developed something else is in Bun's place for each
-// of these. See "what bun format takes from Bun" in test/cli/format/format.test.ts.
+// of these. See "what bun fmt takes from Bun" in test/cli/format/format.test.ts.
 describe.concurrent("what bun lint takes from Bun", () => {
   const files = {
     "eslint.config.js": basic,
@@ -14174,6 +14226,30 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["let ...a;", "Unexpected token @4+3"],
       ["let\n@d class A {}", "Unexpected token @4+1"],
       ["let\n1;", "Unexpected token @4+1"],
+      [
+        "await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await as any;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ~x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ++x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await { a: 1 };",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await of;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
     ],
     "d.ts": [
       ["const a: number = 1;", "TS(1039) Initializers are not allowed in ambient contexts. @18+1"],
@@ -14382,6 +14458,10 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["f(a b);", 'Expected `,` or `)` but found `Identifier` @4+1 "`,` or `)` expected", 1+1 "Opened here"'],
       ["[a b];", 'Expected `,` or `]` but found `Identifier` @3+1 "`,` or `]` expected", 0+1 "Opened here"'],
       ["a ? b;", 'Expected `:` but found `;` @5+1 "`:` expected", 2+1 "Conditional starts here"'],
+      [
+        "await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
     ],
     "tsx": [
       ["function f<>() {}", "TS(1098) Type parameter list cannot be empty. @10+2"],
@@ -16447,6 +16527,145 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["let a,\nfunction f() {}", "Identifier expected. 'function' is a reserved word that cannot be used here. @7+8"],
       ["let @ = 1;", "Unexpected token @4+1"],
       ["let 1;", "Unexpected token @4+1"],
+      ["await; import.meta;", "Unexpected token @5+1"],
+      ["await.y; import.meta;", "Unexpected token @5+1"],
+      ["await = 1; import.meta;", "Unexpected token @6+1"],
+      [
+        "await / x / g; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @11+0 help: Try inserting a semicolon here",
+      ],
+      ["{ await(); } import.meta;", "Empty parenthesized expression @7+2"],
+      ["{ class A extends await {} } import.meta;", "Cannot use `await` as an identifier in an async context @18+5"],
+      ["function w() { await (x); } import.meta;", "The keyword 'await' is reserved @15+5"],
+      ["const w = () => await (x); import.meta;", "The keyword 'await' is reserved @16+5"],
+      ["var await; import.meta;", "The keyword 'await' is reserved @4+5"],
+      ["x = { await }; import.meta;", "The keyword 'await' is reserved @6+5"],
+      ["a <!--b\nimport.meta;", "HTML comments are not allowed in modules @2+4"],
+      [
+        "await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ~x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ++x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await { a: 1 };",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await of;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await () => 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await #x in y;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["f(await !x);", 'Expected `,` or `)` but found `!` @8+1 "`,` or `)` expected", 1+1 "Opened here"'],
+      [
+        "y = await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @9+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "{ await !x; }",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @7+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "if (a) await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @12+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !x; export {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !x; await y;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !x; import.meta;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await (x); await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @16+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await --x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @8+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await !x\nexport {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        'await !x; import "a";',
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "function f() {} await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @21+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "async function f() { await !x; } await !x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @38+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await ...x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await @d class {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["await <a />;", "Unexpected token @10+1"],
+      ["await /x/;", "Unexpected token @9+1"],
+      [
+        "await async () => 1;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @14+0 help: Try inserting a semicolon here",
+      ],
+      ["await yield;", "The keyword 'yield' is reserved @6+5"],
+      ["class A { static { await !x; } }", "Cannot use await in class static initialization block @19+5"],
+      [
+        "await of x;",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      [
+        "await of; export {};",
+        "Expected a semicolon or an implicit semicolon after a statement, but found none @5+0 help: Try inserting a semicolon here",
+      ],
+      ["x = { await }; export {};", "The keyword 'await' is reserved @6+5"],
+      ["export {}; x = { await };", 'Expected `:` but found `}` @23+1 "`:` expected"'],
+      ["import.meta; x = { await };", 'Expected `:` but found `}` @25+1 "`:` expected"'],
+      ["async function f() { x = { await }; }", 'Expected `:` but found `}` @33+1 "`:` expected"'],
+      ["await(); import.meta;", "Empty parenthesized expression @5+2"],
+      ["await(); export {};", "Empty parenthesized expression @5+2"],
+      ["export {}; await();", "Empty parenthesized expression @16+2"],
+      ["{ class A extends await {} } export {};", "Cannot use `await` as an identifier in an async context @18+5"],
+      ["export {}; { class A extends await {} }", "Cannot use `await` as an identifier in an async context @29+5"],
+      ["import.meta; { class A extends await {} }", "Cannot use `await` as an identifier in an async context @31+5"],
+      ["class A extends await {} import.meta;", "Cannot use `await` as an identifier in an async context @16+5"],
+      ["new await; import.meta;", "Cannot use `await` as an identifier in an async context @4+5"],
+      ["new await; export {};", "Cannot use `await` as an identifier in an async context @4+5"],
+      ["export {}; new await;", "Cannot use `await` as an identifier in an async context @15+5"],
+      ["a <!--b\nexport {};", "HTML comments are not allowed in modules @2+4"],
+      ["import.meta;\na <!--b", "HTML comments are not allowed in modules @15+4"],
+      ["export {};\na <!--b", "HTML comments are not allowed in modules @13+4"],
+      ["var await; export {};", "The keyword 'await' is reserved @4+5"],
+      ["await; export {};", "Unexpected token @5+1"],
+      ["await = 1; export {};", "Unexpected token @6+1"],
+      ["(await) => 1; import.meta;", "The keyword 'await' is reserved @1+5"],
+      ["(await) => 1; export {};", "The keyword 'await' is reserved @1+5"],
+      ["({ await } = x); import.meta;", "The keyword 'await' is reserved @3+5"],
+      ["let { await } = x; import.meta;", "The keyword 'await' is reserved @6+5"],
     ],
     "cjs": [
       ["await /k/;", "Unexpected token @9+1"],
@@ -16528,6 +16747,10 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       ["< />;", "Unexpected token @2+1"],
       ["<1 />;", "Unexpected token @1+1"],
       ["</>;", "Unexpected token @1+1"],
+    ],
+    "mjs": [
+      ["x = { await };", 'Expected `:` but found `}` @12+1 "`:` expected"'],
+      ["{ class A extends await {} }", "Cannot use `await` as an identifier in an async context @18+5"],
     ],
   };
 
@@ -17217,6 +17440,8 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "let < 1;",
       "let in a;",
       "let instanceof a;",
+      "await (x); import.meta;",
+      "await <T>x;",
     ],
     "ts tsx mts": [
       "using a = b; await using c = d; export {};",
@@ -17422,6 +17647,43 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "<a-b.c />;",
       "007;",
       "export default class {}",
+      "await (x); import.meta;",
+      "await (async () => {})(); import.meta.url;",
+      "import.meta; await (x);",
+      "await (x); function f() { import.meta; }",
+      "await [x]; import.meta;",
+      "await + x; import.meta;",
+      "await `x`; import.meta;",
+      "y = await (x); import.meta;",
+      "f(await (x)); import.meta;",
+      "{ await (x); } import.meta;",
+      "export {}; await !x;",
+      "await y; await !x;",
+      "import.meta; await !x;",
+      "await\n!x;",
+      'import "a"; await !x;',
+      "async function f() { await !x; }",
+      "await -x;",
+      "await +x;",
+      "await `x`;",
+      "await [x];",
+      "await new X;",
+      "await typeof x;",
+      "await void x;",
+      "await delete x.y;",
+      "await function () {};",
+      "await class {};",
+      "await this;",
+      "await null;",
+      "await in x;",
+      "await instanceof x;",
+      "await as;",
+      "await using a = b; await !x;",
+      "x = { await };",
+      "await();",
+      "{ class A extends await {} }",
+      "x = { await: 1 }; import.meta;",
+      "x = { await() {} }; import.meta;",
     ],
     "cts": [
       "for (var a = 1 in {}) {}",
@@ -17446,6 +17708,7 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       "let await;",
     ],
     "jsx": ["< a />;"],
+    "mjs": ["await !x;", "a <!--b"],
   };
 
   test("every error of a file is printed like oxlint's, in its order", async () => {
@@ -17470,6 +17733,22 @@ describe("TypeScript grammar errors under .oxlintrc.json", () => {
       }
     }
     expect(await run(files, oxlintrc)).toEqual({ errors: {}, exitCode: 0 });
+  });
+
+  // What oxlint 1.87 prints and `bun lint` does not yet.
+  const knownDifferences: [extension: string, code: string, ...errors: string[]][] = [
+    // `for await` does not tell oxc that the file is a module, so the `await` after it is a name.
+    [
+      "js",
+      "for await (const a of b) {} await !x;",
+      "Expected a semicolon or an implicit semicolon after a statement, but found none @33+0 help: Try inserting a semicolon here",
+      "`for await` loops are only allowed within async functions and at the top levels of modules @4+5 help: Either remove this `await` or add the `async` keyword to the enclosing function",
+    ],
+    ["js", "class A { a = await !x; }", 'Expected `;` but found `!` @20+1 "`;` expected"'],
+  ];
+  test.todo.each(knownDifferences)("%s: %j", async (extension, code, ...errors) => {
+    const name = `a.${extension}`;
+    expect(await run({ [name]: code + "\n" }, oxlintrc)).toEqual({ errors: { [name]: errors }, exitCode: 1 });
   });
 
   test("without a config file this code is linted, as typescript-eslint's parser takes it", async () => {

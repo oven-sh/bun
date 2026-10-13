@@ -85,7 +85,8 @@ if (mine.join() !== sorted.join()) throw new Error("the rules are not numbered b
 if (mine.length !== rules.length) throw new Error(`${mine.length} rules have a number, ${rules.length} a runner`);
 
 const kinds = [...new Set(rules.flatMap(it => it.kinds))].sort();
-if (kinds.length > 255) throw new Error("a kind does not fit in a byte");
+// The last two numbers of a byte mean something else.
+if (kinds.length > 253) throw new Error("a kind does not fit in a byte");
 
 const lines = (words, indent, width = 118) => {
   const all = [];

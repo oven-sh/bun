@@ -1,4 +1,4 @@
-//! A check that formatting has not lost or made up anything: `bun format --debug-check`.
+//! A check that formatting has not lost or made up anything: `bun fmt --debug-check`.
 //!
 //! What would be written is parsed, and compared with the file:
 //!

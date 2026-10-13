@@ -88,7 +88,7 @@ impl ExplicitModuleBoundaryTypes {
     }
 
     /// `export`: for oxlint, the export that has led to `func`, which its rule is called with.
-    fn check_parameters<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>, export: Option<Span>) {
+    fn check_parameters<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>, export: Option<Node<'a>>) {
         let is_oxlint = cx.language().is_oxlint;
         let report = |at: Span, message: Message| match export {
             Some(export) => cx.report(at, message).listened_on(export),
@@ -395,7 +395,7 @@ struct OxlintChecker<'a, 'c> {
     rule: &'c ExplicitModuleBoundaryTypes,
     cx: &'c Cx<'a, ExplicitModuleBoundaryTypes>,
     /// The export that is being checked.
-    export: Span,
+    export: Node<'a>,
     /// What is still to be done, the next at the end.
     steps: Vec<Step<'a>>,
     /// It is forgotten after what has set it, not set back.
@@ -465,7 +465,7 @@ fn overloaded_methods(class: Class<'_>) -> FxHashSet<Member<'_>> {
 
 impl<'a> OxlintChecker<'a, '_> {
     fn check_export(&mut self, statement: Stmt<'a>) {
-        self.export = statement.export_span().unwrap_or_else(|| statement.span());
+        self.export = Node::Stmt(statement);
         self.visit(statement);
         while let Some(step) = self.steps.pop() {
             let first = self.steps.len();
@@ -947,7 +947,7 @@ impl Rule for ExplicitModuleBoundaryTypes {
             let mut checker = OxlintChecker {
                 rule: self,
                 cx,
-                export: Span::default(),
+                export: Node::File(cx.file()),
                 steps: Vec::new(),
                 target: None,
                 around: Vec::new(),

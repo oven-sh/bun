@@ -1,4 +1,4 @@
-//! `bun format` for the rules of `bun lint` that hold a file against its formatted text: see [`bun_lint::formats`].
+//! `bun fmt` for the rules of `bun lint` that hold a file against its formatted text: see [`bun_lint::formats`].
 //!
 //! `prettier/prettier` stands in for the rule of `eslint-plugin-prettier` 5, which asks the Prettier of the project
 //! (`eslint-plugin-prettier.js`, `worker.mjs`). Whatever could make the text another one than that Prettier's is a
@@ -35,7 +35,7 @@ struct Read<'e> {
     configs: Configs<'e>,
     ignored: Ignored,
     with_node_modules: bool,
-    /// `allowUnsupported` of `[format]`, which is for `bun/format`.
+    /// `allowUnsupported` of `[fmt]`, which is for `bun/format`.
     allows_unsupported: bool,
 }
 
@@ -51,7 +51,7 @@ fn plugins_of(json: Option<&Json>) -> Result<Vec<Vec<u8>>, Reason> {
         .collect()
 }
 
-/// The command line of `bun format` that says what the options of the rule say. `defaults`: of its flags, which Prettier
+/// The command line of `bun fmt` that says what the options of the rule say. `defaults`: of its flags, which Prettier
 /// knows nothing of.
 fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options, Reason> {
     let defaults = defaults.filter(|_| request.like == Like::BunFormat);
@@ -167,7 +167,7 @@ fn check_packages(cwd: &[u8], module: Option<&[u8]>) -> Result<(), Reason> {
 /// [`Formats`], for a run of `bun lint`.
 pub struct ForRules<'e> {
     environment: &'e Environment<'e>,
-    /// What `[format]` of bunfig.toml says.
+    /// What `[fmt]` of bunfig.toml says.
     defaults: Option<&'e Options>,
     /// There are one or two in a run.
     sets: Guarded<Vec<Arc<Set<'e>>>>,
@@ -267,7 +267,7 @@ impl<'e> ForRules<'e> {
         }
         let kind = Kind::with_options(path, &resolved.options);
         tailwind::only_where_sorted(&mut resolved.options, kind);
-        // As `bun format`, which then leaves the classes as they are.
+        // As `bun fmt`, which then leaves the classes as they are.
         if *allows_unsupported && configs.classes.has_no_package_for(path) {
             resolved.options.tailwind = None;
         }
@@ -276,7 +276,7 @@ impl<'e> ForRules<'e> {
         let names = (&Interner::new_in(&names) as &dyn Intern, &names);
         let formatted = format(path, request.text, &resolved, names, &mut scratch, false);
         self.scratches.lock().push(scratch);
-        // Tailwind is asked in a process of its own, which takes about a second. `bun format` asks once, about all
+        // Tailwind is asked in a process of its own, which takes about a second. `bun fmt` asks once, about all
         // files. Here it would be once for each file that has a class that no file before it has.
         if (resolved.options.tailwind.as_deref()).is_some_and(Tailwind::has_missed) {
             return Err(Reason::Classes);

@@ -1,4 +1,4 @@
-// The scanner that `bun lint`, `bun format` and `bun check` share reads the length of a name, of indentation and of a plain
+// The scanner that `bun lint`, `bun fmt` and `bun check` share reads the length of a name, of indentation and of a plain
 // string from bitmaps that a SIMD kernel fills 64 bytes at a time, through a 64-bit window. These tests put the end of each kind
 // of run on both sides of every boundary that involves: 8, 16, 32, 56, 57 and 64 bytes, and the end of the file.
 import { afterAll, describe, expect, test } from "bun:test";
@@ -123,7 +123,7 @@ describe.concurrent("scanner", () => {
     // Not in the directory of the test run: this repository's .gitignore has `/a.js`, and an ignored file is printed as it is.
     using dir = tempDir("bun-scanner", {});
     await using proc = spawn({
-      cmd: [bunExe(), "format", "--print-width", "100000", "--stdin-filepath", "a.js"],
+      cmd: [bunExe(), "fmt", "--print-width", "100000", "--stdin-filepath", "a.js"],
       env,
       cwd: String(dir),
       stdin: Buffer.from(input.join("\n") + "\n"),

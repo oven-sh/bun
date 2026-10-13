@@ -47,7 +47,7 @@ describe.concurrent.each([
     ],
   },
   {
-    command: "format",
+    command: "fmt",
     source: "src/lint/driver/fmt/cli.rs",
     common: [
       "check",
@@ -72,7 +72,7 @@ describe.concurrent.each([
     expect(Object.keys(listed(stdout))).toEqual(common);
     expect(lines.filter(line => line.startsWith(`  bun ${command}`))).toHaveLength(3);
     expect(lines.slice(-2)).toEqual([
-      `Full documentation is available at https://bun.com/docs/runtime/${command}`,
+      `Full documentation is available at https://bun.com/docs/runtime/${command === "fmt" ? "format" : command}`,
       `See every flag with bun ${command} --help --all`,
     ]);
     expect(lines.length).toBeLessThanOrEqual(25);
@@ -126,7 +126,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     ["-v"],
     ["-V"],
     ["src", "-v"],
-    ...(command === "format" ? [["--explain", "no-var"], ["--explain=no-var"]] : []),
+    ...(command === "fmt" ? [["--explain", "no-var"], ["--explain=no-var"]] : []),
   ])("%s %s is passed to a package.json script of that name, and its exit code counts", async (...args) => {
     const files = { "package.json": JSON.stringify({ scripts: { [command]: "echo the script && exit 3 && echo" } }) };
     const { stdout, exitCode } = await runIn(files, command, ...args);
@@ -145,7 +145,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
 
   test("flags of the command that stand before it count", async () => {
     const [flags, text, after, code] =
-      command === "format"
+      command === "fmt"
         ? [["--check", "-c", "--list-different", "-l"], "const   a=1\n", "const   a=1\n", 1]
         : [["--fix"], "let a = 1;\nexport { a };\n", "const a = 1;\nexport { a };\n", 0];
     using dir = tempDir("bun-flags-before", { "a.ts": text });
@@ -230,9 +230,16 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
   });
 });
 
-test("bun format --all is rejected without --help", async () => {
-  const { stdout, stderr, exitCode } = await run("format", "--all");
+test("bun fmt --all is rejected without --help", async () => {
+  const { stdout, stderr, exitCode } = await run("fmt", "--all");
   expect(stderr).toContain("error: --all has no effect without --help");
   expect(stdout).toBe("");
   expect(exitCode).toBe(2);
+});
+
+test("bun format is not a command, and says which one is", async () => {
+  const { stdout, stderr, exitCode } = await runIn({ "a.js": "a  =  1\n" }, "format");
+  expect(stderr).toBe('error: Script not found "format"\nnote: The formatter is bun fmt\n');
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });

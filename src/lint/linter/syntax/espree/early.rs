@@ -2072,7 +2072,7 @@ impl<'a> Checks<'a, '_> {
     /// `checkExport`, `checkLocalExport`
     fn exports(&mut self) {
         let file = self.file;
-        // To Prettier a file is a module, also one that `bun format` could only parse as a script.
+        // To Prettier a file is a module, also one that `bun fmt` could only parse as a script.
         if !self.is_babel && file.language().source_type != SourceType::Module {
             return;
         }

@@ -377,6 +377,9 @@ fn write_document_with_cursor(
     if !preprocess::preprocess(&mut tree, &options) {
         return Err(FormatError::NestedTooDeeply);
     }
+    if options.format.html_template_depth > 0 && in_js::would_repeat_substitution(&tree) {
+        return Err(FormatError::SyntaxError);
+    }
     let mut printer = printer::Printer {
         tree: &tree,
         options: &options,

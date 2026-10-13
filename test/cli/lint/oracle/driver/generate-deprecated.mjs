@@ -50,7 +50,7 @@ entries.sort((a, b) => (a[0] < b[0] ? -1 : 1));
 
 const tables = [
   ["DEPRECATED", "ESLint's, and those of the plugins that are built in, in whole or in part. Sorted by name.", it => !it[2]],
-  ["FORMATTING", "Rules about code layout, sorted by name. Bun doesn't have them: `bun format` does their work.", it => it[2]],
+  ["FORMATTING", "Rules about code layout, sorted by name. Bun doesn't have them: `bun fmt` does their work.", it => it[2]],
 ].map(([name, comment, isMeant]) => {
   const rows = entries.flatMap((it, line) => (isMeant(it) ? [`    (${JSON.stringify(it[0])}, ${line}),\n`] : []));
   return `\n/// ${comment}\npub(super) const ${name}: &[Deprecated] = &[\n${rows.join("")}];\n`;

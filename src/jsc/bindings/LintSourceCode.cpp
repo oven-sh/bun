@@ -270,28 +270,43 @@ const Vector<uint32_t>& lastDescendantsOf(LintSourceCodeState& state)
 //
 // To a plugin they are plain data properties of a frozen object, as with ESLint. Each is computed when it's read.
 
-JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeText, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeText, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     return JSValue::encode(LintHost::from(globalObject)->text());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeHasBOM, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeHasBOM, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     return JSValue::encode(jsBoolean(LintHost::from(globalObject)->hasBOM()));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeAst, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeAst, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     return JSValue::encode(callHook(globalObject, LintHost::from(globalObject)->sourceCode.program));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeLines, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeLines, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     return JSValue::encode(linesOf(globalObject, LintHost::from(globalObject)));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeLineStartIndices, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeLineStartIndices, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);
@@ -315,21 +330,30 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeLineStartIndices, (JSGlobalObject * glo
     return JSValue::encode(indices);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeTokensAndComments, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeTokensAndComments, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     return lintTokensAndComments(globalObject);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     LintHost* host = LintHost::from(globalObject);
     return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->nodes.kindFor(host->isEspree(), host->isOxlint(), host->shortensNodes())));
 }
 
 // What typescript-eslint's parser gives without type information. Rules take the maps for a sign of TypeScript. There are no
 // nodes of TypeScript's own tree to put in them. oxlint has none for any file.
-JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);
@@ -361,8 +385,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject * globa
     return JSValue::encode(services);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeScopeManager, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeScopeManager, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(holder);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     LintHost* host = LintHost::from(globalObject);
     if (host->isOxlint())
         return JSValue::encode(host->sourceCode.scopeManagerOfOxlint.get());
@@ -1185,8 +1212,11 @@ JSValue computeLoc(JSGlobalObject* globalObject, LintHost* host, JSValue nodeOrT
 }
 
 // What's in `loc` of a node of ESLint until it's read. To a plugin it's a plain property all along.
-JSC_DEFINE_CUSTOM_GETTER(lintLazyLocOfNode, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(lintLazyLocOfNode, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName name))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(thisValue);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);

@@ -1,4 +1,4 @@
-//! Extra steps for `sortImports` from bunfig.toml's `[format]` or `--sort-imports`, on top of oxfmt's sorter. Sorts the names
+//! Extra steps for `sortImports` from bunfig.toml's `[fmt]` or `--sort-imports`, on top of oxfmt's sorter. Sorts the names
 //! inside braces and merges imports from the same module.
 //!
 //! This is a text-to-text pass, like the Prettier plugins. The caller parses and formats the returned text instead of the

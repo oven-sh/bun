@@ -1,4 +1,4 @@
-// Tests for `sortImports` in bunfig.toml's `[format]` and for `--sort-imports`. On top of oxfmt's `sortImports`, they sort the
+// Tests for `sortImports` in bunfig.toml's `[fmt]` and for `--sort-imports`. On top of oxfmt's `sortImports`, they sort the
 // names inside braces and merge imports from the same module. Neither has an option.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -10,7 +10,7 @@ afterAll(endChildren);
 
 async function run(cwd: string, args: string[]) {
   await using proc = spawn({
-    cmd: [bunExe(), "format", "--log-level=warn", ...args],
+    cmd: [bunExe(), "fmt", "--log-level=warn", ...args],
     env: bunEnv,
     cwd,
     stdout: "pipe",
@@ -33,7 +33,7 @@ async function format(files: Record<string, string>, args: string[] = []) {
   return { ...first, files: after, second: { ...second, files: read() } };
 }
 
-const bunfig = { "bunfig.toml": "[format]\nsortImports = true\n" };
+const bunfig = { "bunfig.toml": "[fmt]\nsortImports = true\n" };
 
 const cases: [name: string, input: string, output: string][] = [
   [
@@ -748,7 +748,7 @@ describe.concurrent("sortImports sources", () => {
   test("the key, the table and the flag all sort names and merge", async () => {
     const [key, table, flag] = await Promise.all([
       format({ ...bunfig, "a.ts": input }),
-      format({ "bunfig.toml": "[format.sortImports]\nnewlinesBetween = false\n", "a.ts": input }),
+      format({ "bunfig.toml": "[fmt.sortImports]\nnewlinesBetween = false\n", "a.ts": input }),
       format({ "a.ts": input }, ["--sort-imports"]),
     ]);
     expect([key.files["a.ts"], table.files["a.ts"], flag.files["a.ts"]]).toEqual([tidy, tidy, tidy]);
@@ -762,7 +762,7 @@ describe.concurrent("sortImports sources", () => {
   });
 
   test("sortSideEffects = true lets side-effect imports move", async () => {
-    const result = await format({ "bunfig.toml": "[format.sortImports]\nsortSideEffects = true\n", "a.ts": input });
+    const result = await format({ "bunfig.toml": "[fmt.sortImports]\nsortSideEffects = true\n", "a.ts": input });
     expect(result.files["a.ts"]).toBe(
       `import { d } from "a";\nimport { c } from "x";\nimport { a, b } from "x";\n\nimport "./setup";\n`,
     );

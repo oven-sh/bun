@@ -137,6 +137,9 @@ pub struct Options {
     pub is_json: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
+    /// For oxc, in a file whose name does not say what it is: until something says that it is a module, an `await` at the top
+    /// level is a name unless a word or a literal follows it.
+    pub is_module_or_script: bool,
     /// Goes on after a syntax error as TypeScript's parser does, and reports it.
     pub recovers: bool,
     /// The tags of JSDoc comments are read as TypeScript's parser reads them: in a JavaScript file

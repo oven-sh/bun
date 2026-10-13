@@ -517,7 +517,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 }
                 let tally = by_directory.entry(group.clone()).or_default();
 
-                // `bun format` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
+                // `bun fmt` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
                 let mut options = FormatOptions {
                     embedded_html: true,
                     ..FormatOptions::default()

@@ -27,8 +27,16 @@ fn get_entry_point(modules: &dyn Modules, file_name: &[u8]) -> Option<Vec<u8>> {
     };
     // Without extensions a path means itself only if it is a file.
     let (lookup, is_require) = (Lookup::Node(SmallVec::new()), true);
-    let try_file = |path: Vec<u8>| modules.resolve_file(&pkg_path, &path, is_require, &lookup).filter(|it| *it == path);
-    let try_extensions = |path: &[u8]| EXTENSIONS.iter().find_map(|it| try_file([path, *it].concat()));
+    let try_file = |path: Vec<u8>| {
+        modules
+            .resolve_file(&pkg_path, &path, is_require, &lookup)
+            .filter(|it| *it == path)
+    };
+    let try_extensions = |path: &[u8]| {
+        EXTENSIONS
+            .iter()
+            .find_map(|it| try_file([path, *it].concat()))
+    };
     let try_index = |directory: &[u8]| try_extensions(&paths::join(directory, b"index"));
     let directory = paths::dirname(&pkg_path);
     // A file of that name comes before the directory, and is not in it.
@@ -36,22 +44,29 @@ fn get_entry_point(modules: &dyn Modules, file_name: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     // `tryPackage`
-    let main = pkg.get(b"main").and_then(Json::as_str).filter(|it| !it.is_empty());
+    let main = pkg
+        .get(b"main")
+        .and_then(Json::as_str)
+        .filter(|it| !it.is_empty());
     let main = main.map(|it| paths::resolve(directory, it));
-    main.and_then(|it| try_file(it.clone()).or_else(|| try_extensions(&it)).or_else(|| try_index(&it)))
-        .or_else(|| try_index(directory))
+    main.and_then(|it| {
+        try_file(it.clone())
+            .or_else(|| try_extensions(&it))
+            .or_else(|| try_index(&it))
+    })
+    .or_else(|| try_index(directory))
 }
 
 /// `hasCJSExportReference && !isImportBinding`
 fn has_cjs_export_reference<'a>(file: &'a File<'a>, identifier: Name<'a>) -> bool {
     // `findScope`: the last scope that declares the name, wherever it is.
-    let Some(variable) = file.scopes().rev().find_map(|it| it.get_name(identifier)) else {
+    let declared = |it: Scope<'a>| it.variable(identifier).filter(|it| it.symbol().is_some());
+    let Some(variable) = file.scopes().rev().find_map(declared) else {
         return true;
     };
-    // ESLint has the name of a class declaration in the scope of the class too, which comes later.
     variable.scope().kind() == ScopeKind::Module
-        && !variable.declarations().any(|it| matches!(it, Declaration::Class(_)))
-        && variable.declarations().next().and_then(Declaration::kind) != Some(DeclarationKind::ImportBinding)
+        && variable.declarations().next().and_then(Declaration::kind)
+            != Some(DeclarationKind::ImportBinding)
 }
 
 impl NoImportModuleExports {
@@ -76,23 +91,33 @@ impl NoImportModuleExports {
 }
 
 impl Rule for NoImportModuleExports {
-    const META: Meta =
-        Meta::plugin(Plugin::Import, "no-import-module-exports", Kind::Problem).fixable(Fixable::Code).needs_modules();
-    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).classes().stmts(&[StmtTag::Interface]).finish();
+    const META: Meta = Meta::plugin(Plugin::Import, "no-import-module-exports", Kind::Problem)
+        .fixable(Fixable::Code)
+        .needs_modules();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Dot, ExprTag::Index])
+        .classes()
+        .stmts(&[StmtTag::Interface])
+        .finish();
     /// `module` and `exports`, each with where the first `MemberExpression` of it starts.
     type State<'a> = [(Name<'a>, u32); 2];
 
     fn new(options: &Options) -> Self {
         let exceptions = options.object(0).strings("exceptions");
         let minimatch = |glob: &str| Glob::new(glob.as_bytes());
-        NoImportModuleExports { exceptions: exceptions.into_iter().map(minimatch).collect() }
+        NoImportModuleExports {
+            exceptions: exceptions.into_iter().map(minimatch).collect(),
+        }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.has_stmts([StmtTag::Import]) || !file.mentions_any(&["module", "exports"]) {
             return None;
         }
-        Some([(file.name_of("module"), u32::MAX), (file.name_of("exports"), u32::MAX)])
+        Some([
+            (file.name_of("module"), u32::MAX),
+            (file.name_of("exports"), u32::MAX),
+        ])
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -123,7 +148,10 @@ impl Rule for NoImportModuleExports {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
-        let seen = cx.state.iter().filter(|it| it.1 != u32::MAX && has_cjs_export_reference(file, it.0));
+        let seen = cx
+            .state
+            .iter()
+            .filter(|it| it.1 != u32::MAX && has_cjs_export_reference(file, it.0));
         let (Some(first), Some(modules)) = (seen.map(|it| it.1).min(), file.modules()) else {
             return;
         };
@@ -133,7 +161,10 @@ impl Rule for NoImportModuleExports {
             return;
         }
         // Those that ESLint has come to before the first such expression. After it nothing is reported.
-        for import_declaration in file.stmts_of_kind(StmtTag::Import).filter(|it| it.span().start < first) {
+        for import_declaration in file
+            .stmts_of_kind(StmtTag::Import)
+            .filter(|it| it.span().start < first)
+        {
             cx.report(import_declaration, NO_IMPORT);
         }
     }

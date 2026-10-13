@@ -379,8 +379,8 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     expect(byFlag.stdout).toBe(plain.stdout);
   });
 
-  test("bun/format compares a file with bun format's output, including [format] options", async () => {
-    const files = { "a.js": "a('b')\n", "bunfig.toml": "[format]\nsemi = false\nsingleQuote = true\n" };
+  test("bun/format compares a file with bun fmt's output, including [fmt] options", async () => {
+    const files = { "a.js": "a('b')\n", "bunfig.toml": "[fmt]\nsemi = false\nsingleQuote = true\n" };
     const rule = (...options: unknown[]) => ({
       ".oxlintrc.json": JSON.stringify({ rules: { "bun/format": ["error", ...options] } }),
     });

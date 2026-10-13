@@ -312,7 +312,7 @@ _ZN3bun4xxh39N_SVE_2568HashLongEPKhmS3_                                       [S
 _ZN3bun4xxh310N_SVE2_1288HashLongEPKhmS3_                                     [SVE]
 
 # ----------------------------------------------------------------------------
-# Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun format`. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
+# Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
 # (12 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun5N_SVE19ScannerRunStopsImplEPKhmPhm        [SVE]

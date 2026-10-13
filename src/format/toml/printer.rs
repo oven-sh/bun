@@ -1,12 +1,12 @@
 //! Tree to text: `formatter/mod.rs` of oxc-toml, with the options that oxfmt leaves as they are
 //! taken for granted: nothing is aligned, sorted or indented, an array that fits on the line and has
-//! no comment is on one line, one that does not fit has an element on each line.
+//! no comment is on one line, one that does not fit has an element on each line. One thing is not as in oxc-toml: an inline
+//! table with a comment has one entry per line. oxc-toml joins the lines, which comments out the rest of the table.
 //!
 //! Without an oxfmt config, Bun uses its own layout for arrays and inline tables (see [`Printer::flat`]):
 //!
 //! - Each array decides for itself whether it fits on the line. oxc-toml breaks every array of an entry that is too long.
-//! - An inline table with a comment, or with a line break after its `{`, keeps one entry per line. oxc-toml joins the lines,
-//!   which comments out the rest of the table.
+//! - An inline table with a line break after its `{` keeps one entry per line.
 //! - An inline table never gets line breaks it didn't have, because TOML 1.0 parsers reject them. If it's too long, only an
 //!   array in its last entry breaks: `{ version = "1", features = [` .. `] }`.
 //! - No empty lines right inside the brackets.
@@ -533,9 +533,11 @@ impl Printer<'_> {
 
     /// `format_inline_table`
     fn inline_table(&self, node: usize, context: Context, out: &mut Vec<u8>) {
-        if self.expands(node, context, out)
-            && (self.has_child(node, Kind::Entry) || self.has_child(node, Kind::Comment))
-        {
+        let expands = match self.flat {
+            Some(_) => self.expands(node, context, out),
+            None => self.has_own_comment(node),
+        };
+        if expands && (self.has_child(node, Kind::Entry) || self.has_child(node, Kind::Comment)) {
             return self.list(node, context, true, out);
         }
         if !self.has_child(node, Kind::Entry) {
@@ -597,7 +599,7 @@ impl Printer<'_> {
         self.list(node, context, is_multiline, out);
     }
 
-    /// `format_array`. In Bun's layout also for an inline table with one entry per line.
+    /// `format_array`. Also for an inline table with one entry per line.
     fn list(&self, node: usize, context: Context, is_multiline: bool, out: &mut Vec<u8>) {
         let (open, close) = match self.elements[node].kind {
             Kind::InlineTable => (b'{', b'}'),

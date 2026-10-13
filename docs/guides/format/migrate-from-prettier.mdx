@@ -1,15 +1,15 @@
 ---
-title: Migrate from Prettier to bun format
+title: Migrate from Prettier to bun fmt
 sidebarTitle: Migrate from Prettier
 mode: center
 ---
 
-`bun format` reads your `.prettierrc` and prints what Prettier 3 prints. In most projects you only change the command.
+`bun fmt` reads your `.prettierrc` and prints what Prettier 3 prints. In most projects you only change the command.
 
 Start with `--doctor`. It shows what Bun will do with your config, and it doesn't format or write anything.
 
 ```sh terminal icon="terminal"
-bun format --doctor
+bun fmt --doctor
 ```
 
 ```txt
@@ -33,33 +33,33 @@ Change the scripts.
   "scripts": {
     "format": "prettier --write .", // [!code --]
     "format:check": "prettier --check .", // [!code --]
-    "format": "bun format", // [!code ++]
-    "format:check": "bun format --check" // [!code ++]
+    "format": "bun fmt", // [!code ++]
+    "format:check": "bun fmt --check" // [!code ++]
   }
 }
 ```
 
-`bun format` writes by default and formats the current directory, so `--write .` goes away. Other flags and arguments stay the same. Change CI and Git hooks too.
+`bun fmt` writes by default and formats the current directory, so `--write .` goes away. Other flags and arguments stay the same. Change CI and Git hooks too.
 
-Don't skip this. If `package.json` has a `format` script, `bun format` runs that script, so you'd still get Prettier.
+If your script is called `fmt`, don't skip this: `bun fmt` runs a `fmt` script when `package.json` has one, so you'd still get Prettier.
 
 Watch out for two differences in hooks and shell scripts:
 
-- **No arguments means the current directory.** Prettier prints an error there. So if the file list can be empty, as in `git diff --cached --name-only | xargs bun format` or `bun format $(git ls-files '*.foo')`, Bun formats everything. Use `bun format --staged` in a pre-commit hook, or `xargs -r`.
-- **`bun format file.ts` writes the file and prints its name.** `prettier file.ts` prints the formatted code. To print it, pipe the code in: `bun format --stdin-filepath file.ts < file.ts`.
+- **No arguments means the current directory.** Prettier prints an error there. So if the file list can be empty, as in `git diff --cached --name-only | xargs bun fmt` or `bun fmt $(git ls-files '*.foo')`, Bun formats everything. Use `bun fmt --staged` in a pre-commit hook, or `xargs -r`.
+- **`bun fmt file.ts` writes the file and prints its name.** `prettier file.ts` prints the formatted code. To print it, pipe the code in: `bun fmt --stdin-filepath file.ts < file.ts`.
 
-Piping into `--parser` works like in Prettier: `generate | bun format --parser typescript > out.ts`.
+Piping into `--parser` works like in Prettier: `generate | bun fmt --parser typescript > out.ts`.
 
 ---
 
 Check that nothing changes. With a Prettier config, `--check` prints what Prettier prints.
 
 ```sh terminal icon="terminal"
-bun format --check
+bun fmt --check
 ```
 
 ```txt
-$ bun format --check
+$ bun fmt --check
 Checking formatting...
 All matched files use Prettier code style!
 ```
@@ -111,7 +111,7 @@ If you use `prettier-plugin-tailwindcss`, take it out of `.prettierrc` and turn 
 ```
 
 ```toml bunfig.toml icon="settings"
-[format.sortTailwindcss]
+[fmt.sortTailwindcss]
 functions = ["tw"]
 ```
 
@@ -138,27 +138,27 @@ Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-s
 With any other plugin, Bun skips the files that config covers and exits with code `2`. A plugin could print them differently, and Bun won't guess. Pass `--allow-unsupported` to format them without the plugin.
 
 ```txt
-[error] 3 files were not formatted because the Prettier config uses plugins that bun format does not include: prettier-plugin-brace-style
+[error] 3 files were not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style
 [error]   Use --allow-unsupported to format them without the plugins.
 ```
 
 ---
 
-You don't have to keep `.prettierrc`. Move the options to [`bunfig.toml`](/runtime/format#options), under the same names, and delete the file. `overrides` become [`[[format.overrides]]`](/runtime/bunfig#format-overrides).
+You don't have to keep `.prettierrc`. Move the options to [`bunfig.toml`](/runtime/format#options), under the same names, and delete the file. `overrides` become [`[[fmt.overrides]]`](/runtime/bunfig#format-overrides).
 
 ```toml bunfig.toml icon="settings"
-[format]
+[fmt]
 semi = false
 singleQuote = true
 ```
 
-Without a Prettier config, `bun format` also formats TOML files, and `--check` prints a shorter report.
+Without a Prettier config, `bun fmt` also formats TOML files, and `--check` prints a shorter report.
 
 ---
 
 ## Differences from Prettier
 
-If `bun format` and Prettier 3 print different code, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
+If `bun fmt` and Prettier 3 print different code, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
 
 - **It writes by default.** `--write` is accepted and does nothing.
 - **No arguments means the current directory.**
@@ -167,6 +167,7 @@ If `bun format` and Prettier 3 print different code, that's a bug. [Open an issu
 - **`--cache` does nothing.** Every run formats every file.
 - **Exit code `2` means something went wrong**, like a syntax error or a skipped file. Prettier uses `1` for some of these.
 - **Bytes that aren't valid UTF-8 are kept.** Prettier replaces them.
+- **Formatting never changes what a file means.** In a few rare cases Prettier's output does. In a Handlebars template it drops `<!DOCTYPE html>`, and it joins the lines of a `<script>`, so a `// comment` swallows the code after it. Bun keeps both.
 - **Symlinks that lead out of the repository aren't written through.**
 - **`console.log` in your config file is hidden** unless the config fails to load.
 
@@ -174,5 +175,5 @@ If `bun format` and Prettier 3 print different code, that's a bug. [Open an issu
 
 See also:
 
-- [`bun format`](/runtime/format)
+- [`bun fmt`](/runtime/format)
 - [Migrate from ESLint to bun lint](/guides/lint/migrate-from-eslint)

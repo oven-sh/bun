@@ -304,8 +304,11 @@ private:
 
 // What's in a property that is `[]` in every node of a type, until it's read. To a plugin it's a plain property all along, and each
 // node has an array of its own. Few rules read `decorators` of an `Identifier`, and a third of all nodes are `Identifier`s.
-JSC_DEFINE_CUSTOM_GETTER(lintLazyEmptyList, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+JSC_DEFINE_CUSTOM_GETTER(lintLazyEmptyList, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName name))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(thisValue);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = tryCreateFilledLintArray(vm, globalObject, 0);

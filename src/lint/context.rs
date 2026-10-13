@@ -1,7 +1,7 @@
 //! What a listener of a rule is given besides the node: the file, the state of the rule, and the
 //! means to report.
 
-use crate::ast::{File, Ident, Name};
+use crate::ast::{File, Ident, Name, Packed};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
 use crate::oxlint_help::{self, Edits, Found, Help, Part};
 use crate::oxlint_messages;
@@ -27,6 +27,8 @@ pub struct Diagnostic {
     pub message_id: &'static str,
     pub message: Vec<u8>,
     pub span: Span,
+    /// The node that was reported, or the one that [`Report::listened_on`] was given. `None`: it was a token, a name or a span.
+    pub node: Option<Packed>,
     /// ESLint was given a position, not a range: it reports no `endLine` and `endColumn`.
     pub has_no_end: bool,
     pub when: When,
@@ -152,7 +154,7 @@ impl<'a, R: Rule> Cx<'a, R> {
     /// ```
     #[inline]
     pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
-        self.base.report(at.span(), message)
+        self.base.report(at.span(), at.packed_node(), message)
     }
 
     /// Does what `throw new Error(message)` does in a JavaScript rule. It's for a rule that can't do its job, for example because
@@ -223,7 +225,7 @@ impl<'a, R: Rule> Cx<'a, R> {
 impl<'a> CxBase<'a> {
     #[cold]
     #[inline(never)]
-    fn report(&self, span: Span, message: Message) -> Report<'a> {
+    fn report(&self, span: Span, node: Option<Packed>, message: Message) -> Report<'a> {
         let (language, sink) = (self.file.language(), &self.file.sink);
         // The rules of `bun:test` say what those of oxlint say, whatever the configuration.
         let has_help =
@@ -253,6 +255,7 @@ impl<'a> CxBase<'a> {
             message_id: message.id,
             message: Vec::new(),
             span,
+            node,
             has_no_end: false,
             when: self.meta.reports,
             details: None,
@@ -308,7 +311,7 @@ impl<'a> CxBase<'a> {
     #[cold]
     #[inline(never)]
     fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
-        let mut report = self.report(Span::empty(offset), message);
+        let mut report = self.report(Span::empty(offset), None, message);
         if let Some(diagnostic) = &mut report.diagnostic {
             diagnostic.has_no_end = true;
         }
@@ -378,6 +381,9 @@ impl<'a> Report<'a> {
     pub fn listened_on(mut self, node: impl Spanned) -> Self {
         if let Some(details) = self.details() {
             details.listened_on = Some(node.span());
+        }
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.node = node.packed_node();
         }
         self
     }

@@ -316,7 +316,7 @@ pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool
     decide(chain, path, is_directory, is_in_search).unwrap_or(false)
 }
 
-/// The same for what a search of `bun format` comes to. There oxfmt hands the crate `ignore` a path that is not in the directory
+/// The same for what a search of `bun fmt` comes to. There oxfmt hands the crate `ignore` a path that is not in the directory
 /// of the file as it is: a pattern without a `/` finds the name. About an argument that is not in the directory it does not ask.
 pub(crate) fn is_ignored_in_search(chain: &Chain, path: &[u8], is_directory: bool) -> bool {
     let is_in_search = true;

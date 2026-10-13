@@ -63,7 +63,7 @@ pub(crate) enum Need {
     Rules,
     /// It lints or formats files.
     Files,
-    /// `bun format` skips files because of a plugin it doesn't have. Until that changes, only the old tool formats them.
+    /// `bun fmt` skips files because of a plugin it doesn't have. Until that changes, only the old tool formats them.
     SkippedFiles,
     /// The config file can't be loaded without it. Holds the file's name as shown to the user.
     Configuration(Vec<u8>),

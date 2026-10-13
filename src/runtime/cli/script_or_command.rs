@@ -1,4 +1,4 @@
-//! `bun check`, `bun lint` and `bun format` ran the script of that name in `package.json` before they
+//! `bun check`, `bun lint` and `bun fmt` ran the script of that name in `package.json` before they
 //! were commands, so where a project has such a script they still do. In that script, and in what it
 //! runs, they are the commands: `"lint": "bun lint"`. So it is with a file `lint.ts` and with
 //! `node_modules/.bin/lint`.
@@ -235,7 +235,7 @@ fn command_of_script(name: &[u8]) -> Option<&'static [u8]> {
     match name {
         b"check" | b"precheck" | b"postcheck" => Some(b"check"),
         b"lint" | b"prelint" | b"postlint" => Some(b"lint"),
-        b"format" | b"preformat" | b"postformat" => Some(b"format"),
+        b"fmt" | b"prefmt" | b"postfmt" => Some(b"fmt"),
         _ => None,
     }
 }
@@ -273,7 +273,7 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
         }
     };
     // `name` takes the place of what another package manager has said, for what the script runs.
-    for command in [&b"check"[..], b"lint", b"format"] {
+    for command in [&b"check"[..], b"lint", b"fmt"] {
         if let Some(inherited) = package_of_inherited_script(command) {
             note(command, &inherited);
         }

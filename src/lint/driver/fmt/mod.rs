@@ -1,8 +1,8 @@
-//! `bun format`: the command line of Prettier, on all threads.
+//! `bun fmt`: the command line of Prettier, on all threads.
 //!
 //! - [`cli`]: the flags.
-//! - [`run`]: `bun format`, given the flags and an [`Environment`].
-//! - [`ForRules`]: `bun format` for the rules of `bun lint` that hold a file against its formatted text.
+//! - [`run`]: `bun fmt`, given the flags and an [`Environment`].
+//! - [`ForRules`]: `bun fmt` for the rules of `bun lint` that hold a file against its formatted text.
 
 pub mod cli;
 mod config;
@@ -121,7 +121,7 @@ fn cannot_force_parser_on(written: &[u8], parser: &[u8]) -> Vec<u8> {
         b"." | b"" => Vec::new(),
         _ => [directory, b"/"].concat(),
     };
-    text.extend_from_slice(b"\n  Name the files, or use a glob: bun format --parser ");
+    text.extend_from_slice(b"\n  Name the files, or use a glob: bun fmt --parser ");
     text.extend_from_slice(&[parser, b" \"", &base, b"**/*.", extension, b"\""].concat());
     text
 }
@@ -477,7 +477,7 @@ fn format(
     // What `>` of Windows PowerShell writes. Some parsers take it for UTF-8 with a NUL next to every letter.
     if matches!(text, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
         return Err(Failure::Syntax(
-            b"SyntaxError: This file is UTF-16. bun format only reads UTF-8.".to_vec(),
+            b"SyntaxError: This file is UTF-16. bun fmt only reads UTF-8.".to_vec(),
         ));
     }
     // The name says what kind of file it is. Whether it is TypeScript is up to `path`.
@@ -591,10 +591,14 @@ fn format(
         Some(Kind::Handlebars) => {
             let done =
                 bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
-            if verifies && done.is_ok() && scratch.handlebars.is_damaged() {
-                return Err(Failure::Changed(
-                    "formatting like Prettier would change its meaning",
-                ));
+            if verifies && done.is_ok() && out != text {
+                match bun_format::handlebars::says_the_same(text, &out, options) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(Failure::Changed("formatting would change its meaning"));
+                    }
+                    Err(error) => return finish(Err(error), out, "Handlebars"),
+                }
             }
             return finish(done, out, "Handlebars");
         }
@@ -788,7 +792,7 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatte
     })
 }
 
-/// Why `bun format` leaves a file as it is.
+/// Why `bun fmt` leaves a file as it is.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Refusal {
     /// It has a syntax error or is nested too deeply.
@@ -797,7 +801,7 @@ pub enum Refusal {
     Bug,
 }
 
-/// The text of the file at `path` formatted with `options`, the way `bun format` does it, and where
+/// The text of the file at `path` formatted with `options`, the way `bun fmt` does it, and where
 /// the cursor ends up. For the tests of the formatter.
 pub fn format_for_tests(
     path: &[u8],
@@ -949,7 +953,7 @@ impl Run<'_> {
             pretty!(
                 out,
                 colors,
-                "<b>{} {} {} formatting.<r><d> Run <r><cyan>bun format<r><d> to fix {}.<r>\n",
+                "<b>{} {} {} formatting.<r><d> Run <r><cyan>bun fmt<r><d> to fix {}.<r>\n",
                 different,
                 files(different),
                 needs,
@@ -1760,7 +1764,7 @@ impl Run<'_> {
             } else if only_looks {
                 self.warn(
                     format!(
-                        "Code style issues found in {}. Run bun format to fix.",
+                        "Code style issues found in {}. Run bun fmt to fix.",
                         count(different)
                     )
                     .as_bytes(),
@@ -1852,7 +1856,7 @@ impl Run<'_> {
             _ => ("files were", "them"),
         };
         let text = format!(
-            "{count} {noun} not formatted because the Prettier config uses plugins that bun format does not include: "
+            "{count} {noun} not formatted because the Prettier config uses plugins that bun fmt does not include: "
         );
         let end = format!("\n  Use --allow-unsupported to format {it} without the plugins.");
         self.error(&[text.as_bytes(), &names.join(&b", "[..]), end.as_bytes()].concat());
@@ -1872,7 +1876,7 @@ impl Run<'_> {
             .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
             .collect();
         let text = format!(
-            "{count} {noun} not formatted because bun format does not support {its} language yet: "
+            "{count} {noun} not formatted because bun fmt does not support {its} language yet: "
         );
         let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
         if !not_installed.is_empty() {
@@ -1881,7 +1885,7 @@ impl Run<'_> {
                 &[
                     &b"Not installed: "[..],
                     &plugins,
-                    b"\n  Install prettier and every plugin in your config, and bun format will use them for these files.",
+                    b"\n  Install prettier and every plugin in your config, and bun fmt will use them for these files.",
                 ]
                 .concat(),
             );
@@ -1919,7 +1923,7 @@ impl Run<'_> {
         {
             return self.fail(
                 &[
-                    b"bun format does not include the plugin ",
+                    b"bun fmt does not include the plugin ",
                     &name[..],
                     b"\n  Use --allow-unsupported to format without it.",
                 ]
@@ -1927,7 +1931,7 @@ impl Run<'_> {
             );
         }
         if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
-            self.warn(b"--plugin has no effect because bun format does not load Prettier plugins");
+            self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
         }
         if options.config.is_some() && !options.config_lookup {
             let mut out = self.fail(b"Cannot use --no-config and --config together.");
@@ -2020,7 +2024,7 @@ impl Run<'_> {
     }
 }
 
-/// Does what `bun format` does. `options.help` and `options.cwd` are for the caller to see to.
+/// Does what `bun fmt` does. `options.help` and `options.cwd` are for the caller to see to.
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
     match options.doctor {
         true => watching(environment, |environment, modules| {

@@ -1,7 +1,7 @@
-//! Runs the tests of Prettier and of oxfmt on `bun format`. The tests are in
+//! Runs the tests of Prettier and of oxfmt on `bun fmt`. The tests are in
 //! `test/cli/format/{prettier,oxfmt}/bundle.zst`.
 //!
-//! It is compiled into debug and canary builds of Bun (`bun format --run-prettier-tests`,
+//! It is compiled into debug and canary builds of Bun (`bun fmt --run-prettier-tests`,
 //! `--run-oxfmt-tests`, for `test/cli/format/conformance.test.ts`).
 
 #![forbid(unsafe_code)]

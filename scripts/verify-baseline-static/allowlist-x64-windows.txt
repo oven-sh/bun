@@ -1238,7 +1238,7 @@ jsimd_ycc_extxrgb_convert_avx2           [AVX, AVX2]
 jsimd_ycc_rgb_convert_avx2               [AVX, AVX2]
 
 # ----------------------------------------------------------------------------
-# Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun format`. Gate: hwy::SupportedTargets via CPUID.
+# Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via CPUID.
 # (18 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX2::ScannerRunStopsImpl       [AVX, AVX2, BMI1, BMI2]

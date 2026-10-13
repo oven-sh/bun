@@ -1,4 +1,4 @@
-// Tests for `bun lint --init` and `bun format --init`.
+// Tests for `bun lint --init` and `bun fmt --init`.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -19,7 +19,7 @@ const env = {
   ESLINT_USE_FLAT_CONFIG: undefined,
 };
 
-type Command = "lint" | "format";
+type Command = "lint" | "fmt";
 
 async function run(cwd: string, command: Command, ...args: string[]) {
   await using proc = spawn({ cmd: [bunExe(), command, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
@@ -35,7 +35,7 @@ const sections = {
 # "no-console" = "warn"
 # "eqeqeq" = ["error", "smart"]
 `,
-  format: `[format]
+  fmt: `[fmt]
 # printWidth = 100
 # semi = false
 `,
@@ -43,9 +43,9 @@ const sections = {
 
 const utf16 = (text: string) => Buffer.from("﻿" + text, "utf16le").toString("latin1");
 
-describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command => {
+describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
   const section = sections[command];
-  const other = command === "lint" ? "format" : "lint";
+  const other = command === "lint" ? "fmt" : "lint";
 
   test("creates bunfig.toml", async () => {
     using dir = tempDir("bun-init-section", { "a.js": "a;\n" });
@@ -237,12 +237,12 @@ describe.concurrent("writes nothing if another tool's config file is in use", ()
     ["lint", { "config/mine.mjs": flat }, ["-c", "config/mine.mjs"], "config/mine.mjs"],
     ["lint", { "eslint.config.js": flat, ".oxlintrc.json": "{}" }, ["--flavor=oxlint"], ".oxlintrc.json"],
     ["lint", { "eslint.config.js": flat, ".oxlintrc.json": "{}" }, ["--flavor=eslint"], "eslint.config.js"],
-    ["format", { ".prettierrc": "{}" }, [], ".prettierrc"],
-    ["format", { ".prettierrc.toml": "semi = false\n", "sub/a.js": "" }, ["--cwd", "sub"], "../.prettierrc.toml"],
-    ["format", { "package.json": '{ "prettier": {} }' }, [], "prettier in package.json"],
-    ["format", { ".oxfmtrc.json": "{}" }, [], ".oxfmtrc.json"],
-    ["format", { ".oxfmtrc.jsonc": "{}", "sub/a.js": "" }, ["--cwd", "sub"], "../.oxfmtrc.jsonc"],
-    ["format", { "config/mine.json": "{}" }, ["--config", "config/mine.json"], "config/mine.json"],
+    ["fmt", { ".prettierrc": "{}" }, [], ".prettierrc"],
+    ["fmt", { ".prettierrc.toml": "semi = false\n", "sub/a.js": "" }, ["--cwd", "sub"], "../.prettierrc.toml"],
+    ["fmt", { "package.json": '{ "prettier": {} }' }, [], "prettier in package.json"],
+    ["fmt", { ".oxfmtrc.json": "{}" }, [], ".oxfmtrc.json"],
+    ["fmt", { ".oxfmtrc.jsonc": "{}", "sub/a.js": "" }, ["--cwd", "sub"], "../.oxfmtrc.jsonc"],
+    ["fmt", { "config/mine.json": "{}" }, ["--config", "config/mine.json"], "config/mine.json"],
   ])("bun %s: %j %j", async (command, files, args, shown) => {
     using dir = tempDir("bun-init-section", files);
     expect(await run(String(dir), command, "--init", ...args)).toEqual({
@@ -259,9 +259,9 @@ describe.concurrent("writes nothing if another tool's config file is in use", ()
     ["lint", { "package.json": '{ "devDependencies": { "oxlint": "1.0.0" } }' }],
     ["lint", { "eslint.config.js": flat, "args": "--flavor=oxlint" }],
     ["lint", { "eslint.config.js": flat, "args": "--no-config-lookup" }],
-    ["format", { "package.json": '{ "devDependencies": { "prettier": "3.0.0" } }' }],
-    ["format", { ".editorconfig": "root = true\n" }],
-    ["format", { ".prettierrc": "{}", "args": "--no-config" }],
+    ["fmt", { "package.json": '{ "devDependencies": { "prettier": "3.0.0" } }' }],
+    ["fmt", { ".editorconfig": "root = true\n" }],
+    ["fmt", { ".prettierrc": "{}", "args": "--no-config" }],
   ])("still writes bunfig.toml, bun %s: %j", async (command, { args, ...files }) => {
     using dir = tempDir("bun-init-section", files);
     const result = await run(String(dir), command, "--init", ...(args ? [args] : []));
@@ -271,7 +271,7 @@ describe.concurrent("writes nothing if another tool's config file is in use", ()
 
   test("a broken config file is an error", async () => {
     using dir = tempDir("bun-init-section", { "eslint.config.js": "throw new Error('no');\n", ".prettierrc": "{" });
-    for (const command of ["lint", "format"] as const) {
+    for (const command of ["lint", "fmt"] as const) {
       const result = await run(String(dir), command, "--init");
       expect(result.stderr).toContain(command === "lint" ? "eslint.config.js" : ".prettierrc");
       expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({ stdout: "", exitCode: 2 });
@@ -310,10 +310,10 @@ describe.concurrent("the commented-out lines work when uncommented", () => {
   });
 
   const names = Array.from({ length: 8 }, (_, at) => `argument${at}`);
-  test.each(variants(sections.format))("bun format: %j", async (keys, bunfig) => {
+  test.each(variants(sections.fmt))("bun fmt: %j", async (keys, bunfig) => {
     expect(["printWidth", "semi"]).toEqual(expect.arrayContaining([...keys]));
     using dir = tempDir("bun-init-section", { "a.js": `call(${names.join(",")})\n`, "bunfig.toml": bunfig });
-    const result = await run(String(dir), "format", "a.js");
+    const result = await run(String(dir), "fmt", "a.js");
     const call = keys.includes("printWidth")
       ? `call(${names.join(", ")})`
       : `call(\n${names.map(name => `  ${name},\n`).join("")})`;

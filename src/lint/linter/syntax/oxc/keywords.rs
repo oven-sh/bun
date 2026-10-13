@@ -6,8 +6,8 @@
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
-    self, Class, Expr, ExprKind, File, Flags, FnKind, Func, Handle, MemberKind, Node, Pat, Stmt,
-    StmtKind, StmtTag, TypeKind, TypeNode, TypeParam, UnOp, VarDecl, VarKind,
+    self, Class, Expr, ExprKind, File, Flags, FnKind, Func, Handle, MemberKind, Node, Pat,
+    PropKind, Stmt, StmtKind, StmtTag, TypeKind, TypeNode, TypeParam, UnOp, VarDecl, VarKind,
 };
 use crate::language::SourceType;
 use crate::span::Span;
@@ -131,6 +131,19 @@ impl<'a> Checks<'a> {
                 None => is_export(it),
             };
             if is_after_export {
+                return true;
+            }
+            // Once the file has turned out to be a module, oxc reads a statement again in which `await` was a reference.
+            let is_reference = |(i, raw): (usize, &hir::Expr)| {
+                matches!(raw.kind, hir::ExprKind::Ident(name) if name == known::r#await)
+                    && span.contains_offset(raw.pos)
+                    && file.expr_in_tree(i).is_some()
+                    && !matches!(
+                        Node::Expr(Expr::from_raw(file, i as u32)).parent(),
+                        Node::Prop(it) if it.kind() == PropKind::Shorthand
+                    )
+            };
+            if file.hir.exprs.iter().enumerate().any(is_reference) {
                 return true;
             }
             start = span.start.min(at);

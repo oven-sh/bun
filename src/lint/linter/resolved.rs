@@ -6,6 +6,7 @@ use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
 use crate::options::Json;
+use crate::oxlint_order::Kinds;
 use crate::rule::{Meta, Plugin, When};
 use crate::rule_set::RuleBits;
 use crate::runner::{Listeners, RuleEntry};
@@ -211,6 +212,8 @@ pub(super) struct Slot {
     pub(super) number: u16,
     /// With a configuration of oxlint: when oxlint reports what the rule reports.
     pub(super) when: When,
+    /// With a configuration of oxlint: the kinds of node that it calls the rule with.
+    pub(super) kinds: Kinds,
     pub(super) severity: Severity,
 }
 
@@ -251,7 +254,7 @@ pub struct ResolvedConfig {
     /// Those of JavaScript plugins, also the ones that are off. They run if [`LintOptions::js_plugins`](super::LintOptions) is
     /// there, and are skipped otherwise.
     pub js_rules: Vec<ConfiguredJsRule>,
-    /// Those about layout, which are left to `bun format`, also the ones that are off.
+    /// Those about layout, which are left to `bun fmt`, also the ones that are off.
     pub formatting_rules: Vec<FormattingRule>,
     /// The plugins [none of whose rules is here](Plugin::has_no_rules), of which `categories` of oxlint turn rules on.
     pub plugins_without_rules: Vec<Plugin>,

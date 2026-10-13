@@ -1,15 +1,15 @@
 ---
-title: Migrate from oxfmt to bun format
+title: Migrate from oxfmt to bun fmt
 sidebarTitle: Migrate from oxfmt
 mode: center
 ---
 
-`bun format` reads your `.oxfmtrc.json` and prints what oxfmt 0.72 prints. In most projects you only change the command.
+`bun fmt` reads your `.oxfmtrc.json` and prints what oxfmt 0.72 prints. In most projects you only change the command.
 
 Start with `--doctor`. It shows what Bun will do with your config, and it doesn't format or write anything.
 
 ```sh terminal icon="terminal"
-bun format --doctor
+bun fmt --doctor
 ```
 
 ```txt
@@ -29,26 +29,26 @@ Change the scripts.
   "scripts": {
     "format": "oxfmt", // [!code --]
     "format:check": "oxfmt --check", // [!code --]
-    "format": "bun format", // [!code ++]
-    "format:check": "bun format --check" // [!code ++]
+    "format": "bun fmt", // [!code ++]
+    "format:check": "bun fmt --check" // [!code ++]
   }
 }
 ```
 
 Flags and arguments stay the same. Change CI and Git hooks too.
 
-Don't skip this. If `package.json` has a `format` script, `bun format` runs that script, so you'd still get oxfmt.
+If your script is called `fmt`, don't skip this: `bun fmt` runs a `fmt` script when `package.json` has one, so you'd still get oxfmt.
 
 ---
 
 Check that nothing changes. With an oxfmt config, a run prints what oxfmt prints.
 
 ```sh terminal icon="terminal"
-bun format --check
+bun fmt --check
 ```
 
 ```txt
-$ bun format --check
+$ bun fmt --check
 Checking formatting...
 
 All matched files use the correct format.
@@ -94,13 +94,13 @@ note: Using .oxfmtrc.json. .prettierrc is ignored. Use --config to pick it.
 
 ---
 
-Keep `oxfmt` if your editor's oxc extension uses it. `bun format` has no language server.
+Keep `oxfmt` if your editor's oxc extension uses it. `bun fmt` has no language server.
 
 ---
 
 ## Differences from oxfmt
 
-If `bun format` and oxfmt 0.72 print different code, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
+If `bun fmt` and oxfmt 0.72 print different code, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
 
 - **The output is oxfmt 0.72's**, whatever version you had installed.
 - **No `--lsp` or `--migrate`.**
@@ -108,10 +108,11 @@ If `bun format` and oxfmt 0.72 print different code, that's a bug. [Open an issu
 - **Errors and warnings are worded differently.**
 - **An invalid TOML file is left alone**, with a warning. oxfmt rewrites the parts it can read.
 - **A file that isn't valid UTF-8 is still formatted**, and the invalid bytes are kept. oxfmt exits with code `2`.
+- **Formatting never changes what a file means.** In a few rare cases oxfmt's output does. In TOML it joins the lines of an inline table with a comment, which comments out the rest of the table. Bun keeps one entry per line.
 
 ---
 
 See also:
 
-- [`bun format`](/runtime/format)
+- [`bun fmt`](/runtime/format)
 - [Migrate from oxlint to bun lint](/guides/lint/migrate-from-oxlint)

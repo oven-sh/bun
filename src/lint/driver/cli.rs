@@ -529,7 +529,7 @@ pub struct Options {
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
     pub allow_unsupported: bool,
     pub native_plugin_rules: NativePlugins,
-    /// The defaults of the flags of `bun format`, for the rule `bun/format`. No flag sets them.
+    /// The defaults of the flags of `bun fmt`, for the rule `bun/format`. No flag sets them.
     pub of_bun_format: Option<Box<crate::fmt::cli::Options>>,
     /// Not ESLint 8's `--no-eslintrc`: its configuration files are looked for.
     pub eslintrc: bool,

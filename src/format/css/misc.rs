@@ -1,6 +1,7 @@
 //! Prettier's `print/misc.js`, and the utilities of Prettier that it uses: strings, numbers, units.
 
-use crate::text::{self, make_string};
+use crate::html::in_js::PLACEHOLDER_START;
+use crate::text::make_string;
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -268,16 +269,27 @@ pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) ->
     Cow::Owned(out)
 }
 
+/// `value.toLowerCase()`, of the letters of ASCII: to CSS, the others are not the same in the other case. Prettier makes a
+/// `k` of a Kelvin sign.
+pub(crate) fn to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
+    match value.iter().any(u8::is_ascii_uppercase) {
+        true => Cow::Owned(value.to_ascii_lowercase()),
+        false => Cow::Borrowed(value),
+    }
+}
+
 /// `maybeToLowerCase`
 pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
+    // The last stands for a substitution in a template of JavaScript. Prettier does not find it again in lower case.
     let keeps_case = strings::contains_any(value, b"$@#")
         || value.starts_with(b"%")
         || value.starts_with(b"--")
         || value.starts_with(b":--")
-        || (strings::contains_char(value, b'(') && strings::contains_char(value, b')'));
+        || (strings::contains_char(value, b'(') && strings::contains_char(value, b')'))
+        || (value.len() > PLACEHOLDER_START.len() && strings::contains(value, PLACEHOLDER_START));
     match keeps_case {
         true => Cow::Borrowed(value),
-        false => text::to_lower_case(value),
+        false => to_lower_case(value),
     }
 }
 

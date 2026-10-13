@@ -1,6 +1,6 @@
 //! A bridge to the project's own Prettier, for files in a language that only a Prettier plugin can format.
 //!
-//! `bun format` doesn't support Svelte, Astro or PHP. If the Prettier config lists the plugin for such a language, and
+//! `bun fmt` doesn't support Svelte, Astro or PHP. If the Prettier config lists the plugin for such a language, and
 //! both Prettier and the plugin are installed, the whole file goes to `prettier.format`. That runs in the same VMs that
 //! run `bun lint`'s plugins. The result is checked or written like the built-in formatter's output. It's exact, but slow.
 

@@ -392,7 +392,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             raw.get(first_line_end..last_line_start).unwrap_or_default(),
         );
         // There is no formatter for TOML.
-        if !(is_yaml || (is_toml && value.is_empty())) {
+        if !(is_yaml || (is_toml && value.is_empty()))
+            || crate::front_matter::has_indented_delimiter(raw)
+        {
             return false;
         }
         let attempt = self.out.start_attempt();

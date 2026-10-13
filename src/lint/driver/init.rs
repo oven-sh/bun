@@ -1,4 +1,4 @@
-//! `bun lint --init` and `bun format --init`. Adds the command's section to the bunfig.toml in the working directory.
+//! `bun lint --init` and `bun fmt --init`. Adds the command's section to the bunfig.toml in the working directory.
 
 use crate::format::summary::write_error;
 use crate::run::{Environment, Outcome};
@@ -28,7 +28,7 @@ pub(crate) const LINT: Section = Section {
 };
 
 pub(crate) const FORMAT: Section = Section {
-    name: "format",
+    name: "fmt",
     body: "# printWidth = 100\n# semi = false\n",
     key_in_package: "prettier",
 };

@@ -11,17 +11,17 @@ import { cases, fixtures } from "./cases.json";
 afterAll(endChildren);
 
 type Files = Record<string, string | { link: string }>;
-// A fixture has `experimentalTailwindcss`, which has no effect here. That `bun format` says so is tested elsewhere.
-const command = [bunExe(), "format", "--allow-unsupported"];
+// A fixture has `experimentalTailwindcss`, which has no effect here. That `bun fmt` says so is tested elsewhere.
+const command = [bunExe(), "fmt", "--allow-unsupported"];
 const env = { NO_COLOR: "1", AGENT: "0", CLAUDECODE: undefined };
 
-describe.concurrent("bun format does what oxfmt does", () => {
+describe.concurrent("bun fmt does what oxfmt does", () => {
   for (const it of cases) {
     const files = { ...(fixtures as Record<string, Files>)[it.name], ...it.gitignore } as Files;
     const links = Object.entries(files).filter(([, file]) => typeof file !== "string") as [string, { link: string }][];
     test.skipIf(isWindows && links.length > 0)(`${it.name}/${it.index}: ${it.args.join(" ")}`, async () => {
       const texts = Object.entries(files).filter(([, file]) => typeof file === "string") as [string, string][];
-      // Without a configuration file `bun format` is like Prettier. An empty one above the fixtures makes it like oxfmt.
+      // Without a configuration file `bun fmt` is like Prettier. An empty one above the fixtures makes it like oxfmt.
       using dir = tempDir("oxfmt-cli", {
         ".oxfmtrc.json": "{}\n",
         ...Object.fromEntries(texts.map(([name, text]) => [`fixtures/${name}`, text])),

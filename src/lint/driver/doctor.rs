@@ -178,7 +178,7 @@ enum Reason {
     NotSupported,
     /// Same, but for an ESLint 8 config. ESLint 8 reports the missing definition in every file.
     NotDefined,
-    /// `bun format` does its job.
+    /// `bun fmt` does its job.
     Formatting,
     /// It needs types, and nothing turned them on.
     NeedsTypes,
@@ -201,8 +201,8 @@ impl Reason {
             (Reason::NotSupported, _) => "are not supported",
             (Reason::NotDefined, 1) => "is not defined by any plugin",
             (Reason::NotDefined, _) => "are not defined by any plugin",
-            (Reason::Formatting, 1) => "is a formatting rule, use bun format",
-            (Reason::Formatting, _) => "are formatting rules, use bun format",
+            (Reason::Formatting, 1) => "is a formatting rule, use bun fmt",
+            (Reason::Formatting, _) => "are formatting rules, use bun fmt",
             (Reason::NeedsTypes, 1) => "needs types, use --type-aware",
             (Reason::NeedsTypes, _) => "need types, use --type-aware",
         }

@@ -1,11 +1,11 @@
-//! `bun lint` and `bun format` without the command line: finds the configuration and the files,
+//! `bun lint` and `bun fmt` without the command line: finds the configuration and the files,
 //! parses them, type checks them if a rule asks for types, runs the rules or the formatter on all
 //! cores, and prints what they report.
 //!
 //! - [`cli`]: the flags.
 //! - [`bunfig`]: their defaults in bunfig.toml.
 //! - [`run`]: `bun lint`, given the flags and an [`Environment`].
-//! - [`fmt`]: the same for `bun format`.
+//! - [`fmt`]: the same for `bun fmt`.
 
 #![forbid(unsafe_code)]
 

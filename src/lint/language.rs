@@ -138,11 +138,15 @@ pub struct LanguageOptions {
     pub is_oxlint: bool,
     /// There's no ESLint or oxlint config, so no rule has to match an installed package's behavior.
     pub stands_alone: bool,
-    /// The scopes are those of oxc where they differ from typescript-eslint's: `namespace A.B { }` is a namespace `B` that is
-    /// declared in the scope of a namespace `A`; outside strict code a function that JavaScript declares in a block is a
-    /// variable of the function around; the name in a closing tag of JSX is a reference. Not with a plugin in JavaScript:
-    /// oxlint hands those the scopes of typescript-eslint.
+    /// With a configuration of oxlint. The scopes are those of oxc where they differ from typescript-eslint's: `namespace A.B { }`
+    /// is a namespace `B` that is declared in the scope of a namespace `A`; outside strict code a function that JavaScript
+    /// declares in a block is a variable of the function around; the name in a closing tag of JSX is a reference; the type of
+    /// the parameter of a `catch` and the options of an import type are visited. Not for a plugin in JavaScript, which oxlint
+    /// hands the scopes of typescript-eslint, nor for `rules_that_oxlint_lacks`: a file has
+    /// [two analyses](crate::semantic#two-analyses) there.
     pub has_scopes_of_oxc: bool,
+    /// With a configuration of oxlint: the rules that are on and that oxlint could only run as rules of a plugin in JavaScript.
+    pub rules_that_oxlint_lacks: Vec<&'static crate::rule::Meta>,
     /// With a configuration of oxlint in which no rule makes the variables of every file: the parser looks out for a name that may
     /// be declared twice, which is an error for oxlint. See `Dialect::oxc_names`.
     pub parser_tracks_names: bool,
@@ -407,6 +411,7 @@ impl LanguageOptions {
             is_oxlint: false,
             stands_alone: false,
             has_scopes_of_oxc: false,
+            rules_that_oxlint_lacks: Vec::new(),
             parser_tracks_names: false,
             eslint_8: None,
             eslint_major: 10,
@@ -515,6 +520,7 @@ impl Default for LanguageOptions {
             is_oxlint: false,
             stands_alone: false,
             has_scopes_of_oxc: false,
+            rules_that_oxlint_lacks: Vec::new(),
             parser_tracks_names: false,
             eslint_8: None,
             eslint_major: 10,

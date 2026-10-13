@@ -26,7 +26,7 @@ const tools = {
 async function format(files: Record<string, string>, names: string[], flags: string[] = []) {
   using dir = tempDir("bun-format-sort-imports", files);
   await using proc = spawn({
-    cmd: [bunExe(), "format", "--log-level=warn", ...flags, "."],
+    cmd: [bunExe(), "fmt", "--log-level=warn", ...flags, "."],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",

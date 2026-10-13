@@ -63,7 +63,7 @@ impl<'t> Around<'t> {
     }
 
     /// The whole lines that `span` is on, with the last line break, if nothing else is on them. Removing that leaves no empty
-    /// line behind, which `bun format --check` would complain about. An empty line next to them goes too if it would end up
+    /// line behind, which `bun fmt --check` would complain about. An empty line next to them goes too if it would end up
     /// first or last in a block or in the file, or next to another empty line.
     pub fn whole_lines(&self) -> Option<Span> {
         let line_break = self.line_break.filter(|_| self.starts_line)?;

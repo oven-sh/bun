@@ -72,8 +72,8 @@ describe("docs/lint/rules", () => {
     expect(wrong).toEqual([]);
   });
 
-  test("TOML snippets are formatted the way `bun format` prints them", async () => {
-    // Pasting a snippet into a formatted bunfig.toml has to keep `bun format --check` green.
+  test("TOML snippets are formatted the way `bun fmt` prints them", async () => {
+    // Pasting a snippet into a formatted bunfig.toml has to keep `bun fmt --check` green.
     const files: Record<string, string> = { "canary/bunfig.toml": "a   = 1\n" };
     for (const name of pageNames()) {
       let count = 0;
@@ -83,7 +83,7 @@ describe("docs/lint/rules", () => {
     expect(Object.keys(files).length).toBeGreaterThan(1000);
     using dir = tempDir("bun-lint-rule-docs-toml", files);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "format", "--list-different", "."],
+      cmd: [bunExe(), "fmt", "--list-different", "."],
       cwd: String(dir),
       env,
       stdout: "pipe",

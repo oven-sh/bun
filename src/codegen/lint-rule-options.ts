@@ -9,7 +9,7 @@
 // An option without a default is commented out, so the snippet as a whole never changes what the rule does.
 // `test/cli/lint/rule-docs.test.ts` checks that.
 //
-// The layout is what `bun format` prints, so pasting a snippet into a formatted `bunfig.toml` keeps `bun format --check`
+// The layout is what `bun fmt` prints, so pasting a snippet into a formatted `bunfig.toml` keeps `bun fmt --check`
 // green. The same test checks that too.
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -17,7 +17,7 @@ export type Schema = { [key: string]: any };
 
 // Fits an 80-column terminal, next to the frame that `bun lint --explain` draws around code.
 export const WIDTH = 78;
-// `bun format` puts a list on one line if it fits in `printWidth`. Comments don't count.
+// `bun fmt` puts a list on one line if it fits in `printWidth`. Comments don't count.
 const PRINT_WIDTH = 80;
 
 export const isObject = (value: unknown): value is Record<string, any> =>
@@ -403,7 +403,7 @@ export function optionsSnippet(
   const exploded = withHints([{ text: start }, { text: `  ${toml(severity)},` }, ...lines, { text: "]" }]);
   const table = lines.findIndex(it => it.text === "  {");
   const plain = lines.slice(0, table < 0 ? lines.length : table);
-  // A comment between the brackets keeps one value per line. Without one, `bun format` joins whatever fits.
+  // A comment between the brackets keeps one value per line. Without one, `bun fmt` joins whatever fits.
   const hasHints = withHints(plain).join("\n") !== plain.map(it => it.text).join("\n");
   // A single value's hint can go behind the `]`.
   const only = `${start}${toml(severity)}, ${lines[0].text.trim().slice(0, -1)}]`;
@@ -412,7 +412,7 @@ export function optionsSnippet(
   if (hasHints || plain.some(it => isOff(it) || !it.text.endsWith(","))) return done(exploded);
   const head = [toml(severity), ...plain.map(it => it.text.trim().slice(0, -1))].join(", ");
   if (table < 0) return done(`${start}${head}]`.length <= PRINT_WIDTH ? [`${start}${head}]`] : exploded);
-  // `bun format` hugs a table in last position: `["error", {` .. `}]`.
+  // `bun fmt` hugs a table in last position: `["error", {` .. `}]`.
   if (lines.findIndex(it => it.text === "  },") < lines.length - 1 || `${start}${head}, {`.length > PRINT_WIDTH)
     return done(exploded);
   const inner = lines.slice(table + 1, -1).map(it => ({ ...it, text: it.text.slice(2) }));

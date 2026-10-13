@@ -4,6 +4,7 @@
 //! written once more with the substitutions in the place of the placeholders.
 
 use super::Parser;
+use super::ast::{Flags, Kind, Tree};
 use super::js::write_string;
 use super::map_strings::{MapString, write_mapped};
 pub(crate) use super::utilities::is_placeholder_in_js;
@@ -18,7 +19,7 @@ use crate::text;
 use bun_core::strings;
 use smallvec::SmallVec;
 
-const PLACEHOLDER_START: &[u8] = b"PRETTIER_HTML_PLACEHOLDER_";
+pub(crate) const PLACEHOLDER_START: &[u8] = b"PRETTIER_HTML_PLACEHOLDER_";
 const PLACEHOLDER_END: &[u8] = b"_IN_JS";
 
 /// `isAngularComponentTemplate`: `` @Component({ template: `..` }) ``. `parent`: of the template.
@@ -284,8 +285,19 @@ impl MapString for Substitutions<'_> {
     }
 }
 
-/// Whether `document`, which is what has become of `text`, has as many substitutions. `<${a}>` gets the end tag `</${a}>`
-/// from Prettier. oxfmt leaves such a template as it is.
+/// Whether an element of `tree` with a substitution in its name has no end tag. It would get one: Prettier makes
+/// `<${a}>b</${a}>` of `<${a}>b`, which evaluates `a` twice. Such a template stays as it is.
+pub(super) fn would_repeat_substitution(tree: &Tree<'_>) -> bool {
+    tree.nodes.iter().any(|node| {
+        node.kind == Kind::Element
+            && !(node.flags).intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
+            && node.name.len() > PLACEHOLDER_START.len()
+            && strings::contains(&node.name.to_ascii_uppercase(), PLACEHOLDER_START)
+    })
+}
+
+/// Whether `document`, which is what has become of `text`, has as many substitutions. oxfmt leaves a template that has
+/// not as it is.
 fn has_as_many_substitutions(
     text: &[u8],
     document: Interned,

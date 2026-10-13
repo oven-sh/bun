@@ -122,7 +122,7 @@ const OPTIONS_WITH_STRINGS: [&[u8]; 10] = [
 /// What else there is at the top of a configuration file of Prettier.
 const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath"];
 
-/// The name [`SortSettings`] uses for `sortImports` when a flag or `[format]` sets it.
+/// The name [`SortSettings`] uses for `sortImports` when a flag or `[fmt]` sets it.
 const SORT_IMPORTS_OF_BUN: &[u8] = b"bun.sortImports";
 
 /// The largest number that is read. It stands for `Infinity` and for `max_line_length = off`.
@@ -902,7 +902,7 @@ pub(crate) struct Configs<'c> {
     options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
-    /// `[[format.overrides]]`. Globs are relative to the working directory.
+    /// `[[fmt.overrides]]`. Globs are relative to the working directory.
     overrides: Vec<Override>,
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
@@ -1236,7 +1236,7 @@ impl<'c> Configs<'c> {
             self.warn(&[
                 b"\"plugins\" in ",
                 path,
-                b" has no effect because bun format does not load Prettier plugins",
+                b" has no effect because bun fmt does not load Prettier plugins",
             ]);
         }
         Ok(Some(Arc::new(config)))
@@ -1701,7 +1701,7 @@ impl<'c> Configs<'c> {
         }
         let mut sort_imports: Option<Vec<u8>> = None;
         let mut sort_tailwindcss: Option<Vec<u8>> = None;
-        // oxfmt-only options are also valid under a Prettier config when a flag or `[format]` sets them.
+        // oxfmt-only options are also valid under a Prettier config when a flag or `[fmt]` sets them.
         let is_known = |name: &[u8]| is_oxfmt || from_flags.iter().any(|it| it.0 == name);
         // Prettier knows the options of the plugins that it has loaded.
         let knows_all_options = !is_oxfmt && !self.names_other_plugins(scope, path);
@@ -1789,7 +1789,7 @@ impl<'c> Configs<'c> {
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
         if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
-            // Paths in an oxfmt config are relative to that file. Paths in `[format]` are relative to the working directory.
+            // Paths in an oxfmt config are relative to that file. Paths in `[fmt]` are relative to the working directory.
             let of_config = (config.filter(|it| it.is_oxfmt)).map(|it| paths::dirname(&it.path));
             let places = (of_config, directory);
             let tailwind = tailwind::for_file(&self.classes, self.environment, &value, places);

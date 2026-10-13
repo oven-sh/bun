@@ -60,6 +60,7 @@ pub mod prelude {
     pub use crate::rule::{Fixable, Kind, Message, Meta, NodeTags, On, Presets, Rule};
     pub use crate::semantic::{
         Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind, Symbol,
+        Variable, VariableKind,
     };
     pub use crate::span::{Position, Span, Spanned};
     pub use crate::tokens::{Token, TokenKind, Tokens, skip_trivia, skip_trivia_back};

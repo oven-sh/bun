@@ -1,4 +1,4 @@
-//! A check that formatting has not changed the program: `bun format --debug-check`.
+//! A check that formatting has not changed the program: `bun fmt --debug-check`.
 //!
 //! What would be written is parsed, and its syntax tree is compared with that of the file ([`tree`]). So are
 //! the comments ([`comments`]). All that is not in the tree is free to change: white space, semicolons,

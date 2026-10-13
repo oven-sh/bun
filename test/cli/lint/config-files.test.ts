@@ -4941,7 +4941,7 @@ describe.concurrent("whose configuration files count", () => {
   test.each([
     [["-D", "no-vra"], `Unknown rule "no-vra"\n  Did you mean "no-var"?`],
     [["-A", "no-vra"], `Unknown rule "no-vra"\n  Did you mean "no-var"?`],
-    [["-W", "indent"], `"indent" is a formatting rule\n  bun format does that`],
+    [["-W", "indent"], `"indent" is a formatting rule\n  bun fmt does that`],
   ])("%j is rejected without a config file", async (flags, why) => {
     const { problems, stderr, exitCode } = await lint({ "a.js": code }, [...flags, "a.js"]);
     expect({ problems, stderr, exitCode }).toEqual({ problems: [], stderr: `error: ${why}`, exitCode: 2 });
@@ -5639,7 +5639,7 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
   });
 });
 
-// ESLint has deprecated its rules about layout, and eslint-plugin-react its `jsx-space-before-closing`. They are not built in: `bun format`
+// ESLint has deprecated its rules about layout, and eslint-plugin-react its `jsx-space-before-closing`. They are not built in: `bun fmt`
 // does their work. The configurations that people share still turn them on.
 describe.concurrent("the deprecated rules about layout", () => {
   const rules = {

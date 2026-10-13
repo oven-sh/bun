@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use smallvec::SmallVec;
 
 /// Enforce consistent brace style for all control statements.
@@ -177,17 +178,14 @@ fn remove_braces<'a>(fixer: Fixer<'a>, body: Stmt<'a>) -> Option<Fix> {
 
 /// The first `if` of the chain of `if`, `else if` and `else` that `body` is a branch of. oxlint's rule is called with it, and goes
 /// through the chain.
-fn first_of_chain(body: Stmt<'_>) -> Option<Stmt<'_>> {
-    let mut link = body
-        .parent()
-        .as_stmt()
-        .filter(|it| it.tag() == StmtTag::If)?;
-    while let Some(parent) = link.parent().as_stmt()
-        && parent.as_if().is_some_and(|it| it.2 == Some(link))
-    {
-        link = parent;
-    }
-    Some(link)
+fn first_of_chain<'a>(body: Stmt<'a>, chains: &mut AncestorMemo<'a, Stmt<'a>>) -> Option<Stmt<'a>> {
+    let link = body.parent().as_stmt();
+    let link = link.filter(|it| it.tag() == StmtTag::If)?;
+    chains.find(Node::Stmt(link), |link, parent| {
+        let link = link.as_stmt()?;
+        let goes_on = parent.as_stmt().and_then(Stmt::as_if);
+        (!goes_on.is_some_and(|it| it.2 == Some(link))).then_some(link)
+    })
 }
 
 impl Curly {
@@ -239,9 +237,17 @@ impl Curly {
         }
     }
 
-    fn report<'a>(&self, check: &Check<'a>, cx: &Cx<'a, Self>) {
+    fn report<'a>(
+        &self,
+        check: &Check<'a>,
+        chains: &mut AncestorMemo<'a, Stmt<'a>>,
+        cx: &Cx<'a, Self>,
+    ) {
         let body = check.body;
-        let chain = first_of_chain(body).filter(|_| cx.language().is_oxlint);
+        let chain = match cx.language().is_oxlint {
+            true => first_of_chain(body, chains),
+            false => None,
+        };
         let report = |message: Message| match chain {
             Some(first) => cx.report(body, message).listened_on(first),
             None => cx.report(body, message),
@@ -284,8 +290,9 @@ impl Curly {
     fn report_all<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut checks = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut checks, |it| it.body.span().start);
+        let mut chains = AncestorMemo::default();
         for check in &checks {
-            self.report(check, cx);
+            self.report(check, &mut chains, cx);
         }
     }
 

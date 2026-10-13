@@ -577,17 +577,17 @@ Every flag that makes sense as a default is also a key, in camelCase: `--max-war
 
 ## Formatter
 
-The `[format]` section configures [`bun format`](/runtime/format). Run `bun format --init` to add it.
+The `[fmt]` section configures [`bun fmt`](/runtime/format). Run `bun fmt --init` to add it.
 
 ```toml title="bunfig.toml" icon="settings"
-[format]
+[fmt]
 printWidth = 100
 semi = false
 sortImports = true
 ignorePatterns = ["vendor/", "**/*.gen.ts"]
 ```
 
-A typo doesn't go unnoticed. An unknown key or a bad value is an error, and `bun format` exits with code `2`.
+A typo doesn't go unnoticed. An unknown key or a bad value is an error, and `bun fmt` exits with code `2`.
 
 ### Style options
 
@@ -621,14 +621,14 @@ Same names, defaults, and meaning as [Prettier's options](https://prettier.io/do
 [Sort, group, and merge imports](/runtime/format#sort-imports). Default `false`.
 
 ```toml title="bunfig.toml" icon="settings"
-[format]
+[fmt]
 sortImports = true
 ```
 
 To change the groups, use a table. These are the defaults:
 
 ```toml title="bunfig.toml" icon="settings"
-[format.sortImports]
+[fmt.sortImports]
 groups = ["builtin", "external", ["internal", "subpath"], ["parent", "sibling", "index"], "style", "unknown"]
 internalPattern = ["~/", "@/", "#"]
 newlinesBetween = true
@@ -653,7 +653,7 @@ To give type imports a group of their own, prefix a group with `type-`, like `"t
 [Sort Tailwind CSS classes](/runtime/format#sort-tailwind-css-classes). Default `false`. Needs `tailwindcss` version 3 or 4 installed in the project.
 
 ```toml title="bunfig.toml" icon="settings"
-[format.sortTailwindcss]
+[fmt.sortTailwindcss]
 stylesheet = "./src/app.css"
 functions = ["clsx", "tw"]
 ```
@@ -674,7 +674,7 @@ By default, `functions` is `clsx`, `cn`, `cva`, `cx`, `classNames`, `classnames`
 [Sort the keys of `package.json`](/runtime/format#sort-package-json). Default `false`.
 
 ```toml title="bunfig.toml" icon="settings"
-[format]
+[fmt]
 sortPackageJson = true
 ```
 
@@ -685,7 +685,7 @@ sortPackageJson = true
 [Format JSDoc comments](/runtime/format#format-jsdoc-comments). Default `false`.
 
 ```toml title="bunfig.toml" icon="settings"
-[format]
+[fmt]
 jsdoc = true
 ```
 
@@ -705,10 +705,10 @@ jsdoc = true
 
 ### `format.ignorePatterns`
 
-Skip the files that match. `bun format` already skips `node_modules` and everything in `.gitignore`.
+Skip the files that match. `bun fmt` already skips `node_modules` and everything in `.gitignore`.
 
 ```toml title="bunfig.toml" icon="settings"
-[format]
+[fmt]
 ignorePatterns = ["vendor/", "**/*.gen.ts"]
 ```
 
@@ -717,7 +717,7 @@ ignorePatterns = ["vendor/", "**/*.gen.ts"]
 Different options for some files. Later entries win over earlier ones, and a flag wins over all of them.
 
 ```toml title="bunfig.toml" icon="settings"
-[[format.overrides]]
+[[fmt.overrides]]
 files = ["*.test.ts", "scripts/**"]
 excludeFiles = ["scripts/vendor/**"]
 options = { printWidth = 120, sortImports = false }
@@ -728,10 +728,10 @@ options = { printWidth = 120, sortImports = false }
 
 ### Every other flag
 
-Any flag that makes sense as a default has a key: its name in camelCase. `bun format --help --all` lists the flags. The command line wins over `bunfig.toml`.
+Any flag that makes sense as a default has a key: its name in camelCase. `bun fmt --help --all` lists the flags. The command line wins over `bunfig.toml`.
 
 ```toml title="bunfig.toml" icon="settings"
-[format]
+[fmt]
 editorconfig = false # --no-editorconfig
 ignorePath = [".gitignore", ".formatignore"] # --ignore-path .gitignore --ignore-path .formatignore
 insertFinalNewline = false # --no-insert-final-newline
@@ -739,7 +739,7 @@ logLevel = "warn" # --log-level warn
 threads = 4 # --threads 4
 ```
 
-`[format]` also applies in a project with a `.prettierrc` or an `.oxfmtrc.json`, where a key overrides the config file as its flag does. `plugins` belong in that config file.
+`[fmt]` also applies in a project with a `.prettierrc` or an `.oxfmtrc.json`, where a key overrides the config file as its flag does. `plugins` belong in that config file.
 
 ## Package manager
 

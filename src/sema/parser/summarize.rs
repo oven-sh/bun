@@ -129,13 +129,15 @@ fn file_of(
     let mut file = file_read_as(scratch, how, text, atoms, false);
     let is_refused = |file: &FileBuilder| file.has_errors || file.has_parse_diagnostics;
     let (was_refused, html_opens) = (is_refused(&file), scratch.html_opens);
-    let may_be_script = html_opens.first.is_some() || scratch.has_only_ambiguous_awaits;
+    let has_only_ambiguous_awaits = scratch.has_only_ambiguous_awaits;
+    let may_be_script = html_opens.first.is_some() || has_only_ambiguous_awaits;
     if !how.dialect.oxc || how.dialect.script || !was_refused && !may_be_script {
         return file;
     }
     // For oxc a file is a script if nothing in it says that it is a module. Here only these are read otherwise in one.
     let is_module_by_name = is_named([b".mjs", b".mts"]);
-    let is_module = is_module_by_name || file.has_module_syntax;
+    let has_import_meta = (file.exprs.iter()).any(|e| matches!(e.kind, ExprKind::ImportMeta));
+    let is_module = is_module_by_name || file.has_module_syntax || has_import_meta;
     let words: [&[u8]; 3] = [b"await", b"<!--", b"-->"];
     if was_refused && (is_module || !words.iter().any(|it| bun_core::strings::contains(text, it))) {
         return file;
@@ -164,8 +166,11 @@ fn file_of(
     }
     scratch.recycle(file);
     let script = file_read_as(scratch, as_script, text, atoms, true);
-    // `<!--` makes it a script whatever comes of that. `await (a)` is a call in a script, and `await a` makes it a module.
-    let is_script = !is_refused(&script) || !was_refused && html_opens.first.is_some();
+    // `<!--` makes it a script whatever comes of that. `await (a)` is a call in a script, and `await a` makes it a module. Where
+    // nothing makes it one, oxc has read `await` as a name, and what is wrong with that is what it says: `await /a/;`.
+    let is_script = !is_refused(&script)
+        || !was_refused && html_opens.first.is_some()
+        || has_only_ambiguous_awaits;
     if is_script && !script.has_module_syntax {
         return script;
     }
@@ -201,6 +206,9 @@ fn file_read_as(
         await_is_a_name: is_json
             || (is_ecmascript || dialect.oxc) && dialect.script
             || is_ecmascript && dialect.flow && !dialect.babel,
+        is_module_or_script: dialect.oxc
+            && !dialect.script
+            && ![&b".mjs"[..], b".mts"].iter().any(|it| path.ends_with(it)),
         recovers: false,
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,

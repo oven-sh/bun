@@ -6,7 +6,7 @@
 
 use super::Error;
 use super::ast::{self, Call, Head, Kind, NOTHING, NodeId, Range, Text, Tree};
-use super::lexer::{Token, TokenKind};
+use super::lexer::{Token, TokenKind, id_len};
 use crate::stack::Stack;
 use crate::syntax_error::{Message, Refusal};
 use bun_core::strings;
@@ -22,8 +22,8 @@ pub(crate) enum StatementKind {
     Mustache {
         node: NodeId,
         is_valid: bool,
-        /// The node is not all that the template says.
-        is_damaged: bool,
+        /// See `Node::is_as_written`.
+        is_as_written: bool,
     },
     /// The statements of what follows `{{#a}}` come next, up to `first_end`, then those of what follows `{{else}}`,
     /// up to `next`.
@@ -34,7 +34,7 @@ pub(crate) enum StatementKind {
         /// `{{^a}}`
         is_inverted: bool,
         is_valid: bool,
-        is_damaged: bool,
+        is_as_written: bool,
         block_params: Range,
     },
     /// Partials and decorators.
@@ -97,7 +97,7 @@ struct Header {
     path: Expression,
     call: Call,
     is_valid: bool,
-    is_damaged: bool,
+    is_as_written: bool,
     block_params: Range,
     strip: Strip,
 }
@@ -107,6 +107,8 @@ struct Inverse {
     strip: Strip,
     /// `{{else if a}}`: the block that it is.
     chained: Option<NodeId>,
+    /// That block is. It has no end of its own, so the block that it is in is too.
+    is_as_written: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -144,8 +146,8 @@ struct Parser<'a> {
     /// The parameters and pairs of the calls that are being parsed.
     pending: Vec<NodeId>,
     stack: Stack,
-    /// Something of what has been parsed since this was last `false` is not in the tree.
-    is_damaged: bool,
+    /// Something of what has been parsed since this was last `false` is in no node.
+    has_dropped: bool,
 }
 
 /// What is said where there is no token of `kind`.
@@ -391,7 +393,14 @@ impl Parser<'_> {
         let mut is_valid = true;
         while self.is_at_hash() {
             let token = self.next();
-            let (key, _) = self.id(token);
+            let (key, is_literal) = self.id(token);
+            // Prettier prints it without the brackets that it needs.
+            let name = self.text(key);
+            let is_name = !name.is_empty() && id_len(name) == name.len();
+            let key = match is_name || (!is_literal && !name.starts_with(b"[")) {
+                true => key,
+                false => Text::source(token.start as usize, token.end as usize),
+            };
             self.next();
             let value = self.expression()?;
             is_valid &= value.is_valid && value.class != Class::HashLiteral;
@@ -429,7 +438,7 @@ impl Parser<'_> {
             // It is taken for `undefined`, which only matters where its position is asked for.
             Class::HashLiteral => (NOTHING, !params.is_empty()),
         };
-        self.is_damaged |= path.class == Class::HashLiteral;
+        self.has_dropped |= path.class == Class::HashLiteral;
         Ok((
             Call {
                 path: node,
@@ -512,6 +521,7 @@ impl Parser<'_> {
 
         let mut parts = SmallVec::<[Text; 4]>::new();
         let mut dropped = 0;
+        let mut has_private_name = false;
         for segment in &segments {
             if !segment.is_literal && matches!(self.text(segment.part), b".." | b"." | b"this") {
                 if !parts.is_empty() {
@@ -522,7 +532,7 @@ impl Parser<'_> {
             }
             parts.push(match segment.separator {
                 Some(separator) if separator.kind == TokenKind::PrivateSep => {
-                    self.is_damaged = true;
+                    has_private_name = true;
                     let owned = self.tree.start_text();
                     self.tree.write(b"#");
                     self.tree.write_text(self.source, segment.part);
@@ -574,7 +584,7 @@ impl Parser<'_> {
         let is_this = is_this_path(text);
         let is_splat = text == b"...attributes";
         // Only the `this` that a path starts with comes back.
-        self.is_damaged |= dropped != usize::from(is_this);
+        let is_as_written = has_private_name || dropped != usize::from(is_this);
         let invalid = Expression {
             node: NOTHING,
             class: Class::Path,
@@ -632,8 +642,12 @@ impl Parser<'_> {
             (name, tail)
         };
         let tail = self.tree.add_names(tail);
+        let node = self.tree.add(Kind::Path { head, name, tail }, start, end);
+        if is_as_written {
+            self.tree.keep_as_written(node);
+        }
         Ok(Expression {
-            node: self.tree.add(Kind::Path { head, name, tail }, start, end),
+            node,
             is_valid: true,
             ..invalid
         })
@@ -658,7 +672,7 @@ impl Parser<'_> {
         let mut names = SmallVec::<[Text; 4]>::new();
         while self.peek().kind == TokenKind::Id {
             let token = self.next();
-            names.push(self.id_text(token));
+            names.push(Text::source(token.start as usize, token.end as usize));
         }
         self.expect(TokenKind::CloseBlockParams)?;
         let (Some(first), Some(last)) = (names.first(), names.last()) else {
@@ -673,7 +687,6 @@ impl Parser<'_> {
         {
             return Err(self.error(Message::UnexpectedToken));
         }
-        self.is_damaged |= names.iter().any(|name| self.text(*name).starts_with(b"["));
         Ok(self.tree.add_names(&names))
     }
 
@@ -684,7 +697,7 @@ impl Parser<'_> {
         close: TokenKind,
         takes_block_params: bool,
     ) -> Result<Header, Error> {
-        self.is_damaged = false;
+        self.has_dropped = false;
         let path = self.helper_name()?;
         let (call, is_valid) = self.call(path)?;
         let block_params = match self.peek().kind {
@@ -696,7 +709,7 @@ impl Parser<'_> {
             path,
             call,
             is_valid,
-            is_damaged: self.is_damaged,
+            is_as_written: self.has_dropped,
             block_params,
             strip: self.strip(open, close),
         })
@@ -723,6 +736,7 @@ impl Parser<'_> {
         Ok(Inverse {
             strip: self.strip(token, token),
             chained: None,
+            is_as_written: false,
         })
     }
 
@@ -767,7 +781,8 @@ impl Parser<'_> {
             is_inverted,
             // Without what follows `{{else}}`, `{{^a}}` has no `program`.
             is_valid: header.is_valid && (!is_inverted || inverse.is_some()),
-            is_damaged: header.is_damaged || is_inverted,
+            is_as_written: header.is_as_written
+                || inverse.is_some_and(|inverse| inverse.is_as_written),
             block_params: header.block_params,
         };
         self.end_statement(index, kind);
@@ -796,6 +811,8 @@ impl Parser<'_> {
                 Ok(Some(Inverse {
                     strip: header.strip,
                     chained: Some(node),
+                    is_as_written: header.is_as_written
+                        || inverse.is_some_and(|inverse| inverse.is_as_written),
                 }))
             }
             _ => Ok(None),
@@ -847,7 +864,7 @@ impl Parser<'_> {
         // It becomes a block like any other.
         let header = Header {
             strip: Strip::default(),
-            is_damaged: true,
+            is_as_written: true,
             ..self.header(open, TokenKind::CloseRawBlock, false)?
         };
         let index = self.add_statement(StatementKind::Unsupported, open.start, open.end);
@@ -875,7 +892,7 @@ impl Parser<'_> {
             TokenKind::OpenUnescaped => (TokenKind::CloseUnescaped, true),
             _ => (TokenKind::Close, self.slice(open).ends_with(b"&")),
         };
-        self.is_damaged = false;
+        self.has_dropped = false;
         let no_arguments = (Range::default(), Range::default());
         let (path, mut call, mut is_valid) = if open.kind == TokenKind::Open && self.is_at_hash() {
             let base = self.pending.len();
@@ -903,7 +920,7 @@ impl Parser<'_> {
         }
         // What follows a literal is dropped unseen.
         if path.is_some_and(|path| path.class == Class::Literal) {
-            self.is_damaged = !call.params.is_empty() || !call.pairs.is_empty();
+            self.has_dropped = !call.params.is_empty() || !call.pairs.is_empty();
             ((call.params, call.pairs), is_valid) = (no_arguments, true);
         }
         let kind = Kind::Mustache {
@@ -915,12 +932,12 @@ impl Parser<'_> {
         };
         let node = self.tree.add(kind, open.start as usize, close.end as usize);
         let is_valid = is_valid && !path.is_some_and(|path| path.is_splat);
-        let is_damaged = self.is_damaged;
+        let is_as_written = self.has_dropped;
         self.add_statement(
             StatementKind::Mustache {
                 node,
                 is_valid,
-                is_damaged,
+                is_as_written,
             },
             open.start,
             close.end,
@@ -1010,7 +1027,7 @@ pub(crate) fn parse(
         statements,
         pending: Vec::new(),
         stack: Stack::for_tree(),
-        is_damaged: false,
+        has_dropped: false,
     };
     parser.program()?;
     parser.expect(TokenKind::Eof).map(drop)

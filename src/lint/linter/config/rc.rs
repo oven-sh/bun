@@ -71,6 +71,12 @@ pub fn oxlint_category(plugin: Plugin, name: &str) -> Option<&'static str> {
         .map(|it| it.0)
 }
 
+/// Whether oxlint could only run the rule as a rule of a plugin in JavaScript: it doesn't have it. Such a rule is a port of a
+/// rule for ESLint.
+pub fn oxlint_lacks(meta: &Meta) -> bool {
+    oxlint_category(meta.plugin, meta.name).is_none()
+}
+
 /// Whether oxlint runs the rule on code that is TypeScript, or on code that is not: its `should_run`, as far as that goes by the
 /// language.
 pub fn oxlint_runs_on(meta: &Meta, is_typescript: bool) -> bool {

@@ -13,6 +13,7 @@ use super::conditional::{ConditionalLike, Operand, should_extra_indent};
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::parentheses;
 use crate::js::print::binary_like_expression::is_angular_pipe;
+use crate::js::print::statements::parenthesis_before_needs_semicolon;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -140,11 +141,20 @@ struct WrapInParens<'b, T>(&'b T);
 
 impl<'a, T: Format<'a>> Format<'a> for WrapInParens<'_, T> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        write!(f, WrapIn("(", self.0));
+    }
+}
+
+/// The same with something else than a `(` to start with.
+struct WrapIn<'b, T>(&'static str, &'b T);
+
+impl<'a, T: Format<'a>> Format<'a> for WrapIn<'_, T> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
         write!(
             f,
             [
-                if_group_breaks(&"("),
-                soft_block_indent(self.0),
+                if_group_breaks(&self.0),
+                soft_block_indent(self.1),
                 if_group_breaks(&")")
             ]
         );
@@ -283,13 +293,17 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
 
     let format_test_with_question_mark = format_with(|f| {
         let format_test = format_with(|f| match conditional {
-            ConditionalLike::ConditionalExpression(_) => {
+            ConditionalLike::ConditionalExpression(e) => {
                 let is_conditional = test.is_conditional();
                 let test = FormatOperand(test, comments.after_test);
+                let open = match parenthesis_before_needs_semicolon(e, f) {
+                    true => ";(",
+                    false => "(",
+                };
                 write!(
                     f,
                     [
-                        WrapInParens(&test),
+                        WrapIn(open, &test),
                         is_conditional.then_some(expand_parent())
                     ]
                 );

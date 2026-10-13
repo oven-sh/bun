@@ -95,6 +95,8 @@ struct Literal<'a> {
     unsigned: Span,
     sign: Option<u8>,
     value: Value<'a>,
+    /// The number without the sign, if it is an expression.
+    number: Option<Expr<'a>>,
 }
 
 fn is_jsx(node: Node) -> bool {
@@ -384,6 +386,7 @@ impl Checker {
             unsigned: e.span(),
             sign,
             value,
+            number: Some(e),
         };
         self.check(literal, place_of_expr(full, parent), cx);
     }
@@ -410,6 +413,7 @@ impl Checker {
             },
             sign: is_signed.then_some(b'-'),
             value,
+            number: None,
         };
         self.check(literal, Place::LiteralType(ty), cx);
     }
@@ -438,6 +442,7 @@ impl Checker {
             unsigned: span,
             sign: None,
             value,
+            number: None,
         };
         self.check(literal, place, cx);
     }
@@ -464,10 +469,10 @@ impl Checker {
                 Some(true) => return,
                 // A `+` is not part of what is reported here.
                 Some(false) if literal.sign == Some(b'+') => {
-                    return report_magic(literal.unsigned, None, literal.unsigned, cx);
+                    return report_magic(literal.unsigned, None, literal, cx);
                 }
                 Some(false) => {
-                    return report_magic(literal.full, literal.sign, literal.unsigned, cx);
+                    return report_magic(literal.full, literal.sign, literal, cx);
                 }
                 None => {}
             }
@@ -507,12 +512,13 @@ impl Checker {
                     cx.report(literal.full, USE_CONST);
                 }
             }
-            _ => report_magic(literal.full, literal.sign, literal.unsigned, cx),
+            _ => report_magic(literal.full, literal.sign, literal, cx),
         }
     }
 }
 
-fn report_magic<R: Rule>(at: Span, sign: Option<u8>, unsigned: Span, cx: &Cx<'_, R>) {
+fn report_magic<'a, R: Rule>(at: Span, sign: Option<u8>, literal: Literal<'a>, cx: &Cx<'a, R>) {
+    let unsigned = literal.unsigned;
     let raw = match sign {
         Some(_) if at.start + 1 == unsigned.start && at.end == unsigned.end => {
             Cow::Borrowed(cx.slice(at))
@@ -520,7 +526,13 @@ fn report_magic<R: Rule>(at: Span, sign: Option<u8>, unsigned: Span, cx: &Cx<'_,
         Some(sign) => Cow::Owned([&[sign][..], cx.slice(unsigned)].concat()),
         None => Cow::Borrowed(cx.slice(unsigned)),
     };
-    cx.report(at, NO_MAGIC).data("raw", raw);
+    let report = match literal.number {
+        Some(number) if at == unsigned => cx.report(number, NO_MAGIC),
+        // oxlint's rule is called with the number.
+        Some(number) if cx.language().is_oxlint => cx.report(at, NO_MAGIC).listened_on(number),
+        _ => cx.report(at, NO_MAGIC),
+    };
+    report.data("raw", raw);
 }
 
 impl Rule for NoMagicNumbers {

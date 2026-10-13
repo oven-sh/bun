@@ -1731,10 +1731,10 @@ impl NotBuiltIn {
         let about_layout = match &self.about_layout[..] {
             [] => None,
             [one] => Some(format!(
-                "1 deprecated formatting rule did not run: {one}\n  Use bun format instead."
+                "1 deprecated formatting rule did not run: {one}\n  Use bun fmt instead."
             )),
             all => Some(format!(
-                "{} deprecated formatting rules did not run: {}{}\n  Use bun format instead.",
+                "{} deprecated formatting rules did not run: {}{}\n  Use bun fmt instead.",
                 all.len(),
                 all[..all.len().min(3)].join(", "),
                 if all.len() > 3 { ", .." } else { "" },

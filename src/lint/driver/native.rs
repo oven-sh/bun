@@ -61,12 +61,9 @@ impl Mistake {
 /// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
 pub(crate) fn unknown_rule(registry: &Registry, id: &[u8]) -> Vec<u8> {
     match registry.why_missing(id) {
-        Missing::Formatting => [
-            b"\"",
-            id,
-            b"\" is a formatting rule\n  bun format does that",
-        ]
-        .concat(),
+        Missing::Formatting => {
+            [b"\"", id, b"\" is a formatting rule\n  bun fmt does that"].concat()
+        }
         Missing::OfPluginWithoutRules(plugin) => [
             b"\"",
             id,

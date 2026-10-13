@@ -1175,8 +1175,11 @@ JSArray* addAllLibVariables(JSGlobalObject* globalObject, LintHost* host)
     return variables;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(lintLazyVariablesOfGlobalScope, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(lintLazyVariablesOfGlobalScope, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {
+    JSGlobalObject* globalObject = LintHost::realmOfHolder(thisValue);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintHost* host = LintHost::from(globalObject);
     // That of a file that is done.

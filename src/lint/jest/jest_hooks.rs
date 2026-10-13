@@ -212,7 +212,7 @@ pub(crate) mod require_hook {
 
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
             let file = ctx.file;
-            self.check_block_body(file.body(), file.span(), ctx);
+            self.check_block_body(file.body(), Node::File(file), ctx);
             for_each_call_named_like(file, &[JestGeneralFnKind::Describe], &mut |node| {
                 if let Some(callback) =
                     (node.as_call()).and_then(|it| Arguments::of(it.args(), ctx.runner).callback)
@@ -224,7 +224,7 @@ pub(crate) mod require_hook {
                         &[JestFnKind::General(JestGeneralFnKind::Describe)],
                     )
                 {
-                    self.check_block_body(statements, node.span(), ctx);
+                    self.check_block_body(statements, Node::Expr(node), ctx);
                 }
             });
         }
@@ -233,7 +233,7 @@ pub(crate) mod require_hook {
         fn check_block_body<'a>(
             &self,
             statements: List<'a, Stmt<'a>>,
-            around: Span,
+            around: Node<'a>,
             ctx: &Ctx<'a, '_>,
         ) {
             let report = |at: Span| match ctx.file.language().is_oxlint {

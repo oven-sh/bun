@@ -76,7 +76,7 @@ pub struct Names {
 /// Returned by [`Registry::why_missing`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Missing {
-    /// A formatting rule. `bun format` handles those.
+    /// A formatting rule. `bun fmt` handles those.
     Formatting,
     /// The plugin is known, but [none of its rules are built in](Plugin::has_no_rules).
     OfPluginWithoutRules(Plugin),
@@ -507,7 +507,7 @@ pub fn deprecated_rule(id: &[u8]) -> Option<&'static Deprecated> {
 }
 
 /// The rule about the layout of the code that ESLint calls `id`, if those who wrote it have deprecated it. None of them is
-/// here: `bun format` does their work. A configuration of ESLint that names one is not wrong.
+/// here: `bun fmt` does their work. A configuration of ESLint that names one is not wrong.
 pub fn formatting_rule(id: &[u8]) -> Option<&'static Deprecated> {
     find_deprecated(deprecated::FORMATTING, id)
 }

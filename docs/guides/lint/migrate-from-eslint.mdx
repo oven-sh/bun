@@ -137,7 +137,7 @@ Pick the ESLint config with `--config`.
 If `bun lint` and ESLint 10 disagree about a rule, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
 
 - **Built-in rules have a fixed version**, whatever you have installed: ESLint 10.12, typescript-eslint 8.71, eslint-plugin-react 7.37, react-hooks 7.1, import 2.32, n 18.4. [`--no-native-plugin-rules`](/lint/plugins#run-the-installed-package-instead) runs your installed plugins instead.
-- **Deprecated formatting rules don't run**: `semi`, `quotes`, `indent`, and so on. Use [`bun format`](/runtime/format) or `@stylistic/eslint-plugin`.
+- **Deprecated formatting rules don't run**: `semi`, `quotes`, `indent`, and so on. Use [`bun fmt`](/runtime/format) or `@stylistic/eslint-plugin`.
 - **No custom formatters.** `-f` only takes built-in formats such as `stylish`, `json`, `unix`, `junit`, and `sarif`.
 - **No `--inspect-config` or `--mcp`.**
 - **`--cache` does nothing.** Every run lints every file.
@@ -156,4 +156,4 @@ See also:
 
 - [`bun lint`](/runtime/lint)
 - [ESLint plugins](/lint/plugins)
-- [Migrate from Prettier to bun format](/guides/format/migrate-from-prettier)
+- [Migrate from Prettier to bun fmt](/guides/format/migrate-from-prettier)

@@ -2,12 +2,12 @@
 //! mustaches piece by piece, and `TokenizerEventHandlers` and `HandlebarsNodeVisitors` of `@glimmer/syntax`, in the
 //! mode `codemod`: entities stay as they are written.
 //!
-//! The states are those of the tokenizer, with all that they let through and all that they drop.
+//! The states are those of the tokenizer, with all that they let through. What they drop is kept: the node that it is
+//! dropped from is marked (`Node::is_as_written`), or the template as a whole (`Tree::has_lost_text`).
 
 use super::Error;
 use super::ast::{Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::parser::{Statement, StatementKind};
-use super::positions::Positions;
 use crate::stack::Stack;
 use crate::syntax_error::{Message, Refusal};
 use bun_core::strings;
@@ -50,6 +50,28 @@ enum State {
     AfterAttributeValueQuoted,
     SelfClosingStartTag,
     EndTagOpen,
+}
+
+impl State {
+    fn is_in_doctype(self) -> bool {
+        matches!(
+            self,
+            State::Doctype
+                | State::BeforeDoctypeName
+                | State::DoctypeName
+                | State::AfterDoctypeName
+                | State::AfterDoctypePublicKeyword
+                | State::BeforeDoctypePublicIdentifier
+                | State::AfterDoctypeSystemKeyword
+                | State::DoctypePublicIdentifierDoubleQuoted
+                | State::DoctypePublicIdentifierSingleQuoted
+                | State::AfterDoctypePublicIdentifier
+                | State::BetweenDoctypePublicAndSystemIdentifiers
+                | State::DoctypeSystemIdentifierDoubleQuoted
+                | State::DoctypeSystemIdentifierSingleQuoted
+                | State::AfterDoctypeSystemIdentifier
+        )
+    }
 }
 
 fn is_space(byte: u8) -> bool {
@@ -112,6 +134,8 @@ struct Tag {
     name: Text,
     start: usize,
     is_self_closing: bool,
+    /// Something in it is dropped.
+    is_as_written: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -138,7 +162,6 @@ struct Builder<'a> {
     source: &'a [u8],
     refusal: &'a Refusal,
     statements: &'a [Statement],
-    positions: &'a Positions,
     tree: &'a mut Tree,
 
     state: State,
@@ -147,9 +170,6 @@ struct Builder<'a> {
     end: usize,
     /// The tokenizer has read one character more than it had.
     has_read_too_far: bool,
-    /// Up to `shifted_up_to`, the tokenizer takes itself to be so many UTF-16 code units before where it is.
-    shift: u32,
-    shifted_up_to: usize,
     /// `tagNameBuffer` is empty. Otherwise it is `tag.name`.
     is_tag_name_buffer_empty: bool,
 
@@ -164,9 +184,9 @@ struct Builder<'a> {
     attribute_parts: Vec<NodeId>,
     /// Of the text or the comment that is being read.
     start: usize,
-    /// Where the text that is being read really starts.
-    data_start: usize,
     comment: Text,
+    /// Something in the comment is dropped.
+    is_comment_as_written: bool,
     /// Where the dashes are that may end the comment.
     dashes: [usize; 2],
 
@@ -190,17 +210,6 @@ impl Builder<'_> {
         self.source.get(self.index..self.end).unwrap_or_default()
     }
 
-    /// `this.offset()`
-    fn position(&self) -> usize {
-        if self.shift != 0 && self.index <= self.shifted_up_to {
-            return self
-                .positions
-                .moved(self.source, self.index, -i64::from(self.shift))
-                .unwrap_or(self.index);
-        }
-        self.index
-    }
-
     fn text(&self, text: Text) -> &[u8] {
         self.tree.text(self.source, text)
     }
@@ -220,20 +229,21 @@ impl Builder<'_> {
                 value: self.comment,
             },
             self.start,
-            self.position(),
+            self.index,
         );
+        if std::mem::take(&mut self.is_comment_as_written) {
+            self.tree.keep_as_written(comment);
+        }
         self.children.push(comment);
     }
 
     fn begin_data(&mut self) {
-        (self.start, self.data_start) = (self.position(), self.index);
+        self.start = self.index;
     }
 
     fn finish_data(&mut self) {
-        let chars = Text::source(self.data_start, self.index);
-        let text = self
-            .tree
-            .add(Kind::Text { chars }, self.start, self.position());
+        let chars = Text::source(self.start, self.index);
+        let text = self.tree.add(Kind::Text { chars }, self.start, self.index);
         self.children.push(text);
     }
 
@@ -243,6 +253,7 @@ impl Builder<'_> {
             name: Text::EMPTY,
             start: self.tag_open,
             is_self_closing: false,
+            is_as_written: false,
         };
         self.is_tag_name_buffer_empty = false;
         self.tag_parts.iter_mut().for_each(Vec::clear);
@@ -308,7 +319,10 @@ impl Builder<'_> {
             children: Range::default(),
             is_self_closing: self.tag.is_self_closing,
         };
-        let element = self.tree.add(kind, self.tag.start, self.position());
+        let element = self.tree.add(kind, self.tag.start, self.index);
+        if self.tag.is_as_written {
+            self.tree.keep_as_written(element);
+        }
         self.stack.push(Frame {
             element,
             base: self.children.len(),
@@ -338,9 +352,11 @@ impl Builder<'_> {
             return Err(self.error_at(Message::WrongEndTag, self.tag.start));
         }
         let list = self.take_children(frame.base);
-        let end = self.position() as u32;
+        let end = self.index as u32;
+        let is_as_written = self.tag.is_as_written;
         if let Some(node) = self.tree.nodes.get_mut(frame.element as usize) {
             node.end = end;
+            node.is_as_written |= is_as_written;
             if let Kind::Element { children, .. } = &mut node.kind {
                 *children = list;
             }
@@ -350,7 +366,7 @@ impl Builder<'_> {
     }
 
     fn begin_attribute(&mut self) {
-        let position = self.position();
+        let position = self.index;
         self.attribute = Attribute {
             start: position,
             value_start: position,
@@ -376,7 +392,7 @@ impl Builder<'_> {
     fn begin_attribute_value(&mut self, is_quoted: bool) {
         self.attribute.is_quoted = is_quoted;
         self.attribute.current_part = Text::EMPTY;
-        self.attribute.value_start = self.position();
+        self.attribute.value_start = self.index;
     }
 
     fn append_to_attribute_value(&mut self, start: usize, end: usize) {
@@ -402,7 +418,7 @@ impl Builder<'_> {
 
     fn finish_attribute_value(&mut self) -> Result<(), Error> {
         self.finalize_text_part();
-        let position = self.position();
+        let position = self.index;
         let Attribute {
             name,
             start,
@@ -535,7 +551,7 @@ impl Builder<'_> {
 
     fn open_tag(&mut self) {
         self.state = State::TagOpen;
-        self.tag_open = self.position();
+        self.tag_open = self.index;
         self.index += 1;
     }
 
@@ -632,7 +648,7 @@ impl Builder<'_> {
                     self.begin_tag(false);
                     self.append_to_tag_name();
                 } else {
-                    self.tree.is_damaged = true;
+                    self.tree.has_lost_text = true;
                 }
             }
             State::MarkupDeclarationOpen => {
@@ -647,9 +663,8 @@ impl Builder<'_> {
                 {
                     self.index += 6;
                     self.state = State::Doctype;
-                    self.tree.is_damaged = true;
                 } else {
-                    self.tree.is_damaged = true;
+                    self.tree.has_lost_text = true;
                 }
             }
             State::Doctype => {
@@ -748,7 +763,7 @@ impl Builder<'_> {
                     self.state = State::BeforeData;
                 } else {
                     // The character is dropped: a UTF-16 code unit.
-                    self.tree.is_damaged = true;
+                    self.is_comment_as_written = true;
                     self.append_to_comment(self.dashes[0], self.dashes[0] + 1);
                     if character >= 0xF0 {
                         self.index = (self.index + 4).min(self.end);
@@ -979,7 +994,7 @@ impl Builder<'_> {
                     self.begin_tag(true);
                     self.append_to_tag_name();
                 } else {
-                    self.tree.is_damaged = true;
+                    self.tree.has_lost_text = true;
                 }
             }
         }
@@ -990,33 +1005,45 @@ impl Builder<'_> {
     fn content(&mut self, start: usize, end: usize) -> Result<(), Error> {
         (self.index, self.end) = (start, end);
         // Only in a text and in the value of an attribute, an escaped mustache is printed with its backslash.
-        self.tree.is_damaged |= self.source[start..end].starts_with(b"{{")
-            && !matches!(
-                self.state,
+        if self.source[start..end].starts_with(b"{{") {
+            match self.state {
                 State::BeforeData
-                    | State::BeforeAttributeValue
-                    | State::AttributeValueDoubleQuoted
-                    | State::AttributeValueSingleQuoted
-                    | State::AttributeValueUnquoted
-            );
-        // It counts from where the parser takes the piece to start. The next line is counted from its start.
-        self.shift = self.positions.deficit_at(start);
-        let has_read_too_far = std::mem::take(&mut self.has_read_too_far);
-        if self.shift != 0 || has_read_too_far {
-            let line = &self.source[start..end];
-            let line = &line[..strings::index_of_char_usize(line, b'\n').unwrap_or(line.len())];
-            self.shifted_up_to = start + line.len();
-            // It skips a character, and does not count it.
-            if has_read_too_far {
-                if line.is_empty() {
-                    return Err(self.error(Message::UnexpectedCharacter));
-                }
-                self.consume_unit()?;
-                self.shift += 1;
+                | State::BeforeAttributeValue
+                | State::AttributeValueDoubleQuoted
+                | State::AttributeValueSingleQuoted
+                | State::AttributeValueUnquoted => {}
+                State::CommentStart
+                | State::CommentStartDash
+                | State::Comment
+                | State::CommentEndDash
+                | State::CommentEnd => self.is_comment_as_written = true,
+                State::TagName
+                | State::EndTagName
+                | State::BeforeAttributeName
+                | State::AttributeName
+                | State::AfterAttributeName
+                | State::AfterAttributeValueQuoted
+                | State::SelfClosingStartTag => self.tag.is_as_written = true,
+                state if state.is_in_doctype() => {}
+                _ => self.tree.has_lost_text = true,
             }
         }
+        // It skips a character.
+        if std::mem::take(&mut self.has_read_too_far) {
+            if matches!(self.peek(), None | Some(b'\n')) {
+                return Err(self.error(Message::UnexpectedCharacter));
+            }
+            self.consume_unit()?;
+            self.tree.has_lost_text = true;
+        }
         while let Some(character) = self.peek() {
+            let was_in_doctype = self.state.is_in_doctype();
             self.step(character)?;
+            if was_in_doctype && self.state == State::BeforeData {
+                let end = self.index.min(self.end);
+                let doctype = self.tree.add(Kind::Doctype, self.tag_open, end);
+                self.children.push(doctype);
+            }
         }
         self.has_read_too_far = self.index > self.end;
         self.index = self.end;
@@ -1038,7 +1065,10 @@ impl Builder<'_> {
         else {
             return Err(self.error(Message::MisplacedMustache));
         };
-        self.tree.is_damaged |= is_trusting || strip != 0;
+        // Neither the third brace nor the tilde is in an `ElementModifierStatement`.
+        if is_trusting || strip != 0 {
+            self.tree.keep_as_written(mustache);
+        }
         if self.tag.is_end
             || !matches!(
                 self.tree.kind(call.path),
@@ -1078,9 +1108,16 @@ impl Builder<'_> {
             | State::AttributeValueUnquoted => {
                 self.append_dynamic_attribute_value_part(mustache);
             }
-            // Where a comment starts or ends, it gets out of it.
+            // Where a comment starts or ends, `@glimmer/syntax` puts it before the comment.
+            State::CommentStart
+            | State::CommentStartDash
+            | State::CommentEndDash
+            | State::CommentEnd => {
+                self.is_comment_as_written = true;
+                self.state = State::Comment;
+            }
             _ => {
-                self.tree.is_damaged |= !matches!(self.state, State::BeforeData | State::Data);
+                self.tree.has_lost_text |= !matches!(self.state, State::BeforeData | State::Data);
                 self.children.push(mustache);
             }
         }
@@ -1091,8 +1128,7 @@ impl Builder<'_> {
         if let StatementKind::Content = statement.kind {
             return self.content(statement.start as usize, statement.end as usize);
         }
-        let [start, end] = [statement.start, statement.end]
-            .map(|offset| self.positions.of_token(self.source, offset as usize));
+        let (start, end) = (statement.start as usize, statement.end as usize);
         if let StatementKind::Unsupported = statement.kind {
             return Err(self.error_at(Message::UnsupportedMustache, statement.start as usize));
         }
@@ -1120,16 +1156,15 @@ impl Builder<'_> {
             StatementKind::Mustache {
                 node,
                 is_valid,
-                is_damaged,
+                is_as_written,
             } => {
                 if !is_valid {
                     return Err(
                         self.error_at(Message::UnsupportedMustache, statement.start as usize)
                     );
                 }
-                self.tree.is_damaged |= is_damaged;
-                if let Some(mustache) = self.tree.nodes.get_mut(node as usize) {
-                    (mustache.start, mustache.end) = (start as u32, end as u32);
+                if is_as_written {
+                    self.tree.keep_as_written(node);
                 }
                 self.mustache(node)?;
             }
@@ -1139,13 +1174,12 @@ impl Builder<'_> {
                 has_second,
                 is_inverted,
                 is_valid,
-                is_damaged,
+                is_as_written,
                 block_params,
             } => {
                 if !matches!(self.state, State::Data | State::BeforeData) || !is_valid {
                     return Err(self.error_at(Message::MisplacedBlock, statement.start as usize));
                 }
-                self.tree.is_damaged |= is_damaged;
                 let first = (index + 1, first_end as usize);
                 let second = (first_end as usize, statement.next as usize);
                 let (default_block, else_block) = match is_inverted {
@@ -1161,6 +1195,7 @@ impl Builder<'_> {
                 };
                 if let Some(block) = self.tree.nodes.get_mut(node as usize) {
                     (block.start, block.end) = (start as u32, end as u32);
+                    block.is_as_written = is_as_written;
                     if let Kind::BlockStatement {
                         program, inverse, ..
                     } = &mut block.kind
@@ -1196,7 +1231,7 @@ impl Builder<'_> {
             index = statement.next as usize;
         }
         // What is left of a tag or a comment goes on behind the block, or is lost.
-        self.tree.is_damaged |= self.state != State::BeforeData;
+        self.tree.has_lost_text |= self.state != State::BeforeData;
         // An element that is open stays so.
         match self.stack.pop() {
             Some(frame) if self.stack.len() == depth => Ok(self.take_children(frame.base)),
@@ -1219,7 +1254,6 @@ impl Builder<'_> {
 pub(crate) fn build(
     source: &[u8],
     statements: &[Statement],
-    positions: &Positions,
     front_matter: Option<NodeId>,
     tree: &mut Tree,
     refusal: &Refusal,
@@ -1228,14 +1262,11 @@ pub(crate) fn build(
         source,
         refusal,
         statements,
-        positions,
         tree,
         state: State::BeforeData,
         index: 0,
         end: 0,
         has_read_too_far: false,
-        shift: 0,
-        shifted_up_to: 0,
         is_tag_name_buffer_empty: true,
         tag_open: 0,
         tag: Tag::default(),
@@ -1245,8 +1276,8 @@ pub(crate) fn build(
         attribute: Attribute::default(),
         attribute_parts: Vec::new(),
         start: 0,
-        data_start: 0,
         comment: Text::EMPTY,
+        is_comment_as_written: false,
         dashes: [0; 2],
         stack: Vec::new(),
         children: Vec::new(),

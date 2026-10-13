@@ -1,7 +1,6 @@
 //! The lexer of `@handlebars/parser` (`src/handlebars.l`): in each state the first rule that matches wins.
 
 use super::Error;
-use super::positions::Positions;
 use crate::syntax_error::{Message, Refusal};
 use bun_collections::ByteSet;
 use bun_core::strings;
@@ -447,15 +446,8 @@ fn number_len(text: &[u8]) -> Option<usize> {
     is_literal_lookahead(&text[len..]).then_some(len)
 }
 
-/// Writes the tokens of `text` to `tokens`, which is empty, and where the parser takes them to be to `positions`. The
-/// last is `Eof`.
-pub(crate) fn lex(
-    text: &[u8],
-    tokens: &mut Vec<Token>,
-    positions: &mut Positions,
-    refusal: &Refusal,
-) -> Result<(), Error> {
-    let counts_wrongly = Positions::can_be_wrong(text);
+/// Writes the tokens of `text` to `tokens`, which is empty. The last is `Eof`.
+pub(crate) fn lex(text: &[u8], tokens: &mut Vec<Token>, refusal: &Refusal) -> Result<(), Error> {
     let mut lexer = Lexer {
         text,
         refusal,
@@ -472,19 +464,14 @@ pub(crate) fn lex(
                 return Err(lexer.error(Message::UnexpectedEnd));
             }
             lexer.token(TokenKind::Eof, 0);
-            positions.finish(text);
             return Ok(());
         }
-        let start = lexer.at;
         match state {
             State::Initial => lexer.initial()?,
             State::Mu => lexer.mustache()?,
             State::Emu => lexer.escaped_mustache()?,
             State::Com => lexer.comment()?,
             State::Raw => lexer.raw()?,
-        }
-        if counts_wrongly {
-            positions.add_match(text, start, lexer.at);
         }
     }
 }

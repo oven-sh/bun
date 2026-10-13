@@ -61,7 +61,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(readme).toInclude("index.ts");
     expect(readme).toInclude("bun check");
     expect(readme).toInclude("`bun lint`");
-    expect(readme).toInclude("`bun format`");
+    expect(readme).toInclude("`bun fmt`");
 
     expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
@@ -497,7 +497,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       ]);
       expect({ checkStdout, checkStderr, checkExited }).toMatchObject({ checkStdout: "", checkExited: 0 });
 
-      // `bun lint` reports nothing, not even a warning, and `bun format` has nothing to change.
+      // `bun lint` reports nothing, not even a warning, and `bun fmt` has nothing to change.
       await using lint = Bun.spawn({
         cmd: [bunExe(), "lint", "-f", "json"],
         cwd: temp,
@@ -513,7 +513,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect({ problems, lintStderr, lintExited }).toMatchObject({ problems: [], lintExited: 0 });
 
       await using format = Bun.spawn({
-        cmd: [bunExe(), "format", "--check"],
+        cmd: [bunExe(), "fmt", "--check"],
         cwd: temp,
         stdio: ["ignore", "pipe", "pipe"],
         env: bunEnv,
@@ -547,7 +547,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   );
 
   test.skipIf(isWindows)(
-    "`bun format --check` passes on the generated CLAUDE.md",
+    "`bun fmt --check` passes on the generated CLAUDE.md",
     async () => {
       await using temp = tempDir("bun-init-claude-md", { "bin/claude": "#!/bin/sh\n" });
       fs.chmodSync(path.join(temp, "bin/claude"), 0o755);
@@ -561,12 +561,12 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect(fs.readFileSync(path.join(temp, "app/CLAUDE.md"), "utf8")).toStartWith("Default to using Bun");
 
       await using format = Bun.spawn({
-        cmd: [bunExe(), "format", "--check", "CLAUDE.md"],
+        cmd: [bunExe(), "fmt", "--check", "CLAUDE.md"],
         cwd: path.join(temp, "app"),
         stdio: ["ignore", "pipe", "pipe"],
         env: bunEnv,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([format.stdout.text(), format.stderr.text(), format.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([fmt.stdout.text(), format.stderr.text(), format.exited]);
       expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
     },
     30_000,

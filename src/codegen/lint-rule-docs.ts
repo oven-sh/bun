@@ -374,7 +374,7 @@ export type Report = [line: number, column: number, endLine: number, endColumn: 
 export type Outcome = { reports: Report[]; error?: string };
 
 /** Pages of rules whose message has a path with `\` in it on Windows. In other messages a `\` is part of what they say. */
-const joinsPaths = new Set(["import/no-relative-packages"]);
+const joinsPaths = new Set(["import/named", "import/no-relative-packages"]);
 
 /** Lints every example, each in a directory of its own in `dir`. */
 export async function lintExamples(dir: string, examples: Example[], byPage: Map<string, Rule>, lint: Lint) {

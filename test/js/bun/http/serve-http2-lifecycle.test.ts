@@ -1,6 +1,9 @@
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
 import http2 from "node:http2";
+import { join } from "node:path";
 import tls from "node:tls";
 import {
   F,
@@ -411,3 +414,315 @@ describe("Bun.serve http2 lifecycle", () => {
     await proc.exited;
   });
 });
+
+// A server that answers a connection it is done with by close(2) resets it when the client still
+// sends, and the reset drops what the kernel has not delivered yet: the end of a response, the
+// GOAWAY. These tests put the server in exactly that state without a timing assumption. Either a
+// frame is unread in the server's kernel when the server acts (the /hold handler keeps the fixture's
+// event loop stopped until the test creates a file), or the client does not read and sends its
+// frame after the server's FIN. Each client must then see every byte, the GOAWAY, and a FIN.
+const holdPath = (dir: string, action: string, ms = 0) =>
+  `/hold?do=${action}&ms=${ms}&file=${encodeURIComponent(join(dir, "release"))}`;
+const release = (dir: string) => writeFileSync(join(dir, "release"), "");
+const ping = () => frame(T.PING, 0, 0, Buffer.from("8 bytes!"));
+
+/** A raw client whose windows take a whole response, so flow control never holds one back. */
+async function connectWide(port: number, secure: boolean, opts: { allowHalfOpen?: boolean } = {}) {
+  const raw = await RawH2.connect(port, secure, { settings: Buffer.from([0, 4, 0x40, 0, 0, 0]), ...opts });
+  raw.write(frame(T.WINDOW_UPDATE, 0, 0, Buffer.from([0x40, 0, 0, 0])));
+  await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+  return raw;
+}
+
+/** The connection ended in order: GOAWAY(`code`) for `lastStreamId`, then the server's FIN. */
+async function expectGoawayThenFin(raw: RawH2, lastStreamId: number, code = 0) {
+  expect(await raw.goaway()).toEqual({ lastStreamId, code });
+  await raw.waitForEnd();
+  expect(raw.error).toBeUndefined();
+}
+
+describe.each([
+  ["h2c", false],
+  ["TLS", true],
+] as const)("Bun.serve http2 graceful close over %s", (_, secure) => {
+  const bodySize = 1024 * 1024;
+  const connectRaw = (port: number, opts: { allowHalfOpen?: boolean } = {}) => connectWide(port, secure, opts);
+
+  test("stop() with a response in flight: a frame the client sent meanwhile does not cut it", async () => {
+    await using fx = await startFixture({ tls: secure });
+    using dir = tempDir("serve-http2-hold", {});
+    const raw = await connectRaw(fx.port);
+    raw.headers(1, baseHeaders("/gate?n=" + bodySize));
+    await fx.stderrHas("GATED");
+    // Same connection: the response completes inside this connection's own socket event.
+    raw.headers(3, baseHeaders(holdPath(String(dir), "stop")));
+    await fx.stderrHas("HOLDING");
+    await raw.writeFlushed(ping());
+    release(String(dir));
+    expect((await raw.body(1)).length).toBe(bodySize);
+    expect((await raw.body(3)).toString()).toBe("held");
+    await expectGoawayThenFin(raw, 3);
+    await fx.stderrHas("STOPPED");
+  });
+
+  test("stop() from another connection: the response ends outside a socket event and is not cut", async () => {
+    await using fx = await startFixture({ tls: secure });
+    using dir = tempDir("serve-http2-hold", {});
+    const raw = await connectRaw(fx.port);
+    raw.headers(1, baseHeaders("/gate?n=" + bodySize));
+    await fx.stderrHas("GATED");
+    const control = await connectRaw(fx.port);
+    control.headers(1, baseHeaders(holdPath(String(dir), "stop")));
+    await fx.stderrHas("HOLDING");
+    await raw.writeFlushed(ping());
+    release(String(dir));
+    expect((await raw.body(1)).length).toBe(bodySize);
+    await expectGoawayThenFin(raw, 1);
+    expect((await control.body(1)).toString()).toBe("held");
+    await expectGoawayThenFin(control, 1);
+    await fx.stderrHas("STOPPED");
+  });
+
+  test("stop() with a response in flight: frames the client sends after the server's FIN do not cut it", async () => {
+    await using fx = await startFixture({ tls: secure });
+    using dir = tempDir("serve-http2-hold", {});
+    const raw = await connectRaw(fx.port);
+    raw.headers(1, baseHeaders("/gate?n=" + bodySize));
+    await fx.stderrHas("GATED");
+    const control = await connectRaw(fx.port);
+    control.headers(1, baseHeaders(holdPath(String(dir), "stop")));
+    await fx.stderrHas("HOLDING");
+    // This side reads nothing from here on: its kernel takes one receive window of the response
+    // and the server's kernel keeps the rest, also after the server is done with the connection.
+    raw.socket.pause();
+    release(String(dir));
+    // The server ends `raw` first and `control` after it: control's FIN says `raw` has its FIN.
+    expect((await control.body(1)).toString()).toBe("held");
+    await expectGoawayThenFin(control, 1);
+    // Nothing was unread when the server ended `raw`. These frames arrive afterwards. A reset
+    // that answers the first one fails the second write.
+    await raw.writeFlushed(ping());
+    await raw.writeFlushed(ping());
+    raw.socket.resume();
+    expect((await raw.body(1)).length).toBe(bodySize);
+    await expectGoawayThenFin(raw, 1);
+    await fx.stderrHas("STOPPED");
+  });
+
+  test("stop() with a response larger than the kernel buffers: a frame for every chunk read does not cut it", async () => {
+    await using fx = await startFixture({ tls: secure });
+    using dir = tempDir("serve-http2-hold", {});
+    const size = 16 * 1024 * 1024;
+    const raw = await connectRaw(fx.port);
+    raw.headers(1, baseHeaders("/gate?n=" + size));
+    await fx.stderrHas("GATED");
+    raw.headers(3, baseHeaders(holdPath(String(dir), "stop")));
+    await fx.stderrHas("HOLDING");
+    // Like a client that sends WINDOW_UPDATE or PING while it downloads.
+    raw.socket.on("data", () => {
+      if (!raw.ended && !raw.closed) raw.write(ping());
+    });
+    release(String(dir));
+    expect((await raw.body(1)).length).toBe(size);
+    await expectGoawayThenFin(raw, 3);
+    // 16 MiB is what a TLS connection needs to show the cut, and seconds in a debug build.
+  }, 20000);
+
+  test("stop() ends an idle connection with GOAWAY and a FIN when a frame crosses it", async () => {
+    await using fx = await startFixture({ tls: secure });
+    using dir = tempDir("serve-http2-hold", {});
+    const idle = await connectRaw(fx.port);
+    const control = await connectRaw(fx.port);
+    control.headers(1, baseHeaders(holdPath(String(dir), "stop")));
+    await fx.stderrHas("HOLDING");
+    await idle.writeFlushed(ping());
+    release(String(dir));
+    await expectGoawayThenFin(idle, 0);
+    expect((await control.body(1)).toString()).toBe("held");
+    await expectGoawayThenFin(control, 1);
+    await fx.stderrHas("STOPPED");
+  });
+
+  test("closeIdleConnections() ends an idle connection with GOAWAY and a FIN, and counts it once", async () => {
+    await using fx = await startFixture({ tls: secure });
+    using dir = tempDir("serve-http2-hold", {});
+    const idle = await connectRaw(fx.port);
+    const control = await connectRaw(fx.port);
+    control.headers(1, baseHeaders(holdPath(String(dir), "close-idle")));
+    await fx.stderrHas("HOLDING");
+    await idle.writeFlushed(ping());
+    release(String(dir));
+    await expectGoawayThenFin(idle, 0);
+    // Two calls in a row: the first one finishes the idle connection, the second one leaves it alone.
+    expect((await control.body(1)).toString()).toBe("held1,0");
+    // The busy connection was spared and the server still serves it.
+    control.headers(3, baseHeaders("/hello"));
+    expect((await control.body(3)).toString()).toBe("hello");
+    control.close();
+  });
+
+  test("a client GOAWAY is answered with GOAWAY and a FIN once its streams are done", async () => {
+    await using fx = await startFixture({ tls: secure });
+    const raw = await connectRaw(fx.port);
+    raw.headers(1, baseHeaders("/slow?ms=50"));
+    raw.write(frame(T.GOAWAY, 0, 0, Buffer.alloc(8)));
+    expect((await raw.body(1)).toString()).toBe("slow");
+    await expectGoawayThenFin(raw, 1);
+  });
+
+  test("a connection error ends the streams, reports its code and ends with a FIN; later frames are not reset", async () => {
+    await using fx = await startFixture({ tls: secure });
+    const raw = await connectRaw(fx.port, { allowHalfOpen: true });
+    raw.headers(1, baseHeaders("/abort"));
+    // The connection window already holds 2^30: one more of these overflows it. The frame comes
+    // in two reads, so the server finds the error in a frame it had to put together. The answer
+    // to the PING says that the server has read up to the first part.
+    const overflow = frame(T.WINDOW_UPDATE, 0, 0, Buffer.from([0x7f, 0xff, 0xff, 0xff]));
+    raw.write(Buffer.concat([frame(T.GOAWAY, 0, 0, Buffer.alloc(8)), ping(), overflow.subarray(0, 5)]));
+    await raw.waitFor(f => f.type === T.PING && (f.flags & F.ACK) !== 0);
+    raw.write(overflow.subarray(5));
+    await expectGoawayThenFin(raw, 1, 3);
+    await fx.stderrHas("ABORTED");
+    // This side is still open and keeps sending. A reset that answers the first frame fails the second write.
+    await raw.writeFlushed(ping());
+    await raw.writeFlushed(ping());
+    raw.socket.end();
+    await raw.waitForClose();
+    expect(raw.error).toBeUndefined();
+  });
+
+  test("stop(true) closes a lingering connection before it returns", async () => {
+    await using fx = await startFixture({ tls: secure });
+    const raw = await connectRaw(fx.port, { allowHalfOpen: true });
+    raw.headers(1, baseHeaders("/stop"));
+    expect((await raw.body(1)).toString()).toBe("stopping");
+    await expectGoawayThenFin(raw, 1);
+    // This side never answers the FIN. The fixture reports whether stop(true) waited for it.
+    fx.proc.stdin.end();
+    await fx.stderrHas("STOPPED-AT-ONCE");
+    raw.close();
+  });
+
+  test("stop(true) closes a connection with a stream open before it returns, whatever the client does", async () => {
+    await using fx = await startFixture({ tls: secure });
+    const raw = await connectRaw(fx.port, { allowHalfOpen: true });
+    raw.headers(1, baseHeaders("/abort"));
+    await raw.writeFlushed(ping());
+    await raw.waitFor(f => f.type === T.PING && (f.flags & F.ACK) !== 0);
+    fx.proc.stdin.end();
+    await fx.stderrHas("STOPPED-AT-ONCE");
+    expect(fx.stderr()).toContain("ABORTED");
+    expect((await raw.goaway()).code).toBe(0);
+    raw.close();
+  });
+});
+
+describe("Bun.serve http2 graceful close, the wait for the client's FIN", () => {
+  // usockets ticks timeouts in 4 s steps, so these tests need real seconds. The client never closes
+  // its side, so only the server's own bound ends the connection. stop() is called from the abort
+  // listener of a stream the client resets: the connection then ends inside that callback, and the
+  // stream's own timeout must not replace the bound afterwards.
+  for (const [name, secure, idleTimeout, atLeastMs] of [
+    // Idle timeouts are off: the bound is 8 s, which is 4 to 8 s on the 4 s tick.
+    ["h2c, idleTimeout 0", false, 0, 3000],
+    // The idle timeout is longer than 8 s, so it is the bound: 12 to 16 s.
+    ["TLS, idleTimeout 16", true, 16, 9000],
+  ] as const) {
+    test(`a client that never closes holds stop() until the bound and no longer (${name})`, async () => {
+      await using fx = await startFixture({ tls: secure, idleTimeout });
+      const raw = await connectWide(fx.port, secure, { allowHalfOpen: true });
+      raw.headers(1, baseHeaders("/abort-stop"));
+      // The reset comes in two reads with a frame behind it: the server ends the connection from
+      // inside a frame that it had to put together, and must not go on to the next one. The
+      // answer to the PING says that the server has read up to the first part.
+      const reset = frame(T.RST_STREAM, 0, 1, Buffer.from([0, 0, 0, 8]));
+      raw.write(Buffer.concat([ping(), reset.subarray(0, 5)]));
+      await raw.waitFor(f => f.type === T.PING && (f.flags & F.ACK) !== 0);
+      raw.write(Buffer.concat([reset.subarray(5), ping()]));
+      await expectGoawayThenFin(raw, 1);
+      const finAt = performance.now();
+      // The promise of stop() stays pending while the connection lingers, so that a process
+      // that exits after `await server.stop()` cannot cut what the client still reads.
+      await fx.stderrHas("STOPPED");
+      expect(performance.now() - finAt).toBeGreaterThan(atLeastMs);
+      raw.close();
+    }, 40000);
+  }
+
+  test("a client that keeps sending after the server's FIN is closed when it has sent more than a window", async () => {
+    await using fx = await startFixture({ tls: false });
+    const raw = await connectWide(fx.port, false, { allowHalfOpen: true });
+    raw.headers(1, baseHeaders("/stop"));
+    expect((await raw.body(1)).toString()).toBe("stopping");
+    await expectGoawayThenFin(raw, 1);
+    // The server reads and drops what still comes, up to the 16 MiB its connection window allowed
+    // and 1 MiB more. Past that it closes, long before the wait for this side's FIN ends.
+    raw.write(Buffer.alloc(18 * 1024 * 1024));
+    await raw.waitForClose();
+    await fx.stderrHas("STOPPED");
+  });
+
+  test("an idle timeout ends the connection with GOAWAY and a FIN when a frame crosses it", async () => {
+    // idleTimeout 2 is one tick. /hold keeps the event loop stopped for more than a tick, so the
+    // timeout of the idle connection fires right after it, with this client's frame still unread.
+    await using fx = await startFixture({ tls: false, idleTimeout: 2 });
+    using dir = tempDir("serve-http2-hold", {});
+    const idle = await connectWide(fx.port, false);
+    const control = await connectWide(fx.port, false);
+    control.headers(1, baseHeaders(holdPath(String(dir), "none", 4200)));
+    await fx.stderrHas("HOLDING");
+    await idle.writeFlushed(ping());
+    release(String(dir));
+    await expectGoawayThenFin(idle, 0);
+    expect((await control.body(1)).toString()).toBe("held");
+    control.close();
+  }, 20000);
+});
+
+// These need a build with usockets fault injection (ASAN builds): a send() that takes nothing, or
+// a few bytes only, is the kernel of a peer that does not read.
+describe.skipIf(!fault.available() || isWindows)(
+  "Bun.serve http2 graceful close when the kernel does not take the bytes",
+  () => {
+    const rule = (r: object) => encodeURIComponent(JSON.stringify(r));
+
+    test.each([
+      // send() takes nothing, twice: the GOAWAY stays in the connection's buffer.
+      ["h2c", false, { syscall: "send", action: "zero", repeat: 2 }],
+      // send() takes 5 bytes once: the rest of the sealed GOAWAY record stays in the TLS spill.
+      ["TLS", true, { syscall: "send", action: "short", bytes: 5, repeat: 1 }],
+    ] as const)(
+      "closeIdleConnections() over %s neither counts nor ends a connection whose GOAWAY is not out; both follow",
+      async (_, secure, blocked) => {
+        await using fx = await startFixture({ tls: secure });
+        const idle = await connectWide(fx.port, secure);
+        const control = await connectWide(fx.port, secure);
+        control.headers(1, baseHeaders("/fault-close-idle?rule=" + rule(blocked)));
+        await expectGoawayThenFin(idle, 0);
+        expect((await control.body(1)).toString()).toBe("counts 0,0");
+        control.close();
+      },
+    );
+
+    test("stop() does not cut a response that is still in the connection's buffer", async () => {
+      await using fx = await startFixture({ tls: false });
+      const raw = await connectWide(fx.port, false);
+      raw.headers(1, baseHeaders("/respond-blocked?n=100000"));
+      expect((await raw.body(1)).length).toBe(100000);
+      await expectGoawayThenFin(raw, 1);
+      await fx.stderrHas("STOPPED");
+    });
+
+    test("a connection error whose GOAWAY the kernel does not take closes the connection and ends its streams", async () => {
+      await using fx = await startFixture({ tls: false });
+      const raw = await connectWide(fx.port, false);
+      raw.headers(1, baseHeaders("/abort"));
+      // after: 1 lets the answer to this request out. The next send() is the GOAWAY of the error.
+      raw.headers(3, baseHeaders("/arm?rule=" + rule({ syscall: "send", action: "zero", after: 1, repeat: 1 })));
+      expect((await raw.body(3)).toString()).toBe("armed");
+      raw.write(frame(T.WINDOW_UPDATE, 0, 0, Buffer.from([0x7f, 0xff, 0xff, 0xff])));
+      await raw.waitForClose();
+      await fx.stderrHas("ABORTED");
+    });
+  },
+);

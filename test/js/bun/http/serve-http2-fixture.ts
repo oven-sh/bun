@@ -2,14 +2,17 @@
 // per describe block, driven over real sockets by the test. Prints its port as
 // JSON on stdout once listening and stops on stdin EOF.
 //
-//   bun serve-http2-fixture.ts --big-file <path> [--tls] [--no-http1] [--http3] [--idle-timeout <s>]
+//   bun serve-http2-fixture.ts --big-file <path> [--tls <cert+key json>] [--no-http1] [--http3] [--idle-timeout <s>]
+//
+// The certificate comes in a file and not from "harness": that import alone
+// takes seconds in a debug build, in every fixture a test starts.
 import { serve } from "bun";
-import { tls as tlsCert } from "harness";
+import { existsSync, readFileSync, writeSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 const { values: args } = parseArgs({
   options: {
-    tls: { type: "boolean", default: false },
+    tls: { type: "string" },
     http1: { type: "boolean", default: true },
     http3: { type: "boolean", default: false },
     "idle-timeout": { type: "string", default: "30" },
@@ -21,6 +24,9 @@ const bigFile = args["big-file"]!;
 
 const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
 let lateRead: PromiseWithResolvers<void> | undefined;
+let gate: PromiseWithResolvers<void> | undefined;
+// A marker the test waits for. Synchronous, so that it is out before the handler goes on.
+const mark = (marker: string) => writeSync(2, marker + "\n");
 
 const makeRoutes = () => ({
   "/api/:id": (req: Bun.BunRequest<"/api/:id">) =>
@@ -40,7 +46,7 @@ const makeRoutes = () => ({
 
 const server = serve({
   port: 0,
-  tls: args.tls ? tlsCert : undefined,
+  tls: args.tls ? JSON.parse(readFileSync(args.tls, "utf8")) : undefined,
   http2: true,
   http1: args.http1,
   http3: args.http3,
@@ -274,8 +280,66 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
     case "/passthrough":
       return new Response(req.body, { headers: { "x-passthrough": "1" } });
     case "/stop":
-      setTimeout(() => server.stop(), 0);
+      setTimeout(() => server.stop().then(() => mark("STOPPED")), 0);
       return new Response("stopping");
+    // ?n= bytes, once /hold lets it answer.
+    case "/gate": {
+      gate ??= Promise.withResolvers();
+      mark("GATED");
+      await gate.promise;
+      return new Response(Buffer.alloc(Number(url.searchParams.get("n")), "g"));
+    }
+    // Keeps the event loop stopped until the test creates ?file= (and for ?ms= at least), so
+    // that what the clients write meanwhile is still unread in the kernel when ?do= runs.
+    // Then /gate answers.
+    case "/hold": {
+      const file = url.searchParams.get("file")!;
+      const until = performance.now() + Number(url.searchParams.get("ms") ?? "0");
+      mark("HOLDING");
+      while (!existsSync(file) || performance.now() < until) Bun.sleepSync(1);
+      let result = "held";
+      switch (url.searchParams.get("do")) {
+        case "stop":
+          server.stop().then(() => mark("STOPPED"));
+          break;
+        case "close-idle":
+          result += server.closeIdleConnections() + "," + server.closeIdleConnections();
+          break;
+      }
+      gate?.resolve();
+      gate = undefined;
+      return new Response(result);
+    }
+    // Never answers. When the client resets the stream, the abort listener stops the server:
+    // the connection ends from inside that callback.
+    case "/abort-stop": {
+      req.signal.addEventListener("abort", () => {
+        server.stop().then(() => mark("STOPPED"));
+        server.closeIdleConnections();
+      });
+      return new Promise<Response>(() => {});
+    }
+    // The next three arm a usockets fault in this process (ASAN builds). The module is not
+    // imported at the top: every other test would pay for loading it.
+    // Arms ?rule=, then calls closeIdleConnections() twice.
+    case "/fault-close-idle": {
+      require("bun:internal-for-testing").socketFaultInjection.set(JSON.parse(url.searchParams.get("rule")!));
+      return new Response("counts " + server.closeIdleConnections() + "," + server.closeIdleConnections());
+    }
+    // Answers with ?n= bytes that send() does not take. In the next macrotask, when the response
+    // is with the connection and its stream has retired, stops the server and lets send() work again.
+    case "/respond-blocked": {
+      const fault = require("bun:internal-for-testing").socketFaultInjection;
+      fault.set({ syscall: "send", action: "zero", repeat: -1 });
+      setImmediate(() => {
+        server.stop().then(() => mark("STOPPED"));
+        fault.clear();
+      });
+      return new Response(Buffer.alloc(Number(url.searchParams.get("n")), "g"));
+    }
+    case "/arm":
+      require("bun:internal-for-testing").socketFaultInjection.set(JSON.parse(url.searchParams.get("rule")!));
+      return new Response("armed");
     case "/reload":
       server.reload({
         routes: { ...makeRoutes(), "/reloaded-route": new Response("after-reload") },
@@ -306,8 +370,19 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
 }
 
 console.log(JSON.stringify({ port: server.port }));
-process.stdin.on("end", () => {
-  server.stop(true);
-  process.stderr.write("", () => process.exit(0));
-});
-process.stdin.resume();
+// Bun.stdin and not process.stdin: the node stream takes more than a second to
+// load in a debug build, and every test waits for this process to exit.
+(async () => {
+  for await (const _ of Bun.stdin.stream()) {
+  }
+  // stop(true) closes every connection before it returns, so its promise
+  // settles within the next turns of the event loop, whatever the clients do.
+  let settled = false;
+  server.stop(true).then(() => (settled = true));
+  setImmediate(() =>
+    setImmediate(() => {
+      mark(settled ? "STOPPED-AT-ONCE" : "STOP-PENDING");
+      process.exit(0);
+    }),
+  );
+})();

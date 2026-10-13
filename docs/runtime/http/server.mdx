@@ -330,6 +330,8 @@ await server.stop(true);
 
 By default, `stop()` allows in-flight requests and WebSocket connections to complete. The server closes idle keep-alive connections immediately. Connections with a request in flight close once the server has sent their response. Pass `true` to immediately terminate all connections instead. The returned promise resolves once every connection has closed.
 
+An HTTP/2 connection gets a `GOAWAY` frame and the server ends its side of the connection. The connection closes when the client closes its own side, or after `idleTimeout` (after 8 seconds when that is shorter or disabled).
+
 ### `server.closeIdleConnections()`
 
 To close keep-alive connections that are not currently serving a request, without stopping the server:
@@ -339,7 +341,7 @@ const closed = server.closeIdleConnections();
 console.log(`closed ${closed} idle connections`);
 ```
 
-It returns the number of connections it closed. Connections with a request in flight and open WebSockets are untouched, and the server keeps accepting new connections. This method mirrors `node:http`'s `server.closeIdleConnections()`, which returns nothing.
+It returns the number of connections it closed. An HTTP/2 connection counts when the server ends its side of it. Connections with a request in flight and open WebSockets are untouched, and the server keeps accepting new connections. This method mirrors `node:http`'s `server.closeIdleConnections()`, which returns nothing.
 
 ### `server.ref()` and `server.unref()`
 

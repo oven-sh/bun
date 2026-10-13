@@ -5259,7 +5259,7 @@ describe("a send that the kernel rejects", () => {
             ? undefined
             : () => require("node:tls").connect({ ...options, socket: require("node:net").connect(options) });
           const headers = { "Content-Length": body.length };
-          // The server is slow to answer its first connection.
+          // The first connection finds the server cold: its reset comes after the client has filled the kernel's buffers.
           for (let i = 0; i < 4; i++) {
             const request = require("node:https").request({ ...options, method: "POST", headers, createConnection });
             let outcome = "nothing";
@@ -5284,6 +5284,42 @@ describe("a send that the kernel rejects", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  it("does not report the write that it cut off as done", async () => {
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: COMMON_CERT,
+      socket: { data: socket => socket.terminate() },
+    });
+    await using client = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `// More than the kernel takes for a peer that does not read.
+        const body = Buffer.alloc(32 * 1024 * 1024, "a");
+        const options = { host: "${server.hostname}", port: ${server.port}, rejectUnauthorized: false };
+        // The first connection finds the server cold: its reset comes after the client has filled the kernel's buffers.
+        for (let i = 0; i < 4; i++) {
+          const socket = require("node:tls").connect(options);
+          let written = "pending";
+          socket.on("error", () => {}).write(body, error => (written = error ? "failed" : "done"));
+          await new Promise(resolve => socket.on("close", resolve));
+          console.log(written);
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
+    const outcomes = stdout.trim().split("\n");
+    expect({ count: outcomes.length, done: outcomes.filter(outcome => outcome === "done") }).toEqual({
+      count: 4,
+      done: [],
+    });
+    expect(exitCode).toBe(0);
+  });
 
   it.each([true, false])("in the handshake is a 'tlsClientError' (allowHalfOpen: %p)", async allowHalfOpen => {
     const clientHello = Promise.withResolvers<Buffer>();

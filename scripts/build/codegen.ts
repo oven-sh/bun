@@ -870,14 +870,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, [
-        "run",
-        script,
-        debugFlag(cfg),
-        cfg.buildDir,
-        cfg.typesDir,
-        `--without-bindings=${sources.bindgen.filter(src => !hasSchema(cfg, src)).map(src => basename(src))}`,
-      ]),
+      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir, withoutBindings(cfg, sources)]),
     },
   });
 
@@ -933,6 +926,10 @@ function hasSchema(cfg: CodegenFields, src: string): boolean {
   return cfg.assertions || !src.endsWith("_test.bind.ts");
 }
 
+function withoutBindings(cfg: CodegenFields, sources: Sources): string {
+  return `--without-bindings=${sources.bindgen.filter(src => !hasSchema(cfg, src)).map(src => basename(src))}`;
+}
+
 /** Exported for test/internal/build-codegen-declared-outputs.test.ts. */
 export function emitBindgen({ n, cfg, sources: allSources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
@@ -958,14 +955,16 @@ export function emitBindgen({ n, cfg, sources: allSources, o, dirStamp }: Ctx): 
   n.build({
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
-    inputs: [...sources.bindgen, ...sources.bindgenInternal],
+    inputs: [...allSources.bindgen, ...sources.bindgenInternal],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: ".bind.ts → Generated*.{cpp,h}, generated_bindgen_*.rs",
       args: shJoin(cfg, [
         script,
-        `--sources=${sources.bindgen.map((src, i) => `${crates[i]}=${src}`).join(",")}`,
+        // Every schema: build/types is shared by every profile, so Bindgen.d.ts describes them all.
+        `--sources=${allSources.bindgen.map(src => `${crateOf(src)}=${src}`).join(",")}`,
+        withoutBindings(cfg, allSources),
         `--codegen-path=${cfg.codegenDir}`,
         `--types-path=${cfg.typesDir}`,
       ]),

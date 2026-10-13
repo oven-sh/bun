@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> (emitBindgen in scripts/build/codegen.ts)
+// Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,.. --without-bindings=<b.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> (emitBindgen in scripts/build/codegen.ts)
 
 import assert from "node:assert";
 import path from "node:path";
@@ -65,16 +65,19 @@ function sortTypes(file: SchemaFile): void {
   file.types = sorted;
 }
 
-const args = argParse(["sources", "codegen-path", "types-path"]);
+const args = argParse(["sources", "without-bindings", "codegen-path", "types-path"]);
 const codegenPath: string = args["codegen-path"];
 const sources = (args.sources as string)
   .split(",")
   .filter(source => source.length > 0)
   .sort();
 
-const files: SchemaFile[] = [];
-for (const source of sources) files.push(await load(source));
-files.forEach(sortTypes);
+const allFiles: SchemaFile[] = [];
+for (const source of sources) allFiles.push(await load(source));
+allFiles.forEach(sortTypes);
+/** What this build compiles. The types describe every schema. */
+const without = ((args["without-bindings"] as string | undefined) ?? "").split(",");
+const files = allFiles.filter(file => !without.includes(`${file.origin.stem}.bind.ts`));
 const owners = new Map<string, string>();
 for (const file of files) {
   for (const { name } of file.types) {
@@ -93,4 +96,4 @@ writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Counts.h"), cppCount
 for (const [crate, crateFiles] of Map.groupBy(files, file => file.origin.crate)) {
   writeIfNotChanged(path.join(codegenPath, `generated_bindgen_${crate}.rs`), rustForCrate(crateFiles));
 }
-writeIfNotChanged(path.join(args["types-path"], "Bindgen.d.ts"), dts(files));
+writeIfNotChanged(path.join(args["types-path"], "Bindgen.d.ts"), dts(allFiles));

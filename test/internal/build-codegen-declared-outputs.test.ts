@@ -199,9 +199,18 @@ describe("emitBindgen", () => {
 
       const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
       const typesDir = resolve(String(dir), "types");
-      const sources = /--sources=[^\s'"]+/.exec(n.toString().replaceAll("$:", ":"))![0];
+      const schemas = n
+        .toString()
+        .replaceAll("$:", ":")
+        .match(/--(sources|without-bindings)=[^\s'"]*/g)!;
       expect(
-        await bunRun(["run", script, sources, `--codegen-path=${cfg.codegenDir}`, `--types-path=${typesDir}`]),
+        await bunRun([
+          "run",
+          script,
+          ...new Set(schemas),
+          `--codegen-path=${cfg.codegenDir}`,
+          `--types-path=${typesDir}`,
+        ]),
       ).toSpawn("");
 
       const written = readdirSync(cfg.codegenDir).sort();

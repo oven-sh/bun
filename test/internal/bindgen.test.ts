@@ -75,7 +75,8 @@ it("custom enforceRange boundaries", () => {
   expect(bindgen.requiredAndOptionalArg(false, 0, 0)).toBe(0);
 });
 
-it("unsigned integer dictionary fields reject negative values", () => {
+// Not through the test schema, so on every build.
+itAlways("unsigned integer dictionary fields reject negative values", () => {
   const listen = (tls: Record<string, number>) =>
     Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
 

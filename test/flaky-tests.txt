@@ -51,7 +51,6 @@ test/cli/run/run-crash-handler.test.ts  # 1 of 80 builds; windows; pid 2220 invo
 test/cli/update_interactive_formatting.test.ts  # 1 of 80 builds; ubuntu
 test/cli/watch/watch.test.ts  # 3 of 80 builds; windows; error: stream closed, output so far: "iter first\n"
 test/cli/watch/watcher-trace.test.ts  # 3 of 80 builds; windows
-test/integration/next-pages/test/dev-server-ssr-100.test.ts  # 15 of 80 builds; windows; ConnectionRefused from the next dev server after 98 of 100 requests (windows)
 test/js/bun/cron/in-process-cron.test.ts  # 5 of 80 builds; alpine
 test/js/bun/css/color.test.ts  # 3 of 80 builds; (worker crashed) before reporting results; ansi-16 never emits a 256-color escape: test...
 test/js/bun/http/bun-serve-file.test.ts  # pollable file response survives a client that stops reading and then disconnects: timed out (1 build, 109134, ubuntu 25.04 aarch64). A Bun bug, not fixed yet: on POSIX FileResponseStream does not pause its reader under backpressure

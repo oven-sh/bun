@@ -2442,9 +2442,9 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
     auto iter = headers->createIterator(false);
     unsigned int i = 0;
 
-    for (auto pair = iter.next(); pair; pair = iter.next()) {
-        const auto name = pair->key;
-        const auto value = pair->value;
+    while (auto* entry = iter.nextEntry()) {
+        const auto& name = *entry->key;
+        const auto& value = *entry->value;
 
         ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
         ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
@@ -2488,10 +2488,10 @@ void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* coun
 {
     auto iter = headers->createIterator();
     size_t i = 0;
-    for (auto pair = iter.next(); pair; pair = iter.next()) {
+    while (auto* entry = iter.nextEntry()) {
         // copyTo isomorphic-encodes: one byte per code unit.
-        i += pair->key.length();
-        i += pair->value.length();
+        i += entry->key->length();
+        i += entry->value->length();
     }
 
     *count = headers->size();

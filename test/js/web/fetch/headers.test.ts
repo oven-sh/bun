@@ -546,22 +546,19 @@ describe("Headers", () => {
     ];
     const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-    function walkEveryWay(headers: Headers) {
-      const forEach: [string, string][] = [];
+    function expectEveryWalk(headers: Headers, expected: string[][]) {
+      const forEach: string[][] = [];
       headers.forEach((value, key, parent) => {
         expect(parent).toBe(headers);
         forEach.push([key, value]);
       });
-      const forOf: [string, string][] = [];
-      for (const [key, value] of headers) forOf.push([key, value]);
-      const keys = [...headers.keys()];
       const values = [...headers.values()];
-      return {
+      expect({
         forEach,
-        forOf,
+        forOf: [...headers],
         entries: [...headers.entries()],
-        zipped: keys.map((key, i) => [key, values[i]]),
-      };
+        keysAndValues: [...headers.keys()].map((key, i) => [key, values[i]]),
+      }).toEqual({ forEach: expected, forOf: expected, entries: expected, keysAndValues: expected });
     }
 
     test.each([
@@ -581,12 +578,7 @@ describe("Headers", () => {
       const expected = names
         .map(name => [name.toLowerCase(), `value of ${name}`])
         .sort((a, b) => byCodeUnit(a[0], b[0]));
-      expect(walkEveryWay(headers)).toEqual({
-        forEach: expected,
-        forOf: expected,
-        entries: expected,
-        zipped: expected,
-      });
+      expectEveryWalk(headers, expected);
     });
 
     // What Bun does today. The Fetch spec sorts "set-cookie" in with the other names.
@@ -603,12 +595,7 @@ describe("Headers", () => {
         ["set-cookie", "a=1"],
         ["set-cookie", "b=2"],
       ];
-      expect(walkEveryWay(headers)).toEqual({
-        forEach: expected,
-        forOf: expected,
-        entries: expected,
-        zipped: expected,
-      });
+      expectEveryWalk(headers, expected);
     });
 
     test("a name stored as UTF-16 is lowercased and sorted like any other", () => {

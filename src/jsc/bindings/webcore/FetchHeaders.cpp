@@ -337,54 +337,33 @@ static const std::array<uint8_t, numHTTPHeaderNames>& lowercaseHeaderNameRanks()
 void FetchHeaders::Iterator::collectEntries()
 {
     auto& map = m_headers->internalHeaders();
-    bool hasSetCookie = !map.getSetCookieHeaders().isEmpty();
     m_entries.shrink(0);
-    m_entries.reserveCapacity(map.commonHeaders().size() + map.uncommonHeaders().size() + (hasSetCookie ? 1 : 0));
+    m_entries.reserveCapacity(map.size());
     m_lowercasedKeys.shrink(0);
 
-    if (m_lowerCaseKeys) {
-        for (auto& header : map.commonHeaders())
-            m_entries.unsafeAppendWithoutCapacityCheck(Entry { &WTF::httpHeaderNameStringImpl(header.key), &header.value, header.key });
-        for (auto& header : map.uncommonHeaders()) {
-            String lowercased = lowercaseHeaderName(header.key);
-            const String* key = &header.key;
-            if (lowercased.impl() != header.key.impl()) {
+    auto& knownName = m_lowerCaseKeys ? WTF::httpHeaderNameStringImpl : WTF::httpHeaderNameDefaultCaseStringImpl;
+    for (auto& header : map.commonHeaders())
+        m_entries.unsafeAppendWithoutCapacityCheck(Entry { &knownName(header.key), &header.value, header.key });
+    for (auto& header : map.uncommonHeaders()) {
+        const String* key = &header.key;
+        if (m_lowerCaseKeys) {
+            if (String lowercased = lowercaseHeaderName(header.key); lowercased.impl() != header.key.impl()) {
                 // Room for all of them before the first: the entries point at its elements.
                 m_lowercasedKeys.reserveCapacity(map.uncommonHeaders().size());
                 m_lowercasedKeys.unsafeAppendWithoutCapacityCheck(WTF::move(lowercased));
                 key = &m_lowercasedKeys.last();
             }
-            m_entries.unsafeAppendWithoutCapacityCheck(Entry { key, &header.value, std::nullopt });
         }
-        auto& ranks = lowercaseHeaderNameRanks();
-        std::sort(m_entries.begin(), m_entries.end(), [&](const Entry& a, const Entry& b) {
-            if (a.name && b.name)
-                return ranks[static_cast<size_t>(*a.name)] < ranks[static_cast<size_t>(*b.name)];
-            return WTF::codePointCompareLessThan(*a.key, *b.key);
-        });
-    } else {
-        for (auto& header : map.commonHeaders())
-            m_entries.unsafeAppendWithoutCapacityCheck(Entry { &WTF::httpHeaderNameDefaultCaseStringImpl(header.key), &header.value, header.key });
-        for (auto& header : map.uncommonHeaders())
-            m_entries.unsafeAppendWithoutCapacityCheck(Entry { &header.key, &header.value, std::nullopt });
-        std::sort(m_entries.begin(), m_entries.end(), [](const Entry& a, const Entry& b) {
-            return WTF::codePointCompareLessThan(*a.key, *b.key);
-        });
+        m_entries.unsafeAppendWithoutCapacityCheck(Entry { key, &header.value, std::nullopt });
     }
-    if (hasSetCookie)
-        m_entries.unsafeAppendWithoutCapacityCheck(Entry { &WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), nullptr, HTTPHeaderName::SetCookie });
-
-    m_currentIndex += m_cookieIndex;
-    if (hasSetCookie) {
-        size_t setCookieKeyIndex = m_entries.size() - 1;
-        if (m_currentIndex < setCookieKeyIndex)
-            m_cookieIndex = 0;
-        else {
-            m_cookieIndex = std::min(m_currentIndex - setCookieKeyIndex, map.getSetCookieHeaders().size());
-            m_currentIndex -= m_cookieIndex;
-        }
-    } else
-        m_cookieIndex = 0;
+    const uint8_t* ranks = m_lowerCaseKeys ? lowercaseHeaderNameRanks().data() : nullptr;
+    std::sort(m_entries.begin(), m_entries.end(), [ranks](const Entry& a, const Entry& b) {
+        if (ranks && a.name && b.name)
+            return ranks[static_cast<size_t>(*a.name)] < ranks[static_cast<size_t>(*b.name)];
+        return WTF::codePointCompareLessThan(*a.key, *b.key);
+    });
+    for (auto& cookie : map.getSetCookieHeaders())
+        m_entries.unsafeAppendWithoutCapacityCheck(Entry { &WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), &cookie, HTTPHeaderName::SetCookie });
 
     m_updateCounter = m_headers->m_headers.updateCounter();
 }
@@ -394,21 +373,8 @@ const FetchHeaders::Iterator::Entry* FetchHeaders::Iterator::nextEntry()
     if (m_entries.isEmpty() || m_updateCounter != m_headers->m_headers.updateCounter())
         collectEntries();
 
-    auto& setCookieHeaders = m_headers->getSetCookieHeaders();
-
     while (m_currentIndex < m_entries.size()) {
-        auto& entry = m_entries[m_currentIndex];
-
-        if (entry.name == HTTPHeaderName::SetCookie) {
-            if (m_cookieIndex < setCookieHeaders.size()) {
-                entry.value = &setCookieHeaders[m_cookieIndex++];
-                return &entry;
-            }
-            m_currentIndex++;
-            continue;
-        }
-
-        m_currentIndex++;
+        auto& entry = m_entries[m_currentIndex++];
         if (!entry.value->isNull())
             return &entry;
     }
@@ -426,9 +392,8 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 
 FetchHeaders::Iterator::Iterator(FetchHeaders& headers, bool lowerCaseKeys = true)
     : m_headers(headers)
+    , m_lowerCaseKeys(lowerCaseKeys)
 {
-    m_cookieIndex = 0;
-    m_lowerCaseKeys = lowerCaseKeys;
 }
 
 } // namespace WebCore

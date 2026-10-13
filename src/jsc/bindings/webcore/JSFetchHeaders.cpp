@@ -508,8 +508,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_set, (JSGlobalObject * 
 
 struct FetchHeadersIteratorTraits {
     static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
-    using KeyType = IDLDOMString;
-    using ValueType = IDLDOMString;
 };
 
 using FetchHeadersIteratorBase = JSDOMIteratorBase<JSFetchHeaders, FetchHeadersIteratorTraits>;

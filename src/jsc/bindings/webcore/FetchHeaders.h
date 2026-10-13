@@ -91,7 +91,6 @@ public:
         explicit Iterator(FetchHeaders&);
         Iterator(FetchHeaders&, bool lowerCaseKeys);
         Iterator(Iterator&&) = default;
-        Iterator(const Iterator&) = delete;
         std::optional<KeyValuePair<String, String>> next();
 
         // Points into the headers: valid until they change or nextEntry() is called again.
@@ -107,11 +106,10 @@ public:
 
         Ref<FetchHeaders> m_headers;
         size_t m_currentIndex { 0 };
-        // Sorted by key, then one entry for all the Set-Cookie headers: nextEntry() points it at each in turn.
+        // Sorted by key, then the Set-Cookie headers in the order they were added.
         Vector<Entry> m_entries;
         Vector<String> m_lowercasedKeys;
         uint64_t m_updateCounter { 0 };
-        size_t m_cookieIndex { 0 };
         bool m_lowerCaseKeys { true };
     };
     Iterator createIterator(bool lowerCaseKeys = true)
@@ -137,12 +135,8 @@ private:
     // An iterator points into the map while the counter stands still, so the one way to a map that can be changed moves it.
     class CountedHeaderMap {
     public:
-        explicit CountedHeaderMap(HTTPHeaderMap&& map)
+        explicit CountedHeaderMap(HTTPHeaderMap map)
             : m_map(WTF::move(map))
-        {
-        }
-        explicit CountedHeaderMap(const HTTPHeaderMap& map)
-            : m_map(map)
         {
         }
 

@@ -358,3 +358,18 @@ it("setPriority without arguments throws ERR_MISSING_ARGS", () => {
     expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS", message: "Not enough arguments" }),
   );
 });
+
+it("native functions are not constructors", () => {
+  for (const name of [
+    "freemem",
+    "getPriority",
+    "homedir",
+    "hostname",
+    "loadavg",
+    "release",
+    "setPriority",
+    "totalmem",
+  ]) {
+    expect(() => new os[name]()).toThrow(TypeError);
+  }
+});

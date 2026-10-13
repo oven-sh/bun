@@ -84,3 +84,19 @@ test("scan options", () => {
   expect(scan("package.json", [])).toEqual(scan("package.json", {}));
   expect(scan("*", Object.assign([], { cwd, dot: true }))).toEqual([".dot", "a.txt"]);
 });
+
+test("every option is read before a cwd that is too long is reported", () => {
+  const read: string[] = [];
+  const options = {
+    get cwd() {
+      read.push("cwd");
+      return Buffer.alloc(5000, "a").toString();
+    },
+    get dot() {
+      read.push("dot");
+      return false;
+    },
+  };
+  expect(() => new Bun.Glob("*").scanSync(options)).toThrow("scanSync: invalid `cwd`, longer than");
+  expect(read).toEqual(["cwd", "dot"]);
+});

@@ -537,6 +537,9 @@ test.each([false, true])(
             "\r\n",
         );
         for (const w of wire) sock.write(compressedBinaryFrame(w));
+        // The next bytes are the client's Close frame. The server closes the connection
+        // first (RFC 6455 7.1.1); the client sends no FIN before that.
+        sock.once("data", () => sock.end());
       };
       sock.on("data", onData);
     });

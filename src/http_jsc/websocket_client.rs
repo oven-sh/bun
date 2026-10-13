@@ -1120,11 +1120,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.clear_data();
             return;
         }
-        // shutdown_read/shutdown are deferred to shutdown_after_close_frame()
-        // so the close frame can finish writing first: SHUT_RD on Linux makes
-        // the socket immediately readable (recv → 0), and the resulting on_end
-        // → terminate → cancel(Failure) would RST and discard the buffered
-        // frame.
         let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
         let header = WebsocketHeader::new(((body_len + 2) & 0x7F) as u8, true, Opcode::Close);
         frame[..2].copy_from_slice(&header.slice());
@@ -1156,7 +1151,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if self.enqueue_encoded_bytes(&frame[..frame_len]) {
             let dispatch_code = dispatch_code.unwrap_or(code);
             if self.send_buffer.borrow().readable_length() == 0 {
-                self.shutdown_after_close_frame();
+                self.wait_for_server_close();
                 self.clear_data();
                 self.dispatch_close(dispatch_code, reason);
             } else {
@@ -1170,18 +1165,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// SHUT_RD + SHUT_WR after the close frame is in the kernel send buffer.
-    /// Marks the socket shut-down so loop.c takes the CLEAN_SHUTDOWN branch on
-    /// the subsequent EOF instead of dispatching `on_end → terminate → fail →
-    /// cancel → close(Failure)`, which would RST and discard the queued close
-    /// frame. SSL is excluded because the SSL handshake can happen during
-    /// writes; tunnel mode operates on a detached socket.
-    fn shutdown_after_close_frame(&self) {
-        if !SSL && self.tunnel().is_none() {
-            self.tcp.get().shutdown_read();
-            self.tcp.get().shutdown();
-        }
-        // RFC 6455 7.1.1: the server closes the TCP connection first, within reason.
+    /// Our Close frame is with the transport. Nothing is shut down behind it:
+    /// a `SHUT_RD` or a FIN here makes the kernel reset the connection on the
+    /// server's next frame, and the reset drops what this client sent and the
+    /// kernel still holds. The socket keeps reading (`handle_data` discards)
+    /// until the server closes the TCP connection first (RFC 6455 7.1.1),
+    /// within reason.
+    fn wait_for_server_close(&self) {
         match self.tunnel() {
             Some(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
             None => self.tcp.get().set_timeout(close_timeout_seconds()),
@@ -1190,7 +1180,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn finish_pending_close(&self) {
         if let Some((code, reason)) = self.close_dispatch_pending.take() {
-            self.shutdown_after_close_frame();
+            self.wait_for_server_close();
             self.clear_data();
             self.dispatch_close(code, reason);
         }
@@ -1218,10 +1208,10 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn handle_end(&self, socket: Socket<SSL>) {
         debug_assert!(self.is_same_socket(&socket));
-        if self.has_pending_close_dispatch() {
-            // Peer FIN'd while we're still draining our close frame; finish the
-            // drain on the next writable event instead of RST'ing via
-            // terminate → fail → cancel(Failure).
+        if self.has_pending_close_dispatch() || self.cpp_websocket().is_none() {
+            // The server's FIN behind our Close frame, flushed or not. uSockets
+            // closes the socket next, with a FIN; terminate() would reset it
+            // and drop what the kernel still has to send.
             return;
         }
         self.terminate(ErrorCode::Ended);

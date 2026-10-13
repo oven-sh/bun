@@ -336,3 +336,212 @@ describe.concurrent("wss:// after the close event", () => {
     20_000,
   );
 });
+
+// Behind its Close frame the client shuts nothing down: it keeps reading, and the server closes
+// the TCP connection first (RFC 6455 section 7.1.1). A shutdown(SHUT_RD) or a FIN there makes the
+// kernel reset the connection on the server's next frame, and the reset drops what the client
+// sent and the kernel had not delivered yet.
+describe.concurrent("ws:// after the close event", () => {
+  // The masked frames a client sent: data frames are counted, Close frames are kept.
+  class ClientFrames {
+    messages = 0;
+    bytes = 0;
+    closes: { code: number; reason: string }[] = [];
+    #pending = Buffer.alloc(0);
+
+    push(chunk: Buffer) {
+      let buf = this.#pending.length ? Buffer.concat([this.#pending, chunk]) : chunk;
+      for (;;) {
+        if (buf.length < 2) break;
+        let length = buf[1] & 0x7f;
+        let offset = 2;
+        if (length === 126) {
+          if (buf.length < 4) break;
+          length = buf.readUInt16BE(2);
+          offset = 4;
+        } else if (length === 127) {
+          if (buf.length < 10) break;
+          length = Number(buf.readBigUInt64BE(2));
+          offset = 10;
+        }
+        const mask = buf.subarray(offset, offset + 4);
+        offset += 4;
+        if (buf.length < offset + length) break;
+        const opcode = buf[0] & 0x0f;
+        if (opcode === 0x8) {
+          const payload = Buffer.from(buf.subarray(offset, offset + length));
+          for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+          this.closes.push({ code: payload.readUInt16BE(0), reason: payload.toString("utf8", 2) });
+        } else if (opcode === 0x1 || opcode === 0x2) {
+          this.messages++;
+          this.bytes += length;
+        }
+        buf = buf.subarray(offset + length);
+      }
+      this.#pending = buf;
+    }
+  }
+
+  const CLOSE_1000 = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
+
+  // A raw ws:// server that keeps its side open after the client's FIN. It answers the
+  // opening handshake and hands the socket to `onUpgrade`.
+  async function startRawWsServer(onUpgrade: (socket: Socket, frames: ClientFrames) => void) {
+    const server = createServer({ allowHalfOpen: true }, socket => {
+      let head = "";
+      socket.on("data", function onHead(chunk: Buffer) {
+        head += chunk.toString("latin1");
+        if (!head.includes("\r\n\r\n")) return;
+        socket.off("data", onHead);
+        const key = /Sec-WebSocket-Key:\s*(.*)\r\n/i.exec(head)![1].trim();
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        onUpgrade(socket, new ClientFrames());
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return {
+      url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      [Symbol.dispose]: () => void server.close(),
+    };
+  }
+
+  // A FIN behind the Close frame is in the server's receive queue when the Close frame is.
+  // One more loopback round trip gives this process the time to read it.
+  async function startRoundTrip() {
+    const echo = createServer(socket => void socket.pipe(socket)).listen(0, "127.0.0.1");
+    await once(echo, "listening");
+    return {
+      async roundTrip() {
+        const socket = connect((echo.address() as AddressInfo).port, "127.0.0.1");
+        socket.write("x");
+        await once(socket, "data");
+        socket.destroy();
+      },
+      [Symbol.dispose]: () => void echo.close(),
+    };
+  }
+
+  // The server reads nothing until the client called close(). From then on it answers every
+  // chunk it reads with a frame of its own, like a chat or a ticker, and closes after the
+  // client's Close frame.
+  it("everything sent before close() arrives at a server that keeps talking", async () => {
+    const TICK = Buffer.from([0x81, 0x04, 0x74, 0x69, 0x63, 0x6b]);
+    const upgraded = Promise.withResolvers<{ socket: Socket; frames: ClientFrames }>();
+    using server = await startRawWsServer((socket, frames) => {
+      socket.pause();
+      upgraded.resolve({ socket, frames });
+    });
+
+    const ws = new WebSocket(server.url);
+    const closed = new Promise<{ code: number; wasClean: boolean }>(resolve => {
+      ws.onclose = event => resolve({ code: event.code, wasClean: event.wasClean });
+    });
+    const sent = new Promise<void>(resolve => {
+      ws.onopen = () => {
+        const message = Buffer.alloc(65536, "M").toString();
+        for (let i = 0; i < 8; i++) ws.send(message);
+        ws.close(1000, "bye");
+        resolve();
+      };
+    });
+
+    const { socket, frames } = await upgraded.promise;
+    const departed = departure(socket);
+    socket.on("data", chunk => {
+      frames.push(chunk);
+      if (frames.closes.length === 0) socket.write(TICK);
+      else socket.end(CLOSE_1000);
+    });
+    await sent;
+    socket.write(TICK);
+    socket.resume();
+
+    const [client_left, client] = await Promise.all([departed, closed]);
+    expect({
+      server: { messages: frames.messages, bytes: frames.bytes, closes: frames.closes, client_left },
+      client,
+    }).toEqual({
+      server: {
+        messages: 8,
+        bytes: 8 * 65536,
+        closes: [{ code: 1000, reason: "bye" }],
+        client_left: { fin: true },
+      },
+      client: { code: 1000, wasClean: true },
+    });
+  });
+
+  it("close() sends no FIN before the server's", async () => {
+    using loopback = await startRoundTrip();
+    const fins = Promise.withResolvers<{ beforeTheServers: boolean; client_left: Departure }>();
+    using server = await startRawWsServer((socket, frames) => {
+      const departed = departure(socket);
+      let clientFin = false;
+      socket.on("end", () => (clientFin = true));
+      socket.on("data", async chunk => {
+        frames.push(chunk);
+        if (frames.closes.length === 0) return;
+        await loopback.roundTrip();
+        const beforeTheServers = clientFin;
+        socket.end(CLOSE_1000);
+        fins.resolve({ beforeTheServers, client_left: await departed });
+      });
+    });
+    const ws = new WebSocket(server.url);
+    const closed = new Promise<number>(resolve => (ws.onclose = event => resolve(event.code)));
+    ws.onopen = () => ws.close(1000);
+    expect(await closed).toBe(1000);
+    // The client answers the server's FIN with its own, not with a reset.
+    expect(await fins.promise).toEqual({ beforeTheServers: false, client_left: { fin: true } });
+  });
+
+  // uSockets sweeps its timeouts every 4 s, so a timeout of 1 s takes 4 to 8 s.
+  it("the client closes a connection that its peer keeps open", async () => {
+    using loopback = await startRoundTrip();
+    const fins = Promise.withResolvers<{ afterTheCloseFrame: boolean; client_left: Departure }>();
+    using server = await startRawWsServer((socket, frames) => {
+      const departed = departure(socket);
+      let clientFin = false;
+      socket.on("end", () => {
+        clientFin = true;
+        socket.end();
+      });
+      socket.on("data", async chunk => {
+        frames.push(chunk);
+        if (frames.closes.length === 0) return;
+        await loopback.roundTrip();
+        fins.resolve({ afterTheCloseFrame: clientFin, client_left: await departed });
+      });
+    });
+    await using client = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+            const ws = new WebSocket(process.env.WS_URL);
+            ws.onopen = () => ws.close();
+            ws.onclose = event => console.log(event.code, event.wasClean);
+            // An exit would close the connection too, so stay until the test lets go of stdin.
+            process.stdin.resume();
+          `,
+      ],
+      env: { ...bunEnv, WS_URL: server.url, BUN_CONFIG_WS_CLOSE_TIMEOUT: "1" },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const { value } = await client.stdout.getReader().read();
+    expect(new TextDecoder().decode(value)).toBe("1000 true\n");
+    // No FIN right behind the Close frame, and a FIN (not a reset) when the wait is over.
+    expect(await fins.promise).toEqual({ afterTheCloseFrame: false, client_left: { fin: true } });
+    expect(client.exitCode).toBeNull();
+  }, 20_000);
+});

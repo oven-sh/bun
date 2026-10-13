@@ -115,7 +115,7 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
 describe.concurrent("bun fmt", () => {
   test("a UTF-16 file", async () => {
     const { stderr, exitCode } = await bun({ "a.js": Buffer.from("﻿a;\n", "utf16le") }, ["fmt", "a.js"]);
-    expect(stderr).toStartWith("error: a.js: SyntaxError: This file is UTF-16. bun fmt only reads UTF-8.\n");
+    expect(stderr).toStartWith("error: This file is UTF-16. bun fmt only reads UTF-8\n    at a.js\n\n");
     expect(exitCode).toBe(2);
   });
 

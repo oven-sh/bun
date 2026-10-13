@@ -79,7 +79,21 @@ impl Problem {
         }
     }
 
-    /// `offset`: in `text`, not counting a byte order mark.
+    /// In JavaScript or TypeScript, where U+2028 ends a line too. `offset`: as the parser counts it.
+    #[cold]
+    fn in_file(file: &File, message: &[u8], offset: u32) -> Problem {
+        let at = file.position(offset);
+        Problem {
+            message: message.to_vec(),
+            at: Some(Place {
+                line: at.line,
+                column: at.column + 1,
+                line_text: file.line_text(at.line).to_vec(),
+            }),
+        }
+    }
+
+    /// In any other language. `offset`: in `text`, not counting a byte order mark.
     #[cold]
     fn at(text: &[u8], message: &[u8], offset: u32) -> Problem {
         let text = strings::without_utf8_bom(text);
@@ -379,7 +393,7 @@ fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Problem {
         }
         None => message.extend_from_slice(b"Unexpected token"),
     }
-    Problem::at(file.text(), &message, first.map_or(0, |it| it.start))
+    Problem::in_file(file, &message, first.map_or(0, |it| it.start))
 }
 
 /// For code that isn't JavaScript or TypeScript.
@@ -732,8 +746,8 @@ fn print<'a>(
         false => bun_lint::linter::refusal_of_prettier(file, types),
     };
     if let Some(why) = refusal {
-        return Err(Failure::Syntax(Problem::at(
-            file.text(),
+        return Err(Failure::Syntax(Problem::in_file(
+            file,
             &why.message,
             why.at,
         )));

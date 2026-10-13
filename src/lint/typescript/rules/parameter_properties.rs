@@ -33,12 +33,20 @@ fn modifiers_of(flags: Flags) -> u8 {
     } else {
         0
     };
-    accessibility | if flags.contains(Flags::READONLY) { READONLY } else { 0 }
+    accessibility
+        | if flags.contains(Flags::READONLY) {
+            READONLY
+        } else {
+            0
+        }
 }
 
 /// Where typescript-estree has a `TSParameterProperty`: a keyword is before the parameter.
 fn has_keyword(param: Param) -> bool {
-    param.modifiers().iter().any(|modifier| modifier.decorator().is_none())
+    param
+        .modifiers()
+        .iter()
+        .any(|modifier| modifier.decorator().is_none())
 }
 
 /// The name of a parameter that is an `Identifier` for typescript-estree.
@@ -60,14 +68,21 @@ pub(crate) fn identifier_key<'a>(member: Member<'a>) -> Option<Name<'a>> {
 fn assigned_name<'a>(statement: Stmt<'a>) -> Option<Name<'a>> {
     let (_, target, value) = statement.as_expr()?.as_assign()?;
     let is_property_of_this = match target.kind() {
-        ExprKind::Dot { obj, name, .. } => obj.tag() == ExprTag::This && !name.bytes().starts_with(b"#"),
-        ExprKind::Index { obj, index, .. } => obj.tag() == ExprTag::This && index.tag() == ExprTag::Ident,
+        ExprKind::Dot { obj, name, .. } => {
+            obj.tag() == ExprTag::This && !name.bytes().starts_with(b"#")
+        }
+        ExprKind::Index { obj, index, .. } => {
+            obj.tag() == ExprTag::This && index.tag() == ExprTag::Ident
+        }
         _ => false,
     };
     value.as_ident().filter(|_| is_property_of_this)
 }
 
-fn type_annotations_match<'a>(class_property: Member<'a>, constructor_parameter: Param<'a>) -> bool {
+fn type_annotations_match<'a>(
+    class_property: Member<'a>,
+    constructor_parameter: Param<'a>,
+) -> bool {
     match (class_property.ty(), constructor_parameter.ty()) {
         (Some(a), Some(b)) => {
             let file = a.file();
@@ -88,14 +103,17 @@ impl ParameterProperties {
             && !self.is_allowed(param.flags())
             && let Some(name) = param.pat().as_ident()
         {
-            cx.report(param, PREFER_CLASS_PROPERTY).data("parameter", name);
+            cx.report(param, PREFER_CLASS_PROPERTY)
+                .data("parameter", name);
         }
     }
 
     fn check_class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         let constructors = || {
             let members = class.members().iter();
-            members.filter(|it| it.kind() == MemberKind::Constructor).filter_map(Member::func)
+            members
+                .filter(|it| it.kind() == MemberKind::Constructor)
+                .filter_map(Member::func)
         };
         let mut assigned: FxHashSet<Name<'a>> = FxHashSet::default();
         for constructor in constructors() {
@@ -106,8 +124,10 @@ impl ParameterProperties {
             return;
         }
         // Of several with the same name, the last counts.
-        let parameters: FxHashMap<Name<'a>, Param<'a>> =
-            constructors().flat_map(Func::params).filter_map(|it| Some((plain_name(it)?, it))).collect();
+        let parameters: FxHashMap<Name<'a>, Param<'a>> = constructors()
+            .flat_map(Func::params)
+            .filter_map(|it| Some((plain_name(it)?, it)))
+            .collect();
         let mut properties: FxHashMap<Name<'a>, Member<'a>> = FxHashMap::default();
         for member in class.members() {
             if member.kind() == MemberKind::Property
@@ -119,11 +139,14 @@ impl ParameterProperties {
                 properties.insert(name, member);
             }
         }
-        for name in assigned {
-            if let (Some(parameter), Some(property)) = (parameters.get(&name), properties.get(&name))
+        let place = |name: &Name<'a>| properties.get(name).map(|it| it.span().start);
+        for name in utils::sort::in_order_of(assigned, |it| (place(it), it.bytes())) {
+            if let (Some(parameter), Some(property)) =
+                (parameters.get(&name), properties.get(&name))
                 && type_annotations_match(*property, *parameter)
             {
-                cx.report(*property, PREFER_PARAMETER_PROPERTY).data("parameter", name);
+                cx.report(*property, PREFER_PARAMETER_PROPERTY)
+                    .data("parameter", name);
             }
         }
     }

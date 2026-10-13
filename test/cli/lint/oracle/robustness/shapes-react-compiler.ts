@@ -54,7 +54,7 @@ const tooDeep = (name: string, text: () => string): Case => ({
   rules,
   args: ["-f", "json"],
   matches:
-    /^\{ "diagnostics": \[\{"message": "Support functions of this size","code": "react\(todo\)",.*"help": "What is in it is nested too deeply",.*\}\],$/m,
+    /^\{ "diagnostics": \[\{"message": "Support functions of this size","code": "react\(todo\)",.*"help": "The function body is nested too deeply",.*\}\],$/m,
   exitCode: 1,
 });
 

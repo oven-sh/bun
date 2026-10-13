@@ -713,7 +713,9 @@ impl Rule for NoUnsafeAssignment {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut assignments = std::mem::take(&mut cx.state);
-        assignments.sort_by_key(|it| (it.0.start, std::cmp::Reverse(it.0.end)));
+        utils::sort::sort_by_key(&mut assignments, |it| {
+            (it.0.start, std::cmp::Reverse(it.0.end))
+        });
         for (_, assignment) in assignments {
             match assignment {
                 Assignment::Expr(node) => Self::assign(node, cx),

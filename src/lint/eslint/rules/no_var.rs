@@ -8,17 +8,22 @@ use std::cell::RefCell;
 /// Require `let` or `const` instead of `var`.
 pub struct NoVar;
 
-const UNEXPECTED_VAR: Message = Message::new("unexpectedVar", "Unexpected var, use let or const instead.");
+const UNEXPECTED_VAR: Message =
+    Message::new("unexpectedVar", "Unexpected var, use let or const instead.");
 
 /// ESLint's `getEnclosingFunctionScope`.
 fn get_enclosing_function_scope(scope: Scope<'_>) -> Option<Scope<'_>> {
-    scope.chain().find(|it| matches!(it.kind(), ScopeKind::Function | ScopeKind::Global))
+    scope
+        .chain()
+        .find(|it| matches!(it.kind(), ScopeKind::Function | ScopeKind::Global))
 }
 
 /// ESLint's `isReferencedInClosure`.
 fn is_referenced_in_closure(variable: Symbol<'_>) -> bool {
     let enclosing = get_enclosing_function_scope(variable.scope());
-    variable.references().any(|reference| get_enclosing_function_scope(reference.scope()) != enclosing)
+    variable
+        .references()
+        .any(|reference| get_enclosing_function_scope(reference.scope()) != enclosing)
 }
 
 /// ESLint's `isLoopAssignee`.
@@ -49,7 +54,9 @@ fn scope_node_span(statement: Stmt<'_>) -> Span {
                 return it.span();
             }
             // The body of a function is a `BlockStatement`. A `StaticBlock` is not a scope node.
-            Node::Func(func) if func.kind() != FnKind::StaticBlock && matches!(child, Node::Stmt(_)) => {
+            Node::Func(func)
+                if func.kind() != FnKind::StaticBlock && matches!(child, Node::Stmt(_)) =>
+            {
                 if let Some(body) = func.body_span() {
                     return body;
                 }
@@ -66,31 +73,34 @@ fn has_self_reference_in_tdz(declarator: VarDecl<'_>) -> bool {
         return false;
     };
     let init_span = (!ast_utils::is_function(init)).then(|| init.span());
-    Node::VarDecl(declarator).declared_symbols().into_iter().any(|variable| {
-        let Some(first) = variable.declarations().next() else {
-            return false;
-        };
-        let Some(id) = first.name_span() else {
-            return false;
-        };
-        let default_value = match first {
-            Declaration::Var(pat) | Declaration::Param(pat) => match pat.parent() {
-                Node::PatProp(prop) => prop.default(),
-                Node::PatElem(element) => element.default(),
-                Node::Param(param) => param.default(),
+    Node::VarDecl(declarator)
+        .declared_symbols()
+        .into_iter()
+        .any(|variable| {
+            let Some(first) = variable.declarations().next() else {
+                return false;
+            };
+            let Some(id) = first.name_span() else {
+                return false;
+            };
+            let default_value = match first {
+                Declaration::Var(pat) | Declaration::Param(pat) => match pat.parent() {
+                    Node::PatProp(prop) => prop.default(),
+                    Node::PatElem(element) => element.default(),
+                    Node::Param(param) => param.default(),
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
-        };
-        let default_span = default_value.map(Expr::span);
-        variable.references().any(|reference| {
-            let at = reference.span();
-            !reference.is_init()
-                && (at.start < id.start
-                    || default_span.is_some_and(|it| it.contains(at))
-                    || init_span.is_some_and(|it| it.contains(at)))
+            };
+            let default_span = default_value.map(Expr::span);
+            variable.references().any(|reference| {
+                let at = reference.span();
+                !reference.is_init()
+                    && (at.start < id.start
+                        || default_span.is_some_and(|it| it.contains(at))
+                        || init_span.is_some_and(|it| it.contains(at)))
+            })
         })
-    })
 }
 
 /// What the fixes of a file find out.
@@ -106,24 +116,36 @@ pub struct State<'a> {
 impl<'a> State<'a> {
     /// Where the first call of `function` starts.
     fn first_call(&self, function: Symbol<'a>) -> u32 {
-        *self.first_calls.borrow_mut().entry(function).or_insert_with(|| {
-            let calls = function.references().filter(|it| it.expr().is_some_and(ast_utils::is_callee));
-            calls.map(|it| it.span().start).min().unwrap_or(u32::MAX)
-        })
+        *self
+            .first_calls
+            .borrow_mut()
+            .entry(function)
+            .or_insert_with(|| {
+                let calls = function
+                    .references()
+                    .filter(|it| it.expr().is_some_and(ast_utils::is_callee));
+                calls.map(|it| it.span().start).min().unwrap_or(u32::MAX)
+            })
     }
 
     fn is_in_loop(&self, statement: Stmt<'a>) -> bool {
-        let is_in_loop = self.loops.borrow_mut().find(statement.into(), |_, parent| {
-            match ast_utils::is_function(parent) {
-                true => Some(false),
-                false => ast_utils::is_loop(parent).then_some(true),
-            }
-        });
+        let is_in_loop =
+            self.loops.borrow_mut().find(
+                statement.into(),
+                |_, parent| match ast_utils::is_function(parent) {
+                    true => Some(false),
+                    false => ast_utils::is_loop(parent).then_some(true),
+                },
+            );
         is_in_loop == Some(true)
     }
 
     /// ESLint's `hasUnsafeHoistedFunctionReference`. `declaration_start`: where the declarator starts.
-    fn has_unsafe_hoisted_function_reference(&self, variable: Symbol<'a>, declaration_start: u32) -> bool {
+    fn has_unsafe_hoisted_function_reference(
+        &self,
+        variable: Symbol<'a>,
+        declaration_start: u32,
+    ) -> bool {
         let home = variable.scope();
         for reference in variable.references() {
             if reference.is_init() || reference.span().start < declaration_start {
@@ -135,7 +157,9 @@ impl<'a> State<'a> {
                     && func.kind() == FnKind::Decl
                     && func.has_body()
                     && let Some(name) = func.name()
-                    && let Some(function) = current.parent().and_then(|upper| upper.get_name(name.name()))
+                    && let Some(function) = current
+                        .parent()
+                        .and_then(|upper| upper.get_name(name.name()))
                     && self.first_call(function) < declaration_start
                 {
                     return true;
@@ -170,7 +194,8 @@ impl<'a> State<'a> {
                 || variable.declarations().len() >= 2
                 || variable.name().is("let")
         };
-        if variables.iter().any(is_never_let) || declarations.iter().any(has_self_reference_in_tdz) {
+        if variables.iter().any(is_never_let) || declarations.iter().any(has_self_reference_in_tdz)
+        {
             return false;
         }
 
@@ -183,11 +208,14 @@ impl<'a> State<'a> {
             {
                 return true;
             }
-            let Some(declarator) = variable.declarations().next().and_then(Declaration::node) else {
+            let Some(declarator) = variable.declarations().next().and_then(Declaration::node)
+            else {
                 return true;
             };
             let declaration_start = declarator.span().start;
-            variable.references().any(|reference| !reference.is_init() && reference.span().start < declaration_start)
+            variable
+                .references()
+                .any(|reference| !reference.is_init() && reference.span().start < declaration_start)
                 || self.has_unsafe_hoisted_function_reference(variable, declaration_start)
         };
         if variables.iter().any(|&variable| cannot_be_let(variable)) {
@@ -195,7 +223,10 @@ impl<'a> State<'a> {
         }
 
         if self.is_in_loop(statement) {
-            if variables.iter().any(|&variable| is_referenced_in_closure(variable)) {
+            if variables
+                .iter()
+                .any(|&variable| is_referenced_in_closure(variable))
+            {
                 return false;
             }
             if !is_loop_assignee(statement) && !declarations.iter().all(|it| it.init().is_some()) {
@@ -213,7 +244,10 @@ fn var_keyword(statement: Stmt<'_>) -> Option<Span> {
         Some(last) => skip_trivia(source, last.span().end),
         None => statement.span().start,
     };
-    source.get(start as usize..)?.starts_with(b"var").then(|| Span::new(start, start + 3))
+    source
+        .get(start as usize..)?
+        .starts_with(b"var")
+        .then(|| Span::new(start, start + 3))
 }
 
 /// oxlint's `is_written_to`: something is assigned to one of the variables after the declaration. A default value
@@ -224,7 +258,10 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
         match pat.kind() {
             PatKind::Missing => {}
             PatKind::Ident(_) => {
-                if pat.symbol().is_some_and(|it| it.references().any(|it| it.is_write() && !it.is_init())) {
+                if pat
+                    .symbol()
+                    .is_some_and(|it| it.references().any(|it| it.is_write() && !it.is_init()))
+                {
                     return true;
                 }
             }
@@ -238,7 +275,12 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
                 if elems.iter().any(|it| it.default().is_some()) {
                     return true;
                 }
-                pending.extend(elems.iter().filter(|it| !it.is_rest()).filter_map(PatElem::pat));
+                pending.extend(
+                    elems
+                        .iter()
+                        .filter(|it| !it.is_rest())
+                        .filter_map(PatElem::pat),
+                );
             }
         }
     }
@@ -248,7 +290,11 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
 /// The fix of oxlint 1.87. There is none if a variable is referred to outside of what the declaration is in. It is
 /// `const` if nothing is assigned later and all have a value. All of the declaration is replaced, so that no other fix
 /// changes it in the same pass.
-fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> Option<Fix> {
+fn fix_as_oxlint<'a>(
+    fixer: Fixer<'a>,
+    statement: Stmt<'a>,
+    declarations: List<'a, VarDecl<'a>>,
+) -> Option<Fix> {
     let var = var_keyword(statement)?;
     // A variable does not leave the file. The default value of a parameter is outside of the body of the function.
     let around = match statement.parent() {
@@ -265,7 +311,8 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'
             declaration.pat().for_each_binding(&mut |pat| {
                 // That a parameter gets its default value is no reference for it.
                 leaves |= pat.symbol().is_some_and(|it| {
-                    it.references().any(|it| !around.contains(it.span()) && !(is_body && it.is_init()))
+                    it.references()
+                        .any(|it| !around.contains(it.span()) && !(is_body && it.is_init()))
                 });
             });
         }
@@ -274,7 +321,9 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'
         }
     }
     let is_let = statement.flags().contains(Flags::AMBIENT)
-        || declarations.iter().any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
+        || declarations
+            .iter()
+            .any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
     let (file, span) = (fixer.file(), statement.span_without_export());
     let before = file.slice(Span::before(span.start, var));
     let after = file.slice(Span::after(var, span.end));
@@ -299,13 +348,19 @@ impl Rule for NoVar {
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         // `const`, `let`
-        if matches!(cx.text().get(statement.span().start as usize), Some(b'c' | b'l')) {
+        if matches!(
+            cx.text().get(statement.span().start as usize),
+            Some(b'c' | b'l')
+        ) {
             return;
         }
         let Some(declarations) = statement.as_var() else {
             return;
         };
-        if declarations.first().is_none_or(|it| it.var_kind() != VarKind::Var) {
+        if declarations
+            .first()
+            .is_none_or(|it| it.var_kind() != VarKind::Var)
+        {
             return;
         }
         if let Node::Stmt(parent) = statement.parent()
@@ -318,16 +373,25 @@ impl Rule for NoVar {
         let span = statement.span_without_export();
         // oxlint says nothing about ambient declarations, and points at the keyword.
         let is_oxlint = cx.language().is_oxlint;
-        if is_oxlint && cx.state.ambient.has_ambient_typescript_ancestor(statement.into()) {
+        if is_oxlint
+            && cx
+                .state
+                .ambient
+                .has_ambient_typescript_ancestor(statement.into())
+        {
             return;
         }
         let place = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
-        cx.report(place, UNEXPECTED_VAR).fix(|fixer| {
-            if is_oxlint {
-                return fix_as_oxlint(fixer, statement, declarations);
-            }
-            let var = var_keyword(statement)?;
-            cx.state.can_fix(statement, declarations).then(|| fixer.replace(var, "let"))
-        });
+        cx.report(place, UNEXPECTED_VAR)
+            .called_with(statement)
+            .fix(|fixer| {
+                if is_oxlint {
+                    return fix_as_oxlint(fixer, statement, declarations);
+                }
+                let var = var_keyword(statement)?;
+                cx.state
+                    .can_fix(statement, declarations)
+                    .then(|| fixer.replace(var, "let"))
+            });
     }
 }

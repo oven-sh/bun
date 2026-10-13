@@ -1,4 +1,5 @@
-//! TOML, the way oxfmt formats it. Prettier has no TOML.
+//! TOML, the way oxfmt formats it. Prettier has no TOML. Without an oxfmt config, arrays and inline tables get Bun's own
+//! layout, which `printer.rs` describes.
 //!
 //! oxfmt does it with the crate [`oxc-toml`](https://crates.io/crates/oxc-toml) (MIT license, Ferenc
 //! Tamás, VoidZero Inc. and contributors), a fork of taplo, whose formatter `printer.rs` is a port of,

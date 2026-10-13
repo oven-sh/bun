@@ -1,5 +1,6 @@
 use super::FormatJsxName;
 use crate::js::print::type_parameters::type_arguments;
+use crate::js::utils::tailwindcss::loses_line_breaks;
 use crate::prelude::*;
 use crate::text::is_next_line_empty;
 use crate::{format_args, write};
@@ -19,8 +20,9 @@ fn as_string_literal_attribute_value(attribute: Prop<'_>) -> Option<Expr<'_>> {
     })
 }
 
-fn has_line_break(string: Expr<'_>) -> bool {
+fn has_line_break<'a>(string: Expr<'a>, f: &Formatter<'a>) -> bool {
     bun_core::strings::index_of_any(string.text(), b"\r\n").is_some()
+        && !loses_line_breaks(string, f)
 }
 
 impl<'a> FormatOpeningElement<'a> {
@@ -50,7 +52,7 @@ impl<'a> FormatOpeningElement<'a> {
             && attributes
                 .first()
                 .and_then(as_string_literal_attribute_value)
-                .is_some_and(|it| !has_line_break(it))
+                .is_some_and(|it| !has_line_break(it, f))
         {
             OpeningElementLayout::SingleStringAttribute
         } else {
@@ -146,7 +148,8 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
 
                 let has_multiline_string_attribute = attributes
                     .iter()
-                    .any(|it| as_string_literal_attribute_value(it).is_some_and(has_line_break));
+                    .filter_map(as_string_literal_attribute_value)
+                    .any(|it| has_line_break(it, f));
                 write!(
                     f,
                     group(&format_inner).should_expand(has_multiline_string_attribute)

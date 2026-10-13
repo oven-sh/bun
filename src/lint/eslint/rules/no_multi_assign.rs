@@ -31,8 +31,9 @@ impl Rule for NoMultiAssign {
             }
             _ => false,
         };
+        // oxlint's rule is called with what the assignment is the value of.
         if is_chained {
-            cx.report(e, UNEXPECTED_CHAIN);
+            cx.report(e, UNEXPECTED_CHAIN).called_with(e.parent());
         }
     }
 }

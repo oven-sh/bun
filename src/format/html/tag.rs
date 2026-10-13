@@ -113,11 +113,21 @@ impl<'o> Tags<'_, '_, 'o> {
         });
     }
 
+    /// Whether what is in `id` is written as it is, and `id` has no end tag that says where that ends. Prettier takes it to
+    /// be empty: `<pre><b>a</b>` becomes `<pre>>`. Here it is written to its end, and gets no end tag.
+    pub(crate) fn is_written_to_its_end(self, id: Id) -> bool {
+        let node = &self.tree[id];
+        node.has(Flags::PRESERVES_CONTENT)
+            && !(node.flags).intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
+            && self.tree.has_children(id)
+    }
+
     fn should_not_print_closing_tag(self, id: Id) -> bool {
         !self.tree[id]
             .flags
             .intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
             && (self.tree.has_prettier_ignore(id)
+                || self.is_written_to_its_end(id)
                 || self
                     .tree
                     .parent_of(id)
@@ -286,9 +296,6 @@ impl<'o> Tags<'_, '_, 'o> {
     /// `getNodeContent`
     pub(crate) fn node_content(self, id: Id) -> &'o [u8] {
         let node = &self.tree[id];
-        let Some(end_span) = node.end_span() else {
-            return b"";
-        };
         let mut start = node.start_span.end as usize;
         if self
             .tree
@@ -298,6 +305,17 @@ impl<'o> Tags<'_, '_, 'o> {
             start =
                 start.saturating_sub(self.len_of(|tags, out| tags.opening_tag_end_marker(id, out)));
         }
+        let Some(end_span) = node.end_span() else {
+            if !self.is_written_to_its_end(id) {
+                return b"";
+            }
+            let (mut end, mut at) = (node.span.end, id);
+            while let Some(last) = self.tree.last_child(at) {
+                (end, at) = (end.max(self.tree[last].span.end), last);
+            }
+            let content = self.options.original_text.get(start..end as usize);
+            return content.unwrap_or_default().trim_ascii_end();
+        };
         let mut end = end_span.start as usize;
         if self
             .tree

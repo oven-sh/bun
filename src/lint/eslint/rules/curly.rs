@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use smallvec::SmallVec;
 
 /// Enforce consistent brace style for all control statements.
@@ -54,7 +55,9 @@ fn last_line_excluding_semicolon(statement: Stmt<'_>) -> Option<u32> {
 /// Whether `statement` ends on the line of the token before it.
 fn is_collapsed_one_liner(statement: Stmt<'_>) -> bool {
     let file = statement.file();
-    let before = file.token_before(statement).map(|it| file.line_of(it.start()));
+    let before = file
+        .token_before(statement)
+        .map(|it| file.line_of(it.start()));
     before.is_some() && before == last_line_excluding_semicolon(statement)
 }
 
@@ -62,22 +65,35 @@ fn is_collapsed_one_liner(statement: Stmt<'_>) -> bool {
 /// comment, and the end of `statement` without its `;`. So `;` alone on the next line is none.
 fn is_collapsed_one_liner_for_oxlint(statement: Stmt<'_>) -> bool {
     let file = statement.file();
-    let before = file.text().get(..statement.span().start as usize).unwrap_or_default();
-    let before = before.iter().rposition(|it| !it.is_ascii_whitespace()).map_or(0, |it| it as u32 + 1);
+    let before = file
+        .text()
+        .get(..statement.span().start as usize)
+        .unwrap_or_default();
+    let before = before
+        .iter()
+        .rposition(|it| !it.is_ascii_whitespace())
+        .map_or(0, |it| it as u32 + 1);
     file.line_of(before) == file.line_of(end_without_semicolon_for_oxlint(statement))
 }
 
 /// Where the text of `statement` ends without the `;` and the white space at its end. A comment before the `;` is part
 /// of it.
 fn end_without_semicolon_for_oxlint(statement: Stmt<'_>) -> u32 {
-    let last = statement.text().iter().rposition(|it| !it.is_ascii_whitespace() && *it != b';');
+    let last = statement
+        .text()
+        .iter()
+        .rposition(|it| !it.is_ascii_whitespace() && *it != b';');
     statement.span().start + last.map_or(0, |it| it as u32 + 1)
 }
 
 /// oxlint's `is_followed_by_else_keyword`: it skips a character after the block, and wants a space, a `;` or a `{`
 /// after the `else`, or where that would be.
 fn is_followed_by_else_for_oxlint(block: Stmt<'_>) -> bool {
-    let rest = block.file().text().get(block.span().end as usize..).unwrap_or_default();
+    let rest = block
+        .file()
+        .text()
+        .get(block.span().end as usize..)
+        .unwrap_or_default();
     let skipped = match rest {
         [b'\r', b'\n', ..] | [b'\n', b'\r', ..] => 2,
         [] => return false,
@@ -93,15 +109,18 @@ fn is_followed_by_else_for_oxlint(block: Stmt<'_>) -> bool {
 fn is_one_liner(statement: Stmt<'_>) -> bool {
     let file = statement.file();
     if file.language().is_oxlint && statement.tag() != StmtTag::Empty {
-        return file.line_of(statement.span().start) == file.line_of(end_without_semicolon_for_oxlint(statement));
+        return file.line_of(statement.span().start)
+            == file.line_of(end_without_semicolon_for_oxlint(statement));
     }
     statement.tag() == StmtTag::Empty
-        || last_line_excluding_semicolon(statement) == Some(statement.file().line_of(statement.span().start))
+        || last_line_excluding_semicolon(statement)
+            == Some(statement.file().line_of(statement.span().start))
 }
 
 /// Whether what is in the block that `closing` ends needs a `;` after it once the braces are gone.
 fn needs_semicolon<'a>(file: &'a File<'a>, closing: Token<'a>) -> bool {
-    let (Some(before), Some(after)) = (file.token_before(closing), file.token_after(closing)) else {
+    let (Some(before), Some(after)) = (file.token_before(closing), file.token_after(closing))
+    else {
         return false;
     };
     if ast_utils::is_semicolon_token(&before) {
@@ -112,7 +131,10 @@ fn needs_semicolon<'a>(file: &'a File<'a>, closing: Token<'a>) -> bool {
     let ends_with_block = match utils::get_node_by_range_index(file, before.start()) {
         Node::Stmt(last) => last.as_block().is_some(),
         Node::Func(func) => {
-            func.kind() == FnKind::Decl && func.body_span().is_some_and(|body| body.end == before.end())
+            func.kind() == FnKind::Decl
+                && func
+                    .body_span()
+                    .is_some_and(|body| body.end == before.end())
         }
         _ => false,
     };
@@ -120,7 +142,10 @@ fn needs_semicolon<'a>(file: &'a File<'a>, closing: Token<'a>) -> bool {
         return false;
     }
     file.line_of(before.end()) == file.line_of(after.start())
-        || matches!(after.text().first(), Some(b'(' | b'[' | b'/' | b'`' | b'+' | b'-'))
+        || matches!(
+            after.text().first(),
+            Some(b'(' | b'[' | b'/' | b'`' | b'+' | b'-')
+        )
         || before.is_punctuator("++")
         || before.is_punctuator("--")
 }
@@ -130,12 +155,16 @@ fn remove_braces<'a>(fixer: Fixer<'a>, body: Stmt<'a>) -> Option<Fix> {
     let (file, span) = (fixer.file(), body.span());
     // oxlint takes the braces away, and puts a space after a `do`.
     if file.language().is_oxlint {
-        let is_after_do = matches!(body.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::DoWhile);
+        let is_after_do =
+            matches!(body.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::DoWhile);
         let space: &[u8] = if is_after_do { b" " } else { b"" };
         return Some(fixer.replace(body, [space, file.slice(span.shrink(1, 1))].concat()));
     }
     let needs_preceding_space = file.token_before(body)?.end() == span.start
-        && !ast_utils::can_tokens_be_adjacent(file.token_before(body)?, file.tokens_in(body).nth(1)?);
+        && !ast_utils::can_tokens_be_adjacent(
+            file.token_before(body)?,
+            file.tokens_in(body).nth(1)?,
+        );
     if needs_semicolon(file, file.last_token(body)?) {
         return None;
     }
@@ -147,8 +176,25 @@ fn remove_braces<'a>(fixer: Fixer<'a>, body: Stmt<'a>) -> Option<Fix> {
     Some(fixer.replace(body, replaced))
 }
 
+/// The first `if` of the chain of `if`, `else if` and `else` that `body` is a branch of. oxlint's rule is called with it, and goes
+/// through the chain.
+fn first_of_chain<'a>(body: Stmt<'a>, chains: &mut AncestorMemo<'a, Stmt<'a>>) -> Option<Stmt<'a>> {
+    let link = body.parent().as_stmt();
+    let link = link.filter(|it| it.tag() == StmtTag::If)?;
+    chains.find(Node::Stmt(link), |link, parent| {
+        let link = link.as_stmt()?;
+        let goes_on = parent.as_stmt().and_then(Stmt::as_if);
+        (!goes_on.is_some_and(|it| it.2 == Some(link))).then_some(link)
+    })
+}
+
 impl Curly {
-    fn prepare_check<'a>(&self, body: Stmt<'a>, name: &'static str, has_condition: bool) -> Check<'a> {
+    fn prepare_check<'a>(
+        &self,
+        body: Stmt<'a>,
+        name: &'static str,
+        has_condition: bool,
+    ) -> Check<'a> {
         if self.mode == Mode::All {
             return Check {
                 body,
@@ -162,17 +208,23 @@ impl Curly {
         let only = block.and_then(|it| it.first().filter(|_| it.len() == 1));
         let is_oxlint = body.file().language().is_oxlint;
         let are_braces_necessary = || match is_oxlint {
-            true => ast_utils::are_braces_necessary_if(body, || is_followed_by_else_for_oxlint(body)),
+            true => {
+                ast_utils::are_braces_necessary_if(body, || is_followed_by_else_for_oxlint(body))
+            }
             false => ast_utils::are_braces_necessary(body),
         };
         let expected = match self.mode {
             Mode::All => Some(true),
             _ if block.is_some() && (only.is_none() || are_braces_necessary()) => Some(true),
             Mode::Multi => Some(false),
-            Mode::MultiLine if is_oxlint => (!is_collapsed_one_liner_for_oxlint(body)).then_some(true),
+            Mode::MultiLine if is_oxlint => {
+                (!is_collapsed_one_liner_for_oxlint(body)).then_some(true)
+            }
             Mode::MultiLine => (!is_collapsed_one_liner(body)).then_some(true),
             Mode::MultiOrNest => Some(match only {
-                Some(only) => !is_one_liner(only) || body.file().comments_before(only).next().is_some(),
+                Some(only) => {
+                    !is_one_liner(only) || body.file().comments_before(only).next().is_some()
+                }
                 None => !is_one_liner(body),
             }),
         };
@@ -185,15 +237,28 @@ impl Curly {
         }
     }
 
-    fn report<'a>(&self, check: &Check<'a>, cx: &Cx<'a, Self>) {
+    fn report<'a>(
+        &self,
+        check: &Check<'a>,
+        chains: &mut AncestorMemo<'a, Stmt<'a>>,
+        cx: &Cx<'a, Self>,
+    ) {
         let body = check.body;
+        let chain = match cx.language().is_oxlint {
+            true => first_of_chain(body, chains),
+            false => None,
+        };
+        let report = |message: Message| match chain {
+            Some(first) => cx.report(body, message).called_with(first),
+            None => cx.report(body, message),
+        };
         match check.expected {
             Some(true) if !check.actual => {
                 let message = match check.has_condition {
                     true => MISSING_CURLY_AFTER_CONDITION,
                     false => MISSING_CURLY_AFTER,
                 };
-                cx.report(body, message)
+                report(message)
                     .data("name", check.name)
                     .fix(|fixer| fixer.replace(body, [&b"{"[..], body.text(), b"}"].concat()));
             }
@@ -202,7 +267,7 @@ impl Curly {
                     true => UNEXPECTED_CURLY_AFTER_CONDITION,
                     false => UNEXPECTED_CURLY_AFTER,
                 };
-                cx.report(body, message)
+                report(message)
                     .data("name", check.name)
                     .fix(|fixer| remove_braces(fixer, body));
             }
@@ -212,7 +277,10 @@ impl Curly {
 
     /// Keeps `check` for [`Curly::report_all`] if there is something to report.
     fn note<'a>(check: Check<'a>, cx: &mut Cx<'a, Self>) {
-        if check.expected.is_some_and(|expected| expected != check.actual) {
+        if check
+            .expected
+            .is_some_and(|expected| expected != check.actual)
+        {
             cx.state.push(check);
         }
     }
@@ -222,8 +290,9 @@ impl Curly {
     fn report_all<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut checks = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut checks, |it| it.body.span().start);
+        let mut chains = AncestorMemo::default();
         for check in &checks {
-            self.report(check, cx);
+            self.report(check, &mut chains, cx);
         }
     }
 
@@ -254,7 +323,9 @@ impl Curly {
             checks.push(self.prepare_check(last, "else", false));
         }
         let expected = checks.iter().any(|it| it.expected.unwrap_or(it.actual));
-        checks.iter_mut().for_each(|it| it.expected = Some(expected));
+        checks
+            .iter_mut()
+            .for_each(|it| it.expected = Some(expected));
         for check in checks {
             Self::note(check, cx);
         }
@@ -273,7 +344,13 @@ impl Curly {
     }
 }
 
-const LOOPS: [StmtTag; 5] = [StmtTag::While, StmtTag::DoWhile, StmtTag::For, StmtTag::ForIn, StmtTag::ForOf];
+const LOOPS: [StmtTag; 5] = [
+    StmtTag::While,
+    StmtTag::DoWhile,
+    StmtTag::For,
+    StmtTag::ForIn,
+    StmtTag::ForOf,
+];
 
 impl Rule for Curly {
     const META: Meta = Meta::eslint("curly", Kind::Suggestion).fixable(Fixable::Code);

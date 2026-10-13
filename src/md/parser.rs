@@ -144,7 +144,7 @@ pub(crate) struct Parser<'a> {
     // The index of the one of them that was asked about last.
     pub(crate) inline_line: usize,
     // `Extensions::leaf_bytes`
-    pub(crate) starts_extension_leaf: [bool; 256],
+    pub(crate) starts_extension_leaf: bun_collections::ByteSet,
     // Where the lines of the document start.
     pub(crate) line_starts: Vec<OFF>,
     // The labels of the footnotes that are defined, normalized.
@@ -368,7 +368,7 @@ impl<'a> Parser<'a> {
             extensions: None,
             inline_lines: Vec::new(),
             inline_line: 0,
-            starts_extension_leaf: [false; 256],
+            starts_extension_leaf: bun_collections::ByteSet::init_empty(),
             line_starts: Vec::new(),
             footnote_labels: bun_collections::StringSet::new(),
         };
@@ -431,7 +431,7 @@ impl<'a> Parser<'a> {
             self.mark_char_map[c as usize] |= MARK_HIDES | MARK_EXTENSION;
         }
         for &c in extensions.leaf_bytes {
-            self.starts_extension_leaf[c as usize] = true;
+            self.starts_extension_leaf.set(c as usize);
         }
         self.extensions = Some(extensions);
     }

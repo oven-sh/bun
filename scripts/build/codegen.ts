@@ -339,6 +339,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
   emitBindgen(ctx);
   emitJsSink(ctx);
   emitObjectLuts(ctx);
+  emitLintDocs(ctx);
   emitCompressedEmbeds(ctx);
 
   n.phony("codegen", o.all);
@@ -460,41 +461,89 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
  * shipped to a browser (dev-server client runtime, error overlay, error page).
  * Release builds embed these via `bun_zstd::embed_compressed!` and inflate on
  * first use instead of carrying the plain text in `.rodata`. Anything that runs
- * inside Bun (builtin modules, bake.server.js, FFI headers, …) stays as-is.
+ * inside Bun (builtin modules, bake.server.js, FFI headers, …) stays as-is,
+ * except text that only `bun lint`, `bun fmt` and `bun check` read.
  * Output: `<codegenDir>/compressed/<name>.zst`.
  */
 function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "compress-embed.ts");
-  const assets: { input: string; name: string }[] = [
+  const assets: { inputs: string[]; name: string }[] = [
     // Repo files, named by repo-relative path.
     ...[
       "completions/bun.bash",
       "completions/bun.zsh",
       "completions/bun.fish",
       "src/runtime/bake/bun-framework-react/client.tsx",
-    ].map(rel => ({ input: resolve(cfg.cwd, rel), name: rel })),
-    // Codegen outputs (browser bundles), named `codegen/<path in codegenDir>`.
+      "src/lint/linter/config/presets.txt",
+      "src/lint/linter/deprecated.txt",
+      "src/lint/linter/schema/schemas.txt",
+      "src/lint/oxlint_help.txt",
+      "src/sema/messages.txt",
+      "src/lint/js_plugin/worker/eslint_patch.js",
+    ].map(rel => ({ inputs: [resolve(cfg.cwd, rel)], name: rel })),
+    // Codegen outputs (browser bundles, lint rule docs), named `codegen/<path in codegenDir>`.
     ...[
       "bake.client.js",
       "bake.error.js",
       "bun-error/index.js",
       "bun-error/bun-error.css",
       "node-fallbacks/react-refresh.js",
-    ].map(rel => ({ input: resolve(cfg.codegenDir, rel), name: `codegen/${rel}` })),
+      ...LINT_DOCS,
+    ].map(rel => ({ inputs: [resolve(cfg.codegenDir, rel)], name: `codegen/${rel}` })),
+    // Files that are read together share a frame. The Rust side relies on the order.
+    {
+      name: "lint/plugin-host.js",
+      inputs: ["paths.js", "ast.js", "scope.js", "processor.js", "eslint.js", "prettier.js", "main.js"].map(file =>
+        resolve(cfg.cwd, "src/lint/js_plugin/worker", file),
+      ),
+    },
+    {
+      name: "lint/config-scripts.js",
+      inputs: [
+        "evaluate-start.js",
+        "evaluate-describe.js",
+        "evaluate-stand-ins.js",
+        "evaluate-eslint.js",
+        "evaluate-eslintrc.js",
+        "fmt/evaluate-prettier.js",
+        "fmt/tailwind.js",
+      ].map(file => resolve(cfg.cwd, "src/lint/driver", file)),
+    },
   ];
-  for (const { input, name } of assets) {
+  for (const { inputs, name } of assets) {
     const out = resolve(cfg.codegenDir, "compressed", `${name}.zst`);
     n.build({
       outputs: [out],
       rule: "codegen",
-      inputs: [script, input],
+      inputs: [script, ...inputs],
       orderOnlyInputs: [dirStamp],
-      vars: { cwd: cfg.cwd, desc: `compressed/${name}.zst`, args: shJoin(cfg, [script, input, out]) },
+      vars: { cwd: cfg.cwd, desc: `compressed/${name}.zst`, args: shJoin(cfg, [script, out, ...inputs]) },
     });
     o.all.push(out);
     // Debug reads the originals at runtime; only release embeds these.
     o.rustInputs.push(out);
   }
+}
+
+/** The text that `bun lint --rules` and `bun lint --explain` print. Written to `codegenDir`. */
+const LINT_DOCS = ["lint-rule-pages.txt"];
+
+function emitLintDocs({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-lint-docs.ts");
+  const outputs = LINT_DOCS.map(name => resolve(cfg.codegenDir, name));
+  n.build({
+    outputs,
+    rule: "codegen",
+    inputs: [script, ...sources.lintRuleDocs],
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "lint-rule-pages.txt",
+      args: shJoin(cfg, [script, resolve(cfg.cwd, "docs", "lint", "rules"), ...outputs]),
+    },
+  });
+  o.all.push(...outputs);
+  o.rustInputs.push(...outputs);
 }
 
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {

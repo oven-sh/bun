@@ -163,7 +163,7 @@ impl Rule for RequireAwait {
             };
             cx.report(place, MISSING_AWAIT)
                 .data("name", upper_case_first(&name).into_owned())
-                .suggest(REMOVE_ASYNC, |fixer| remove_async(fixer, func));
+                .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| remove_async(fixer, func));
         }
     }
 }

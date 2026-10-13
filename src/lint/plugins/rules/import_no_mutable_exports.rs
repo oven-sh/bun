@@ -4,7 +4,10 @@ use bun_lint::rule::Plugin;
 /// Forbid the use of mutable exports with `var` or `let`.
 pub struct NoMutableExports;
 
-const MUTABLE: Message = Message::new("", "Exporting mutable '{{kind}}' binding, use 'const' instead.");
+const MUTABLE: Message = Message::new(
+    "",
+    "Exporting mutable '{{kind}}' binding, use 'const' instead.",
+);
 
 impl Rule for NoMutableExports {
     const META: Meta = Meta::plugin(Plugin::Import, "no-mutable-exports", Kind::Suggestion);
@@ -19,7 +22,7 @@ impl Rule for NoMutableExports {
         match stmt.tag() {
             StmtTag::Var => {
                 if stmt.is_exported() {
-                    check_declaration(stmt, cx);
+                    check_declaration(stmt, stmt, cx);
                 }
             }
             StmtTag::ExportDefault => {
@@ -47,7 +50,8 @@ impl Rule for NoMutableExports {
     }
 }
 
-fn check_declaration<'a>(declaration: Stmt<'a>, cx: &Cx<'a, NoMutableExports>) {
+/// `export`: what exports it, which oxlint's rule is called with.
+fn check_declaration<'a>(declaration: Stmt<'a>, export: Stmt<'a>, cx: &Cx<'a, NoMutableExports>) {
     let StmtKind::Var(declarators) = declaration.kind() else {
         return;
     };
@@ -56,10 +60,16 @@ fn check_declaration<'a>(declaration: Stmt<'a>, cx: &Cx<'a, NoMutableExports>) {
         Some(VarKind::Let) => "let",
         _ => return,
     };
-    cx.report(declaration.span_without_export(), MUTABLE).data("kind", kind);
+    cx.report(declaration.span_without_export(), MUTABLE)
+        .called_with(export)
+        .data("kind", kind);
 }
 
-fn check_declarations_in_scope<'a>(export: Stmt<'a>, name: Name<'a>, cx: &Cx<'a, NoMutableExports>) {
+fn check_declarations_in_scope<'a>(
+    export: Stmt<'a>,
+    name: Name<'a>,
+    cx: &Cx<'a, NoMutableExports>,
+) {
     let Some(symbol) = Node::Stmt(export).scope().get_name(name) else {
         return;
     };
@@ -67,7 +77,7 @@ fn check_declarations_in_scope<'a>(export: Stmt<'a>, name: Name<'a>, cx: &Cx<'a,
         if declaration.kind() == Some(DeclarationKind::Variable)
             && let Some(Node::Stmt(parent)) = declaration.parent()
         {
-            check_declaration(parent, cx);
+            check_declaration(parent, export, cx);
         }
     }
 }

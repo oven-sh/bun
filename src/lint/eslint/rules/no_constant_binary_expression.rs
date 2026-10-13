@@ -3,11 +3,14 @@ use bun_lint::utils::ast_utils::{
     Constants, is_constant, is_constant_in, is_ecmascript_global, is_global_reference, is_literal,
     is_reference_to_global_variable,
 };
+use bun_lint::utils::eslint_utils::get_static_value;
 use smallvec::SmallVec;
 
 /// Disallow expressions where the operation doesn't affect the value.
 pub struct NoConstantBinaryExpression {
     check_relational_comparisons: Option<bool>,
+    /// `allowLiteralToggle`, which only `bun lint` has.
+    allow_literal_toggle: bool,
 }
 
 const CONSTANT_BINARY_OPERAND: Message = Message::new(
@@ -284,7 +287,7 @@ fn is_static_literal(e: Expr<'_>) -> bool {
 }
 
 impl Rule for NoConstantBinaryExpression {
-    const META: Meta = Meta::eslint("no-constant-binary-expression", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-constant-binary-expression", Kind::Problem).recommended().hints();
     const ON: On = On::new().binaries(&[
         BinOp::And,
         BinOp::Or,
@@ -303,6 +306,7 @@ impl Rule for NoConstantBinaryExpression {
     fn new(options: &Options) -> Self {
         NoConstantBinaryExpression {
             check_relational_comparisons: options.object(0).bool("checkRelationalComparisons"),
+            allow_literal_toggle: options.object(0).bool_or("allowLiteralToggle", false),
         }
     }
 
@@ -333,6 +337,7 @@ impl Rule for NoConstantBinaryExpression {
             return;
         };
         let may_be_constant = match op {
+            BinOp::And | BinOp::Or if self.allow_literal_toggle && is_toggle(left) => false,
             // That is all of the test.
             BinOp::And | BinOp::Or => is_constant_in(left, true, &mut cx.state),
             BinOp::Nullish => !matches!(left.tag(), ExprTag::Dot | ExprTag::Index),
@@ -342,6 +347,15 @@ impl Rule for NoConstantBinaryExpression {
         if may_be_constant {
             Self::check(e, (op, left, right), cx);
         }
+    }
+}
+
+/// `true`, `false`, `0` or `1`. In front of `&&` or `||` it's how people switch a piece of code off or on for a while.
+fn is_toggle(e: Expr<'_>) -> bool {
+    match e.kind() {
+        ExprKind::True | ExprKind::False => true,
+        ExprKind::Number(value) => value == 0.0 || value == 1.0,
+        _ => false,
     }
 }
 
@@ -385,6 +399,24 @@ fn may_be_static_literal(e: Expr<'_>) -> bool {
     }
 }
 
+/// The hint for a `&&`, `||` or `??` that always picks the same side. `left` is its left side.
+fn why_short_circuit(op: BinOp, left: Expr) -> &'static str {
+    let value = get_static_value(left, Some(Node::Expr(left).scope()));
+    let is_object = matches!(left.tag(), ExprTag::Object | ExprTag::Array | ExprTag::Fn | ExprTag::Class | ExprTag::New);
+    let value = value.map(|it| (it.is_truthy(), it.is_nullish())).or_else(|| is_object.then_some((true, false)));
+    match (op, value) {
+        (BinOp::Or, Some((true, _))) => "The left side is always truthy, so the right side is never used.",
+        (BinOp::Or, Some((false, _))) => "The left side is always falsy, so the result is always the right side.",
+        (BinOp::And, Some((true, _))) => "The left side is always truthy, so the result is always the right side.",
+        (BinOp::And, Some((false, _))) => "The left side is always falsy, so the right side is never used.",
+        (BinOp::Nullish, Some((_, true))) => "The left side is always null or undefined, so the result is always the right side.",
+        (BinOp::Nullish, _) => "The left side is never null or undefined, so the right side is never used.",
+        _ => "The left side is always truthy or always falsy. Are parentheses missing?",
+    }
+}
+
+const SAME_RESULT: &str = "The result is always the same. Are parentheses missing?";
+
 impl NoConstantBinaryExpression {
     #[inline(never)]
     fn check<'a>(e: Expr<'a>, (op, left, right): (BinOp, Expr<'a>, Expr<'a>), cx: &mut Cx<'a, Self>) {
@@ -394,13 +426,15 @@ impl NoConstantBinaryExpression {
             BinOp::And | BinOp::Or => {
                 cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                     .data("property", "truthiness")
-                    .data("operator", bin_op_text(op));
+                    .data("operator", bin_op_text(op))
+                    .hint(why_short_circuit(op, left));
             }
             BinOp::Nullish => {
                 if has_constant_nullishness(left, false) {
                     cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                         .data("property", "nullishness")
-                        .data("operator", bin_op_text(op));
+                        .data("operator", bin_op_text(op))
+                        .hint(why_short_circuit(op, left));
                 }
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
@@ -408,11 +442,13 @@ impl NoConstantBinaryExpression {
                 if is_constant_operand(left, right, is_strict) {
                     cx.report(right_place, CONSTANT_BINARY_OPERAND)
                         .data("operator", bin_op_text(op))
-                        .data("otherSide", "left");
+                        .data("otherSide", "left")
+                        .hint(SAME_RESULT);
                 } else if is_constant_operand(right, left, is_strict) {
                     cx.report(left_place, CONSTANT_BINARY_OPERAND)
                         .data("operator", bin_op_text(op))
-                        .data("otherSide", "right");
+                        .data("otherSide", "right")
+                        .hint(SAME_RESULT);
                 } else if is_strict {
                     if is_always_new(left) {
                         cx.report(left_place, ALWAYS_NEW);

@@ -123,6 +123,7 @@ pub fn check<'a, R: Rule>(
             // oxlint points at the member before.
             let place = if is_oxlint { before.and_then(key_span).unwrap_or_default() } else { key };
             cx.report(place, UNEXPECTED)
+                .hint("Only the last one counts.")
                 .labels_with(|labels| {
                     labels.push(key, format!("\"{}\" is re-declared here", bstr::BStr::new(&name[..])));
                 })
@@ -132,7 +133,7 @@ pub fn check<'a, R: Rule>(
 }
 
 impl Rule for NoDupeClassMembers {
-    const META: Meta = Meta::eslint("no-dupe-class-members", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-dupe-class-members", Kind::Problem).recommended().hints();
     const ON: On = On::new().classes();
     type State<'a> = Seen<'a>;
 

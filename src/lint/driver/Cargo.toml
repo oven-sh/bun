@@ -26,9 +26,11 @@ bun_ast.workspace = true
 bun_clap.workspace = true
 bun_collections.workspace = true
 bun_core.workspace = true
+bun_md.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
+bun_zstd.workspace = true
 bstr.workspace = true
 
 [lints]

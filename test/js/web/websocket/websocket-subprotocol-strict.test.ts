@@ -64,20 +64,31 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     };
   }
 
-  async function expectConnectionFailure(port: number, protocols: string[], expectedCode = 1002) {
-    const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers();
+  /** The connection fails: an 'error' event, then a 'close' that is not clean. */
+  async function expectConnectionFailure(
+    port: number,
+    protocols: string[],
+    expectedCode = 1002,
+    reason = "Mismatch client protocol",
+  ) {
+    const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers<void>();
 
     const ws = new WebSocket(`ws://localhost:${port}`, protocols);
     const onopenMock = mock(() => {});
     ws.onopen = onopenMock;
 
+    const events: string[] = [];
+    ws.onerror = error => events.push(`error: ${(error as ErrorEvent).message}`);
     ws.onclose = close => {
-      expect(close.code).toBe(expectedCode);
-      expect(close.reason).toBe("Mismatch client protocol");
+      events.push(`close: ${close.code} ${close.reason}, wasClean ${close.wasClean}`);
       resolveClose();
     };
 
     await closePromise;
+    expect(events).toEqual([
+      `error: WebSocket connection to 'ws://localhost:${port}/' failed: ${reason}`,
+      `close: ${expectedCode} ${reason}, wasClean false`,
+    ]);
     expect(onopenMock).not.toHaveBeenCalled();
   }
 
@@ -195,17 +206,7 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
 
   it("should fail the connection when subprotocols were requested but the server omits the Sec-WebSocket-Protocol header, and should connect without a subprotocol when none were requested and the server sends none", async () => {
     await using server = await createTestServer([]);
-    const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers<CloseEvent>();
-
-    const ws = new WebSocket(`ws://localhost:${server.port}`, ["chat", "echo"]);
-    const onopenMock = mock(() => {});
-    ws.onopen = onopenMock;
-    ws.onclose = close => resolveClose(close);
-
-    const close = await closePromise;
-    expect(close.code).toBe(1002);
-    expect(close.reason).toBe("Missing client protocol");
-    expect(onopenMock).not.toHaveBeenCalled();
+    await expectConnectionFailure(server.port, ["chat", "echo"], 1002, "Missing client protocol");
 
     const { promise: openPromise, resolve: resolveOpen, reject } = Promise.withResolvers<void>();
     const bare = new WebSocket(`ws://localhost:${server.port}`);

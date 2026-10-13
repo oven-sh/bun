@@ -58,6 +58,7 @@
 #include "CryptoKeyRSA.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "VectorSizeLimit.h"
 #include "node/crypto/CryptoUtil.h"
 #include <openssl/bytestring.h>
 #include <openssl/err.h>
@@ -1432,15 +1433,21 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                         return;
                     }
                     CString jwkUTF8String = jwkString.utf8(StrictConversion);
-                    bytes.append(jwkUTF8String.span());
 
                     // AES-KW (RFC 3394) can only wrap plaintext whose length is a multiple of
                     // 8 bytes. A serialized JWK usually isn't, so pad it with trailing spaces,
                     // which JSON.parse ignores when the key is unwrapped. This matches Node.js.
-                    if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW) {
-                        while (bytes.size() % 8)
-                            bytes.append(' ');
+                    size_t paddedSize = jwkUTF8String.length();
+                    if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW)
+                        paddedSize = roundUpToMultipleOf(8, paddedSize);
+                    if (paddedSize > Bun::maxVectorSize<uint8_t>() || !bytes.tryReserveInitialCapacity(paddedSize)) [[unlikely]] {
+                        weakThis->m_pendingPromises.remove(index);
+                        promise->reject(OperationError, "Input data is too large"_s);
+                        return;
                     }
+                    bytes.append(jwkUTF8String.span());
+                    while (bytes.size() < paddedSize)
+                        bytes.append(' ');
                 }
                 }
 

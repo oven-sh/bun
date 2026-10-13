@@ -347,10 +347,11 @@ describe("oversized inputs", () => {
 describe("oversized outputs", () => {
   // The input cap above leaves room for an output that is larger than the
   // input: AES-GCM and ChaCha20-Poly1305 append a tag, AES-CBC pads up to the
-  // next block, AES-KW adds 8 bytes. The OpenSSL backends size that output
-  // buffer themselves, and the Vector size constructor aborts the process
-  // when the size is over the cap. The synthetic limit lowers the cap to
-  // 1 MiB so each backend is tested on both sides of it with small buffers.
+  // next block, AES-KW adds 8 bytes, and a JWK export base64-encodes the key.
+  // The OpenSSL backends size that output buffer themselves, and the Vector
+  // size constructor aborts the process when the size is over the cap. The
+  // synthetic limit lowers the cap to 1 MiB so each path is tested on both
+  // sides of it with small buffers.
   it("rejects an output over the buffer limit and accepts one at the limit", async () => {
     const script = `
       import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
@@ -373,9 +374,14 @@ describe("oversized outputs", () => {
           results[label] = e.name;
         }
       };
-      const wrap = async size => {
-        const key = await subtle.importKey("raw", new Uint8Array(size), { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
-        return subtle.wrapKey("raw", key, kek, "AES-KW");
+      const hmac = size => subtle.importKey("raw", new Uint8Array(size), { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+      const wrap = async (format, size) => subtle.wrapKey(format, await hmac(size), kek, "AES-KW");
+      const exportJwk = async size => {
+        try {
+          results["HMAC jwk export " + (size * 4 > limit * 3 ? "over" : "at") + " limit"] = (await subtle.exportKey("jwk", await hmac(size))).k.length;
+        } catch (e) {
+          results["HMAC jwk export over limit"] = e.name;
+        }
       };
 
       await record("AES-GCM at limit", subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(limit - 16)));
@@ -384,8 +390,12 @@ describe("oversized outputs", () => {
       await record("ChaCha20-Poly1305 over limit", subtle.encrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chachaKey, new Uint8Array(limit - 15)));
       await record("AES-CBC at limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit - 1)));
       await record("AES-CBC over limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit)));
-      await record("AES-KW at limit", wrap(limit - 8));
-      await record("AES-KW over limit", wrap(limit));
+      await record("AES-KW at limit", wrap("raw", limit - 8));
+      await record("AES-KW over limit", wrap("raw", limit));
+      // base64url of 3 bytes is 4 characters, so a 768 KiB key encodes to exactly 1 MiB.
+      await exportJwk((limit / 4) * 3);
+      await exportJwk((limit / 4) * 3 + 3);
+      await record("AES-KW jwk over limit", wrap("jwk", (limit / 4) * 3));
 
       // The process is still usable after a rejection.
       const small = await subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(16).fill(5));
@@ -411,6 +421,9 @@ describe("oversized outputs", () => {
       "AES-CBC over limit": "OperationError",
       "AES-KW at limit": 1024 * 1024,
       "AES-KW over limit": "OperationError",
+      "HMAC jwk export at limit": 1024 * 1024,
+      "HMAC jwk export over limit": "OperationError",
+      "AES-KW jwk over limit": "OperationError",
       "small round-trip": "ok",
     });
     expect(exitCode).toBe(0);

@@ -481,7 +481,7 @@ pub fn do_patch_commit(
             bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
 
         // `Global::crash()` runs no deferred restore: the patch hash goes back before any exit below.
-        let patch_hash = match PatchStamp::take_out(new_folder, pkg.resolution.tag) {
+        let patch_hash = match PatchStamp::take_out(new_folder, old_folder, pkg.resolution.tag) {
             Ok(patch_hash) => patch_hash,
             Err(e) => {
                 bun_core::pretty_error!(

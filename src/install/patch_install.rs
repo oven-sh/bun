@@ -207,6 +207,32 @@ impl PatchStamp {
         }
     }
 
+    /// The patch hash that `contents` of [`Self::file`] hold.
+    fn held(tag: ResolutionTag, contents: &[u8]) -> Option<&[u8]> {
+        match tag {
+            ResolutionTag::Git | ResolutionTag::Github => {
+                contents.get(Self::bun_tag_resolved(contents).len() + 1..)
+            }
+            _ => crate::bun_json::PackageJSONVersionChecker::leading_patch_hash(contents),
+        }
+    }
+
+    /// Whether the unpatched package holds `patch_hash` itself: it was published from a patched copy.
+    pub(crate) fn published_with(
+        unpatched_dir: Fd,
+        unpatched_folder: &[u8],
+        tag: ResolutionTag,
+        patch_hash: &[u8],
+    ) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+            &mut buf.0,
+            &[unpatched_folder, Self::file(tag).as_bytes()],
+        );
+        sys::File::read_from(unpatched_dir, path.as_bytes())
+            .is_ok_and(|contents| Self::held(tag, &contents) == Some(patch_hash))
+    }
+
     /// `node_modules/<temporary name>`: outside the folder that `bun patch --commit` diffs, on its filesystem.
     fn aside(extname: &[u8]) -> ZBox {
         let mut name_buf = [0u8; 64];
@@ -223,7 +249,11 @@ impl PatchStamp {
     }
 
     /// Swaps [`Self::file`] of the copy for one without the patch hash. Returns where the original waits for [`Self::put_back`].
-    pub(crate) fn take_out(folder: &[u8], tag: ResolutionTag) -> sys::Result<Option<ZBox>> {
+    pub(crate) fn take_out(
+        folder: &[u8],
+        unpatched_folder: &[u8],
+        tag: ResolutionTag,
+    ) -> sys::Result<Option<ZBox>> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut buf.0,
@@ -235,6 +265,12 @@ impl PatchStamp {
         let Some(unstamped) = Self::unstamped(tag, &contents) else {
             return sys::Result::Ok(None);
         };
+        // A hash that the unpatched package holds too is a key of the package itself, not the mark of a patch.
+        if Self::held(tag, &contents)
+            .is_some_and(|hash| Self::published_with(Fd::cwd(), unpatched_folder, tag, hash))
+        {
+            return sys::Result::Ok(None);
+        }
 
         // The original is renamed, never rewritten: it can share its inode with the cache, and a rename back cannot fail for space.
         let replacement = Self::aside(b"without-patch-hash");

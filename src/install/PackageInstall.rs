@@ -813,23 +813,6 @@ impl<'a> PackageInstall<'a> {
                 .directory_exists_at(root_node_modules_dir, self.destination_dir_subpath)
     }
 
-    /// A package that was published from a patched copy has the key in the package.json of its cache folder.
-    fn published_with_patch_hash(&self, patch_hash: &[u8]) -> bool {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let package_json_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-            &mut buf.0,
-            &[self.cache_dir_subpath.as_bytes(), b"package.json"],
-        );
-        let Ok(contents) = sys::File::read_from(self.cache_dir, package_json_path.as_bytes())
-        else {
-            return false;
-        };
-        let source = bun_ast::Source::init_path_string(b"package.json".as_slice(), &contents[..]);
-        let mut log = bun_ast::Log::init();
-        let mut checker = bun_json::PackageJSONVersionChecker::init(&source, &mut log);
-        checker.parse().is_ok() && checker.found_patch_hash() == patch_hash
-    }
-
     fn get_installed_package_json_source(
         &mut self,
         root_node_modules_dir: &Dir,
@@ -994,7 +977,15 @@ impl<'a> PackageInstall<'a> {
                 let mut buf = [0u8; 16];
                 found_patch_hash == PatchStamp::hex(&mut buf, patch.contents_hash)
             }
-            None => found_patch_hash.is_empty() || self.published_with_patch_hash(found_patch_hash),
+            None => {
+                found_patch_hash.is_empty()
+                    || PatchStamp::published_with(
+                        self.cache_dir,
+                        self.cache_dir_subpath.as_bytes(),
+                        resolution_tag,
+                        found_patch_hash,
+                    )
+            }
         }
     }
 

@@ -1329,13 +1329,15 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
   }
 
   // A package that someone published from a patched copy has the key in its own package.json.
+  const shipsKey = {
+    "ships-key": {
+      "package.json": `{"_bunPatchHash":"0123456789abcdef","name":"ships-key","version":"1.0.0"}`,
+      "index.js": "module.exports = 1;\n",
+    },
+  };
+
   test.concurrent("a package that is published with the patch hash key is installed once", async () => {
-    using dir = tempDir("published-with-patch-hash", {
-      "ships-key": {
-        "package.json": `{"_bunPatchHash":"0123456789abcdef","name":"ships-key","version":"1.0.0"}`,
-        "index.js": "module.exports = 1;\n",
-      },
-    });
+    using dir = tempDir("published-with-patch-hash", shipsKey);
     const { server, app, installed } = await projectWithPackage(String(dir), "ships-key");
     using _ = server;
 
@@ -1344,6 +1346,24 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       "_bunPatchHash",
       "0123456789abcdef",
     ]);
+    expect(await install(app)).toContain("(no changes)");
+  });
+
+  test.concurrent("`bun patch --commit` leaves the key of a package that is published with it", async () => {
+    using dir = tempDir("patch-published-with-patch-hash", shipsKey);
+    const { server, app, installed } = await projectWithPackage(String(dir), "ships-key");
+    using _ = server;
+    const patch = Bun.file(join(app, "patches", "ships-key@1.0.0.patch"));
+
+    await install(app);
+    // The first commit sees only the key of the package. The second one also sees the hash of the first patch.
+    for (const edit of ["first", "second"]) {
+      await bun(app, ["patch", "ships-key"]);
+      await Bun.write(join(installed, `${edit}.txt`), `${edit}\n`);
+      await bun(app, ["patch", "--commit", "node_modules/ships-key"]);
+      expect(await patch.text()).toContain(`${edit}.txt`);
+      expect(await patch.text()).not.toContain("package.json");
+    }
     expect(await install(app)).toContain("(no changes)");
   });
 
@@ -1434,14 +1454,24 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 
     test.concurrent("`bun patch --commit` keeps the patch hash out of the next patch", async () => {
       const { packageDir, noDeps } = await patchedProject(linker);
+      const packageJson = join(noDeps, "package.json");
+      const patch = Bun.file(join(packageDir, "patches", "no-deps@1.0.0.patch"));
 
       await bun(packageDir, ["patch", "no-deps"]);
       await Bun.write(join(noDeps, "second.txt"), "second\n");
       await bun(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+      expect(await patch.text()).toContain("second.txt");
+      expect(await patch.text()).not.toContain("package.json");
 
-      const patch = await Bun.file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text();
-      expect(patch).toContain("second.txt");
-      expect(patch).not.toContain("_bunPatchHash");
+      // A formatter changes the spacing around the key.
+      await bun(packageDir, ["patch", "no-deps"]);
+      const written = await Bun.file(packageJson).text();
+      expect(written).toStartWith('{"_bunPatchHash":"');
+      await Bun.write(packageJson, written.replace('{"_bunPatchHash":"', '{\n  "_bunPatchHash": "'));
+      await Bun.write(join(noDeps, "third.txt"), "third\n");
+      await bun(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+      expect(await patch.text()).toContain("third.txt");
+      expect(await patch.text()).not.toContain("package.json");
     });
 
     test.concurrent("a `bun patch --commit` that fails keeps the edits", async () => {

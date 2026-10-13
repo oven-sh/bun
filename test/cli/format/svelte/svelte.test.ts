@@ -879,7 +879,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ],
       // With a second one there is a line for it.
       [
-        "{#snippet row({ b } // c\n = {}, d)}y{/snippet}\n",
+        "{#snippet row(\n  { b }   = {}, // c\n  d,\n)}y{/snippet}\n",
         "{#snippet row(\n  { b } = {}, // c\n  d,\n)}y{/snippet}\n",
         null,
       ],

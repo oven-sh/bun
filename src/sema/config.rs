@@ -48,19 +48,35 @@ impl ConfigError {
         }
     }
 
-    /// `problem`, in the configuration file at `config_path`, which may be absent. The syntax tree
-    /// of the file is left in `session`.
-    pub fn of_problem(
+    /// `problems`, in the configuration file at `config_path`, which may be absent. It is parsed
+    /// once for all of them: each of thousands of `paths` can have one. The syntax tree of the file
+    /// is left in `session`.
+    pub fn of_problems<'a>(
         host: &dyn Host,
         session: &Session,
         config_path: &[u8],
-        problem: &crate::verify::Problem,
-    ) -> ConfigError {
-        let at = (!config_path.is_empty())
+        problems: impl IntoIterator<Item = &'a Problem>,
+    ) -> Vec<ConfigError> {
+        let mut problems = problems.into_iter().peekable();
+        if problems.peek().is_none() {
+            return Vec::new();
+        }
+        let file = (!config_path.is_empty())
             .then(|| host.read(config_path))
             .flatten()
-            .and_then(|text| TsConfigSourceFile::parse(host, session, text))
-            .and_then(|file| problem.span_in(&file))
+            .and_then(|text| TsConfigSourceFile::parse(host, session, text));
+        problems
+            .map(|problem| Self::of_problem(file.as_ref(), config_path, problem))
+            .collect()
+    }
+
+    fn of_problem(
+        file: Option<&TsConfigSourceFile>,
+        config_path: &[u8],
+        problem: &Problem,
+    ) -> ConfigError {
+        let at = file
+            .and_then(|file| problem.span_in(file))
             .map(|(from, to)| (config_path.to_vec(), from, to));
         ConfigError {
             code: problem.code,
@@ -102,7 +118,8 @@ pub struct Project {
     /// `ProjectReferences() != nil`: `references` is an array, whatever is in it.
     pub has_references: bool,
     pub errors: Vec<ConfigError>,
-    /// The merged `compilerOptions` of all the files that were read, from which `options` is built.
+    /// The merged `compilerOptions` of all the files that were read, from which `options` is built,
+    /// without `paths`: there can be thousands, and `options.paths` has them.
     pub raw_compiler_options: Vec<(Vec<u8>, Json)>,
     pub written: Written,
 }
@@ -451,12 +468,13 @@ fn parse_config(
     // The files that wait for what they extend, the outermost first, and `resolutionStack`, which has the path of each. Not by
     // recursion: a chain of `extends` is as long as somebody makes it.
     let (mut waiting, mut stack): (Vec<Open>, FxHashSet<Vec<u8>>) = Default::default();
+    let mut circles = Circles::default();
     let mut to_read = Some(path.to_vec());
     // A file that is read, with all that it extends. `Some(None)`: it cannot be used.
     let mut read: Option<Option<Raw>> = None;
     loop {
         if let Some(path) = to_read.take() {
-            match open_config(host, session, &path, &stack, errors) {
+            match open_config(host, session, &path, &stack, &waiting, &mut circles, errors) {
                 Some(open) if open.extended.is_some() => {
                     stack.insert(open.resolved_path.clone());
                     waiting.push(open);
@@ -467,21 +485,29 @@ fn parse_config(
         let Some(innermost) = waiting.last_mut() else {
             return read.flatten();
         };
-        if let (Some(Some(extended)), Some((path, reported))) =
+        if let (Some(Some(extended)), Some((path, reported, circles_met))) =
             (read.take(), innermost.asked.take())
         {
-            // What is wrong with it is said to each that extends it.
-            if errors.len() == reported {
+            // What is wrong with it is said to each that extends it. What is made of the files of
+            // a circle depends on where it was entered.
+            if circles.met != circles_met {
+                circles.kept.push((path.clone(), extended.clone()));
+            } else if errors.len() == reported {
                 host.keep_extended_config(&path, &|| std::sync::Arc::new(extended.clone()));
             }
             innermost.inherit(&path, extended, host.is_case_sensitive());
         }
         while let Some(path) = innermost.extended.as_mut().and_then(Iterator::next) {
+            if let Some((_, kept)) = circles.kept.iter().find(|it| it.0 == path) {
+                circles.met += 1;
+                innermost.inherit(&path, kept.clone(), host.is_case_sensitive());
+                continue;
+            }
             let kept = host.extended_config(&path);
             match kept.as_ref().and_then(|it| it.downcast_ref::<Raw>()) {
                 Some(kept) => innermost.inherit(&path, kept.clone(), host.is_case_sensitive()),
                 None => {
-                    innermost.asked = Some((path.clone(), errors.len()));
+                    innermost.asked = Some((path.clone(), errors.len(), circles.met));
                     to_read = Some(path);
                     break;
                 }
@@ -502,8 +528,21 @@ struct Open {
     inherited: Raw,
     /// `extendedConfigPath`, what is still to come of it. `None`: it has no `extends`.
     extended: Option<std::vec::IntoIter<Vec<u8>>>,
-    /// The one that is being read, and how many errors there were before.
-    asked: Option<(Vec<u8>, usize)>,
+    /// The one that is being read, and how many errors and `Circles::met` there were before.
+    asked: Option<(Vec<u8>, usize, usize)>,
+}
+
+/// The circles of `extends` that one `parse_config` has met.
+#[derive(Default)]
+struct Circles {
+    /// The files at which one was closed: TS18000 is reported once for each. TypeScript keeps such
+    /// a file once it has met it, and what it keeps has no errors.
+    closed: FxHashSet<Vec<u8>>,
+    /// How often one was met, or one of `kept` was used.
+    met: usize,
+    /// The files that met one, with what they are for this `parse_config`: it depends on where the
+    /// circle was entered.
+    kept: Vec<(Vec<u8>, Raw)>,
 }
 
 /// What [`parse_config`] does with the file itself. `stack`: `resolutionStack`.
@@ -512,6 +551,8 @@ fn open_config(
     session: &Session,
     path: &[u8],
     stack: &FxHashSet<Vec<u8>>,
+    waiting: &[Open],
+    circles: &mut Circles,
     errors: &mut Vec<ConfigError>,
 ) -> Option<Open> {
     let text = host.read(path);
@@ -544,7 +585,13 @@ fn open_config(
     let is_case_sensitive = host.is_case_sensitive();
     let resolved_path = to_path(path, is_case_sensitive).into_owned();
     if stack.contains(&resolved_path) {
-        errors.push(ConfigError::new(18000, &[]));
+        circles.met += 1;
+        if circles.closed.insert(resolved_path) {
+            // typescript-go passes no argument, and prints `{0}`. TypeScript 6 prints the files.
+            let files = waiting.iter().map(|it| &it.path[..]).chain([path]);
+            let files: Vec<_> = files.map(displayed_path).collect();
+            errors.push(ConfigError::new(18000, &[&files.join(&b" -> "[..])]));
+        }
         return None;
     }
     // `convertConfigFileToObject`
@@ -951,14 +998,18 @@ fn project_from_raw(
     }
     let compiler = Json::Object(std::mem::take(&mut raw.compiler));
     let mut options = Options::from_compiler_options(base, &compiler);
+    if !options.paths.is_empty() {
+        options.paths = host.shared_paths(std::mem::take(&mut options.paths));
+    }
     options.use_case_sensitive_file_names = host.is_case_sensitive();
     options.verify(&compiler, config_path);
-    errors.extend(
-        options
-            .problems
-            .iter()
-            .map(|problem| ConfigError::of_problem(host, session, config_path, problem)),
-    );
+    let about_options = &options.problems;
+    errors.extend(ConfigError::of_problems(
+        host,
+        session,
+        config_path,
+        about_options,
+    ));
     // `hasZeroOrNoReferences`
     let has_no_references = raw.references.items.as_ref().is_none_or(Vec::is_empty);
     // Errors outside `compilerOptions`.
@@ -1007,9 +1058,10 @@ fn project_from_raw(
         b"exclude",
         &mut problems,
     ));
-    errors.extend(problems.iter().map(|problem| ConfigError {
+    let outside_options = ConfigError::of_problems(host, session, config_path, &problems);
+    errors.extend(outside_options.into_iter().map(|error| ConfigError {
         is_about_options: false,
-        ..ConfigError::of_problem(host, session, config_path, problem)
+        ..error
     }));
     let validated_files = raw.files.strings();
     let literal = substitute_all(validated_files.clone());
@@ -1045,7 +1097,10 @@ fn project_from_raw(
             exclude: raw.exclude.written(),
         },
         raw_compiler_options: match compiler {
-            Json::Object(options) => options,
+            Json::Object(mut options) => {
+                options.retain(|option| option.0 != b"paths");
+                options
+            }
             _ => Vec::new(),
         },
     }
@@ -1084,20 +1139,6 @@ pub fn matched_include_spec<'s>(
             GlobPattern::compile(&spec.1, base, Usage::Files, case_sensitive)
                 .is_some_and(|pattern| pattern.matches_path(typescript_path(path)))
         })
-        .map(|spec| spec.0.as_slice())
-        .filter(|spec| !spec.is_empty())
-}
-
-/// `getMatchedFileSpec`: the first of `specs` (source text, path) that names the file at `path`, as
-/// its source text. `""` is no match to its callers.
-pub fn matched_file_spec<'s>(
-    specs: &'s [(Vec<u8>, Vec<u8>)],
-    path: &[u8],
-    case_sensitive: bool,
-) -> Option<&'s [u8]> {
-    specs
-        .iter()
-        .find(|spec| is_same_path(&spec.1, path, case_sensitive))
         .map(|spec| spec.0.as_slice())
         .filter(|spec| !spec.is_empty())
 }

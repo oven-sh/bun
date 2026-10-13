@@ -12,20 +12,20 @@ import {
   runBunInstall,
   runBunUpdate,
   toMatchNodeModulesAt,
-  VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
-var verdaccio: VerdaccioRegistry;
+var verdaccio: TestRegistry;
 
 setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
-  verdaccio = new VerdaccioRegistry();
+  verdaccio = new TestRegistry();
   await verdaccio.start();
 });
 

@@ -3226,7 +3226,14 @@ struct Included<'a, 's> {
     /// The keys of `redirectAndFileFormat` that `createDiagnosticExplainingFile` has stored: a file
     /// name for each path.
     explained_in_diagnostics: std::cell::RefCell<Vec<Vec<u8>>>,
+    /// Where each entry of `files` and of `include` is in the configuration file, which is parsed
+    /// once for all of them. `None`: it cannot be.
+    top_elements_in_configuration: std::cell::OnceCell<Option<[TopElements; 2]>>,
+    /// `getMatchedFileSpec` for every path at once: the first of `Options::file_specs` with it.
+    file_spec_by_path: std::cell::OnceCell<FxHashMap<Cow<'a, [u8]>, &'a [u8]>>,
 }
+
+type TopElements = FxHashMap<Vec<u8>, (u32, u32)>;
 
 /// Where a problem with the inclusion of a file is reported, if that is in a file.
 type Explanation = (Option<(FileId, u32, u32)>, Problem);
@@ -3514,6 +3521,7 @@ impl Included<'_, '_> {
                 options,
                 &self.roots[index],
                 self.host.is_case_sensitive(),
+                self.matched_file_spec(&self.roots[index]),
                 to_file_name,
             ),
             IncludeReason::LibFile(Some(entry)) => (1422, vec![entry.clone()]),
@@ -3544,14 +3552,49 @@ impl Included<'_, '_> {
         }
     }
 
+    /// `getMatchedFileSpec`: the first of `files` that names the file at `path`, as its source text.
+    /// `""` is no match to its callers.
+    fn matched_file_spec(&self, path: &[u8]) -> Option<&[u8]> {
+        let is_case_sensitive = self.host.is_case_sensitive();
+        let by_path = self.file_spec_by_path.get_or_init(|| {
+            let mut by_path = FxHashMap::default();
+            for (text, path) in &self.options.file_specs {
+                let first = by_path.entry(to_path(path, is_case_sensitive));
+                first.or_insert(&text[..]);
+            }
+            by_path
+        });
+        let spec = by_path.get(&to_path(path, is_case_sensitive)).copied();
+        spec.filter(|spec| !spec.is_empty())
+    }
+
     /// `toRelatedInfo`
     fn related_info(&self, visit: &Visit) -> Option<(FileId, u32, u32, u32)> {
         let options = self.options;
-        let in_configuration = |place: Place, code: u32| {
+        let parsed = |then: &mut dyn FnMut(&crate::json::TsConfigSourceFile)| {
             let text = self.host.read(&options.config_path)?;
             let session = Session::new();
-            let file = crate::json::TsConfigSourceFile::parse(self.host, &session, text)?;
-            let (start, end) = Problem::new(code, &[], place).span_in(&file)?;
+            then(&crate::json::TsConfigSourceFile::parse(
+                self.host, &session, text,
+            )?);
+            Some(())
+        };
+        let in_configuration = |place: Place, code: u32| {
+            let mut span = None;
+            parsed(&mut |file| span = Problem::new(code, &[], place.clone()).span_in(file));
+            let (start, end) = span?;
+            Some((IN_CONFIGURATION, start, end, code))
+        };
+        let top_element = |list: usize, spec: &[u8], code: u32| {
+            let spans = self.top_elements_in_configuration.get_or_init(|| {
+                let mut spans = None;
+                parsed(&mut |file| {
+                    let of = |name| crate::verify::spans_of_top_elements(file, name);
+                    spans = Some([of(b"files"), of(b"include")]);
+                });
+                spans
+            });
+            let &(start, end) = spans.as_ref()?[list].get(spec)?;
             Some((IN_CONFIGURATION, start, end, code))
         };
         match &visit.reason {
@@ -3569,13 +3612,11 @@ impl Included<'_, '_> {
             &IncludeReason::RootFile(index) => {
                 let is_case_sensitive = self.host.is_case_sensitive();
                 let root = &self.roots[index];
-                match root_file_reason(options, root, is_case_sensitive, &file_name_as_it_is) {
-                    (1409, args) => {
-                        in_configuration(Place::TopElement(b"files", args[0].clone()), 1410)
-                    }
-                    (1407, args) => {
-                        in_configuration(Place::TopElement(b"include", args[0].clone()), 1408)
-                    }
+                let file_spec = self.matched_file_spec(root);
+                let to_file_name = &file_name_as_it_is;
+                match root_file_reason(options, root, is_case_sensitive, file_spec, to_file_name) {
+                    (1409, args) => top_element(0, &args[0], 1410),
+                    (1407, args) => top_element(1, &args[0], 1408),
                     _ => None,
                 }
             }
@@ -3879,14 +3920,13 @@ fn root_file_reason(
     options: &Options,
     path: &[u8],
     is_case_sensitive: bool,
+    matched_file_spec: Option<&[u8]>,
     to_file_name: ToFileName<'_>,
 ) -> (u32, Vec<Vec<u8>>) {
     if options.config_path.is_empty() {
         return (1427, Vec::new());
     }
-    if let Some(spec) =
-        crate::config::matched_file_spec(&options.file_specs, path, is_case_sensitive)
-    {
+    if let Some(spec) = matched_file_spec {
         return (1409, vec![spec.to_vec(), to_file_name(path)]);
     }
     if options.is_default_include_spec {
@@ -4476,15 +4516,10 @@ impl<'s> Files<'s> {
         without_file.append(&mut libs_without_file);
         // `collectFiles`, `seen[data]`: of the tasks for one path only the first is walked, and
         // the `processingDiagnostics` of the others are dropped.
-        let mut walked: Vec<Vec<u8>> = Vec::new();
-        without_file.retain(|(visit, _)| {
-            let mut seen = walked.iter();
-            let is_first = !seen.any(|name| is_same_path(name, &visit.name, is_case_sensitive));
-            if is_first {
-                walked.push(visit.name.clone());
-            }
-            is_first
-        });
+        // By path: thousands of entries of `files` can be missing.
+        let mut walked: FxHashSet<Vec<u8>> = FxHashSet::default();
+        without_file
+            .retain(|(visit, _)| walked.insert(to_path(&visit.name, is_case_sensitive).into()));
         let roots_end = starts.len();
         // `addAutomaticTypeDirectiveTasks`: the last of `rootTasks`, for this file name. There is
         // one `parseTaskData` for a path, and `collectFiles` goes on from the first of its tasks: a
@@ -5253,11 +5288,14 @@ impl<'s> Files<'s> {
         // `tasksSeenByNameIgnoreCase`: only where they are different files.
         let mut alike: Vec<Vec<(&[u8], FileId)>> = Vec::new();
         let no_file = FileId(modules.len() as u32);
-        let is_respelled = |(i, a): (usize, &&[u8])| {
-            let mut before = missing_roots[..i].iter();
-            before.any(|b| a != b && is_same_path(a, b, is_case_sensitive))
-        };
-        if missing_roots.iter().enumerate().any(is_respelled) {
+        // Two of them have one path and are spelled differently.
+        let mut spelled: FxHashMap<Cow<'_, [u8]>, &[u8]> = FxHashMap::default();
+        let mut is_respelled = false;
+        for &name in &missing_roots {
+            let first = spelled.entry(to_path(name, is_case_sensitive));
+            is_respelled |= *first.or_insert(name) != name;
+        }
+        if is_respelled {
             respelled.push(no_file);
         }
         if is_case_sensitive {
@@ -5299,6 +5337,8 @@ impl<'s> Files<'s> {
             roots_end,
             root_of_start: &root_of_start,
             explained_in_diagnostics: Default::default(),
+            top_elements_in_configuration: Default::default(),
+            file_spec_by_path: Default::default(),
         };
         // None of their reasons is a reference in a file.
         let explained = included.explain_tasks_without_file(&without_file);
@@ -7587,26 +7627,23 @@ impl<'s> Files<'s> {
 
     /// The minimum and maximum number of type arguments of a reference to `sym`.
     pub(crate) fn type_argument_arity(&self, sym: Sym) -> (usize, usize) {
-        if let Some((file, params)) = self.only_type_param_list(sym) {
-            let hir = self.hir(file);
-            return (
-                params
-                    .iter()
-                    .rposition(|tp| hir[tp].default.is_none())
-                    .map_or(0, |last| last + 1),
-                params.len(),
-            );
-        }
-        let lists = self.type_param_lists(sym);
-        // `getMinTypeArgumentCount`, `hasTypeParameterDefault`: a parameter has a default if any of
-        // its declarations has one.
+        let lists = match self.only_type_param_list(sym) {
+            Some(list) => std::iter::once(list).collect(),
+            None => self.type_param_lists(sym),
+        };
+        // In a single list a type parameter without a name is a symbol of its own.
+        let is_single_list = lists.len() == 1;
+        // `appendTypeParameters`, `getMinTypeArgumentCount`, `hasTypeParameterDefault`: the type
+        // parameters of one name are one symbol, also within one list (`<T, T>`), and it has a
+        // default if any of its declarations has one.
         let mut all: SmallVec<[(Atom, bool); 4]> = SmallVec::new();
         for (file, params) in lists {
             let hir = self.hir(file);
             for tp in params.iter() {
                 let (name, has_default) = (hir[tp].name, hir[tp].default.is_some());
-                match all.iter_mut().find(|known| known.0 == name) {
-                    Some(known) => known.1 |= has_default,
+                let is_named = !is_single_list || (name != Atom::NONE && name != known::empty);
+                match all.iter_mut().find(|seen| is_named && seen.0 == name) {
+                    Some(seen) => seen.1 |= has_default,
                     None => all.push((name, has_default)),
                 }
             }

@@ -795,6 +795,7 @@ export function buildAllowedNodeEnvironmentFlags() {
     "--inspect-brk",
     "--inspect-port",
     "--max-http-header-size",
+    "--max-old-space-size",
     "--no-addons",
     "--no-deprecation",
     "--no-warnings",

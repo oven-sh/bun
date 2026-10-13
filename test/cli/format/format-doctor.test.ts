@@ -182,6 +182,39 @@ Still needed:   prettier, prettier-plugin-svelte (some files go to them)
 `);
       expect(exitCode).toBe(0);
     });
+
+    test("with `svelte = true` in [fmt], another version is not in use", async () => {
+      const { stdout, exitCode } = await doctor({ ...project("3.4.0"), "bunfig.toml": "[fmt]\nsvelte = true\n" });
+      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+
+    3 files are formatted natively
+
+Built-in plugins: prettier-plugin-svelte
+
+You can remove: prettier, prettier-plugin-svelte
+Not checked:    other tools' configs, CI files, Git hooks
+`);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      ["svelte = false in [fmt]", { "bunfig.toml": "[fmt]\nsvelte = false\n" }, []],
+      ["--no-svelte", {}, ["--no-svelte"]],
+    ])("says that the files are left alone: %s", async (_, files, args) => {
+      const { stdout, exitCode } = await doctor({ ...project("3.4.0"), ...files }, args);
+      expect(stdout).toBe(`Using .prettierrc.json (Prettier config)
+
+    2 files are formatted natively
+
+Built-in plugins: prettier-plugin-svelte
+
+You can remove: prettier, prettier-plugin-svelte
+Not checked:    other tools' configs, CI files, Git hooks
+
+note: Svelte files are not formatted (svelte = false)
+`);
+      expect(exitCode).toBe(0);
+    });
   });
 
   test("lists unsupported plugins and plugins that aren't installed", async () => {

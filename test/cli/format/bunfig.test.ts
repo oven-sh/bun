@@ -1,5 +1,5 @@
 // Tests for the `[fmt]` keys that go beyond Prettier's options, and their flags: `sortImports`, `sortTailwindcss`,
-// `sortPackageJson`, `jsdoc`, `insertFinalNewline` and `overrides`. Also covers TOML, which needs no key.
+// `sortPackageJson`, `jsdoc`, `svelte`, `insertFinalNewline` and `overrides`. Also covers TOML, which needs no key.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -20,7 +20,8 @@ async function format(files: Record<string, string>, args: string[] = ["."]) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const read = (name: string) => readFileSync(join(String(dir), name), "utf8");
-  return { stdout, stderr, exitCode, files: Object.fromEntries(Object.keys(files).map(name => [name, read(name)])) };
+  const after = Object.fromEntries(Object.keys(files).map(name => [name, read(name)]));
+  return { stdout, stderr, exitCode, files: after, cwd: String(dir) };
 }
 
 const bunfig = (text: string) => ({ "bunfig.toml": `[fmt]\n${text}\n` });
@@ -411,6 +412,235 @@ export function add(a, b) {}
     const result = await format({ ...bunfig(line), "a.js": input });
     expect(result.stderr).toContain(message);
     expect(result.files["a.js"]).toBe(input);
+    expect(result.exitCode).toBe(2);
+  });
+});
+
+describe.concurrent("svelte", () => {
+  const input = `<style>p{color:red}</style>
+<p a={a}>hi</p>
+<script>let a=1</script>
+`;
+  const formatted = `<script>
+  let a = 1;
+</script>
+
+<p {a}>hi</p>
+
+<style>
+  p {
+    color: red;
+  }
+</style>
+`;
+  const table = `[fmt.svelte]
+sortOrder = "styles-markup-scripts-options"
+allowShorthand = false
+indentScriptAndStyle = false
+`;
+  const byTable = `<style>
+p {
+  color: red;
+}
+</style>
+
+<p a={a}>hi</p>
+
+<script>
+let a = 1;
+</script>
+`;
+  const installed = (version: string) => ({
+    "node_modules/prettier-plugin-svelte/package.json": JSON.stringify({ name: "prettier-plugin-svelte", version }),
+  });
+  const withPlugin = { ".prettierrc": `{ "plugins": ["prettier-plugin-svelte"] }\n` };
+
+  test("is on by default, and works as a key, a flag and a table", async () => {
+    const files = { "a.svelte": input };
+    const [plain, on, off, flag, over, options, under, kept] = await Promise.all([
+      format(files),
+      format({ ...bunfig("svelte = true"), ...files }),
+      format({ ...bunfig("svelte = false"), ...files }),
+      format(files, ["--no-svelte", "."]),
+      format({ ...bunfig("svelte = false"), ...files }, ["--svelte", "."]),
+      format({ "bunfig.toml": table, ...files }),
+      format({ "bunfig.toml": table, ...files }, ["--no-svelte", "."]),
+      format({ "bunfig.toml": table, ...files }, ["--svelte", "."]),
+    ]);
+    const results = [plain, on, off, flag, over, options, under, kept];
+    expect(results.map(it => it.files["a.svelte"])).toEqual([
+      formatted,
+      formatted,
+      input,
+      input,
+      formatted,
+      byTable,
+      input,
+      byTable,
+    ]);
+    expect(results.map(it => [it.stderr, it.exitCode])).toEqual(results.map(() => ["", 0]));
+  });
+
+  test("a file that is passed by name is in no known language while it is off", async () => {
+    const result = await format({ ...bunfig("svelte = false"), "a.svelte": input }, ["a.svelte"]);
+    expect(result.stderr).toBe(`error: No parser could be inferred for file "${join(result.cwd, "a.svelte")}".\n`);
+    expect(result.files["a.svelte"]).toBe(input);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("so are the code blocks in Markdown", async () => {
+    const block = (code: string) => "```svelte\n" + code + "```\n";
+    const [plain, off] = await Promise.all([
+      format({ "a.md": block("<p   >hi</p>\n") }),
+      format({ ...bunfig("svelte = false"), "a.md": block("<p   >hi</p>\n") }),
+    ]);
+    expect(plain.files["a.md"]).toBe(block("<p>hi</p>\n"));
+    expect(off.files["a.md"]).toBe(block("<p   >hi</p>\n"));
+    expect([off.stderr, off.exitCode]).toEqual(["", 0]);
+  });
+
+  test("counts for more than a .prettierrc, like every key", async () => {
+    const files = { "a.svelte": input };
+    const [without, on, named, off, other, byBun] = await Promise.all([
+      format({ ".prettierrc": "{}\n", ...files }),
+      format({ ".prettierrc": "{}\n", ...bunfig("svelte = true"), ...files }),
+      format({ ...withPlugin, ...files }),
+      format({ ...withPlugin, ...bunfig("svelte = false"), ...files }),
+      // Another version than the one that is built in. Nothing can format the file, since Prettier isn't installed.
+      format({ ...withPlugin, ...installed("3.4.0"), ...files }, ["--allow-unsupported", "."]),
+      format({ ...withPlugin, ...installed("3.4.0"), ...bunfig("svelte = true"), ...files }),
+    ]);
+    expect([without, on, named, off, other, byBun].map(it => it.files["a.svelte"])).toEqual([
+      input,
+      formatted,
+      formatted,
+      input,
+      input,
+      formatted,
+    ]);
+    expect([without, on, named, off, byBun].map(it => [it.stderr, it.exitCode])).toEqual(Array(5).fill(["", 0]));
+    // In the file itself it is still an unknown option.
+    const inFile = await format({ ".prettierrc": `{ "svelte": true }`, ...files, "a.js": "a  ;\n" });
+    expect(inFile.stderr).toBe("warn: Ignored unknown option { svelte: true }.\n");
+    expect(inFile.files).toMatchObject({ "a.svelte": input, "a.js": "a;\n" });
+  });
+
+  test("counts for more than an .oxfmtrc.json, like every key", async () => {
+    const files = { "a.svelte": input };
+    const oxfmt = (svelte: unknown) => ({ ".oxfmtrc.json": JSON.stringify({ svelte }) + "\n" });
+    const order = { sortOrder: "markup-scripts-styles-options" };
+    const [without, on, inFile, off, both] = await Promise.all([
+      format({ ".oxfmtrc.json": "{}\n", ...files }),
+      format({ ".oxfmtrc.json": "{}\n", ...bunfig("svelte = true"), ...files }),
+      format({ ...oxfmt(true), ...files }),
+      format({ ...oxfmt(true), ...bunfig("svelte = false"), ...files }),
+      format({ ...oxfmt(order), "bunfig.toml": table, ...files }),
+    ]);
+    expect([without, on, inFile, off, both].map(it => it.files["a.svelte"])).toEqual([
+      input,
+      formatted,
+      formatted,
+      input,
+      byTable,
+    ]);
+  });
+
+  test("--config-precedence decides between the key and the config file, as for every option", async () => {
+    const files = { "a.svelte": input };
+    const inFile = { ".oxfmtrc.json": `{ "svelte": { "indentScriptAndStyle": false } }\n` };
+    const notIndented = formatted.replace(/^  /gm, "");
+    const run = (precedence: string, config: Record<string, string>) =>
+      format({ ...config, ...bunfig("svelte = false"), ...files }, [`--config-precedence=${precedence}`, "."]);
+    const results = await Promise.all([
+      run("cli-override", inFile),
+      run("file-override", inFile),
+      run("prefer-file", inFile),
+      run("file-override", withPlugin),
+      // The file says nothing about Svelte, so the key is all there is.
+      run("file-override", { ".oxfmtrc.json": "{}\n" }),
+      run("file-override", {}),
+      run("prefer-file", {}),
+    ]);
+    expect(results.map(it => it.files["a.svelte"])).toEqual([
+      input,
+      notIndented,
+      notIndented,
+      formatted,
+      input,
+      input,
+      input,
+    ]);
+  });
+
+  test("the plugin's own options in a .prettierrc still count, and the table counts for more", async () => {
+    const config = { plugins: ["prettier-plugin-svelte"], svelteSortOrder: "markup-scripts-styles-options" };
+    const files = { ".prettierrc": JSON.stringify(config) + "\n", "a.svelte": input };
+    const [ofPlugin, both] = await Promise.all([format(files), format({ "bunfig.toml": table, ...files })]);
+    expect(ofPlugin.files["a.svelte"]).toBe(`<p {a}>hi</p>
+
+<script>
+  let a = 1;
+</script>
+
+<style>
+  p {
+    color: red;
+  }
+</style>
+`);
+    expect(both.files["a.svelte"]).toBe(byTable);
+  });
+
+  test("can be turned on, off and set for some files", async () => {
+    const files = { "a.svelte": input, "src/b.svelte": input, "src/old/c.svelte": input };
+    const config = `[fmt]
+svelte = false
+
+[[fmt.overrides]]
+files = "src/**"
+options = { svelte = { indentScriptAndStyle = false } }
+
+[[fmt.overrides]]
+files = "src/old/**"
+options = { svelte = false }
+`;
+    const [some, none, all] = await Promise.all([
+      format({ "bunfig.toml": config, ...files }),
+      format({ "bunfig.toml": config, ...files }, ["--no-svelte", "."]),
+      format({ "bunfig.toml": config, ...files }, ["--svelte", "."]),
+    ]);
+    const notIndented = formatted.replace(/^  /gm, "");
+    expect(some.files).toMatchObject({ "a.svelte": input, "src/b.svelte": notIndented, "src/old/c.svelte": input });
+    expect(none.files).toMatchObject(files);
+    // The flag turns it on everywhere, and an override keeps its options.
+    expect(all.files).toMatchObject({
+      "a.svelte": formatted,
+      "src/b.svelte": notIndented,
+      "src/old/c.svelte": notIndented,
+    });
+  });
+
+  const at = (line: string, column: number, message: string) =>
+    `2 | ${line}\n${" ".repeat(3 + column)}^\nerror: ${message}\n    at bunfig.toml:2:${column}\n`;
+  const options = (text: string) => `overrides = [{ files = "a", options = { ${text} } }]`;
+  test.each([
+    [`svelte = "no"`, 10, "expected boolean or object but received string"],
+    ["svelte = { order = 1 }", 12, `Unknown key "order" in [fmt.svelte]`],
+    ["svelte = { sortorder = 1 }", 12, `Unknown key "sortorder" in [fmt.svelte]\n  Did you mean "sortOrder"?`],
+    ["svelte = { sortOrder = 1 }", 24, "expected string but received number"],
+    [
+      `svelte = { sortOrder = "scripts-markup" }`,
+      24,
+      `Invalid svelte.sortOrder value: scripts-markup.\n  Use "none", or all four parts in the order you want: "options-scripts-markup-styles"`,
+    ],
+    [`svelte = { allowShorthand = "no" }`, 29, "expected boolean but received string"],
+    ["svelte = { indentScriptAndStyle = 0 }", 35, "expected boolean but received number"],
+    [options("svelte = 1"), 50, "expected boolean or object but received number"],
+    [options("svelte = { indent = true }"), 52, `Unknown key "indent" in [fmt.svelte]`],
+  ])("rejects %s", async (line, column, message) => {
+    const result = await format({ ...bunfig(line), "a.svelte": input });
+    expect(result.stderr).toBe(at(line, column, message));
+    expect(result.files["a.svelte"]).toBe(input);
     expect(result.exitCode).toBe(2);
   });
 });

@@ -282,6 +282,63 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     }
   });
 
+  // Each way to pass the name of a savepoint, and the name in the statements that
+  // the server receives. sqlite-sql.test.ts has the same rows for SQLite.
+  const savepointCalls: [string, string, (tx: Bun.TransactionSQL, fn: () => Promise<string>) => Promise<string>][] = [
+    ['savepoint("audit", fn)', "s0_audit", (tx, fn) => tx.savepoint("audit", fn)],
+    ["savepoint(fn)", "s0", (tx, fn) => tx.savepoint(fn)],
+    // @ts-expect-error not in the types
+    ['savepoint(fn, "audit")', "s0_audit", (tx, fn) => tx.savepoint(fn, "audit")],
+    ['savepoint("a-b c", fn)', "s0_a_b_c", (tx, fn) => tx.savepoint("a-b c", fn)],
+    // @ts-expect-error not in the types
+    ['savepoint(fn, "a-b c")', "s0_a_b_c", (tx, fn) => tx.savepoint(fn, "a-b c")],
+    // @ts-expect-error not in the types
+    ["savepoint(fn, fn)", "s0", (tx, fn) => tx.savepoint(() => expect.unreachable(), fn)],
+  ];
+
+  test.each(savepointCalls)("%s sends SAVEPOINT %s", async (_, name, call) => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      expect(await sql.begin(tx => call(tx, async () => "released"))).toBe("released");
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: `SAVEPOINT ${name}` },
+        { conn: 0, sql: `RELEASE SAVEPOINT ${name}` },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test('savepoint("audit", fn) sends ROLLBACK TO SAVEPOINT s0_audit when fn rejects', async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const rejected = await sql.begin(tx =>
+        tx
+          .savepoint("audit", async () => {
+            throw new Error("undo");
+          })
+          .catch(err => err.message),
+      );
+      expect(rejected).toBe("undo");
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SAVEPOINT s0_audit" },
+        { conn: 0, sql: "ROLLBACK TO SAVEPOINT s0_audit" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // A transaction started on a reserved connection runs on the reservation's own
   // slot. When it rejects before BEGIN is sent, the slot has to stay with the
   // reservation. bun:test also fails these tests if the rejected begin() leaves an

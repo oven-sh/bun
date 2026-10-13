@@ -1249,7 +1249,7 @@ describe("Transactions", () => {
     const cases: [string, string, (tx: Bun.TransactionSQL, fn: typeof probe) => Promise<unknown>][] = [
       ['savepoint("audit", fn)', "s0_audit", (tx, fn) => tx.savepoint("audit", fn)],
       ["savepoint(fn)", "s0", (tx, fn) => tx.savepoint(fn)],
-      // @ts-expect-error not in the types. Older code uses it: savepoint(name, fn) used to drop the name.
+      // @ts-expect-error not in the types. It stays: this order has always sent the name.
       ['savepoint(fn, "audit")', "s0_audit", (tx, fn) => tx.savepoint(fn, "audit")],
       ['savepoint("a-b c", fn)', "s0_a_b_c", (tx, fn) => tx.savepoint("a-b c", fn)],
       // @ts-expect-error not in the types

@@ -14,6 +14,15 @@ pub fn is_promise_constructor_like(ty: Type) -> bool {
     is_builtin_symbol_like(ty, "PromiseConstructor")
 }
 
+/// tsgolint's `t == checker.globalRegExpType`: the declared type of the `RegExp` of the default library.
+pub fn is_global_reg_exp_type(ty: Type) -> bool {
+    ty.get_symbol().is_some_and(|symbol| {
+        symbol.name() == b"RegExp"
+            && is_symbol_from_default_library(symbol)
+            && symbol.get_declared_type() == ty
+    })
+}
+
 /// `isErrorLike(program, type)`: `Error`, or a class that extends it.
 pub fn is_error_like(ty: Type) -> bool {
     is_builtin_symbol_like(ty, "Error")

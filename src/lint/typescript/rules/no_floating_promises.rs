@@ -5,7 +5,7 @@ use bun_lint::types::utils::{
     parse_then_call, parse_type_or_value_specifiers, type_matches_some_specifier,
     value_matches_some_specifier,
 };
-use bun_lint::types::{IdMap, NodeFlags, Signature, SymbolFlags, SyntaxKind, TsSymbol, Type};
+use bun_lint::types::{IdMap, Signature, TsSymbol, Type};
 use bun_lint::utils::eslint_utils::is_parenthesized;
 use bun_lint::utils::ts_utils::{OperatorPrecedence, get_operator_precedence_for_node};
 
@@ -116,58 +116,6 @@ fn rejection_handler_of(mut promise: Expr<'_>) -> Option<Expr<'_>> {
             return call.on_rejected;
         }
         promise = parse_finally_call(promise)?.object;
-    }
-}
-
-/// TypeScript's `isEntityNameExpression`: `a`, `a.b`, `a.b.c`.
-fn is_entity_name_expression(mut node: Expr) -> bool {
-    loop {
-        match node.kind() {
-            ExprKind::Ident(_) => return true,
-            ExprKind::Dot { obj, name, .. } if !obj.is_parenthesized() && !name.bytes().starts_with(b"#") => {
-                node = obj;
-            }
-            _ => return false,
-        }
-    }
-}
-
-/// The checker's `tryGetNameFromEntityNameExpression`, for a name that is a string: of a constant
-/// or of a member of an enum, the literal type that is declared, or else that of the initializer.
-fn try_get_name_from_entity_name_expression(node: Expr<'_>) -> Option<&[u8]> {
-    let symbol = node.ts_symbol()?.skip_alias();
-    let declaration = symbol.value_declaration()?;
-    let is_constant_variable = symbol.has_flags(SymbolFlags::VARIABLE)
-        && declaration.flags().intersects(NodeFlags::CONST | NodeFlags::USING);
-    if !is_constant_variable && !symbol.has_flags(SymbolFlags::ENUM_MEMBER) {
-        return None;
-    }
-    let declared = declaration.type_node().and_then(|it| it.get_type_from_type_node().string_value());
-    if declared.is_some() {
-        return declared;
-    }
-    match (declaration.kind(), declaration.initializer()) {
-        (SyntaxKind::VariableDeclaration | SyntaxKind::EnumMember, Some(initializer)) => {
-            initializer.get_type_at_location().string_value()
-        }
-        (SyntaxKind::EnumMember, None) => Some(declaration.name()?.text()),
-        _ => None,
-    }
-}
-
-/// The checker's `getAccessedPropertyName`, by which tsgolint knows the method that is called: the
-/// name after the dot, with the `#` of a private one, or in the brackets a string, a constant or a
-/// member of an enum. Parentheses in the brackets leave it without a name.
-fn get_accessed_property_name(access: Expr<'_>) -> Option<&[u8]> {
-    match access.kind() {
-        ExprKind::Dot { name, .. } => Some(name.bytes()),
-        ExprKind::Index { index, .. } if !index.is_parenthesized() => match index.kind() {
-            ExprKind::String(value) => Some(value.bytes()),
-            ExprKind::Template(template) if template.exprs().is_empty() => Some(template.cooked(0)?.bytes()),
-            _ if is_entity_name_expression(index) => try_get_name_from_entity_name_expression(index),
-            _ => None,
-        },
-        _ => None,
     }
 }
 
@@ -292,7 +240,7 @@ impl NoFloatingPromises {
                 // A callee in parentheses is not an access expression.
                 let method_name = match callee.is_parenthesized() {
                     true => None,
-                    false => get_accessed_property_name(callee),
+                    false => callee.file().type_checker().get_accessed_property_name(callee),
                 };
                 let arguments = call.args();
                 let mut known_arguments =

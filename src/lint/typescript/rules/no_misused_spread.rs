@@ -9,6 +9,7 @@ use bun_lint::types::utils::{
     parse_type_or_value_specifiers, type_matches_some_specifier,
 };
 use bun_lint::types::{IdMap, ObjectFlags, SyntaxKind, Type, TypeFlags};
+use bun_lint::utils::oxlint::is_visited_as_pattern;
 use bun_lint::utils::ts_utils::{WrappingFixerParams, get_wrapping_fixer};
 
 /// Disallow using the spread operator when it might cause unexpected behavior.
@@ -138,35 +139,6 @@ fn is_map(ty: Type) -> bool {
 
 fn is_iterable_map(ty: Type) -> bool {
     is_type_recurser(ty, &|t| is_builtin_symbol_like(t, &["Map", "ReadonlyMap"]))
-}
-
-/// Whether tsgolint's `patternVisitor` visits `e`: the left of a `=`, and in an array or object literal that it visits an
-/// element, the value of a property and what is spread. Not the left of a default in these, nor the head of a `for`-`of`.
-fn is_visited_as_pattern(e: Expr) -> bool {
-    let mut at = e;
-    loop {
-        if at.is_parenthesized() {
-            return false;
-        }
-        at = match at.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Assign { op: None, target, .. } if target == at => return !is_visited_as_pattern(parent),
-                ExprKind::Array(_) | ExprKind::Spread(_) => parent,
-                _ => return false,
-            },
-            Node::Prop(prop)
-                if prop.value() == Some(at)
-                    && !prop.is_jsx_attribute()
-                    && matches!(prop.kind(), PropKind::Init | PropKind::Spread) =>
-            {
-                match prop.parent() {
-                    Node::Expr(object) => object,
-                    _ => return false,
-                }
-            }
-            _ => return false,
-        };
-    }
 }
 
 /// Whether the array or object literal is a pattern for the original: ESLint's `ArrayPattern` or `ObjectPattern`, or what

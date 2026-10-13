@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::utils::{
-    TypeOrValueSpecifier, get_constrained_type_at_location, get_type_name, is_symbol_from_default_library,
+    TypeOrValueSpecifier, get_constrained_type_at_location, get_type_name, is_global_reg_exp_type,
     matches_type_or_base_type, parse_type_or_value_specifiers, type_matches_some_specifier,
 };
 use bun_lint::types::{IdMap, IdSet, Type, TypeFlags};
@@ -17,11 +17,6 @@ pub struct RestrictTemplateExpressions {
 
 const INVALID_TYPE: Message =
     Message::new("invalidType", "Invalid type \"{{type}}\" of template literal expression.");
-
-/// tsgolint's `t == globalRegexpType`: the `RegExp` of the default library, not a type that prints as `RegExp`.
-fn is_global_reg_exp_type(ty: Type) -> bool {
-    ty.get_symbol().is_some_and(|symbol| symbol.name() == b"RegExp" && is_symbol_from_default_library(symbol))
-}
 
 impl RestrictTemplateExpressions {
     /// `on_the_way`: the arrays that `inner_type` is in. `type A = A[]` has no end.

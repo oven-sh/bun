@@ -5,9 +5,10 @@ use bun_lint::types::tsutils::{
 };
 use bun_lint::types::utils::{
     find_truthiness_asserted_argument, get_constrained_type_at_location,
-    is_array_method_call_with_predicate, is_type_array_type_or_union_of_array_types,
+    get_constraint_of_type_parameter, is_array_method_call_with_predicate,
+    is_type_array_type_or_union_of_array_types,
 };
-use bun_lint::types::{IdSet, SyntaxKind, Type, TypeFlags, TypePredicate, TypePredicateKind};
+use bun_lint::types::{IdSet, Type, TypeFlags, TypePredicate, TypePredicateKind};
 use bun_lint::utils::estree_span;
 use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer, is_parenless_arrow_function,
@@ -538,14 +539,6 @@ fn analyze_type_parts<'a>(types: impl Iterator<Item = Type<'a>>) -> TypeInfo {
         is_truthy,
         is_enum,
     }
-}
-
-/// `checker.getConstraintOfTypeParameter(type)`: the constraint as it is declared, which can be a
-/// type parameter itself.
-fn get_constraint_of_type_parameter(type_parameter: Type<'_>) -> Option<Type<'_>> {
-    let mut declarations = type_parameter.get_symbol()?.declarations();
-    let declaration = declarations.find(|it| it.kind() == SyntaxKind::TypeParameter)?;
-    Some(declaration.constraint()?.get_type_from_type_node())
 }
 
 /// tsgolint's `findTruthinessAssertedArgument`. A predicate about a name that is no parameter

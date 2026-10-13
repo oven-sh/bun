@@ -2,7 +2,7 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::union_constituents;
 use bun_lint::types::utils::get_type_name;
-use bun_lint::types::{NameOf, NodeFlags, SymbolFlags, SyntaxKind, TsNode, Type};
+use bun_lint::types::Type;
 use bun_lint::utils::eslint_utils::{find_variable_of, get_static_value};
 use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer_for_chain_element, is_static_member_access_of_value,
@@ -125,74 +125,6 @@ fn get_static_argument_value(mut node: Expr<'_>) -> StaticArgumentValue<'_> {
     }
 }
 
-/// TypeScript's `isEntityNameExpression`.
-fn is_entity_name_expression(mut node: Expr<'_>) -> bool {
-    loop {
-        if node.is_parenthesized() {
-            return false;
-        }
-        match node.kind() {
-            ExprKind::Ident(_) => return true,
-            ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => node = obj,
-            _ => return false,
-        }
-    }
-}
-
-/// The checker's `isBlockScopedNameDeclaredBeforeUse`, for a use in the linted file: the declaration is
-/// before it, or the use is in a function that the declaration is not in.
-fn is_block_scoped_name_declared_before_use(declaration: TsNode<'_>, usage: Expr<'_>) -> bool {
-    if !declaration.is_in_linted_file() {
-        return true;
-    }
-    let declaration = declaration.span();
-    declaration.start <= usage.span().start
-        || Node::Expr(usage).ancestors().filter_map(Node::as_func).any(|func| !func.span().contains(declaration))
-}
-
-/// Whether the checker's `getAccessedPropertyName` of the member access is `name`, which is not a number.
-/// A key that is not a literal has the name that the type of the `const` or of the member of an enum
-/// says, to which it refers.
-fn is_accessed_property_name(member: Expr<'_>, name: &[u8]) -> bool {
-    let index = match member.kind() {
-        ExprKind::Dot { name: property, .. } => return property.bytes() == name,
-        ExprKind::Index { index, .. } if !index.is_parenthesized() => index,
-        _ => return false,
-    };
-    let symbol = match index.kind() {
-        ExprKind::String(value) => return value.bytes() == name,
-        ExprKind::Template(template) if template.quasi_count() == 1 => {
-            return template.cooked(0).is_some_and(|value| value.bytes() == name);
-        }
-        ExprKind::Ident(_) => index.ts_symbol(),
-        ExprKind::Dot { .. } if is_entity_name_expression(index) => NameOf(index).ts_symbol(),
-        _ => return false,
-    };
-    let Some(symbol) = symbol.map(|it| it.skip_alias()) else {
-        return false;
-    };
-    let Some(declaration) = symbol.value_declaration() else {
-        return false;
-    };
-    // tsgolint gives no name to a variable of a binding pattern.
-    let is_constant_variable = declaration.kind() == SyntaxKind::VariableDeclaration
-        && declaration.flags().intersects(NodeFlags::CONST.union(NodeFlags::USING));
-    if !is_constant_variable && !symbol.has_flags(SymbolFlags::ENUM_MEMBER) {
-        return false;
-    }
-    let is_name = |ty: Type<'_>| ty.string_value() == Some(name);
-    if declaration.type_node().is_some_and(|it| is_name(it.get_type_from_type_node())) {
-        return true;
-    }
-    if !is_block_scoped_name_declared_before_use(declaration, index) {
-        return false;
-    }
-    match declaration.initializer() {
-        Some(initializer) => is_name(initializer.get_type_at_location()),
-        None => declaration.kind() == SyntaxKind::EnumMember && declaration.name().is_some_and(|it| it.text() == name),
-    }
-}
-
 /// Whether the syntax proves that there is no `g` flag. If not, there may or may not be one.
 fn definitely_does_not_contain_global_flag(node: Expr) -> bool {
     if node.file().language().is_oxlint {
@@ -254,7 +186,10 @@ impl Rule for PreferRegexpExec {
         let is_oxlint = cx.language().is_oxlint;
         let is_match = match is_oxlint {
             // For tsgolint a callee in parentheses is no member access.
-            true => !member_node.is_parenthesized() && is_accessed_property_name(member_node, b"match"),
+            true => {
+                !member_node.is_parenthesized()
+                    && matches!(cx.file().type_checker().get_accessed_property_name(member_node), Some(b"match"))
+            }
             // `(a?.match)(b)` calls a `ChainExpression`.
             false => !member_node.is_chain_root() && is_static_member_access_of_value(member_node, &["match"]),
         };

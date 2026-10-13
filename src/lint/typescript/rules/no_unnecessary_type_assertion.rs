@@ -6,8 +6,8 @@ use bun_lint::types::tsutils::{
     is_type_reference, union_constituents,
 };
 use bun_lint::types::utils::{
-    get_constrained_type_at_location, get_contextual_type, get_declaration, is_nullable_type,
-    is_type_flag_set,
+    get_constrained_type_at_location, get_constraint_of_type_parameter, get_contextual_type,
+    get_declaration, is_nullable_type, is_type_flag_set,
 };
 use bun_lint::types::{IdSet, Signature, SyntaxKind, TsNode, Type, TypeFlags};
 use bun_lint::utils::ast_utils::is_member_expression;
@@ -467,12 +467,6 @@ fn get_original_expression(assertion: Assertion<'_>) -> Expr<'_> {
         current = inner.expression;
     }
     current
-}
-
-/// `checker.getConstraintOfTypeParameter(type)`: the constraint as it is written, which can be a type parameter.
-fn get_constraint_of_type_parameter(ty: Type<'_>) -> Option<Type<'_>> {
-    let declaration = ty.get_symbol()?.declarations().find(|it| it.kind() == SyntaxKind::TypeParameter)?;
-    Some(declaration.constraint()?.get_type_from_type_node())
 }
 
 /// tsgolint's `isConstrainedTo`: `source` is `target`, or leads there by the constraints of type parameters.

@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{intersection_constituents, is_object_type, union_constituents};
 use bun_lint::types::utils::{
-    get_constrained_type_at_location, get_type_name, is_symbol_from_default_library, is_type_any_type,
+    get_constrained_type_at_location, get_type_name, is_global_reg_exp_type, is_type_any_type,
     is_type_flag_set,
 };
 use bun_lint::types::{Type, TypeFlags};
@@ -44,15 +44,6 @@ fn is_deeply_object_type(ty: Type) -> bool {
 /// `getTypeName(typeChecker, type) === 'RegExp'`
 fn is_named_reg_exp(ty: Type) -> bool {
     !ty.has_flags(TypeFlags::INTRINSIC | TypeFlags::STRING_LIKE) && get_type_name(ty) == b"RegExp"
-}
-
-/// tsgolint: `part == globalRegExpType`, the declared type of the interface of the default library.
-fn is_global_reg_exp_type(ty: Type) -> bool {
-    ty.get_symbol().is_some_and(|symbol| {
-        symbol.name() == b"RegExp"
-            && is_symbol_from_default_library(symbol)
-            && symbol.get_declared_type() == ty
-    })
 }
 
 impl RestrictPlusOperands {

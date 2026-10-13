@@ -5,8 +5,7 @@
 use super::estree::sibling_statements;
 use super::misc::NodeWithKey;
 use super::predicates::is_function_type;
-use crate::ast::{Expr, ExprKind, Flags, Func, KeyKind, Member, Node, Stmt};
-use crate::types::{NameOf, NodeFlags, SymbolFlags, SyntaxKind, TsSymbol, TypeFlags};
+use crate::ast::{Expr, Flags, Func, KeyKind, Member, Node, Stmt};
 use crate::utils::eslint_utils::{StaticSymbol, StaticValue, get_static_value};
 use std::borrow::Cow;
 
@@ -86,74 +85,6 @@ pub fn is_static_member_access_of_value<'a>(
         .is_some_and(|value| values.iter().any(|it| it.as_ref() == value))
 }
 
-/// TypeScript's `resolveEntityName` of an entity name expression that is a value: through aliases,
-/// and into namespaces and enums only. Parentheses are nodes there, so they end the name.
-fn resolve_entity_name(node: Expr<'_>) -> Option<TsSymbol<'_>> {
-    if node.is_parenthesized() {
-        return None;
-    }
-    let symbol = match node.kind() {
-        ExprKind::Ident(_) => node.ts_symbol()?,
-        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => {
-            if !resolve_entity_name(obj)?.has_flags(SymbolFlags::NAMESPACE) {
-                return None;
-            }
-            NameOf(node).ts_symbol()?
-        }
-        _ => return None,
-    };
-    Some(symbol.skip_alias())
-}
-
-/// The checker's `tryGetNameFromEntityNameExpression`, if the name is that of a string: of a
-/// `const` or of a member of an enum, the literal type that is declared, or else that of the
-/// initializer. Whether the constant is declared before its use is not asked.
-fn try_get_name_from_entity_name_expression(node: Expr<'_>) -> Option<&[u8]> {
-    let symbol = resolve_entity_name(node)?;
-    let declaration = symbol.value_declaration()?;
-    let is_constant_variable = symbol.has_flags(SymbolFlags::VARIABLE)
-        && declaration
-            .flags()
-            .intersects(NodeFlags::CONST | NodeFlags::USING);
-    if !is_constant_variable && !symbol.has_flags(SymbolFlags::ENUM_MEMBER) {
-        return None;
-    }
-    if let Some(type_node) = declaration.type_node() {
-        let ty = type_node.get_type_from_type_node();
-        if ty.has_flags(TypeFlags::STRING_OR_NUMBER_LITERAL | TypeFlags::UNIQUE_ES_SYMBOL) {
-            return ty.string_value();
-        }
-    }
-    match (declaration.kind(), declaration.initializer()) {
-        (SyntaxKind::BindingElement, _) => None,
-        (_, Some(initializer)) => initializer.get_type_at_location().string_value(),
-        (SyntaxKind::EnumMember, None) => Some(symbol.name()),
-        _ => None,
-    }
-}
-
-/// The checker's `getAccessedPropertyName` of a member access, by which tsgolint names the member,
-/// if the name is that of a string: the name after the dot, with the `#` of a private one, or in
-/// the brackets a string, a `const` or a member of an enum. Unlike
-/// [`get_static_member_access_value`] it evaluates nothing: not `"a" + "b"`, not a `let`, not a
-/// key in parentheses. It asks the type checker.
-pub fn get_accessed_property_name(access: Expr<'_>) -> Option<&[u8]> {
-    match access.kind() {
-        ExprKind::Dot { name, .. } => Some(name.bytes()),
-        ExprKind::Index { index, .. } if !index.is_parenthesized() => match index.kind() {
-            ExprKind::String(value) => Some(value.bytes()),
-            ExprKind::Template(template) if template.exprs().is_empty() => {
-                Some(template.cooked(0)?.bytes())
-            }
-            ExprKind::Ident(_) | ExprKind::Dot { .. } => {
-                try_get_name_from_entity_name_expression(index)
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 /// The object of the member access that `call`, a `Call`, calls, if the member is one of `names`.
 /// `skip_parentheses`: whether tsgolint looks through parentheses around the callee.
 fn object_of_called_method<'a>(
@@ -169,7 +100,10 @@ fn object_of_called_method<'a>(
             return None;
         }
         let obj = callee.object()?;
-        let name = get_accessed_property_name(callee)?;
+        let name = callee
+            .file()
+            .type_checker()
+            .get_accessed_property_name(callee)?;
         return names.iter().any(|it| it.as_bytes() == name).then_some(obj);
     }
     // `(a?.b)()` calls a `ChainExpression`.

@@ -6,13 +6,14 @@ use bun_lint::types::tsutils::{
 };
 use bun_lint::types::utils::{
     find_truthiness_asserted_argument, find_type_guard_asserted_argument,
-    get_constrained_type_at_location, get_constraint_info, get_type_name,
+    get_constrained_type_at_location, get_constraint_info, get_constraint_of_type_parameter,
+    get_type_name,
     get_type_of_property_of_name, get_value_of_literal_type, is_array_method_call_with_predicate,
     is_nullable_type, is_possibly_falsy, is_possibly_truthy, is_type_any_type, is_type_flag_set,
     is_type_unknown_type,
 };
 use bun_lint::types::{
-    Literal, ObjectFlags, SymbolFlags, SyntaxKind, Type, TypeFlags, TypePredicateKind, TypeStructure,
+    Literal, ObjectFlags, SymbolFlags, Type, TypeFlags, TypePredicateKind, TypeStructure,
 };
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::StaticValue;
@@ -491,18 +492,6 @@ fn tsgolint_is_comparable(ty: Type, flags: TypeFlags) -> bool {
         return ty.types().iter().any(|part| tsgolint_is_comparable(part, flags));
     }
     ty.is_intersection() && ty.types().iter().all(|part| tsgolint_is_comparable(part, flags))
-}
-
-/// `checker.getConstraintOfTypeParameter(type)`: the constraint that is written, which can be another type parameter.
-fn get_constraint_of_type_parameter(ty: Type<'_>) -> Option<Type<'_>> {
-    if !ty.is_type_parameter() {
-        return None;
-    }
-    let declaration = ty.get_symbol()?.declarations().next()?;
-    if declaration.kind() != SyntaxKind::TypeParameter {
-        return None;
-    }
-    Some(declaration.constraint()?.get_type_from_type_node())
 }
 
 /// tsgolint's `getPropertyTypeFromBase` for the access `prop_access` to `name`: what the property is declared as, or

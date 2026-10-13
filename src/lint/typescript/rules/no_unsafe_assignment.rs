@@ -7,6 +7,7 @@ use bun_lint::types::utils::{
     is_type_unknown_type, is_unsafe_assignment,
 };
 use bun_lint::types::{NameOf, TsSymbol, Type};
+use bun_lint::utils::oxlint::is_visited_as_pattern;
 use bun_lint::utils::ts_utils::get_this_expression;
 use bun_lint::utils::{Target, TargetElement, TargetKind};
 use rustc_hash::FxHashMap;
@@ -488,39 +489,6 @@ fn check_assignment_to_target<'a>(
     }
 }
 
-/// Whether tsgolint's `visitLintNodes` comes to this array or object as a pattern: from the left of a `=`, through
-/// elements, values of properties and spreads. The left of a default in a pattern is not one, nor is that of a `for`.
-fn is_pattern(node: Expr) -> bool {
-    let (mut at, mut allows_pattern) = (node, false);
-    loop {
-        if at.is_parenthesized() {
-            return allows_pattern;
-        }
-        at = match at.parent() {
-            Node::Expr(parent) => match parent.as_assign() {
-                // The left of an assignment that is itself in a pattern is visited as an expression.
-                Some((None, left, _)) if left == at => {
-                    allows_pattern = !allows_pattern;
-                    parent
-                }
-                None if matches!(parent.tag(), ExprTag::Array | ExprTag::Spread) => parent,
-                _ => return allows_pattern,
-            },
-            Node::Prop(property)
-                if property.value() == Some(at)
-                    && matches!(property.kind(), PropKind::Init | PropKind::Spread)
-                    && !property.is_jsx_attribute() =>
-            {
-                match property.parent() {
-                    Node::Expr(object) => object,
-                    _ => return allows_pattern,
-                }
-            }
-            _ => return allows_pattern,
-        };
-    }
-}
-
 fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
     // The properties of an object pattern are checked via assignments.
     if node.is_import_attribute()
@@ -603,7 +571,7 @@ impl NoUnsafeAssignment {
             return;
         }
         let is_rest = match cx.language().is_oxlint {
-            true => is_pattern(parent),
+            true => is_visited_as_pattern(parent),
             false => parent.is_assignment_target(),
         };
         if is_rest {
@@ -633,7 +601,7 @@ impl NoUnsafeAssignment {
         let ExprKind::Object(properties) = node.kind() else {
             return;
         };
-        if is_pattern(node) {
+        if is_visited_as_pattern(node) {
             return;
         }
         for property in properties {

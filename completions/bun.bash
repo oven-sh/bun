@@ -6,8 +6,18 @@ _file_arguments() {
     local reset=$(shopt -p globstar extglob)
     shopt -s globstar extglob
 
-    # matching files, plus directories so the user can descend into them
-    COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") $(compgen -d -- "${cur_word}") );
+    # matching files, plus directories so the user can descend into them;
+    # read one candidate per line so names with spaces stay whole
+    local files dirs entry
+    local -A seen=()
+    readarray -t files < <(compgen -f -X "${extensions}" -- "${cur_word}")
+    readarray -t dirs < <(compgen -d -- "${cur_word}")
+    COMPREPLY=()
+    for entry in "${files[@]}" "${dirs[@]}"; do
+        [[ -n "${seen[${entry}]}" ]] && continue
+        seen[${entry}]=1
+        COMPREPLY+=( "${entry}" )
+    done
     compopt -o filenames 2>/dev/null;
 
     eval "${reset}"

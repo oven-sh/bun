@@ -127,7 +127,7 @@ With any other plugin, Bun skips the files that config covers and exits with cod
 
 ---
 
-You don't have to keep `.prettierrc`. Move the options to [`bunfig.toml`](/runtime/format#options), under the same names, and delete the file. `overrides` become [`[[fmt.overrides]]`](/runtime/bunfig#format-overrides).
+You don't have to keep `.prettierrc`. Move the options to [`bunfig.toml`](/format#options), under the same names, and delete the file. `overrides` become [`[[fmt.overrides]]`](/runtime/bunfig#format-overrides).
 
 ```toml bunfig.toml icon="settings"
 [fmt]
@@ -158,5 +158,5 @@ If `bun fmt` and Prettier 3 print different code, that's a bug. [Open an issue](
 
 See also:
 
-- [`bun fmt`](/runtime/format)
+- [`bun fmt`](/format)
 - [Migrate from ESLint to bun lint](/guides/lint/migrate-from-eslint)

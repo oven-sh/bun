@@ -86,7 +86,7 @@ bun remove oxlint oxlint-tsgolint
 
 `import { defineConfig } from "oxlint"` in an `oxlint.config.ts` keeps working without the package.
 
-No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, add an empty `.oxlintrc.json` before you uninstall. Without it you get [Bun's defaults](/runtime/lint#default-rules).
+No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, add an empty `.oxlintrc.json` before you uninstall. Without it you get [Bun's defaults](/lint#default-rules).
 
 ```json .oxlintrc.json icon="file-json"
 {}
@@ -157,6 +157,6 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 
 See also:
 
-- [`bun lint`](/runtime/lint)
+- [`bun lint`](/lint)
 - [ESLint plugins](/lint/plugins)
 - [Migrate from oxfmt to bun fmt](/guides/format/migrate-from-oxfmt)

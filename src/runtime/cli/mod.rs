@@ -2379,7 +2379,7 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r
   <b><green>bun fmt<r> <blue>src test/a.test.ts<r>
   <b><green>bun fmt<r> <cyan>--check<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/runtime/format<r>
+Full documentation is available at <magenta>https://bun.com/docs/format<r>
 "
                 );
                 if !show_all_flags {
@@ -2403,7 +2403,7 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/format<
   <b><green>bun lint<r> <cyan>--fix<r> <blue>src<r>
   <b><green>bun lint<r> <cyan>--rule<r> <blue>'no-console: error'<r>
 
-Full documentation is available at <magenta>https://bun.com/docs/runtime/lint<r>
+Full documentation is available at <magenta>https://bun.com/docs/lint<r>
 "
                 );
                 if !show_all_flags {

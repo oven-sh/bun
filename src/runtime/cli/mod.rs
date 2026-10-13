@@ -1618,6 +1618,9 @@ pub(crate) mod command {
         argv: &'a [&'static bun_core::ZStr],
         command: &[u8],
     ) -> &'a [&'static bun_core::ZStr] {
+        if let Some(at) = arguments::checked_command_index(command) {
+            return &argv[at + 1..];
+        }
         let mut args = argv.iter().enumerate();
         while let Some((at, arg)) = args.next() {
             match arg.as_bytes() {
@@ -1643,8 +1646,17 @@ pub(crate) mod command {
             Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
             None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
         };
-        let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
+        let at = arguments::checked_command_index(command)
+            .or_else(|| argv.iter().position(|arg| arg.as_bytes() == command))
+            .unwrap_or(argv.len());
+        let values = arguments::checked_option_values(command);
+        let before = argv.iter().take(at).skip(1);
         let mut args: Vec<_> = before
+            .filter(|arg| {
+                !values
+                    .iter()
+                    .any(|value| core::ptr::eq(arg.as_bytes(), *value))
+            })
             .filter(|arg| arg.as_bytes().starts_with(b"-"))
             .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
             .copied()
@@ -1655,7 +1667,17 @@ pub(crate) mod command {
 
     /// `bun --help lint`: prints the help of `command` and exits if `--help` or `-h` is among the flags of `bun`, which precede it.
     fn print_help_if_asked_before(argv: &[&'static bun_core::ZStr], command: &[u8], tag: Tag) {
-        let mut before = (argv.iter().map(|it| it.as_bytes())).take_while(|arg| *arg != command);
+        if let Some(args) = arguments::checked_command_arguments(command) {
+            if args.flag(b"--help") {
+                tag_print_help(tag, false);
+                Global::exit(0);
+            }
+            return;
+        }
+        let at = arguments::checked_command_index(command)
+            .or_else(|| argv.iter().position(|arg| arg.as_bytes() == command))
+            .unwrap_or(argv.len());
+        let mut before = argv.iter().take(at).map(|it| it.as_bytes());
         if before.any(|arg| matches!(arg, b"--help" | b"-h")) {
             tag_print_help(tag, false);
             Global::exit(0);

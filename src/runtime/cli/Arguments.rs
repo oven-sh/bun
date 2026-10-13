@@ -811,8 +811,7 @@ fn check_table(cmd: CommandTag) -> Option<&'static clap::ConvertedTable> {
     None
 }
 
-/// Command dispatch must not mistake the value of `--project` for `build`, `test`, or `run`.
-pub(crate) fn checked_command_name() -> Option<Option<&'static [u8]>> {
+fn checked_auto_arguments() -> Option<Option<clap::Args<clap::Help>>> {
     let table = check_table(CommandTag::AutoCommand)?;
     let parsed = clap::parse_with_table::<clap::Help>(
         table,
@@ -821,7 +820,12 @@ pub(crate) fn checked_command_name() -> Option<Option<&'static [u8]>> {
             ..parsing_options(CommandTag::AutoCommand)
         },
     );
-    Some(parsed.ok().and_then(|args| {
+    Some(parsed.ok())
+}
+
+/// Command dispatch must not mistake the value of `--project` for `build`, `test`, or `run`.
+pub(crate) fn checked_command_name() -> Option<Option<&'static [u8]>> {
+    Some(checked_auto_arguments()?.and_then(|args| {
         // --filter owns a workspace script, even when its name is a built-in command.
         // AutoCommand routes the parsed filter to the workspace script runner instead.
         if !args.options(b"--filter").is_empty() {
@@ -830,6 +834,37 @@ pub(crate) fn checked_command_name() -> Option<Option<&'static [u8]>> {
             args.positionals().first().copied()
         }
     }))
+}
+
+/// Script ownership and command argument slicing use the same positional boundary as dispatch.
+/// Equal text in an option value must not hide a later `--cwd`, `--filter`, or help flag.
+pub(crate) fn checked_command_index(command: &[u8]) -> Option<usize> {
+    let args = checked_command_arguments(command)?;
+    let positional = *args.positionals().first()?;
+    // Clap's OsIterator borrows the process-global argv; pointer identity distinguishes equal tokens.
+    bun_core::argv()
+        .iter()
+        .position(|arg| core::ptr::eq(arg, positional))
+}
+
+pub(crate) fn checked_command_arguments(command: &[u8]) -> Option<clap::Args<clap::Help>> {
+    let args = checked_auto_arguments()??;
+    (*args.positionals().first()? == command).then_some(args)
+}
+
+/// Every value consumed before the command belongs to Bun, including an overwritten option.
+pub(crate) fn checked_option_values(command: &[u8]) -> Vec<&'static [u8]> {
+    if checked_command_arguments(command).is_none() {
+        return Vec::new();
+    }
+    clap::option_values(
+        CHECK_AUTO_PARAMS,
+        clap::ParseOptions {
+            suppress_warnings: true,
+            ..parsing_options(CommandTag::AutoCommand)
+        },
+    )
+    .unwrap_or_default()
 }
 
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────

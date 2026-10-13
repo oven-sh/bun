@@ -15735,6 +15735,66 @@ describe.concurrent("@types/bun", () => {
 
 describe.concurrent("--check", () => {
   describe("checker controls", () => {
+    test.each(["check", "lint", "fmt"])(
+      "a project value named %s does not take the script's command boundary",
+      async command => {
+        using dir = project({
+          "actual/package.json": JSON.stringify({ scripts: { [command]: `echo script-${command}` } }),
+          "actual/app.ts": `export const n: number = 1;\n`,
+          "actual/console.d.ts": `declare var console: { log(...args: unknown[]): void };\n`,
+          [`actual/${command}/tsconfig.json`]: JSON.stringify({
+            ...JSON.parse(tsconfig),
+            files: ["../app.ts", "../console.d.ts"],
+          }),
+        });
+        const results = await Promise.all(
+          ["--project", "--tsconfig-override"].flatMap(option => [
+            run(String(dir), ["--check", option, command, "--cwd", "actual", command]),
+            run(String(dir), ["--cwd", "actual", "--check", option, command, command]),
+          ]),
+        );
+        expect(results.map(it => [it.stdout, it.exitCode])).toEqual(results.map(() => [`script-${command}`, 0]));
+      },
+    );
+
+    test("a project value named fmt does not become a formatter path", async () => {
+      using dir = project({
+        "actual/x.ts": `export const n: number = 1;\n`,
+        // Kept unformatted: --check must not select this configuration as a formatter input.
+        "actual/fmt/tsconfig.json": `{ "compilerOptions": { "strict": true } }`,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), [
+        "--check",
+        "--tsconfig-override",
+        "fmt",
+        "--cwd",
+        "actual",
+        "fmt",
+        "x.ts",
+      ]);
+      expect([stdout, stderr, exitCode]).toEqual(["", "1 file is formatted.", 0]);
+      expect(readFileSync(join(String(dir), "actual/fmt/tsconfig.json"), "utf8")).toBe(
+        `{ "compilerOptions": { "strict": true } }`,
+      );
+    });
+
+    test.each(["--help", "-h"])("a project value named %s does not request formatter help", async value => {
+      using dir = project({
+        "actual/x.ts": `export const n: number = 1;\n`,
+        [`actual/${value}/tsconfig.json`]: `{ "compilerOptions": { "strict": true } }`,
+        "actual/valid/tsconfig.json": `{ "compilerOptions": { "strict": true } }`,
+      });
+      const results = await Promise.all(
+        ["--project", "--tsconfig-override"].flatMap(option => [
+          run(String(dir), ["--check", option, value, "--cwd", "actual", "fmt", "x.ts"]),
+          run(String(dir), ["--check", option, value, option, "valid", "--cwd", "actual", "fmt", "x.ts"]),
+        ]),
+      );
+      expect(results.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(
+        results.map(() => ["", "1 file is formatted.", 0]),
+      );
+    });
+
     test("standalone aliases consume and forward controls while a check script keeps its name", async () => {
       const selected = JSON.stringify({ ...JSON.parse(tsconfig), files: ["selected.ts"] });
       using dir = project({

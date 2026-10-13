@@ -494,6 +494,39 @@ pub fn parse_with_table<Id: 'static>(
     Ok(Args { clap })
 }
 
+/// Every option value consumed by the parser, including values later overwritten by the
+/// same option. Callers forwarding raw arguments use this to preserve argument ownership.
+pub fn option_values<Id: 'static>(
+    params: &'static [Param<Id>],
+    opt: ParseOptions<'_>,
+) -> crate::Result<Vec<&'static [u8]>> {
+    let mut iter = args::OsIterator::init();
+    let mut stream = streaming::StreamingClap {
+        params,
+        iter: &mut iter,
+        diagnostic: opt.diagnostic,
+        suppress_warnings: opt.suppress_warnings,
+        optional_booleans: opt.optional_booleans,
+        state: streaming::State::Normal,
+        positional: None,
+        short_aliases: opt.short_aliases,
+        unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
+    };
+    let mut values = Vec::new();
+    let mut positionals = 0;
+    while let Some(arg) = stream.next()? {
+        if arg.param.names.long.is_none() && arg.param.names.short.is_none() {
+            positionals += 1;
+            if opt.stop_after_positional_at > 0 && positionals >= opt.stop_after_positional_at {
+                break;
+            }
+        } else if arg.param.takes_value != Values::None {
+            values.extend(arg.value);
+        }
+    }
+    Ok(values)
+}
+
 /// Parses the command line arguments passed into the program based on an
 /// array of `Param`s.
 ///

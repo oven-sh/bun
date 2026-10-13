@@ -36,8 +36,11 @@ fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
 #[cold]
 #[inline(never)]
 pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
-    let args = bun_core::argv().into_iter();
-    let mut of_command = (args.skip_while(|arg| *arg != command)).take_while(|arg| *arg != b"--");
+    let argv = bun_core::argv();
+    let at = super::arguments::checked_command_index(command)
+        .or_else(|| argv.iter().position(|arg| arg == command))
+        .unwrap_or(argv.len());
+    let mut of_command = argv.into_iter().skip(at).take_while(|arg| *arg != b"--");
     !of_command.any(|arg| asks_the_command(command, arg)) && runs(command) != Runs::Command
 }
 
@@ -46,28 +49,42 @@ pub(crate) fn runs(command: &[u8]) -> Runs {
     use bun_paths::platform::Auto;
     use bun_paths::resolve_path::join_abs_string;
     let mut cwd = working_directory();
-    let mut args = bun_core::argv().into_iter();
-    while let Some(arg) = args.next() {
-        // What follows the name of a script is for the script.
-        if arg == command {
-            break;
-        }
-        // These are about scripts: those of several packages, whatever this one has, or none.
-        if matches!(
-            arg,
-            b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
-        ) || arg.starts_with(b"--filter")
-            || arg.starts_with(b"-F")
+    if let Some(args) = super::arguments::checked_command_arguments(command) {
+        if args.flag(b"--workspaces")
+            || args.flag(b"--parallel")
+            || args.flag(b"--sequential")
+            || args.flag(b"--if-present")
+            || !args.options(b"--filter").is_empty()
         {
             return Runs::Other;
         }
-        let given = match arg.strip_prefix(b"--cwd") {
-            Some(b"") => args.next(),
-            Some(rest) => rest.strip_prefix(b"="),
-            None => None,
-        };
-        if let Some(given) = given {
+        if let Some(given) = args.option(b"--cwd") {
             cwd = join_abs_string::<Auto>(&cwd, &[given]).to_vec();
+        }
+    } else {
+        let mut args = bun_core::argv().into_iter();
+        while let Some(arg) = args.next() {
+            // What follows the name of a script is for the script.
+            if arg == command {
+                break;
+            }
+            // These are about scripts: those of several packages, whatever this one has, or none.
+            if matches!(
+                arg,
+                b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
+            ) || arg.starts_with(b"--filter")
+                || arg.starts_with(b"-F")
+            {
+                return Runs::Other;
+            }
+            let given = match arg.strip_prefix(b"--cwd") {
+                Some(b"") => args.next(),
+                Some(rest) => rest.strip_prefix(b"="),
+                None => None,
+            };
+            if let Some(given) = given {
+                cwd = join_abs_string::<Auto>(&cwd, &[given]).to_vec();
+            }
         }
     }
     let other_if = |found: bool| if found { Runs::Other } else { Runs::Command };

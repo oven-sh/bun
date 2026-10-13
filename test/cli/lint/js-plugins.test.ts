@@ -1668,8 +1668,11 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   test(
     "there are as many engines as pay, with types and without, and they report the same",
     async () => {
-      const run = async (count: number, extension: string, size: number, threads: string) => {
+      // `waits`: an engine stays in use with its first file until another engine has one. A thread only asks for an engine while
+      // the others are in use, and whether they are is otherwise up to how the threads happen to run.
+      const run = async (count: number, extension: string, size: number, threads: string, waits = false) => {
         const files: Record<string, string> = {
+          "engines/.keep": "",
           "tsconfig.json": JSON.stringify({ compilerOptions: { noLib: true, types: [] } }),
           "eslint.config.mjs": `
             import demo from "./plugin.mjs";
@@ -1682,7 +1685,20 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
                 rules: { "@typescript-eslint/no-floating-promises": "error" },
               },
             ];`,
-          "plugin.mjs": `export default { rules: { seen: { create: context => ({ Program(node) { context.report({ node, message: "seen" }); } }) } } };`,
+          "plugin.mjs": `
+            import { readdirSync, writeFileSync } from "node:fs";
+            const engines = new URL("./engines/", import.meta.url);
+            // Each engine evaluates the module once.
+            let isFirst = ${waits};
+            export default { rules: { seen: { create: context => ({ Program(node) {
+              if (isFirst) {
+                isFirst = false;
+                writeFileSync(new URL(crypto.randomUUID(), engines), "");
+                const end = Date.now() + 20_000;
+                while (readdirSync(engines).length < 3 && Date.now() < end);
+              }
+              context.report({ node, message: "seen" });
+            } }) } } };`,
         };
         // One comment: thousands of them take a debug build minutes.
         const text = `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
@@ -1700,11 +1716,10 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         run(24, "js", 0, "8"),
         run(24, "ts", 250_000, "1"),
         run(24, "js", 250_000, "1"),
-        run(24, "ts", 250_000, "8"),
-        run(24, "js", 250_000, "8"),
+        run(24, "ts", 250_000, "8", true),
+        run(24, "js", 250_000, "8", true),
       ]);
       expect([smallWithTypes.engines, small.engines, oneWithTypes.engines, one.engines]).toEqual([1, 1, 1, 1]);
-      // A thread only asks for an engine while the others are in use.
       for (const it of [largeWithTypes, large]) {
         expect(it.engines).toBeGreaterThan(1);
         expect(it.engines).toBeLessThanOrEqual(3);

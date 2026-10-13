@@ -1794,6 +1794,77 @@ module.exports = {
       expect(await found(files, ["--plugin", "demo"])).toEqual(expected);
     });
 
+    test.each([
+      ["an ES module", `export { default } from "./impl.js";\n`, local],
+      ["an ES module that imports it first", `import it from "./impl.js";\nexport default it;\n`, local],
+    ])("so is a file of the project that has what another exports: %s", async (_, entry, impl) => {
+      const files = {
+        ...project,
+        "lint/plugin.js": entry,
+        "lint/impl.js": impl,
+        "eslint.config.js": `
+          import local from "./lint/plugin.js";
+          export default [{ plugins: { local }, rules: { "local/no-todo": "warn" } }];\n`,
+      };
+      const expected = { found: ["1:1 local/no-todo"], stderr: "", exitCode: 0 };
+      expect(await found({ ...files, ...bunfig(`["./lint/plugin.js"]`, {}) })).toEqual(expected);
+      expect(await found(files, ["--plugin", "./lint/plugin.js"])).toEqual(expected);
+    });
+
+    test("so is a package of the workspace that is linked into node_modules", async () => {
+      using dir = tempDir("bun-lint", {
+        ...project,
+        "packages/eslint-plugin-ws/package.json": `{ "name": "eslint-plugin-ws", "main": "index.js" }`,
+        "packages/eslint-plugin-ws/index.js": `module.exports = require("./dist/plugin.js");\n`,
+        "packages/eslint-plugin-ws/dist/plugin.js": project["node_modules/eslint-plugin-demo/index.js"].replace(
+          "eslint-plugin-demo",
+          "eslint-plugin-ws",
+        ),
+        "eslint.config.js": `
+          import ws from "eslint-plugin-ws";
+          export default [{ plugins: { ws }, rules: { "ws/no-foo": "error" } }];\n`,
+        ...bunfig(`["ws"]`, {}),
+      });
+      symlinkSync(
+        join(String(dir), "packages/eslint-plugin-ws"),
+        join(String(dir), "node_modules/eslint-plugin-ws"),
+        "junction",
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "-f", "unix", "src"],
+        env,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain(":2:14: No foo. [Error/ws/no-foo]");
+      expect(exitCode).toBe(1);
+    });
+
+    test("two plugins of one package under one name are two plugins", async () => {
+      const one = project["node_modules/eslint-plugin-demo/index.js"].replace(
+        "eslint-plugin-demo",
+        "eslint-plugin-multi",
+      );
+      const files = {
+        ...project,
+        "node_modules/eslint-plugin-multi/package.json": `{ "name": "eslint-plugin-multi", "main": "a.js" }`,
+        "node_modules/eslint-plugin-multi/a.js": one,
+        "node_modules/eslint-plugin-multi/b.js": one.replace("No foo.", "Another."),
+        "eslint.config.js": `
+          import multi from "eslint-plugin-multi/a.js";
+          export default [{ plugins: { multi }, rules: { "multi/no-foo": "error" } }];\n`,
+      };
+      const { stdout, stderr, exitCode } = await lint({ ...files, ...bunfig(`["eslint-plugin-multi/b.js"]`, {}) }, [
+        "src",
+      ]);
+      expect(stderr).toContain(`The plugin "multi" is loaded twice: here, and by plugins in bunfig.toml or --plugin`);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+    });
+
     test("two files of the project under one name are two plugins", async () => {
       const files = {
         ...project,

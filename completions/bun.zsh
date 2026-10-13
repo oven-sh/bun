@@ -901,6 +901,7 @@ _bun_fmt_completion() {
         '--sort-tailwindcss[Sort Tailwind CSS classes]' \
         '--sort-package-json[Sort the keys of package.json]' \
         '--jsdoc[Format JSDoc comments]' \
+        '--svelte[Format Svelte components (default without a Prettier or oxfmt config)]' \
         '--no-svelte[Do not format Svelte components]' \
         '--staged[Only format files that are staged in git, and stage them again]' \
         '--changed[Only format files that differ from a branch or commit (default\: the default branch)]' \

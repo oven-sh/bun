@@ -56,6 +56,9 @@ const OPTIONS: &[Param] = &[
     clap::param!("--sort-tailwindcss              Sort Tailwind CSS classes"),
     clap::param!("--sort-package-json             Sort the keys of <b>package.json<r>"),
     clap::param!("--jsdoc                         Format JSDoc comments"),
+    clap::param!(
+        "--svelte                        Format Svelte components <d>(default without a Prettier or oxfmt config)<r>"
+    ),
     clap::param!("--no-svelte                     Do not format Svelte components"),
 ];
 
@@ -175,7 +178,6 @@ const OPPOSITES: &[Param] = &[
     clap::param!("--bracket-spacing"),
     clap::param!("--error-on-unmatched-pattern"),
     clap::param!("--insert-final-newline"),
-    clap::param!("--svelte"),
 ];
 
 pub const HELP: Help = Help {

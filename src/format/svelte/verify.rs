@@ -6,10 +6,10 @@
 //!   the same attributes and directives in the same order. The scripts, the style sheet and `<svelte:options>` can be
 //!   anywhere, and so can comments, which go with them.
 //! - The code in the markup has the same tokens in the same order: expressions, declarations, patterns, the heads of
-//!   snippets. Free to change is what a formatter changes: parentheses, `,` and `;`, the quotes of strings and of keys, how a
-//!   number is written, an escape in a name, the order of the flags of a regular expression and of modifiers, the `|` before
-//!   the first type of a union, and the text of a template that can be in another language. So `(a + b) * c` is `a + b * c` here. Code that cannot be parsed
-//!   by itself has the same letters as often.
+//!   snippets. Free to change is what a formatter changes: parentheses, `,` and `;`, which quotes a string has and whether
+//!   a key has any, how a number is written, an escape in a name, the order of the flags of a regular expression and of
+//!   modifiers, the `|` before the first type of a union, and the text of a template that can be in another language. So
+//!   `(a + b) * c` is `a + b * c` here. Code that cannot be parsed by itself has the same letters as often.
 //! - All that is text has the same letters as often: comments, scripts, style sheets.
 //! - There are as many comments: in the markup, between attributes, and in and around the code in the markup, where
 //!   `prettier-plugin-svelte` loses them: `{a /* b */}`.
@@ -30,9 +30,9 @@ use crate::html::js::Parse;
 use crate::html::verify::{Reader, Signature};
 use crate::js::utils::number::format_trimmed_number;
 use crate::options::HtmlWhitespaceSensitivity;
-use crate::verify::without_unicode_escapes;
+use crate::verify::{is_in_another_language, is_table, without_unicode_escapes};
 use bun_core::strings;
-use bun_lint::ast::File;
+use bun_lint::ast::{Expr, ExprTag, File};
 use bun_lint::tokens::{Token, TokenKind};
 use std::borrow::Cow;
 
@@ -415,6 +415,14 @@ impl Check<'_, '_> {
                 self.reader.name(b"", element.name);
                 match (element.this_with_more, element.this) {
                     (Some(written), _) => self.span(written),
+                    // `this={"a"}` is `this="a"`.
+                    (None, Some(this)) if this.kind == ExpressionKind::Text => {
+                        self.reader.exact(this.span.of(self.text));
+                    }
+                    (None, Some(this)) if this.kind == ExpressionKind::StringLiteral => {
+                        self.reader.exact(&without_quotes(this.span.of(self.text)));
+                        self.comments_around(this);
+                    }
                     (None, Some(this)) => self.expression(this),
                     (None, None) => {}
                 }
@@ -563,7 +571,7 @@ impl Check<'_, '_> {
 }
 
 /// Whether something ends with `token` that an operator can follow. If not, a `|` behind it is before the first type of a
-/// union, and a template behind it has no tag.
+/// union.
 #[optimize(size)]
 fn ends_operand(token: Token<'_>) -> bool {
     match token.kind() {
@@ -573,6 +581,57 @@ fn ends_operand(token: Token<'_>) -> bool {
         }
         _ => true,
     }
+}
+
+#[optimize(size)]
+fn is_spelled_like_modifier(token: Token<'_>) -> bool {
+    matches!(token.kind(), TokenKind::Identifier | TokenKind::Keyword)
+        && matches!(
+            token.text(),
+            b"abstract"
+                | b"accessor"
+                | b"declare"
+                | b"override"
+                | b"private"
+                | b"protected"
+                | b"public"
+                | b"readonly"
+                | b"static"
+        )
+}
+
+/// Whether `token`, which is spelled like one, is a modifier: the name of what it is a modifier of follows, or another
+/// modifier. In `f(public, a)` and `{ static: 1 }` it is a name.
+#[optimize(size)]
+fn is_modifier(previous: Option<Token<'_>>, next: Option<Token<'_>>) -> bool {
+    next.is_some_and(|next| match next.kind() {
+        TokenKind::Punctuator => match next.text() {
+            b"*" => true,
+            // `a[0]` has one too.
+            b"[" => previous.is_none_or(|it| {
+                is_spelled_like_modifier(it) || matches!(it.text(), b"{" | b";" | b"}")
+            }),
+            _ => false,
+        },
+        TokenKind::Template | TokenKind::RegularExpression => false,
+        _ => true,
+    })
+}
+
+/// Where the expressions of the kinds `tags` start that `is_one` holds for, in order.
+#[optimize(size)]
+fn starts_of<'a>(
+    file: &'a File<'a>,
+    tags: &[ExprTag],
+    is_one: impl Fn(Expr<'a>) -> bool,
+) -> Vec<u32> {
+    let all = tags.iter().flat_map(|&tag| file.exprs_of_kind(tag));
+    let mut starts: Vec<u32> = all
+        .filter(|&it| is_one(it))
+        .map(|it| it.span().start)
+        .collect();
+    crate::sort::sort(&mut starts[..]);
+    starts
 }
 
 /// What is between the quotes of `string`, where a quote is not escaped.
@@ -603,10 +662,18 @@ fn read_tokens<'a>(
     reader: &mut Reader,
 ) {
     let mut left_out = left_out.iter().peekable();
-    // For each template that is open: whether it can be in another language.
+    // A string that is none of these is a key, a type or the name of a module.
+    let values = starts_of(file, &[ExprTag::String], |_| true);
+    // `` css`a {}` ``, `` /* HTML */ `<a></a>` ``, `` test.each`a | b` ``
+    let free_templates = starts_of(file, &[ExprTag::Template, ExprTag::String], |it| {
+        it.text().starts_with(b"`") && (is_in_another_language(it) || is_table(it))
+    });
+    // For each template that is open: whether it is one of those.
     let mut templates = Vec::new();
     let (mut previous, mut is_behind_key) = (None, false);
-    for token in file.tokens() {
+    let mut tokens = file.tokens().peekable();
+    while let Some(token) = tokens.next() {
+        let next = tokens.peek().copied();
         let (text, at) = (
             token.text(),
             (token.start() as usize).saturating_sub(before),
@@ -624,7 +691,18 @@ fn read_tokens<'a>(
                 b"|" | b"&" if !previous.is_some_and(ends_operand) => {}
                 _ => reader.exact(text),
             },
-            TokenKind::String => reader.exact(&without_quotes(text)),
+            TokenKind::String => {
+                // A key can get and lose its quotes, nothing else can: `"a"` is not `a`.
+                let is_key = values.binary_search(&token.start()).is_err()
+                    && !previous.is_some_and(|it| it.is_punctuator("?"))
+                    && next.is_some_and(|it| {
+                        matches!(it.text(), b":" | b"?" | b"(" | b"<" | b"=" | b"!")
+                    });
+                if !is_key {
+                    reader.mark(60);
+                }
+                reader.exact(&without_quotes(text));
+            }
             TokenKind::Numeric => reader.exact(&format_trimmed_number(text)),
             TokenKind::RegularExpression => {
                 let flags = strings::last_index_of_char(text, b'/').map_or(text.len(), |it| it + 1);
@@ -633,11 +711,7 @@ fn read_tokens<'a>(
             }
             TokenKind::Template => {
                 if text.starts_with(b"`") {
-                    // `` css`a {}` ``, `` /* HTML */ `<a></a>` ``
-                    templates.push(
-                        previous.is_some_and(ends_operand)
-                            || file.comments_before(token).next().is_some(),
-                    );
+                    templates.push(free_templates.binary_search(&token.start()).is_ok());
                 }
                 match templates.last() {
                     Some(true) => reader.count(text),
@@ -648,20 +722,7 @@ fn read_tokens<'a>(
                 }
             }
             // `static private` is `private static`.
-            TokenKind::Identifier | TokenKind::Keyword
-                if matches!(
-                    text,
-                    b"abstract"
-                        | b"accessor"
-                        | b"declare"
-                        | b"override"
-                        | b"private"
-                        | b"protected"
-                        | b"public"
-                        | b"readonly"
-                        | b"static"
-                ) =>
-            {
+            _ if is_spelled_like_modifier(token) && is_modifier(previous, next) => {
                 reader.count(text)
             }
             _ if strings::contains_char(text, b'\\') => {

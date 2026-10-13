@@ -81,7 +81,7 @@ fn is_void(name: &[u8]) -> bool {
     VOID_ELEMENT_NAMES.contains(&name) || name.eq_ignore_ascii_case(b"!doctype")
 }
 
-const RESERVED_WORDS: [&[u8]; 48] = [
+pub(crate) const RESERVED_WORDS: [&[u8]; 48] = [
     b"arguments",
     b"await",
     b"break",
@@ -906,7 +906,7 @@ impl<'a> Parser<'a, '_> {
                         start: self.tree[first.0].start,
                         end: self.tree[first.0].end,
                     },
-                    ExpressionKind::StringLiteral,
+                    ExpressionKind::Text,
                 ),
             });
         }
@@ -1343,26 +1343,36 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
-    /// `read_value`: where the `;`, `{` or `}` is that ends what starts at `start`. `is_selector`: it is read by
-    /// `read_selector_list`, which throws at a `<`. `None` also for a `</style` that is not in a string, a comment or `url(..)`:
-    /// Svelte reads on, and the formatter for style sheets does not leave it as it is.
-    fn end_of_css_value(&self, start: usize, is_selector: bool) -> Option<usize> {
+    /// `read_value`: where the `;`, `{` or `}` is that ends what starts at `start`. `is_prelude`: of an at-rule. If not, what a
+    /// `{` ends is read by `read_selector_list`, which throws at a `<`.
+    ///
+    /// `None` also where Svelte reads on and the formatter for style sheets does not leave a `</style` as it is, or does not
+    /// read on: one that is not in a string, a comment or `url(..)`, and a string that goes on in the next line.
+    fn end_of_css_value(&self, start: usize, is_prelude: bool) -> Option<usize> {
         let text = &self.text[..self.len];
-        let (mut at, mut is_in_url, mut quote) = (start, false, None);
+        let (mut at, mut is_in_url, mut quote, mut has_angle) = (start, false, None, false);
         loop {
-            at += strings::index_of_any(text.get(at..)?, b"\\\"'()/;{}<")?;
+            at += strings::index_of_any(text.get(at..)?, b"\\\"'()/;{}<\n")?;
             match text[at] {
-                b'<' if quote.is_none()
-                    && !is_in_url
-                    && (is_selector || text[at..].starts_with(b"</style")) =>
-                {
-                    return None;
+                b'\n' if quote.is_some() => return None,
+                b'<' if quote.is_none() && !is_in_url => {
+                    if text[at..].starts_with(b"</style") {
+                        return None;
+                    }
+                    has_angle = true;
                 }
                 b'\\' => at += 1,
                 byte if quote == Some(byte) => quote = None,
                 b')' => is_in_url = false,
                 byte @ (b'"' | b'\'') if quote.is_none() => quote = Some(byte),
-                b'(' if text[start..at].ends_with(b"url") => is_in_url = true,
+                // To Svelte `aurl(` is one too.
+                b'(' => {
+                    if let [before @ .., b'u', b'r', b'l'] = &text[start..at] {
+                        is_in_url = !(before.last())
+                            .is_some_and(|&it| !it.is_ascii() || is_in_css_name(it));
+                    }
+                }
+                b'{' if !is_in_url && quote.is_none() && has_angle && !is_prelude => return None,
                 b';' | b'{' | b'}' if !is_in_url && quote.is_none() => return Some(at),
                 b'/' if !is_in_url && quote.is_none() && text.get(at + 1) == Some(&b'*') => {
                     at += 1 + strings::index_of(&text[at + 2..], b"*/")? + 2;
@@ -1389,8 +1399,20 @@ impl<'a> Parser<'a, '_> {
             match rest.first()? {
                 b'<' if depth == 0 && rest.starts_with(b"</style") => return Some(at),
                 b'}' => depth = depth.checked_sub(1)?,
-                &first => {
-                    at = self.end_of_css_value(at, depth == 0 && first != b'@')?;
+                // `read_at_rule`: the name is not part of the prelude.
+                b'@' => {
+                    let name = rest[1..]
+                        .iter()
+                        .take_while(|&&it| !it.is_ascii() || is_in_css_name(it));
+                    at = self.end_of_css_value(at + 1 + name.count(), true)?;
+                    match text[at] {
+                        b'{' => depth += 1,
+                        b';' => {}
+                        _ => return None,
+                    }
+                }
+                _ => {
+                    at = self.end_of_css_value(at, false)?;
                     match text[at] {
                         b'{' => depth += 1,
                         b';' => {}
@@ -2240,6 +2262,11 @@ fn is_typescript(text: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// `/[a-zA-Z0-9_-]/`, and the `@` and the `\\` that a name can start with or have in it.
+fn is_in_css_name(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'@' | b'\\')
 }
 
 /// Where what is behind the white space and the comments at `at` starts.

@@ -81,8 +81,12 @@ pub(super) fn report(
         let (scope, path) = (&target.scope, &target.path);
         let named = configs.packages_of_plugins(scope, Some(path));
         let missing = configs.missing_plugins(scope, Some(path)).iter();
+        // With `svelte = false` nobody does what the plugin for it does.
+        let is_in_use =
+            |it: &&[u8]| !(configs.turns_svelte_off() && config::is_plugin_for_svelte(it));
         named
             .chain(missing.map(|it| &it[..]))
+            .filter(is_in_use)
             .for_each(|it| plugins.add(it, configs.is_built_in(it)));
         nested.extend(configs.path_of_config(scope).map(shown));
     }
@@ -120,6 +124,8 @@ pub(super) fn report(
     notes.extend(configs.note().map(<[u8]>::to_vec));
     if configs.turns_svelte_off() {
         notes.push(b"Svelte files are not formatted (svelte = false)".to_vec());
+    } else if configs.turns_svelte_off_for_some() {
+        notes.push(b"Some Svelte files are not formatted (svelte = false in an override)".to_vec());
     }
 
     let loaded = modules.packages();

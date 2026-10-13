@@ -32,6 +32,8 @@ pub(crate) enum ExpressionKind {
     Identifier,
     /// A string.
     StringLiteral,
+    /// The text of `this="a"`, for which Svelte has a string.
+    Text,
     /// `null`, a number, `true`, a regular expression ..
     OtherLiteral,
     Sequence,

@@ -239,6 +239,10 @@ enum Svelte {
     Nobody,
 }
 
+pub(super) fn is_plugin_for_svelte(name: &[u8]) -> bool {
+    package_of(name) == PLUGIN_FOR_SVELTE
+}
+
 /// What the last `svelte` in `settings` says: `true`, `false` or a table, which turns it on.
 fn svelte_in(settings: &Settings) -> Option<bool> {
     let about_it = settings.iter().rfind(|it| it.0 == b"svelte");
@@ -1697,6 +1701,16 @@ impl<'c> Configs<'c> {
     /// Whether `--no-svelte` or `svelte = false` in `[fmt]` is there. An override can still turn it on for some files.
     pub(crate) fn turns_svelte_off(&self) -> bool {
         self.svelte_of_flags(None) == Some(false)
+    }
+
+    /// Whether an override of `[fmt]` has `svelte = false`.
+    pub(crate) fn turns_svelte_off_for_some(&self) -> bool {
+        (self.overrides.iter()).any(|it| svelte_in(&it.settings) == Some(false))
+    }
+
+    /// Whether `--parser svelte`, or the same in `[fmt]`, is there.
+    pub(crate) fn asks_for_parser_of_svelte(&self) -> bool {
+        (self.options.format.iter()).any(|it| it.0 == b"parser" && it.1 == b"svelte")
     }
 
     /// Whether a flag or the config asks for a part of the file at `path`, which has `scope`, or for where the cursor ends up.

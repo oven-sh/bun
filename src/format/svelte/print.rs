@@ -9,7 +9,7 @@ use super::doc::{
     Brace, Code, Doc, EMPTY, Js, JsKind, Parser, dedent, group, indent, owned, text, trim_left,
     trim_right,
 };
-use super::parser::closing_tag_omitted;
+use super::parser::{RESERVED_WORDS, closing_tag_omitted};
 use crate::html::embed::infer_parser_by_type_attribute;
 use crate::html::preprocess::slice;
 use crate::options::{
@@ -20,6 +20,7 @@ use crate::text::{
     has_newline, has_newline_backwards, is_previous_line_empty, skip_newline, skip_spaces,
 };
 use bun_core::strings;
+use bun_lint::utils::text::is_identifier_name;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
@@ -528,11 +529,17 @@ impl<'a, 'o> Printer<'a, 'o> {
         }
     }
 
-    /// Whether `expression` is the name `name`. The plugin makes `{a}` of `a={a /* b */}`.
+    /// Whether `expression` is the name `name`. The plugin makes `{a}` of `a={a /* b */}` and of `a={/* b */ a}`.
     fn is_name(&self, expression: Expression, name: &[u8]) -> bool {
         expression.kind == ExpressionKind::Identifier
             && expression.span.of(self.text) == name
-            && !self.has_comments_around(expression)
+            && !self.has_comments(expression)
+    }
+
+    /// Whether `name`, which stands for `name={name}`, can be written like that. The plugin makes `class:a-b={a-b}` of
+    /// `class:a-b`, and `class:if={if}` of `class:if`.
+    fn is_variable(name: &[u8]) -> bool {
+        is_identifier_name(name) && !RESERVED_WORDS.contains(&name)
     }
 
     /// `isOrCanBeConvertedToShorthand`
@@ -690,15 +697,23 @@ impl<'a, 'o> Printer<'a, 'o> {
         Cow::Borrowed(Span { start, end }.of(self.text))
     }
 
-    /// Whether there is a comment before or behind what the plugin prints of `expression`: `{a /* b */}`, `{/* b */ (a)}`.
+    /// Whether there is a comment from `start` to `end`, where there is nothing but parentheses, white space and comments.
+    fn has_comment_between(&self, start: u32, end: u32) -> bool {
+        let around = self.text.get(start as usize..end as usize);
+        around.is_some_and(|it| strings::contains_char(it, b'/'))
+    }
+
+    /// Whether there is a comment before or behind what the plugin prints of `expression`: `{a /* b */}`, `{/* b */ (a)}`. It
+    /// prints the one in `{/* b */ a}`.
     fn has_comments_around(&self, expression: Expression) -> bool {
-        // What is there is parentheses, white space and comments.
-        let has_comment = |start: u32, end: u32| {
-            let around = self.text.get(start as usize..end as usize);
-            around.is_some_and(|it| strings::contains_char(it, b'/'))
-        };
-        has_comment(expression.outer.start, expression.from)
-            || has_comment(expression.span.end, expression.outer.end)
+        self.has_comment_between(expression.outer.start, expression.from)
+            || self.has_comment_between(expression.span.end, expression.outer.end)
+    }
+
+    /// Whether there is a comment before or behind `expression`. For who prints something else in its place.
+    fn has_comments(&self, expression: Expression) -> bool {
+        self.has_comment_between(expression.outer.start, expression.span.start)
+            || self.has_comment_between(expression.span.end, expression.outer.end)
     }
 
     fn js(&self, expression: Expression) -> Js<'a> {
@@ -1335,7 +1350,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     Self::print_modifiers(&modifiers),
                 ];
                 if self.can_be_shorthand(name, &value) || value == Value::True {
-                    if !allows_shorthand {
+                    if !allows_shorthand && Self::is_variable(name) {
                         prefix.extend([Doc::Token("={"), text(name), Doc::Token("}")]);
                     }
                     return Doc::List(prefix);
@@ -1349,6 +1364,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 expression,
             } => {
                 let is_own_name = expression.is_some_and(|it| self.is_name(it, name));
+                let allows_shorthand = allows_shorthand || !Self::is_variable(name);
                 let (prefix, value) = match kind {
                     DirectiveKind::On => ("on:", with_value(self, expression)),
                     DirectiveKind::Bind if is_own_name && allows_shorthand => ("bind:", EMPTY),
@@ -1636,8 +1652,9 @@ impl<'a, 'o> Printer<'a, 'o> {
         } else if let Some(this) = this {
             let line = self.attribute_line(&element.attributes, true);
             let value = match this.kind {
+                ExpressionKind::Text => self.print_text_of_this(this.span),
                 ExpressionKind::StringLiteral
-                    if kind == ElementKind::SvelteElement && !self.has_comments_around(this) =>
+                    if kind == ElementKind::SvelteElement && !self.has_comments(this) =>
                 {
                     self.print_tag_name(this)
                 }
@@ -1785,26 +1802,37 @@ impl<'a, 'o> Printer<'a, 'o> {
         group(parts)
     }
 
-    /// `this=` of `<svelte:element>` with a string.
-    fn print_tag_name(&self, tag: Expression) -> Doc<'a> {
-        let written = tag.span.of(self.text);
-        let before = (tag.span.start as usize)
+    /// `this="a"`. The plugin puts every text between double quotes: `this='a"b'` becomes `this="a"b"`.
+    fn print_text_of_this(&self, written: Span) -> Doc<'a> {
+        let before = (written.start as usize)
             .checked_sub(1)
             .and_then(|at| self.text.get(at));
-        let is_in_braces = before == Some(&b'{');
-        // A literal has its quotes, the text of an attribute has not.
-        let value = match written {
-            [open @ (b'"' | b'\''), inner @ .., close] if open == close => inner,
-            _ => written,
+        let quote = Doc::Token(match (before, written.of(self.text)) {
+            (_, value) if !strings::contains_char(value, b'"') => "\"",
+            (Some(b'\''), _) => "'",
+            _ => "",
+        });
+        Doc::List(vec![quote.clone(), text(written.of(self.text)), quote])
+    }
+
+    /// `this=` of `<svelte:element>` with a string. Right behind the `{` the plugin prints `{"a"}`, elsewhere `"a"`, with what
+    /// the string stands for in it, whatever that is: `this={'a"b'}` becomes `this={"a"b"}`, and `this={ "a&amp;b" }`, which is
+    /// no entity, becomes one.
+    fn print_tag_name(&self, tag: Expression) -> Doc<'a> {
+        let value = match tag.span.of(self.text) {
+            [_, inner @ .., _] => inner,
+            _ => b"",
         };
-        // The plugin puts what the string stands for between double quotes: `this={'a"b'}` becomes `this={"a"b"}`.
-        if is_in_braces && strings::index_of_any(value, b"\"\\").is_some() {
+        let is_plain = |&it: &u8| {
+            !it.is_ascii() || it.is_ascii_alphanumeric() || matches!(it, b'-' | b'_' | b':' | b'.')
+        };
+        if !value.iter().all(is_plain) {
             return self.print_js_in_braces(tag);
         }
-        if strings::contains_char(value, b'"') {
-            let quote = Doc::Token(if before == Some(&b'\'') { "'" } else { "" });
-            return Doc::List(vec![quote.clone(), text(value), quote]);
-        }
+        let is_in_braces = (tag.span.start as usize)
+            .checked_sub(1)
+            .and_then(|at| self.text.get(at))
+            == Some(&b'{');
         Doc::List(vec![
             Doc::Token(if is_in_braces { "{\"" } else { "\"" }),
             text(value),

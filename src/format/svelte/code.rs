@@ -69,8 +69,9 @@ fn starts_like_a_tag<'a>(mut e: Expr<'a>, brace: Brace, f: &Formatter<'a>) -> bo
 }
 
 /// Whether one of the `comments` in `text` can be the last of it that is printed. One at the start or at the end of its line
-/// waits for the end of a line: `a[0\n/* b */\n]` is `a[0]\n/* b */`. Any other stays before what follows it, unless all of
-/// that goes: parentheses, and the `;` of a statement.
+/// waits for the end of a line: `a[0\n/* b */\n]` is `a[0]\n/* b */`. Any other stays before what follows it, unless that goes,
+/// like parentheses and the `;` of a statement, or is written before it: `a as B[/* c */]` is `a as B[] /* c */`. So it can if
+/// nothing follows it that does not close something.
 fn can_end_with_comment(text: &[u8], comments: &[Comment]) -> bool {
     // They are in the order in which they are printed.
     let Some(end) = comments.iter().map(|it| it.span.end).max() else {
@@ -80,7 +81,7 @@ fn can_end_with_comment(text: &[u8], comments: &[Comment]) -> bool {
     loop {
         behind = strings::trim_js_whitespace_end(behind);
         match behind {
-            [before @ .., b')' | b';'] => behind = before,
+            [before @ .., b')' | b']' | b'}' | b'>' | b';'] => behind = before,
             _ => break,
         }
     }

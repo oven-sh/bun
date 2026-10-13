@@ -2193,6 +2193,11 @@ impl Run<'_> {
         if !(options.plugins.iter()).all(|it| configs.is_built_in(it)) {
             self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
         }
+        if configs.asks_for_parser_of_svelte() && configs.turns_svelte_off() {
+            return self.fail(
+                b"Cannot use --parser svelte while Svelte is off (--no-svelte, or svelte = false in bunfig.toml).",
+            );
+        }
         if options.config.is_some() && !options.config_lookup {
             let mut out = self.fail(b"Cannot use --no-config and --config together.");
             out.exit_code = 1;

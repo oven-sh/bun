@@ -141,10 +141,7 @@ where
                     // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
                     let _ = bun_sys::update_nonblocking(fd, false);
                     is_nonblocking = false;
-                } else if !is_nonblocking && *pollable {
-                    // O_NONBLOCK is meaningless on regular files / char devices
-                    // and lives on the shared open file description, so only
-                    // set it where it buys us EAGAIN semantics.
+                } else if !is_nonblocking {
                     let flags = match bun_sys::get_fcntl_flags(fd) {
                         Ok(flags) => flags,
                         Err(err) => {

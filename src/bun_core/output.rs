@@ -413,19 +413,6 @@ impl Source {
         Self::get_force_color_depth().unwrap_or(ColorDepth::None) != ColorDepth::None
     }
 
-    /// What `FORCE_COLOR` / `NO_COLOR` alone say (the part of the colour
-    /// decision that doesn't depend on which stream is being written to), for
-    /// callers colouring output bound for a stream other than fd 1/2.
-    pub fn env_color_override() -> Option<bool> {
-        if Self::get_force_color_depth().is_some() {
-            Some(Self::is_force_color())
-        } else if Self::is_no_color() {
-            Some(false)
-        } else {
-            None
-        }
-    }
-
     pub fn color_depth() -> ColorDepth {
         *LAZY_COLOR_DEPTH.get_or_init(compute_color_depth)
     }
@@ -2275,12 +2262,6 @@ pub fn print_errorln(args: impl core::fmt::Display) {
     print_to(Destination::Stderr, format_args!("{args}\n"));
 }
 
-/// See [`Source::env_color_override`].
-#[inline]
-pub fn env_color_override() -> Option<bool> {
-    Source::env_color_override()
-}
-
 /// `Output.enable_ansi_colors_stdout` — safe relaxed-load wrapper over the
 /// startup-initialized atomic.
 #[inline]
@@ -2472,12 +2453,6 @@ impl ErrName for crate::CrateError {
 // each enum impls `ErrName` explicitly instead.
 
 // ── ScopedDebugWriter ─────────────────────────────────────────────────────
-
-/// True while this thread is inside a `scoped_log!` write (debug builds).
-#[inline]
-pub fn is_inside_scoped_log() -> bool {
-    crate::env::IS_DEBUG && scoped_debug_writer::DISABLE_INSIDE_LOG.get() > 0
-}
 
 pub mod scoped_debug_writer {
     use super::*;

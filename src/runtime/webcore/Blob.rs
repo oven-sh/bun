@@ -1658,19 +1658,9 @@ impl BlobExt for Blob {
             );
         }
 
-        // Every writer for fd 1 / fd 2 on this VM is the one stdio sink, so per-call options (`highWaterMark`) do not apply.
-        let stdio_sink = || {
-            let fd = stdio_fd_of_store(global_this, &store)?;
-            webcore::file_sink::stdio_sink_js(global_this, fd)
-        };
-
         #[cfg(windows)]
         {
             use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-
-            if let Some(js) = stdio_sink() {
-                return Ok(js);
-            }
 
             let pathlike = &store.data.as_file().pathlike;
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -1781,9 +1771,6 @@ impl BlobExt for Blob {
             };
             if let streams::Start::FileSink(ref mut opts) = stream_start {
                 opts.input_path = input_path;
-                if let Some(js) = stdio_sink() {
-                    return Ok(js);
-                }
             }
 
             if let bun_sys::Result::Err(err) = sink.start(&stream_start, context) {
@@ -4645,33 +4632,6 @@ pub(crate) fn write_file_with_source_destination(
 // writeFileInternal / writeFile (Bun.write)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Some(Fd::stdout()|stderr())` when `store` is this VM's stdout/stderr store
-/// or any fd-backed store on fd 1/2 — i.e. writes to it belong to the stdio sink.
-pub(crate) fn stdio_fd_of_store(global_this: &JSGlobalObject, store: &Store) -> Option<Fd> {
-    let store::Data::File(ref file) = store.data else {
-        return None;
-    };
-    let PathOrFileDescriptor::Fd(fd) = file.pathlike else {
-        return None;
-    };
-    match fd.stdio_tag() {
-        Some(bun_core::Stdio::StdOut) => return Some(Fd::stdout()),
-        Some(bun_core::Stdio::StdErr) => return Some(Fd::stderr()),
-        _ => {}
-    }
-    // SAFETY: bun_vm() never returns null for a Bun-owned global.
-    let vm = global_this.bun_vm().as_mut();
-    let rare = vm.rare_data.as_ref()?;
-    let store_ptr = core::ptr::from_ref(store).cast::<c_void>().cast_mut();
-    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-        Some(Fd::stdout())
-    } else if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-        Some(Fd::stderr())
-    } else {
-        None
-    }
-}
-
 /// ## Errors
 /// - If `path_or_blob` is a detached blob
 /// ## Panics
@@ -4722,60 +4682,6 @@ pub(crate) fn write_file_internal(
             return Err(cx.global().throw_invalid_arguments(format_args!(
                 "Cannot create a directory for a file descriptor"
             )));
-        }
-    }
-
-    // Bun.write(Bun.stdout | Bun.stderr, data): through the stdio sink, so it is
-    // ordered with everything already handed to the sink (console.*,
-    // process.stdout — though not with chunks process.stdout's Writable is still
-    // holding: cork(), backpressure buffer) and gets the same EAGAIN handling
-    // (and never lands on the thread pool, whose LIFO queue reversed
-    // back-to-back writes to a file-backed stdout).
-    if let PathOrBlob::Blob(ref b) = *path_or_blob {
-        if b.offset.get() == 0 && !b.is_s3() {
-            let stdio_fd = b
-                .store
-                .get()
-                .as_deref()
-                .and_then(|st| stdio_fd_of_store(cx.global(), st));
-            if let Some(stdio_fd) = stdio_fd {
-                // SAFETY: bun_vm() is the live VM owning `cx.global()`.
-                let vm = cx.global().bun_vm().as_mut();
-                if let Some(sink) = webcore::file_sink::stdio_sink_for(vm, stdio_fd) {
-                    // An async JS writer, like process.stdout: a pipe may queue
-                    // and resolve later rather than stall the loop.
-                    // SAFETY: canonical live pointer held by RareData.
-                    #[cfg(not(windows))]
-                    unsafe {
-                        (*sink).stdio_go_nonblocking()
-                    };
-                    // SAFETY: as above.
-                    let wrote = unsafe { (*sink).write_js_value(cx.global(), data, true, true)? };
-                    if let Some((result, accepted)) = wrote {
-                        // Resolves with *this* call's byte count: right away if
-                        // the fd took it, otherwise once the sink's queue has
-                        // drained (the loop keeps running meanwhile).
-                        return Ok(match result {
-                            streams::Writable::Err(err) => {
-                                JSPromise::rejected_promise(cx.global(), err.to_js(cx.global()))
-                                    .to_js()
-                            }
-                            // SAFETY: as above.
-                            streams::Writable::Pending(_) => unsafe {
-                                (*sink).add_stdio_waiter(cx.global(), accepted as f64)
-                            },
-                            _ => JSPromise::resolved_promise_value(
-                                cx.global(),
-                                JSValue::js_number(accepted as f64),
-                            ),
-                        });
-                    }
-                    // A Blob / stream source takes the general path below; at
-                    // least keep it behind anything already queued.
-                    // SAFETY: as above.
-                    let _ = unsafe { webcore::FileSink::drain_sync(sink) };
-                }
-            }
         }
     }
 

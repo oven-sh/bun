@@ -61,7 +61,6 @@ using namespace JSC;
     macro(close) \
     macro(cmd) \
     macro(code) \
-    macro(consoleStream) \
     macro(createCommonJSModule) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
@@ -179,12 +178,9 @@ using namespace JSC;
     macro(statusCode) \
     macro(statusMessage) \
     macro(statusText) \
-    macro(stderr) \
-    macro(stdout) \
     macro(storage) \
     macro(stream) \
     macro(syscall) \
-    macro(takeBuffered) \
     macro(text) \
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \

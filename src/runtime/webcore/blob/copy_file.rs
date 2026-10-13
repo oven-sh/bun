@@ -420,18 +420,10 @@ impl CopyFile {
             match bun_sys::get_errno(written) {
                 bun_sys::E::SUCCESS => {}
 
-                bun_sys::E::EINTR => continue,
-
                 // XDEV: cross-device copy not supported
                 // NOSYS: syscall not available
                 // OPNOTSUPP: filesystem doesn't support this operation
-                // AGAIN: either end is a pipe whose description someone made
-                //        O_NONBLOCK (a stdio pipe, typically); the read/write
-                //        loop waits each side out properly.
-                bun_sys::E::ENOSYS
-                | bun_sys::E::EXDEV
-                | bun_sys::E::ENOTSUP
-                | bun_sys::E::EAGAIN => {
+                bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
                     return self.fallback_read_write(remain, unknown_size, &mut total_written);
                 }
@@ -995,14 +987,14 @@ fn read_write_loop_capped(
     let mut remaining = cap;
     while remaining > 0 {
         let want = (buf.len() as SizeType).min(remaining) as usize;
-        let amt = bun_sys::read_retrying(src_fd, &mut buf[..want])?;
+        let amt = bun_sys::read(src_fd, &mut buf[..want])?;
         if amt == 0 {
             break;
         }
         remaining -= amt as SizeType;
         let mut slice = &buf[..amt];
         while !slice.is_empty() {
-            match bun_sys::write_retrying(dest_fd, slice)? {
+            match bun_sys::write(dest_fd, slice)? {
                 0 => return Ok(()),
                 n => {
                     *total += n as u64;

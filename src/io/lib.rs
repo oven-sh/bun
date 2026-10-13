@@ -473,10 +473,8 @@ pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
 #[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;
-pub mod stdio_lock;
 #[path = "write.rs"]
 pub mod write;
-pub use stdio_lock::StdioLock;
 
 // ── re-exports for higher tiers ─────────────────────────────────────────────
 // Byte-level `Write` trait + helpers. Downstream
@@ -1900,10 +1898,6 @@ impl FilePollRef {
     #[inline]
     pub fn set_flag(self, f: FilePollFlag) {
         self.inner().flags.insert(f);
-    }
-    #[inline]
-    pub fn clear_flag(self, f: FilePollFlag) {
-        self.inner().flags.remove(f);
     }
     #[inline]
     pub(crate) fn file_type(self) -> crate::pipes::FileType {

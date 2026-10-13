@@ -87,8 +87,6 @@ pub trait PosixPipeWriter {
             FileType::Pipe if !force_sync => {
                 self.try_write_with_write_fn(buf, write_to_blocking_pipe)
             }
-            // Nothing resumes an `EAGAIN` here (someone else made the description non-blocking), so wait it out.
-            FileType::File => self.try_write_with_write_fn(buf, sys::write_retrying),
             _ => self.try_write_with_write_fn(buf, sys::write),
         }
     }
@@ -686,12 +684,6 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub(crate) closed_without_reporting: bool,
     pub force_sync: bool,
-    /// Sub-`CHUNK_SIZE` writes are coalesced and normally also arm the poll,
-    /// so the next writable event flushes them. An owner that flushes at end
-    /// of tick itself (FileSink's `AutoFlusher` on the stdio sink, whose poll
-    /// is deliberately unregistered while idle) turns this off to save the
-    /// registration syscall per buffered write.
-    pub poll_flushes_buffer: bool,
     /// Last reported `WriteStatus == Pending` (i.e. write(2) returned EAGAIN).
     backed_up: core::cell::Cell<bool>,
     rwf_unsupported: core::cell::Cell<bool>,
@@ -706,7 +698,6 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             is_done: false,
             closed_without_reporting: false,
             force_sync: false,
-            poll_flushes_buffer: true,
             backed_up: core::cell::Cell::new(false),
             rwf_unsupported: core::cell::Cell::new(false),
         }
@@ -765,12 +756,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     #[inline]
     fn parent(&self) -> *mut Parent {
         self.parent
-    }
-
-    /// [`parent`](Self::parent), for the poll dispatcher.
-    #[inline]
-    pub fn parent_ptr(&self) -> *mut Parent {
-        self.parent()
     }
 
     /// Single nonnull-asref dispatch for the set-once `parent` backref.
@@ -863,16 +848,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         Self::r(this).close();
     }
 
-    /// A write the parent issued on this writer's fd itself (bypassing
-    /// `write()`) failed terminally; tear down exactly as if `write()` had hit
-    /// the error.
-    pub fn fail(&mut self, err: sys::Error) {
-        if self.is_done || self.closed_without_reporting {
-            return;
-        }
-        self._on_error(err);
-    }
-
     fn _on_write(&mut self, written: usize, status: WriteStatus) {
         self.outgoing.wrote(written);
 
@@ -918,15 +893,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub fn write_utf16(&mut self, buf: &[u16]) -> WriteResult {
-        self.write_utf16_impl(buf, true)
-    }
-
-    /// See [`write_now`](Self::write_now).
-    pub fn write_utf16_now(&mut self, buf: &[u16]) -> WriteResult {
-        self.write_utf16_impl(buf, false)
-    }
-
-    fn write_utf16_impl(&mut self, buf: &[u16], may_buffer: bool) -> WriteResult {
         if self.is_done || self.closed_without_reporting {
             return WriteResult::Done(0);
         }
@@ -939,25 +905,16 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         let buf_len = self.outgoing.size() - before_len;
 
-        self.maybe_write_newly_buffered_data(buf_len, may_buffer)
+        self.maybe_write_newly_buffered_data(buf_len)
     }
 
     pub fn write_latin1(&mut self, buf: &[u8]) -> WriteResult {
-        self.write_latin1_impl(buf, true)
-    }
-
-    /// See [`write_now`](Self::write_now).
-    pub fn write_latin1_now(&mut self, buf: &[u8]) -> WriteResult {
-        self.write_latin1_impl(buf, false)
-    }
-
-    fn write_latin1_impl(&mut self, buf: &[u8], may_buffer: bool) -> WriteResult {
         if self.is_done || self.closed_without_reporting {
             return WriteResult::Done(0);
         }
 
         if bun_core::strings::is_all_ascii(buf) {
-            return self.write_impl(buf, may_buffer);
+            return self.write(buf);
         }
 
         let before_len = self.outgoing.size();
@@ -969,17 +926,15 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         let buf_len = self.outgoing.size() - before_len;
 
-        self.maybe_write_newly_buffered_data(buf_len, may_buffer)
+        self.maybe_write_newly_buffered_data(buf_len)
     }
 
-    fn maybe_write_newly_buffered_data(&mut self, buf_len: usize, may_buffer: bool) -> WriteResult {
+    fn maybe_write_newly_buffered_data(&mut self, buf_len: usize) -> WriteResult {
         debug_assert!(!self.is_done);
 
-        if may_buffer && self.should_buffer(0) {
+        if self.should_buffer(0) {
             self.parent_on_write(buf_len, WriteStatus::Drained);
-            if self.poll_flushes_buffer {
-                Self::register_poll(self);
-            }
+            Self::register_poll(self);
 
             return WriteResult::Wrote(buf_len);
         }
@@ -1027,22 +982,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub fn write(&mut self, buf: &[u8]) -> WriteResult {
-        self.write_impl(buf, true)
-    }
-
-    /// `write` that never coalesces: the syscall is attempted now (anything
-    /// already queued goes first), the remainder queued on EAGAIN / short
-    /// write. What a stream's `_write` wants, as opposed to a batching writer.
-    pub fn write_now(&mut self, buf: &[u8]) -> WriteResult {
-        self.write_impl(buf, false)
-    }
-
-    fn write_impl(&mut self, buf: &[u8], may_buffer: bool) -> WriteResult {
         if self.is_done || self.closed_without_reporting {
             return WriteResult::Done(0);
         }
 
-        if may_buffer && self.should_buffer(buf.len()) {
+        if self.should_buffer(buf.len()) {
             // this is streaming, but we buffer the data below `chunk_size` to
             // reduce the number of writes
             if self.outgoing.write(buf).is_err() {
@@ -1052,9 +996,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             // noop, but need this to have a chance
             // to register deferred tasks (onAutoFlush)
             self.parent_on_write(buf.len(), WriteStatus::Drained);
-            if self.poll_flushes_buffer {
-                Self::register_poll(self);
-            }
+            Self::register_poll(self);
 
             // it's buffered, but should be reported as written to
             // callers
@@ -1128,9 +1070,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 self.outgoing.wrote(written);
                 if self.outgoing.is_empty() {
                     self.outgoing.reset();
-                } else {
-                    // Backed up: the writable event is what drains the rest.
-                    Self::register_poll(self);
                 }
             }
             WriteResult::Wrote(written) => {
@@ -1203,10 +1142,22 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return sys::Result::Ok(());
         }
 
-        let existing_poll = self.get_poll();
-        let poll = self.ensure_poll(fd);
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
         let loop_ = unsafe { Parent::event_loop(self.parent()) };
+        let existing_poll = self.get_poll();
+        let poll = match existing_poll {
+            Some(p) => p,
+            None => {
+                let p = FilePollRef::init(
+                    loop_,
+                    fd,
+                    Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()),
+                );
+                self.handle = PollOrFd::Poll(p);
+                p
+            }
+        };
+
         match poll.register_with_fd(loop_.loop_(), FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
@@ -1219,47 +1170,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
 
         sys::Result::Ok(())
-    }
-
-    /// `start` without registering the poll with the loop: the `FilePoll`
-    /// exists (so `FileType` and keep-alive work) but the kernel isn't asked
-    /// for writability until the first backpressure (`register_poll`). For a
-    /// long-lived writer whose fd is rarely full — an idle `EVFILT_WRITE` /
-    /// `EPOLLOUT` registration on a pipe makes every `write(2)` *and* the
-    /// reader's `read(2)` pay for knote/wakeup bookkeeping. Pair with
-    /// [`unregister_poll`](Self::unregister_poll) once drained.
-    pub fn start_lazy(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
-        if !is_pollable {
-            return self.start(fd, false);
-        }
-        let _ = self.ensure_poll(fd);
-        sys::Result::Ok(())
-    }
-
-    /// Undo `register_poll` (keeps the `FilePoll`). No-op if not registered.
-    pub fn unregister_poll(&mut self) {
-        let Some(poll) = self.get_poll() else { return };
-        if !poll.is_registered() {
-            return;
-        }
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::loop_(self.parent()) }.cast();
-        let _ = poll.unregister(loop_, false);
-    }
-
-    fn ensure_poll(&mut self, fd: Fd) -> FilePollRef {
-        if let Some(p) = self.get_poll() {
-            return p;
-        }
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::event_loop(self.parent()) };
-        let p = FilePollRef::init(
-            loop_,
-            fd,
-            Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()),
-        );
-        self.handle = PollOrFd::Poll(p);
-        p
     }
 }
 
@@ -2676,21 +2586,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     pub fn write(&mut self, buffer: &[u8]) -> WriteResult {
         self.write_internal_u8(buffer, WriteKind::Bytes)
-    }
-
-    /// Windows never coalesces (`uv_write` / `WriteFile` per call), so these
-    /// are the plain writes; see the posix `write_now`.
-    #[inline]
-    pub fn write_now(&mut self, buffer: &[u8]) -> WriteResult {
-        self.write(buffer)
-    }
-    #[inline]
-    pub fn write_latin1_now(&mut self, buffer: &[u8]) -> WriteResult {
-        self.write_latin1(buffer)
-    }
-    #[inline]
-    pub fn write_utf16_now(&mut self, buf: &[u16]) -> WriteResult {
-        self.write_utf16(buf)
     }
 
     pub fn flush(&mut self) -> WriteResult {

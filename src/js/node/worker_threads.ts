@@ -346,16 +346,16 @@ const { makePortReadable, makePortWritable } = require("internal/worker/stdio");
 // thread would get); read them here so they exist before user code, as in node.
 function setupWorkerStdio(stdio) {
   _setStdioPorts(stdio);
-  // Point the native console at the port streams, which is what routes a
-  // worker's console.log to the parent (Node: console._stdout is
-  // process.stdout, which in a worker is a port-backed Writable).
-  const setConsoleStream = $newCppFunction("BunProcess.cpp", "jsFunctionSetConsoleStream", 2);
-  setConsoleStream(1, process.stdout);
-  setConsoleStream(2, process.stderr);
+  const stdoutStream = process.stdout;
+  const stderrStream = process.stderr;
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
   void process.stdin;
+  // node routes console.log through process.stdout/stderr; Bun's global console
+  // writes the fd directly, so rebind it to the port-backed streams.
+  const { Console } = require("node:console");
+  (globalThis as { console: unknown }).console = new Console(stdoutStream, stderrStream);
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for

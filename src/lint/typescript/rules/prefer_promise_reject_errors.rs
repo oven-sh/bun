@@ -16,22 +16,15 @@ pub struct PreferPromiseRejectErrors {
 const REJECT_AN_ERROR: Message =
     Message::new("rejectAnError", "Expected the Promise rejection reason to be an Error.");
 
-/// Whether tsgolint's `checker.getAccessedPropertyName(callee)` is `reject`, as far as the syntax
-/// decides it: `a.#reject` is named `#reject`, and a key names a property only if it is a literal
-/// or an entity name, without parentheses.
+/// Whether tsgolint's `checker.getAccessedPropertyName(callee)` is `reject`: `a.#reject` is named
+/// `#reject`.
 fn is_access_of_reject(callee: Expr<'_>) -> bool {
     match callee.kind() {
         ExprKind::Dot { name, .. } => name.bytes() == b"reject",
-        ExprKind::Index { index, .. } => {
-            let names_a_property = match index.kind() {
-                ExprKind::String(_) | ExprKind::Ident(_) | ExprKind::Dot { .. } => true,
-                ExprKind::Template(template) => template.exprs().is_empty(),
-                _ => false,
-            };
-            names_a_property
-                && !index.is_parenthesized()
-                && is_static_member_access_of_value(callee, &["reject"])
-        }
+        ExprKind::Index { .. } => matches!(
+            callee.file().type_checker().get_accessed_property_name(callee),
+            Some(b"reject")
+        ),
         _ => false,
     }
 }

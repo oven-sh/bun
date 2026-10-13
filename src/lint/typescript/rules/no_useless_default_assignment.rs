@@ -344,12 +344,29 @@ fn check_element<'a>(
     if element_index >= tuple_args.len() || element_index >= target.min_length() {
         return;
     }
-    let is_used = match element_index < target.fixed_length() {
+    let fixed_length = target.fixed_length();
+    let mut end = tuple_args.len();
+    if cx.language().is_oxlint && element_index >= fixed_length {
+        // tsgolint: a trailing element cannot reach this position if too many required elements precede it.
+        let (flags, mut position) = (target.element_flags(), fixed_length);
+        end = fixed_length;
+        while end < tuple_args.len() && position <= element_index {
+            position += usize::from(flags.get(end).is_some_and(|it| it.contains(bun_lint::types::ElementFlags::REQUIRED)));
+            end += 1;
+        }
+    }
+    let is_used = match element_index < fixed_length {
         true => tuple_args.get(element_index).is_some_and(can_be_undefined),
-        false => tuple_args.iter().skip(target.fixed_length()).any(can_be_undefined),
+        false => tuple_args.iter().take(end).skip(fixed_length).any(can_be_undefined),
     };
     if !is_used {
-        let value = tuple_args.get(element_index).filter(|_| element_index < target.fixed_length());
+        let mut candidates = tuple_args.iter().take(end).skip(fixed_length);
+        let value = match element_index < fixed_length {
+            true => tuple_args.get(element_index),
+            // tsgolint names `getUnionType` of the candidates: known here only where they are one type.
+            false if cx.language().is_oxlint => candidates.next().filter(|first| candidates.all(|it| it == *first)),
+            false => None,
+        };
         report_useless_default(right, removal, left.span(), "property", value, cx);
     }
 }

@@ -189,6 +189,12 @@ impl<'a> TupleTarget<'a> {
     pub fn has_rest_element(self) -> bool {
         self.info.combined_flags.intersects(ElementFlags::VARIABLE)
     }
+
+    /// `target.elementFlags`
+    #[inline]
+    pub fn element_flags(self) -> &'a [ElementFlags] {
+        self.info.element_flags
+    }
 }
 
 /// The parts of a type that is neither a union, an intersection nor an object type.

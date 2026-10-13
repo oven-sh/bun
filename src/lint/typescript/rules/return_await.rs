@@ -155,8 +155,12 @@ fn insert_await<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Vec<Fix> {
 /// tsgolint's `hasAsync` is the modifier as written. The HIR does not keep it on the function of an accessor.
 fn has_async_modifier(func: Func<'_>) -> bool {
     matches!(func.kind(), FnKind::Getter | FnKind::Setter)
-        && matches!(func.owner(), Node::Member(member)
-            if member.modifiers().iter().any(|it| it.flag() == Flags::ASYNC))
+        && match func.owner() {
+            Node::Member(member) => member.modifiers().iter().any(|it| it.flag() == Flags::ASYNC),
+            Node::Expr(e) => matches!(e.parent(), Node::Prop(prop)
+                if prop.modifiers().iter().any(|it| it.flag() == Flags::ASYNC)),
+            _ => false,
+        }
 }
 
 impl ReturnAwait {

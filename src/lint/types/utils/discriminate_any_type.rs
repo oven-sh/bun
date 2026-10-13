@@ -1,7 +1,7 @@
 //! `discriminateAnyType.ts`
 
 use super::{has_room_on_the_stack, is_type_any_array_type, is_type_any_type};
-use crate::types::tsutils::{is_thenable_type, type_constituents};
+use crate::types::tsutils::{is_thenable_type, is_union_or_intersection_type, type_constituents};
 use crate::types::{Locate, TsNode, Type};
 use smallvec::SmallVec;
 
@@ -37,13 +37,44 @@ fn discriminate_any_type_worker<'a>(
     if is_type_any_array_type(ty) {
         return AnyType::AnyArray;
     }
-    for part in type_constituents(ty) {
-        if is_thenable_type(ts_node, part)
-            && let Some(awaited_type) = part.get_awaited_type()
-            && discriminate_any_type_worker(awaited_type, ts_node, visited) == AnyType::Any
-        {
-            return AnyType::PromiseAny;
+    // tsgolint's `TypeRecurser` asks the leaves of nested unions and intersections.
+    let found_promise_any = match ty.file().language().is_oxlint {
+        true => type_recurser(ty, &mut |part: Type<'a>| {
+            is_promise_any(part, ts_node, visited)
+        }),
+        false => type_constituents(ty)
+            .into_iter()
+            .any(|part| is_promise_any(part, ts_node, visited)),
+    };
+    match found_promise_any {
+        true => AnyType::PromiseAny,
+        false => AnyType::Safe,
+    }
+}
+
+fn is_promise_any<'a>(
+    part: Type<'a>,
+    ts_node: TsNode<'a>,
+    visited: &mut SmallVec<[Type<'a>; 4]>,
+) -> bool {
+    is_thenable_type(ts_node, part)
+        && part.get_awaited_type().is_some_and(|awaited_type| {
+            discriminate_any_type_worker(awaited_type, ts_node, visited) == AnyType::Any
+        })
+}
+
+/// `TypeRecurser(t, predicate)` of tsgolint's `utils.go`.
+fn type_recurser<'a>(ty: Type<'a>, predicate: &mut dyn FnMut(Type<'a>) -> bool) -> bool {
+    if !is_union_or_intersection_type(ty) {
+        return predicate(ty);
+    }
+    if !has_room_on_the_stack() {
+        return false;
+    }
+    for subtype in ty.types() {
+        if type_recurser(subtype, &mut *predicate) {
+            return true;
         }
     }
-    AnyType::Safe
+    false
 }

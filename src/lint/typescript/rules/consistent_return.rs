@@ -166,7 +166,7 @@ impl ConsistentReturn {
                 cx.report(statement, message).data("name", tsgolint_function_name(func));
             }
         }
-        if expected == Some(true) && !has_mismatch && func.is_end_reachable() && !allows_void() {
+        if expected == Some(true) && !has_mismatch && func.has_implicit_return() && !allows_void() {
             cx.report(func.span(), MISSING_RETURN_VALUE).data("name", tsgolint_function_name(func));
         }
     }

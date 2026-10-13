@@ -8,7 +8,8 @@ use bun_lint::utils::ts_utils::{
     upper_case_first,
 };
 use bun_lint_eslint::rules::require_await::{
-    MISSING_AWAIT, REMOVE_ASYNC, State, mark_function_around, node_with_async_keyword,
+    MISSING_AWAIT, REMOVE_ASYNC, State, mark_function_around, mark_function_with,
+    node_with_async_keyword,
 };
 
 /// Disallow async functions which do not return promises and have no `await` expression.
@@ -79,41 +80,31 @@ fn is_async_yield(func: Func, is_oxlint: bool) -> bool {
 
 /// tsgolint's `currentScope` at `node`: the function, method, accessor or constructor that it is in. A computed key and
 /// a decorator are in their method, and a static block is in the function around its class.
-fn current_scope(node: Node<'_>) -> Option<Func<'_>> {
-    node.ancestors().find_map(|parent| {
-        let func = match parent {
-            Node::Func(func) => func,
-            Node::Member(member) if !member.is_signature() => member.func()?,
-            Node::Prop(prop) => prop.func()?,
-            _ => return None,
-        };
-        matches!(
-            func.kind(),
-            FnKind::Decl
-                | FnKind::Expr
-                | FnKind::Arrow
-                | FnKind::Method
-                | FnKind::Getter
-                | FnKind::Setter
-                | FnKind::Constructor
-        )
-        .then_some(func)
-    })
+fn current_scope<'a>(_: Node<'a>, parent: Node<'a>) -> Option<Func<'a>> {
+    let func = match parent {
+        Node::Func(func) => func,
+        Node::Member(member) if !member.is_signature() => member.func()?,
+        Node::Prop(prop) => prop.func()?,
+        _ => return None,
+    };
+    matches!(
+        func.kind(),
+        FnKind::Decl
+            | FnKind::Expr
+            | FnKind::Arrow
+            | FnKind::Method
+            | FnKind::Getter
+            | FnKind::Setter
+            | FnKind::Constructor
+    )
+    .then_some(func)
 }
 
 /// `node` awaits something: tsgolint's `markAsHasAwait`, and typescript-eslint's.
 fn mark_as_has_await<'a>(node: Node<'a>, cx: &mut Cx<'a, RequireAwait>) {
-    if !cx.language().is_oxlint {
-        return mark_function_around(node, cx);
-    }
-    if let Some(func) = current_scope(node)
-        && let Ok(at) = cx
-            .state
-            .candidates
-            .binary_search_by_key(&func.id().idx(), |it| it.id().idx())
-        && let Some(has_await) = cx.state.has_await.get_mut(at)
-    {
-        *has_await = true;
+    match cx.language().is_oxlint {
+        true => mark_function_with(node, cx, current_scope),
+        false => mark_function_around(node, cx),
     }
 }
 

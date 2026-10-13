@@ -64,16 +64,11 @@ fn get_text(param: TsNode<'_>) -> Cow<'_, [u8]> {
 }
 
 /// What tsgolint compares: the text from `param.Pos()`, so with the trivia after the token before.
-/// Only the linted file has that. Elsewhere it is taken to be the one space after a comma.
-fn tsgolint_get_full_text<'a>(
-    file: &'a File<'a>,
-    param: TsNode<'a>,
-    index: usize,
-) -> Cow<'a, [u8]> {
-    let span = param.span();
-    if param.is_in_linted_file() && span.end > span.start {
-        let pos = file.token_before(span).map_or(span.start, |token| token.end());
-        return Cow::Borrowed(file.slice(Span::new(pos, span.end)));
+/// The default library has no text: there it is taken to be the one space after a comma.
+fn tsgolint_get_full_text<'a>(param: TsNode<'a>, index: usize) -> Cow<'a, [u8]> {
+    let full_text = param.get_full_text();
+    if !full_text.is_empty() {
+        return Cow::Borrowed(full_text);
     }
     let text = get_text(param);
     if index == 0 {
@@ -92,7 +87,7 @@ fn has_same_parameters<'a>(
     tsgolint: Option<&'a File<'a>>,
 ) -> bool {
     let text = |index: usize, param: TsNode<'a>| match tsgolint {
-        Some(file) => tsgolint_get_full_text(file, param, index),
+        Some(_) => tsgolint_get_full_text(param, index),
         None => get_text(param),
     };
     node_a.kind().is_function_like()

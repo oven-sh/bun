@@ -102,7 +102,13 @@ fn is_built_in_boolean_call(node: Node) -> bool {
     call.callee().is_ident("Boolean")
         && !(call.callee().is_parenthesized() && expression.file().language().is_oxlint)
         && !call.args().is_empty()
-        && find_variable(node.scope(), "Boolean").is_none()
+        // tsgolint: no declaration of the symbol of the callee is outside a declaration file.
+        && match expression.file().language().is_oxlint {
+            true => call.callee().ts_symbol().is_none_or(|symbol| {
+                symbol.declarations().all(|it| it.get_source_file().is_declaration_file())
+            }),
+            false => find_variable(node.scope(), "Boolean").is_none(),
+        }
 }
 
 /// typescript-go's `IsLogicalExpression`: a `&&`, a `||` or a `??`, however many `!` are before it.

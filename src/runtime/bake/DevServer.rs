@@ -1210,8 +1210,8 @@ impl DevServer {
                 .unwrap_or(false),
         ) {
             Ok(v) => v,
-            // The server runtime and the routes it loads are not part of the executable.
-            Err(err) if jsc::runs_only_embedded_code() => return Err(err),
+            // Neither the server runtime nor the routes it loads are embedded code.
+            Err(err) if jsc::is_non_embedded_code_disallowed() => return Err(err),
             Err(err) => {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
                 // `print_error_like_object_to_console` needs `&mut VM`, so cast

@@ -2949,11 +2949,7 @@ macro_rules! __runtime_embed_impl {
         #[allow(unexpected_cfgs)]
         let __s: &'static str = {
             #[cfg(bun_codegen_embed)]
-            {
-                // A static has one address. A literal has one per codegen unit the enclosing function is inlined into.
-                static EMBEDDED: &str = ::core::include_str!(::core::concat!(::core::env!("BUN_CODEGEN_DIR"), "/", $sub));
-                EMBEDDED
-            }
+            { ::core::include_str!(::core::concat!(::core::env!("BUN_CODEGEN_DIR"), "/", $sub)) }
             #[cfg(not(bun_codegen_embed))]
             { $crate::__runtime_embed_impl!(@load $crate::EmbedKind::Codegen, $sub) }
         };

@@ -23,36 +23,20 @@ pub struct ClientEntryPoint {
     pub(crate) source: bun_ast::Source,
 }
 
-#[derive(Default)]
-pub struct ServerEntryPoint {
-    /// The source of `bun:main`, once there is an entry point: [`MAIN_SOURCE`] or [`MAIN_SOURCE_WITH_HOT_RELOAD`].
-    pub contents: Option<&'static [u8]>,
-}
-
-macro_rules! entry_specifier {
+macro_rules! entry_point_specifier {
     () => {
         "bun:main/entry"
     };
 }
 
-impl ServerEntryPoint {
-    /// What `bun:main` imports. The module loader's resolve hook answers it with the entry point's path.
-    pub const ENTRY_SPECIFIER: &'static [u8] = entry_specifier!().as_bytes();
+/// What `bun:main` imports. The module loader's resolve hook answers it with the entry point's path.
+pub const ENTRY_POINT_SPECIFIER: &[u8] = entry_point_specifier!().as_bytes();
 
-    pub fn generate(entry: &mut ServerEntryPoint, is_hot_reload_enabled: bool) {
-        entry.contents = Some(if is_hot_reload_enabled {
-            MAIN_SOURCE_WITH_HOT_RELOAD.as_bytes()
-        } else {
-            MAIN_SOURCE.as_bytes()
-        });
-    }
-}
-
-/// A static for its one address: `bun_runtime::embedded_code` knows Bun's own module texts by where they are.
-pub static MAIN_SOURCE_WITH_HOT_RELOAD: &str = concat!(
+/// The source of `bun:main` with `--hot` or `--watch`. A static, like [`BUN_MAIN_SOURCE`], to have one address: see `static_module_sources`.
+pub static BUN_MAIN_SOURCE_HOT: &[u8] = concat!(
     "// @bun\n\
      import * as start from '",
-    entry_specifier!(),
+    entry_point_specifier!(),
     "';\n\
      var hmrSymbol = Symbol(\"BunServerHMR\");\n\
      var entryNamespace = start;\n\
@@ -83,12 +67,13 @@ pub static MAIN_SOURCE_WITH_HOT_RELOAD: &str = concat!(
      \x20     console.debug(`Started ${server.development ? 'development ' : ''}server: ${server.protocol}://${server.hostname}:${server.port}`);\n\
      \x20  }\n\
      }\n",
-);
+)
+.as_bytes();
 
-pub static MAIN_SOURCE: &str = concat!(
+pub static BUN_MAIN_SOURCE: &[u8] = concat!(
     "// @bun\n\
      import * as start from \"",
-    entry_specifier!(),
+    entry_point_specifier!(),
     "\";\n\
      var entryNamespace = start;\n\
      function isServerConfig(def) {\n\
@@ -105,7 +90,8 @@ pub static MAIN_SOURCE: &str = concat!(
      \x20  const server = Bun.serve(entryNamespace.default);\n\
      \x20  console.debug(`Started ${server.development ? 'development ' : ''}server: ${server.protocol}://${server.hostname}:${server.port}`);\n\
      }\n",
-);
+)
+.as_bytes();
 
 // This is not very fast. The idea is: we want to generate a unique entry point
 // per macro function export that registers the macro Registering the macro

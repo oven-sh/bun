@@ -216,7 +216,7 @@ impl ElfFile {
         let bun_section = self.find_bun_section(ehdr)?;
         let bun_section_offset = bun_section.file_offset;
         let bun_section_vaddr = bun_section.vaddr;
-        let page_size = Self::page_size(ehdr);
+        let page_size = page_size(ehdr.e_machine);
 
         let header_size: u64 = size_of::<u64>() as u64;
         let new_content_size: u64 = header_size + payload.len() as u64;
@@ -571,21 +571,17 @@ impl ElfFile {
         // e_shoff is at offset 40 in Elf64_Ehdr
         write_u64_le(&mut self.data[40..][..8], new_shoff);
     }
-
-    fn page_size(ehdr: Elf64_Ehdr) -> u64 {
-        page_size_of(ehdr.e_machine)
-    }
 }
 
-const fn page_size_of(e_machine: u16) -> u64 {
+const fn page_size(e_machine: u16) -> u64 {
     match e_machine {
         EM_AARCH64 | EM_PPC64 => 0x10000, // 64KB
         _ => 0x1000,                      // 4KB
     }
 }
 
-/// What `write_bun_section` aligns and pads the payload to in an executable for the architecture this is compiled for.
-pub const NATIVE_PAYLOAD_ALIGNMENT: u64 = page_size_of(if cfg!(target_arch = "aarch64") {
+/// What `write_bun_section` aligns and pads `.bun` to in an executable for the architecture this is compiled for.
+pub const BUN_SECTION_ALIGNMENT: u64 = page_size(if cfg!(target_arch = "aarch64") {
     EM_AARCH64
 } else if cfg!(target_arch = "powerpc64") {
     EM_PPC64

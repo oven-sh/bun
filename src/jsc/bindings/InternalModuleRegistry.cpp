@@ -10,6 +10,7 @@
 #include <atomic>
 #include <utility>
 
+#include "CodeGenerationFromStrings.h"
 #include "InternalModuleRegistryConstants.h"
 #include "ModuleGraph.h"
 #include "ZigSourceProvider.h"
@@ -22,11 +23,17 @@
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
+#include <JavaScriptCore/NonEmbeddedCode.h>
 #include <JavaScriptCore/ParserError.h>
 
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
 // (StandaloneModuleGraph, Flags::HAS_BUILTIN_BYTECODE); those bytes live in the executable for the life of the process.
 extern "C" bool Bun__standaloneInternalModuleBytecode(void* bunVM, uint32_t id, const uint8_t** bytes, size_t* size, uint32_t* entryOffset);
+extern "C" bool Bun__isEmbeddedModule(const uint8_t* source, size_t sourceLength, const uint8_t* bytecode, size_t bytecodeLength, size_t bytecodeEntryOffset);
+
+namespace WebCore {
+std::span<const Latin1Character> builtinsSource();
+}
 
 namespace Bun {
 
@@ -85,8 +92,8 @@ static String internalModuleString(uint32_t offset, uint32_t length)
 static String internalModuleSource(uint32_t id)
 {
     const auto& m = internalModuleRecord(id);
-    // A file is not Bun::isEmbeddedCode().
-    if (JSC::Options::refuseUntrustedCode() || JSC::Options::reportUntrustedCode())
+    // The copy on disk is not embedded code.
+    if (JSC::NonEmbeddedCode::isDisallowedOrReported())
         return internalModuleString(m.codeOffset, m.codeLength);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, ASCIILiteral::fromLiteralUnsafe(InternalModuleRegistryConstants::fileNames[id]));
@@ -106,6 +113,34 @@ static String internalModuleSource(uint32_t id)
     return internalModuleString(m.codeOffset, m.codeLength);
 }
 #endif
+
+static bool isSameMemory(std::span<const uint8_t> a, std::span<const uint8_t> b)
+{
+    return a.data() == b.data() && a.size() == b.size();
+}
+
+bool isEmbeddedCode(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset)
+{
+    if (isSameMemory(source, asByteSpan(WebCore::builtinsSource())))
+        return bytecode.empty();
+
+    std::span internalModulesData { reinterpret_cast<const uint8_t*>(bun_internal_modules_data), bun_internal_modules_header.dataLength };
+    if (source.data() < internalModulesData.data() || source.data() >= internalModulesData.data() + internalModulesData.size())
+        return Bun__isEmbeddedModule(source.data(), source.size(), bytecode.data(), bytecode.size(), bytecodeEntryOffset);
+
+    for (uint32_t id = 0; id < bun_internal_modules_header.moduleCount; id++) {
+        const auto& m = internalModuleRecord(id);
+        if (!isSameMemory(source, internalModulesData.subspan(m.codeOffset, m.codeLength)))
+            continue;
+        if (bytecode.empty())
+            return true;
+        const uint8_t* cachedBytes = nullptr;
+        size_t cachedSize = 0;
+        uint32_t cachedEntryOffset = 0;
+        return Bun__standaloneInternalModuleBytecode(nullptr, id, &cachedBytes, &cachedSize, &cachedEntryOffset) && isSameMemory(bytecode, { cachedBytes, cachedSize }) && cachedEntryOffset == bytecodeEntryOffset;
+    }
+    return false;
+}
 
 JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {

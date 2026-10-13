@@ -110,12 +110,12 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
-        // The engine refuses a macro's entry point, which is text made here. That rejection has no one to catch it.
-        if jsc::runs_only_embedded_code() {
+        // The engine would refuse the macro's entry point, but nothing catches that rejection.
+        if jsc::is_non_embedded_code_disallowed() {
             log.add_range_error(
                 Some(source),
                 import_range,
-                b"Macros cannot run in a compiled executable with --disallow-code-generation-from-strings=strict",
+                b"Macros cannot be used with --disallow-code-generation-from-strings=strict in a standalone executable: a macro is not embedded in the executable",
             );
             return Err(crate::Error::MacroFailed);
         }

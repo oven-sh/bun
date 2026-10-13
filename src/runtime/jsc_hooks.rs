@@ -1,11 +1,11 @@
 //! `crate::jsc_hooks` — high-tier bodies for the cold-path entry points that
 //! `bun_jsc` cannot define itself without inverting the crate DAG
-//! (`timer::All`, `ServerEntryPoint`, `Transpiler`, `HardcodedModule`, …).
+//! (`timer::All`, `Transpiler`, `HardcodedModule`, …).
 //!
 //! Layout:
 //!   1. [`RuntimeState`] — per-VM state the low tier stores as `*mut c_void`
-//!      (owns `timer::All` + the synthetic `bun:main` `ServerEntryPoint`).
-//!   2. `__BUN_RUNTIME_HOOKS` — `init_runtime_state` / `generate_entry_point`
+//!      (owns `timer::All`).
+//!   2. `__BUN_RUNTIME_HOOKS` — `init_runtime_state`
 //!      / `load_preloads` / `ensure_debugger` / `auto_tick` (fn-ptr table).
 //!   3. Module loader: `__bun_transpile_source_code` /
 //!      `__bun_fetch_builtin_module` (declared `extern "Rust"` in
@@ -37,7 +37,6 @@ use bun_jsc::{
 
 use bun_ast::ImportKind;
 use bun_ast::Loader;
-use bun_bundler::entry_points::ServerEntryPoint;
 use bun_bundler::options::{self, ModuleType};
 use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
@@ -45,7 +44,7 @@ use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
-use crate::embedded_code::own_module_source;
+use crate::embedded_code::static_source_code;
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
 
@@ -77,8 +76,6 @@ pub(crate) struct RuntimeState {
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
-    /// Synthetic `bun:main` wrapper source.
-    pub(crate) entry_point: ServerEntryPoint,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
     /// the Rust `Transpiler<'a>` threads `&'a Arena`). Owned here so
     /// `deinit_runtime_state` reclaims it on Worker teardown — previously
@@ -347,7 +344,6 @@ unsafe fn init_runtime_state(
         },
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
-        entry_point: ServerEntryPoint::default(),
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
@@ -410,7 +406,7 @@ unsafe fn init_runtime_state(
         args.target = Some(api::Target::Bun);
         // The arena lives on
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
-        // alongside `timer`/`entry_point` on Worker teardown. The `Box`
+        // alongside `timer` on Worker teardown. The `Box`
         // payload address is stable, so a `'static` borrow is sound for the
         // `Transpiler<'static>` field — both die in VM teardown
         // (`vm.transpiler` is never dropped; see `ptr::write` note below).
@@ -663,7 +659,7 @@ unsafe fn configure_debugger(
 /// Reclaim the per-VM [`RuntimeState`] boxed in [`init_runtime_state`]. Called
 /// from `VirtualMachine::deinit` / worker `destroy()` with the opaque pointer
 /// returned by `init_runtime_state`. Clears the thread-local and drops the
-/// `Box`, freeing `timer` + `entry_point`.
+/// `Box`, freeing `timer`.
 ///
 /// # Safety
 /// `state` must be the exact pointer returned by [`init_runtime_state`] for
@@ -699,18 +695,6 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
     // touches the stores again.
     bun_ast::expr::data::Store::deinit();
     bun_ast::stmt::data::Store::deinit();
-}
-
-/// `ServerEntryPoint.generate(watch)` — picks the source of `bun:main`. `false` when this thread has no `RuntimeState`.
-fn generate_entry_point(watch: bool) -> bool {
-    let state = runtime_state();
-    if state.is_null() {
-        return false;
-    }
-    // SAFETY: `state` is the live per-thread `RuntimeState` (boxed in
-    // `init_runtime_state`); no other `&mut` to `entry_point` is held here.
-    ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch);
-    true
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
@@ -1511,7 +1495,6 @@ mod vm_loader_ctx {
 static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     init_runtime_state,
     deinit_runtime_state,
-    generate_entry_point,
     load_preloads,
     ensure_debugger,
     auto_tick,
@@ -3278,7 +3261,7 @@ fn transpile_source_code_inner(
                 {
                     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
                     return Ok(ResolvedSource {
-                        source_code: own_module_source(WASI_RUNNER_SOURCE),
+                        source_code: static_source_code(WASI_RUNNER_SOURCE),
                         source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::Esm,
                         ..Default::default()
@@ -3307,7 +3290,7 @@ fn transpile_source_code_inner(
             };
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
-                source_code: own_module_source(sqlite_module_source_code_string),
+                source_code: static_source_code(sqlite_module_source_code_string),
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::Esm,
                 ..Default::default()
@@ -3554,7 +3537,7 @@ fn js_synthetic_module(name: &'static [u8]) -> ResolvedSource {
 /// `getHardcodedModule(jsc_vm, specifier, hardcoded)` —
 /// the per-variant body of the builtin-module fast path. Returns `None` when
 /// the variant is recognised but not currently servable (e.g. `bun:main`
-/// before `ServerEntryPoint::generate` has run, or `bun:internal-for-testing`
+/// before `reload_entry_point` has run, or `bun:internal-for-testing`
 /// without the opt-in flag).
 fn get_hardcoded_module(
     specifier: &bun_core::String,
@@ -3567,18 +3550,9 @@ fn get_hardcoded_module(
 
     match hardcoded {
         HardcodedModule::BunMain => {
-            // Synthetic `bun:main` wrapper — pulls source from this thread's
-            // `RuntimeState.entry_point`.
-            let state = runtime_state();
-            if state.is_null() {
-                return None;
-            }
-            // SAFETY: `state` is the live per-thread `RuntimeState` boxed in
-            // `init_runtime_state`; no other `&mut` to `entry_point` is held.
-            let contents = unsafe { (*state).entry_point.contents }?;
             use bun_jsc::resolved_source::Tag;
             Some(ResolvedSource {
-                source_code: own_module_source(contents),
+                source_code: static_source_code(VirtualMachine::get().bun_main_source?),
                 source_url: specifier.clone(),
                 tag: Tag::Esm,
                 ..ResolvedSource::default()
@@ -3629,7 +3603,7 @@ fn get_hardcoded_module(
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
             return Some(ResolvedSource {
-                source_code: own_module_source(bun_ast::runtime::Runtime::source_code()),
+                source_code: bun_core::String::from_bytes(bun_ast::runtime::Runtime::source_code()),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
             });
@@ -3700,7 +3674,7 @@ fn __bun_fetch_builtin_module(
 
         if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
             return Some(ResolvedSource {
-                source_code: own_module_source(SQLITE_MODULE_SOURCE_STANDALONE),
+                source_code: static_source_code(SQLITE_MODULE_SOURCE_STANDALONE),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
             });

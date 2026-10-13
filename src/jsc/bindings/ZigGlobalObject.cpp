@@ -2,7 +2,6 @@
 
 #include "ZigGlobalObject.h"
 #include "CodeGenerationFromStrings.h"
-#include "EmbeddedCode.h"
 #include "BunModuleRegistry.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
@@ -351,7 +350,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useWarmUpMarkedBlocks() = false;
 #endif
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
-            g_jscConfig.isTrustedCode = Bun::isEmbeddedCode;
+            g_jscConfig.isEmbeddedCode = Bun::isEmbeddedCode;
 
 #ifdef BUN_DEBUG
             JSC::Options::showPrivateScriptsInStackTraces() = true;
@@ -428,6 +427,13 @@ extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
         if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_useConcurrentJIT="_s))
             JSC::Options::setOption(envp[i] + 8, false);
     }
+}
+
+// After JSCInitialize, so that BUN_JSC_disallowNonEmbeddedCode=0 does not undo it, and before the first VM, as above.
+extern "C" void JSC__disallowNonEmbeddedCode()
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    JSC::Options::disallowNonEmbeddedCode() = true;
 }
 
 extern "C" void* Bun__getVM();
@@ -3534,10 +3540,10 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
-extern "C" bool Bun__VM__entryPointImportedByMain(void* bunVM, const BunString* specifier, BunString* entryPoint);
+extern "C" bool Bun__VM__resolveEntryPointSpecifier(void* bunVM, const BunString* specifier, BunString* entryPointPath);
 
-// bun:main is the same text whatever the entry point is: it imports a name that stands for the entry point's path.
-static JSValue keyOrEntryPointImportedByMain(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
+// bun:main is the same text whatever the entry point is: it imports a specifier that stands for the entry point's path.
+static JSValue resolveEntryPointSpecifier(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
 {
     if (!referrer || !referrer.isString() || !key.isString())
         return key;
@@ -3545,10 +3551,10 @@ static JSValue keyOrEntryPointImportedByMain(Zig::GlobalObject* globalObject, JS
         return key;
     WTF::String specifierString = uncheckedDowncast<JSString>(key)->tryGetValue();
     BunString specifier = Bun::toString(specifierString);
-    BunString entryPoint = BunStringEmpty;
-    if (!Bun__VM__entryPointImportedByMain(globalObject->bunVM(), &specifier, &entryPoint))
+    BunString entryPointPath = BunStringEmpty;
+    if (!Bun__VM__resolveEntryPointSpecifier(globalObject->bunVM(), &specifier, &entryPointPath))
         return key;
-    return jsString(globalObject->vm(), entryPoint.transferToWTFString());
+    return jsString(globalObject->vm(), entryPointPath.transferToWTFString());
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
@@ -3563,7 +3569,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (!useImportMap)
         RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
 
-    key = keyOrEntryPointImportedByMain(globalObject, key, referrer);
+    key = resolveEntryPointSpecifier(globalObject, key, referrer);
 
     WTF::String keyString;
     if (key.isString()) {
@@ -3635,7 +3641,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
     // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
     auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
     if (useImportMap)
-        key = keyOrEntryPointImportedByMain(zigGlobalObject, key, referrer);
+        key = resolveEntryPointSpecifier(zigGlobalObject, key, referrer);
     if (key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(zigGlobalObject)) {
         auto* string = uncheckedDowncast<JSString>(key);
         if (!string->isRope()) {

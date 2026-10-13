@@ -675,12 +675,12 @@ export const structuredCloneAdvanced: (
   serializationContext: SerializationContext,
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
-/** `JSC::evaluate(makeSource(text))`, with none of the checks of the APIs that take source text. */
-export const evaluateAsProgram: undefined | ((text: string) => any) = $newCppFunction(
+/** `JSC::evaluate(makeSource(source))`, with none of the checks of the APIs that take source text. */
+export const evaluateForTesting: undefined | ((source: string) => any) = $newCppFunction(
   "InternalForTesting.cpp",
-  "jsFunction_evaluateAsProgram",
+  "jsFunction_evaluateForTesting",
   1,
-  "assertions",
+  "ASSERT_ENABLED",
 );
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);

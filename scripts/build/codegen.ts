@@ -408,6 +408,11 @@ function debugFlag(cfg: CodegenFields): string {
   return cfg.debug ? "--debug=ON" : "--debug=OFF";
 }
 
+/** `--assertions=ON` / `--assertions=OFF`: whether the C++ is compiled with `ASSERT_ENABLED`. */
+function assertionsFlag(cfg: CodegenFields): string {
+  return cfg.assertions ? "--assertions=ON" : "--assertions=OFF";
+}
+
 /**
  * Shell-quote args for a codegen rule command string. These rules wrap in
  * `cmd /c` on a Windows HOST, so quoting follows the host shell.
@@ -880,14 +885,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, [
-        "run",
-        script,
-        debugFlag(cfg),
-        cfg.buildDir,
-        cfg.typesDir,
-        cfg.assertions ? "--assertions=ON" : "--assertions=OFF",
-      ]),
+      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir, assertionsFlag(cfg)]),
     },
   });
 

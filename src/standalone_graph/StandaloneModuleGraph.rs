@@ -63,8 +63,8 @@ pub struct StandaloneModuleGraph {
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
     pub runtime_options: RuntimeOptions,
-    /// Indices into `files` of those that are [`File::is_script`], by the address of their `contents`.
-    scripts_by_address: std::sync::OnceLock<Vec<u32>>,
+    /// Indices into `files` of those that are [`File::is_javascript_module`], by the address of their `contents`.
+    javascript_modules_by_address: std::sync::OnceLock<Vec<u32>>,
 }
 
 /// Runtime defaults chosen at build time (`Flags::HAS_RUNTIME_OPTIONS` record: `u32 flags`, `u32 value`).
@@ -722,7 +722,7 @@ impl File {
     }
 
     /// JavaScript this executable runs, so stored as the string body the engine reads in place (`is_stored_as_string`).
-    pub fn is_script(&self) -> bool {
+    pub fn is_javascript_module(&self) -> bool {
         self.loader.is_javascript_like()
             && self.side != FileSide::Client
             && self.encoding != Encoding::Binary
@@ -988,7 +988,7 @@ impl StandaloneModuleGraph {
                 prelinked_module_files: Vec::new(),
                 startup_module_count: 0,
                 runtime_options: RuntimeOptions::default(),
-                scripts_by_address: std::sync::OnceLock::new(),
+                javascript_modules_by_address: std::sync::OnceLock::new(),
             });
         }
 
@@ -1340,43 +1340,43 @@ impl StandaloneModuleGraph {
             prelinked_module_files,
             startup_module_count: startup_module_count.min(module_count as u32),
             runtime_options,
-            scripts_by_address: std::sync::OnceLock::new(),
+            javascript_modules_by_address: std::sync::OnceLock::new(),
         })
     }
 
-    /// The JavaScript this executable runs whose `contents` are these very bytes, not a copy of them or a part of them.
-    pub fn script_at(&self, contents: *const [u8]) -> Option<&File> {
+    /// The [`File::is_javascript_module`] whose `contents` are these very bytes, not a copy of them or a part of them.
+    pub fn find_javascript_module_by_address(&self, contents: *const [u8]) -> Option<&File> {
         let files = self.files.values();
         let address_of = |&index: &u32| files[index as usize].contents.as_bytes().as_ptr().addr();
-        let scripts = self.scripts_by_address.get_or_init(|| {
-            let mut scripts: Vec<u32> = (0..files.len() as u32)
-                .filter(|&index| files[index as usize].is_script())
+        let modules = self.javascript_modules_by_address.get_or_init(|| {
+            let mut modules: Vec<u32> = (0..files.len() as u32)
+                .filter(|&index| files[index as usize].is_javascript_module())
                 .collect();
-            scripts.sort_unstable_by_key(address_of);
-            scripts
+            modules.sort_unstable_by_key(address_of);
+            modules
         });
-        let found = scripts
+        let found = modules
             .binary_search_by_key(&contents.cast::<u8>().addr(), address_of)
             .ok()?;
-        let file = &files[scripts[found] as usize];
+        let file = &files[modules[found] as usize];
         (file.contents.len() == contents.len()).then_some(file)
     }
 
-    /// Maps the payload read-only. Nothing writes to it, whatever `File::bytecode` being `*mut` allows: a PE section is read-only to begin with.
+    /// Nothing writes to the section, whatever `File::bytecode` being `*mut` allows: Windows maps it read-only to begin with.
     #[cfg(unix)]
-    pub fn make_read_only(&self) -> Result<(), E> {
+    pub fn make_section_read_only(&self) -> Result<(), E> {
         #[cfg(target_os = "macos")]
-        let alignment = bun_macho::PAYLOAD_ALIGNMENT as usize;
+        let alignment = bun_macho::BUN_SECTION_ALIGNMENT as usize;
         #[cfg(not(target_os = "macos"))]
-        let alignment = bun_elf::NATIVE_PAYLOAD_ALIGNMENT as usize;
-        // The payload is the graph between its length and `Offsets` + `TRAILER`. It starts a page and is padded to `alignment`.
+        let alignment = bun_elf::BUN_SECTION_ALIGNMENT as usize;
+        // The section is the graph between its length and `Offsets` + `TRAILER`. It starts a page and is padded to `alignment`.
         let start = self.bytes.cast::<u8>().addr() - size_of::<u64>();
         if !start.is_multiple_of(bun_alloc::page_size()) {
             return Err(E::EINVAL);
         }
         let len = (size_of::<u64>() + self.bytes.len() + size_of::<Offsets>() + TRAILER.len())
             .next_multiple_of(alignment);
-        // SAFETY: `[start, start + len)` is whole pages of the executable's image that hold nothing but the payload.
+        // SAFETY: `[start, start + len)` is whole pages of the executable's image that hold nothing but the section.
         let rc = unsafe { libc::mprotect(start as *mut core::ffi::c_void, len, libc::PROT_READ) };
         if rc != 0 {
             return Err(bun_sys::get_errno(rc));
@@ -1385,7 +1385,7 @@ impl StandaloneModuleGraph {
     }
 
     #[cfg(not(unix))]
-    pub fn make_read_only(&self) -> Result<(), E> {
+    pub fn make_section_read_only(&self) -> Result<(), E> {
         Ok(())
     }
 

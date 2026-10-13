@@ -39,14 +39,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD, (JSC::JSGlobalObjec
 
 #if ASSERT_ENABLED
 // A way to hand the engine text that --disallow-code-generation-from-strings=strict has no check of its own for.
-JSC_DEFINE_HOST_FUNCTION(jsFunction_evaluateAsProgram, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_evaluateForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto text = callFrame->argument(0).toWTFString(globalObject);
+    auto source = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     NakedPtr<JSC::Exception> exception;
-    JSValue result = JSC::evaluate(globalObject, makeSource(text, SourceOrigin(), SourceTaintedOrigin::Untainted), globalObject->globalThis(), exception);
+    JSValue result = JSC::evaluate(globalObject, makeSource(source, SourceOrigin(), SourceTaintedOrigin::Untainted), globalObject->globalThis(), exception);
     if (exception) {
         throwException(globalObject, scope, exception.get());
         return {};

@@ -40,8 +40,6 @@ pub enum Error {
     JSError,
     #[error("TarballFailedToExtract")]
     TarballFailedToExtract,
-    #[error("ServerEntryPointGenerate")]
-    ServerEntryPointGenerate,
     #[error("UnexpectedPendingResolution")]
     UnexpectedPendingResolution,
     #[error("WorkerTerminated")]
@@ -110,7 +108,6 @@ impl Error {
             Self::ParseError => "ParseError",
             Self::JSError => "JSError",
             Self::TarballFailedToExtract => "TarballFailedToExtract",
-            Self::ServerEntryPointGenerate => "ServerEntryPointGenerate",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::WorkerTerminated => "WorkerTerminated",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",

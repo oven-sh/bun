@@ -1,37 +1,36 @@
-//! Which JavaScript outside the builtins section is part of this executable. `Bun::isEmbeddedCode` asks.
+//! The Rust half of `Bun::isEmbeddedCode`: the JavaScript in this executable that is outside the builtins section.
 
-use bun_bundler::entry_points::{MAIN_SOURCE, MAIN_SOURCE_WITH_HOT_RELOAD};
+use bun_bundler::entry_points::{BUN_MAIN_SOURCE, BUN_MAIN_SOURCE_HOT};
 
 use crate::jsc_hooks::{
     SQLITE_MODULE_SOURCE, SQLITE_MODULE_SOURCE_HOT, SQLITE_MODULE_SOURCE_STANDALONE,
     WASI_RUNNER_SOURCE,
 };
 
-/// The modules Bun has the text of itself. All ASCII.
-fn own_module_texts() -> [&'static [u8]; 7] {
+/// The modules whose source is a `static` in Bun. All ASCII.
+fn static_module_sources() -> [&'static [u8]; 6] {
     [
-        MAIN_SOURCE.as_bytes(),
-        MAIN_SOURCE_WITH_HOT_RELOAD.as_bytes(),
+        BUN_MAIN_SOURCE,
+        BUN_MAIN_SOURCE_HOT,
         SQLITE_MODULE_SOURCE,
         SQLITE_MODULE_SOURCE_HOT,
         SQLITE_MODULE_SOURCE_STANDALONE,
         WASI_RUNNER_SOURCE,
-        bun_ast::runtime::Runtime::source_code(),
     ]
 }
 
-/// One of `own_module_texts` as a source the engine reads where it is: a text is known by its address, so a copy is not it.
-pub(crate) fn own_module_source(text: &'static [u8]) -> bun_core::String {
+/// A `ResolvedSource::source_code` that the engine reads in place: embedded code is known by its address, so a copy is not embedded.
+pub(crate) fn static_source_code(source: &'static [u8]) -> bun_core::String {
     debug_assert!(
-        own_module_texts()
+        static_module_sources()
             .iter()
-            .any(|&own| core::ptr::eq(own, text))
+            .any(|&known| core::ptr::eq(known, source))
     );
-    debug_assert!(text.is_ascii());
-    bun_core::String::create_static_external(text, true)
+    debug_assert!(source.is_ascii());
+    bun_core::String::create_static_external(source, true)
 }
 
-/// Whether `source` is all of a module's text and `bytecode`, unless it is empty, what the executable has for that module.
+/// Whether `source` is all of a module's source and `bytecode`, unless it is empty, what the executable has for that module.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__isEmbeddedModule(
     source: *const u8,
@@ -41,14 +40,14 @@ pub(crate) extern "C" fn Bun__isEmbeddedModule(
     bytecode_entry_offset: usize,
 ) -> bool {
     let source = core::ptr::slice_from_raw_parts(source, source_len);
-    if own_module_texts()
+    if static_module_sources()
         .iter()
-        .any(|&own| core::ptr::eq(own, source))
+        .any(|&known| core::ptr::eq(known, source))
     {
         return bytecode_len == 0;
     }
-    let Some(file) =
-        bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.script_at(source))
+    let Some(file) = bun_standalone_graph::Graph::get_ref()
+        .and_then(|graph| graph.find_javascript_module_by_address(source))
     else {
         return false;
     };

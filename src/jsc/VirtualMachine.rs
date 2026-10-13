@@ -155,7 +155,8 @@ pub struct VirtualMachine {
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
-    pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
+    /// The source of `bun:main`, once `reload_entry_point` is about to load the entry point through it.
+    pub bun_main_source: Option<&'static [u8]>,
     pub origin: bun_url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
     // `bun_runtime` is a forward dep of this crate; stored type-erased and
@@ -504,17 +505,17 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
     true
 }
 
-/// `GlobalObject::moduleLoaderResolve`, of an import by `bun:main`: the entry point's path if `specifier` stands for it.
+/// `GlobalObject::moduleLoaderResolve`, for what `bun:main` imports: `ENTRY_POINT_SPECIFIER` is the entry point's path.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__entryPointImportedByMain(
+pub extern "C" fn Bun__VM__resolveEntryPointSpecifier(
     vm: &VirtualMachine,
     specifier: &bun_core::String,
-    entry_point: &mut bun_core::String,
+    entry_point_path: &mut bun_core::String,
 ) -> bool {
-    if !specifier.eq_ascii(bun_bundler::entry_points::ServerEntryPoint::ENTRY_SPECIFIER) {
+    if !specifier.eq_ascii(bun_bundler::entry_points::ENTRY_POINT_SPECIFIER) {
         return false;
     }
-    *entry_point = bun_core::String::clone_utf8(vm.main());
+    *entry_point_path = bun_core::String::clone_utf8(vm.main());
     true
 }
 
@@ -2782,8 +2783,6 @@ pub struct RuntimeHooks {
     /// `heap::take`s it and clears its thread-local cache. Without this slot
     /// every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
-    /// `ServerEntryPoint.generate(watch)` — picks the source of `bun:main`. `false` when the thread has no runtime state.
-    pub generate_entry_point: fn(watch: bool) -> bool,
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
@@ -3259,7 +3258,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).entered_context).write(Cell::new(None));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead());
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
-            addr_of_mut!((*vm).entry_point).write(Default::default());
+            addr_of_mut!((*vm).bun_main_source).write(None);
             addr_of_mut!((*vm).origin).write(Default::default());
             addr_of_mut!((*vm).ref_strings).write(Default::default());
             addr_of_mut!((*vm).modules).write(Default::default());
@@ -3290,7 +3289,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
         }
 
-        // High-tier per-VM state — Transpiler / Timer::All / entry_point.
+        // High-tier per-VM state — Transpiler / Timer::All.
         // Note (init order): the transpiler and per-VM timer state must be
         // built BEFORE `JSGlobalObject` creation. The C++ body
         // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
@@ -3493,12 +3492,11 @@ impl VirtualMachine {
         }
 
         if !self.main_is_html_entrypoint {
-            if let Some(hooks) = hooks {
-                let watch = self.is_watcher_enabled();
-                if !(hooks.generate_entry_point)(watch) {
-                    return Err(crate::CrateError::ServerEntryPointGenerate);
-                }
-            }
+            self.bun_main_source = Some(if self.is_watcher_enabled() {
+                bun_bundler::entry_points::BUN_MAIN_SOURCE_HOT
+            } else {
+                bun_bundler::entry_points::BUN_MAIN_SOURCE
+            });
         }
 
         if !self.transpiler.options.disable_transpilation {
@@ -5137,10 +5135,6 @@ impl VirtualMachine {
             ret.path = b"bun:wrap";
             return Ok(());
         }
-        if specifier == MAIN_FILE_NAME && self.entry_point.contents.is_some() {
-            ret.path = MAIN_FILE_NAME;
-            return Ok(());
-        }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
             ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
@@ -5617,7 +5611,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.pending_internal_promise.deinit();
 
-        // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
+        // `timer` lives in the high-tier `RuntimeState` box, so
         // dispatch the reclaim through the hook.
         if let Some(hooks) = runtime_hooks() {
             let state = core::mem::replace(&mut self.runtime_state, core::ptr::null_mut());

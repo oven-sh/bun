@@ -1520,7 +1520,7 @@ bun build ./src/index.ts --outdir ./dist --metafile=./dist/meta.json --metafile-
 
 #### `metafile` option formats
 
-In the JavaScript API, `metafile` accepts several forms:
+In the JavaScript API, `metafile` accepts several forms. Each form includes the metafile in the result object as `result.metafile`:
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 // Boolean — include metafile in the result object
@@ -1530,23 +1530,39 @@ await Bun.build({
   metafile: true,
 });
 
-// String — write JSON metafile to a specific path
+// String — also write the JSON metafile to ./dist/meta.json
 await Bun.build({
   entrypoints: ["./src/index.ts"],
   outdir: "./dist",
-  metafile: "./dist/meta.json",
+  metafile: "meta.json",
 });
 
-// Object — specify separate paths for JSON and markdown output
+// Object — also write the JSON metafile, the markdown metafile, or both
 await Bun.build({
   entrypoints: ["./src/index.ts"],
   outdir: "./dist",
   metafile: {
-    json: "./dist/meta.json",
-    markdown: "./dist/meta.md",
+    json: "meta.json", // ./dist/meta.json
+    markdown: "meta.md", // ./dist/meta.md
   },
 });
 ```
+
+A relative path is relative to `outdir`, and an absolute path is used as it is. This differs from the CLI flags, whose paths are relative to the working directory. If the build cannot write a metafile, the build fails.
+
+Each path also adds an artifact to `result.outputs`, with a `kind` of `"metafile-json"` or `"metafile-markdown"`. Like every other output, a metafile is written only when there is an `outdir`. Without an `outdir`, read it from the artifact:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  metafile: { markdown: "meta.md" },
+});
+
+const report = result.outputs.find(output => output.kind === "metafile-markdown");
+console.log(await report.text());
+```
+
+A build that compiles an executable returns only the executable in `result.outputs`.
 
 The metafile structure contains:
 
@@ -1589,11 +1605,11 @@ interface BuildOutput {
   outputs: BuildArtifact[];
   success: boolean;
   logs: Array<object>; // see docs for details
-  metafile?: BuildMetafile; // only when metafile: true
+  metafile?: BuildMetafile; // only when the metafile option is set
 }
 
 interface BuildArtifact extends Blob {
-  kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+  kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "metafile-json" | "metafile-markdown";
   path: string;
   loader: Loader;
   hash: string | null;
@@ -1953,6 +1969,15 @@ interface BuildConfig {
    */
   tsconfig?: string;
 
+  /**
+   * Generate a metafile that describes the build. `true` returns it as
+   * `BuildOutput.metafile`. A string or an object also gives the path of the
+   * JSON metafile and of the markdown metafile, relative to `outdir`.
+   *
+   * @default false
+   */
+  metafile?: boolean | string | { json?: string; markdown?: string };
+
   outdir?: string;
 }
 
@@ -1960,13 +1985,14 @@ interface BuildOutput {
   outputs: BuildArtifact[];
   success: boolean;
   logs: Array<BuildMessage | ResolveMessage>;
+  metafile?: BuildMetafile; // only when the metafile option is set
 }
 
 interface BuildArtifact extends Blob {
   path: string;
   loader: Loader;
   hash: string | null;
-  kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+  kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "metafile-json" | "metafile-markdown";
   sourcemap: BuildArtifact | null;
 }
 

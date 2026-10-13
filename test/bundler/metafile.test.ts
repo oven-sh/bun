@@ -687,7 +687,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/entry.js`],
       outdir: `${dir}/dist`,
-      metafile: "output-meta.json" as any,
+      metafile: "output-meta.json",
     });
 
     expect(result.success).toBe(true);
@@ -718,7 +718,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/main.js`],
       outdir: `${dir}/dist`,
-      metafile: { json: "custom-meta.json" } as any,
+      metafile: { json: "custom-meta.json" },
     });
 
     expect(result.success).toBe(true);
@@ -742,7 +742,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/app.js`],
       outdir: `${dir}/dist`,
-      metafile: { markdown: "analysis.md" } as any,
+      metafile: { markdown: "analysis.md" },
     });
 
     expect(result.success).toBe(true);
@@ -774,7 +774,7 @@ describe("Bun.build metafile option variants", () => {
       metafile: {
         json: "meta.json",
         markdown: "meta.md",
-      } as any,
+      },
     });
 
     expect(result.success).toBe(true);
@@ -850,7 +850,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/test.js`],
       outdir: `${dir}/dist`,
-      metafile: { markdown: "meta.md" } as any,
+      metafile: { markdown: "meta.md" },
     });
 
     expect(result.success).toBe(true);

@@ -192,9 +192,9 @@ pub struct Program<'s> {
     /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
     /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
     serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
-    /// `Finished::listings` of the valid tasks so far: the first in serial order for each mapped
-    /// type. Written and read at a barrier (`Program::validate`).
-    serial_listings: Guarded<crate::util::FxHashMap<(FileId, crate::hir::TypeNodeId), bool>>,
+    /// `Finished::listings` of the valid tasks so far: the first in serial order for each
+    /// intersection. Written and read at a barrier (`Program::validate`).
+    serial_listings: Guarded<crate::util::FxHashMap<Sym, bool>>,
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
@@ -857,6 +857,7 @@ impl<'s> Program<'s> {
             restrictive_instantiations_kept: Default::default(),
             kept_a_renamed_param: Default::default(),
             instantiating_generic_argument: None,
+            inferred_between_same_extends: Default::default(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
@@ -1729,6 +1730,9 @@ pub struct Checker<'p, 's> {
     /// The argument whose generic signature `instantiateTypeWithSingleGenericCallSignature` is
     /// instantiating, and the depth of `stack` when it began: `currentNode` is still the argument.
     instantiating_generic_argument: Option<(FileId, ExprId, usize)>,
+    /// The extends types of conditional types that were related to an instantiation of the same
+    /// declaration with the same extends type: the inference between the two has been made.
+    inferred_between_same_extends: crate::util::FxHashSet<TypeId>,
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),

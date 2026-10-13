@@ -91,6 +91,10 @@ async function run(cwd: string, cmd: string[], extra: Record<string, string | un
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crash, an assertion or a sanitizer report: the test that asserts the exit code says nothing about why.
+  if (exitCode !== 0 && exitCode !== 1 && exitCode !== 2) {
+    console.error(`bun ${cmd.join(" ")} exited with ${exitCode}:\n${stderr}`);
+  }
   const clean = (text: string) =>
     text
       .replaceAll("\\", "/")

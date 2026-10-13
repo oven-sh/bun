@@ -170,6 +170,10 @@ pub trait Host: Sync {
     }
     /// Calls `work` with every index below `count`, on any number of threads.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
+    /// Whether `parallel` is `on_this_thread`, whatever the number of threads asked for.
+    fn is_of_one_thread(&self) -> bool {
+        false
+    }
     /// `parallel`, on the calling thread alone.
     fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         for index in 0..count {

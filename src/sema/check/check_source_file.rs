@@ -60,11 +60,8 @@ impl<'s> Program<'s> {
                 });
                 // A task before it in the serial order assigned the other list: this one would
                 // have found that.
-                let has_another_list = (finished.listings.iter()).any(|it| {
-                    listings
-                        .get(&(it.0, it.1))
-                        .is_some_and(|&first| first != it.2)
-                });
+                let has_another_list = (finished.listings.iter())
+                    .any(|it| listings.get(&it.0).is_some_and(|&first| first != it.1));
                 if is_invalid
                     || has_another_list
                     || self.has_walked_across_earlier_walk(finished, &walked)
@@ -72,7 +69,7 @@ impl<'s> Program<'s> {
                     return true;
                 }
                 for it in &finished.listings {
-                    listings.entry((it.0, it.1)).or_insert(it.2);
+                    listings.entry(it.0).or_insert(it.1);
                 }
                 for it in &finished.order_dependent_variances {
                     serial.entry(it.sym).or_insert(it.variances);

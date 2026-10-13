@@ -5037,7 +5037,15 @@ impl<'p, 's> Checker<'p, 's> {
                     // Also when both sides have the same extends type: the inference asks for the
                     // variances of the generic types in it, and in a cycle of variance
                     // computations what they are depends on who asks first.
-                    if !source_params.is_empty() {
+                    // FOR SPEED: once. Instantiated from one declaration, both sides have the same
+                    // `infer` type parameters, and each that occurs in the extends type maps to
+                    // itself: after the first time the inference changes nothing.
+                    let is_repeated = !source_params.is_empty()
+                        && source_extends == target_extends
+                        && !(self.params_mentioned_in(source_extends, &source_params))
+                            .contains(&false)
+                        && !self.inferred_between_same_extends.insert(source_extends);
+                    if !source_params.is_empty() && !is_repeated {
                         let around = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
                             &source_params,

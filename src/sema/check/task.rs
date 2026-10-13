@@ -67,7 +67,7 @@ pub struct Task<'s> {
     /// See `Finished::order_dependent_variances`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
     /// See `Finished::listings`.
-    pub(super) listings: Vec<(FileId, crate::hir::TypeNodeId, bool)>,
+    pub(super) listings: Vec<(Sym, bool)>,
     /// See `Finished::assignments_walked`. It is added to under `&Checker`.
     pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
     /// The types, signatures, mappers and component lists that the task has created.
@@ -261,11 +261,12 @@ pub struct Finished<'s> {
     pub foreign_evaluations: [u32; 14],
     /// See `Program::validate`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// The lists of properties that the task assigned to intersections, by a mapped type among
-    /// their constituents: whether the members of that mapped type were in place, so that the
-    /// list lacks them (`Program::listed_properties`), or it has them all. Which of the two a
-    /// checker keeps depends on which statement gets there first. See `Program::validate`.
-    pub(super) listings: Vec<(FileId, crate::hir::TypeNodeId, bool)>,
+    /// The lists of properties that the task assigned to intersections, by the type alias that
+    /// names the intersection: whether the members of a mapped type among its constituents were
+    /// in place, so that the list lacks them (`Program::listed_properties`), or it has them all.
+    /// Which of the two a checker keeps depends on which statement gets there first. See
+    /// `Program::validate`.
+    pub(super) listings: Vec<(Sym, bool)>,
     /// The functions and source files that `markNodeAssignments` has walked in the task
     /// (`Program::assignments_marked`), and whether the task was visiting the file. See
     /// `Program::validate`.
@@ -286,7 +287,7 @@ impl Finished<'_> {
         let mut measured = self.order_dependent_variances.iter();
         measured.any(|it| it.compared | it.failed | it.inferred != 0)
             || self.assignments_walked.iter().any(|it| it.2)
-            || self.listings.iter().any(|it| it.2)
+            || !self.listings.is_empty()
     }
 }
 

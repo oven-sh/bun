@@ -2768,6 +2768,9 @@ impl Host for WithOutputs<'_> {
         }
         self.disk.parallel(count, work);
     }
+    fn is_of_one_thread(&self) -> bool {
+        self.threads == 1
+    }
     fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         self.disk.on_this_thread(count, work);
     }
@@ -2778,7 +2781,12 @@ impl Host for WithOutputs<'_> {
         self.threads
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        self.disk.io_pool()
+        // The thread that builds a small project reads its files too: the threads that only
+        // read serve one load at a time.
+        match self.threads {
+            1 => None,
+            _ => self.disk.io_pool(),
+        }
     }
 }
 
@@ -2931,6 +2939,7 @@ fn check_with_references(
     let is_solution =
         |index: usize| roots[index].is_empty() && projects[index].project.has_references;
     let loaded = || (0..count).filter(|&index| !is_left_out[index] && !is_solution(index));
+    let built_at_once = loaded().count();
     if !request.plan_options.shares_every_file {
         let variants = variants_of_several(loaded().map(|index| &projects[index].project.options));
         host.share_declaration_files(variants, loaded().count());
@@ -2993,10 +3002,13 @@ fn check_with_references(
     // them: where there are more projects than are built at once, each small one is loaded and
     // checked by the thread that builds it, and as many of them at once as there are threads.
     let large_at_once = (request.plan_options.projects_at_once)
-        .min(host.threads())
-        .min(count);
+        .clamp(1, host.threads().max(1))
+        .min(count.max(1));
+    // A program that reads the sources of what it references has all of those files too.
     let is_small = |index: usize| {
-        count > large_at_once && roots[index].len() <= request.plan_options.files_of_a_small_project
+        !reads_sources
+            && built_at_once > large_at_once
+            && roots[index].len() <= request.plan_options.files_of_a_small_project
     };
     // `is_built`: by project, now. `Err`: the projects that have to be built first, besides those
     // that it references.
@@ -3488,7 +3500,10 @@ fn check_named_files(
     run: Option<&Run<'_>>,
     in_room: Option<&Place<'_>>,
 ) -> Report {
+    // A small project of a build is checked by the one thread that builds it, and has the plan
+    // of one thread.
     let threads = match request.threads {
+        _ if host.is_of_one_thread() => 1,
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };

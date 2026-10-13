@@ -4399,10 +4399,10 @@ impl<'p, 's> Checker<'p, 's> {
                 // of it around this one ends later.
                 if !self.stack.contains(&q)
                     && self.p.listed_properties.get(&self.task, &ty).is_none()
+                    && self.note_listing(ty, parts, true)
                 {
                     let listed = self.synth(shape.clone_in(self.arena));
                     (self.p.listed_properties).insert(&self.task, ty, listed, Stored::new());
-                    self.note_listing(parts, true);
                 }
                 self.provisional_shape(shape)
             }
@@ -4422,29 +4422,36 @@ impl<'p, 's> Checker<'p, 's> {
     /// members in place: it is complete, and stays. The entry is `ty` itself.
     fn note_complete_listing(&mut self, ty: TypeId, parts: &[TypeId]) {
         if self.p.listed_properties.get(&self.task, &ty).is_none()
-            && self.note_listing(parts, false)
+            && self.note_listing(ty, parts, false)
         {
             (self.p.listed_properties).insert(&self.task, ty, ty, Stored::new());
         }
     }
 
-    fn note_listing(&mut self, parts: &[TypeId], is_partial: bool) -> bool {
+    /// `Finished::listings`: the list of properties of the intersection `ty` is assigned.
+    /// `is_partial`: the members of a mapped type among `parts` are in place, so the list lacks
+    /// them. Another task cannot tell which list the tasks before it assign, so
+    /// `Program::validate` compares what each has noted, by the type alias that names `ty`: an
+    /// intersection without one keeps no list of its own. `false`: nothing is noted.
+    fn note_listing(&mut self, ty: TypeId, parts: &[TypeId], is_partial: bool) -> bool {
+        let Some(&(alias, ref type_arguments)) = self.stored_alias(ty) else {
+            return false;
+        };
         let from = self.resolution_start;
-        let mut is_noted = false;
-        for &part in parts {
-            if let TypeData::Anon {
-                origin: Origin::Mapped(file, node),
-                mapper: MapperId::IDENTITY,
-            } = *self.data(part)
-                && (!is_partial || self.stack[from..].contains(&Query::Shape(part)))
-            {
-                is_noted = true;
-                if !self.task.listings.contains(&(file, node, is_partial)) {
-                    self.task.listings.push((file, node, is_partial));
-                }
-            }
+        let has_mapped_type = type_arguments.is_empty()
+            && parts.iter().any(|&part| {
+                matches!(
+                    self.data(part),
+                    TypeData::Anon {
+                        origin: Origin::Mapped(..),
+                        mapper: MapperId::IDENTITY,
+                    }
+                ) && (!is_partial || self.stack[from..].contains(&Query::Shape(part)))
+            });
+        if has_mapped_type && !self.task.listings.contains(&(alias, is_partial)) {
+            self.task.listings.push((alias, is_partial));
         }
-        is_noted
+        has_mapped_type
     }
 
     fn shape_of_synth(&mut self, object: TypeId) -> Built<'p> {

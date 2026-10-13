@@ -176,8 +176,9 @@ declare module "bun" {
       /**
        * Path to the database file
        *
-       * Without a `filename`, Bun reads `DATABASE_URL`. A `DATABASE_URL` for
-       * another database, such as `postgres://...`, does not apply.
+       * With `adapter: "sqlite"` and no `filename`, Bun skips a `DATABASE_URL`
+       * that holds a PostgreSQL, MySQL or MariaDB URL. Pass `filename`, or set
+       * `SQLITE_URL`, to select the file.
        *
        * Examples:
        *

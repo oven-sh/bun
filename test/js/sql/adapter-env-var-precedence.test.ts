@@ -293,12 +293,12 @@ describe("SQL adapter environment variable precedence", () => {
     expect(options.options.sslMode).toBe(2); // SSLMode.require
   });
 
-  describe("{ adapter: 'sqlite' } and a DATABASE_URL for another database", () => {
+  describe("{ adapter: 'sqlite' } and a PostgreSQL, MySQL or MariaDB URL in DATABASE_URL", () => {
     // The file name that the SQLite client resolves to, with the given variables set.
-    async function filenameWith(variables: Record<string, string>) {
+    async function filenameWith(variables: Record<string, string>, open = () => new SQL({ adapter: "sqlite" })) {
       Object.assign(process.env, variables);
       try {
-        await using sql = new SQL({ adapter: "sqlite" });
+        await using sql = open();
         return sql.options.filename;
       } finally {
         for (const name in variables) delete process.env[name];
@@ -308,12 +308,13 @@ describe("SQL adapter environment variable precedence", () => {
     const postgresUrl = "postgres://pu:pp@pghost:5432/pgdb";
     const mysqlUrl = "mysql://mu:mp@myhost:3306/mydb";
     const mariadbUrl = "mariadb://mu:mp@myhost:3306/mydb";
-    const urlsForAnotherDatabase = [
+    const serverUrls = [
       postgresUrl,
       "postgresql://pu:pp@pghost:5432/pgdb",
       "POSTGRES://pu:pp@pghost:5432/pgdb",
       " postgres://pu:pp@pghost:5432/pgdb",
       "postgres://pu:pp@pghost:5432/pgdb?sslmode=require",
+      "postgres://pu:pp@pghost:5432/pgdb?redirect=https://example.com/cb",
       mysqlUrl,
       "mysql2://mu:mp@myhost:3306/mydb",
       mariadbUrl,
@@ -321,10 +322,18 @@ describe("SQL adapter environment variable precedence", () => {
 
     test.each(
       ["DATABASE_URL", "DATABASEURL", "TLS_DATABASE_URL"].flatMap(variable =>
-        urlsForAnotherDatabase.map(url => ({ variable, url })),
+        serverUrls.map(url => ({ variable, url })),
       ),
     )("ignores $variable=$url", async ({ variable, url }) => {
       expect(await filenameWith({ [variable]: url })).toBe(":memory:");
+    });
+
+    test.each([
+      ["{ adapter, filename: undefined }", () => new SQL({ adapter: "sqlite", filename: undefined })],
+      ["undefined and { adapter }", () => new SQL(undefined as never, { adapter: "sqlite" })],
+      ["null and { adapter }", () => new SQL(null as never, { adapter: "sqlite" })],
+    ])("ignores DATABASE_URL in the call form %s", async (_title, open) => {
+      expect(await filenameWith({ DATABASE_URL: postgresUrl }, open)).toBe(":memory:");
     });
 
     test("opens an in-memory database", async () => {
@@ -348,7 +357,7 @@ describe("SQL adapter environment variable precedence", () => {
           read: "SQLITE_URL",
           ignored: { DATABASE_URL: postgresUrl, DATABASEURL: mysqlUrl, TLS_DATABASE_URL: mariadbUrl },
         },
-        { read: "SQLITEURL", ignored: { TLS_DATABASE_URL: postgresUrl } },
+        { read: "SQLITE_URL", ignored: { TLS_DATABASE_URL: postgresUrl } },
       ].map(row => ({ ...row, names: Object.keys(row.ignored).join(", ") })),
     )("reads $read after it ignores $names", async ({ read, ignored }) => {
       using dir = tempDir("sql-env-next-variable", {});
@@ -368,11 +377,19 @@ describe("SQL adapter environment variable precedence", () => {
     test("still uses a DATABASE_URL that is a SQLite URL or a path", async () => {
       using dir = tempDir("sql-env-sqlite-url", {});
       const filename = `${dir}/env.db`;
+      const fileUrl = Bun.pathToFileURL(filename).href;
       const filenames: unknown[] = [];
-      for (const url of [":memory:", "sqlite://:memory:", `sqlite://${filename}`, `sqlite:${filename}`, filename]) {
+      for (const url of [
+        ":memory:",
+        "sqlite://:memory:",
+        `sqlite://${filename}`,
+        `sqlite:${filename}`,
+        filename,
+        fileUrl,
+      ]) {
         filenames.push(await filenameWith({ DATABASE_URL: url }));
       }
-      expect(filenames).toEqual([":memory:", ":memory:", filename, filename, filename]);
+      expect(filenames).toEqual([":memory:", ":memory:", filename, filename, filename, Bun.fileURLToPath(fileUrl)]);
     });
 
     // A scheme that does not name a server database of Bun.SQL, and a value with no scheme, stay file names.

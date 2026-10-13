@@ -605,6 +605,8 @@ DATABASE_URL="file:///absolute/path/to/db.sqlite"
 
 **Note:** Bun ignores PostgreSQL-specific environment variables such as `POSTGRES_URL` and `PGHOST` when you use SQLite.
 
+With `adapter: "sqlite"` and no `filename`, Bun skips a `DATABASE_URL` that holds a PostgreSQL, MySQL or MariaDB URL. Pass `filename`, or set `SQLITE_URL`, to select the file.
+
 ---
 
 ## Runtime Preconnection

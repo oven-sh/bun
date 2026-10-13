@@ -1619,33 +1619,27 @@ const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
 
 const env = Bun.env;
 
-/**
- * The value of DATABASE_URL, DATABASEURL or TLS_DATABASE_URL as the SQLite
- * adapter reads it. The URL of a server database is not a file name, so the
- * variable then counts as not set. A path, a bare host and any other scheme
- * stay file names.
- */
-function sqliteUrlFromGenericVariable(value: string | undefined): string | null {
-  if (!value) return null;
+// SQLite does not take a PostgreSQL, MySQL or MariaDB URL from DATABASE_URL, DATABASEURL or TLS_DATABASE_URL.
+function genericUrlFor(
+  adapter: Bun.SQL.__internal.Adapter | undefined,
+  value: string | undefined,
+): string | null | undefined {
+  if (adapter !== "sqlite" || !value) return value;
   const schemeEnd = value.indexOf("://");
-  if (schemeEnd !== -1) {
-    // The server adapters parse the value with `new URL()`, which ignores whitespace before the scheme and its case.
-    const scheme = value.slice(0, schemeEnd).trim().toLowerCase();
-    // `http`, `https` and `ftp` select postgres when no adapter is given, but they name no database.
-    if (scheme !== "http" && scheme !== "https" && scheme !== "ftp") {
-      const named = parseAdapterFromProtocol(scheme);
-      if (named !== null && named !== "sqlite") return null;
-    }
-  }
-  return value;
+  if (schemeEnd === -1) return value;
+  // The server adapters parse the value with `new URL()`, which ignores whitespace before the scheme and its case.
+  const scheme = value.slice(0, schemeEnd).trim().toLowerCase();
+  // `http`, `https` and `ftp` select postgres when no adapter is given, but they name no database.
+  if (scheme === "http" || scheme === "https" || scheme === "ftp") return value;
+  const named = parseAdapterFromProtocol(scheme);
+  return named === null || named === "sqlite" ? value : null;
 }
 
 /**
  * Reads environment variables to try and find a connnection string
- * @param adapter If an adapter is specified in the options, pass it here.
- * DATABASE_URL, DATABASEURL and TLS_DATABASE_URL come first for every adapter
- * (see sqliteUrlFromGenericVariable for SQLite), then the variables specific to
- * that adapter. Otherwise it will try them all.
+ * @param adapter If an adapter is specified in the options, pass it here and
+ * this function will only resolve from environment variables that are specific
+ * to that adapter. Otherwise it will try them all.
  */
 function getConnectionDetailsFromEnvironment(
   adapter: Bun.SQL.__internal.Adapter | undefined,
@@ -1653,17 +1647,10 @@ function getConnectionDetailsFromEnvironment(
   let url: string | null = null;
   let sslMode: SSLMode.require | null = null;
 
-  if (adapter === "sqlite") {
-    url =
-      sqliteUrlFromGenericVariable(env.DATABASE_URL) ||
-      sqliteUrlFromGenericVariable(env.DATABASEURL) ||
-      sqliteUrlFromGenericVariable(env.TLS_DATABASE_URL);
-  } else {
-    url ||= env.DATABASE_URL || env.DATABASEURL || null;
-    if (!url) {
-      url = env.TLS_DATABASE_URL || null;
-      if (url) sslMode = SSLMode.require;
-    }
+  url ||= genericUrlFor(adapter, env.DATABASE_URL) || genericUrlFor(adapter, env.DATABASEURL) || null;
+  if (!url) {
+    url = genericUrlFor(adapter, env.TLS_DATABASE_URL) || null;
+    if (url) sslMode = SSLMode.require;
   }
   if (url) return [url, sslMode, adapter || null];
 

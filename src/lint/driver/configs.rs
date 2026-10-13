@@ -1369,7 +1369,7 @@ impl<'l> Loader<'l> {
             }
             // A path in bunfig.toml is relative to that file.
             let bunfig = paths::resolve(self.cwd(), &options.bunfig);
-            let directory = written.map_or(self.cwd(), |_| paths::dirname(&bunfig));
+            let directory = written.map_or_else(|| self.cwd(), |_| paths::dirname(&bunfig));
             let names = [Some(&specifier[..]), long.as_deref()];
             let mut tried = names.into_iter().flatten().map(|name| {
                 let loaded = self.js_plugins.load(directory, name, alias);

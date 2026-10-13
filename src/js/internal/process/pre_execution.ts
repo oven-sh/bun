@@ -112,7 +112,7 @@ function v8Column(kind: EnvOpKind, file: string, line: number, key: string | nul
   return -1;
 }
 
-function printEnvTrace(kind: EnvOpKind, key: string | null): void {
+function printEnvTrace(kind: EnvOpKind, key: string | null, trap: Function): void {
   if (inEnvTrace) return;
   inEnvTrace = true;
   try {
@@ -123,16 +123,13 @@ function printEnvTrace(kind: EnvOpKind, key: string | null): void {
       out = key === null ? "[--trace-env] enumerate environment variables\n" : `[--trace-env] ${op} "${key}"\n`;
     }
     if (envTracePrintJsStack) {
-      // The capture burns 3 frames on trace machinery (printEnvTrace, the
-      // proxy trap, and the Error line); widen the limit so the user still
-      // sees `Error.stackTraceLimit` real frames.
-      const limit = Error.stackTraceLimit;
-      Error.stackTraceLimit = limit + 3;
-      const stack = new Error().stack!.split("\n");
-      Error.stackTraceLimit = limit;
-      // stack[0] = "Error", [1] = printEnvTrace, [2] = the proxy trap.
+      // Starts below the proxy trap, so the user sees `Error.stackTraceLimit` real frames.
+      const target: { stack?: string } = {};
+      ErrorCaptureStackTrace(target, trap);
+      const stack = target.stack!.split("\n");
+      // stack[0] = "Error"
       let corrected = false;
-      for (let i = 3; i < stack.length; i++) {
+      for (let i = 1; i < stack.length; i++) {
         let frame = stack[i];
         if (!corrected) {
           const m = frame.match(RE_FRAME_LOC);
@@ -163,39 +160,41 @@ const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectDefineProperty = Reflect.defineProperty;
 const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const ReflectOwnKeys = Reflect.ownKeys;
+const ErrorCaptureStackTrace = Error.captureStackTrace;
 
 function installEnvTracing(): void {
   const real = process.env;
-  const proxy = new Proxy(real, {
+  const handler: ProxyHandler<typeof real> = {
     get(target, prop) {
-      if (typeof prop === "string") printEnvTrace("get", prop);
+      if (typeof prop === "string") printEnvTrace("get", prop, handler.get!);
       return ReflectGet(target, prop);
     },
     set(target, prop, value) {
-      if (typeof prop === "string") printEnvTrace("set", prop);
+      if (typeof prop === "string") printEnvTrace("set", prop, handler.set!);
       return ReflectSet(target, prop, value);
     },
     has(target, prop) {
-      if (typeof prop === "string") printEnvTrace("query", prop);
+      if (typeof prop === "string") printEnvTrace("query", prop, handler.has!);
       return ReflectHas(target, prop);
     },
     deleteProperty(target, prop) {
-      if (typeof prop === "string") printEnvTrace("delete", prop);
+      if (typeof prop === "string") printEnvTrace("delete", prop, handler.deleteProperty!);
       return ReflectDeleteProperty(target, prop);
     },
     defineProperty(target, prop, desc) {
-      if (typeof prop === "string") printEnvTrace("define", prop);
+      if (typeof prop === "string") printEnvTrace("define", prop, handler.defineProperty!);
       return ReflectDefineProperty(target, prop, desc);
     },
     getOwnPropertyDescriptor(target, prop) {
-      if (typeof prop === "string") printEnvTrace("descriptor", prop);
+      if (typeof prop === "string") printEnvTrace("descriptor", prop, handler.getOwnPropertyDescriptor!);
       return ReflectGetOwnPropertyDescriptor(target, prop);
     },
     ownKeys(target) {
-      printEnvTrace("enumerate", null);
+      printEnvTrace("enumerate", null, handler.ownKeys!);
       return ReflectOwnKeys(target);
     },
-  });
+  };
+  const proxy = new Proxy(real, handler);
   Object.defineProperty(process, "env", {
     value: proxy,
     writable: true,

@@ -2671,7 +2671,11 @@ void GlobalObject::finishCreation(VM& vm)
 
     static const LazyPropertyInit<JSFunction> lazyFunctionInits[] = {
         { OBJECT_OFFSETOF(GlobalObject, m_errorConstructorPrepareStackTraceInternalValue), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-             init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
+             auto* function = JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public);
+             init.set(function);
+             // JSC makes immutable the functions in an immutable object's properties. It cannot see this one, which a native getter of Error returns.
+             if (init.owner->errorConstructor()->hasImmutableProperties())
+                 function->makePropertiesImmutable(init.vm);
          } },
 
         { OBJECT_OFFSETOF(GlobalObject, m_utilInspectFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
@@ -2800,6 +2804,8 @@ void GlobalObject::finishCreation(VM& vm)
 
     addBuiltinGlobals(vm);
 
+    applyImmutableGlobalsOption(vm);
+
     ASSERT(classInfo());
 }
 
@@ -2819,7 +2825,12 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
         throwException(globalObject, scope, returnedException.get());
         return {};
     }
-    console->putDirect(vm, property, result, 0);
+    {
+        JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        console->putDirect(vm, property, result, 0);
+    }
+    if (console->hasImmutableProperties() && result.isObject())
+        globalObject->makeObjectAndItsFunctionsImmutable(vm, asObject(result));
     return JSValue::encode(result);
 }
 

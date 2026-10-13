@@ -291,6 +291,14 @@ void throwTypeErrorOrOutOfMemory(JSC::JSGlobalObject* globalObject, JSC::ThrowSc
     JSC::throwTypeError(globalObject, scope, message);
 }
 
+bool throwIfSetterOwnerIsImmutable(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* owner)
+{
+    if (!owner->hasImmutableProperties()) [[likely]]
+        return false;
+    JSC::throwTypeError(globalObject, scope, JSC::ReadonlyPropertyWriteError);
+    return true;
+}
+
 JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, MessageBuilder& message)
 {
     auto built = message.tryToString();

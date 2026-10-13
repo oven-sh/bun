@@ -74,14 +74,7 @@ for (const fn of [
   });
 }
 
-function isErrorStackTraceLimitWritable() {
-  const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
-  if (desc === undefined) return Object.isExtensible(Error);
-  return Object.prototype.hasOwnProperty.$call(desc, "writable") ? desc.writable : desc.set !== undefined;
-}
-
 export default {
-  isErrorStackTraceLimitWritable,
   AbortError,
   codes: {
     ERR_INVALID_ARG_TYPE,

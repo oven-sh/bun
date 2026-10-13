@@ -1089,7 +1089,10 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 {
     (void)thisEncoded;
     (void)propertyName;
-    return BunObject_setter_main(globalObject, encodedValue);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, defaultGlobalObject(globalObject)->bunObject()))
+        return false;
+    RELEASE_AND_RETURN(scope, BunObject_setter_main(globalObject, encodedValue));
 }
 
 // LazyProperty wrappers for stdin/stderr/stdout

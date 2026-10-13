@@ -2339,6 +2339,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
         return false;
     }
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
+    if (throwIfSetterOwnerIsImmutable(lexicalGlobalObject, throwScope, process))
+        return false;
     auto code = JSValue::decode(value);
 
     RELEASE_AND_RETURN(throwScope, setProcessExitCodeInner(lexicalGlobalObject, process, code));
@@ -3214,10 +3216,13 @@ void Process::setArgv(JSGlobalObject* globalObject, JSValue value)
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
     if (!process) {
         return true;
     }
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, process))
+        return false;
 
     JSValue value = JSValue::decode(encodedValue);
     process->setArgv(globalObject, value);
@@ -3264,10 +3269,13 @@ void Process::setExecArgv(JSGlobalObject* globalObject, JSValue value)
 
 JSC_DEFINE_CUSTOM_SETTER(setProcessExecArgv, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
     if (!process) {
         return true;
     }
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, process))
+        return false;
 
     JSValue value = JSValue::decode(encodedValue);
     process->setExecArgv(globalObject, value);
@@ -4657,6 +4665,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, getProcessObject(globalObject, JSValue::decode(thisValue))))
+        return false;
     JSValue value = JSValue::decode(encodedValue);
 
     double port = value.toNumber(globalObject);
@@ -4715,6 +4725,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     if (!thisObject || !jsString) {
         return false;
     }
+    if (throwIfSetterOwnerIsImmutable(globalObject, scope, getProcessObject(globalObject, thisObject)))
+        return false;
     WTF::String wtfStr = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 #if !OS(WINDOWS)

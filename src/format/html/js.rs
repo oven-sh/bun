@@ -302,10 +302,10 @@ struct ClassSorter<'t, 'a> {
 }
 
 impl ClassSorter<'_, '_> {
-    /// `texts`: those of the template at `whole`, or what is between the quotes of the string there, and where each is.
-    fn sort<'s>(&mut self, whole: Span, texts: impl ExactSizeIterator<Item = (&'s [u8], Span)>) {
+    /// How the texts of the template or the string at `whole` are sorted.
+    fn how(&self, whole: Span) -> (Collapse, Tidies) {
         let among = |rules| collapse_among(&self.around, whole, self.tailwind, rules);
-        let (around, tidies) = match self.host {
+        match self.host {
             Host::Angular => (among((true, Texts::AsWritten)), self.tailwind.tidies()),
             Host::Vue => (among((false, Texts::Unseen)), self.tailwind.tidies()),
             // `removeDuplicates: false, collapseWhitespace: false`
@@ -316,7 +316,12 @@ impl ClassSorter<'_, '_> {
                     removes_duplicates: false,
                 },
             ),
-        };
+        }
+    }
+
+    /// `texts`: those of the template at `whole`, or what is between the quotes of the string there, and where each is.
+    fn sort<'s>(&mut self, whole: Span, texts: impl ExactSizeIterator<Item = (&'s [u8], Span)>) {
+        let (around, tidies) = self.how(whole);
         let count = texts.len();
         for (index, (text, span)) in texts.enumerate() {
             let ends = ends_in_template(text, (index == 0, index + 1 == count), around);

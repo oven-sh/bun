@@ -6,7 +6,10 @@
 //! directory by directory, or of who has listed the directories; what a project includes by its patterns.
 
 use crate::host::{Asking, from_native};
-use crate::{installed_typescript, lacks_its_packages, major_of_typescript_at};
+use crate::{
+    Graph, Listed, installed_typescript, lacks_its_packages, major_of_typescript_at,
+    project_that_checks,
+};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::config::{self, Asked, Roots};
@@ -14,6 +17,7 @@ use bun_sema::json::Json;
 use bun_sema::program::libs_referenced_by;
 use bun_sema::resolve::{
     Host, Kept, Options, ancestors, contains_path, inside, is_same_path, join,
+    output_declaration_file_name,
 };
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -32,15 +36,21 @@ pub struct Outline {
 }
 
 struct Project {
+    parsed: Arc<config::Project>,
     roots: Roots,
     /// The configuration files.
     references: Vec<Vec<u8>>,
-    options: Options,
     /// Made when a file of the project asks. `None`: what it depends on is not installed, so what its files can use is
     /// not known.
     outline: OnceLock<Option<Arc<Outline>>>,
     /// `Outlines::reached_from`. `Outlines::projects` keeps them.
-    reached: OnceLock<Vec<Weak<Project>>>,
+    reached: OnceLock<Reached>,
+}
+
+struct Reached {
+    /// The same reference graph validator used by checking, including permitted circular edges.
+    is_valid: bool,
+    projects: Vec<Weak<Project>>,
 }
 
 /// Where a project is read into, by the first that asks for it. `None`: it cannot be read.
@@ -100,20 +110,36 @@ impl Outlines {
         let host = self.asking(false);
         let file = Asked::new(&path);
         let has_it = |it: &Arc<Project>| it.roots.has(&file, &|path| host.is_file(path));
-        for (config, place) in self.above(dirname::<Posix>(&path)).iter() {
-            let Some(project) = self.read_into(place, config) else {
-                continue;
-            };
-            // What it references is read only if it has not got the file itself.
-            let owner = match has_it(project) {
-                true => Some(Arc::clone(project)),
-                false => {
+        for (config, _) in self.above(dirname::<Posix>(&path)).iter() {
+            let owner = project_that_checks(config, host.is_case_sensitive(), |config| {
+                let place = self.place_of(config);
+                let project = self.read_into(&place, config)?;
+                let listed = has_it(project).then(|| {
+                    // Declarations are read by both projects. A source that a reference includes
+                    // is read through its declaration output in this project.
                     let reached = project.reached.get_or_init(|| self.reached_from(project));
-                    reached.iter().filter_map(Weak::upgrade).find(has_it)
-                }
-            };
+                    let redirects = reached.is_valid
+                        && output_declaration_file_name(&path, None).is_some()
+                        && reached
+                            .projects
+                            .iter()
+                            .filter_map(Weak::upgrade)
+                            .any(|it| has_it(&it));
+                    (Listed::AsConfigured, redirects)
+                });
+                Some((listed, project.references.clone()))
+            });
             if let Some(owner) = owner {
-                let outline = || self.outline(&owner.options);
+                let place = self.place_of(&owner);
+                let owner = self.read_into(&place, &owner)?;
+                if !owner
+                    .reached
+                    .get_or_init(|| self.reached_from(owner))
+                    .is_valid
+                {
+                    return None;
+                }
+                let outline = || self.outline(&owner.parsed.options);
                 return owner.outline.get_or_init(outline).clone();
             }
         }
@@ -188,26 +214,40 @@ impl Outlines {
         found
     }
 
-    /// The projects that `project` references, directly or not, in the order in which `Projects::find_project_with`
-    /// asks them for a file.
-    fn reached_from(&self, project: &Project) -> Vec<Weak<Project>> {
-        let is_case_sensitive = self.host.is_case_sensitive();
-        let mut all = Vec::new();
-        let mut seen = vec![project.options.config_path.clone()];
-        // Those to look at, the next one last.
-        let mut pending: Vec<Vec<u8>> = project.references.iter().rev().cloned().collect();
-        while let Some(config) = pending.pop() {
-            if (seen.iter()).any(|it| is_same_path(it, &config, is_case_sensitive)) {
-                continue;
-            }
-            let place = self.place_of(&config);
-            if let Some(project) = self.read_into(&place, &config) {
-                pending.extend(project.references.iter().rev().cloned());
-                all.push(Arc::downgrade(project));
-            }
-            seen.push(config);
+    /// The projects that `project` references, directly or not. This is a membership set:
+    /// `project_that_checks` owns the order in which a file's project is selected.
+    fn reached_from(&self, project: &Project) -> Reached {
+        let host = self.asking(false);
+        let mut load = |config: &[u8]| {
+            let place = self.place_of(config);
+            self.read_into(&place, config)
+                .map(|it| Arc::clone(&it.parsed))
+        };
+        // This host lists no sources. The graph is used only for reference validity and reachability;
+        // Roots::has supplies file membership without loading a program.
+        let mut graph = Graph::new(&host, &mut load);
+        graph.create_build_tasks(Arc::clone(&project.parsed));
+        graph.setup_build_tasks(&project.parsed.config_path);
+        let projects = graph
+            .projects
+            .iter()
+            .filter(|it| {
+                !is_same_path(
+                    &it.project.config_path,
+                    &project.parsed.config_path,
+                    host.is_case_sensitive(),
+                )
+            })
+            .filter_map(|it| {
+                let place = self.place_of(&it.project.config_path);
+                self.read_into(&place, &it.project.config_path)
+                    .map(Arc::downgrade)
+            })
+            .collect();
+        Reached {
+            is_valid: graph.errors.is_empty(),
+            projects,
         }
-        all
     }
 
     fn place_of(&self, config: &[u8]) -> Place {
@@ -241,7 +281,7 @@ impl Outlines {
             references: (project.references.iter())
                 .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
                 .collect(),
-            options: project.options,
+            parsed: Arc::new(project),
             outline: OnceLock::new(),
             reached: OnceLock::new(),
         })

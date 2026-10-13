@@ -180,6 +180,88 @@ describe.concurrent("bun lint", () => {
   });
 
   describe("the globals of a file are what the types of its project declare", () => {
+    test.each([
+      ["breadth-first", true],
+      ["breadth-first", false],
+      ["referenced owner", true],
+      ["referenced owner", false],
+    ] as const)("fast and full inference use the %s (DOM: %s)", async (layout, hasDOM) => {
+      const project = (dom: boolean, references: { path: string }[] = []) =>
+        JSON.stringify({
+          compilerOptions: {
+            allowJs: true,
+            checkJs: true,
+            noEmit: true,
+            lib: dom ? ["es5", "dom"] : ["es5"],
+            types: [],
+          },
+          files: ["x.js"],
+          references,
+        });
+      const files = {
+        "x.js": "window;\n",
+        "tsconfig.json":
+          layout === "breadth-first"
+            ? JSON.stringify({ files: [], references: [{ path: "./a.json" }, { path: "./b.json" }] })
+            : project(!hasDOM, [{ path: "./b.json" }]),
+        "a.json": JSON.stringify({ files: [], references: [{ path: "./c.json" }] }),
+        "b.json": project(hasDOM),
+        "c.json": project(!hasDOM),
+      };
+      for (const inference of ["--infer-globals=fast", "--infer-globals"]) {
+        const { stdout, exitCode } = await lint(files, [inference, "--rule", "no-undef: error", "-f", "unix", "x.js"]);
+        expect(exitCode).toBe(hasDOM ? 0 : 1);
+        if (hasDOM) expect(stdout).toBe("");
+        else expect(stdout).toContain("'window' is not defined. [Error/no-undef]");
+      }
+    });
+
+    test.each([false, true])("fast and full inference preserve circular reference validity: %s", async circular => {
+      const project = (files: string[], references: { path: string; circular?: boolean }[] = []) =>
+        JSON.stringify({
+          compilerOptions: { allowJs: true, checkJs: true, noEmit: true, lib: ["es5"], types: [] },
+          files,
+          references,
+        });
+      const files = {
+        "tsconfig.json": project([], [{ path: "./b.json" }, { path: "./c.json" }]),
+        "b.json": project(["x.js"], [{ path: "./d.json", circular }]),
+        "d.json": project(["x.js"], [{ path: "./b.json" }]),
+        "c.json": project(["x.js", "c.d.ts"]),
+        "c.d.ts": "declare const SELECTED_OWNER_GLOBAL: number;\n",
+        "x.js": "SELECTED_OWNER_GLOBAL;\n",
+      };
+      for (const inference of ["--infer-globals=fast", "--infer-globals"]) {
+        const { stdout, exitCode } = await lint(files, [inference, "--rule", "no-undef: error", "-f", "unix", "x.js"]);
+        expect(exitCode).toBe(circular ? 0 : 1);
+        if (circular) expect(stdout).toBe("");
+        else expect(stdout).toContain("'SELECTED_OWNER_GLOBAL' is not defined. [Error/no-undef]");
+      }
+    });
+
+    test("fast and full inference find an ancestor that includes the file", async () => {
+      const files = {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { allowJs: true, checkJs: true, noEmit: true, lib: ["es5"], types: [] },
+          files: ["nested/x.js", "globals.d.ts"],
+        }),
+        "nested/tsconfig.json": '{ "files": [] }',
+        "globals.d.ts": "declare const SELECTED_OWNER_GLOBAL: number;\n",
+        "nested/x.js": "SELECTED_OWNER_GLOBAL;\n",
+      };
+      for (const inference of ["--infer-globals=fast", "--infer-globals"]) {
+        const { stdout, exitCode } = await lint(files, [
+          inference,
+          "--rule",
+          "no-undef: error",
+          "-f",
+          "unix",
+          "nested/x.js",
+        ]);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      }
+    });
+
     const options = (lib: string[], more: object) => JSON.stringify({ compilerOptions: { lib, types: [], ...more } });
     const files = {
       // In no project.

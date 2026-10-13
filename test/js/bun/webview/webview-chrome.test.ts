@@ -1004,35 +1004,34 @@ it("chrome: click(selector) does not wait for an animation that cannot start", a
 
 it("chrome: click(selector) does not take the position before the first frame for a frame's", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  // The page moves the button by a step per frame, from when click() first looks for it. The first callback that
+  // click() asks for runs in the frame that asked: nothing has moved by then. The second skips a frame, so that it
+  // cannot be in that frame too.
   await view.navigate(
     html(`
-        <style>
-          @keyframes slide { from { left: 0; } to { left: 100px; } }
-          #mover { position: fixed; top: 50px; width: 60px; height: 60px;
-                   animation: slide 300ms linear forwards; }
-        </style>
+        <style>#mover { position: fixed; left: 0; top: 50px; width: 60px; height: 60px; }</style>
         <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+        <script>
+          const { querySelector } = document;
+          const nextFrame = requestAnimationFrame;
+          document.querySelector = function (selector) {
+            document.querySelector = querySelector;
+            let left = 0;
+            (function step() {
+              mover.style.left = (left += 20) + "px";
+              if (left < 100) nextFrame(step);
+            })();
+            let asked = 0;
+            window.requestAnimationFrame = callback => {
+              if (asked++ === 0) return (queueMicrotask(() => callback(performance.now())), 0);
+              window.requestAnimationFrame = nextFrame;
+              return nextFrame(() => nextFrame(callback));
+            };
+            return querySelector.call(this, selector);
+          };
+        </script>
       `),
   );
-  // Under way, and the first callback runs in the frame that asked for it: nothing has moved by then. The second
-  // skips a frame, so that it cannot be in that frame too.
-  await view.evaluate(`new Promise((resolve, reject) => {
-    const deadline = performance.now() + 2000;
-    (function look() {
-      if (mover.getBoundingClientRect().left === 0) {
-        if (performance.now() > deadline) return reject("mover never moved");
-        return setTimeout(look, 1);
-      }
-      const { requestAnimationFrame } = window;
-      let asked = 0;
-      window.requestAnimationFrame = callback => {
-        if (asked++ === 0) return (queueMicrotask(() => callback(performance.now())), 0);
-        window.requestAnimationFrame = requestAnimationFrame;
-        return requestAnimationFrame(() => requestAnimationFrame(callback));
-      };
-      resolve();
-    })();
-  })`);
   await view.click("#mover");
   expect(await view.evaluate("String(window.__hit)")).toBe("100");
 });

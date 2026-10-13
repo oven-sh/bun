@@ -200,12 +200,36 @@ impl<T: Node> UnboundedQueue<T> {
     /// accessed outside this queue. The caller transfers logical ownership of
     /// the node to the queue until a `pop`/`pop_batch` returns it.
     pub fn push(&self, item: NonNull<T>) {
-        self.push_batch(item, item);
+        // SAFETY: `self` is live for the whole call.
+        unsafe { Self::push_batch(self, item, item) };
+    }
+
+    /// [`push`](Self::push) for a producer whose queue the consumer may free as
+    /// soon as the node is visible (`MiniEventLoop::enqueue_task_concurrent`).
+    /// A `&self` argument would assert the queue's storage, padding included,
+    /// until this returns; [`push_batch`](Self::push_batch) asserts nothing
+    /// after its publishing store.
+    ///
+    /// # Safety
+    /// `this` must point to a live queue when called (the consumer may free it
+    /// once the node is visible); `item` as for [`push`](Self::push).
+    pub unsafe fn push_raw(this: *const Self, item: NonNull<T>) {
+        // SAFETY: fn contract.
+        unsafe { Self::push_batch(this, item, item) };
     }
 
     /// `first..=last` must form a valid intrusive chain of live `T` nodes. The
     /// caller transfers logical ownership of every node in the chain.
-    pub(crate) fn push_batch(&self, first: NonNull<T>, last: NonNull<T>) {
+    ///
+    /// The chain becomes visible to the consumer at the `next` store (queue was
+    /// non-empty) or the `front` store (queue was empty). A
+    /// [`push_raw`](Self::push_raw) caller's queue may be freed from that point
+    /// on, so nothing after either store may touch `*this`.
+    ///
+    /// # Safety
+    /// `this` must point to a live queue when called; the consumer may free it
+    /// once the chain is visible.
+    pub(crate) unsafe fn push_batch(this: *const Self, first: NonNull<T>, last: NonNull<T>) {
         let (first, last) = (first.as_ptr(), last.as_ptr());
         // SAFETY: caller guarantees `last` is a live node (NonNull is non-null).
         unsafe { T::set_next(last, ptr::null_mut()) };
@@ -222,13 +246,16 @@ impl<T: Node> UnboundedQueue<T> {
             }
             debug_assert!(item == last, "`last` should be reachable from `first`");
         }
-        let old_back = self.back.0.swap(last, Ordering::AcqRel);
+        // SAFETY: the chain is not visible yet, so `*this` is live (fn contract).
+        let old_back = unsafe { (*this).back.0.swap(last, Ordering::AcqRel) };
         if !old_back.is_null() {
             // SAFETY: `old_back` was the previous tail, still live (its `next`
             // is null and no consumer has popped past it yet — see `pop`).
             unsafe { T::atomic_store_next(old_back, first, Ordering::Release) };
         } else {
-            self.front.0.store(first, Ordering::Release);
+            // SAFETY: the chain is not visible until this store completes, so
+            // `*this` is live for it (fn contract).
+            unsafe { (*this).front.0.store(first, Ordering::Release) };
         }
     }
 
@@ -331,5 +358,146 @@ impl<T: Node> UnboundedQueue<T> {
 
     pub fn is_empty(&self) -> bool {
         self.back.0.load(Ordering::Acquire).is_null()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::cell::Cell;
+
+    struct Node(Link<Node>);
+
+    // SAFETY: `0` is the node's only link field.
+    unsafe impl Linked for Node {
+        unsafe fn link(item: *mut Self) -> *const Link<Self> {
+            // SAFETY: `item` is a live node (queue contract).
+            unsafe { ptr::addr_of!((*item).0) }
+        }
+    }
+
+    struct SendPtr<T>(*mut T);
+    // SAFETY: the tests below only dereference the pointer on the thread that
+    // currently owns the pointee (see each use).
+    unsafe impl<T> Send for SendPtr<T> {}
+
+    // Miri reports any access to the queue after the publishing store as a race
+    // with the consumer's free. It cannot see a `&Self` receiver; the next test does.
+    #[test]
+    fn consumer_may_free_the_queue_once_the_node_is_visible() {
+        let iterations = if cfg!(miri) { 64 } else { 10_000 };
+        for prefill in [false, true] {
+            for _ in 0..iterations {
+                let queue = Box::into_raw(Box::new(UnboundedQueue::<Node>::new()));
+                let mut first = Node(Link::new());
+                let mut second = Node(Link::new());
+                let expected = if prefill {
+                    // SAFETY: the queue was just allocated and nothing else
+                    // refers to it yet.
+                    unsafe { (*queue).push(NonNull::from(&mut first)) };
+                    2
+                } else {
+                    1
+                };
+
+                let consumer = {
+                    let queue = SendPtr(queue);
+                    let consumer = move || {
+                        let queue = queue;
+                        // Addresses, so the result can cross back to the producer.
+                        let mut popped: Vec<usize> = Vec::with_capacity(expected);
+                        while popped.len() < expected {
+                            // SAFETY: the queue is live until this thread frees
+                            // it below.
+                            let node = unsafe { (*queue.0).pop() };
+                            if node.is_null() {
+                                std::thread::yield_now();
+                            } else {
+                                popped.push(node as usize);
+                            }
+                        }
+                        // Every node the producer will ever push has arrived:
+                        // the property under test is that freeing here is
+                        // fine whatever the producer is still doing.
+                        // SAFETY: allocated with `Box::new` above; the producer
+                        // holds no reference to it, only the pointer it posts
+                        // through, and it never dereferences that again.
+                        drop(unsafe { Box::from_raw(queue.0) });
+                        popped
+                    };
+                    std::thread::Builder::new().spawn(consumer).unwrap()
+                };
+
+                // SAFETY: the queue is live at least until this node is
+                // visible, which is all `push_raw` requires.
+                unsafe { UnboundedQueue::push_raw(queue, NonNull::from(&mut second)) };
+
+                let popped = consumer.join().unwrap();
+                let mut want = Vec::new();
+                if prefill {
+                    want.push(&raw mut first as usize);
+                }
+                want.push(&raw mut second as usize);
+                assert_eq!(popped, want);
+            }
+        }
+    }
+
+    // Its publishing `next` store frees the queue: a consumer that frees on visibility.
+    struct FreeingNode {
+        link: Link<FreeingNode>,
+        queue_to_free: Cell<*mut UnboundedQueue<FreeingNode>>,
+    }
+
+    // SAFETY: all four route to `link`; the publishing store then frees the
+    // queue. (`super::Node`: this module's `Node` struct shadows the trait.)
+    unsafe impl super::Node for FreeingNode {
+        unsafe fn get_next(item: *mut Self) -> *mut Self {
+            // SAFETY: `item` is a live node (queue contract).
+            unsafe { (*item).link.0.load(Ordering::Relaxed) }
+        }
+        unsafe fn set_next(item: *mut Self, p: *mut Self) {
+            // SAFETY: as above.
+            unsafe { (*item).link.0.store(p, Ordering::Relaxed) }
+        }
+        unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+            // SAFETY: as above.
+            unsafe { (*item).link.0.load(ordering) }
+        }
+        unsafe fn atomic_store_next(item: *mut Self, p: *mut Self, ordering: Ordering) {
+            // SAFETY: as above.
+            let queue = unsafe {
+                (*item).link.0.store(p, ordering);
+                (*item).queue_to_free.replace(ptr::null_mut())
+            };
+            if !queue.is_null() {
+                // SAFETY: set only by the test below, to a `Box::into_raw` queue.
+                drop(unsafe { Box::from_raw(queue) });
+            }
+        }
+    }
+
+    // Miri rejects that free if `push_raw` or `push_batch` holds a `&Self` across the publish.
+    #[test]
+    fn push_raw_holds_no_reference_across_the_publish() {
+        let queue = Box::into_raw(Box::new(UnboundedQueue::<FreeingNode>::new()));
+        let mut tail = FreeingNode {
+            link: Link::new(),
+            queue_to_free: Cell::new(queue),
+        };
+        let mut second = FreeingNode {
+            link: Link::new(),
+            queue_to_free: Cell::new(ptr::null_mut()),
+        };
+        // Empty queue: the publish is the `front` store, so nothing is freed yet.
+        // SAFETY: the queue was just allocated and nothing else refers to it.
+        unsafe { (*queue).push(NonNull::from(&mut tail)) };
+        // Non-empty queue: the publish is the store to `tail`'s link, which
+        // frees the queue.
+        // SAFETY: the queue is live until that store, which is all `push_raw`
+        // requires.
+        unsafe { UnboundedQueue::push_raw(queue, NonNull::from(&mut second)) };
+        assert!(tail.queue_to_free.get().is_null());
+        assert_eq!(tail.link.0.load(Ordering::Relaxed), &raw mut second);
     }
 }

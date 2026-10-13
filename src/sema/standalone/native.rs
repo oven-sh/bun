@@ -317,6 +317,9 @@ fn first(text: &[u8], f: impl Fn(u8) -> bool) -> usize {
 // Weak: where the kernels themselves are linked, they count.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+extern "C" fn highway_use_static_target_if_none_chosen() {}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_char(p: *const u8, len: usize, needle: u8) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| c == needle)

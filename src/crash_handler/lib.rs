@@ -782,9 +782,15 @@ mod draft {
         None,
     }
 
+    unsafe extern "C" {
+        safe fn highway_use_static_target_if_none_chosen();
+    }
+
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
     #[cold]
     pub fn crash_handler(reason: CrashReason, seed: TraceSeed) -> ! {
+        highway_use_static_target_if_none_chosen();
+
         if cfg!(debug_assertions) {
             Output::disable_scoped_debug_writer();
         }

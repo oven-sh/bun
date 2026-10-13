@@ -2352,6 +2352,14 @@ template size_t MemMemTwoWayFallback<uint16_t>(const uint16_t*, size_t, const ui
 // The extern "C" only affects linkage (for C callers), not namespace resolution.
 extern "C" {
 
+// For the crash handler, which searches strings: a crash inside hwy::SupportedTargets() must not run it again.
+void highway_use_static_target_if_none_chosen()
+{
+    auto& target = hwy::GetChosenTarget();
+    if (!target.IsInitialized())
+        target.Update(HWY_STATIC_TARGET);
+}
+
 void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len)
 {
     return BUN_HWY_DISPATCH(MemMemImpl)(haystack, haystack_len, needle, needle_len);

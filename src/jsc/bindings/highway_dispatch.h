@@ -9,8 +9,9 @@ namespace bun {
 
 inline void highwayChooseTarget()
 {
-    static const bool chosen = (hwy::GetChosenTarget().Update(hwy::SupportedTargets()), true);
-    (void)chosen;
+    auto& target = hwy::GetChosenTarget();
+    if (!target.IsInitialized())
+        target.Update(hwy::SupportedTargets());
 }
 
 #if defined(__has_attribute)

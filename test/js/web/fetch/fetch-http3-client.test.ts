@@ -1259,3 +1259,46 @@ test("custom TLS trust options are rejected on protocol: http3 and excluded from
   expect(stdout).toMatch(/second status=200 sessions=0\n$/);
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/32234
+test("connects to a server with an Ed25519 certificate", async () => {
+  const fixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const server = Bun.serve({
+    port: 0,
+    tls: { key: Bun.file(join(fixtures, "ed25519-key.pem")), cert: Bun.file(join(fixtures, "ed25519-cert.pem")) },
+    http3: true,
+    http1: false,
+    fetch: () => new Response("ed25519 over h3"),
+  });
+  try {
+    const res = await fetch(`https://127.0.0.1:${server.port}/`, h3);
+    expect(await res.text()).toBe("ed25519 over h3");
+  } finally {
+    // As in afterAll: the pooled session drains on lsquic's idle timeout, so stop(true) is not awaited.
+    server.stop(true);
+  }
+});
+
+test("protocol: http3 is refused once tls.DEFAULT_CIPHERS is assigned, as it is with a ciphers option", async () => {
+  const fixture = `
+    import tls from "node:tls";
+    const server = Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("ok") });
+    const attempt = options =>
+      fetch(server.url, { protocol: "http3", tls: { rejectUnauthorized: false, ...options } }).then(
+        res => res.text(),
+        error => error.code,
+      );
+    const ciphers = "ECDHE-RSA-AES256-GCM-SHA384";
+    const results = { nothing: await attempt(), option: await attempt({ ciphers }) };
+    tls.DEFAULT_CIPHERS = ciphers;
+    results.assigned = await attempt();
+    console.log(JSON.stringify(results));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The HTTP/3 client has one context, which takes no option. QUIC is TLS 1.3, so the list would not apply to it.
+  expect(JSON.parse(stdout)).toEqual({ nothing: "ok", option: "HTTP3Unsupported", assigned: "HTTP3Unsupported" });
+  expect(exitCode).toBe(0);
+});

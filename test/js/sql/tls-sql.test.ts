@@ -1,4 +1,4 @@
-import { SQL, randomUUIDv7 } from "bun";
+import { randomUUIDv7, SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { describeWithContainer, isDockerEnabled, tls as tlsCert } from "harness";
 import net from "node:net";
@@ -6,9 +6,20 @@ import path from "node:path";
 import tls from "node:tls";
 import {
   listeningServer,
+  MYSQL_CLIENT_SSL,
+  MYSQL_DEFAULT_CAPABILITIES,
+  mysqlAckSessionSetup,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlReadPackets,
   pgAuthenticationCleartextPassword,
   pgAuthenticationOk,
+  pgCommandComplete,
+  pgDataRow,
+  pgErrorResponse,
+  pgReadFrontendMessages,
   pgReadyForQuery,
+  pgRowDescription,
   pgSSLRequest,
   pgSSLResponse,
 } from "./wire-frames";
@@ -463,51 +474,196 @@ test("postgres client aborts the connection when the server declines TLS that wa
   }
 });
 
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
+// A plain-TCP Postgres that answers an SSLRequest with `sslRequestAnswer`, a StartupMessage with
+// AuthenticationOk and a Query with one row, and hangs up on a ClientHello. Returns the frames it saw
+// and what the client reported.
+async function queryServerWithoutTls(
+  sslRequestAnswer: Buffer,
+  query: string,
+  options: SQL.Options = {},
+  PGSSLMODE?: string,
+) {
+  const wire: string[] = [];
+  const sockets = new Set<net.Socket>();
+  const { server, port } = await listeningServer(socket => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let buffered = Buffer.alloc(0);
+    let started = false;
+    socket.on("data", (data: Buffer) => {
+      buffered = Buffer.concat([buffered, data]);
+      while (!started) {
+        if (buffered[0] === 0x16) {
+          wire.push("ClientHello");
+          return void socket.end();
+        }
+        if (buffered.length < 4 || buffered.length < buffered.readInt32BE(0)) return;
+        const frame = buffered.subarray(0, buffered.readInt32BE(0));
+        buffered = buffered.subarray(frame.length);
+        if (frame.equals(pgSSLRequest())) {
+          wire.push("SSLRequest");
+          socket.write(sslRequestAnswer);
+        } else {
+          wire.push("StartupMessage");
+          started = true;
+          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        }
+      }
+      buffered = pgReadFrontendMessages(buffered, type => {
+        if (type !== "Q".charCodeAt(0)) return;
+        wire.push("Query");
+        socket.write(
+          Buffer.concat([
+            pgRowDescription([{ name: "x", typeOid: 25 }]),
+            pgDataRow([Buffer.from("1")]),
+            pgCommandComplete("SELECT 1"),
+            pgReadyForQuery(),
+          ]),
+        );
+      });
+    });
+  });
+
+  try {
+    // The constructor reads the environment.
+    if (PGSSLMODE) process.env.PGSSLMODE = PGSSLMODE;
+    await using sql = new SQL({
+      url: `postgres://u:pw@127.0.0.1:${port}/db${query}`,
+      adapter: "postgres",
+      max: 1,
+      connectionTimeout: 5,
+      ...options,
+    });
+    delete process.env.PGSSLMODE;
+    const result = await sql`select 1`.simple().then(
+      rows => rows[0].x,
+      e => e.code,
+    );
+    return { wire, result };
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+}
+
+// https://www.postgresql.org/docs/current/libpq-ssl.html#LIBPQ-SSL-SSLMODE-STATEMENTS
+test("postgres continues in plaintext after the server declines TLS only when the sslmode allows it", async () => {
+  const plaintext = { wire: ["SSLRequest", "StartupMessage", "Query"], result: "1" };
+  const refused = { wire: ["SSLRequest"], result: "ERR_POSTGRES_TLS_NOT_AVAILABLE" };
+  const rows: [query: string, options: SQL.Options, outcome: unknown, PGSSLMODE?: string][] = [
+    ["?sslmode=disable", {}, { wire: ["StartupMessage", "Query"], result: "1" }],
+    ["?sslmode=allow", {}, plaintext],
+    ["?sslmode=prefer", {}, plaintext],
+    ["", { ssl: "prefer" }, plaintext],
+    ["", { tls: "prefer" }, plaintext],
+    ["", {}, plaintext, "prefer"],
+    ["?sslmode=require", {}, refused],
+    ["?sslmode=verify-ca", {}, refused],
+    ["?sslmode=verify-full", {}, refused],
+    ["?ssl=true", {}, refused],
+    ["", {}, refused, "require"],
+    ["", {}, refused, "verify-full"],
+    ["?sslmode=prefer", { tls: true }, refused],
+    ["?sslmode=prefer", { tls: {} }, refused],
+    ["?sslmode=prefer", { tls: { rejectUnauthorized: false } }, refused],
+    ["?sslmode=prefer", { ssl: "require" }, refused],
+    ["?sslmode=prefer", { ssl: "verify-ca" }, refused],
+    ["?sslmode=prefer", { ssl: "verify-full" }, refused],
+  ];
+  const outcomes = await Promise.all(
+    rows.map(([query, options, , PGSSLMODE]) => queryServerWithoutTls(pgSSLResponse("N"), query, options, PGSSLMODE)),
+  );
+  expect(rows.map((row, i) => row.with(2, outcomes[i]))).toEqual(rows);
+});
+
+test("postgres sslmode=prefer takes the 'N', and nothing that comes with it or in its place", async () => {
+  const injected = pgErrorResponse({ S: "FATAL", C: "XX000", M: "injected before startup" });
+  expect(
+    await Promise.all([
+      queryServerWithoutTls(Buffer.concat([pgSSLResponse("N"), injected]), "?sslmode=prefer"),
+      queryServerWithoutTls(pgAuthenticationCleartextPassword(), "?sslmode=prefer"),
+      // The server accepts TLS and then hangs up on the handshake.
+      queryServerWithoutTls(pgSSLResponse("S"), "?sslmode=prefer"),
+    ]),
+  ).toEqual([
+    { wire: ["SSLRequest", "StartupMessage", "Query"], result: "1" },
+    { wire: ["SSLRequest"], result: "ERR_POSTGRES_UNEXPECTED_MESSAGE" },
+    { wire: ["SSLRequest", "ClientHello"], result: "ECONNRESET" },
+  ]);
+});
+
 // Reads the client's TLS records off the wire, which a container cannot show. A PostgreSQL server
 // logs "could not receive data from client" for a TLS connection that ends without a close_notify.
-test.each(["idleTimeout", "maxLifetime"])(
-  "postgres sends a close_notify when %s closes a TLS connection",
-  async option => {
-    // TLS 1.2 leaves a record's type in the clear.
-    const ALERT = 21;
-    const terminator = tls.createServer({ ...tlsCert, maxVersion: "TLSv1.2" }, socket => {
-      socket.on("error", () => {});
+test.each([
+  ["postgres", "idleTimeout"],
+  ["postgres", "maxLifetime"],
+  ["postgres", "close"],
+  ["mysql", "idleTimeout"],
+  ["mysql", "close"],
+] as const)("%s sends a close_notify when %s closes a TLS connection", async (adapter, option) => {
+  // TLS 1.2 leaves a record's type in the clear.
+  const ALERT = 21;
+  const terminator = tls.createServer({ ...tlsCert, maxVersion: "TLSv1.2" }, socket => {
+    socket.on("error", () => {});
+    if (adapter === "postgres") {
       socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()])));
-    });
-    await new Promise<void>(resolve => terminator.listen(0, "127.0.0.1", resolve));
-
-    let records = Buffer.alloc(0);
-    const closed = Promise.withResolvers<void>();
-    const { port, server } = await listeningServer(client => {
-      client.on("error", () => {});
-      client.on("close", () => closed.resolve());
-      client.once("data", () => {
-        client.write(pgSSLResponse("S"));
-        const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
-        upstream.on("error", () => {});
-        client.on("data", (chunk: Buffer) => {
-          records = Buffer.concat([records, chunk]);
-        });
-        client.pipe(upstream).pipe(client);
-      });
-    });
-
-    try {
-      await using sql = new SQL({
-        url: `postgres://postgres@127.0.0.1:${port}/bun_sql_test`,
-        max: 1,
-        tls: { rejectUnauthorized: false },
-        [option]: 0.05,
-      });
-      await sql.connect();
-      await closed.promise;
-
-      const types: number[] = [];
-      for (let i = 0; i + 5 <= records.length; i += 5 + records.readUInt16BE(i + 3)) types.push(records[i]);
-      expect(types.at(-1)).toBe(ALERT);
-    } finally {
-      server.close();
-      terminator.close();
+      return;
     }
-  },
-);
+    let buffered = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!mysqlAckSessionSetup(socket, payload)) socket.write(mysqlOkPacket(seq + 1));
+      });
+    });
+  });
+  await new Promise<void>(resolve => terminator.listen(0, "127.0.0.1", resolve));
+
+  // The client's plaintext request for TLS: the SSLRequest message, resp. packet.
+  const requestLength = adapter === "postgres" ? 8 : 36;
+  let records: Buffer = Buffer.alloc(0);
+  const closed = Promise.withResolvers<void>();
+  const { port, server } = await listeningServer(client => {
+    client.on("error", () => {});
+    client.on("close", () => closed.resolve());
+    if (adapter === "mysql") {
+      client.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
+    }
+    client.once("data", (request: Buffer) => {
+      if (adapter === "postgres") client.write(pgSSLResponse("S"));
+      const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
+      upstream.on("error", () => {});
+      records = request.subarray(requestLength);
+      upstream.write(records);
+      client.on("data", (chunk: Buffer) => {
+        records = Buffer.concat([records, chunk]);
+      });
+      client.pipe(upstream).pipe(client);
+    });
+  });
+
+  try {
+    await using sql = new SQL({
+      url: `${adapter}://postgres@127.0.0.1:${port}/bun_sql_test`,
+      max: 1,
+      tls: { rejectUnauthorized: false },
+      // The lifetime starts before the handshake, and has to outlast it.
+      ...(option !== "close" && { [option]: option === "maxLifetime" ? 0.5 : 0.05 }),
+    });
+    await sql.connect();
+    if (option === "close") await sql.close();
+    await closed.promise;
+
+    const types: number[] = [];
+    for (let i = 0; i + 5 <= records.length; i += 5 + records.readUInt16BE(i + 3)) types.push(records[i]);
+    expect(types.at(-1)).toBe(ALERT);
+  } finally {
+    server.close();
+    terminator.close();
+  }
+});

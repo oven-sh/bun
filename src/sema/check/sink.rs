@@ -37,6 +37,7 @@
 use super::explain::NOWHERE;
 use super::task::Finished;
 use super::*;
+use crate::util::SharedSort;
 use bun_threading::Guarded;
 
 /// `args ...any` of `NewDiagnostic` and `reportError`.
@@ -262,6 +263,7 @@ fn is_task_independent(q: Query) -> bool {
         | Query::Comparison(_) => true,
         Query::ReturnOfSignature(_)
         | Query::Shape(_)
+        | Query::Properties(_)
         | Query::Constraint(_)
         | Query::InferredConstraint(_)
         | Query::MappedProp(..)
@@ -329,7 +331,7 @@ impl super::Program<'_> {
 
     /// `SortAndDeduplicateDiagnostics`
     pub(super) fn sort_and_deduplicate_diagnostics(&self, reported: &mut Vec<Reported>) {
-        reported.sort_by(|a, b| self.compare_diagnostics(a, b));
+        reported.shared_sort_by(|a, b| self.compare_diagnostics(a, b));
         // `compactAndMergeRelatedInfos`: diagnostics that differ only in their related information
         // are merged into one that has all of it, sorted.
         reported.dedup_by(|next, first| {
@@ -337,7 +339,7 @@ impl super::Program<'_> {
             if is_same {
                 let related = &mut first.related_information;
                 related.append(&mut next.related_information);
-                related.sort_by(|a, b| self.compare_diagnostics(a, b));
+                related.shared_sort_by(|a, b| self.compare_diagnostics(a, b));
                 related.dedup_by(|next, first| equal_diagnostics(next, first));
             }
             is_same
@@ -489,8 +491,14 @@ impl Checker<'_, '_> {
             .find(|&i| !self.is_part_of(self.stack[i], self.stack[i - 1]))
             .unwrap_or(lowest);
         let asked_by = (from > floor).then(|| self.stack[from - 1]);
+        // `getTypeOfAccessors` of a getter of an object literal calls `getReturnTypeFromBody` itself.
+        let is_return_type_from_body = match asked_by {
+            Some(Query::Return(..) | Query::ReturnAtFirstLook(..)) => true,
+            Some(Query::LiteralProp(file, p)) => self.hir(file)[p].kind == PropKind::Getter,
+            _ => false,
+        };
         let is_checked_again = match (*self.stack.get(from)?, asked_by) {
-            (Query::Expr(file, e), Some(Query::Return(..) | Query::ReturnAtFirstLook(..))) => {
+            (Query::Expr(file, e), _) if is_return_type_from_body => {
                 let hir = self.hir(file);
                 is_parenthesized(hir, e)
                     || !matches!(self.bound(file).expr_parent[e.idx()],

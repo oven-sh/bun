@@ -168,8 +168,23 @@ impl Checker<'_, '_> {
         } else {
             hir.jsdoc_type(JsDocTypeOwner::Fn(func))
         };
+        // `checkAccessorDeclaration` passes `getTypeOfAccessors(symbol)`, which is `any` after a circularity.
+        let type_of_accessors = match bound.fns[func.idx()].owner {
+            _ if f.kind != FnKind::Getter => None,
+            FnOwner::Member(m) if bound.member_symbol[m.idx()].is_some() => {
+                let symbol = self.symbol_of_member(file, m);
+                Some(self.type_of_symbol(symbol))
+            }
+            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+                Parent::Prop(p) => Some(self.type_of_literal_prop(file, p)),
+                _ => None,
+            },
+            _ => None,
+        };
         // `getReturnTypeFromAnnotation`
-        let annotated = if f.ret.is_some() {
+        let annotated = if type_of_accessors.is_some() {
+            type_of_accessors
+        } else if f.ret.is_some() {
             Some(self.type_from_node(file, f.ret))
         } else {
             self.return_type_of_full_signature(file, func)
@@ -177,8 +192,8 @@ impl Checker<'_, '_> {
         let declared = if let Some(declared) = annotated {
             Some(self.unwrap_return_type(file, func, declared))
         } else if f.kind == FnKind::Getter {
-            // `checkAccessorDeclaration` passes `getTypeOfAccessors`: the setter's parameter
-            // annotation, or else the type inferred from the body.
+            // A getter without a symbol: the setter's parameter annotation, or else the type
+            // inferred from the body.
             Some(self.return_type_of_fn(file, func))
         } else if self.p.files.options.no_implicit_returns {
             None

@@ -12,6 +12,7 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
+use bun_sema::util::SharedSort;
 use std::io::Write;
 
 macro_rules! alloc_print {
@@ -116,7 +117,7 @@ fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_
     // the preceding line would be mistaken for the error's line.
     // Nor for lines that are not hand-written, which fill the screen.
     let is_blank = lines.last().is_none_or(|line| line.trim_ascii().is_empty());
-    let is_hidden = is_blank || lines.iter().any(|line| line.len() > 1000);
+    let is_hidden = is_blank || lines.iter().any(|line| line.len() > crate::MAX_SHOWN_LINE);
     let lines = if is_hidden { &[] } else { lines };
     let location = (!d.path.is_empty()).then(|| bun_ast::Location {
         file: Vec::from(display_path(&d.path, style)).into(),
@@ -228,7 +229,7 @@ fn write_occurrences(
     }
     let files = plural(by_file.len(), b"file", b"files");
     pretty!(out, style.color, "<d> in {}<r>\n", files);
-    by_file.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+    by_file.shared_sort_by_key(|&(_, count)| std::cmp::Reverse(count));
     let width = with_commas(by_file[0].1).len();
     for (of, count) in &by_file {
         pretty!(
@@ -258,7 +259,7 @@ fn count_by_file<'a>(
         by_file[at].1 += 1;
     }
     // The sort is stable: the projects stay in build order.
-    by_file.sort_by(|a, b| a.0.path.cmp(&b.0.path));
+    by_file.shared_sort_by(|a, b| a.0.path.cmp(&b.0.path));
     by_file
 }
 
@@ -306,6 +307,29 @@ fn attribute(text: &[u8]) -> BString {
     out
 }
 
+/// The `<source>` of a problem, for an agent: `lines`, which are not none and of which the first has the number `first`, and
+/// carets below the line with the number `at`, from the column `from` up to the column `to`, both counted from 0. `None`: up to the
+/// end of the line.
+pub fn write_agent_source(
+    out: &mut Vec<u8>,
+    first: u32,
+    lines: &[&[u8]],
+    at: u32,
+    (from, to): (usize, Option<usize>),
+) {
+    out.extend_from_slice(b"<source>\n");
+    let gutter = bun_core::fmt::digit_count(first as usize + lines.len() - 1);
+    for (line, text) in (first..).zip(lines) {
+        let text = strings::replace_owned(text, b"\t", b" ");
+        let _ = writeln!(out, "{line:>gutter$} | {}", text.trim_ascii_end().as_bstr());
+        if line == at {
+            let carets = "^".repeat(to.unwrap_or(text.len()).saturating_sub(from).max(1));
+            let _ = writeln!(out, "{:1$}{carets}", "", gutter + 3 + from);
+        }
+    }
+    out.extend_from_slice(b"</source>\n");
+}
+
 fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], style: &Style) {
     let _ = write!(out, "<{}", d.category.name());
     if !d.path.is_empty() {
@@ -326,8 +350,11 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
     out.extend_from_slice(b">\n");
     out.extend_from_slice(&d.text);
     out.push(b'\n');
-    if !d.source.is_empty() {
-        out.extend_from_slice(b"<source>\n");
+    let has_long_line = d
+        .source
+        .iter()
+        .any(|line| line.len() > crate::MAX_SHOWN_LINE);
+    if !d.source.is_empty() && !has_long_line {
         // For an error that spans many lines, only its start. Leading and trailing blank lines
         // carry no information.
         let at = (d.line - d.source_line) as usize;
@@ -339,22 +366,15 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         let first = blank(&mut d.source[..at].iter());
         let end = d.source.len().min(at + 3);
         let end = end - blank(&mut d.source[at + 1..end].iter().rev());
-        let gutter = bun_core::fmt::digit_count(d.source_line as usize + end - 1);
-        for (line, text) in (d.source_line + first as u32..).zip(&d.source[first..end]) {
-            let text = strings::replace_owned(text, b"\t", b" ");
-            let _ = writeln!(out, "{line:>gutter$} | {}", text.trim_ascii_end().as_bstr());
-            if line == d.line {
-                let (from, end) = (d.column as usize - 1, d.end_column as usize - 1);
-                let to = if d.end_line == d.line {
-                    end
-                } else {
-                    text.len()
-                };
-                let carets = "^".repeat(to.saturating_sub(from).max(1));
-                let _ = writeln!(out, "{:1$}{carets}", "", gutter + 3 + from);
-            }
-        }
-        out.extend_from_slice(b"</source>\n");
+        let lines: Vec<&[u8]> = d.source[first..end].iter().map(Vec::as_slice).collect();
+        let to = (d.end_line == d.line).then(|| d.end_column as usize - 1);
+        write_agent_source(
+            out,
+            d.source_line + first as u32,
+            &lines,
+            d.line,
+            (d.column as usize - 1, to),
+        );
     }
     for note in &d.related {
         out.extend_from_slice(b"<related");
@@ -513,7 +533,7 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
         groups[at].push(d);
     }
     // The sort is stable: ties stay in source order.
-    groups.sort_by_key(|group| std::cmp::Reverse(group.len()));
+    groups.shared_sort_by_key(|group| std::cmp::Reverse(group.len()));
     let shown = groups.len().min(MAX_GROUPS);
     for group in &groups[..shown] {
         match style.layout {
@@ -675,12 +695,12 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         (report.diagnostics.iter()).filter(|d| d.category == Category::Error && !d.path.is_empty());
     let mut by_file = count_by_file(in_files);
     let files_with_errors = by_file.len();
-    for path in &report.incomplete {
+    for file in &report.incomplete {
         pretty!(
             out,
             style.color,
-            "<red>error<r><d>:<r> ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.\n",
-            relative_path(path, style.cwd, style)
+            "<red>error<r><d>:<r> {}\n",
+            BStr::new(&file.message(&relative_path(&file.path, style.cwd, style)))
         );
     }
     // A repository can have a hundred fixtures that nobody installs.
@@ -806,7 +826,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
     out.push(b'\n');
     // Never truncated. In a terminal the end of the output is what stays on screen, so the files with the most errors go last.
     if style.layout == Layout::Pretty {
-        by_file.sort_by_key(|&(_, count)| count);
+        by_file.shared_sort_by_key(|&(_, count)| count);
     }
     let width = by_file
         .iter()

@@ -760,6 +760,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isSocketNew,
         socket,
         isAncientHTTP: boolean,
+        // Only for a CONNECT, or an Upgrade request that has no body and is not pipelined (canHandOffHead in NodeHTTP.cpp).
         connectHead?: Buffer,
         isPipelinedDispatch?: boolean,
       ) {
@@ -1075,7 +1076,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           } else {
             http_req.complete = true;
           }
-          const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
+          const upgradeHead = connectHead ? connectHead : kEmptyBuffer;
           let upgradeHandled;
           try {
             upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);

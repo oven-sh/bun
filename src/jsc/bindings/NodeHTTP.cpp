@@ -82,8 +82,8 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
 // bitfield) to `args`, and capture the raw header bytes into `flatHeaders`
 // as [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
 // req.headers can be materialized lazily (Bun__NodeHTTP__buildRawHeadersArray)
-// only when user code reads them.
-static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+// only when user code reads them. Returns the dispatch bitfield.
+static uint32_t assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     {
         std::string_view fullURLStdStr = request->getFullUrl();
@@ -160,6 +160,17 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     // The headers-object slot now carries the dispatch bitfield; rawHeaders
     // materialize lazily from the captured bytes, so no array is passed.
     args.append(jsNumber(bits));
+    return bits;
+}
+
+// Whether the JS dispatcher can pass `head` to a listener: 'connect', or 'upgrade' of a request that has no body and is not pipelined.
+static ALWAYS_INLINE bool canHandOffHead(JSC::VM& vm, JSValue methodString, uint32_t dispatchBits, bool hasBody, bool isPipelinedDispatch)
+{
+    static constexpr uint32_t upgradeBits = kDispatchHasUpgrade | kDispatchConnUpgrade;
+    // Every CONNECT has this cell as its method (Bun__HTTPMethod__toJS). Before the first one it is null and matches nothing.
+    if (methodString == JSValue(Bun::commonStrings(vm).m_httpCONNECT))
+        return true;
+    return !hasBody && !isPipelinedDispatch && (dispatchBits & upgradeBits) == upgradeBits;
 }
 
 // Builds the rawHeaders flat array [name, value, ...] from the bytes captured
@@ -299,7 +310,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     // Typical request header sections are a few hundred bytes; the inline
     // capacity keeps the capture heap-allocation-free for the common case.
     WTF::Vector<uint8_t, 1024> flatHeaders;
-    assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
+    const uint32_t dispatchBits = assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
 
     auto* httpResponseData = response->getHttpResponseData();
     // Pipelined: an earlier response is in flight, so this one is queued and gets the connection at its turn (startPipelinedResponse).
@@ -345,7 +356,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     args.append(jsBoolean(request->isAncient()));
 
     // Pass pipelined data (head buffer) for Node.js compat (connect/upgrade events)
-    if (!request->head.empty()) {
+    if (!request->head.empty() && canHandOffHead(vm, methodString, dispatchBits, hasBody, isPipelinedDispatch)) {
         JSC::JSUint8Array* headBuffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(request->head.data()), request->head.size()));
         RETURN_IF_EXCEPTION(scope, {});
         args.append(headBuffer);

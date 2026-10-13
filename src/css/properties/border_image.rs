@@ -583,6 +583,16 @@ impl BorderImageHandler {
         self.repeat = None;
     }
 
+    /// Whether a value is buffered. `has_any` stays set after `reset`.
+    pub(super) fn buffers_any(&self) -> bool {
+        self.has_any
+            && (self.source.is_some()
+                || self.slice.is_some()
+                || self.width.is_some()
+                || self.outset.is_some()
+                || self.repeat.is_some())
+    }
+
     pub(crate) fn will_flush(&self, property: &Property) -> bool {
         match property {
             Property::BorderImageSource(_)
@@ -595,7 +605,7 @@ impl BorderImageHandler {
         }
     }
 
-    fn flush(
+    pub(super) fn flush(
         &mut self,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,

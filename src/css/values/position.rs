@@ -291,7 +291,7 @@ impl Default for Position {
 }
 
 /// A side keyword with an optional offset.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, crate::generics::IsCompatible)]
 pub struct PositionComponentSide<S> {
     /// A side keyword.
     pub(crate) side: S,
@@ -300,7 +300,7 @@ pub struct PositionComponentSide<S> {
 }
 
 /// A component of a CSS `<position>` value (horizontal or vertical).
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, crate::generics::IsCompatible)]
 pub enum PositionComponent<S> {
     /// The `center` keyword.
     Center,
@@ -375,7 +375,7 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty, crate::generics::IsCompatible)]
 pub enum HorizontalPositionKeyword {
     /// The `left` keyword.
     Left,
@@ -394,7 +394,7 @@ impl HorizontalPositionKeyword {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty, crate::generics::IsCompatible)]
 pub enum VerticalPositionKeyword {
     /// The `top` keyword.
     Top,

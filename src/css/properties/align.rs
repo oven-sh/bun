@@ -3,7 +3,7 @@ use crate as css;
 use crate::compat;
 use crate::css_values::length::LengthPercentage;
 use crate::prefixes::Feature;
-use crate::properties::{Property, PropertyId};
+use crate::properties::{Property, PropertyId, Rejected};
 use crate::{DeclarationList, PropertyHandlerContext, VendorPrefix};
 use crate::{Parser, PrintErr, Printer, Result as CssResult, Token};
 use bun_alloc::ArenaVecExt as _;
@@ -596,7 +596,7 @@ impl LegacyJustify {
 
 /// A [gap](https://www.w3.org/TR/css-align-3/#column-row-gap) value, as used in the
 /// `column-gap` and `row-gap` properties.
-#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss, css::generics::IsCompatible)]
 pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
     Normal,
@@ -605,7 +605,7 @@ pub enum GapValue {
 }
 
 /// A value for the [gap](https://www.w3.org/TR/css-align-3/#gap-shorthand) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::generics::IsCompatible)]
 pub struct Gap {
     /// The row gap.
     pub(crate) row: GapValue,
@@ -951,6 +951,8 @@ pub struct AlignHandler {
     pub(crate) justify_items: Option<JustifyItems>,
     pub(crate) row_gap: Option<GapValue>,
     pub(crate) column_gap: Option<GapValue>,
+    /// Set when `row_gap` and `column_gap` hold a declaration that a target rejects.
+    pub(crate) rejected_gap: Rejected,
     pub(crate) has_any: bool,
 }
 
@@ -1282,14 +1284,38 @@ impl AlignHandler {
                 self.justify_items = Some(val.justify.clone());
             }
             Property::RowGap(val) => {
+                self.before_gap(
+                    property,
+                    context.targets.rejects(val),
+                    |this| this.row_gap.as_ref() == Some(val),
+                    dest,
+                    context,
+                );
                 self.row_gap = Some(val.clone());
                 self.has_any = true;
             }
             Property::ColumnGap(val) => {
+                self.before_gap(
+                    property,
+                    context.targets.rejects(val),
+                    |this| this.column_gap.as_ref() == Some(val),
+                    dest,
+                    context,
+                );
                 self.column_gap = Some(val.clone());
                 self.has_any = true;
             }
             Property::Gap(val) => {
+                self.before_gap(
+                    property,
+                    context.targets.rejects(val),
+                    |this| {
+                        this.row_gap.as_ref() == Some(&val.row)
+                            && this.column_gap.as_ref() == Some(&val.column)
+                    },
+                    dest,
+                    context,
+                );
                 self.row_gap = Some(val.row.clone());
                 self.column_gap = Some(val.column.clone());
                 self.has_any = true;
@@ -1311,6 +1337,27 @@ impl AlignHandler {
         true
     }
 
+    /// Runs before `property` is buffered in `row_gap` or `column_gap`.
+    /// `rejected` says whether a target rejects it, and `repeats` whether it
+    /// sets what those slots hold.
+    fn before_gap(
+        &mut self,
+        property: &Property,
+        rejected: bool,
+        repeats: impl FnOnce(&Self) -> bool,
+        dest: &mut DeclarationList<'_>,
+        context: &mut PropertyHandlerContext<'_>,
+    ) {
+        if (self.row_gap.is_some() || self.column_gap.is_some())
+            && self
+                .rejected_gap
+                .must_flush_before(property, rejected, || repeats(self))
+        {
+            self.flush(dest, context);
+        }
+        self.rejected_gap = Rejected::after(property, rejected);
+    }
+
     pub(crate) fn finalize(
         &mut self,
         dest: &mut DeclarationList<'_>,
@@ -1325,6 +1372,7 @@ impl AlignHandler {
         }
 
         self.has_any = false;
+        self.rejected_gap = Rejected::default();
 
         let mut align_content = self.align_content.take();
         let mut justify_content = self.justify_content.take();

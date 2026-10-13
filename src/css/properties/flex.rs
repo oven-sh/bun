@@ -2,7 +2,7 @@
 use crate as css;
 use bun_alloc::ArenaVecExt as _;
 
-use crate::properties::{Property, PropertyId};
+use crate::properties::{Property, PropertyId, Rejected};
 use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyContent};
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
@@ -523,6 +523,8 @@ pub struct FlexHandler {
     pub(crate) box_ordinal_group: Option<(BoxOrdinalGroup, VendorPrefix)>,
     /// The flex-order property value and vendor prefix (legacy)
     pub(crate) flex_order: Option<(CSSInteger, VendorPrefix)>,
+    /// Set when `grow`, `shrink` and `basis` hold a declaration that a target rejects.
+    pub(crate) rejected_flex: Rejected,
     /// Whether any flex-related properties have been set
     pub(crate) has_any: bool,
 }
@@ -542,6 +544,28 @@ impl FlexHandler {
                     if !(field.0 == *$val) && !field.1.contains(*$vp) {
                         self.flush(dest, context);
                     }
+                }
+            }};
+        }
+
+        // Whether `$prop` buffers `$val`.
+        macro_rules! holds {
+            ($prop:ident, $val:expr) => {
+                self.$prop.as_ref().is_some_and(|field| field.0 == *$val)
+            };
+        }
+
+        // Runs before `property` is buffered in `grow`, `shrink` or `basis`.
+        // `$rejected` says whether a target rejects it, and `$repeats` whether
+        // it sets what those slots hold.
+        macro_rules! before_flex {
+            ($rejected:expr, $repeats:expr) => {{
+                if (self.grow.is_some() || self.shrink.is_some() || self.basis.is_some())
+                    && self
+                        .rejected_flex
+                        .must_flush_before(property, $rejected, || $repeats)
+                {
+                    self.flush(dest, context);
                 }
             }};
         }
@@ -593,6 +617,7 @@ impl FlexHandler {
                     self.box_flex = None;
                     self.flex_positive = None;
                 }
+                before_flex!(false, false);
                 property_helper!(grow, &val.0, &val.1);
             }
             Property::BoxFlex(val) => property_helper!(box_flex, &val.0, &val.1),
@@ -601,29 +626,65 @@ impl FlexHandler {
                 if context.targets.browsers.is_some() {
                     self.flex_negative = None;
                 }
+                before_flex!(false, false);
                 property_helper!(shrink, &val.0, &val.1);
             }
             Property::FlexNegative(val) => property_helper!(flex_negative, &val.0, &val.1),
             Property::FlexBasis(val) => {
+                let rejected = context.targets.rejects(&val.0);
+                // The clear below drops the legacy twin. One with another value is
+                // the fallback of a value that a target rejects.
+                if rejected && self.preferred_size.is_some() && !holds!(preferred_size, &val.0) {
+                    self.flush(dest, context);
+                }
                 if context.targets.browsers.is_some() {
                     self.preferred_size = None;
                 }
+                before_flex!(rejected, holds!(basis, &val.0));
                 property_helper!(basis, &val.0, &val.1);
+                self.rejected_flex = Rejected::after(property, rejected);
             }
-            Property::FlexPreferredSize(val) => property_helper!(preferred_size, &val.0, &val.1),
+            Property::FlexPreferredSize(val) => {
+                if self.preferred_size.is_some()
+                    && !holds!(preferred_size, &val.0)
+                    && context.targets.rejects(&val.0)
+                {
+                    self.flush(dest, context);
+                }
+                property_helper!(preferred_size, &val.0, &val.1);
+            }
             Property::Flex(val) => {
+                let flex = &val.0;
+                // Only the basis can hold syntax that a target rejects.
+                let rejected = context.targets.rejects(&flex.basis);
+                // As for `flex-basis`: keep a legacy twin that holds another value.
+                if rejected
+                    && ((self.box_flex.is_some() && !holds!(box_flex, &flex.grow))
+                        || (self.flex_positive.is_some() && !holds!(flex_positive, &flex.grow))
+                        || (self.flex_negative.is_some() && !holds!(flex_negative, &flex.shrink))
+                        || (self.preferred_size.is_some() && !holds!(preferred_size, &flex.basis)))
+                {
+                    self.flush(dest, context);
+                }
                 if context.targets.browsers.is_some() {
                     self.box_flex = None;
                     self.flex_positive = None;
                     self.flex_negative = None;
                     self.preferred_size = None;
                 }
-                maybe_flush!(grow, &val.0.grow, &val.1);
-                maybe_flush!(shrink, &val.0.shrink, &val.1);
-                maybe_flush!(basis, &val.0.basis, &val.1);
-                property_helper!(grow, &val.0.grow, &val.1);
-                property_helper!(shrink, &val.0.shrink, &val.1);
-                property_helper!(basis, &val.0.basis, &val.1);
+                before_flex!(
+                    rejected,
+                    holds!(grow, &flex.grow)
+                        && holds!(shrink, &flex.shrink)
+                        && holds!(basis, &flex.basis)
+                );
+                maybe_flush!(grow, &flex.grow, &val.1);
+                maybe_flush!(shrink, &flex.shrink, &val.1);
+                maybe_flush!(basis, &flex.basis, &val.1);
+                property_helper!(grow, &flex.grow, &val.1);
+                property_helper!(shrink, &flex.shrink, &val.1);
+                property_helper!(basis, &flex.basis, &val.1);
+                self.rejected_flex = Rejected::after(property, rejected);
             }
             Property::Order(val) => {
                 if context.targets.browsers.is_some() {
@@ -668,6 +729,7 @@ impl FlexHandler {
         }
 
         self.has_any = false;
+        self.rejected_flex = Rejected::default();
 
         let mut direction: Option<(FlexDirection, VendorPrefix)> = self.direction.take();
         let mut wrap: Option<(FlexWrap, VendorPrefix)> = self.wrap.take();

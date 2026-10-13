@@ -17,7 +17,7 @@ use crate::{
 // the `Property` enum (properties_generated.rs) stays lifetime-free.
 // Re-threading `'bump` through `Property<'a>` crate-wide is deferred work
 // (see /tmp/todo-fix/complex/mk04-repair.md; also TransformHandler below).
-#[derive(Clone, PartialEq, Default)]
+#[derive(Clone, PartialEq, Default, crate::generics::IsCompatible)]
 pub struct TransformList {
     pub(crate) v: Vec<Transform>,
 }
@@ -77,7 +77,7 @@ impl TransformList {
 }
 
 /// An individual transform function (https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#two-d-transform-functions).
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, crate::generics::IsCompatible)]
 pub enum Transform {
     /// A 2D translation.
     Translate {
@@ -577,7 +577,7 @@ impl Transform {
 }
 
 /// A 2D matrix.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, crate::generics::IsCompatible)]
 pub struct Matrix<T> {
     pub(crate) a: T,
     pub(crate) b: T,
@@ -588,7 +588,7 @@ pub struct Matrix<T> {
 }
 
 /// A 3D matrix.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, crate::generics::IsCompatible)]
 pub struct Matrix3d<T> {
     pub(crate) m11: T,
     pub(crate) m12: T,
@@ -662,7 +662,7 @@ impl Perspective {
 }
 
 /// A value for the [translate](https://drafts.csswg.org/css-transforms-2/#propdef-translate) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, crate::generics::IsCompatible)]
 pub enum Translate {
     /// The "none" keyword.
     None,
@@ -957,10 +957,13 @@ impl TransformHandler {
 
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
+                // The same holds for a value that a target does not support: the
+                // buffered value is its fallback.
                 // Compute the predicate first, then act, so no borrow of
                 // self.transform is held across self.flush().
                 let needs_flush = if let Some(current) = &self.transform {
-                    current.0 != *transform_val && !current.1.contains(vp)
+                    current.0 != *transform_val
+                        && (!current.1.contains(vp) || context.targets.rejects(transform_val))
                 } else {
                     false
                 };
@@ -976,7 +979,17 @@ impl TransformHandler {
                     self.has_any = true;
                 }
             }
-            Property::Translate(val) => individual_property!(translate, val),
+            Property::Translate(val) => {
+                if self
+                    .translate
+                    .as_ref()
+                    .is_some_and(|translate| translate != val)
+                    && context.targets.rejects(val)
+                {
+                    self.flush(dest, context);
+                }
+                individual_property!(translate, val)
+            }
             Property::Rotate(val) => individual_property!(rotate, val),
             Property::Scale(val) => individual_property!(scale, val),
             Property::Unparsed(unparsed) => {

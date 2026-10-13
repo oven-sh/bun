@@ -2,10 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
+  type Browsers,
   cssTest,
   cssTestTodo,
   indoc,
@@ -2155,6 +2157,14 @@ describe("css tests", () => {
       "height",
       "min-height",
       "max-height",
+      "flex-basis",
+      "gap",
+      "row-gap",
+      "column-gap",
+      "background-size",
+      "background-position-x",
+      "background-position-y",
+      "translate",
       // "line-height",
       // "border-radius",
     ];
@@ -2230,6 +2240,229 @@ describe("css tests", () => {
         },
       );
     }
+  });
+
+  // A browser that does not support the syntax of a declaration discards the whole declaration,
+  // and keeps what the other declarations of the rule set. So the minifier must print such a
+  // declaration on its own: no later value may replace an earlier one through it, and it must
+  // not become part of a shorthand.
+  describe("declarations that a target does not support", () => {
+    // These have no `dvh`, `cqw` or `lh` unit.
+    const old: Browsers = { chrome: 80 << 16, firefox: 78 << 16, safari: 14 << 16 };
+    // These have all three.
+    const current: Browsers = { chrome: 125 << 16, firefox: 126 << 16, safari: (17 << 16) | (4 << 8) };
+
+    // `source` and `expected` are the declarations of one rule.
+    const rule = (source: string, expected: string = source, targets: Browsers = old) =>
+      prefix_test(`.a { ${source} }`, `.a { ${expected}; }`, targets);
+
+    describe("the same property again", () => {
+      rule("flex-basis: 100vh; flex-basis: 100dvh");
+      rule("flex: 1 1 100vh; flex: 1 1 100dvh", "flex: 100vh; flex: 100dvh");
+      rule("gap: 16px; gap: 2cqw");
+      rule("row-gap: 16px; row-gap: 1lh");
+      rule("column-gap: 16px; column-gap: 2cqw");
+      rule("background-size: 100vw 100vh; background-size: 100dvw 100dvh");
+      rule("background-position: 10px 10px; background-position: 1cqw 1cqw");
+      rule(
+        "background: linear-gradient(red, blue) 0 0 / 100vw 100vh; background: linear-gradient(red, blue) 0 0 / 100dvw 100dvh",
+        "background: linear-gradient(red, #00f) 0 0 / 100vw 100vh; background: linear-gradient(red, #00f) 0 0 / 100dvw 100dvh",
+      );
+      rule("border: 2px solid red; border: 1cqw solid red");
+      rule("border-top: 2px solid red; border-top: 1cqw solid red");
+      rule("border-inline-start: 2px solid red; border-inline-start: 1cqw solid red");
+      rule(
+        "border-block: 2px solid red; border-block: 1cqw solid red",
+        "border-block-start: 2px solid red; border-block-end: 2px solid red; border-block-start: 1cqw solid red; border-block-end: 1cqw solid red",
+      );
+      rule("transform: translateX(100vw); transform: translateX(100dvw)");
+      rule("-webkit-transform: translateX(100vw); -webkit-transform: translateX(100dvw)");
+      rule("translate: 10px; translate: 1cqw");
+      rule("transform: rotate(90deg); translate: 10px; translate: 1cqw");
+    });
+
+    describe("a shorthand, then a longhand that a target rejects", () => {
+      rule("background: red; background-size: 100dvw 100dvh");
+      rule("background: red; background-position: 1cqw 1cqw");
+      rule("flex: 1 1 auto; flex-basis: 100dvh", "flex: auto; flex-basis: 100dvh");
+      rule("gap: 16px 8px; row-gap: 1lh");
+      rule("border: 2px solid red; border-top: 1cqw solid red");
+      rule("border: 2px solid red; border-top-width: 1cqw");
+    });
+
+    describe("a longhand, then a shorthand that a target rejects", () => {
+      rule("column-gap: 4px; gap: 2cqw 3px");
+      // The rejected shorthand holds the same column gap. A target that discards it still needs the longhand.
+      rule("column-gap: 3px; gap: 2cqw 3px");
+      rule("flex-grow: 2; flex: 1 1 100dvh", "flex-grow: 2; flex: 100dvh");
+      rule("flex-basis: 100vh; flex: 1 1 100dvh", "flex-basis: 100vh; flex: 100dvh");
+      rule("background-repeat: no-repeat; background: red 0 0 / 1cqw");
+      rule("background-position-x: 10px; background-position: 5px 2cqw");
+      rule("border-top-style: dashed; border-top: 1cqw solid red");
+      rule("border-top-color: red; border: 1cqw solid blue", "border-top-color: red; border: 1cqw solid #00f");
+      rule("border-block-start: 2px solid red; border: 1cqw solid red");
+    });
+
+    describe("longhands of one shorthand", () => {
+      rule("flex-grow: 1; flex-shrink: 1; flex-basis: 100dvh");
+      rule("row-gap: 16px; column-gap: 2cqw");
+      rule("border-style: solid; border-color: red; border-width: 1cqw");
+      rule("border-top-style: solid; border-top-color: red; border-top-width: 1cqw");
+    });
+
+    describe("a declaration after one that a target rejects", () => {
+      rule("gap: 2cqw; row-gap: 16px");
+      rule("flex: 1 1 100dvh; flex-grow: 3", "flex: 100dvh; flex-grow: 3");
+      rule("border: 1cqw solid red; border-color: blue", "border: 1cqw solid red; border-color: #00f");
+      rule("background: red 0 0 / 1cqw; background-color: blue", "background: red 0 0 / 1cqw; background-color: #00f");
+      // The same property with a value that every target supports replaces it in every browser.
+      rule("gap: 2cqw; gap: 16px", "gap: 16px");
+      rule("flex-basis: 100dvh; flex-basis: 100vh", "flex-basis: 100vh");
+      rule("border: 1cqw solid red; border: 2px solid blue", "border: 2px solid #00f");
+    });
+
+    describe("the same declaration again", () => {
+      rule("gap: 2cqw; gap: 2cqw", "gap: 2cqw");
+      rule("flex: 1 1 100dvh; flex: 1 1 100dvh", "flex: 100dvh");
+      rule("border: 1cqw solid red; border: 1cqw solid red", "border: 1cqw solid red");
+      rule("background: red 0 0 / 1cqw; background: red 0 0 / 1cqw", "background: red 0 0 / 1cqw");
+      rule("translate: 1cqw; translate: 1cqw", "translate: 1cqw");
+
+      test("2000 rules with one rejected declaration print it once", () => {
+        const source = ".a{border:1cqw solid red}";
+        expect(
+          cssInternals.prefixTest(Buffer.alloc(2000 * source.length, source).toString(), "", old),
+        ).toEqualIgnoringWhitespace(".a { border: 1cqw solid red; }");
+      });
+    });
+
+    // The flush for the rejected value comes before the first write. It used to come between the
+    // writes of one declaration, and printed a mix of the two declarations.
+    describe("several sides in one declaration", () => {
+      rule("border-width: 1px 2px 3px 4px; border-width: 5px 1cqw 7px 8px");
+      rule("border-width: 1px 2px; border-width: 3px 1cqw");
+      rule(
+        "border-color: red green blue black; border-color: red lch(50% 50 50) blue black",
+        "border-color: red green #00f #000; border-color: red lch(50% 50 50) #00f #000",
+      );
+    });
+
+    // Colours are lowered for the targets, so a colour does not make a declaration rejected.
+    describe("generated colour fallbacks", () => {
+      rule(
+        "background-size: 10px; background-size: 1cqw; background: oklch(60% .2 20)",
+        "background-size: 10px; background-size: 1cqw; background: #de394b; background: color(display-p3 .803011 .281487 .314032); background: lab(51.4748% 64.1607 30.5566)",
+      );
+      rule(
+        "background-repeat: no-repeat; background: lch(50% 50 50)",
+        "background: #b25f37; background: color(display-p3 .656593 .389775 .248753); background: lch(50% 50 50)",
+      );
+      // An earlier flush that printed no colour and no image does not stop the fallbacks.
+      rule(
+        "background-size: var(--s); background: lch(50% 50 50)",
+        "background-size: var(--s); background: #b25f37; background: color(display-p3 .656593 .389775 .248753); background: lch(50% 50 50)",
+      );
+      rule(
+        "border: 2px solid red; border: 2px solid oklch(60% .2 20)",
+        "border: 2px solid #de394b; border: 2px solid color(display-p3 .803011 .281487 .314032); border: 2px solid lab(51.4748% 64.1607 30.5566)",
+      );
+      rule(
+        "border-width: 1cqw; border-color: lch(50% 50 50)",
+        "border-width: 1cqw; border-color: #b25f37; border-color: color(display-p3 .656593 .389775 .248753); border-color: lch(50% 50 50)",
+      );
+    });
+
+    // `border` resets `border-image`. A target that discards `border` keeps the image.
+    describe("border-image under border", () => {
+      rule(
+        "border: 2px solid red; border-image: linear-gradient(red, blue) 1; border: 1cqw solid red",
+        "border: 2px solid red; border-image: linear-gradient(red, #00f) 1; border: 1cqw solid red",
+      );
+      rule(
+        "border-image: linear-gradient(red, blue) 1; border: 1cqw solid red",
+        "border-image: linear-gradient(red, #00f) 1; border: 1cqw solid red",
+      );
+      rule("border-image: linear-gradient(red, blue) 1; border: 2px solid red", "border: 2px solid red");
+    });
+
+    describe("!important, merged rules and at-rules", () => {
+      rule("gap: 16px !important; gap: 2cqw !important");
+      rule("gap: 16px; gap: 2cqw !important");
+      rule(
+        "color: red; gap: 16px; width: 1px; gap: 2cqw; height: 1px",
+        "color: red; gap: 16px; gap: 2cqw; width: 1px; height: 1px",
+      );
+      rule(
+        "align-items: center; gap: 16px; gap: 2cqw; justify-items: center",
+        "align-items: center; gap: 16px; justify-items: center; gap: 2cqw",
+      );
+      prefix_test(".a { gap: 16px } .a { gap: 2cqw }", ".a { gap: 16px; gap: 2cqw; }", old);
+      prefix_test(
+        "@media (min-width: 1px) { .a { flex-basis: 100vh; flex-basis: 100dvh } }",
+        "@media (min-width: 1px) { .a { flex-basis: 100vh; flex-basis: 100dvh; } }",
+        old,
+      );
+    });
+
+    describe("every target supports the value", () => {
+      rule("flex-basis: 100vh; flex-basis: 100dvh", "flex-basis: 100dvh", current);
+      rule("gap: 16px 8px; row-gap: 1lh", "gap: 1lh 8px", current);
+      rule("background: red; background-size: 100dvw 100dvh", "background: red 0 0 / 100dvw 100dvh", current);
+      rule("border: 2px solid red; border: 1cqw solid red", "border: 1cqw solid red", current);
+      rule("border-width: 1px 2px 3px 4px; border-width: 5px 1cqw 7px 8px", "border-width: 5px 1cqw 7px 8px", current);
+      rule("flex-grow: 1; flex-shrink: 1; flex-basis: 100dvh", "flex: 100dvh", current);
+      rule("translate: 10px; translate: 1cqw", "translate: 1cqw", current);
+    });
+
+    describe("no targets", () => {
+      minify_test(".a { flex-basis: 100vh; flex-basis: 100dvh }", ".a{flex-basis:100dvh}");
+      minify_test(".a { gap: 16px; gap: 2cqw }", ".a{gap:2cqw}");
+      minify_test(".a { background: red; background-size: 100dvw 100dvh }", ".a{background:red 0 0/100dvw 100dvh}");
+      minify_test(".a { border: 2px solid red; border: 1cqw solid red }", ".a{border:1cqw solid red}");
+      minify_test(".a { translate: 10px; translate: 1cqw }", ".a{translate:1cqw}");
+    });
+
+    describe("logical border radius", () => {
+      // These print a logical radius in place, and have no `cqw` unit.
+      const inPlace: Browsers = { chrome: 95 << 16, firefox: 100 << 16, safari: 15 << 16 };
+      rule("border-start-start-radius: 10px; border-start-start-radius: 1cqw", undefined, inPlace);
+      rule("border-start-start-radius: 10px; border-radius: 1cqw", undefined, inPlace);
+      rule(
+        "border-start-start-radius: 1cqw; border-start-start-radius: 1cqw",
+        "border-start-start-radius: 1cqw",
+        inPlace,
+      );
+      // These compile a logical radius to `:dir()` rules. Such a rule outranks the rule it comes
+      // from, so the 10px must not go there: it would override the 1cqw in every browser.
+      rule("border-start-start-radius: 10px; border-radius: 1cqw", "border-radius: 1cqw");
+    });
+
+    // Safari 8 compiles logical borders to `:dir()` rules. The same reasoning as for the radius.
+    describe("logical borders that compile to :dir() rules", () => {
+      const safari8: Browsers = { safari: 8 << 16 };
+      rule(
+        "border-inline-start-width: 3px; border-inline: 1dvh solid red",
+        "border-left: 1dvh solid red; border-right: 1dvh solid red",
+        safari8,
+      );
+      rule("border-inline-start: 3px solid red; border: 1dvh solid #00f", "border: 1dvh solid #00f", safari8);
+      rule("border: 2px solid red; border: 1cqw solid red", undefined, safari8);
+    });
+
+    describe("legacy flex properties", () => {
+      const ie10: Browsers = { ie: 10 << 16 };
+      rule("-ms-flex-preferred-size: 100vh; flex-basis: 100dvh");
+      rule(
+        "-ms-flex-preferred-size: 100vh; flex-basis: 100dvh",
+        "-ms-flex-preferred-size: 100vh; -ms-flex-preferred-size: 100dvh; flex-basis: 100dvh",
+        ie10,
+      );
+      const prefixed =
+        "-ms-flex-preferred-size: 100vh; flex-basis: 100vh; -ms-flex-preferred-size: 100dvh; flex-basis: 100dvh";
+      rule("flex-basis: 100vh; flex-basis: 100dvh", prefixed, ie10);
+      // The output above does not grow when it is minified again.
+      rule(prefixed, prefixed, ie10);
+    });
   });
 
   describe("padding", () => {

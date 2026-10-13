@@ -156,6 +156,14 @@ impl Targets {
         }
         true
     }
+
+    /// Whether a browser target does not support the syntax of `val`. That
+    /// browser discards the whole declaration, so a handler must not let the
+    /// declaration replace an earlier one. `false` without browser targets.
+    pub(crate) fn rejects<T: css::generics::IsCompatible + ?Sized>(&self, val: &T) -> bool {
+        self.browsers
+            .is_some_and(|browsers| !val.is_compatible(&browsers))
+    }
 }
 
 /// Browser versions to compile CSS for.

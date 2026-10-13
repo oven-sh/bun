@@ -3,7 +3,7 @@ use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
 use crate::css_values::color::{ColorFallbackKind, CssColor};
 use crate::css_values::length::Length;
-use crate::properties::{Property, PropertyId, PropertyIdTag};
+use crate::properties::{Property, PropertyId, PropertyIdTag, Rejected};
 use crate::targets::Browsers;
 use crate::{
     DeclarationList, Feature, Parser, PrintErr, Printer, PropertyCategory, PropertyHandlerContext,
@@ -438,6 +438,20 @@ impl BorderShorthand {
         self.color = None;
     }
 
+    fn buffers_any(&self) -> bool {
+        self.width.is_some() || self.style.is_some() || self.color.is_some()
+    }
+
+    /// Whether the side buffers the three values of `border`.
+    fn holds<const P: u8>(&self, border: &GenericBorder<LineStyle, P>) -> bool {
+        self.width.as_ref() == Some(&border.width)
+            && self.style == Some(border.style)
+            && self
+                .color
+                .as_ref()
+                .is_some_and(|color| css::generic::eql(color, &border.color))
+    }
+
     fn is_valid(&self) -> bool {
         self.width.is_some() && self.style.is_some() && self.color.is_some()
     }
@@ -608,6 +622,8 @@ pub struct BorderHandler {
     border_image_handler: BorderImageHandler,
     border_radius_handler: BorderRadiusHandler,
     flushed_properties: BorderProperty,
+    /// Set when the sides hold a declaration that a target rejects.
+    rejected: Rejected,
     has_any: bool,
 }
 
@@ -1218,45 +1234,98 @@ mod border_handler_body {
 
             // Helper macros.
 
-            macro_rules! flush_helper {
-                ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
+            // Whether a target rejects the declaration at hand (`$rejects`). A
+            // logical side that compiles to `:dir()` rules never counts: those
+            // rules outrank the rule itself, so a flushed fallback would override
+            // the value that follows it.
+            macro_rules! rejected {
+                ($category:expr, $rejects:expr) => {
+                    $rejects
+                        && ($category == Physical
+                            || !context.should_compile_logical(Feature::LogicalBorders))
+                };
+            }
+
+            // One declaration that sets `$prop` on one or more sides. The flush
+            // decision comes before the first write, so that a flush never prints
+            // a side that this declaration has already replaced.
+            macro_rules! write_sides {
+                // A target that does not support one of the widths discards the
+                // whole declaration.
+                (width, $category:expr, $($key:ident = $val:expr),+) => {
+                    write_sides!(
+                        @flush_if false,
+                        rejected!($category, false $(|| context.targets.rejects($val))+),
+                        width, $category, $($key = $val),+
+                    )
+                };
+                // `flush` lowers a colour that a target does not support, so the
+                // declaration is not rejected. The buffered colour of the same
+                // side stays in front of it, as the author's fallback.
+                ($prop:ident, $category:expr, $($key:ident = $val:expr),+) => {
+                    write_sides!(
+                        @flush_if false $(|| (self.$key.$prop.as_ref().is_some_and(|existing| !existing.eql($val))
+                            && context.targets.rejects($val)))+,
+                        false,
+                        $prop, $category, $($key = $val),+
+                    )
+                };
+                (@flush_if $flush_if:expr, $rejected:expr, $prop:ident, $category:expr, $($key:ident = $val:expr),+) => {{
                     if $category != self.category {
                         self.flush(dest, context);
                     }
 
-                    if let Some(existing) = &self.$key.$prop {
-                        if !existing.eql($val)
-                            && context.targets.browsers.is_some()
-                            && !css::generic::is_compatible(
-                                $val,
-                                &context.targets.browsers.unwrap(),
-                            )
-                        {
-                            self.flush(dest, context);
-                        }
+                    let rejected: bool = $rejected;
+                    if self.has_any
+                        && (self.rejected.must_flush_before(property, rejected, || {
+                            true $(&& self.$key.$prop.as_ref().is_some_and(|existing| existing.eql($val)))+
+                        }) || $flush_if)
+                    {
+                        self.flush(dest, context);
                     }
+
+                    $(self.$key.$prop = Some($val.deep_clone(arena));)+
+                    self.rejected = Rejected::after(property, rejected);
+                    self.category = $category;
+                    self.has_any = true;
                 }};
             }
 
             macro_rules! property_helper {
-                ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
-                    flush_helper!($key, $prop, $val, $category);
-                    self.$key.$prop = Some($val.deep_clone(arena));
+                ($key:ident, $prop:ident, $val:expr, $category:expr) => {
+                    write_sides!($prop, $category, $key = $val)
+                };
+            }
+
+            // A `border-<side>` shorthand for one or more sides. Only the width can
+            // hold syntax that a target rejects: `flush` lowers the colour.
+            macro_rules! set_borders {
+                ($val:expr, $category:expr, $($key:ident),+) => {{
+                    if $category != self.category {
+                        self.flush(dest, context);
+                    }
+
+                    let rejected: bool =
+                        rejected!($category, context.targets.rejects(&$val.width));
+                    if self.has_any
+                        && self.rejected.must_flush_before(property, rejected, || {
+                            true $(&& self.$key.holds($val))+
+                        })
+                    {
+                        self.flush(dest, context);
+                    }
+
+                    $(self.$key.set_border(arena, $val);)+
+                    self.rejected = Rejected::after(property, rejected);
                     self.category = $category;
                     self.has_any = true;
                 }};
             }
 
             macro_rules! set_border_helper {
-                ($key:ident, $val:expr, $category:expr) => {{
-                    if $category != self.category {
-                        self.flush(dest, context);
-                    }
-
-                    self.$key.set_border(arena, $val);
-                    self.category = $category;
-                    self.has_any = true;
-                }};
+                ($key:ident, $val:expr, $category:expr) => {
+                    set_borders!($val, $category, $key)
+                };
             }
 
             use PropertyCategory::{Logical, Physical};
@@ -1279,8 +1348,12 @@ mod border_handler_body {
                     property_helper!(border_block_end, color, val, Logical)
                 }
                 Property::BorderBlockColor(val) => {
-                    property_helper!(border_block_start, color, &val.start, Logical);
-                    property_helper!(border_block_end, color, &val.end, Logical);
+                    write_sides!(
+                        color,
+                        Logical,
+                        border_block_start = &val.start,
+                        border_block_end = &val.end
+                    );
                 }
                 Property::BorderInlineStartColor(val) => {
                     property_helper!(border_inline_start, color, val, Logical)
@@ -1289,8 +1362,12 @@ mod border_handler_body {
                     property_helper!(border_inline_end, color, val, Logical)
                 }
                 Property::BorderInlineColor(val) => {
-                    property_helper!(border_inline_start, color, &val.start, Logical);
-                    property_helper!(border_inline_end, color, &val.end, Logical);
+                    write_sides!(
+                        color,
+                        Logical,
+                        border_inline_start = &val.start,
+                        border_inline_end = &val.end
+                    );
                 }
                 Property::BorderTopWidth(val) => property_helper!(border_top, width, val, Physical),
                 Property::BorderBottomWidth(val) => {
@@ -1309,8 +1386,12 @@ mod border_handler_body {
                     property_helper!(border_block_end, width, val, Logical)
                 }
                 Property::BorderBlockWidth(val) => {
-                    property_helper!(border_block_start, width, &val.start, Logical);
-                    property_helper!(border_block_end, width, &val.end, Logical);
+                    write_sides!(
+                        width,
+                        Logical,
+                        border_block_start = &val.start,
+                        border_block_end = &val.end
+                    );
                 }
                 Property::BorderInlineStartWidth(val) => {
                     property_helper!(border_inline_start, width, val, Logical)
@@ -1319,8 +1400,12 @@ mod border_handler_body {
                     property_helper!(border_inline_end, width, val, Logical)
                 }
                 Property::BorderInlineWidth(val) => {
-                    property_helper!(border_inline_start, width, &val.start, Logical);
-                    property_helper!(border_inline_end, width, &val.end, Logical);
+                    write_sides!(
+                        width,
+                        Logical,
+                        border_inline_start = &val.start,
+                        border_inline_end = &val.end
+                    );
                 }
                 Property::BorderTopStyle(val) => property_helper!(border_top, style, val, Physical),
                 Property::BorderBottomStyle(val) => {
@@ -1339,8 +1424,12 @@ mod border_handler_body {
                     property_helper!(border_block_end, style, val, Logical)
                 }
                 Property::BorderBlockStyle(val) => {
-                    property_helper!(border_block_start, style, &val.start, Logical);
-                    property_helper!(border_block_end, style, &val.end, Logical);
+                    write_sides!(
+                        style,
+                        Logical,
+                        border_block_start = &val.start,
+                        border_block_end = &val.end
+                    );
                 }
                 Property::BorderInlineStartStyle(val) => {
                     property_helper!(border_inline_start, style, val, Logical)
@@ -1349,8 +1438,12 @@ mod border_handler_body {
                     property_helper!(border_inline_end, style, val, Logical)
                 }
                 Property::BorderInlineStyle(val) => {
-                    property_helper!(border_inline_start, style, &val.start, Logical);
-                    property_helper!(border_inline_end, style, &val.end, Logical);
+                    write_sides!(
+                        style,
+                        Logical,
+                        border_inline_start = &val.start,
+                        border_inline_end = &val.end
+                    );
                 }
                 Property::BorderTop(val) => set_border_helper!(border_top, val, Physical),
                 Property::BorderBottom(val) => set_border_helper!(border_bottom, val, Physical),
@@ -1367,18 +1460,20 @@ mod border_handler_body {
                     set_border_helper!(border_inline_end, val, Logical)
                 }
                 Property::BorderBlock(val) => {
-                    set_border_helper!(border_block_start, val, Logical);
-                    set_border_helper!(border_block_end, val, Logical);
+                    set_borders!(val, Logical, border_block_start, border_block_end);
                 }
                 Property::BorderInline(val) => {
-                    set_border_helper!(border_inline_start, val, Logical);
-                    set_border_helper!(border_inline_end, val, Logical);
+                    set_borders!(val, Logical, border_inline_start, border_inline_end);
                 }
                 Property::BorderWidth(val) => {
-                    property_helper!(border_top, width, &val.top, Physical);
-                    property_helper!(border_right, width, &val.right, Physical);
-                    property_helper!(border_bottom, width, &val.bottom, Physical);
-                    property_helper!(border_left, width, &val.left, Physical);
+                    write_sides!(
+                        width,
+                        Physical,
+                        border_top = &val.top,
+                        border_right = &val.right,
+                        border_bottom = &val.bottom,
+                        border_left = &val.left
+                    );
 
                     self.border_block_start.width = None;
                     self.border_block_end.width = None;
@@ -1387,10 +1482,14 @@ mod border_handler_body {
                     self.has_any = true;
                 }
                 Property::BorderStyle(val) => {
-                    property_helper!(border_top, style, &val.top, Physical);
-                    property_helper!(border_right, style, &val.right, Physical);
-                    property_helper!(border_bottom, style, &val.bottom, Physical);
-                    property_helper!(border_left, style, &val.left, Physical);
+                    write_sides!(
+                        style,
+                        Physical,
+                        border_top = &val.top,
+                        border_right = &val.right,
+                        border_bottom = &val.bottom,
+                        border_left = &val.left
+                    );
 
                     self.border_block_start.style = None;
                     self.border_block_end.style = None;
@@ -1399,10 +1498,14 @@ mod border_handler_body {
                     self.has_any = true;
                 }
                 Property::BorderColor(val) => {
-                    property_helper!(border_top, color, &val.top, Physical);
-                    property_helper!(border_right, color, &val.right, Physical);
-                    property_helper!(border_bottom, color, &val.bottom, Physical);
-                    property_helper!(border_left, color, &val.left, Physical);
+                    write_sides!(
+                        color,
+                        Physical,
+                        border_top = &val.top,
+                        border_right = &val.right,
+                        border_bottom = &val.bottom,
+                        border_left = &val.left
+                    );
 
                     self.border_block_start.color = None;
                     self.border_block_end.color = None;
@@ -1411,6 +1514,35 @@ mod border_handler_body {
                     self.has_any = true;
                 }
                 Property::Border(val) => {
+                    // `border` sets the four sides and resets the logical sides and
+                    // `border-image`.
+                    let rejected = context.targets.rejects(&val.width);
+                    // A target that rejects `border` keeps the `border-image` that
+                    // `border` resets.
+                    let keeps_image = rejected && self.border_image_handler.buffers_any();
+                    // See `rejected!`: such a side is reset without a flush.
+                    let compiled_logical = (self.border_block_start.buffers_any()
+                        || self.border_block_end.buffers_any()
+                        || self.border_inline_start.buffers_any()
+                        || self.border_inline_end.buffers_any())
+                        && context.should_compile_logical(Feature::LogicalBorders);
+                    if self.has_any
+                        && !compiled_logical
+                        && (keeps_image
+                            || self.rejected.must_flush_before(property, rejected, || {
+                                self.border_top.holds(val)
+                                    && self.border_bottom.holds(val)
+                                    && self.border_left.holds(val)
+                                    && self.border_right.holds(val)
+                            }))
+                    {
+                        self.flush(dest, context);
+                    }
+                    if keeps_image {
+                        // After the sides: a buffered `border` resets it too.
+                        self.border_image_handler.flush(dest, context);
+                    }
+
                     self.border_top.set_border(arena, val);
                     self.border_bottom.set_border(arena, val);
                     self.border_left.set_border(arena, val);
@@ -1423,6 +1555,7 @@ mod border_handler_body {
 
                     // Setting the `border` property resets `border-image`
                     self.border_image_handler.reset();
+                    self.rejected = Rejected::after(property, rejected);
                     self.has_any = true;
                 }
                 Property::Unparsed(val) => {
@@ -1474,6 +1607,7 @@ mod border_handler_body {
             }
 
             self.has_any = false;
+            self.rejected = Rejected::default();
 
             self.flush_physical(dest, context);
             self.flush_logical(dest, context);

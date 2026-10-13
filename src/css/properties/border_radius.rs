@@ -16,6 +16,7 @@ use bun_alloc::ArenaVecExt as _;
 // inherent `deep_clone`/`eql` instead), so
 // `BorderRadius` can't `#[derive]` them either. The handler below uses
 // `Size2D::deep_clone`/`Size2D::eql` directly.
+#[derive(css::generics::IsCompatible)]
 pub struct BorderRadius {
     /// The x and y radius values for the top left corner.
     pub(crate) top_left: Size2D<LengthPercentage>,
@@ -157,18 +158,6 @@ pub struct BorderRadiusHandler {
 // There is no field-by-name reflection, so these helpers are
 // macro_rules! that paste the field ident and the corresponding Property variant ident.
 
-// `Size2D::is_compatible` is bounded on `T: values::protocol::IsCompatible`,
-// which `LengthPercentage` (= `DimensionPercentage<LengthValue>`) does not yet impl.
-// Hand-roll the per-component check via `LengthPercentage::is_compatible` (inherent
-// method) until that protocol impl lands.
-#[inline]
-fn size2d_lp_is_compatible(
-    val: &Size2D<LengthPercentage>,
-    browsers: &css::targets::Browsers,
-) -> bool {
-    val.a.is_compatible(browsers) && val.b.is_compatible(browsers)
-}
-
 macro_rules! maybe_flush {
     ($self:expr, $d:expr, $ctx:expr, $prop:ident, $val:expr, $vp:expr) => {{
         // If two vendor prefixes for the same property have different
@@ -179,10 +168,7 @@ macro_rules! maybe_flush {
             }
         }
 
-        if $self.$prop.is_some()
-            && $ctx.targets.browsers.is_some()
-            && !size2d_lp_is_compatible($val, &$ctx.targets.browsers.unwrap())
-        {
+        if $self.$prop.is_some() && $ctx.targets.rejects($val) {
             $self.flush($d, $ctx);
         }
     }};
@@ -220,6 +206,48 @@ macro_rules! logical_property_helper {
         $self.category = PropertyCategory::Logical;
         $self.has_any = true;
     }};
+}
+
+// A parsed logical radius. The buffered radius is the fallback of one that a
+// target does not support.
+macro_rules! logical_radius_helper {
+    ($self:expr, $d:expr, $ctx:expr, $bump:expr, $prop:ident, $variant:ident, $val:expr) => {{
+        if buffers_other_radius(&$self.$prop, $val)
+            && $ctx.targets.rejects($val)
+            && prints_logical_in_place($ctx)
+        {
+            $self.flush($d, $ctx);
+        }
+
+        logical_property_helper!(
+            $self,
+            $d,
+            $ctx,
+            $prop,
+            Property::$variant($val.deep_clone($bump))
+        )
+    }};
+}
+
+/// Whether `slot` buffers a value other than `radius`.
+fn buffers_other_radius(slot: &Option<Property>, radius: &Size2D<LengthPercentage>) -> bool {
+    match slot {
+        None => false,
+        Some(
+            Property::BorderStartStartRadius(buffered)
+            | Property::BorderStartEndRadius(buffered)
+            | Property::BorderEndEndRadius(buffered)
+            | Property::BorderEndStartRadius(buffered),
+        ) => buffered.a != radius.a || buffered.b != radius.b,
+        Some(_) => true,
+    }
+}
+
+/// A flushed logical radius that compiles to `:dir()` rules lands after the
+/// rule and outranks it, so it would override a later value instead of being
+/// its fallback. Only a radius that prints in place can be one.
+fn prints_logical_in_place(context: &PropertyHandlerContext) -> bool {
+    !context.should_compile_logical(css::compat::Feature::LogicalBorderRadius)
 }
 
 macro_rules! single_property {
@@ -295,42 +323,53 @@ impl BorderRadiusHandler {
                 property_helper!(self, dest, context, bump, bottom_left, val, *vp)
             }
             Property::BorderStartStartRadius(r) => {
-                logical_property_helper!(
+                logical_radius_helper!(
                     self,
                     dest,
                     context,
+                    bump,
                     start_start,
-                    Property::BorderStartStartRadius(r.deep_clone(bump))
+                    BorderStartStartRadius,
+                    r
                 )
             }
             Property::BorderStartEndRadius(r) => {
-                logical_property_helper!(
+                logical_radius_helper!(
                     self,
                     dest,
                     context,
+                    bump,
                     start_end,
-                    Property::BorderStartEndRadius(r.deep_clone(bump))
+                    BorderStartEndRadius,
+                    r
                 )
             }
             Property::BorderEndEndRadius(r) => {
-                logical_property_helper!(
-                    self,
-                    dest,
-                    context,
-                    end_end,
-                    Property::BorderEndEndRadius(r.deep_clone(bump))
-                )
+                logical_radius_helper!(self, dest, context, bump, end_end, BorderEndEndRadius, r)
             }
             Property::BorderEndStartRadius(r) => {
-                logical_property_helper!(
+                logical_radius_helper!(
                     self,
                     dest,
                     context,
+                    bump,
                     end_start,
-                    Property::BorderEndStartRadius(r.deep_clone(bump))
+                    BorderEndStartRadius,
+                    r
                 )
             }
             Property::BorderRadius((val, vp)) => {
+                // `border-radius` overrides the logical corners.
+                if (self.start_start.is_some()
+                    || self.start_end.is_some()
+                    || self.end_end.is_some()
+                    || self.end_start.is_some())
+                    && context.targets.rejects(val)
+                    && prints_logical_in_place(context)
+                {
+                    self.flush(dest, context);
+                }
+
                 self.start_start = None;
                 self.start_end = None;
                 self.end_end = None;

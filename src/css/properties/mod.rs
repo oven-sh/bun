@@ -141,6 +141,48 @@ mod properties_impl;
 pub use self::custom::CustomPropertyName;
 pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
 
+/// What a handler buffers when a browser target rejects it: one declaration,
+/// alone. `Rejected::default()` when every target supports what the handler
+/// buffers.
+///
+/// A handler buffers the declarations of a shorthand group, and `flush` prints
+/// them folded: a later value replaces an earlier one, and longhands become a
+/// shorthand. A target that does not support the syntax of a declaration
+/// discards that declaration as a whole and keeps what the others set. Folded
+/// output takes those others away from it. So a handler never folds a rejected
+/// declaration with another one: it flushes before the declaration and before
+/// the next one. lightningcss 1.33.0 folds them.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Rejected(Option<PropertyIdTag>);
+
+impl Rejected {
+    /// Whether the handler must flush before it buffers `property`. `rejected`
+    /// says whether a target rejects `property`. `repeats` says whether
+    /// `property` sets the values that the buffered declaration set.
+    #[inline]
+    pub(crate) fn must_flush_before(
+        self,
+        property: &Property,
+        rejected: bool,
+        repeats: impl FnOnce() -> bool,
+    ) -> bool {
+        match self.0 {
+            None => rejected,
+            // The same property again. A value that every target supports
+            // replaces the buffered one in every browser. One that a target
+            // rejects needs the buffered one as its fallback.
+            Some(buffered) if buffered == property.variant_tag() => rejected && !repeats(),
+            Some(_) => true,
+        }
+    }
+
+    /// The state once the handler has buffered `property`.
+    #[inline]
+    pub(crate) fn after(property: &Property, rejected: bool) -> Self {
+        Self(rejected.then(|| property.variant_tag()))
+    }
+}
+
 /// A [CSS-wide keyword](https://drafts.csswg.org/css-cascade-5/#defaulting-keywords).
 // The `DefineEnumProperty` derive emits `EnumProperty` +
 // `From<Self> for &'static str` + inherent `parse`/`to_css`.

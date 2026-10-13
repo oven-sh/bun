@@ -434,7 +434,7 @@ impl<D> DimensionPercentage<D> {
 }
 
 /// Either a `<number>` or `<percentage>`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, crate::generics::IsCompatible)]
 pub enum NumberOrPercentage {
     /// A number.
     Number(CSSNumber),

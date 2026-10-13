@@ -6,7 +6,7 @@ use crate::css_values::image::Image;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};
 use crate::generics::{CssEql, DeepClone};
-use crate::properties::{Property, PropertyId};
+use crate::properties::{Property, PropertyId, Rejected};
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, SmallList, VendorPrefix,
 };
@@ -265,7 +265,7 @@ impl Background {
 }
 
 /// A value for the [background-size](https://www.w3.org/TR/css-backgrounds-3/#background-size) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::generics::IsCompatible)]
 pub enum BackgroundSize {
     /// An explicit background size.
     Explicit(ExplicitBackgroundSize),
@@ -275,7 +275,7 @@ pub enum BackgroundSize {
     Contain,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::generics::IsCompatible)]
 pub struct ExplicitBackgroundSize {
     /// The width of the background.
     pub(crate) width: LengthPercentageOrAuto,
@@ -334,7 +334,7 @@ impl BackgroundSize {
 }
 
 /// A value for the [background-position](https://drafts.csswg.org/css-backgrounds/#background-position) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::generics::IsCompatible)]
 pub struct BackgroundPosition {
     /// The x-position.
     pub(crate) x: HorizontalPosition,
@@ -595,6 +595,8 @@ pub struct BackgroundHandler {
     // `'bump` through BackgroundHandler would avoid the heap alloc.
     pub(crate) decls: Vec<Property>,
     pub(crate) flushed_properties: BackgroundProperty,
+    /// Set when the handler buffers a declaration that a target rejects.
+    pub(crate) rejected: Rejected,
     pub(crate) has_any: bool,
 }
 
@@ -629,6 +631,20 @@ macro_rules! flush_helper {
     }};
 }
 
+/// Whether `$field` buffers exactly the value that `$project` reads from each
+/// item of `$val`.
+macro_rules! buffers_same {
+    ($this:expr, $field:ident, $val:expr, |$item:ident| $project:expr) => {
+        $this.$field.as_ref().is_some_and(|buffered| {
+            buffered.len() == $val.len()
+                && buffered
+                    .iter()
+                    .zip($val.iter())
+                    .all(|(buffered, $item)| *buffered == $project)
+        })
+    };
+}
+
 macro_rules! push_property {
     ($this:expr, $dest:expr, $variant:ident, $bg_prop:expr, $val:expr) => {{
         $dest.push(Property::$variant($val));
@@ -644,16 +660,31 @@ impl BackgroundHandler {
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let arena = dest.bump();
+        // Whether a target rejects `property`.
+        let mut rejected = false;
         match property {
             Property::BackgroundColor(val) => {
+                self.before_supported(property, dest, context);
                 flush_helper!(self, color, val, dest, context);
                 self.color = Some(val.deep_clone(arena));
             }
             Property::BackgroundImage(val) => {
+                self.before_supported(property, dest, context);
                 self.background_helper(val, property, dest, context);
                 self.images = Some(val.deep_clone(arena));
             }
             Property::BackgroundPosition(val) => {
+                rejected = context.targets.rejects(val);
+                self.before_write(
+                    property,
+                    rejected,
+                    |this| {
+                        buffers_same!(this, x_positions, val, |layer| layer.x)
+                            && buffers_same!(this, y_positions, val, |layer| layer.y)
+                    },
+                    dest,
+                    context,
+                );
                 let len = val.len();
                 {
                     let x_positions = init_small_list_helper!(self, x_positions, len);
@@ -669,25 +700,53 @@ impl BackgroundHandler {
                 }
             }
             Property::BackgroundPositionX(val) => {
+                rejected = context.targets.rejects(val);
+                self.before_write(
+                    property,
+                    rejected,
+                    |this| this.x_positions.as_ref() == Some(val),
+                    dest,
+                    context,
+                );
                 // Drop replaces deinit; just overwrite.
                 self.x_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundPositionY(val) => {
+                rejected = context.targets.rejects(val);
+                self.before_write(
+                    property,
+                    rejected,
+                    |this| this.y_positions.as_ref() == Some(val),
+                    dest,
+                    context,
+                );
                 self.y_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundRepeat(val) => {
+                self.before_supported(property, dest, context);
                 self.repeats = Some(val.deep_clone(arena));
             }
             Property::BackgroundSize(val) => {
+                rejected = context.targets.rejects(val);
+                self.before_write(
+                    property,
+                    rejected,
+                    |this| this.sizes.as_ref() == Some(val),
+                    dest,
+                    context,
+                );
                 self.sizes = Some(val.deep_clone(arena));
             }
             Property::BackgroundAttachment(val) => {
+                self.before_supported(property, dest, context);
                 self.attachments = Some(val.deep_clone(arena));
             }
             Property::BackgroundOrigin(val) => {
+                self.before_supported(property, dest, context);
                 self.origins = Some(val.deep_clone(arena));
             }
             Property::BackgroundClip(x) => {
+                self.before_supported(property, dest, context);
                 let val: &SmallList<BackgroundClip, 1> = &x.0;
                 let vendor_prefix: VendorPrefix = x.1;
                 // Compute the predicate first, then dispatch (avoids holding
@@ -714,6 +773,18 @@ impl BackgroundHandler {
                 }
             }
             Property::Background(val) => {
+                // A target rejects the declaration when it does not support a position
+                // or a size. Colours and images do not count: `flush` lowers them.
+                rejected = val.iter().any(|layer| {
+                    context.targets.rejects(&layer.position) || context.targets.rejects(&layer.size)
+                });
+                self.before_write(
+                    property,
+                    rejected,
+                    |this| this.buffers_same(val),
+                    dest,
+                    context,
+                );
                 let mut images: SmallList<Image, 1> = SmallList::init_capacity(val.len());
                 for b in val.slice() {
                     images.append_assume_capacity(b.image.deep_clone(arena));
@@ -800,8 +871,67 @@ impl BackgroundHandler {
             _ => return false,
         }
 
+        self.rejected = Rejected::after(property, rejected);
         self.has_any = true;
         true
+    }
+
+    /// Runs before `property` is buffered. `rejected` says whether a target
+    /// rejects it, and `repeats` whether it sets the values that the buffered
+    /// declaration set.
+    fn before_write(
+        &mut self,
+        property: &Property,
+        rejected: bool,
+        repeats: impl FnOnce(&Self) -> bool,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        if self.has_any
+            && self
+                .rejected
+                .must_flush_before(property, rejected, || repeats(self))
+        {
+            self.flush(dest, context);
+        }
+    }
+
+    /// `before_write` for a declaration that every target supports.
+    fn before_supported(
+        &mut self,
+        property: &Property,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
+        self.before_write(property, false, |_| false, dest, context);
+    }
+
+    /// Whether the handler buffers what `background: <val>` sets.
+    fn buffers_same(&self, val: &SmallList<Background, 1>) -> bool {
+        self.color
+            .as_ref()
+            .zip(val.last())
+            .is_some_and(|(color, layer)| color.eql(&layer.color))
+            && self.images.as_ref().is_some_and(|images| {
+                images.len() == val.len()
+                    && images
+                        .iter()
+                        .zip(val.iter())
+                        .all(|(image, layer)| image.eql(&layer.image))
+            })
+            && buffers_same!(self, x_positions, val, |layer| layer.position.x)
+            && buffers_same!(self, y_positions, val, |layer| layer.position.y)
+            && buffers_same!(self, repeats, val, |layer| layer.repeat)
+            && buffers_same!(self, sizes, val, |layer| layer.size)
+            && buffers_same!(self, attachments, val, |layer| layer.attachment)
+            && buffers_same!(self, origins, val, |layer| layer.origin)
+            && self.clips.as_ref().is_some_and(|(clips, _)| {
+                clips.len() == val.len()
+                    && clips
+                        .iter()
+                        .zip(val.iter())
+                        .all(|(clip, layer)| *clip == layer.clip)
+            })
     }
 
     fn background_helper(
@@ -829,6 +959,7 @@ impl BackgroundHandler {
             return;
         }
         self.has_any = false;
+        self.rejected = Rejected::default();
         let arena = dest.bump();
 
         let mut maybe_color: Option<CssColor> = self.color.take();
@@ -923,7 +1054,13 @@ impl BackgroundHandler {
                 // originals Drop normally; no explicit clear needed.
                 // PERF: profile the clones if hot.
 
-                if self.flushed_properties.is_empty() {
+                // A colour or an image that an earlier flush printed is the author's
+                // own fallback. A flush that printed only sizes, positions or
+                // keywords is not one. lightningcss tests `is_empty()` here.
+                if !self
+                    .flushed_properties
+                    .intersects(BackgroundProperty::COLOR | BackgroundProperty::IMAGE)
+                {
                     let mut fallbacks =
                         crate::small_list::get_fallbacks(&mut backgrounds, arena, &context.targets);
                     // Pop in reverse then re-reverse via a temp Vec to

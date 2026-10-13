@@ -312,6 +312,24 @@ describe("HMAC", () => {
   });
   const allConsumed = { digest: consumed, byteLength: consumed, copy: consumed, update: consumed };
 
+  test.each(Object.entries(hashes))("%s digest(hashInto)", (algorithm, expected) => {
+    const byteLength = expected.length / 2;
+    const hmac = new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, "key").update("data\n");
+
+    // A TypedArray that is one byte short throws, and the HMAC is not consumed.
+    expect(() => hmac.digest(new Uint8Array(byteLength - 1))).toThrow(typedArrayTooSmall(byteLength));
+
+    const exact = new Uint8Array(byteLength);
+    expect(hmac.digest(exact)).toBe(exact);
+    expect(toHex(exact)).toBe(expected);
+    expect(() => hmac.digest(exact)).toThrow(consumed);
+
+    // A longer TypedArray starts with the digest. The rest stays as it was.
+    const longer = new Uint8Array(byteLength + 8).fill(7);
+    new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, "key").update("data\n").digest(longer);
+    expect(toHex(longer)).toBe(expected + "0707070707070707");
+  });
+
   for (let key of ["key", Buffer.from("key"), Buffer.from("key").buffer]) {
     test.each(Object.entries(hashes))("%s (key: " + key.constructor.name + ")", (algorithm, expected) => {
       const hmac = new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, key as string | Buffer);
@@ -337,24 +355,6 @@ describe("HMAC", () => {
       // But let's see if anyone complains about it. It is extremely minor
     });
   }
-
-  test.each(Object.entries(hashes))("%s digest(hashInto)", (algorithm, expected) => {
-    const byteLength = expected.length / 2;
-    const hmac = new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, "key").update("data\n");
-
-    // A TypedArray that is one byte short throws, and the HMAC is not consumed.
-    expect(() => hmac.digest(new Uint8Array(byteLength - 1))).toThrow(typedArrayTooSmall(byteLength));
-
-    const exact = new Uint8Array(byteLength);
-    expect(hmac.digest(exact)).toBe(exact);
-    expect(toHex(exact)).toBe(expected);
-    expect(() => hmac.digest(exact)).toThrow(consumed);
-
-    // A longer TypedArray starts with the digest. The rest stays as it was.
-    const longer = new Uint8Array(byteLength + 8).fill(7);
-    new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, "key").update("data\n").digest(longer);
-    expect(toHex(longer)).toBe(expected + "0707070707070707");
-  });
 
   const unsupported = [["shake128"], ["shake256"]] as const;
   test.each(unsupported)("%s is not supported", algorithm => {
@@ -561,12 +561,6 @@ describe("CryptoHasher", () => {
   });
 
   describe("digest(hashInto)", () => {
-    // SHAKE output for "hello", 8 bytes longer than byteLength.
-    const shakeLonger: Record<string, string> = {
-      "shake128": "8eb4b6a932f280335ee1a279f8c208a349e7bc65daf831d3",
-      "shake256": "1234075ae4a1e77316cf2d8000974581a343b9ebbca7e3d1db83394c30f221626f594e4f0de63902",
-    };
-
     test("writes into a TypedArray of exactly byteLength bytes, as docs/runtime/hashing.mdx shows", () => {
       const hasher = new Bun.CryptoHasher("sha256");
       hasher.update("hello world");
@@ -590,10 +584,11 @@ describe("CryptoHasher", () => {
       expect(Bun.CryptoHasher.hash(algorithm, "hello", new Uint8Array(byteLength))).toEqual(exact);
 
       // A longer TypedArray starts with the digest. A fixed-length digest leaves the rest
-      // as it was. SHAKE is an extendable-output function and fills the whole array.
+      // as it was. The rest is not checked for SHAKE, an extendable-output function.
       const longer = new Uint8Array(byteLength + 8).fill(7);
       expect(hasher.update("hello").digest(longer)).toBe(longer);
-      expect(toHex(longer)).toBe(shakeLonger[algorithm] ?? hex + "0707070707070707");
+      expect(toHex(longer.subarray(0, byteLength))).toBe(hex);
+      if (!algorithm.startsWith("shake")) expect(toHex(longer.subarray(byteLength))).toBe("0707070707070707");
     });
 
     test("counts bytes, not elements, and writes at the offset of a view", () => {

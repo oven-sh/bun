@@ -308,6 +308,11 @@ impl CryptoHasher {
         ))
     }
 
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_byte_length(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_number(this.byte_length(global)? as f64))
+    }
+
     /// The length in bytes of the digest this hasher produces.
     fn byte_length(&self, global: &JSGlobalObject) -> JsResult<usize> {
         Ok(match self {
@@ -318,11 +323,6 @@ impl CryptoHasher {
             },
             CryptoHasher::Zig(inner) => inner.get().digest_length as usize,
         })
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_byte_length(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(this.byte_length(global)? as f64))
     }
 
     #[bun_jsc::host_fn(getter)]

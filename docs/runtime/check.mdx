@@ -205,6 +205,8 @@ With [lint-staged](https://github.com/lint-staged/lint-staged), check only the f
 
 lint-staged adds the staged file names to the command, as in `bun check src/a.ts src/b.ts`. `bun check` still uses your `tsconfig.json` for those files. `tsc` does not load `tsconfig.json` when you pass it file names.
 
+Keep the pattern to TypeScript files. With a pattern such as `*.{ts,json}`, a commit that stages only JSON files runs `bun check package.json`, which fails with [`Nothing to check`](#some-files-or-directories).
+
 <Note>
   A change to one file can break a file that imports it. Checking only staged files misses that error, so run `bun
   check` on the whole project in CI as well.

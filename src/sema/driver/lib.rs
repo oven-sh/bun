@@ -1786,15 +1786,13 @@ fn refusal(text: Vec<u8>) -> Diagnostic {
     }
 }
 
-/// `tsconfig.json`, `jsconfig.json`, `tsconfig.*.json`, `jsconfig.*.json`: a configuration file by
-/// its name, as the resolver takes it.
+/// `tsconfig.json`, `tsconfig.*.json` and the same of `jsconfig`: a configuration file by its name.
 fn is_named_like_config(path: &[u8]) -> bool {
     let name = bun_paths::basename(path);
     (name.starts_with(b"tsconfig.") || name.starts_with(b"jsconfig.")) && name.ends_with(b".json")
 }
 
-/// For paths that are all configuration files, of which `config` is the first. `-p` and `-b` take
-/// a configuration file. A path is a file to check.
+/// For paths that are all configuration files, which `-p` and `-b` take. `config` is the first.
 #[cold]
 fn config_named_as_path(cwd: &[u8], config: &[u8], is_case_sensitive: bool) -> Diagnostic {
     let config = get_relative_path_from_directory(cwd, config, is_case_sensitive);
@@ -1969,9 +1967,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             }
         }
     }
-    // Only configuration files are named. `-p` and `-b` take one: as a path it is a JSON file of the
-    // nearest project, and nothing is checked. Before something runs (`--check`) it is the module
-    // to run, whatever its name.
+    // `-p` and `-b` take a configuration file. Under `--check`, a path is the module to run.
     let is_config = |path: &Vec<u8>| {
         explicit.as_ref().is_some_and(|it| is_same(it, path))
             || is_named_like_config(path) && !disk.is_dir(path)
@@ -2172,9 +2168,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         report.projects_checked += checked.projects_checked.max(usize::from(!is_one));
         report.merge(checked);
     }
-    // Nothing was checked and nothing is wrong: the paths hold JSON files, or directories of them.
-    // A file that is TypeScript by its name is left to pass: a declaration file under
-    // `skipLibCheck`, or a file of a referenced project, which is not checked here.
+    // A declaration file that `skipLibCheck` leaves out is TypeScript by its name, and passes.
     let names_source = || {
         let mut files = by_project.iter().flat_map(|it| &it.2);
         files.any(|file| ScriptKind::from_file_name(file).is_some())

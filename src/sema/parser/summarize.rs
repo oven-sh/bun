@@ -2,7 +2,7 @@
 //! parser that refuses it at its first error. What that refuses is parsed again by the parser that
 //! recovers from errors as TypeScript's does.
 
-use crate::{Options, Refusal, Scratch};
+use crate::{Options, Part, Refusal, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::hir::{
@@ -220,6 +220,7 @@ fn file_read_as(
         recovers: false,
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,
+        part: None,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -507,4 +508,101 @@ pub fn with_summary_in_place<'s, R>(
     scratch.recycle(file);
     give_back_scratch(scratch);
     result
+}
+
+/// Parses the parts of one text: see [`Part`]. What the scanner wants to know of the whole text is found out once.
+/// Why a part cannot be parsed.
+#[derive(Debug, Copy, Clone)]
+pub struct PartError {
+    /// Where the first error is in the whole text.
+    pub at: u32,
+    pub is_too_deep: bool,
+}
+
+impl PartError {
+    fn of(refused: &crate::Refused, at: u32) -> PartError {
+        PartError {
+            at,
+            is_too_deep: refused.why == Refusal::TooDeep,
+        }
+    }
+}
+
+pub struct Parts<'t> {
+    text: &'t [u8],
+    scratch: Option<Box<Scratch>>,
+    /// In the place of those of `scratch`, for the text of one part.
+    stops_of_part: bun_highway::ScannerStopsBuffer,
+}
+
+impl<'t> Parts<'t> {
+    pub fn of(text: &'t [u8]) -> Parts<'t> {
+        let mut scratch = take_scratch();
+        // Another text than the last one, maybe at the same address.
+        scratch.stops.forget();
+        Parts {
+            text,
+            scratch: Some(scratch),
+            stops_of_part: Default::default(),
+        }
+    }
+
+    /// Calls `then` with the file, which has one statement, the interner of its atoms, the text of the file, and where the
+    /// last token of `part` ends in that. The text starts where the part starts and ends with the token behind the part: who
+    /// looks for something in the text of a file does not look through all that is around the part. There is no JSX, `await`
+    /// is a keyword, and nothing is recovered from.
+    pub fn parse<'s, R>(
+        &mut self,
+        dialect: Dialect,
+        is_javascript: bool,
+        part: Part,
+        then: impl FnOnce(Summary<'_, 's>, &dyn Intern, &[u8], u32) -> R,
+    ) -> Result<R, PartError> {
+        let (text, scratch) = (self.text, self.scratch.get_or_insert_default());
+        let options = |from: u32, until: u32| Options {
+            is_javascript,
+            dialect,
+            part: Some(Part {
+                from,
+                until,
+                ..part
+            }),
+            ..Default::default()
+        };
+        // Where it ends.
+        let whole = options(part.from, part.until);
+        let found = crate::parse_with_own_atoms(text, whole, scratch).or_else(|refused| {
+            if !refused.why.is_of_scanner() {
+                return Err(PartError::of(&refused, refused.at));
+            }
+            // What follows a part need not be a token: then the text ends before it.
+            crate::parse_with_own_atoms(text, options(part.from, refused.after), scratch)
+                .map_err(|again| PartError::of(&again, refused.after))
+        })?;
+        let until = found.end.1;
+        scratch.recycle(found.file);
+        let code = (text.get(part.from as usize..until as usize)).unwrap_or_default();
+        core::mem::swap(&mut scratch.stops, &mut self.stops_of_part);
+        scratch.stops.forget();
+        let parsed = crate::parse_with_own_atoms(code, options(0, code.len() as u32), scratch);
+        core::mem::swap(&mut scratch.stops, &mut self.stops_of_part);
+        let mut parsed =
+            parsed.map_err(|refused| PartError::of(&refused, part.from + refused.at))?;
+        let result = then(
+            Summary::InPlace(&mut parsed.file),
+            &scratch.atoms(code),
+            code,
+            parsed.end.0,
+        );
+        scratch.recycle(parsed.file);
+        Ok(result)
+    }
+}
+
+impl Drop for Parts<'_> {
+    fn drop(&mut self) {
+        if let Some(scratch) = self.scratch.take() {
+            give_back_scratch(scratch);
+        }
+    }
 }

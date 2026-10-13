@@ -258,6 +258,11 @@ impl Plugin {
         })
     }
 
+    /// Whether, with a configuration of ESLint, the rules here answer for the plugin that is usually called `prefix`.
+    pub fn is_native_under_eslint(prefix: &[u8]) -> bool {
+        Plugin::answers_in_place_of(prefix, None)
+    }
+
     /// The version of the package that the rules here do the same as, if they answer in place of one.
     pub fn follows(self) -> Option<&'static str> {
         match self.names().under_eslint {

@@ -319,7 +319,14 @@ fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
             .concat());
         }
     }
-    .ok_or_else(|| native::unknown_rule(registry, name))
+    .ok_or_else(|| {
+        let said = native::unknown_rule(registry, name);
+        // Whether the plugin is loaded or not, its rules are explained where it is.
+        match said.strip_suffix(native::ADD_THE_PLUGIN) {
+            Some(start) => [start, b"\n  --explain has the built-in rules. For a rule from a plugin, see the plugin's docs"].concat(),
+            None => said,
+        }
+    })
 }
 
 /// `--explain <rule>`. Returns the rendered docs page for `name`, or the error message to print.

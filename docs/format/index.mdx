@@ -7,7 +7,7 @@ import Format from "/snippets/cli/format.mdx";
 
 Bun ships with a fast, built-in code formatter. There's nothing to install and nothing to configure.
 
-- JavaScript, TypeScript, JSX, CSS, SCSS, Less, HTML, Vue, Angular, JSON, YAML, TOML, Markdown, MDX, GraphQL, and Handlebars
+- JavaScript, TypeScript, JSX, CSS, SCSS, Less, HTML, Vue, Svelte, Angular, JSON, YAML, TOML, Markdown, MDX, GraphQL, and Handlebars
 - The same output as [Prettier](https://prettier.io)
 - Sorts imports, Tailwind CSS classes, and `package.json`
 - Works with your existing Prettier or oxfmt config
@@ -32,7 +32,9 @@ To format specific files, pass paths or globs.
 bun fmt src "test/**/*.ts"
 ```
 
-Embedded code is formatted too: `<script>` and `<style>` in HTML and Vue, code blocks in Markdown, and `` css`...` ``, `` html`...` ``, and `` graphql`...` `` templates in JavaScript.
+Embedded code is formatted too: `<script>` and `<style>` in HTML, Vue, and Svelte, code blocks in Markdown, and `` css`...` ``, `` html`...` ``, and `` graphql`...` `` templates in JavaScript.
+
+A syntax error inside a `<script>` or `<style>` of a Svelte component is a warning. That block stays as written, and the rest of the file is formatted.
 
 ## Check without writing
 
@@ -281,7 +283,7 @@ Already have a `.prettierrc` or an `.oxfmtrc.json`? `bun fmt` reads it and print
 
 If `package.json` has a `fmt` script, `bun fmt` runs that script. Inside the script, `bun fmt` is the formatter.
 
-Svelte and Astro aren't built in. If your `.prettierrc` lists their plugin, Bun sends those files to your installed Prettier. To see which files those are, and which packages you can uninstall:
+Astro isn't built in. If your `.prettierrc` lists its plugin, Bun sends those files to your installed Prettier. To see which files those are, and which packages you can uninstall:
 
 ```bash terminal icon="terminal"
 bun fmt --doctor

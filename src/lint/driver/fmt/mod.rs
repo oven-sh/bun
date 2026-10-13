@@ -19,7 +19,7 @@ use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
-use bun_format::options::{Code, Then};
+use bun_format::options::{Code, Goal, ParsePart, PartError, Then};
 use bun_format::pragma::BeforeParsing;
 use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
@@ -29,7 +29,6 @@ use bun_lint::ast::File;
 use bun_lint::js_plugin::{HEAVY, Unformatted};
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
-use bun_lint::utils::code_frame::{self, Frame, Lines, Place, Version};
 use bun_lint::utils::text::ends_with_ignore_ascii_case as ends_in;
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
 use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
@@ -54,29 +53,150 @@ macro_rules! pretty {
     };
 }
 
-const NESTED_TOO_DEEPLY: &[u8] = b"RangeError: The code is nested too deeply.";
-/// In the words of Prettier.
-const TOO_LONG: &[u8] = b"RangeError: Invalid string length";
+const NESTED_TOO_DEEPLY: &[u8] = b"The code is nested too deeply";
+const TOO_LONG: &[u8] = b"The formatted code is too long for a string";
 const MAKE_IT_A_WARNING: &[u8] = b"\n  Use --allow-unsupported to make this a warning.";
+
+/// What is wrong with the text of a file, and where.
+struct Problem {
+    message: Vec<u8>,
+    at: Option<Place>,
+}
+
+struct Place {
+    line: u32,
+    /// From 1, in UTF-16 code units, as everywhere in Bun.
+    column: u32,
+    line_text: Vec<u8>,
+}
+
+impl Problem {
+    /// It is about the whole file.
+    fn new(message: &[u8]) -> Problem {
+        Problem {
+            message: message.to_vec(),
+            at: None,
+        }
+    }
+
+    /// In JavaScript or TypeScript, where U+2028 ends a line too. `offset`: as the parser counts it.
+    #[cold]
+    fn in_file(file: &File, message: &[u8], offset: u32) -> Problem {
+        let at = file.position(offset);
+        Problem {
+            message: message.to_vec(),
+            at: Some(Place {
+                line: at.line,
+                column: at.column + 1,
+                line_text: file.line_text(at.line).to_vec(),
+            }),
+        }
+    }
+
+    /// In any other language. `offset`: in `text`, not counting a byte order mark.
+    #[cold]
+    fn at(text: &[u8], message: &[u8], offset: u32) -> Problem {
+        Places::new(text).problem(message, offset)
+    }
+
+    /// As Bun prints every other error: the line, a caret, the message, and where it is. `shown`: the name of the file.
+    fn print(&self, shown: &[u8], kind: bun_ast::Kind, colors: bool) -> Vec<u8> {
+        let message = bun_ast::Msg {
+            kind,
+            data: bun_ast::Data {
+                text: self.message.clone().into(),
+                location: Some(bun_ast::Location {
+                    file: shown.to_vec().into(),
+                    line: self.at.as_ref().map_or(-1, |it| it.line as i32),
+                    column: self.at.as_ref().map_or(-1, |it| it.column as i32),
+                    line_text: self.at.as_ref().map(|it| it.line_text.clone().into()),
+                    ..Default::default()
+                }),
+            },
+            ..Default::default()
+        };
+        let mut printed = String::new();
+        let _ = match colors {
+            true => message.write_format::<true>(&mut printed),
+            false => message.write_format::<false>(&mut printed),
+        };
+        printed.push_str("\n\n");
+        printed.into_bytes()
+    }
+}
+
+/// The lines and columns of places in a text. Asked for one after the other, from the first to the last, they take one pass
+/// over the text, and what is printed is no longer than the text and the messages: a line is shown with the first problem
+/// that is in it.
+struct Places<'a> {
+    text: &'a [u8],
+    line: u32,
+    line_start: usize,
+    /// Up to where line breaks have been looked for.
+    searched: usize,
+    /// Up to where the line has been measured, and how many UTF-16 code units that is.
+    measured: (usize, u32),
+    /// The line that has been shown last.
+    shown: u32,
+}
+
+impl<'a> Places<'a> {
+    fn new(text: &'a [u8]) -> Places<'a> {
+        Places {
+            text: strings::without_utf8_bom(text),
+            line: 1,
+            line_start: 0,
+            searched: 0,
+            measured: (0, 0),
+            shown: 0,
+        }
+    }
+
+    /// `offset`: in the text, not counting a byte order mark.
+    fn problem(&mut self, message: &[u8], offset: u32) -> Problem {
+        let (text, end) = (self.text, self.text.len().min(offset as usize));
+        if end < self.searched {
+            *self = Places::new(text);
+        }
+        while let Some(found) = strings::index_of_any(&text[self.searched..end], b"\n\r") {
+            self.searched += found + 1;
+            // The `\n` of `\r\n` ends the line.
+            if text[self.searched - 1] == b'\n' || text.get(self.searched) != Some(&b'\n') {
+                (self.line, self.line_start) = (self.line + 1, self.searched);
+                self.measured = (self.searched, 0);
+            }
+        }
+        self.searched = end;
+        let more = strings::utf8_decoded_len_utf16(&text[self.measured.0..end]) as u32;
+        self.measured = (end, self.measured.1 + more);
+        let line_text = match std::mem::replace(&mut self.shown, self.line) == self.line {
+            true => &[][..],
+            false => {
+                let rest = &text[self.line_start..];
+                &rest[..strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len())]
+            }
+        };
+        Problem {
+            message: message.to_vec(),
+            at: Some(Place {
+                line: self.line,
+                column: self.measured.1 + 1,
+                line_text: line_text.to_vec(),
+            }),
+        }
+    }
+}
 
 /// Why a file is left as it is.
 enum Failure {
-    /// `SyntaxError: ';' expected. (1:7)`
-    Syntax(Vec<u8>),
+    Syntax(Problem),
     /// A bug in the formatter: it could not print the file.
     Bug,
     /// `--debug-check`: what would be written does not say what the file says.
     Changed(&'static str),
     /// TOML that cannot be read, with what is wrong with it. oxfmt passes over such a file without a word, so it is no
     /// error.
-    Unread(Vec<u8>),
-}
-
-/// `error.message` of what is in a [`Failure::Syntax`].
-fn message_of(error: &[u8]) -> &[u8] {
-    (error.strip_prefix(b"SyntaxError: "))
-        .or_else(|| error.strip_prefix(b"RangeError: "))
-        .unwrap_or(error)
+    Unread(Problem),
 }
 
 /// Tailwind has been asked, and the order of the classes in the file that is shown as `shown` is still not known.
@@ -308,70 +428,21 @@ struct Refused<'a> {
     is_nested_too_deeply: bool,
 }
 
-/// `SyntaxError: ';' expected. (1:7)`
-fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
-    let mut out = b"SyntaxError: ".to_vec();
+fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Problem {
+    let mut message = Vec::new();
     match first.and_then(|it| Some((it, bun_sema::messages::message(it.code)?.1))) {
-        Some((diagnostic, text)) => bun_sema::messages::format(&mut out, text, &diagnostic.args),
-        None => out.extend_from_slice(b"Unexpected token"),
-    }
-    let at = file.position(first.map_or(0, |it| it.start));
-    let _ = write!(out, " ({}:{})", at.line, at.column + 1);
-    write_frame(&mut out, file, at.line, at.column);
-    out
-}
-
-/// `SyntaxError: Unclosed string (3:6)`, for code that isn't JavaScript or TypeScript.
-#[cold]
-fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Vec<u8> {
-    syntax_error_in_words(text, message.text().as_bytes(), offset)
-}
-
-/// What Prettier appends to a syntax error: the lines around it. `column`: counted from 0.
-fn write_frame<'a>(out: &mut Vec<u8>, lines: &(impl Lines<'a> + ?Sized), line: u32, column: u32) {
-    let frame = Frame {
-        version: Version::Eight,
-        start: Place {
-            line,
-            column: Some(column),
-        },
-        end: None,
-        message: b"",
-        lines_above: 2,
-        lines_below: 3,
-    };
-    let len = out.len();
-    out.push(b'\n');
-    if !code_frame::write(out, lines, &frame) {
-        out.truncate(len);
-    }
-}
-
-/// `offset`: not counting a byte order mark.
-#[cold]
-fn syntax_error_in_words(text: &[u8], message: &[u8], offset: u32) -> Vec<u8> {
-    let text = strings::without_utf8_bom(text);
-    let before = &text[..text.len().min(offset as usize)];
-    let (mut line, mut line_start, mut from) = (1u32, 0, 0);
-    while let Some(found) = strings::index_of_any(&before[from..], b"\n\r") {
-        from += found + 1;
-        // The `\n` of `\r\n` ends the line.
-        if before[from - 1] == b'\n' || text.get(from) != Some(&b'\n') {
-            (line, line_start) = (line + 1, from);
+        Some((diagnostic, text)) => {
+            bun_sema::messages::format(&mut message, text, &diagnostic.args)
         }
+        None => message.extend_from_slice(b"Unexpected token"),
     }
-    // As Prettier counts them: in UTF-16 code units.
-    let column = bun_core::strings::utf8_decoded_len_utf16(&before[line_start..]);
-    let mut out = format!(
-        "SyntaxError: {} ({line}:{})",
-        BStr::new(message),
-        column + 1
-    )
-    .into_bytes();
-    // No more of them than are shown.
-    let lines: Vec<&[u8]> = strings::js_lines(text).take(line as usize + 3).collect();
-    write_frame(&mut out, &lines[..], line, column);
-    out
+    Problem::in_file(file, &message, first.map_or(0, |it| it.start))
+}
+
+/// For code that isn't JavaScript or TypeScript.
+#[cold]
+fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Problem {
+    Problem::at(text, message.text().as_bytes(), offset)
 }
 
 /// What is allocated to format a file, and used again for the next.
@@ -383,11 +454,14 @@ struct Scratches {
     graphql: bun_format::graphql::Scratch,
     handlebars: bun_format::handlebars::Scratch,
     html: bun_format::html::Scratch,
+    svelte: bun_format::svelte::Scratch,
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
     /// For the blocks of code in Markdown.
     blocks: Option<Box<Scratches>>,
+    /// What is to be said about the file that has been formatted last, though it has been formatted.
+    warnings: Vec<Problem>,
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
@@ -454,6 +528,71 @@ fn parse_code(
     with_file(&how, code.text, |file, _, _| then(file));
 }
 
+/// For the expressions in a component of Svelte.
+fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
+    let names = Session::new();
+    let (atoms, plain) = (Interner::new_in(&names), Resolved::default());
+    let how = |path| How {
+        path,
+        is_script: false,
+        is_flow: false,
+        resolved: &plain,
+        verifies: false,
+        atoms: &atoms,
+        memory: &names,
+    };
+    let [javascript, typescript] =
+        [&b"dummy.js"[..], b"dummy.ts"].map(|path| (path, how(path).language_and_dialect()));
+    let mut parts = bun_sema_parser::Parts::of(text);
+    then(&mut |part, then| {
+        let (path, (language, dialect, _)) = match part.is_typescript {
+            true => &typescript,
+            false => &javascript,
+        };
+        let part = bun_sema_parser::Part {
+            goal: match part.goal {
+                Goal::Expression => bun_sema_parser::Goal::Expression,
+                Goal::Declaration => bun_sema_parser::Goal::Declaration,
+                Goal::Type => bun_sema_parser::Goal::Type,
+            },
+            from: part.from,
+            until: part.until,
+        };
+        let is_javascript = language.parser != Parser::TypeScript;
+        let is_bound = parts.parse(
+            *dialect,
+            is_javascript,
+            part,
+            |summary, atoms, code, end| {
+                let mut recycled = Recycled::of_this_thread();
+                let Summary::InPlace(hir) = summary else {
+                    return false;
+                };
+                let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled) else {
+                    return false;
+                };
+                then(
+                    &File::new(path, &*hir, bound, atoms, language, None).with_text(code),
+                    end,
+                );
+                true
+            },
+        );
+        match is_bound {
+            Ok(true) => Ok(()),
+            // The stack has ended there.
+            Ok(false) => Err(PartError {
+                at: part.from,
+                is_nested_too_deeply: true,
+            }),
+            Err(error) => Err(PartError {
+                at: error.at,
+                is_nested_too_deeply: error.is_too_deep,
+            }),
+        }
+    });
+}
+
 /// Whether the two texts are the same value. What cannot be read as a value, with a key twice, is not looked at.
 fn is_same_toml(before: &[u8], after: &[u8]) -> bool {
     use bun_lint::json::{Notation, parse_as};
@@ -476,11 +615,12 @@ fn format(
     verifies: bool,
 ) -> Result<Formatted, Failure> {
     let options = &resolved.options;
+    scratch.warnings.clear();
     // What `>` of Windows PowerShell writes. Some parsers take it for UTF-8 with a NUL next to every letter.
     if matches!(text, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
-        return Err(Failure::Syntax(
-            b"SyntaxError: This file is UTF-16. bun fmt only reads UTF-8.".to_vec(),
-        ));
+        return Err(Failure::Syntax(Problem::new(
+            b"This file is UTF-16. bun fmt only reads UTF-8",
+        )));
     }
     // The name says what kind of file it is. Whether it is TypeScript is up to `path`.
     let name = options
@@ -496,20 +636,22 @@ fn format(
             let cursor = bun_format::cursor::cursor_in_formatted_text(text, options, &out);
             Ok((out, cursor))
         }
-        Err(FormatError::SyntaxError) => Err(Failure::Syntax(
-            format!("SyntaxError: This is not valid {what}.").into_bytes(),
-        )),
+        Err(FormatError::SyntaxError) => Err(Failure::Syntax(Problem::new(
+            format!("This is not valid {what}").as_bytes(),
+        ))),
         Err(FormatError::SyntaxErrorAt(error)) => {
             Err(Failure::Syntax(syntax_error_at(text, error)))
         }
-        Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
-        Err(FormatError::TooLong) => Err(Failure::Syntax(TOO_LONG.to_vec())),
+        Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY))),
+        Err(FormatError::TooLong) => Err(Failure::Syntax(Problem::new(TOO_LONG))),
         Err(FormatError::InvalidDocument) => Err(Failure::Bug),
     };
     let mut out = Vec::new();
     let kind = Kind::with_options(name, options);
     if let (None, Some(parser)) = (kind, &options.parser) {
-        return Err(Failure::Syntax(cannot_resolve_parser(parser)));
+        return Err(Failure::Syntax(Problem::new(&cannot_resolve_parser(
+            parser,
+        ))));
     }
     match kind {
         Some(Kind::Script) | None => {}
@@ -579,7 +721,7 @@ fn format(
             if done == Err(FormatError::SyntaxError)
                 && let Some((message, offset)) = bun_format::toml::syntax_error(text)
             {
-                let error = syntax_error_in_words(text, &message, offset);
+                let error = Problem::at(text, &message, offset);
                 return Err(match options.flavor.is_oxfmt() {
                     true => Failure::Unread(error),
                     false => Failure::Syntax(error),
@@ -589,6 +731,33 @@ fn format(
                 return Err(Failure::Changed("formatting would change its contents"));
             }
             return finish(done, out, "TOML");
+        }
+        Some(Kind::Svelte) => {
+            let plain = Resolved::default();
+            let parse = |code: Code<'_>, then: Then<'_>| {
+                parse_code(code, &plain, (atoms, memory), then);
+            };
+            let parse = Some(&parse as bun_format::options::JavaScriptParser<'_>);
+            let done = bun_format::svelte::format(
+                name,
+                text,
+                options,
+                parse,
+                &mut scratch.svelte,
+                &mut out,
+            );
+            if verifies
+                && done.is_ok()
+                && out != text
+                && !bun_format::svelte::has_same_content(text, &out, options, parse)
+            {
+                return Err(Failure::Changed("formatting would change its contents"));
+            }
+            let mut places = Places::new(text);
+            scratch.warnings = (scratch.svelte.unformatted().iter())
+                .map(|it| places.problem(&it.message, it.at))
+                .collect();
+            return finish(done, out, "Svelte");
         }
         Some(Kind::Handlebars) => {
             let done =
@@ -630,9 +799,7 @@ fn format(
             if matches!(done, Err(FormatError::SyntaxError))
                 && let Some((message, offset)) = bun_format::html::syntax_error(text, parser)
             {
-                return Err(Failure::Syntax(syntax_error_in_words(
-                    text, &message, offset,
-                )));
+                return Err(Failure::Syntax(Problem::at(text, &message, offset)));
             }
             let cursor = done.as_ref().ok().copied().flatten();
             return finish(done.map(|_| ()), out, "HTML").map(|(out, _)| (out, cursor));
@@ -700,7 +867,7 @@ fn print<'a>(
     scratch: &mut Scratches,
 ) -> Result<Formatted, Failure> {
     if refused.is_nested_too_deeply {
-        return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+        return Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY)));
     }
     let options = &how.resolved.options;
     // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
@@ -718,16 +885,11 @@ fn print<'a>(
         false => bun_lint::linter::refusal_of_prettier(file, types),
     };
     if let Some(why) = refusal {
-        let at = file.position(why.at);
-        let mut out = format!(
-            "SyntaxError: {} ({}:{})",
-            BStr::new(&why.message),
-            at.line,
-            at.column + 1
-        )
-        .into_bytes();
-        write_frame(&mut out, file, at.line, at.column);
-        return Err(Failure::Syntax(out));
+        return Err(Failure::Syntax(Problem::in_file(
+            file,
+            &why.message,
+            why.at,
+        )));
     }
     let mut out = Vec::new();
     let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| {
@@ -748,9 +910,9 @@ fn print<'a>(
             return Err(Failure::Syntax(syntax_error_at(file.text(), error)));
         }
         Err(FormatError::NestedTooDeeply) => {
-            return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+            return Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY)));
         }
-        Err(FormatError::TooLong) => return Err(Failure::Syntax(TOO_LONG.to_vec())),
+        Err(FormatError::TooLong) => return Err(Failure::Syntax(Problem::new(TOO_LONG))),
         Err(FormatError::InvalidDocument) => return Err(Failure::Bug),
     };
     if how.resolved.omits_final_newline {
@@ -778,7 +940,7 @@ fn print<'a>(
 fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatted, Failure> {
     with_file(how, text, |file, program, refused| {
         if refused.is_nested_too_deeply {
-            return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+            return Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY)));
         }
         // A file whose imports move is parsed again.
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
@@ -816,6 +978,7 @@ pub fn format_for_tests(
         options: FormatOptions {
             format_javascript: Some(format_block),
             parse_javascript: Some(parse_javascript),
+            parse_parts: Some(parse_parts),
             ..options.clone()
         },
         formats_what_has_errors: true,
@@ -836,6 +999,26 @@ pub fn format_for_tests(
     })
 }
 
+/// What `--debug-check` says about the Svelte component `before` if `after` is what it is formatted to: whether both say the
+/// same. For the tests of the check, which the formatter gives nothing to complain about.
+pub fn is_same_svelte_for_tests(before: &[u8], after: &[u8]) -> bool {
+    let options = FormatOptions {
+        parse_javascript: Some(parse_javascript),
+        parse_parts: Some(parse_parts),
+        ..FormatOptions::default()
+    };
+    bun_format::svelte::has_same_content(before, after, &options, None)
+}
+
+/// Why the file at `path`, which has `scope`, is in no language that is known.
+fn has_no_parser(configs: &Configs, scope: &config::Scope, path: Vec<u8>) -> Vec<u8> {
+    let reason: &[u8] = match configs.leaves_svelte_for_part(scope, &path) {
+        true => b"A range or a cursor offset cannot be used with a Svelte file: \"",
+        false => b"No parser could be inferred for file \"",
+    };
+    [reason, &paths::to_native(path)[..], b"\"."].concat()
+}
+
 /// What has become of a file.
 enum Done {
     Unchanged,
@@ -847,8 +1030,8 @@ enum Done {
     PutAside,
     /// For the user. The exit code is 2.
     Failed(Vec<u8>),
-    /// See [`Failure::Unread`]. A warning for the user.
-    Unread(Vec<u8>),
+    /// The same.
+    Refused(Failure),
 }
 
 struct Run<'r> {
@@ -868,12 +1051,20 @@ struct Run<'r> {
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
     // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
     match configs.parser_for(scope, path) {
+        Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
+            Language::Other
+        }
         Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
-            files::language_for_oxfmt(path, configs.formats_svelte(scope, path))
+            files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
         }
         None => match files::language_of(path) {
+            Language::Unknown
+                if path.ends_with(b".svelte") && configs.formats_svelte(scope, Some(path)) =>
+            {
+                Language::Supported
+            }
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
             Language::Supported if configs.is_read_by_plugin(scope, path) => Language::Other,
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
@@ -986,45 +1177,40 @@ impl Run<'_> {
         }
     }
 
-    /// Prettier's `logger.warn`
+    /// A warning looks the same whichever config there is.
     fn warn(&mut self, text: &[u8]) {
-        if self.options.log_level >= LogLevel::Warn && self.is_native {
+        if self.options.log_level >= LogLevel::Warn {
             pretty!(
                 &mut self.out.stderr,
                 self.colors(),
                 "<yellow>warn<r><d>:<r> {}\n",
                 BStr::new(text)
             );
-        } else if self.options.log_level >= LogLevel::Warn {
-            for line in strings::split(text, b"\n") {
-                pretty!(
-                    &mut self.out.stderr,
-                    self.colors(),
-                    "[<yellow>warn<r>] {}\n",
-                    BStr::new(line)
-                );
-            }
         }
     }
 
-    /// Prettier's `logger.error`
+    /// A line of what Prettier's `--check` prints: a file that isn't formatted, or how many there are. It's the result of the
+    /// run and not a warning about it, so it stays as scripts know it.
+    fn list_as_prettier(&mut self, line: &[u8]) {
+        if self.options.log_level >= LogLevel::Warn {
+            pretty!(
+                &mut self.out.stderr,
+                self.colors(),
+                "[<yellow>warn<r>] {}\n",
+                BStr::new(line)
+            );
+        }
+    }
+
+    /// An error looks the same whichever config there is.
     fn error(&mut self, text: &[u8]) {
-        if self.options.log_level >= LogLevel::Error && self.is_native {
+        if self.options.log_level >= LogLevel::Error {
             pretty!(
                 &mut self.out.stderr,
                 self.colors(),
                 "<red>error<r><d>:<r> {}\n",
                 BStr::new(text)
             );
-        } else if self.options.log_level >= LogLevel::Error {
-            for line in strings::split(text, b"\n") {
-                pretty!(
-                    &mut self.out.stderr,
-                    self.colors(),
-                    "[<red>error<r>] {}\n",
-                    BStr::new(line)
-                );
-            }
         }
         self.out.exit_code = 2;
     }
@@ -1047,15 +1233,38 @@ impl Run<'_> {
         out
     }
 
-    fn describe(shown: &[u8], failure: Failure) -> Vec<u8> {
-        match failure {
-            Failure::Syntax(error) | Failure::Unread(error) => [shown, b": ", &error].concat(),
-            Failure::Bug => [
-                shown,
-                b": the formatter failed. It was not formatted. This is a bug in Bun.",
-            ]
-            .concat(),
-            Failure::Changed(what) => [shown, b": ", what.as_bytes(), b"."].concat(),
+    /// Says what is wrong in the file that is shown as `shown`, which has been formatted all the same.
+    fn report_warnings(&mut self, shown: &[u8], warnings: &[Problem]) {
+        if self.options.log_level >= LogLevel::Warn {
+            for problem in warnings {
+                let printed = problem.print(shown, bun_ast::Kind::Warn, self.colors());
+                self.out.stderr.extend_from_slice(&printed);
+            }
+        }
+    }
+
+    /// Says why the file that is shown as `shown` is left as it is. Not in the way of Prettier or oxfmt, whose words for it
+    /// are others anyway.
+    fn report(&mut self, shown: &[u8], failure: &Failure) {
+        let (problem, kind, level) = match failure {
+            Failure::Unread(problem) => (problem, bun_ast::Kind::Warn, LogLevel::Warn),
+            Failure::Syntax(problem) => (problem, bun_ast::Kind::Err, LogLevel::Error),
+            Failure::Bug => {
+                let text =
+                    b"The formatter failed, so this file was not formatted. This is a bug in Bun";
+                (&Problem::new(text), bun_ast::Kind::Err, LogLevel::Error)
+            }
+            Failure::Changed(what) => {
+                let text = [b"Not formatted, because ", what.as_bytes()].concat();
+                (&Problem::new(&text), bun_ast::Kind::Err, LogLevel::Error)
+            }
+        };
+        if self.options.log_level >= level {
+            let printed = problem.print(shown, kind, self.colors());
+            self.out.stderr.extend_from_slice(&printed);
+        }
+        if kind == bun_ast::Kind::Err {
+            self.out.exit_code = 2;
         }
     }
 
@@ -1139,15 +1348,7 @@ impl Run<'_> {
             if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !only_looks {
                 return self.out;
             }
-            let mut out = self.fail_to_start(
-                configs.flavor,
-                &[
-                    b"No parser could be inferred for file \"",
-                    &paths::to_native(path)[..],
-                    b"\".",
-                ]
-                .concat(),
-            );
+            let mut out = self.fail_to_start(configs.flavor, &has_no_parser(configs, &scope, path));
             if forgives {
                 out.exit_code = 0;
             }
@@ -1195,7 +1396,8 @@ impl Run<'_> {
             }
             return self.out;
         };
-        let Some(kind) = Kind::of_parser(&parser) else {
+        let is_formatted = |kind: &Kind| *kind != Kind::Svelte || options.options.svelte.is_on;
+        let Some(kind) = Kind::of_parser(&parser).filter(is_formatted) else {
             if !configs.names_other_plugins(&scope, None) {
                 self.error(&cannot_resolve_parser(&parser));
                 self.out.exit_code = match (self.is_native, forgives) {
@@ -1304,7 +1506,8 @@ impl Run<'_> {
         let names = Session::new();
         // Prettier's `listDifferent` comes first, and that is all.
         let verifies = self.options.debug_check && !only_looks;
-        let format_text = |options: &Resolved| {
+        let mut scratch = Scratches::default();
+        let mut format_text = |options: &Resolved| {
             let mut first_failure = None;
             for path in paths {
                 match format(
@@ -1312,7 +1515,7 @@ impl Run<'_> {
                     &text,
                     options,
                     (&Interner::new_in(&names), &names),
-                    &mut Scratches::default(),
+                    &mut scratch,
                     verifies,
                 ) {
                     Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
@@ -1342,18 +1545,21 @@ impl Run<'_> {
                 return self.fail(&has_classes_without_order(name));
             }
         }
+        if formatted.is_ok() {
+            self.report_warnings(name, &scratch.warnings);
+        }
         match formatted {
             Err(failure @ Failure::Unread(_)) => {
-                self.warn(&Self::describe(name, failure));
+                self.report(name, &failure);
                 if !only_looks {
                     self.out.stdout = text;
                 }
             }
-            Err(Failure::Syntax(error)) if forgives => {
-                self.error(message_of(&error));
+            Err(failure @ Failure::Syntax(_)) if forgives => {
+                self.report(name, &failure);
                 self.out.exit_code = 0;
             }
-            Err(failure) => self.error(&Self::describe(name, failure)),
+            Err(failure) => self.report(name, &failure),
             // Prettier's `listDifferent`: with `--write` it has nothing to say, and nothing is printed either.
             Ok((formatted, _)) if only_looks => {
                 if formatted != text && !self.options.write {
@@ -1521,14 +1727,8 @@ impl Run<'_> {
                 }
                 Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
                 Language::Unknown => {
-                    done[index] = Some(Done::Failed(
-                        [
-                            b"No parser could be inferred for file \"",
-                            &paths::to_native(target.path.clone())[..],
-                            b"\".",
-                        ]
-                        .concat(),
-                    ));
+                    let path = target.path.clone();
+                    done[index] = Some(Done::Failed(has_no_parser(configs, &target.scope, path)));
                 }
             }
         }
@@ -1578,6 +1778,8 @@ impl Run<'_> {
         let atoms = InternerPerThread::new_in(&names);
         let memory = Session::new();
         let mut results = Guarded::new(done);
+        // By the place of a file in `expanded`.
+        let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
         // Tailwind cannot be asked, and that is allowed.
         let leaves_classes = AtomicBool::new(false);
         let once = fs::Written::default();
@@ -1613,10 +1815,7 @@ impl Run<'_> {
                     self.options.debug_check,
                 ) {
                     Ok((formatted, _)) => formatted,
-                    Err(failure @ Failure::Unread(_)) => {
-                        return Ok(Done::Unread(Self::describe(&shown, failure)));
-                    }
-                    Err(failure) => return Err(Self::describe(&shown, failure)),
+                    Err(failure) => return Ok(Done::Refused(failure)),
                 };
                 if options
                     .options
@@ -1625,6 +1824,10 @@ impl Run<'_> {
                     .is_some_and(Tailwind::has_missed)
                 {
                     return Ok(Done::PutAside);
+                }
+                if !scratch.warnings.is_empty() {
+                    let all = std::mem::take(&mut scratch.warnings);
+                    warnings.lock().push((index, all));
                 }
                 if formatted == text {
                     return Ok(Done::Unchanged);
@@ -1691,7 +1894,11 @@ impl Run<'_> {
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
         let (mut written, mut partly_staged) = (Vec::new(), Vec::new());
-        for (it, done) in expanded.iter().zip(std::mem::take(results.get_mut())) {
+        let mut warnings = std::mem::take(warnings.get_mut());
+        sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
+        let mut warnings = warnings.into_iter().peekable();
+        let results = std::mem::take(results.get_mut());
+        for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
             let target = match it {
                 Expanded::Error(error) => {
                     self.error(error);
@@ -1700,6 +1907,9 @@ impl Run<'_> {
                 Expanded::File(target) => target,
             };
             let shown = paths::relative(cwd, &target.path);
+            if let Some((_, all)) = warnings.next_if(|it| it.0 == index) {
+                self.report_warnings(&shown, &all);
+            }
             match done {
                 None => {}
                 Some(Done::Unchanged) => {
@@ -1708,9 +1918,13 @@ impl Run<'_> {
                         self.log(&shown);
                     }
                 }
-                Some(Done::Unread(warning)) => {
+                Some(Done::Refused(failure @ Failure::Unread(_))) => {
                     unchanged += 1;
-                    self.warn(&warning);
+                    self.report(&shown, &failure);
+                }
+                Some(Done::Refused(failure)) => {
+                    failed += 1;
+                    self.report(&shown, &failure);
                 }
                 // Prettier goes no further.
                 Some(Done::Failed(error)) if config::is_invalid_value(&error) => {
@@ -1740,7 +1954,7 @@ impl Run<'_> {
                         (true, true) => self.log_with_time(&shown, took),
                         // oxfmt does not name the files that it writes.
                         (true, false) if !options.list_different => {}
-                        (false, true) if !self.is_native => self.warn(&shown),
+                        (false, true) if !self.is_native => self.list_as_prettier(&shown),
                         // The list of files is what `--check` was asked for, so it goes to stdout.
                         (false, true) if options.log_level >= LogLevel::Warn => {
                             self.out.stdout.extend_from_slice(&shown);
@@ -1799,7 +2013,7 @@ impl Run<'_> {
                     self.log(b"All matched files use Prettier code style!");
                 }
             } else if only_looks {
-                self.warn(
+                self.list_as_prettier(
                     format!(
                         "Code style issues found in {}. Run bun fmt to fix.",
                         count(different)
@@ -1807,7 +2021,9 @@ impl Run<'_> {
                     .as_bytes(),
                 );
             } else {
-                self.warn(format!("Code style issues fixed in {}.", count(different)).as_bytes());
+                self.list_as_prettier(
+                    format!("Code style issues fixed in {}.", count(different)).as_bytes(),
+                );
             }
         }
         if asks_for_different && different > 0 && self.out.exit_code == 0 {
@@ -1974,7 +2190,7 @@ impl Run<'_> {
                 .concat(),
             );
         }
-        if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
+        if !(options.plugins.iter()).all(|it| configs.is_built_in(it)) {
             self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
         }
         if options.config.is_some() && !options.config_lookup {

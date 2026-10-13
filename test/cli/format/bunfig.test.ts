@@ -481,7 +481,9 @@ describe.concurrent("TOML", () => {
 
   test("reports a syntax error for invalid TOML", async () => {
     const result = await format({ "a.toml": "a = \n", "b.toml": input });
-    expect(result.stderr).toContain("a.toml: SyntaxError:");
+    expect(result.stderr).toContain(
+      "1 | a =\n        ^\nerror: Missing value after '='; values must be on the same line\n    at a.toml:1:5\n",
+    );
     expect(result.files).toEqual({ "a.toml": "a = \n", "b.toml": formatted });
     expect(result.exitCode).toBe(2);
   });

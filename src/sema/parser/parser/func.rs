@@ -488,8 +488,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         ambiguity: Ambiguity,
     ) -> Option<Span<ParamId>> {
         let outer_await = self.context & ctx::AWAIT;
-        // oxc reads the parameters of a signature in a type in the context around the type.
+        // oxc reads the parameters of a signature in a type in the context around the type. At the top level an `await` there
+        // is as much a name as one beside the type.
         let cleared = match self.has_context(ctx::TYPE) {
+            true if self.options.dialect.oxc => self.cleared_in_types,
             true => self.cleared_in_types | ctx::TOP_LEVEL,
             false => ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL,
         };

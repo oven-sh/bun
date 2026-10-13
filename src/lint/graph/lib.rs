@@ -52,6 +52,8 @@ pub struct Store {
     session: Session,
     disk: OnceLock<Disk>,
     cwd: Vec<u8>,
+    /// `cwd`, or a directory above it: the project that `cwd` is in.
+    project: Vec<u8>,
 }
 
 impl Store {
@@ -61,6 +63,15 @@ impl Store {
             session: Session::new(),
             disk: OnceLock::new(),
             cwd: from_native(cwd),
+            project: from_native(cwd),
+        }
+    }
+
+    /// `project`: a directory above `cwd`, up to which a tsconfig.json is looked for that nothing names.
+    pub fn in_project(self, project: &[u8]) -> Store {
+        Store {
+            project: from_native(project),
+            ..self
         }
     }
 
@@ -475,7 +486,14 @@ impl<'h> Graph<'h> {
         listed.dedup();
         let is_for_it = |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
         let chosen = match listed.len() {
-            0 => self.config_in(&self.store.cwd).into_iter().collect(),
+            0 => {
+                let above = bun_lint::paths::ancestors(&self.store.cwd);
+                let mut above = above.take_while(|it| it.starts_with(&self.store.project));
+                above
+                    .find_map(|it| self.config_in(it))
+                    .into_iter()
+                    .collect()
+            }
             1 => listed,
             _ => match listed.iter().position(is_for_it) {
                 Some(at) => vec![listed.swap_remove(at)],

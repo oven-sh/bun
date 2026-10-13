@@ -81,6 +81,14 @@ function otherModulesOf(plugin) {
   return modules.length > 1 ? modules : undefined;
 }
 
+// ESLint's `getObjectId`, for a plugin that says what it is called and which version it is.
+function idOf(plugin) {
+  try {
+    const { name, version } = plugin.meta ?? {};
+    if (typeof name === "string" && name && typeof version === "string" && version) return `${name}@${version}`;
+  } catch {}
+}
+
 // By plugin, parser or processor: what `locateDeep` has found.
 const locatedDeep = new Map();
 

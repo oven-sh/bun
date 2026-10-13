@@ -307,7 +307,7 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
             b"$changesLinter" | b"$defaultOptions" | b"$forReact" | b"$globsOfBun" | b"$ignorePatterns"
-            | b"$jsPlugins" | b"$otherPlugins" | b"$parser" | b"$pluginModules" | b"$processor" | b"$severityByKind" | b"$source"
+            | b"$jsPlugins" | b"$otherPlugins" | b"$parser" | b"$pluginIds" | b"$pluginModules" | b"$processor" | b"$severityByKind" | b"$source"
             | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
             b"rules" => (value.as_object().unwrap_or_default().iter())
@@ -672,7 +672,10 @@ impl Reader<'_> {
                 });
             }
         }
-        let modules_of = |prefix: &[u8]| json.get(b"$pluginModules")?.get(prefix);
+        let modules_of = |prefix: &[u8]| {
+            let of = |key: &[u8]| json.get(key)?.get(prefix);
+            (of(b"$pluginModules"), of(b"$pluginIds"))
+        };
         let others = json.get(b"$otherPlugins").and_then(Json::as_object);
         for (prefix, location) in others.unwrap_or_default() {
             self.refuse_second(prefix, location, modules_of(prefix))?;
@@ -955,12 +958,13 @@ impl Reader<'_> {
     /// ESLint's `Cannot redefine plugin`, for a plugin that the configuration has as `prefix` and a [`NamedPlugin`]. `location`:
     /// where the former is, which is `null` for one that no module exports. The configuration can have imported the same
     /// package: then it is one plugin, for ESLint too. `modules`: all the modules that are the former, if there is more than
-    /// the one of `location`: one module can have what another exports.
+    /// the one of `location`: one module can have what another exports. `id`: its name and version, if it says both: a package
+    /// can have one build to import and one to require.
     pub(super) fn refuse_second(
         &self,
         prefix: &[u8],
         location: &Json,
-        modules: Option<&Json>,
+        (modules, id): (Option<&Json>, Option<&Json>),
     ) -> Result<(), ConfigError> {
         // `[]` and `["default"]` are the same for what has no `default`.
         let is_whole = |it: &Json| {
@@ -977,8 +981,11 @@ impl Reader<'_> {
             modules.contains(module)
                 || (location.get(b"module") == Some(module) && is_whole(location))
         };
-        let mut named = self.js_locations.iter().take(self.named);
-        match named.any(|it| *it.0 == *prefix && !is_same(&it.1)) {
+        let id = id.and_then(Json::as_str);
+        let named = self.js_locations.iter().take(self.named);
+        let mut named = named.zip(&self.js_plugins);
+        let has_id = |it: &js_plugin::Plugin| id.is_some() && it.id.as_deref() == id;
+        match named.any(|(it, plugin)| *it.0 == *prefix && !is_same(&it.1) && !has_id(plugin)) {
             true => Err(ConfigError::new(&[
                 b"The plugin \"",
                 prefix,

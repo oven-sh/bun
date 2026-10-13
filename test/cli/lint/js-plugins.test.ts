@@ -1695,7 +1695,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
                 isFirst = false;
                 writeFileSync(new URL(crypto.randomUUID(), engines), "");
                 const end = Date.now() + 20_000;
-                while (readdirSync(engines).length < 3 && Date.now() < end);
+                while (readdirSync(engines).length < 3 && Date.now() < end) Bun.sleepSync(2);
               }
               context.report({ node, message: "seen" });
             } }) } } };`,

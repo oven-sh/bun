@@ -637,6 +637,12 @@ impl Options {
         self
     }
 
+    /// The bunfig.toml above the working directory whose `[fmt]` was found.
+    pub(crate) fn bunfig_above(&self) -> Option<&[u8]> {
+        let is_above = paths::dirname(&self.bunfig) != b"." && !self.is_bunfig_named;
+        (is_above && self.has_section_of_bunfig).then_some(&self.bunfig)
+    }
+
     /// Where the paths and the patterns in bunfig.toml start: where the file is. `--config` can name a file that is kept
     /// anywhere, and then it is the working directory.
     pub(crate) fn start_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {

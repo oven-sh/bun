@@ -127,7 +127,7 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) ->
             let hint: Vec<u8> = match (built_in, named_by) {
                 _ if prefix.is_empty() => Vec::new(),
                 // No package has them.
-                (Some(Plugin::Eslint), _) => Vec::new(),
+                (Some(Plugin::Eslint | Plugin::Oxc), _) => Vec::new(),
                 (Some(plugin), _) if plugin.is_always_there() => Vec::new(),
                 (Some(_), NamedBy::Explain) => Vec::new(),
                 (Some(plugin), _) => {

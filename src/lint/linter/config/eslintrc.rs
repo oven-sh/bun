@@ -1376,7 +1376,7 @@ impl<'c> Legacy<'_, '_, 'c> {
                 continue;
             };
             let location = location.clone();
-            self.reader.refuse_second(id, &location, None)?;
+            self.reader.refuse_second(id, &location, (None, None))?;
             self.reader.js_locations.push((id.clone(), location));
             // All rules of one that is not implemented here are in it, and a comment can switch them on.
             if !is_implemented_here(registry, id) {

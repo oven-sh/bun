@@ -929,7 +929,8 @@ impl Run<'_> {
             &paths::to_native(environment.cwd.clone()),
         )
         .measuring(options.timing);
-        let store = bun_lint_graph::Store::new(&environment.cwd);
+        let store = bun_lint_graph::Store::new(&environment.cwd)
+            .in_project(&options.start_of_bunfig(&environment.cwd));
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
             let of_the_run = (&linter, environment, &js_plugins);
@@ -949,9 +950,11 @@ impl Run<'_> {
         }
         if options.init {
             return match loader.for_directory(&environment.cwd) {
-                Ok(found) => {
-                    crate::init::LINT.add(found.file.as_deref(), &options.bunfig, environment)
-                }
+                Ok(found) => crate::init::LINT.add(
+                    found.file.as_deref(),
+                    options.bunfig_above(),
+                    environment,
+                ),
                 Err(Fatal(error)) => self.fail(&error),
             };
         }

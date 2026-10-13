@@ -1125,6 +1125,7 @@ describe.concurrent("unknown rules", () => {
     ],
     // No package has them.
     ["bun/only-in-the-package", `Unknown rule "bun/only-in-the-package"`],
+    ["oxc/only-in-the-package", `Unknown rule "oxc/only-in-the-package"`],
     ["eslint/only-in-the-package", `Unknown rule "eslint/only-in-the-package"`],
     ["perfectly-fine", `Unknown rule "perfectly-fine"`],
     // Rules that bun lint leaves out on purpose.

@@ -496,10 +496,9 @@ fn rules_of(options: &Options) -> Vec<(Vec<u8>, Json)> {
     for (severity, rule) in filters {
         merge(&mut rules, vec![(rule.clone(), severity_name(*severity))]);
     }
-    let written = options.rules_of_bunfig.len();
     merge(
         &mut rules,
-        options.from_the_working_directory(&options.rule, written, false),
+        options.from_the_working_directory(&options.rule, &options.rules_of_bunfig, false),
     );
     rules
 }
@@ -984,11 +983,8 @@ impl<'l> Loader<'l> {
             }
             if !it.rules.is_empty() {
                 let is_oxlint = shape == Shape::Oxlint;
-                let rules = (self.options).from_the_working_directory(
-                    &it.rules,
-                    it.places.len(),
-                    is_oxlint,
-                );
+                let rules =
+                    (self.options).from_the_working_directory(&it.rules, &it.places, is_oxlint);
                 entries.push((b"rules", Json::Object(rules)));
             }
             match (it.globals.is_empty(), Json::Object(it.globals.clone())) {
@@ -1230,24 +1226,13 @@ impl<'l> Loader<'l> {
                     }
                     None => entries.push((key.to_vec(), Json::Array(add))),
                 };
-            if !options.ignore_pattern.is_empty() && options.ignore {
-                put(
-                    b"ignorePatterns",
-                    options
-                        .ignore_pattern
-                        .iter()
-                        .cloned()
-                        .map(Json::String)
-                        .collect(),
-                );
-            }
             let mut last = vec![(
                 &b"files"[..],
                 Json::Array(vec![Json::String(b"**/*".to_vec())]),
             )];
             if !options.rule.is_empty() {
-                let written = options.rules_of_bunfig.len();
-                let rules = options.from_the_working_directory(&options.rule, written, true);
+                let places = &options.rules_of_bunfig;
+                let rules = options.from_the_working_directory(&options.rule, places, true);
                 last.push((b"rules", Json::Object(rules)));
             }
             if let Some(globals) = globals_of(options) {
@@ -1445,6 +1430,21 @@ impl<'l> Loader<'l> {
             let is_missing = |why: &[u8], name: &[u8]| {
                 strings::contains(why, &[b"Cannot find module '", name, b"'"].concat())
             };
+            // It is there, and what its package.json says that it starts with is not.
+            let is_installed = |package: &[u8]| {
+                let file = [b"node_modules/", package, b"/package.json"].concat();
+                paths::ancestors(directory).any(|it| fs::is_file(&paths::join(it, &file)))
+            };
+            let lacks_entry_point = |package: &[u8]| {
+                let parts: [&[u8]; 5] = [
+                    b"Cannot load the plugin \"",
+                    specifier,
+                    b"\"\n  ",
+                    package,
+                    b" is installed, but its entry point cannot be found\n  Check \"main\" and \"exports\" in its package.json",
+                ];
+                mistake(parts.concat())
+            };
             let cannot_load = |why: Vec<u8>| {
                 let why = why.strip_prefix(b"ResolveMessage: ").unwrap_or(&why);
                 let why = why.strip_suffix(b" imported from .").unwrap_or(why);
@@ -1507,22 +1507,8 @@ impl<'l> Loader<'l> {
                         {
                             continue;
                         }
-                        // It is there, and what its package.json says that it starts with is not.
-                        Err(why)
-                            if is_missing(&why, specifier)
-                                && paths::ancestors(directory).any(|it| {
-                                    let package = [b"node_modules/", &long[..], b"/package.json"];
-                                    fs::is_file(&paths::join(it, &package.concat()))
-                                }) =>
-                        {
-                            let parts: [&[u8]; 5] = [
-                                b"Cannot load the plugin \"",
-                                specifier,
-                                b"\"\n  ",
-                                long,
-                                b" is installed, but its entry point cannot be found\n  Check \"main\" and \"exports\" in its package.json",
-                            ];
-                            return Err(mistake(parts.concat()));
+                        Err(why) if is_missing(&why, specifier) && is_installed(long) => {
+                            return Err(lacks_entry_point(long));
                         }
                         Err(why) if is_missing(&why, specifier) => {
                             let parts: [&[u8]; 7] = [
@@ -1553,7 +1539,12 @@ impl<'l> Loader<'l> {
                     loaded => (loaded, &long[..]),
                 },
             };
-            let plugin = loaded.map_err(cannot_load)?;
+            let plugin = loaded.map_err(|why| {
+                match !is_path && is_missing(&why, found_as) && is_installed(found_as) {
+                    true => lacks_entry_point(found_as),
+                    false => cannot_load(why),
+                }
+            })?;
             let name = &plugin.name[..];
             if !is_name(name) {
                 let parts: [&[u8]; 5] = [
@@ -2675,12 +2666,26 @@ impl<'l> Loader<'l> {
     }
 
     /// Whether a file that is an argument is left out all the same, as by oxlint: `.eslintignore`
-    /// or `--ignore-path` has a pattern for it. `.gitignore` is not asked.
-    pub(crate) fn ignores_named_file(&self, argument: &[u8], loaded: &Loaded) -> bool {
-        loaded.flavor == Flavor::Oxlint
-            && self.ignore_file_name(loaded).is_some_and(|file| {
-                gitignore::has_argument(self.cwd(), &paths::from_native(file), argument)
-            })
+    /// or `--ignore-path` has a pattern for it, or `--ignore-pattern` is one. `.gitignore` is not asked. `path`: where it is.
+    pub(crate) fn ignores_named_file(&self, argument: &[u8], path: &[u8], loaded: &Loaded) -> bool {
+        if loaded.flavor != Flavor::Oxlint {
+            return false;
+        }
+        let is_in_file = self.ignore_file_name(loaded).is_some_and(|file| {
+            gitignore::has_argument(self.cwd(), &paths::from_native(file), argument)
+        });
+        is_in_file
+            || self.options.ignore
+                && gitignore::is_ignored(&self.patterns_of_the_run(), path, false)
+    }
+
+    /// For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.
+    fn patterns_of_the_run(&self) -> gitignore::Chain {
+        let mut chain = gitignore::Chain::default();
+        for (start, patterns) in self.ignore_patterns() {
+            chain = gitignore::with_lines(chain, &start, patterns.iter().map(|it| &it[..]));
+        }
+        chain
     }
 
     /// The ignore files that count in `directory`, where a search starts. `None`: oxlint does not search it, because those of

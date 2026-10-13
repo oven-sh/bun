@@ -151,7 +151,7 @@ ignorePatterns = ["vendor/", "**/*.gen.ts"]
 
 ## Disable a rule in code
 
-`bun lint` uses ESLint's comments, so existing ones keep working. oxlint's `oxlint-disable` comments mean the same.
+`bun lint` uses ESLint's comments, so existing ones keep working. oxlint's `oxlint-disable` comments mean the same, except next to an ESLint config, where they are ordinary comments as in ESLint.
 
 ```ts
 // eslint-disable-next-line no-console -- the CLI prints its version

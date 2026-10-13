@@ -3,13 +3,14 @@
 
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
-use crate::configs::{Flavor, is_category};
+use crate::configs::{Flavor, is_category, plugin_shorthand};
 use crate::paths;
 use bun_clap as clap;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::NativePlugins;
+use bun_lint::linter::{NativePlugins, parse_rule_id};
 use bun_lint::options::Json;
+use bun_lint::rule::Plugin;
 
 const RULES: &[Param] = &[
     clap::param!("-c, --config <path>             Use this config file instead of looking for one"),
@@ -682,6 +683,25 @@ fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<
     Ok(())
 }
 
+/// `value`: a path or a pattern, or a list of them, which are written from `directory`. `always`: also what starts with `**/`.
+fn start_at(directory: &[u8], value: &mut Json, always: bool) {
+    match value {
+        Json::Array(all) => all
+            .iter_mut()
+            .for_each(|it| start_at(directory, it, always)),
+        Json::String(it) if !it.is_empty() => {
+            let (not, written) = match it.strip_prefix(b"!") {
+                Some(rest) => (&b"!"[..], paths::from_native(rest)),
+                None => (&b""[..], paths::from_native(it)),
+            };
+            if !paths::is_absolute(&written) && (always || !written.starts_with(b"**/")) {
+                *it = [not, &paths::join_normalized(directory, &written)].concat();
+            }
+        }
+        _ => {}
+    }
+}
+
 /// optionator's `mergeRepeatedObjects`
 pub(crate) fn merge(into: &mut Vec<(Vec<u8>, Json)>, entries: Vec<(Vec<u8>, Json)>) {
     for (key, value) in entries {
@@ -936,51 +956,48 @@ impl Options {
                 }
             }
         }
+        self.start_settings_at_bunfig();
         self
     }
 
-    /// `rules`, of which bunfig.toml has the first `written`. The rules read the paths and the patterns in their options from the
-    /// working directory. In these they are written from where the file is.
+    /// `rules`, with where bunfig.toml has them: `places`. The rules read the paths and the patterns in their options from the
+    /// working directory. In what the file has they are written from where the file is.
     pub(crate) fn from_the_working_directory(
         &self,
         rules: &[(Vec<u8>, Json)],
-        written: usize,
+        places: &[crate::bunfig::RuleOfBunfig],
         is_oxlint: bool,
     ) -> Vec<(Vec<u8>, Json)> {
         let mut rules = rules.to_vec();
-        let directory = paths::dirname(&self.bunfig);
-        if directory == b"." || self.is_bunfig_named {
+        let Some(directory) = self.way_to_bunfig() else {
             return rules;
-        }
-        fn start_at(directory: &[u8], value: &mut Json) {
-            match value {
-                Json::Array(all) => all.iter_mut().for_each(|it| start_at(directory, it)),
-                Json::String(it) => {
-                    let (not, written) = match it.strip_prefix(b"!") {
-                        Some(rest) => (&b"!"[..], paths::from_native(rest)),
-                        None => (&b""[..], paths::from_native(it)),
-                    };
-                    // `**/a` is the same from everywhere.
-                    if !paths::is_absolute(&written) && !written.starts_with(b"**/") {
-                        *it = [not, &paths::join_normalized(directory, &written)].concat();
-                    }
-                }
-                _ => {}
+        };
+        for (at, (id, setting)) in rules.iter_mut().enumerate() {
+            // `--rule` may have replaced this entry.
+            if places.get(at).is_none_or(|it| it.setting != *setting) {
+                continue;
             }
-        }
-        for (id, setting) in rules.iter_mut().take(written) {
-            let keys: &[&[u8]] = match &id[..] {
-                b"import/no-restricted-paths" => &[b"basePath"],
+            let (prefix, name) = parse_rule_id(id);
+            if !Plugin::spelled(&plugin_shorthand(prefix)).any(|it| it == Plugin::Import) {
+                continue;
+            }
+            // What is held against the whole path of a file is the same from everywhere if it starts with `**/`. With what files
+            // are looked for it is not.
+            let (keys, finds_files): (&[&[u8]], bool) = match name {
+                b"no-restricted-paths" => (&[b"basePath"], false),
                 // oxlint holds them against what is written in the import.
-                b"import/no-unassigned-import" if !is_oxlint => &[b"allow"],
-                b"import/no-unused-modules" => &[b"src", b"ignoreExports"],
-                b"import/no-extraneous-dependencies" => &[
-                    b"packageDir",
-                    b"devDependencies",
-                    b"optionalDependencies",
-                    b"peerDependencies",
-                    b"bundledDependencies",
-                ],
+                b"no-unassigned-import" if !is_oxlint => (&[b"allow"], false),
+                b"no-unused-modules" => (&[b"src", b"ignoreExports"], true),
+                b"no-extraneous-dependencies" => (
+                    &[
+                        b"packageDir",
+                        b"devDependencies",
+                        b"optionalDependencies",
+                        b"peerDependencies",
+                        b"bundledDependencies",
+                    ],
+                    false,
+                ),
                 _ => continue,
             };
             let Json::Array(parts) = setting else {
@@ -989,21 +1006,98 @@ impl Options {
             let Some(Json::Object(options)) = parts.get_mut(1) else {
                 continue;
             };
-            // What its zones start at, which is the working directory if nothing is said.
-            if keys == [b"basePath"] && !options.iter().any(|it| it.0 == b"basePath") {
-                options.push((b"basePath".to_vec(), Json::String(b".".to_vec())));
+            // What is the working directory if nothing is said.
+            let usual = match name {
+                b"no-restricted-paths" => Some((&b"basePath"[..], Json::String(b".".to_vec()))),
+                b"no-unused-modules" => {
+                    Some((&b"src"[..], Json::Array(vec![Json::String(b".".to_vec())])))
+                }
+                _ => None,
+            };
+            if let Some((key, value)) = usual.filter(|it| !options.iter().any(|at| at.0 == it.0)) {
+                options.push((key.to_vec(), value));
             }
             for (_, value) in options.iter_mut().filter(|it| keys.contains(&&it.0[..])) {
-                start_at(directory, value);
+                let written = value.clone();
+                start_at(directory, value, finds_files);
+                // The name of a package is held against them too, as it is written: `dotenv/config`.
+                if let (b"no-unassigned-import", Json::Array(all), Json::Array(written)) =
+                    (name, value, &written)
+                {
+                    let others = written.iter().filter(|it| !all.contains(it));
+                    let others: Vec<Json> = others.cloned().collect();
+                    all.extend(others);
+                }
             }
         }
         rules
     }
 
+    /// The bunfig.toml above the working directory whose `[lint]` was found.
+    pub(crate) fn bunfig_above(&self) -> Option<&[u8]> {
+        (self.way_to_bunfig().is_some() && self.has_section_of_bunfig).then_some(&self.bunfig)
+    }
+
+    /// From the working directory to the directory above it that has bunfig.toml.
+    fn way_to_bunfig(&self) -> Option<&[u8]> {
+        let directory = paths::dirname(&self.bunfig);
+        (directory != b"." && !self.is_bunfig_named).then_some(directory)
+    }
+
+    /// `settings` and `parserOptions`, which only bunfig.toml has so far: see [`Options::from_the_working_directory`].
+    fn start_settings_at_bunfig(&mut self) {
+        let Some(directory) = self.way_to_bunfig().map(<[u8]>::to_vec) else {
+            return;
+        };
+        fn options_of<'a>(json: &'a mut Json, key: &[u8]) -> Option<&'a mut Json> {
+            let Json::Object(entries) = json else {
+                return None;
+            };
+            Some(&mut entries.iter_mut().find(|it| it.0 == key)?.1)
+        }
+        fn start_resolver_at(directory: &[u8], resolver: &mut Json) {
+            if let Json::Array(all) = resolver {
+                return all
+                    .iter_mut()
+                    .for_each(|it| start_resolver_at(directory, it));
+            }
+            for (name, key) in [(&b"typescript"[..], &b"project"[..]), (b"node", b"paths")] {
+                let options = options_of(resolver, name);
+                if let Some(value) = options.and_then(|it| options_of(it, key)) {
+                    start_at(directory, value, true);
+                }
+            }
+        }
+        let of_overrides = self.overrides.iter_mut().map(|it| &mut it.settings);
+        for (key, value) in std::iter::once(&mut self.settings)
+            .chain(of_overrides)
+            .flatten()
+        {
+            if matches!(&key[..], b"import/resolver" | b"import-x/resolver") {
+                start_resolver_at(&directory, value);
+            }
+        }
+        // `project` starts at `tsconfigRootDir`.
+        let has_root = self
+            .parser_options
+            .iter()
+            .any(|it| it.0 == b"tsconfigRootDir");
+        let key: &[u8] = if has_root {
+            b"tsconfigRootDir"
+        } else {
+            b"project"
+        };
+        for (_, value) in self.parser_options.iter_mut().filter(|it| it.0 == key) {
+            start_at(&directory, value, true);
+        }
+    }
+
     /// Whether a rule is named that holds a file against what `bun fmt` prints, and so needs `[fmt]`.
     pub fn names_a_format_rule(&self) -> bool {
         let of_overrides = self.overrides.iter().flat_map(|it| &it.rules);
-        let mut names = self.rule.iter().chain(of_overrides).map(|it| &it.0[..]);
+        let of_filters = self.filters.iter().map(|it| &it.1[..]);
+        let names = self.rule.iter().chain(of_overrides).map(|it| &it.0[..]);
+        let mut names = names.chain(of_filters);
         names.any(|it| matches!(it, b"bun/format" | b"prettier/prettier"))
     }
 

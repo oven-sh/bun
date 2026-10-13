@@ -846,6 +846,128 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     }
   });
 
+  test.each(["import-x/no-restricted-paths", "eslint-plugin-import/no-restricted-paths"])(
+    "so it does in the options of %s",
+    async rule => {
+      const files = {
+        ".oxlintrc.json": `{ "plugins": ["import"] }`,
+        "bunfig.toml": `[lint.rules]\n"${rule}" = ["error", { zones = [{ target = "./src/client", from = "./src/server" }] }]\n`,
+        "src/server/s.js": "export const s = 1;\n",
+        "src/client/c.js": `import { s } from "../server/s.js";\nexport const c = s;\n`,
+      };
+      for (const cwd of [".", "src", "src/client"]) {
+        expect(await lintIn(cwd, files, [])).toMatchObject({ found: ["src/client/c.js:1 import/no-restricted-paths"] });
+      }
+    },
+  );
+
+  test("the name of a package in `allow` of import/no-unassigned-import is no path", async () => {
+    const files = {
+      "bunfig.toml": `[lint.rules]
+"import/no-unassigned-import" = ["error", { allow = ["dotenv/config", "reflect-metadata", "**/*.css", "packages/app/ok/*.js"] }]
+`,
+      "packages/app/a.js": `import "dotenv/config";\nimport "reflect-metadata";\nimport "./x.css";\nimport "./ok/y.js";\nimport "./no/z.js";\n`,
+    };
+    for (const [cwd, args] of [
+      [".", ["packages"]],
+      ["packages/app", []],
+    ] as const) {
+      expect(await lintIn(cwd, files, [...args])).toMatchObject({
+        found: ["packages/app/a.js:5 import/no-unassigned-import"],
+      });
+    }
+  });
+
+  test("import/no-unused-modules looks for files from where bunfig.toml is, with or without `src`", async () => {
+    const files = (options: string) => ({
+      "package.json": `{ "type": "module" }`,
+      ".eslintrc.json": `{ "root": true, "parserOptions": { "sourceType": "module", "ecmaVersion": 2022 } }`,
+      "bunfig.toml": `[lint]\nplugins = ["import"]\n[lint.rules]\n"import/no-unused-modules" = ["error", { unusedExports = true${options} }]\n`,
+      "src/a/lib.js": "export const used = 1;\n",
+      "src/a/dead.js": "export const dead = 1;\n",
+      "src/b/entry.js": "export const entry = 1;\n",
+      "src/b/main.js": `import { used } from "../a/lib.js";\nconsole.log(used);\n`,
+    });
+    for (const options of ["", `, src = ["src"]`, `, src = ["src"], ignoreExports = ["**/entry.js"]`]) {
+      for (const [cwd, args] of [
+        [".", ["src/a"]],
+        ["src/a", []],
+      ] as const) {
+        expect(await lintIn(cwd, files(options), [...args])).toMatchObject({
+          found: ["src/a/dead.js:1 import/no-unused-modules"],
+        });
+      }
+    }
+  });
+
+  test.each([
+    ["no setting", ""],
+    ["typescript = true", `[lint.settings]\n"import/resolver" = { typescript = true }\n`],
+    ["project", `[lint.settings]\n"import/resolver" = { typescript = { project = "./tsconfig.json" } }\n`],
+    ["projects", `[lint.settings]\n"import/resolver" = { typescript = { project = ["tsconfig.json"] } }\n`],
+  ])("an import is resolved as from where bunfig.toml is: %s", async (_, settings) => {
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }`,
+      "bunfig.toml": `[lint.rules]\n"import/no-unresolved" = "error"\n"import/named" = "error"\n${settings}`,
+      "src/lib/y.ts": "export const y = 1;\n",
+      "src/t.ts": `import { y, z } from "@/lib/y";\nexport const t = [y, z];\n`,
+    };
+    for (const cwd of [".", "src", "src/lib"]) {
+      expect(await lintIn(cwd, files, [join(cwd === "." ? "src" : cwd === "src" ? "." : "..", "t.ts")])).toMatchObject({
+        found: ["src/t.ts:1 import/named"],
+      });
+    }
+  });
+
+  test.each([
+    `parserOptions = { project = "./config/tsconfig.lint.json" }`,
+    `parserOptions = { project = ["./config/tsconfig.lint.json"] }`,
+    `parserOptions = { project = "tsconfig.lint.json", tsconfigRootDir = "config" }`,
+  ])("%s starts where bunfig.toml is", async parserOptions => {
+    const files = {
+      "config/tsconfig.lint.json": `{ "compilerOptions": { "strict": false }, "include": ["../src"] }`,
+      "bunfig.toml": `[lint]\n${parserOptions}\nrules = { "@typescript-eslint/no-unnecessary-condition" = "error" }\n`,
+      "src/t.ts": "export function f(a: string) {\n  if (a === null) return 1;\n  return 2;\n}\n",
+    };
+    // Without `strictNullChecks` the rule says so, and nothing else.
+    for (const cwd of [".", "src"]) {
+      expect(await lintIn(cwd, files, [])).toMatchObject({
+        found: ["src/t.ts:0 @typescript-eslint/no-unnecessary-condition"],
+      });
+    }
+  });
+
+  test("ignorePatterns start where bunfig.toml is for an .oxlintrc.json below it too", async () => {
+    const files = {
+      "bunfig.toml": `[lint]\nignorePatterns = ["generated/**"]\n`,
+      "generated/a.js": "debugger;\n",
+      "packages/app/.oxlintrc.json": `{ "rules": { "no-debugger": "error" } }`,
+      "packages/app/generated/b.js": "debugger;\n",
+    };
+    for (const [cwd, args] of [
+      [".", ["."]],
+      ["packages/app", ["../.."]],
+      ["packages/app", []],
+    ] as const) {
+      expect(await lintIn(cwd, files, [...args])).toMatchObject({
+        found: ["packages/app/generated/b.js:1 no-debugger"],
+      });
+    }
+  });
+
+  test("--rule for a rule that bunfig.toml has too starts in the working directory", async () => {
+    const files = {
+      "bunfig.toml": `[lint.rules]\n"import/no-restricted-paths" = ["error", { zones = [{ target = "./other", from = "./another" }] }]\n`,
+      "project/src/server/s.js": "export const s = 1;\n",
+      "project/src/client/c.js": `import { s } from "../server/s.js";\nexport const c = s;\n`,
+    };
+    const rule = `import/no-restricted-paths: [error, { zones: [{ target: ./src/client, from: ./src/server }] }]`;
+    expect(await lintIn("project", files, ["--rule", rule])).toMatchObject({
+      found: ["project/src/client/c.js:1 import/no-restricted-paths"],
+      exitCode: 1,
+    });
+  });
+
   test("a path in the options of --rule starts in the working directory", async () => {
     const files = {
       "bunfig.toml": `[lint]\nquiet = false\n`,
@@ -1053,6 +1175,75 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
       exitCode: 0,
     });
     expect(existsSync(join(String(dir), "packages/app/bunfig.toml"))).toBe(false);
+  });
+
+  test.each(["../../shared.toml", "absolute"])("--init with --config=%s is as it was", async named => {
+    using dir = tempDir("bun-lint", { "shared.toml": `[lint]\nquiet = false\n`, "packages/app/a.js": code });
+    const path = named === "absolute" ? join(String(dir), "shared.toml") : named;
+    await using proc = spawn({
+      cmd: [bunExe(), `--config=${path}`, "lint", "--init"],
+      env,
+      cwd: join(String(dir), "packages/app"),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "Created bunfig.toml with a [lint] section\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// Every row was run on oxlint 1.87.
+describe.concurrent("--ignore-pattern beside an .oxlintrc.json, with another one further down", () => {
+  const config = `{ "rules": { "no-debugger": "error" } }`;
+  const files = {
+    ".oxlintrc.json": config,
+    "sub/.oxlintrc.json": config,
+    ...Object.fromEntries(
+      ["a.js", "gen/b.js", "sub/c.js", "sub/gen/d.js", "sub/deep/e.js"].map(it => [it, "debugger;\n"]),
+    ),
+  };
+  test.each([
+    [".", ["gen/**"], [], "a.js sub/c.js sub/deep/e.js sub/gen/d.js"],
+    [".", ["gen"], [], "a.js sub/c.js sub/deep/e.js"],
+    [".", ["/gen"], [], "a.js sub/c.js sub/deep/e.js sub/gen/d.js"],
+    [".", ["gen/**"], ["sub"], "sub/c.js sub/deep/e.js sub/gen/d.js"],
+    // A file that is named.
+    [".", ["a.js"], ["a.js"], ""],
+    [".", ["gen/**"], ["gen/b.js", "sub/gen/d.js"], "sub/gen/d.js"],
+    [".", ["*.js"], ["sub/c.js"], ""],
+    [".", ["c.js"], ["sub/c.js"], ""],
+    [".", ["sub/c.js"], ["sub/c.js"], ""],
+    [".", ["/sub/c.js"], ["sub/c.js"], ""],
+    [".", ["sub/**"], ["sub/c.js", "sub/deep/e.js"], ""],
+    // The directory that it is in is not asked about.
+    [".", ["gen"], ["gen/b.js"], "gen/b.js"],
+    [".", ["sub"], ["sub/deep/e.js"], "sub/deep/e.js"],
+    ["sub", ["gen"], ["gen/d.js", "c.js"], "c.js gen/d.js"],
+    ["sub", ["deep/**"], ["deep/e.js"], ""],
+    ["sub", ["c.js"], ["c.js", "gen/d.js"], "gen/d.js"],
+    ["sub", ["sub/c.js"], ["c.js"], "c.js"],
+  ])("in %s, %j with %j", async (cwd, patterns, args, linted) => {
+    using dir = tempDir("bun-lint", files);
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "unix", ...patterns.flatMap(it => ["--ignore-pattern", it]), ...args],
+      env,
+      cwd: join(String(dir), cwd),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = (await proc.stdout.text()).replaceAll("\\", "/");
+    expect(
+      [...stdout.matchAll(/^(\S+?):1:1: /gm)]
+        .map(it => it[1])
+        .sort()
+        .join(" "),
+    ).toBe(linted);
   });
 });
 
@@ -1649,6 +1840,11 @@ module.exports = {
     ],
     // It is installed.
     [
+      `plugins = ["eslint-plugin-no-main"]`,
+      `Cannot load the plugin "eslint-plugin-no-main"\n  eslint-plugin-no-main is installed, but its entry point cannot be found\n`,
+      "2:12",
+    ],
+    [
       `plugins = ["no-main"]`,
       `Cannot load the plugin "no-main"\n  eslint-plugin-no-main is installed, but its entry point cannot be found\n  Check "main" and "exports" in its package.json\n`,
       "2:12",
@@ -2105,6 +2301,34 @@ module.exports = {
       expect(stderr).not.toContain("error:");
       expect(stdout).toContain(":2:14: No foo. [Error/ws/no-foo]");
       expect(exitCode).toBe(1);
+    });
+
+    test("the build to import and the build to require of one package are one plugin", async () => {
+      const build = (how: string, said: string) =>
+        `${how} { meta: { name: "eslint-plugin-dual", version: "1.2.3" }, rules: { r: { create: context => ({
+          Program(node) { context.report({ node, message: "${said}" }); } }) } } };\n`;
+      const files = {
+        ...project,
+        "node_modules/eslint-plugin-dual/package.json": `{ "name": "eslint-plugin-dual", "version": "1.2.3",
+          "exports": { ".": { "import": "./index.mjs", "require": "./index.cjs" } } }`,
+        "node_modules/eslint-plugin-dual/index.mjs": build("export default", "imported"),
+        "node_modules/eslint-plugin-dual/index.cjs": build("module.exports =", "required"),
+        "eslint.config.js": `
+          import dual from "eslint-plugin-dual";
+          export default [{ plugins: { dual }, rules: { "dual/r": "error" } }];\n`,
+      };
+      const { stdout, stderr, exitCode } = await lint({ ...files, ...bunfig(`["dual"]`, {}) }, ["-f", "unix", "src"]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("[Error/dual/r]");
+      expect(exitCode).toBe(1);
+      // Another version is another plugin.
+      const other = {
+        ...files,
+        "node_modules/eslint-plugin-dual/index.cjs": build("module.exports =", "required").replace("1.2.3", "1.2.4"),
+      };
+      expect((await lint({ ...other, ...bunfig(`["dual"]`, {}) }, ["src"])).stderr).toContain(
+        `The plugin "dual" is loaded twice`,
+      );
     });
 
     test("two plugins of one package under one name are two plugins", async () => {

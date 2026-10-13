@@ -942,6 +942,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["at the end of another name", '<script data-lang="ts"></script>\n', '<script data-lang="ts"></script>\n\n'],
       // In double quotes it would not say so any more.
       ["with a quote behind it", "<script lang=ts'></script>\n", "<script lang=ts'></script>\n\n"],
+      // Not so another value.
+      [
+        "next to a value with a quote in it",
+        "<script lang=ts b=c'd></script>\n",
+        `<script lang="ts" b="c'd"></script>\n\n`,
+      ],
     ])("%s", async (_, scripts, formatted) => {
       expect(await format({ "a.svelte": scripts + before }, ["a.svelte"])).toMatchObject({
         stderr: "",
@@ -999,6 +1005,47 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         ],
         exitCode: 0,
       });
+    });
+  });
+
+  // No expression ends with `as { b = c }`. Svelte hides what is from an `as` on, from the last to the first, until there is one.
+  describe("where the expression of an each block ends", () => {
+    const rows = [
+      ["{#each a  as { b = c }}d{/each}", "{#each a as { b = c }}d{/each}"],
+      ["{#each a  as [b = c]}d{/each}", "{#each a as [b = c]}d{/each}"],
+      ["{#each a  as { b = c }, i (b)}d{/each}", "{#each a as { b = c }, i (b)}d{/each}"],
+      ["{#each a.b(c)  as { b: { c = d } }}e{/each}", "{#each a.b(c) as { b: { c = d } }}e{/each}"],
+      ["{#each a /* as */  as { b = c }}d{/each}", "{#each a /* as */ as { b = c }}d{/each}"],
+      ["{#each assets  as { as = has }}d{/each}", "{#each assets as { as = has }}d{/each}"],
+      ["{#each a ? as : b  as { c = d }}e{/each}", "{#each a ? as : b as { c = d }}e{/each}"],
+      ["{#each [as, b]  as { c = d }}e{/each}", "{#each [as, b] as { c = d }}e{/each}"],
+      ['{#each " as "  as { c = d }}e{/each}', '{#each " as " as { c = d }}e{/each}'],
+    ];
+    const typed = [
+      ["{#each a  as b as c}d{/each}", "{#each a as b as c}d{/each}"],
+      ["{#each a  as b as { c = d }}e{/each}", "{#each a as b as { c = d }}e{/each}"],
+      ["{#each (a as b)  as { c = d }}e{/each}", "{#each a as b as { c = d }}e{/each}"],
+      ["{#each f(a as b)  as { c = d }: T}e{/each}", "{#each f(a as b) as { c = d }: T}e{/each}"],
+    ];
+
+    test.each([
+      ["JavaScript", "", rows],
+      ["TypeScript", '<script lang="ts"></script>\n\n', [...rows, ...typed]],
+    ])("%s", async (_, script, rows) => {
+      const names = rows.map((_, index) => `${index}.svelte`);
+      const files = Object.fromEntries(rows.map((it, index) => [names[index], `${script}${it[0]}\n`]));
+      expect(await format(files, names)).toMatchObject({
+        stderr: "",
+        files: rows.map(it => `${script}${it[1]}\n`),
+        exitCode: 0,
+      });
+    });
+
+    test("nowhere, if it is in something that is not closed", async () => {
+      const text = "{#each (a as b as c}d{/each}\n";
+      const result = await format({ "a.svelte": text }, ["a.svelte"]);
+      expect(result.stderr).toMatch(refusalOf("a.svelte"));
+      expect(result).toMatchObject({ files: [text], exitCode: 2 });
     });
   });
 
@@ -1149,6 +1196,16 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       expect(different).toMatchObject({ stdout: "a.svelte\n", stderr: said + summary, files: [before], exitCode: 1 });
     });
 
+    test("a line is shown with the first warning that is about it", async () => {
+      const text = "<div><script>let = </script><style>a{</style></div>\n<div><script>let = </script></div>\n";
+      const result = await format({ "a.svelte": text }, ["a.svelte"], ["--check"]);
+      expect(result.stderr).toStartWith(
+        warning("Expression expected.", [1, 19, "<div><script>let = </script><style>a{</style></div>"]) +
+          "warn: Unclosed block\n   at a.svelte:1:36\n\n" +
+          warning("Expression expected.", [2, 19, "<div><script>let = </script></div>"]),
+      );
+    });
+
     test("--log-level=error does not", async () => {
       const result = await format({ "a.svelte": before }, ["a.svelte"], ["--log-level=error"]);
       expect(result).toMatchObject({ stderr: "", files: [after], exitCode: 0 });
@@ -1286,9 +1343,29 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect(result.exitCode).toBe(2);
   });
 
+  // Where something takes time in proportion to the square of this, it takes seconds.
+  const n = isDebug || isASAN ? 400 : 24_000;
+
+  /** Formats `shapes`, of which `refused` are refused, in little time. */
+  async function expectToTakeLittleTime(shapes: Record<string, string>, refused: string[]) {
+    using dir = tempDir("bun-format-svelte", {
+      ".oxfmtrc.json": oxfmtrc,
+      ...Object.fromEntries(Object.entries(shapes).map(([name, text]) => [`${name}.svelte`, text])),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", "--check", "--threads=1", "."],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(Array.from(stderr.matchAll(/^    at ([\w-]+)\.svelte\b/gm), it => it[1]).sort()).toEqual(refused);
+    expect(exitCode).toBe(2);
+    expect(Number(proc.resourceUsage()!.cpuTime.user) / 1e6).toBeLessThan(3);
+  }
+
   test("texts that are made to take long do not", async () => {
-    // Where something takes time in proportion to the square of this, it takes seconds.
-    const n = isDebug || isASAN ? 400 : 24_000;
     const depth = 100;
     const numbered = (text: (index: number) => string) =>
       Array.from({ length: n }, (_, index) => text(index)).join(" ");
@@ -1296,11 +1373,6 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "paragraphs": repeated("<p>some words here</p>\n", n),
       "comments-not-closed": repeated("<!-- ", n),
       "scripts-not-closed": repeated("<script>", n),
-      "starts-of-scripts": repeated("<script ", 8 * n),
-      "starts-of-scripts-with-an-attribute": repeated("<script a=", 8 * n),
-      "starts-of-scripts-with-a-quote": repeated('<script a="', 8 * n),
-      "scripts-with-a-value-that-ends-a-tag": repeated('<script a=">" ', 8 * n),
-      "languages-behind-the-last-tag": `<script a=">" ${repeated("lang=b ", 8 * n)}`,
       "styles-with-a-quote-not-closed": repeated('<style a="', n),
       "attributes-of-a-script": `<script ${repeated('a="b" ', n)}x`,
       "attributes-of-a-script-next-to-quotes": `<script ${repeated('a="b"c ', n)}>`,
@@ -1346,20 +1418,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "style-sheets": repeated("<style></style>", n),
       "scripts-in-an-element": `<div>${repeated("<script>a</script>", n / 10)}</div>`,
     };
-    using dir = tempDir("bun-format-svelte", {
-      ".oxfmtrc.json": oxfmtrc,
-      ...Object.fromEntries(Object.entries(shapes).map(([name, text]) => [`${name}.svelte`, text])),
-    });
-    await using proc = spawn({
-      cmd: [bunExe(), "fmt", "--check", "--threads=1", "."],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
-    const refused = Array.from(stderr.matchAll(/^    at ([\w-]+)\.svelte\b/gm), it => it[1]);
-    expect(refused.sort()).toEqual([
+    await expectToTakeLittleTime(shapes, [
       "attributes-of-a-script",
       "attributes-of-a-script-next-to-quotes",
       "attributes-of-the-options",
@@ -1369,24 +1428,55 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "elements-in-each-other",
       "end-tags",
       "ends-of-scripts",
-      "languages-behind-the-last-tag",
       "less-than",
       "paragraphs-not-closed",
       "parentheses-in-a-tag",
       "scripts-not-closed",
-      "scripts-with-a-value-that-ends-a-tag",
       "starts-of-blocks",
-      "starts-of-scripts",
-      "starts-of-scripts-with-a-quote",
-      "starts-of-scripts-with-an-attribute",
       "style-sheets",
       "styles-with-a-quote-not-closed",
       "textareas-not-closed",
       "the-mark-of-the-plugin-in-elements",
       "the-same-attribute",
     ]);
-    expect(exitCode).toBe(2);
-    expect(Number(proc.resourceUsage()!.cpuTime.user) / 1e6).toBeLessThan(3);
+  });
+
+  test("nothing is looked for, or parsed, again and again", async () => {
+    const shapes: Record<string, string> = {
+      "starts-of-scripts": repeated("<script ", 8 * n),
+      "starts-of-scripts-with-an-attribute": repeated("<script a=", 8 * n),
+      "starts-of-scripts-with-a-quote": repeated('<script a="', 8 * n),
+      "scripts-with-a-value-that-ends-a-tag": repeated('<script a=">" ', 8 * n),
+      "languages-behind-the-last-tag": `<script a=">" ${repeated("lang=b ", 8 * n)}`,
+      "starts-of-scripts-before-one-end": `${repeated("<script ", 8 * n)}>`,
+      "ends-of-a-textarea-not-closed": `<textarea>${repeated("</textarea ", 8 * n)}`,
+      "titles-in-blocks": repeated("{#if a}", n) + repeated("<title>x</title>", n),
+      "slots-in-elements": repeated("<div>", n) + repeated("<slot></slot>", n),
+      // Every `as` is where Svelte tries to end the expression.
+      "each-in-a-parenthesis-not-closed": `{#each (a${repeated(" as a", n)}}x{/each}`,
+      "each-behind-operators": `{#each x${repeated(" + as", n)} + (}x{/each}`,
+      "each-in-parentheses": `{#each f${repeated("(as)", n)}(}x{/each}`,
+      "each-with-many-assertions": `<script lang="ts"></script>{#each a${repeated(" as a", n)} as { b = 1 }}x{/each}`,
+      "each-with-defaults": repeated("{#each a as { b = 1 }}x{/each}\n", n / 4),
+      // There is a warning about each.
+      "scripts-with-errors": `<div>${repeated("<script>let = </script>\n", n / 4)}</div>`,
+      "scripts-with-errors-and-returns": `<div>${repeated("<script>let = </script>\r\n", n / 4)}</div>`,
+      "scripts-with-errors-on-one-line": `<div>${repeated("<script>let = </script>", n / 4)}</div>`,
+    };
+    await expectToTakeLittleTime(shapes, [
+      "each-behind-operators",
+      "each-in-a-parenthesis-not-closed",
+      "each-in-parentheses",
+      "ends-of-a-textarea-not-closed",
+      "languages-behind-the-last-tag",
+      "scripts-with-a-value-that-ends-a-tag",
+      "slots-in-elements",
+      "starts-of-scripts",
+      "starts-of-scripts-before-one-end",
+      "starts-of-scripts-with-a-quote",
+      "starts-of-scripts-with-an-attribute",
+      "titles-in-blocks",
+    ]);
   });
 
   test("blocks of Svelte in Markdown are formatted where components are", async () => {

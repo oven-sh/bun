@@ -63,18 +63,18 @@ impl<'p> Parsers<'p> {
         })
     }
 
-    /// The tree of `text`.
-    fn tree_of<'a>(self, text: &'a [u8]) -> Result<ast::Tree<'a>, SyntaxError> {
-        let mut tree = Err(SyntaxError(Message::UnexpectedToken, 0));
+    /// The tree of `text`. `Err(None)`: an expression in it is nested too deeply.
+    fn tree_of<'a>(self, text: &'a [u8]) -> Result<ast::Tree<'a>, Option<SyntaxError>> {
+        let mut tree = Err(None);
         (self.parts)(text, &mut |parse_part| {
-            tree = parser::parse(
-                text,
-                &mut js::FromParser {
-                    parse: self.program,
-                    parse_part,
-                    is_typescript: false,
-                },
-            );
+            let mut js = js::FromParser {
+                parse: self.program,
+                parse_part,
+                is_typescript: false,
+                is_nested_too_deeply: false,
+            };
+            let parsed = parser::parse(text, &mut js);
+            tree = parsed.map_err(|error| (!js.is_nested_too_deeply).then_some(error));
         });
         tree
     }
@@ -106,7 +106,8 @@ pub fn format(
         SyntaxError(message, before + at).before_normalizing_end_of_line(without_mark)
     };
     let refuse = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
-    let mut tree = parsers.tree_of(text).map_err(refuse)?;
+    let mut tree = (parsers.tree_of(text))
+        .map_err(|error| error.map_or(FormatError::NestedTooDeeply, refuse))?;
     let host = FormatOptions {
         line_ending: options.line_ending.resolve(original),
         filepath: Some(options.filepath.clone().unwrap_or_else(|| path.into())),
@@ -170,14 +171,15 @@ pub fn format(
     crate::ir::run::print(root, text, &host, &mut scratch.document, out)
 }
 
-/// Without the white space of HTML at its start. The plugin takes all that is white space to JavaScript off both ends, a
-/// no-break space too, which is text.
+/// Without the white space of HTML at its start. The plugin takes off all that is white space to JavaScript, a no-break
+/// space too, which is text to Svelte.
 fn trimmed_start(text: &[u8]) -> &[u8] {
     text.trim_ascii_start()
 }
 
+/// At the end a no-break space is nothing to Svelte, which has `trimEnd()`. It would be text before a `<style>`.
 fn trimmed(text: &[u8]) -> &[u8] {
-    trimmed_start(text).trim_ascii_end()
+    bun_core::strings::trim_js_whitespace_end(trimmed_start(text))
 }
 
 fn prepared(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
@@ -202,7 +204,9 @@ pub fn has_same_content(
         true => [b"<!-- @format -->\n", &before[..]].concat(),
         false => before.into_owned(),
     };
-    let is_kept_in = |after: &[u8]| verify::has_same_content(&before, &prepared(after), parsers);
+    let sensitivity = options.html_whitespace_sensitivity;
+    let is_kept_in =
+        |after: &[u8]| verify::has_same_content(&before, &prepared(after), parsers, sensitivity);
     if is_kept_in(after) {
         return true;
     }

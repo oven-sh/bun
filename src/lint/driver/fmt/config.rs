@@ -1712,6 +1712,13 @@ impl<'c> Configs<'c> {
         }
     }
 
+    /// Whether the file at `path`, which has `scope`, is a component that would be formatted here but for a range or a cursor.
+    pub(crate) fn leaves_svelte_for_part(&self, scope: &Scope, path: &[u8]) -> bool {
+        path.ends_with(b".svelte")
+            && !self.is_oxfmt_for(scope)
+            && self.is_about_part(scope, Some(path))
+    }
+
     /// Whether the config or `--plugin` names `prettier-plugin-svelte` for the file at `path`, which has `scope`.
     fn names_plugin_for_svelte(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
         (self.endings_of_plugins(scope, path)).any(|it| it == b".svelte")

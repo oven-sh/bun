@@ -144,6 +144,13 @@ impl Reader {
         letters
     }
 
+    /// Text that has to be where it is, byte for byte.
+    #[optimize(size)]
+    pub(crate) fn exact(&mut self, text: &[u8]) {
+        self.structure.write(text);
+        self.structure.write_u8(0);
+    }
+
     #[optimize(size)]
     pub(crate) fn name(&mut self, namespace: &[u8], name: &[u8]) {
         for &byte in namespace.iter().chain(b":").chain(name) {

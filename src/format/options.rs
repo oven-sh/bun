@@ -150,8 +150,16 @@ pub struct Part {
 /// an alias.
 pub type ThenWithEnd<'t> = &'t mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>, u32);
 
-/// Parses a part of the text that it has been made for. `Err`: where the first error is in that text.
-pub type ParsePart<'p> = &'p mut dyn FnMut(Part, ThenWithEnd<'_>) -> Result<(), u32>;
+/// Why a [`Part`] cannot be parsed.
+#[derive(Debug, Copy, Clone)]
+pub struct PartError {
+    /// Where the first error is in the text.
+    pub at: u32,
+    pub is_nested_too_deeply: bool,
+}
+
+/// Parses a part of the text that it has been made for.
+pub type ParsePart<'p> = &'p mut dyn FnMut(Part, ThenWithEnd<'_>) -> Result<(), PartError>;
 
 /// Calls what it is given with what parses the parts of a text.
 pub type ParseParts = fn(&[u8], &mut dyn FnMut(ParsePart<'_>));

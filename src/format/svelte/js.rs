@@ -13,6 +13,8 @@ pub(crate) struct FromParser<'p> {
     /// Parses what the component has at some place.
     pub(crate) parse_part: ParsePart<'p>,
     pub(crate) is_typescript: bool,
+    /// The stack has ended in a part.
+    pub(crate) is_nested_too_deeply: bool,
 }
 
 fn kind_of(e: Expr<'_>) -> ExpressionKind {
@@ -185,7 +187,7 @@ impl FromParser<'_> {
                 is_typescript,
             };
             let (mut result, mut stops_at) = (Err(at), None);
-            (self.parse_part)(part, &mut |file, end| {
+            let parsed = (self.parse_part)(part, &mut |file, end| {
                 let mut early = Early {
                     is_typescript,
                     depth: 0,
@@ -199,8 +201,11 @@ impl FromParser<'_> {
                     (None, None) => Err(at),
                     (None, Some(statement)) => read(file, statement, at as u32 + end).ok_or(at),
                 };
-            })
-            .map_err(|error| error as usize)?;
+            });
+            if let Err(error) = parsed {
+                self.is_nested_too_deeply |= error.is_nested_too_deeply;
+                return Err(error.at as usize);
+            }
             // Once more, with nothing to see of it.
             match stops_at {
                 Some(it) => until = at + it as usize,

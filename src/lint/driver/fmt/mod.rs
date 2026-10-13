@@ -19,7 +19,7 @@ use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
-use bun_format::options::{Code, Goal, ParsePart, Then};
+use bun_format::options::{Code, Goal, ParsePart, PartError, Then};
 use bun_format::pragma::BeforeParsing;
 use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
@@ -516,22 +516,37 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
             until: part.until,
         };
         let is_javascript = language.parser != Parser::TypeScript;
-        parts.parse(
+        let is_bound = parts.parse(
             *dialect,
             is_javascript,
             part,
             |summary, atoms, code, end| {
                 let mut recycled = Recycled::of_this_thread();
-                if let Summary::InPlace(hir) = summary
-                    && let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled)
-                {
-                    then(
-                        &File::new(path, &*hir, bound, atoms, language, None).with_text(code),
-                        end,
-                    );
-                }
+                let Summary::InPlace(hir) = summary else {
+                    return false;
+                };
+                let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled) else {
+                    return false;
+                };
+                then(
+                    &File::new(path, &*hir, bound, atoms, language, None).with_text(code),
+                    end,
+                );
+                true
             },
-        )
+        );
+        match is_bound {
+            Ok(true) => Ok(()),
+            // The stack has ended there.
+            Ok(false) => Err(PartError {
+                at: part.from,
+                is_nested_too_deeply: true,
+            }),
+            Err(error) => Err(PartError {
+                at: error.at,
+                is_nested_too_deeply: error.is_too_deep,
+            }),
+        }
     });
 }
 
@@ -941,6 +956,26 @@ pub fn format_for_tests(
     })
 }
 
+/// What `--debug-check` says about the Svelte component `before` if `after` is what it is formatted to: whether both say the
+/// same. For the tests of the check, which the formatter gives nothing to complain about.
+pub fn is_same_svelte_for_tests(before: &[u8], after: &[u8]) -> bool {
+    let options = FormatOptions {
+        parse_javascript: Some(parse_javascript),
+        parse_parts: Some(parse_parts),
+        ..FormatOptions::default()
+    };
+    bun_format::svelte::has_same_content(before, after, &options, None)
+}
+
+/// Why the file at `path`, which has `scope`, is in no language that is known.
+fn has_no_parser(configs: &Configs, scope: &config::Scope, path: Vec<u8>) -> Vec<u8> {
+    let reason: &[u8] = match configs.leaves_svelte_for_part(scope, &path) {
+        true => b"A range or a cursor offset cannot be used with a Svelte file: \"",
+        false => b"No parser could be inferred for file \"",
+    };
+    [reason, &paths::to_native(path)[..], b"\"."].concat()
+}
+
 /// What has become of a file.
 enum Done {
     Unchanged,
@@ -1270,15 +1305,7 @@ impl Run<'_> {
             if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !only_looks {
                 return self.out;
             }
-            let mut out = self.fail_to_start(
-                configs.flavor,
-                &[
-                    b"No parser could be inferred for file \"",
-                    &paths::to_native(path)[..],
-                    b"\".",
-                ]
-                .concat(),
-            );
+            let mut out = self.fail_to_start(configs.flavor, &has_no_parser(configs, &scope, path));
             if forgives {
                 out.exit_code = 0;
             }
@@ -1657,14 +1684,8 @@ impl Run<'_> {
                 }
                 Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
                 Language::Unknown => {
-                    done[index] = Some(Done::Failed(
-                        [
-                            b"No parser could be inferred for file \"",
-                            &paths::to_native(target.path.clone())[..],
-                            b"\".",
-                        ]
-                        .concat(),
-                    ));
+                    let path = target.path.clone();
+                    done[index] = Some(Done::Failed(has_no_parser(configs, &target.scope, path)));
                 }
             }
         }

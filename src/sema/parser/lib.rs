@@ -26,7 +26,7 @@ pub use parser::keyword_suggestion;
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
 pub use summarize::{
-    COUNTS, Counts, Parts, Summary, ThreadCaches, summarize, summarize_as, summarize_in,
+    COUNTS, Counts, PartError, Parts, Summary, ThreadCaches, summarize, summarize_as, summarize_in,
     with_summary, with_summary_in_place,
 };
 

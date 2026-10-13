@@ -1146,7 +1146,8 @@ impl<'a> Parser<'a, '_> {
         }
         // The name is the expression: `<p class:isRed />`.
         if matches!(kind, DirectiveKind::Bind | DirectiveKind::Class) && expression.is_none() {
-            let name = Span::new(start + colon + 1, end);
+            let name_start = start + colon + 1;
+            let name = Span::new(name_start, name_start + directive_name.len());
             expression = Some(Expression::new(name, ExpressionKind::Identifier));
         }
         let kind = Kind::Directive {
@@ -1472,6 +1473,9 @@ impl<'a> Parser<'a, '_> {
                         at -= 1;
                     }
                     self.index = at;
+                    // With the comments before the `as`.
+                    let behind = self.text.get(end as usize..at).unwrap_or_default();
+                    expression.outer.end = end + behind.trim_ascii_end().len() as u32;
                 }
             }
             let mut context = None;
@@ -2030,8 +2034,7 @@ fn is_typescript(text: &[u8]) -> bool {
 
 /// `parse(text, { modern: true })`
 pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
-    // Svelte has `trimEnd()`, which takes a no-break space too.
-    let text = text.trim_ascii_end();
+    let text = strings::trim_js_whitespace_end(text);
     js.start(is_typescript(text));
     let mut tree = Tree::default();
     // The first, which is what `tree.fragment` says.

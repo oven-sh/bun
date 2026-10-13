@@ -511,6 +511,23 @@ pub fn with_summary_in_place<'s, R>(
 }
 
 /// Parses the parts of one text: see [`Part`]. What the scanner wants to know of the whole text is found out once.
+/// Why a part cannot be parsed.
+#[derive(Debug, Copy, Clone)]
+pub struct PartError {
+    /// Where the first error is in the whole text.
+    pub at: u32,
+    pub is_too_deep: bool,
+}
+
+impl PartError {
+    fn of(refused: &crate::Refused, at: u32) -> PartError {
+        PartError {
+            at,
+            is_too_deep: refused.why == Refusal::TooDeep,
+        }
+    }
+}
+
 pub struct Parts<'t> {
     text: &'t [u8],
     scratch: Option<Box<Scratch>>,
@@ -532,15 +549,15 @@ impl<'t> Parts<'t> {
 
     /// Calls `then` with the file, which has one statement, the interner of its atoms, the text of the file, and where the
     /// last token of `part` ends in that. The text starts where the part starts and ends with the token behind the part: who
-    /// looks for something in the text of a file does not look through all that is around the part. `Err`: where the first
-    /// error is in the whole text. There is no JSX, `await` is a keyword, and nothing is recovered from.
+    /// looks for something in the text of a file does not look through all that is around the part. There is no JSX, `await`
+    /// is a keyword, and nothing is recovered from.
     pub fn parse<'s, R>(
         &mut self,
         dialect: Dialect,
         is_javascript: bool,
         part: Part,
         then: impl FnOnce(Summary<'_, 's>, &dyn Intern, &[u8], u32) -> R,
-    ) -> Result<R, u32> {
+    ) -> Result<R, PartError> {
         let (text, scratch) = (self.text, self.scratch.get_or_insert_default());
         let options = |from: u32, until: u32| Options {
             is_javascript,
@@ -556,11 +573,11 @@ impl<'t> Parts<'t> {
         let whole = options(part.from, part.until);
         let found = crate::parse_with_own_atoms(text, whole, scratch).or_else(|refused| {
             if !refused.why.is_of_scanner() {
-                return Err(refused.at);
+                return Err(PartError::of(&refused, refused.at));
             }
             // What follows a part need not be a token: then the text ends before it.
             crate::parse_with_own_atoms(text, options(part.from, refused.after), scratch)
-                .or(Err(refused.after))
+                .map_err(|again| PartError::of(&again, refused.after))
         })?;
         let until = found.end.1;
         scratch.recycle(found.file);
@@ -569,7 +586,8 @@ impl<'t> Parts<'t> {
         scratch.stops.forget();
         let parsed = crate::parse_with_own_atoms(code, options(0, code.len() as u32), scratch);
         core::mem::swap(&mut scratch.stops, &mut self.stops_of_part);
-        let mut parsed = parsed.map_err(|refused| part.from + refused.at)?;
+        let mut parsed =
+            parsed.map_err(|refused| PartError::of(&refused, part.from + refused.at))?;
         let result = then(
             Summary::InPlace(&mut parsed.file),
             &scratch.atoms(code),

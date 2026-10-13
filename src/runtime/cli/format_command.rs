@@ -32,6 +32,16 @@ impl FormatCommand {
 
     /// `args`: what follows `format`.
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
+        // `--debug-check-svelte <before> <after>`, for `test/cli/format/svelte/svelte.test.ts`.
+        if HAS_TEST_RUNNER
+            && let [flag, before, after] = args
+            && flag.as_bytes() == b"--debug-check-svelte"
+        {
+            let read = |path: &ZStr| bun_format_conformance::read_file(path.as_bytes());
+            let is_same = matches!((read(before), read(after)), (Some(before), Some(after))
+                if bun_lint_driver::fmt::is_same_svelte_for_tests(&before, &after));
+            Global::exit(u32::from(!is_same));
+        }
         if HAS_TEST_RUNNER
             && let [first, rest @ ..] = args
             && let Some(run) = test_runner(first.as_bytes())

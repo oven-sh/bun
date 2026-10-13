@@ -8,24 +8,49 @@
 //! - All that is text has the same letters as often: text, comments, scripts, style sheets, the values of attributes,
 //!   expressions. An expression counts with the comments around it, which `prettier-plugin-svelte` loses: `{a /* b */}`.
 //! - There are as many comments: in the markup, between attributes, and around expressions.
+//! - The text of the markup has the same words in the same order, with white space between the same of them, and between
+//!   them and what is next to them. White space is nothing next to a block element, and at the ends of the markup, of a
+//!   block element and of a component. In `<pre>` and `<textarea>` every byte counts.
 
 use super::Parsers;
-use super::ast::{Expression, ExpressionKind, FragmentId, Id, Kind, Pattern, Span, Tree, Value};
+use super::ast::{
+    ElementKind, Expression, ExpressionKind, FragmentId, Id, Kind, Pattern, Span, Tree, Value,
+};
+use super::print::is_block_element_name;
 use crate::html::verify::{Reader, Signature};
+use crate::options::HtmlWhitespaceSensitivity;
 use bun_core::strings;
+use std::borrow::Cow;
 
 struct Check<'t, 'a> {
     tree: &'t Tree<'a>,
     text: &'a [u8],
     reader: Reader,
     comments: u32,
+    sensitivity: HtmlWhitespaceSensitivity,
+}
+
+/// What the text in a fragment is.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Text {
+    /// Words. The white space at the ends of the fragment is nothing.
+    Words,
+    /// The same, and the white space at the ends is what it is between two words: an inline element.
+    WordsWithEnds,
+    /// The same, unless there is nothing else in the fragment: a block of Svelte.
+    WordsWithEndsAroundThem,
+    /// `<pre>`, `<textarea>`
+    Preformatted,
+    /// A script, a style sheet, a template in another language.
+    Code,
 }
 
 /// What is still to be read.
 enum Next {
-    Node(Id),
+    /// `true`: it is in `<pre>`.
+    Node(Id, bool),
     /// One that is there or not, after a mark of its own.
-    Fragment(Option<FragmentId>),
+    Fragment(Option<FragmentId>, Text),
     End,
 }
 
@@ -199,9 +224,83 @@ impl Check<'_, '_> {
             .all(|&id| matches!(&self.tree[id].kind, Kind::Text { raw } if bun_core::strings::trim_js_whitespace(raw).is_empty()))
     }
 
+    #[optimize(size)]
+    fn is_block_element(&self, id: Id) -> bool {
+        matches!(&self.tree[id].kind, Kind::Element(it) if it.kind == ElementKind::RegularElement
+        && match self.sensitivity {
+            HtmlWhitespaceSensitivity::Strict => false,
+            HtmlWhitespaceSensitivity::Ignore => true,
+            HtmlWhitespaceSensitivity::Css => is_block_element_name(it.name),
+        })
+    }
+
+    /// The texts in `run`, which has nothing else in it but comments, and is between `previous` and `next`.
+    #[optimize(size)]
+    fn texts(&mut self, run: &[Id], (previous, next): (Option<Id>, Option<Id>), how: Text) {
+        let tree = self.tree;
+        let mut texts = run.iter().filter_map(|&it| match &tree[it].kind {
+            Kind::Text { raw } => Some(&raw[..]),
+            _ => None,
+        });
+        let first = texts.next().unwrap_or_default();
+        let merged = texts.fold(Cow::Borrowed(first), |mut all, it| {
+            all.to_mut().extend_from_slice(it);
+            all
+        });
+        if how == Text::Preformatted {
+            return self.reader.exact(&merged);
+        }
+        let mut words = strings::split_any(&merged, b" \t\n\r\x0C").filter(|it| !it.is_empty());
+        let is_all_there_is =
+            previous.is_none() && next.is_none() && merged.trim_ascii().is_empty();
+        let is_free_at_end = match how {
+            Text::WordsWithEnds => false,
+            Text::WordsWithEndsAroundThem => is_all_there_is,
+            _ => true,
+        };
+        let is_free_next_to =
+            |it: Option<Id>| it.map_or(is_free_at_end, |it| self.is_block_element(it));
+        let (is_free_before, is_free_behind) = (is_free_next_to(previous), is_free_next_to(next));
+        let Some(first) = words.next() else {
+            if !merged.is_empty() && !is_free_before && !is_free_behind {
+                self.reader.mark(8);
+            }
+            return;
+        };
+        if merged.first().is_some_and(u8::is_ascii_whitespace) && !is_free_before {
+            self.reader.mark(8);
+        }
+        self.reader.exact(first);
+        for word in words {
+            self.reader.mark(8);
+            self.reader.exact(word);
+        }
+        if merged.last().is_some_and(u8::is_ascii_whitespace) && !is_free_behind {
+            self.reader.mark(8);
+        }
+    }
+
+    /// The text in `fragment`, and where it is among what else is in it.
+    #[optimize(size)]
+    fn texts_of(&mut self, fragment: FragmentId, how: Text) {
+        let tree = self.tree;
+        let children = tree.fragment(fragment);
+        let is_text = |id: &Id| matches!(tree[*id].kind, Kind::Text { .. } | Kind::Comment { .. });
+        let (mut at, mut previous) = (0, None);
+        while at < children.len() {
+            let len = children[at..].iter().take_while(|it| is_text(it)).count();
+            let next = children.get(at + len).copied();
+            if len > 0 {
+                self.texts(&children[at..at + len], (previous, next), how);
+            }
+            self.reader.mark(9);
+            (at, previous) = (at + len + 1, next);
+        }
+    }
+
     /// Reads `id`, and says in `next` what is in it, the last first.
     #[optimize(size)]
-    fn enter(&mut self, id: Id, next: &mut Vec<Next>) {
+    fn enter(&mut self, id: Id, is_pre: bool, next: &mut Vec<Next>) {
         let tree = self.tree;
         let node = &tree[id];
         let whole = Span {
@@ -209,6 +308,10 @@ impl Check<'_, '_> {
             end: node.end,
         };
         let mut fragments: [Option<Option<FragmentId>>; 3] = [None; 3];
+        let mut how = match is_pre {
+            true => Text::Preformatted,
+            false => Text::WordsWithEndsAroundThem,
+        };
         match &node.kind {
             Kind::Text { raw } => return self.reader.count(raw),
             Kind::Comment { data } => {
@@ -225,6 +328,24 @@ impl Check<'_, '_> {
                 }
                 self.attributes(&element.attributes);
                 fragments[0] = Some(Some(element.fragment));
+                let is_regular = element.kind == ElementKind::RegularElement;
+                how = match element.name {
+                    b"script" | b"style" | b"template" if is_regular => Text::Code,
+                    _ if is_pre => Text::Preformatted,
+                    name if is_regular
+                        && (name.eq_ignore_ascii_case(b"pre")
+                            || name.eq_ignore_ascii_case(b"textarea")) =>
+                    {
+                        Text::Preformatted
+                    }
+                    _ if is_regular
+                        && !self.is_block_element(id)
+                        && self.sensitivity != HtmlWhitespaceSensitivity::Ignore =>
+                    {
+                        Text::WordsWithEnds
+                    }
+                    _ => Text::Words,
+                };
             }
             Kind::Script {
                 is_module,
@@ -322,12 +443,16 @@ impl Check<'_, '_> {
             }
         }
         next.push(Next::End);
-        next.extend(fragments.into_iter().rev().flatten().map(Next::Fragment));
+        next.extend((fragments.into_iter().rev().flatten()).map(|it| Next::Fragment(it, how)));
     }
 }
 
 #[optimize(size)]
-fn signature(text: &[u8], parsers: Parsers<'_>) -> Option<(Signature, u32)> {
+fn signature(
+    text: &[u8],
+    parsers: Parsers<'_>,
+    sensitivity: HtmlWhitespaceSensitivity,
+) -> Option<(Signature, u32)> {
     let text = super::trimmed(text);
     let tree = parsers.tree_of(text).ok()?;
     let mut check = Check {
@@ -335,25 +460,30 @@ fn signature(text: &[u8], parsers: Parsers<'_>) -> Option<(Signature, u32)> {
         text,
         reader: Reader::default(),
         comments: 0,
+        sensitivity,
     };
-    let mut next = vec![Next::Fragment(Some(tree.fragment))];
+    let mut next = vec![Next::Fragment(Some(tree.fragment), Text::Words)];
     next.extend(
         ([tree.css, tree.instance, tree.module, tree.options].into_iter())
             .flatten()
-            .map(Next::Node),
+            .map(|id| Next::Node(id, false)),
     );
     while let Some(it) = next.pop() {
         match it {
-            Next::Node(id) => check.enter(id, &mut next),
+            Next::Node(id, is_pre) => check.enter(id, is_pre, &mut next),
             Next::End => check.reader.mark(0),
-            Next::Fragment(None) => check.reader.mark(6),
-            Next::Fragment(Some(fragment)) => {
+            Next::Fragment(None, _) => check.reader.mark(6),
+            Next::Fragment(Some(fragment), how) => {
                 check.reader.mark(7);
+                if how != Text::Code {
+                    check.texts_of(fragment, how);
+                }
+                let is_pre = how == Text::Preformatted;
                 next.extend(
                     tree.fragment(fragment)
                         .iter()
                         .rev()
-                        .map(|&id| Next::Node(id)),
+                        .map(|&id| Next::Node(id, is_pre)),
                 );
             }
         }
@@ -368,8 +498,16 @@ fn signature(text: &[u8], parsers: Parsers<'_>) -> Option<(Signature, u32)> {
 /// Whether `after`, which is what has become of `before`, has all that is in `before` and nothing else. Both have `\n` at
 /// the ends of their lines and no byte order mark.
 #[optimize(size)]
-pub(crate) fn has_same_content(before: &[u8], after: &[u8], parsers: Parsers<'_>) -> bool {
-    match (signature(before, parsers), signature(after, parsers)) {
+pub(crate) fn has_same_content(
+    before: &[u8],
+    after: &[u8],
+    parsers: Parsers<'_>,
+    sensitivity: HtmlWhitespaceSensitivity,
+) -> bool {
+    match (
+        signature(before, parsers, sensitivity),
+        signature(after, parsers, sensitivity),
+    ) {
         (Some(before), Some(after)) => before == after,
         _ => false,
     }

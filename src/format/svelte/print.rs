@@ -63,6 +63,10 @@ const BLOCK_ELEMENTS: [&[u8]; 33] = [
     b"ul",
 ];
 
+pub(crate) fn is_block_element_name(name: &[u8]) -> bool {
+    BLOCK_ELEMENTS.contains(&name)
+}
+
 /// `[\t\n\f\r ]`
 fn is_collapsible(byte: u8) -> bool {
     matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' ')
@@ -450,7 +454,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 && match self.options.html_whitespace_sensitivity {
                     HtmlWhitespaceSensitivity::Strict => false,
                     HtmlWhitespaceSensitivity::Ignore => true,
-                    HtmlWhitespaceSensitivity::Css => BLOCK_ELEMENTS.contains(&element.name),
+                    HtmlWhitespaceSensitivity::Css => is_block_element_name(element.name),
                 }
         })
     }
@@ -1229,6 +1233,20 @@ impl<'a, 'o> Printer<'a, 'o> {
         {
             return self.print_as_written(id);
         }
+        // `<script lang="ts>`: to Svelte a value that starts with a quote has one at its end, and this is `t`.
+        if matches!(
+            self.tree[owner].kind,
+            Kind::Script { .. } | Kind::StyleSheet { .. }
+        ) {
+            let (start, end) = (self.tree[id].start, self.tree[id].end);
+            let written = Span { start, end }.of(self.text);
+            let value = strings::index_of_char_usize(written, b'=')
+                .map(|at| strings::trim_js_whitespace_start(&written[at + 1..]));
+            if matches!(value, Some([quote @ (b'"' | b'\''), rest @ ..]) if rest.last() != Some(quote))
+            {
+                return self.print_as_written(id);
+            }
+        }
         match self.tree[id].kind.clone() {
             Kind::Attribute { name, value } => {
                 if self.can_be_shorthand(name, &value) {
@@ -1869,7 +1887,14 @@ impl<'a, 'o> Printer<'a, 'o> {
                 body,
                 fallback,
             } => {
-                let mut parts = vec![Doc::Token("{#each "), self.print_block_js(expression)];
+                // Without an `as`, Svelte goes on where the expression ends, which is before a `)`. The plugin prints
+                // `{#each (a = 1)}`.
+                let list = Self::code(Js {
+                    is_on_one_line: true,
+                    is_without_parentheses: context.is_none(),
+                    ..self.js(expression)
+                });
+                let mut parts = vec![Doc::Token("{#each "), list];
                 if context.is_some() {
                     parts.extend([Doc::Token(" as"), self.expand_node(context)]);
                 }

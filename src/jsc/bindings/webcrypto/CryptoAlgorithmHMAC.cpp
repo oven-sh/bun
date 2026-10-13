@@ -58,17 +58,20 @@ CryptoAlgorithmIdentifier CryptoAlgorithmHMAC::identifier() const
     return s_identifier;
 }
 
-// HMAC hashes three blocks on top of the message: the two pads and the inner digest.
-static size_t hashedSize(CryptoAlgorithmIdentifier hash, size_t messageSize)
+// On top of the message HMAC hashes three blocks (the two pads and the inner digest), and a key longer than a block.
+static size_t hashedSize(const CryptoKeyHMAC& key, size_t messageSize)
 {
+    auto hash = key.hashAlgorithmIdentifier();
     size_t blockSize = hash == CryptoAlgorithmIdentifier::SHA_384 || hash == CryptoAlgorithmIdentifier::SHA_512 ? 128 : 64;
-    return messageSize + 3 * blockSize;
+    size_t keySize = key.key().size();
+    return messageSize + 3 * blockSize + (keySize > blockSize ? keySize : 0);
 }
 
 void CryptoAlgorithmHMAC::sign(const CryptoAlgorithmParameters&, Ref<CryptoKey>&& key, Vector<uint8_t>&& data, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    auto hash = downcast<CryptoKeyHMAC>(key.get()).hashAlgorithmIdentifier();
-    auto inputSize = hashedSize(hash, data.size());
+    auto& hmacKey = downcast<CryptoKeyHMAC>(key.get());
+    auto hash = hmacKey.hashAlgorithmIdentifier();
+    auto inputSize = hashedSize(hmacKey, data.size());
     dispatchOperation(hash, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [key = WTF::move(key), data = WTF::move(data)] {
             return platformSign(downcast<CryptoKeyHMAC>(key.get()), data);
@@ -77,8 +80,9 @@ void CryptoAlgorithmHMAC::sign(const CryptoAlgorithmParameters&, Ref<CryptoKey>&
 
 void CryptoAlgorithmHMAC::verify(const CryptoAlgorithmParameters&, Ref<CryptoKey>&& key, Vector<uint8_t>&& signature, Vector<uint8_t>&& data, BoolCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    auto hash = downcast<CryptoKeyHMAC>(key.get()).hashAlgorithmIdentifier();
-    auto inputSize = hashedSize(hash, data.size());
+    auto& hmacKey = downcast<CryptoKeyHMAC>(key.get());
+    auto hash = hmacKey.hashAlgorithmIdentifier();
+    auto inputSize = hashedSize(hmacKey, data.size());
     dispatchOperation(hash, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [key = WTF::move(key), signature = WTF::move(signature), data = WTF::move(data)] {
             return platformVerify(downcast<CryptoKeyHMAC>(key.get()), signature, data);

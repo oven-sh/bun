@@ -53,7 +53,9 @@ void CryptoAlgorithmSHA256::digest(Vector<uint8_t>&& message, VectorCallback&& c
 
     if (message.size() <= maxInputSizeForInlineOperation(s_identifier)) {
         digest->addBytes(message.begin(), message.size());
-        callback(digest->computeHash());
+        context.postTaskAfterYield([callback = WTF::move(callback), result = digest->computeHash()](auto&) {
+            callback(result);
+        });
         return;
     }
 

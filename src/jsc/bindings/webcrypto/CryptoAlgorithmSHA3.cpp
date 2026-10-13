@@ -46,7 +46,9 @@ static void dispatchDigest(PAL::CryptoDigest::Algorithm algorithm,
 
     if (message.size() <= CryptoAlgorithm::maxInputSizeForInlineOperation(CryptoAlgorithmIdentifier::SHA3_256)) {
         digest->addBytes(message.begin(), message.size());
-        callback(digest->computeHash());
+        context.postTaskAfterYield([callback = WTF::move(callback), result = digest->computeHash()](auto&) {
+            callback(result);
+        });
         return;
     }
 

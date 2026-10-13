@@ -29,6 +29,7 @@
 #if ENABLE(WEB_CRYPTO)
 
 #include "ScriptExecutionContext.h"
+#include <openssl/err.h>
 
 namespace WebCore {
 
@@ -173,11 +174,16 @@ static void runOrDispatchAlgorithmOperation(CryptoAlgorithmIdentifier hashOrCiph
         return;
     }
     auto result = operation();
-    if (result.hasException()) {
-        exceptionCallback(result.releaseException().code(), ""_s);
-        return;
-    }
-    callback(result.releaseReturnValue());
+    // A failed operation leaves its reason on the BoringSSL error queue of the thread it ran on, which is now the caller's.
+    if (result.hasException())
+        ERR_clear_error();
+    context.postTaskAfterYield([result = WTF::move(result), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto&) mutable {
+        if (result.hasException()) {
+            exceptionCallback(result.releaseException().code(), ""_s);
+            return;
+        }
+        callback(result.releaseReturnValue());
+    });
 }
 
 void CryptoAlgorithm::dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue& workQueue, ScriptExecutionContext& context, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, Function<ExceptionOr<Vector<uint8_t>>()>&& operation)

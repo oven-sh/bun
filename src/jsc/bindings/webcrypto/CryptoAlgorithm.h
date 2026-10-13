@@ -84,12 +84,10 @@ public:
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
 
-    // The most bytes a hash or a symmetric cipher takes in about a microsecond, which is what the calling thread
-    // spends on sending an operation to the work queue and taking its result. 0 for every other algorithm.
+    // The bytes a hash or symmetric cipher gets through in about the microsecond a trip to the work queue costs the calling thread; 0 for any other algorithm.
     static size_t maxInputSizeForInlineOperation(CryptoAlgorithmIdentifier hashOrCipher);
 
-    // Up to maxInputSizeForInlineOperation(hashOrCipher) bytes, the operation runs here and now, and its
-    // callback is called before this returns. Over that, it goes to the work queue.
+    // Up to that many bytes the operation runs on the calling thread, and over that on the work queue; either way the callback runs from the event loop.
     static void dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
     static void dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
 

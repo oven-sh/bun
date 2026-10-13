@@ -1,7 +1,8 @@
-import { peek, spawnSync } from "bun";
+import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
 import { createCipheriv, createHash, createHmac, createSecretKey, type webcrypto } from "node:crypto";
+import { join } from "node:path";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1464,8 +1465,8 @@ describe("exception scope discipline", () => {
   });
 });
 
-// A hash or a symmetric cipher over a small input is computed by the call itself: the promise it
-// returns is already settled. Past the limit of the algorithm, the thread pool computes as before.
+// A hash or a symmetric cipher over a small input is computed by the thread that calls it, and
+// its promise settles from the event loop as it does when the thread pool computed it.
 describe("operations on small inputs", async () => {
   const raw = new Uint8Array(32).fill(1);
   const iv12 = new Uint8Array(12).fill(2);
@@ -1473,18 +1474,22 @@ describe("operations on small inputs", async () => {
   const aad = new Uint8Array(20).fill(4);
   const bytes = (size: number) => Uint8Array.from({ length: size }, (_, i) => i % 251);
 
-  const hmacKey = (hash: string) =>
-    crypto.subtle.importKey("raw", raw, { name: "HMAC", hash }, false, ["sign", "verify"]);
+  const hmacKey = (hash: string, key = raw) =>
+    crypto.subtle.importKey("raw", key, { name: "HMAC", hash }, false, ["sign", "verify"]);
   const hmac = {
     "SHA-1": await hmacKey("SHA-1"),
     "SHA-256": await hmacKey("SHA-256"),
     "SHA-512": await hmacKey("SHA-512"),
   };
+  // A key longer than a block of the hash is hashed as well, on every operation.
+  const longRaw = new Uint8Array(200).fill(5);
+  const longKey = await hmacKey("SHA-256", longRaw);
   const cipherKey = (name: string, format = "raw") =>
     crypto.subtle.importKey(format as "raw", raw, name, false, ["encrypt", "decrypt"]);
   const gcm = await cipherKey("AES-GCM");
   const cbc = await cipherKey("AES-CBC");
   const ctr = await cipherKey("AES-CTR");
+  const cfb = await cipherKey("AES-CFB-8");
   const chacha = await cipherKey("ChaCha20-Poly1305", "raw-secret");
 
   // What node:crypto gives: the ciphertext, followed by the tag of an AEAD.
@@ -1495,8 +1500,11 @@ describe("operations on small inputs", async () => {
     return aead ? Buffer.concat([body, cipher.getAuthTag()]) : body;
   };
   const sealGcm = seal("aes-256-gcm", iv12, true);
+  const sealCbc = seal("aes-256-cbc", iv16, false);
+  const sealCtr = seal("aes-256-ctr", iv16, false);
+  const plain = (data: Uint8Array) => Buffer.from(data);
 
-  // [name, largest input computed by the call (-1: none), the operation, what node:crypto gives for the same input]
+  // [name, largest input the calling thread computes (-1: none), the operation, what node:crypto gives for the same input]
   type Case = [string, number, (data: Uint8Array) => Promise<unknown>, (data: Uint8Array) => unknown];
   const digest = (name: string, node: string, limit: number): Case => [
     `digest ${name}`,
@@ -1512,6 +1520,7 @@ describe("operations on small inputs", async () => {
   ];
   const cases: Case[] = [
     digest("SHA-1", "sha1", 1024),
+    digest("SHA-224", "sha224", 1024),
     digest("SHA-256", "sha256", 1024),
     digest("SHA-384", "sha384", 256),
     digest("SHA-512", "sha512", 256),
@@ -1520,6 +1529,12 @@ describe("operations on small inputs", async () => {
     sign("SHA-1", "sha1", 1024 - 3 * 64),
     sign("SHA-256", "sha256", 1024 - 3 * 64),
     sign("SHA-512", "sha512", -1),
+    [
+      "HMAC SHA-256 sign with a key of 200 bytes",
+      1024 - 3 * 64 - 200,
+      data => crypto.subtle.sign("HMAC", longKey, data),
+      data => createHmac("sha256", longRaw).update(data).digest(),
+    ],
     [
       "HMAC SHA-256 verify",
       1024 - 3 * 64,
@@ -1537,90 +1552,115 @@ describe("operations on small inputs", async () => {
       "AES-GCM decrypt",
       1024 - iv12.length - aad.length - 16,
       data => crypto.subtle.decrypt({ name: "AES-GCM", iv: iv12, additionalData: aad }, gcm, sealGcm(data)),
-      data => Buffer.from(data),
+      plain,
     ],
-    [
-      "AES-CBC encrypt",
-      1024,
-      data => crypto.subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbc, data),
-      seal("aes-256-cbc", iv16, false),
-    ],
+    ["AES-CBC encrypt", 1024, data => crypto.subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbc, data), sealCbc],
     // What is decrypted is the padded text: 1023 bytes pad to 1024, and 1024 to 1040.
-    [
-      "AES-CBC decrypt",
-      1023,
-      data => crypto.subtle.decrypt({ name: "AES-CBC", iv: iv16 }, cbc, seal("aes-256-cbc", iv16, false)(data)),
-      data => Buffer.from(data),
-    ],
+    ["AES-CBC decrypt", 1023, data => crypto.subtle.decrypt({ name: "AES-CBC", iv: iv16 }, cbc, sealCbc(data)), plain],
     [
       "AES-CTR encrypt",
       1024,
       data => crypto.subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctr, data),
-      seal("aes-256-ctr", iv16, false),
+      sealCtr,
+    ],
+    [
+      "AES-CTR decrypt",
+      1024,
+      data => crypto.subtle.decrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctr, sealCtr(data)),
+      plain,
     ],
   ];
 
-  it.each(cases)("%s is computed by the call up to %d bytes", async (_, limit, run, expected) => {
+  it.each(cases)("%s gives what node:crypto gives on both sides of %d bytes", async (_, limit, run, expected) => {
     const hex = (value: unknown) =>
       value instanceof ArrayBuffer || Buffer.isBuffer(value) ? Buffer.from(value).toString("hex") : value;
-    const sizes: [number, string][] =
-      limit < 0
-        ? [[1, "pending"]]
-        : [
-            [1, "fulfilled"],
-            [limit, "fulfilled"],
-            [limit + 1, "pending"],
-          ];
+    const sizes = limit < 0 ? [1] : [1, limit, limit + 1];
     const observed = [];
-    for (const [size] of sizes) {
-      const promise = run(bytes(size));
-      observed.push([size, peek.status(promise), hex(await promise)]);
-    }
-    expect(observed).toEqual(sizes.map(([size, status]) => [size, status, hex(expected(bytes(size)))]));
+    for (const size of sizes) observed.push([size, hex(await run(bytes(size)))]);
+    expect(observed).toEqual(sizes.map(size => [size, hex(expected(bytes(size)))]));
   });
 
-  // node:crypto has no ChaCha20-Poly1305 to compare with: what was encrypted has to decrypt to itself.
-  it("ChaCha20-Poly1305 is computed by the call up to 1024 bytes of text and additional data", async () => {
-    const algorithm = { name: "ChaCha20-Poly1305", iv: iv12, additionalData: aad };
-    const limit = 1024 - aad.length;
+  // node:crypto has neither of these to compare with: what was encrypted has to decrypt to itself.
+  it.each([
+    ["ChaCha20-Poly1305", { name: "ChaCha20-Poly1305", iv: iv12, additionalData: aad }, chacha, 1024 - aad.length, 16],
+    ["AES-CFB-8", { name: "AES-CFB-8", iv: iv16 }, cfb, 1024, 0],
+  ] as const)("%s decrypts what it encrypted on both sides of 1024 bytes", async (_, algorithm, key, limit, tag) => {
+    const sizes = [1, limit - tag, limit - tag + 1, limit, limit + 1];
     const observed = [];
-    for (const size of [1, limit - 16, limit - 15, limit, limit + 1]) {
-      const encrypted = crypto.subtle.encrypt(algorithm, chacha, bytes(size));
-      const encrypting = peek.status(encrypted);
-      const sealed = await encrypted;
-      const decrypted = crypto.subtle.decrypt(algorithm, chacha, sealed);
-      const decrypting = peek.status(decrypted);
-      observed.push([
-        size,
-        encrypting,
-        decrypting,
-        sealed.byteLength,
-        Buffer.from(await decrypted).equals(bytes(size)),
-      ]);
+    for (const size of sizes) {
+      const sealed = await crypto.subtle.encrypt(algorithm, key, bytes(size));
+      const opened = await crypto.subtle.decrypt(algorithm, key, sealed);
+      observed.push([size, sealed.byteLength, Buffer.from(opened).equals(bytes(size))]);
     }
-    expect(observed).toEqual([
-      [1, "fulfilled", "fulfilled", 17, true],
-      [limit - 16, "fulfilled", "fulfilled", limit, true],
-      [limit - 15, "fulfilled", "pending", limit + 1, true],
-      [limit, "fulfilled", "pending", limit + 16, true],
-      [limit + 1, "pending", "pending", limit + 17, true],
+    expect(observed).toEqual(sizes.map(size => [size, size + tag, true]));
+  });
+
+  it("a promise settles from the event loop, not from the call", async () => {
+    const order: string[] = [];
+    const settled = Promise.all([
+      crypto.subtle.digest("SHA-256", bytes(8)).then(() => order.push("digest")),
+      crypto.subtle.sign("HMAC", hmac["SHA-256"], bytes(8)).then(() => order.push("sign")),
+      crypto.subtle
+        .decrypt({ name: "AES-GCM", iv: iv12, additionalData: aad }, gcm, new Uint8Array(32))
+        .catch(() => order.push("decrypt")),
     ]);
+    // A promise that the call had settled would run its reaction among these microtasks.
+    for (let i = 0; i < 10; i++) await undefined;
+    order.push("microtasks");
+    await settled;
+    expect(order).toEqual(["microtasks", "digest", "sign", "decrypt"]);
   });
 
-  it("a failure rejects the promise the call returns", async () => {
-    const sealed = sealGcm(bytes(64));
-    sealed[0] ^= 1;
-    const promise = crypto.subtle.decrypt({ name: "AES-GCM", iv: iv12, additionalData: aad }, gcm, sealed);
-    const status = peek.status(promise);
-    const error = await promise.then(
-      () => undefined,
-      error => error,
-    );
-    expect({ status, name: error?.name, isDOMException: error instanceof DOMException }).toEqual({
-      status: "rejected",
-      name: "OperationError",
-      isDOMException: true,
-    });
+  it("a loop that awaits one operation after another lets the event loop turn", async () => {
+    let turns = 0;
+    const immediate = () => void (++turns < 3 && setImmediate(immediate));
+    setImmediate(immediate);
+    let operations = 0;
+    while (turns < 3) {
+      await crypto.subtle.digest("SHA-256", bytes(8));
+      operations++;
+    }
+    expect({ turns, operations: operations > 0 }).toEqual({ turns: 3, operations: true });
+  });
+
+  it("a failure rejects with an OperationError", async () => {
+    const tampered = sealGcm(bytes(64));
+    tampered[0] ^= 1;
+    const failures = [];
+    for (const failing of [
+      () => crypto.subtle.decrypt({ name: "AES-GCM", iv: iv12, additionalData: aad }, gcm, tampered),
+      // The last block does not end in padding.
+      () => crypto.subtle.decrypt({ name: "AES-CBC", iv: iv16 }, cbc, new Uint8Array(32)),
+      () => crypto.subtle.decrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chacha, new Uint8Array(32)),
+    ]) {
+      const error = await failing().then(
+        () => undefined,
+        error => error,
+      );
+      failures.push([error?.name, error instanceof DOMException]);
+    }
+
+    expect(failures).toEqual([
+      ["OperationError", true],
+      ["OperationError", true],
+      ["OperationError", true],
+    ]);
     expect(await crypto.subtle.verify("HMAC", hmac["SHA-256"], new Uint8Array(32), bytes(64))).toBe(false);
+  });
+
+  // The thread pool starts its threads when it is given work.
+  it.skipIf(!isLinux)("no thread of the pool starts for inputs within the limits", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "web-crypto-small-inputs-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ within: 0, over: true }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
